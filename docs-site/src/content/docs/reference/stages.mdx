@@ -258,6 +258,19 @@ A changed module is published at the version these rules give, which the [versio
 | a `version` file in the module | overrides all of the above |
 | no earlier release | `0.1.0` |
 
+The module's interface sets the least bump. `tf-publish` compares the variables and outputs in the module's top-level `.tf` and `.tf.json` files with those at the commit the previous release was cut from.
+
+| Interface change | Least bump |
+|---|---|
+| a variable or output removed or renamed | major |
+| a new variable with no default | major |
+| a variable's default removed, or `nullable = false` set | major |
+| a variable's type changed, other than to `any` or no type | major |
+| a new variable with a default, or a new output | minor |
+| none of these | what the commits or the `version` file say |
+
+When the commits or the `version` file give a smaller bump, `tf-publish` refuses that module, names each change and the bump it needs, publishes the rest, and fails the job. Publish it with a `feat!:` or `feat:` commit, or write the version in the module's `version` file. `terragucci publish --dry-run` shows both bumps for each module, and refuses where `tf-publish` would.
+
 ## The grouped summary
 
 The plan and drift stages group identical changes and name each destroy, replacement or refusal. See [the plan report](/terragucci/reference/report/).

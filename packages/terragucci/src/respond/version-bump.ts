@@ -14,6 +14,7 @@ import { decide, isConfident, summarize, type DecideOptions } from "../decide";
 import { QUESTIONS } from "../decide/questions";
 import { findModules } from "../publish";
 import { commitsSince, tryGit } from "../publish/git";
+import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, largerBump, smallerThan } from "../publish/interface";
 import { applyBump, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "../publish/semver";
 import type { Proposal } from "./change";
 
@@ -34,6 +35,12 @@ export interface BumpSuggestion {
   bump?: Bump;
   version?: string;
   probability?: number;
+  /** The bump the commits call for, before the interface is read: the conventional commits, or the model's suggestion. */
+  commits?: Bump;
+  /** The least bump the module's interface change since the last release needs; patch when it did not change. */
+  interface?: Bump;
+  /** The interface changes past a patch, as one line. */
+  changes?: string;
   /** One line a person can read: why this version, and what to check. */
   note: string;
 }
@@ -113,9 +120,24 @@ export async function versionBumps(
       suggestions.push({ ...base, source: "none", note: `${mod.rel}/version sets the version, and it overrides any bump` });
       continue;
     }
+    const prev = interfaceAt(repo, last.tag, mod.rel);
+    const changes = prev ? interfaceChanges(prev, interfaceOf(join(repo, mod.rel))) : [];
+    const iface = interfaceBump(changes);
+    const ifaceFields = prev ? { interface: iface, ...(changes.length > 0 ? { changes: describeChanges(changes) } : {}) } : {};
     if (messages.some(isConventional)) {
       const bump = bumpFor(messages);
-      suggestions.push({ ...base, source: "conventional", bump, version: formatSemver(applyBump(last.v, bump)), note: "the conventional commits decide the bump" });
+      const short = prev && smallerThan(bump, iface);
+      suggestions.push({
+        ...base,
+        source: "conventional",
+        bump,
+        version: formatSemver(applyBump(last.v, bump)),
+        commits: bump,
+        ...ifaceFields,
+        note: short
+          ? `the conventional commits call for a ${bump}, and the interface needs a ${iface}, so tf-publish refuses the release: ${describeChanges(changes.filter((c) => smallerThan(bump, c.bump)))}`
+          : "the conventional commits decide the bump",
+      });
       continue;
     }
 
@@ -124,11 +146,15 @@ export async function versionBumps(
     const record = await decide(settings.decide, state, { bump: QUESTIONS.versionBump }, options);
     const d = record.decisions.bump!;
     let s: BumpSuggestion;
+    // The release pull request proposes at least the interface's bump, so the version it writes is one tf-publish takes.
+    const raised = (bump: Bump): string => (prev && smallerThan(bump, iface) ? `; raised to ${iface} for the interface: ${describeChanges(changes.filter((c) => smallerThan(bump, c.bump)))}` : "");
     if (isConfident(d) && (d.answer === "major" || d.answer === "minor" || d.answer === "patch")) {
-      const bump = d.answer;
-      s = { ...base, source: "suggested", bump, version: formatSemver(applyBump(last.v, bump)), probability: d.probability, note: `suggested from the commit messages and the diff: ${summarize(d, record)}` };
+      const commits = d.answer;
+      const bump = largerBump(commits, iface);
+      s = { ...base, source: "suggested", bump, version: formatSemver(applyBump(last.v, bump)), probability: d.probability, commits, ...ifaceFields, note: `suggested from the commit messages and the diff: ${summarize(d, record)}${raised(commits)}` };
     } else {
-      s = { ...base, source: "default", bump: "patch", version: formatSemver(applyBump(last.v, "patch")), note: `no suggestion, so patch is proposed: ${summarize(d, record)}` };
+      const bump = largerBump("patch", iface);
+      s = { ...base, source: "default", bump, version: formatSemver(applyBump(last.v, bump)), commits: "patch", ...ifaceFields, note: `no suggestion, so patch is proposed: ${summarize(d, record)}${raised("patch")}` };
     }
     suggestions.push(s);
     proposals.push({
@@ -142,12 +168,15 @@ export async function versionBumps(
 }
 
 function releaseBody(s: BumpSuggestion, messages: string[]): string {
+  const raised = s.commits && s.bump !== s.commits;
+  const to = raised ? "" : `, ${s.last} to ${s.version}`;
   const head =
     s.source === "suggested"
-      ? `Suggested bump: **${s.bump}**, ${s.last} to ${s.version}, with probability ${s.probability!.toFixed(2)}. None of the commits since ${s.last} carries a conventional type, so a model read the commit messages and the diff summary.`
-      : `Proposed bump: patch, ${s.last} to ${s.version}. None of the commits since ${s.last} carries a conventional type, and ${s.note.replace(/^no suggestion, so patch is proposed: /, "")}.`;
+      ? `Suggested bump: **${s.commits}**${to}, with probability ${s.probability!.toFixed(2)}. None of the commits since ${s.last} carries a conventional type, so a model read the commit messages and the diff summary.`
+      : `Proposed bump: patch${to}. None of the commits since ${s.last} carries a conventional type, and ${s.note.replace(/^no suggestion, so patch is proposed: /, "").replace(/; raised to .*$/, "")}.`;
   return [
     head,
+    ...(raised ? ["", `The module's interface needs a **${s.bump}**, so this proposes ${s.last} to ${s.version}: ${s.changes}.`] : []),
     "",
     "Merging this pull request writes the module's `version` file, and the next `tf-publish` run publishes that version. Change the file to another version first if the bump is wrong. Nothing is published until then.",
     "",
