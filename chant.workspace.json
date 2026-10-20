@@ -1,0 +1,17 @@
+{
+  "name": "terragucci",
+  "schema": 1,
+  "minReader": "0.108.0",
+  "members": [],
+  "ci": {
+    "green": {
+      "branch": "main",
+      "window": "24h",
+      "phases": {
+        "static": ["static"],
+        "test": ["test (1/3)", "test (2/3)", "test (3/3)"]
+      },
+      "require": ["static", "test"]
+    }
+  }
+}

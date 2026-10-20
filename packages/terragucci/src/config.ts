@@ -1,0 +1,2368 @@
+/**
+ * terragucci.yml: one schema for one repo or many.
+ *
+ * In a repo, the file sits at the root and its keys are that repo's settings.
+ * In a control repo, `projects:` maps `<host>/<path>` keys to settings, and
+ * `defaults:` applies to every project. A project's own keys override the
+ * defaults, which override terragucci's built-in defaults. With no file at
+ * all, the built-in defaults apply.
+ *
+ * The file may be YAML, JSON, or TypeScript. A `.ts` file is folded to its
+ * value without running it (the data-host profile of typescript-as-data), so
+ * a config that reads the environment is refused with its line.
+ */
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
+import { parseReportsBucket, type BucketRef } from "./report/object-store";
+import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
+import { declaredKind, shapeProblems } from "./refusals";
+export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_GENERATE, SYNTH_ROLLOUTS } from "./refusals";
+
+export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
+export const FORGES = ["github", "gitlab", "forgejo"] as const;
+export const GATES = ["always", "on-destructive", "never"] as const;
+/** Older spellings of a gate policy, still accepted from terragucci.yml and --gate: `on-destroy` is `on-destructive`. */
+export const GATE_ALIASES = { "on-destroy": "on-destructive" } as const satisfies Record<string, Gate>;
+/** Every gate name terragucci accepts: the policies and their older spellings. */
+export const GATE_NAMES: readonly GateName[] = [...GATES, ...(Object.keys(GATE_ALIASES) as (keyof typeof GATE_ALIASES)[])];
+/** The policy a gate name means, or undefined when it names none. */
+export function normalizeGate(v: unknown): Gate | undefined {
+  if (typeof v !== "string") return undefined;
+  if ((GATES as readonly string[]).includes(v)) return v as Gate;
+  return Object.hasOwn(GATE_ALIASES, v) ? GATE_ALIASES[v as keyof typeof GATE_ALIASES] : undefined;
+}
+/**
+ * What counts as the approval of a waiting wave (`approval:`). `ledger` (the
+ * default): any `chant approve` of the wave's set digest on chant/lifecycle,
+ * signed or not. `pr-review`: also the merged pull request's approving review
+ * of its head (on GitLab, an approval after its latest push), when the plans
+ * have not moved since (./review.ts). `sealed`: only one sealed with a key the signers file at base
+ * lists for its approver. Every mode binds the digest.
+ */
+export const APPROVALS = ["ledger", "pr-review", "sealed"] as const;
+/** The keys of `approval:` as a map: the mode, and whether a ledger approval must be signed. */
+export const APPROVAL_KEYS = ["mode", "require_signed"] as const;
+
+/**
+ * `approval:` as a map, in place of the mode alone. `require_signed: true`
+ * refuses an unsigned approval on the ledger: only a signed one can be tied
+ * to the person whose principal signed it, so only a signed one can be
+ * checked against the people behind the change (./involved.ts).
+ */
+export interface ApprovalSettings {
+  mode?: Approval;
+  require_signed?: boolean;
+}
+
+/** The mode an `approval:` value names: the string, or the map's `mode`. */
+export function approvalModeOf(v: Approval | ApprovalSettings | undefined): Approval | undefined {
+  if (typeof v === "string") return v;
+  return v && typeof v === "object" && typeof v.mode === "string" ? v.mode : undefined;
+}
+
+/** Whether an `approval:` value refuses unsigned ledger approvals. */
+export function requireSignedOf(v: Approval | ApprovalSettings | undefined): boolean {
+  return !!v && typeof v === "object" && v.require_signed === true;
+}
+
+/** The keys of a scoped `policy.override` entry. */
+export const OVERRIDE_ENTRY_KEYS = ["roots", "who", "roles", "rules"] as const;
+
+/**
+ * A scoped `policy.override` entry (./override.ts): `who` (forge identities
+ * or signers) and the holders of `roles` in `.chant/trust.json` at base may
+ * override a denial of a root a glob of `roots` matches, for any rule, or
+ * with `rules` only when every rule the override names is one of them.
+ */
+export interface OverrideEntry {
+  roots: string[];
+  who?: string[];
+  roles?: string[];
+  rules?: string[];
+}
+
+/** The keys of one `approval_rules` entry. */
+export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author"] as const;
+
+/**
+ * One `approval_rules` entry (./approval-rules.ts): a wave with a root a glob
+ * of `roots` matches waits for `count` distinct approvers of its set digest
+ * (default 1), each holding one of `roles` in `.chant/trust.json` at base when
+ * `roles` is set, and with `not_author` at least one who is not the change's
+ * author. Read at base, like `approval:`.
+ */
+export interface ApprovalRuleSettings {
+  roots: string[];
+  count?: number;
+  roles?: string[];
+  not_author?: boolean;
+}
+/** Every stage runs on the forge's CI. */
+export const RUNTIMES = ["forge"] as const;
+export const DEPENDENTS = ["follow", "plan"] as const;
+/** What a pull request does with the dependents of a changed unit when terragrunt.dependents is unset. */
+export const DEFAULT_DEPENDENTS: Dependents = "plan";
+export const POLICY_ENGINES = ["conftest", "opa"] as const;
+/**
+ * What a policy rule can do to a root's wave (./report/policy.ts): `deny`
+ * fails the root, `hold` makes its wave wait for an approval whatever `gate`
+ * says, `allow_unattended` lets a wave whose every changing root it allows
+ * apply without one.
+ */
+export const POLICY_OUTCOMES = ["deny", "hold", "allow_unattended"] as const;
+export type PolicyOutcome = (typeof POLICY_OUTCOMES)[number];
+export const POLICY_INPUTS = ["plan", "hcp"] as const;
+/**
+ * When a pull request takes its root locks (`locks:`). `apply` (the default):
+ * when it applies before merge, or a writer comments `/terragucci lock`.
+ * `plan`: from its first plan, through the `pr-lock` job (GitHub and Forgejo;
+ * NO_GITLAB_PLAN_LOCKS), until it merges or closes, or a writer comments
+ * `/terragucci unlock`.
+ */
+export const LOCKS = ["apply", "plan"] as const;
+/** When a change applies: after it merges (default), or from its open pull request before it merges. */
+export const APPLY_WHEN = ["merge", "pull-request"] as const;
+/** With `apply.when: pull-request`, who merges once every wave applied: a person (default), or terragucci. */
+export const APPLY_MERGE = ["manual", "auto"] as const;
+/**
+ * With `apply.when: pull-request`, what an open pull request needs before a
+ * comment applies it: a reviewer's approval of its head (`approved`), a
+ * forge that says it can merge (`mergeable`: no conflicts, and on GitHub no
+ * branch protection blocking it), a head that contains the default branch
+ * (`undiverged`), and every status and check on the head passed (`checks`).
+ * All four by default.
+ */
+export const APPLY_REQUIRES = ["approved", "mergeable", "undiverged", "checks"] as const;
+
+export type Binary = (typeof BINARIES)[number];
+export type ForgeName = (typeof FORGES)[number];
+export type Gate = (typeof GATES)[number];
+/** A gate as terragucci.yml or --gate may spell it: a policy, or an older name for one. */
+export type GateName = Gate | keyof typeof GATE_ALIASES;
+export type Approval = (typeof APPROVALS)[number];
+
+/**
+ * `gitlab.token`: how a GitLab project keeps its forge token. `unprotected`
+ * (the default): the plan job posts its note with the token at once, so a
+ * merge request's code, which can rewrite the job, can use the token too.
+ * `protected`: the token is a protected variable that no merge request or
+ * branch pipeline sees, and the comments schedule's job posts the plan notes.
+ */
+export const TOKEN_PROTECTIONS = ["unprotected", "protected"] as const;
+export type GitLabToken = (typeof TOKEN_PROTECTIONS)[number];
+export type Runtime = (typeof RUNTIMES)[number];
+export type Dependents = (typeof DEPENDENTS)[number];
+export type PolicyEngine = (typeof POLICY_ENGINES)[number];
+export type PolicyInput = (typeof POLICY_INPUTS)[number];
+export type ApplyWhen = (typeof APPLY_WHEN)[number];
+export type Locks = (typeof LOCKS)[number];
+export type ApplyMerge = (typeof APPLY_MERGE)[number];
+export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
+
+/** The stages a step runs before or after (`steps:`). `drift` is the drift job's refresh-only plan. */
+export const STEP_STAGES = ["init", "plan", "apply", "drift"] as const;
+export type StepStage = (typeof STEP_STAGES)[number];
+/** What a step's non-zero exit does: fail the root (the default), or hold its wave for an approval. */
+export const STEP_FAILURES = ["fail", "approve"] as const;
+export type StepFailure = (typeof STEP_FAILURES)[number];
+export const STEP_KEYS = ["name", "run", "before", "after", "roots", "on_failure"] as const;
+
+/**
+ * One entry of `steps:`. `run` is a shell command, run in the root's
+ * directory. Exactly one of `before` and `after` names the stage. `roots`
+ * are globs of the roots it runs for (every root when unset).
+ * `on_failure: approve` turns a non-zero exit into a hold: the root's wave
+ * waits for an approval of its set digest, whatever `gate` says. Only a step
+ * that runs before the gate is decided can hold it: one before or after
+ * init or plan.
+ */
+export interface StepSettings {
+  run: string;
+  name?: string;
+  before?: StepStage;
+  after?: StepStage;
+  roots?: string[];
+  on_failure?: StepFailure;
+}
+
+/**
+ * `apply:`: when a change applies. `when: merge` (the default) applies the
+ * default branch after a merge. `when: pull-request` applies an open pull
+ * request's head on `/terragucci apply`, under the same waves and gates, and
+ * the push after the merge plans and reports drift without applying.
+ * `merge: auto` merges the pull request once every wave applied, in a job of
+ * its own, with the token in the secret `merge_token_env` names when it is
+ * set (required on Forgejo, whose job token cannot push to the default
+ * branch). `requires` lists what an open pull request needs before it
+ * applies (APPLY_REQUIRES, all by default). On every forge, for plain
+ * roots and Terragrunt units alike. On GitLab a merge request note starts no
+ * pipeline, so `when: pull-request` needs `comments:` (the schedule whose
+ * job reads `/terragucci apply`) and `merge_token_env`, a variable whose
+ * token may run pipelines on the default branch and merge there, with
+ * `merge: manual` too (PR_APPLY_NEEDS_ON_GITLAB).
+ */
+export interface ApplySettings {
+  when?: ApplyWhen;
+  merge?: ApplyMerge;
+  merge_token_env?: string;
+  requires?: ApplyRequire[];
+  /**
+   * Minutes between runs of the resume job, which applies a waiting wave once
+   * an approval of its digest is on chant/lifecycle (resume.ts). Off when
+   * unset. 5 to 60.
+   */
+  resume?: number;
+  /**
+   * Roots that apply from a branch other than the default: branch name to
+   * root globs. A push to a named branch applies only the roots its globs
+   * match, in waves behind the same gate; a push to the default branch, and
+   * the apply a comment starts from a merge into it, skip every root a glob
+   * here matches. Plain roots only, with `when: merge`.
+   */
+  branches?: Record<string, string[]>;
+  /**
+   * The workspace decision point every wave gate asks instead of waiting for
+   * `terragucci approve` (chant's "A gate that asks a decision point"). The
+   * point declares `gate.planDigest`, so each plan is its own question, and
+   * its deciders and quorum decide. Read at base, like `approval:`, which
+   * stays `ledger`.
+   */
+  point?: string;
+}
+
+/**
+ * Policy as code, off unless set. `tf-plan` runs the engine over each planned
+ * root's plan JSON and fails the root on a denial. No response, agent or
+ * comment can waive it.
+ */
+export interface PolicySettings {
+  /** The engine. Default `conftest`, which terragucci installs on demand when it is not on the path. */
+  engine?: PolicyEngine;
+  /** The directory of Rego policy, relative to the repo root, or to the root of `source` when that is set. Default `policy`. */
+  path?: string;
+  /**
+   * A shared policy repo, `git+https://<host>/<path>@<ref>`, read at that ref
+   * instead of the repo's own directory. The ref is a tag, a branch or a
+   * commit. Like the rest of the key, it is read at the base.
+   */
+  source?: string;
+  /** The Rego package whose `deny`, `violation`, `deny_*` and `warn` rules count. conftest default: every namespace. opa default: `main`, or every package under `terraform.policies` with `input: hcp`. */
+  namespace?: string;
+  /** What `input` holds: `plan`, the bare plan JSON (default); `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it. */
+  input?: PolicyInput;
+  /**
+   * Who may override a denial: the forge identities or signers whose recorded
+   * override (`terragucci override`) lets `tf-apply` apply one denied plan,
+   * each for every root and rule, or scoped entries (OverrideEntry) for the
+   * roots a glob names. Read at base, like `approval:`. Unset, no override
+   * counts.
+   */
+  override?: (string | OverrideEntry)[];
+  /**
+   * The rule outcomes the policy has: `deny` always, and `hold` and
+   * `allow_unattended` when listed, read from `hold`, `hold_*`,
+   * `allow_unattended` and `allow_unattended_*` rules (engine `opa`). Read
+   * at base. Default `[deny]`.
+   */
+  outcomes?: PolicyOutcome[];
+}
+
+/**
+ * The jobs' cloud identities over the forge's OIDC token. `plan_role` and
+ * `apply_role` are AWS roles; `gcp` and `azure` set those clouds, beside AWS
+ * or instead of it.
+ */
+export interface OidcSettings {
+  plan_role?: string;
+  apply_role?: string;
+  /**
+   * AWS roles by root glob (plain roots): a root takes the pair of the first
+   * glob it matches, so each environment's roots plan and apply with roles
+   * that reach that environment's state alone. A root no glob matches takes
+   * `plan_role` and `apply_role`. In a Terragrunt repo, `terragrunt.credentials`
+   * does this.
+   */
+  roles?: Record<string, RolePair>;
+  /**
+   * The AWS token's audience. Default `sts.amazonaws.com`. A map gives each
+   * stage its own (`plan`, `apply`, `drift`); a stage it leaves out keeps the
+   * default.
+   */
+  audience?: string | Partial<Record<AudienceStage, string>>;
+  /** GCP Workload Identity Federation: the provider's resource name and a service account per stage. */
+  gcp?: {
+    workload_identity_provider: string;
+    plan_service_account: string;
+    apply_service_account: string;
+    /** Default `https://sts.googleapis.com/v1/token`; a regional endpoint such as `https://sts.europe-west3.rep.googleapis.com/v1/token`. */
+    token_url?: string;
+    /**
+     * Service accounts by root glob (plain roots): a root's binary, and what
+     * reads its state, impersonate the pair of the first glob it matches, so
+     * each environment's roots reach that environment's state alone. A root no
+     * glob matches takes plan_service_account and apply_service_account.
+     */
+    roles?: Record<string, RolePair>;
+  };
+  /** An Entra app registration or managed identity per stage, with a federated credential for the forge. */
+  azure?: {
+    tenant_id: string;
+    subscription_id: string;
+    plan_client_id: string;
+    apply_client_id: string;
+    /** The token's audience. Default `api://AzureADTokenExchange`; `api://AzureADTokenExchangeUSGov` for Azure US Government, `api://AzureADTokenExchangeChina` for Azure China. */
+    audience?: string;
+    /**
+     * Client ids by root glob (plain roots), as `gcp.roles` gives service
+     * accounts; each client needs a federated credential for the forge. A root
+     * no glob matches takes plan_client_id and apply_client_id.
+     */
+    roles?: Record<string, RolePair>;
+  };
+}
+
+/** A plan role and an apply role, for the units under one path. */
+export interface RolePair {
+  plan: string;
+  apply: string;
+}
+
+/**
+ * Terragrunt settings. Terragrunt mode is detected (`root.hcl`,
+ * `terragrunt.hcl` or `terragrunt.stack.hcl`); this block only tunes it.
+ */
+export interface TerragruntSettings {
+  /** The Terragrunt release the pipeline installs. Default: the one terragucci's image carries. */
+  version?: string;
+  /** Unit globs discovery leaves out, beside `catalog/**` and the module cache. */
+  exclude?: string[];
+  /** How many units one `run --all` runs at once. Default: from the state backend. */
+  parallelism?: number;
+  /** Units that depend on a changed unit: `plan` (the default) previews them at pull-request time as well as planning them in later waves, `follow` only plans them in later waves. */
+  dependents?: Dependents;
+  /**
+   * Plan and apply roles by unit path glob, assumed over OIDC through a
+   * generated auth-provider-cmd. A unit that sets its own `iam_role` keeps it.
+   */
+  credentials?: Record<string, RolePair>;
+}
+
+/** Atmos settings. Atmos mode is detected (`atmos.yaml` at the repo root); this block only tunes it. */
+export interface AtmosSettings {
+  /** The Atmos release every job installs. Default: the one this terragucci release pins. */
+  version?: string;
+}
+
+/**
+ * Pipeline events and the responses each takes. The first mode is the
+ * default and needs no model. `drift: attribute` also names who changed each drifted attribute (a known-writes
+ * table, then the audit log, then a typed decision when `decide:` is set).
+ */
+export const RESPONSES = {
+  plan: ["summary"],
+  "wave-refused": ["diff", "off"],
+  "apply-failed": ["triage", "off"],
+  drift: ["pull-request", "attribute", "off"],
+  tips: ["pull-request", "off"],
+  fmt: ["commit", "off"],
+  publish: ["notes", "off"],
+  /** next-wave: with `rollouts:` set, init writes a job that runs `respond rollout` on that schedule, so a merged and applied wave's next one opens within one interval. off leaves the job out. */
+  rollout: ["next-wave", "off"],
+  "version-bump": ["off", "suggest"],
+  /** terragucci#30: a typed decision flags a pull request whose description leaves out what its plan destroys or replaces. Needs `decide:`. */
+  description: ["off", "check"],
+} as const;
+export type RespondEvent = keyof typeof RESPONSES;
+export const AGENT_VIA = ["forge"] as const;
+
+/** The services `decide:` can name; each speaks the Jev request and response shape. */
+export const DECIDE_BACKENDS = ["laya", "von", "decider", "jev"] as const;
+export type DecideBackend = (typeof DECIDE_BACKENDS)[number];
+export const QUESTION_TYPES = ["noul", "choice", "score"] as const;
+export type QuestionType = (typeof QUESTION_TYPES)[number];
+
+/**
+ * `decide:`: the typed-decision service the opt-in uses ask (terragucci#28).
+ * With no `decide:`, every use runs its deterministic response.
+ */
+export interface DecideSettings {
+  /** Which service answers: laya (the terragucci-decide image), von, decider or jev. */
+  backend: DecideBackend;
+  /** The service's base URL; `/v1/systemone` is appended. Required except for jev, which defaults to TypeSafe's. */
+  url?: string;
+  /** The pinned model version. Required except for laya, which defaults to the version terragucci-decide serves. */
+  model?: string;
+  /** The environment variable holding the service's bearer token. Required for jev. */
+  token_env?: string;
+  /** The probability an answer needs before a use acts on it, per question type, between 0 and 1. */
+  thresholds?: Partial<Record<QuestionType, number>>;
+}
+
+/** `dashboards:` in terragucci.yml, as a map. `true` takes every default. */
+export interface DashboardSettings {
+  /** Where the files go, relative to the repo. Default `observability/terragucci`. */
+  dir?: string;
+  /** The uid of the Grafana datasource that reads the Prometheus holding the metrics. Default `prometheus`. */
+  prometheus?: string;
+  /** The uid of the Grafana datasource that reads Tempo. Default `tempo`. */
+  tempo?: string;
+  /** The Grafana folder the dashboards and Grafana-managed rules go in. Default `terragucci`. */
+  folder?: string;
+  /** Where Grafana's container finds the dashboard files. Default `/var/lib/grafana/dashboards/terragucci`. */
+  path?: string;
+  /** Alert when a project's drift is older than this. Default `1d`. */
+  drift_age?: string;
+  /** Alert when a wave has waited for its approval longer than this. Default `4h`. */
+  wave_wait?: string;
+  /** Alert when a project's drift run has not run for this long. Default `2d`. */
+  schedule?: string;
+}
+
+export const DASHBOARD_KEYS = ["dir", "prometheus", "tempo", "folder", "path", "drift_age", "wave_wait", "schedule"] as const;
+export const DASHBOARD_DURATION_KEYS = ["drift_age", "wave_wait", "schedule"] as const;
+
+/**
+ * `agent.comment`: the `/terragucci agent <ask>` pull request comment, off
+ * unless set. The comment starts a job that runs a coding agent on the pull
+ * request's head branch and pushes what it changes with `agent.token_env`'s
+ * token. The job gets no cloud credentials: no `oidc` role. `true` takes every
+ * default.
+ */
+export interface AgentCommentSettings {
+  /** The agent's command line, run in the checkout with the prompt on stdin. Default: Claude Code in print mode with file tools only (AGENT_COMMAND in agent-comment.ts). */
+  command?: string;
+  /** The secret holding the model's API key, mapped into the agent's step alone. Default `ANTHROPIC_API_KEY`. */
+  key_secret?: string;
+  /** The most turns the agent takes, as `$TG_AGENT_MAX_TURNS`. Default 30. */
+  max_turns?: number;
+  /** Minutes before the agent's job is stopped. Default 30. */
+  timeout?: number;
+}
+
+export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
+
+/**
+ * `agent.drift`: when the drift job opens the drift issue, a job runs a coding
+ * agent on the default branch with the drift report, and a second job opens a
+ * pull request with what it changed, with `agent.token_env`'s token. The
+ * agent's job holds no forge token and no cloud role. Its settings are
+ * `agent.comment`'s (AgentCommentSettings); `true` takes every default.
+ */
+export const AGENT_DRIFT_KEYS = AGENT_COMMENT_KEYS;
+
+/** Why `agent.drift` and `respond.drift: pull-request` do not go together. */
+export const AGENT_DRIFT_RESPOND = "agent.drift opens the drift pull request itself, so the codified one would be a second; set respond.drift to attribute or off";
+
+/**
+ * `review`: a model reviews each pull request's intent against its plan
+ * (review-agent.ts), off unless `agent` is true. It posts a note and never
+ * approves; a `tf-apply` wave's policy reads its risk as `input.review`.
+ */
+export interface ReviewSettings {
+  /** Turns the review on. */
+  agent?: boolean;
+  /** The command line, run with the prompt on stdin; it prints the review. Default: Claude Code in print mode with no tools (REVIEW_COMMAND in review-agent.ts). */
+  command?: string;
+  /** The secret holding the model's API key, mapped into the review command's step alone. Default `ANTHROPIC_API_KEY`. */
+  key_secret?: string;
+  /** The instructions file, read from the default branch. Default `.terragucci/review.md`. */
+  instructions?: string;
+  /** Minutes before the review job is stopped. Default 10. */
+  timeout?: number;
+}
+
+export const REVIEW_KEYS = ["agent", "command", "key_secret", "instructions", "timeout"] as const;
+
+/** The settings one project (or one repo) can carry. Every key is optional. */
+export interface ProjectSettings {
+  /** Globs of root directories. Detected when absent. */
+  roots?: string[];
+  /** The binary the pipeline runs. Detected when absent. */
+  binary?: Binary;
+  /**
+   * The binary's version. Read from the roots' `required_version` when it pins one. As a map of root
+   * glob to release, the version each root it matches runs (tofu and terraform, plain roots only).
+   */
+  version?: string | Record<string, string>;
+  /** Each plain root's backend, provider and version files, which `terragucci generate` writes; see generate.ts. */
+  generate?: GenerateSettings;
+  /** The forge, for a host terragucci cannot name. */
+  forge?: ForgeName;
+  /** Where the project lives, for a forge not on https or the default port. */
+  url?: string;
+  /** When a wave waits for an approval. A loaded config holds the policy's current name: on-destroy reads as on-destructive. */
+  gate?: GateName;
+  /** What counts as a waiting wave's approval; see APPROVALS, or a map with the mode and `require_signed` (ApprovalSettings). Read from the config at base, never the applied commit's own. */
+  approval?: Approval | ApprovalSettings;
+  /** More approvers, or approvers with a role, for the waves whose roots a glob names; see ApprovalRuleSettings. Read from the config at base. */
+  approval_rules?: ApprovalRuleSettings[];
+  /** When a change applies; see ApplySettings. */
+  apply?: ApplySettings;
+  /** When a pull request takes its root locks; see LOCKS. */
+  locks?: Locks;
+  /**
+   * `canary`: globs for the wave that applies first. `jobs`: the most jobs one wave's roots or units spread across (GitHub and Forgejo).
+   * `after`: plain roots only, for a root or glob the roots or globs it applies after, beside the order its `terraform_remote_state` reads give.
+   * `compose`: plain roots only, opt-in beside the waves: the roots a change reaches plan as one composed run and apply as one (./compose.ts). Default false.
+   * `compose_max`: the most roots one composed run covers; a change that reaches more applies in waves. Default 10.
+   */
+  waves?: { canary?: string[]; jobs?: number; after?: Record<string, string[]>; compose?: boolean; compose_max?: number };
+  /** A cron schedule for tf-drift, or false. */
+  drift?: string | false;
+  /**
+   * The command that writes the roots before any job reads them, such as
+   * CDK Terrain's `npx cdktn synth`. Run from the repo's root, in the check,
+   * plan, apply and drift jobs, on their own checkout.
+   */
+  synth?: string;
+  /**
+   * Commands run before and after a root's init, plan, apply and drift, in
+   * the stage's own job, on its checkout, with its environment less the forge
+   * tokens. Read from terragucci.yml at base, never from the change under
+   * review (./steps.ts).
+   */
+  steps?: StepSettings[];
+  /**
+   * The image every job runs in, in place of terragucci's: one built FROM
+   * the terragucci image for the binary, so the job still has terragucci and
+   * the binary, plus what the steps need.
+   */
+  image?: string;
+  /**
+   * Notifications: the names of the secrets holding a Slack or Teams
+   * incoming webhook, and a generic webhook's address with the key that
+   * signs its body. An apply job whose wave waits, is refused or fails posts
+   * to each (notify.ts), and the drift job posts drift to Slack and Teams.
+   * `relay` names the customer's relay (relay.ts): a waiting wave's Slack
+   * message gets Approve and Decline buttons, its Teams card the reply
+   * `@<relay> approve wave-<k> <digest>`.
+   */
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
+  /**
+   * Cost estimates per root in the plan note: Infracost on the customer's
+   * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
+   * prints Infracost's JSON (report/cost.ts).
+   */
+  cost?: CostSettings;
+  /**
+   * GitLab only: the cron of the comments schedule, or false. The pipeline
+   * gets a `comments` job that reads new merge request notes on that
+   * schedule (comment-gitlab.ts), since GitLab starts no pipeline for a note.
+   */
+  comments?: string | false;
+  /**
+   * A cron schedule, or false: init writes a job that runs `terragucci respond
+   * rollout --mode apply` on it, which opens the next wave of every rollout in
+   * flight once the last one merged and applied. A single repo's key: a
+   * control repo's rollout spans its projects, so it is continued from the
+   * control repo. `respond.rollout: off` leaves the job out.
+   */
+  rollouts?: string | false;
+  /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
+  gitlab?: { token?: GitLabToken };
+  runtime?: Runtime;
+  /**
+   * A bucket for plan reports: `s3://<bucket>`, `gs://<bucket>` or
+   * `az://<account>/<container>`. `url` is the address that serves the bucket's
+   * objects to a browser (a static site, a CDN, the store's public endpoint);
+   * with it, the note, the index and the dashboards link the bucket's copy.
+   * `role` is an AWS role the job assumes with its OIDC token to write the
+   * reports, apart from the job's own role.
+   */
+  reports?: { bucket: string; endpoint?: string; prefix?: string; url?: string; role?: string };
+  /** The environment variable holding the forge token. */
+  token_env?: string;
+  /** Environment variables every job gets. Values only, never secrets. */
+  env?: Record<string, string>;
+  /**
+   * The runner each generated job runs on: a label, a list of labels the
+   * runner must all carry, or on GitHub a runner group; or a map of
+   * `default`, `plan`, `apply` and `drift` to one of those. Rendered as
+   * `runs-on` on GitHub and Forgejo and as `tags` on GitLab. Unset, the jobs
+   * run where they always have.
+   */
+  runner?: RunnerSettings;
+  /**
+   * The names of CI secrets and variables the jobs that plan, apply and check
+   * drift get as environment variables of the same name, such as
+   * TF_VAR_db_password: never their values. GitHub and Forgejo; GitLab hands
+   * every job its CI/CD variables already, so there the key changes nothing.
+   */
+  pass?: PassSettings;
+  /**
+   * Values fetched at job time from a cloud's secret store, by root glob,
+   * with the identity the root plans or applies with (./root-secrets.ts), and
+   * set in that root's binary environment alone. Read from the project's
+   * terragucci.yml by the stage.
+   */
+  secrets?: SecretSource[];
+  /**
+   * The secret holding `OTEL_EXPORTER_OTLP_HEADERS`, such as a collector's API
+   * key, and `trace_url`: a link to a run's trace with `{trace_id}` in it
+   * (Grafana's Explore, Tempo, Jaeger), which the report links.
+   */
+  telemetry?: { headers_secret?: string; trace_url?: string };
+  tips?: boolean;
+  modules?: ModulesSettings;
+  /**
+   * Cloud identities the pipeline takes over OIDC, so no long-lived keys sit in CI.
+   * Plan runs pull-request code and gets the read-only identity; apply gets the
+   * write one. The two must differ, on every cloud set.
+   */
+  oidc?: OidcSettings;
+  /** How many roots of one dependency layer plan at once. Default: from the state backend. */
+  parallelism?: number;
+  /** Terragrunt settings, for a repo terragucci finds Terragrunt in. */
+  terragrunt?: TerragruntSettings;
+  /** Atmos settings, for a repo with an `atmos.yaml` at its root. */
+  atmos?: AtmosSettings;
+  /** Opt-in policy checks over each plan; see PolicySettings. */
+  policy?: PolicySettings;
+  /** The module and provider sources a root may use, checked before init; see SourcesSettings. Off when absent. */
+  sources?: SourcesSettings;
+  /**
+   * `atlantis plan` and `atlantis apply` comments read as `/terragucci plan`
+   * and `/terragucci apply`. Off by default. The alias changes the words
+   * only: the same checks decide (comment.ts).
+   */
+  atlantis_comments?: boolean;
+  /** The response to each pipeline event; see RESPONSES. */
+  respond?: Partial<Record<RespondEvent, string>>;
+  /**
+   * The agent integration behind `agent.comment` and `agent.drift`. Its token
+   * can comment, push a branch and open a pull request; the agent itself never
+   * holds it.
+   */
+  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings };
+  /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
+  review?: ReviewSettings;
+  /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
+  decide?: DecideSettings;
+  /** The AWS region whose CloudTrail drift attribution reads. Default: the region the aws CLI already uses. */
+  audit_region?: string;
+  /**
+   * The CloudWatch Logs group a CloudTrail trail delivers the state buckets'
+   * S3 data events to, in `audit_region`: `terragucci audit` reads it to name
+   * who wrote a state version no wave or migration recorded. Read by the
+   * audit job where it runs; no project's jobs read it.
+   */
+  audit_log_group?: string;
+  /** Dashboards and alert rules written next to the pipeline. Off unless set. */
+  dashboards?: boolean | DashboardSettings;
+  /**
+   * Jobs of your own that `init` and `reconcile` write into the generated
+   * pipeline as they are: a map of job name to the job, in the forge's own
+   * syntax, or the path of a YAML file in the repo that holds that map.
+   */
+  own_jobs?: string | Record<string, Record<string, unknown>>;
+  /** Roots each pull request gets a copy of, under a state key of its own, destroyed on close or once its TTL passes; see EphemeralSettings. */
+  ephemeral?: EphemeralSettings;
+  /**
+   * Named environments: each names its roots by glob and sets the keys that
+   * vary for them (./environments.ts). A root in no environment takes the
+   * top-level values. Read at base, like `gate`. A control repo's `defaults`
+   * and project blocks merge them per environment name.
+   */
+  environments?: Record<string, EnvironmentSettings>;
+}
+
+/** An environment's name: lower-case letters, digits, `-` and `_`. */
+export const ENVIRONMENT_NAME = /^[a-z0-9_-]+$/;
+/** The keys an environment takes. */
+export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"] as const;
+/** The keys of an environment's `oidc`. */
+export const ENVIRONMENT_OIDC_KEYS = ["plan_role", "apply_role", "audience", "gcp", "azure"] as const;
+
+/**
+ * One environment of `environments:`. `roots` are root globs; a root matches
+ * at most one environment. Each other key, when set, replaces the top-level
+ * key's value for the environment's roots.
+ */
+export interface EnvironmentSettings {
+  roots: string[];
+  /** The gate of a wave that holds the environment's roots. A wave of roots in several environments takes the strictest of their gates. */
+  gate?: GateName;
+  /** The environment's identities: its roots plan and apply with them, as `oidc.roles` gives a root glob a pair. */
+  oidc?: EnvironmentOidc;
+  /** The runner the environment's apply jobs run on: a runner, or `{ apply: <runner> }`. A plan job plans every environment's roots, so it keeps the top-level runner. */
+  runner?: RunnerSpec | { apply?: RunnerSpec };
+  /** How many of the environment's roots of one dependency layer plan at once. */
+  parallelism?: number;
+  /** The forge environment its apply jobs run in, on GitHub and GitLab. Default: the environment's name. Forgejo has none. */
+  forge_environment?: string;
+}
+
+/** An environment's identities: an AWS role pair, and a GCP service account pair or an Azure client pair under the project's `oidc.gcp` or `oidc.azure`. */
+export interface EnvironmentOidc {
+  plan_role?: string;
+  apply_role?: string;
+  /** The AWS token audience of the environment's apply jobs, over `oidc.audience`. */
+  audience?: string;
+  gcp?: { plan_service_account: string; apply_service_account: string };
+  azure?: { plan_client_id: string; apply_client_id: string };
+}
+
+/**
+ * Ephemeral environments: each open pull request gets its own copy of the
+ * roots `roots` matches, applied from its head under the state key with
+ * `-pr-<n>` added (ephemeral.ts). Closing the pull request, or `ttl` passing
+ * since its last apply, destroys the copy through a planned destroy that the
+ * audit trail lists. A Terragrunt unit's copy takes the suffix through its
+ * remote_state key, which reads TERRAGUCCI_EPHEMERAL_SUFFIX; with synth the
+ * command writes the roots in the copy's checkout first.
+ */
+export interface EphemeralSettings {
+  /** Root globs. */
+  roots: string[];
+  /** How long a copy lives after the last apply that changed it: `<n>m`, `<n>h` or `<n>d`. Default 24h. */
+  ttl?: string;
+  /** Minutes between the sweep's runs, which destroy the copies whose TTL passed or whose pull request closed. 5 to 60; default 30. */
+  sweep?: number;
+}
+
+/** `ephemeral.ttl` when unset. */
+export const EPHEMERAL_TTL = "24h";
+/** `ephemeral.sweep` when unset. */
+export const EPHEMERAL_SWEEP = 30;
+
+/** A TTL in milliseconds: `<n>m`, `<n>h` or `<n>d`; undefined when it is none of them. */
+export function ttlMs(ttl: string): number | undefined {
+  const m = /^([1-9]\d*)([mhd])$/.exec(ttl);
+  if (!m) return undefined;
+  return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
+}
+
+/** Why ephemeral environments are refused on GitLab with gitlab.token: protected. */
+export const EPHEMERAL_NOT_PROTECTED = "a merge request pipeline applies the copy and records it on chant/lifecycle with the project token, and with gitlab.token: protected no merge request pipeline holds it; leave ephemeral unset or the token unprotected";
+
+/** The whole file: one repo's settings, or `defaults` and `projects` for many repos. */
+export interface TerragucciConfig extends ProjectSettings {
+  defaults?: ProjectSettings;
+  projects?: Record<string, ProjectSettings>;
+}
+
+/** The response a project takes to an event: its setting, or the event's default. */
+export function responseTo(settings: ProjectSettings, event: RespondEvent): string {
+  return settings.respond?.[event] ?? RESPONSES[event][0];
+}
+
+/** One runner: a label, every label of a list, or a GitHub runner group with any labels its runners must also carry. */
+export type RunnerSpec = string | string[] | { group: string; labels?: string[] };
+
+/** `runner`: one runner for every job, or one per stage over a default. */
+export type RunnerSettings = RunnerSpec | Partial<Record<RunnerStage | "default", RunnerSpec>>;
+
+/** The stages `runner` can name apart; every other job runs on `default`. */
+export const JOB_STAGES = ["plan", "apply", "drift"] as const;
+export type RunnerStage = (typeof JOB_STAGES)[number];
+
+/** `pass`: secret and variable names handed to the jobs as environment variables. */
+export interface PassSettings {
+  secrets?: string[];
+  vars?: string[];
+}
+
+/** The clouds whose secret store `secrets` reads. */
+export const SECRET_STORES = ["aws", "gcp", "azure"] as const;
+export type SecretStore = (typeof SECRET_STORES)[number];
+/** The keys of one `secrets` entry. */
+export const SECRET_SOURCE_KEYS = ["roots", "from", "values"];
+
+/**
+ * One `secrets` entry: the roots its globs match get each of `values`, an
+ * environment variable name mapped to where the value is in `from`'s secret
+ * store, with `#<key>` to take one key of a JSON secret:
+ *
+ *   aws    a Secrets Manager secret's name or ARN: `prod/app/db#password`
+ *   gcp    a Secret Manager secret, its version `latest` unless named:
+ *          `projects/<project>/secrets/<secret>[/versions/<version>]`
+ *   azure  a Key Vault secret, its current version unless named:
+ *          `<vault>/<secret>[/<version>]`, the vault a name or a host
+ */
+export interface SecretSource {
+  roots: string[];
+  from: SecretStore;
+  values: Record<string, string>;
+}
+
+/** Where a value is in each store, as `secrets` takes it. */
+export const SECRET_PATH: Record<SecretStore, string> = {
+  aws: "^[^\\s#]+(#[^\\s#]+)?$",
+  gcp: "^projects/[^/\\s#]+/secrets/[^/\\s#]+(/versions/[^/\\s#]+)?(#[^\\s#]+)?$",
+  azure: "^[A-Za-z0-9.-]+/[A-Za-z0-9-]+(/[A-Za-z0-9]+)?(#[^\\s#]+)?$",
+};
+const SECRET_PATH_FORM: Record<SecretStore, string> = {
+  aws: "the Secrets Manager secret's name or ARN, and #<key> for one key of a JSON secret",
+  gcp: "projects/<project>/secrets/<secret>, then /versions/<version> for one version and #<key> for one key of a JSON secret",
+  azure: "<vault>/<secret>, then /<version> for one version and #<key> for one key of a JSON secret",
+};
+const SECRET_PATH_EXAMPLE: Record<SecretStore, string> = { aws: "prod/app/db#password", gcp: "projects/acme-prod/secrets/db-password", azure: "acme-prod-kv/db-password" };
+/** Names `secrets` refuses beside `pass`'s: the variables a root's binary takes its cloud identity from. */
+export const SECRET_IDENTITY_PREFIXES = ["AWS_", "ARM_", "AZURE_", "GOOGLE_", "CLOUDSDK_"];
+
+/** Why `secrets` is refused beside `waves.compose`: a composed run plans its roots in one binary environment. */
+export const SECRETS_COMPOSE = "a composed run plans and applies its roots in one run, and secrets sets each value in its own root's binary environment alone; leave waves.compose unset";
+/** Why `secrets` is refused beside `ephemeral`: a pull request's copies plan and apply without the store's values. */
+export const SECRETS_EPHEMERAL = "an ephemeral copy plans and applies without the values secrets fetches; leave ephemeral unset, or keep the copies' values in pass.secrets";
+
+/** Whether `oidc` gives the jobs an AWS identity: a pair for every root, roles by root glob, or an environment's pair. */
+function hasAwsIdentity(s: ProjectSettings): boolean {
+  const o = s.oidc;
+  if (isObject(o) && ((o.plan_role && o.apply_role) || (isObject(o.roles) && Object.keys(o.roles).length > 0))) return true;
+  return Object.values(s.environments ?? {}).some((e) => isObject(e) && isObject(e.oidc) && Boolean(e.oidc.plan_role));
+}
+
+/**
+ * The problems with `secrets`: a list of entries, each with root globs, a
+ * store and names mapped to paths in it. `whole` when `s` is a repo's own
+ * file: then a name `pass` or `env` sets too, a store whose cloud `oidc`
+ * does not configure, and the keys that plan or apply a root without its
+ * values are refused as well.
+ */
+export function secretsProblems(v: unknown, where: string, s: ProjectSettings, whole: boolean): string[] {
+  if (!Array.isArray(v) || v.length === 0) return [`${where} must be a list of entries, each with roots, from (${SECRET_STORES.join(", ")}) and values`];
+  const out: string[] = [];
+  const passed = new Map<string, string>();
+  for (const k of ["secrets", "vars"] as const) for (const n of s.pass?.[k] ?? []) passed.set(n, `pass.${k}`);
+  for (const n of Object.keys(s.env ?? {})) passed.set(n, "env");
+  const stores = new Set<string>();
+  v.forEach((e, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(e)) {
+      out.push(`${at} must be a map with roots, from and values`);
+      return;
+    }
+    for (const k of Object.keys(e)) if (!SECRET_SOURCE_KEYS.includes(k)) out.push(`${at}.${k} is not a setting (settings: ${SECRET_SOURCE_KEYS.join(", ")})`);
+    if (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every((g) => typeof g === "string" && g.trim() !== "")) out.push(`${at}.roots must be a list of root globs, such as ["envs/prod/**"]`);
+    const from = typeof e.from === "string" && (SECRET_STORES as readonly string[]).includes(e.from) ? (e.from as SecretStore) : undefined;
+    if (!from) out.push(`${at}.from must be aws, gcp or azure: the cloud whose secret store holds the values`);
+    else stores.add(from);
+    if (!isObject(e.values) || Object.keys(e.values).length === 0) {
+      out.push(`${at}.values must map each environment variable name to where its value is, such as TF_VAR_db_password: ${SECRET_PATH_EXAMPLE[from ?? "aws"]}`);
+      return;
+    }
+    for (const [name, path] of Object.entries(e.values)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) out.push(`${at}.values: ${JSON.stringify(name)} is not a variable name, such as TF_VAR_db_password`);
+      else if (PASS_RESERVED_PREFIXES.some((p) => name.toUpperCase().startsWith(p)) || PASS_RESERVED.includes(name)) out.push(`${at}.values: ${name} is reserved: terragucci and the forge set ${[...PASS_RESERVED_PREFIXES.map((p) => `${p}...`), ...PASS_RESERVED].join(", ")} themselves`);
+      else if (SECRET_IDENTITY_PREFIXES.some((p) => name.toUpperCase().startsWith(p))) out.push(`${at}.values: ${name} would replace the cloud identity the root runs with; ${SECRET_IDENTITY_PREFIXES.map((p) => `${p}...`).join(", ")} are the identity's`);
+      else if (whole && passed.has(name)) out.push(`${at}.values: ${name} is set by ${passed.get(name)} too; a root's binary gets one variable of that name, so take it from the store or from the forge, not both`);
+      if (typeof path !== "string" || path.trim() === "") out.push(`${at}.values.${name} must be where the value is, such as ${SECRET_PATH_EXAMPLE[from ?? "aws"]}`);
+      else if (from && !new RegExp(SECRET_PATH[from]).test(path)) out.push(`${at}.values.${name}: ${JSON.stringify(path)} is not where a ${from} secret is: give ${SECRET_PATH_FORM[from]}, such as ${SECRET_PATH_EXAMPLE[from]}`);
+    }
+  });
+  if (!whole) return out;
+  const configured: Record<SecretStore, boolean> = { aws: hasAwsIdentity(s), gcp: isObject(s.oidc) && isObject(s.oidc.gcp), azure: isObject(s.oidc) && isObject(s.oidc.azure) };
+  const needs: Record<SecretStore, string> = { aws: "oidc with an AWS role (plan_role and apply_role, roles, or an environment's)", gcp: "oidc.gcp", azure: "oidc.azure" };
+  for (const c of SECRET_STORES) if (stores.has(c) && !configured[c]) out.push(`${where}: from ${c} needs ${needs[c]}: each root reads the store with the identity it plans and applies with`);
+  if (s.waves?.compose === true) out.push(`${where}: ${SECRETS_COMPOSE}`);
+  if (s.ephemeral !== undefined) out.push(`${where}: ${SECRETS_EPHEMERAL}`);
+  return out;
+}
+
+/** Whether `runner` is a map of stage to runner, rather than one runner. */
+export function runnerByStage(v: RunnerSettings): v is Partial<Record<RunnerStage | "default", RunnerSpec>> {
+  return isObject(v) && !("group" in v);
+}
+
+export const JOB_LABEL = /^[^\s,]+$/;
+export const JOB_STAGE_KEYS = ["default", ...JOB_STAGES];
+
+function runnerSpecProblems(v: unknown, where: string, forge: unknown): string[] {
+  const label = (x: unknown): boolean => typeof x === "string" && JOB_LABEL.test(x);
+  const labels = (x: unknown): boolean => Array.isArray(x) && x.length > 0 && x.every(label) && new Set(x).size === x.length;
+  if (typeof v === "string") return label(v) ? [] : [`${where} must be a runner label, such as self-hosted, with no spaces or commas`];
+  if (Array.isArray(v)) return labels(v) ? [] : [`${where} must be a list of distinct runner labels, such as [self-hosted, linux]`];
+  if (!isObject(v) || !("group" in v)) return [`${where} must be a runner label, a list of labels, or a map with group`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (k !== "group" && k !== "labels") out.push(`${where}.${k} is not a setting (settings: group, labels)`);
+  if (!(typeof v.group === "string" && v.group.trim() !== "")) out.push(`${where}.group must name a GitHub runner group`);
+  if (v.labels !== undefined && !labels(v.labels)) out.push(`${where}.labels must be a list of distinct runner labels`);
+  if (forge !== undefined && forge !== "github") out.push(`${where}.group: runner groups are GitHub's; on ${String(forge)} give a label or a list of labels`);
+  return out;
+}
+
+/** The problems with `runner`, for `forge` when it is known. */
+export function runnerProblems(v: unknown, where: string, forge?: unknown): string[] {
+  if (!runnerByStage(v as RunnerSettings)) return runnerSpecProblems(v, where, forge);
+  const m = v as Record<string, unknown>;
+  if (Object.keys(m).length === 0) return [`${where} must name a runner, or map ${JOB_STAGE_KEYS.join(", ")} to one`];
+  return Object.entries(m).flatMap(([k, spec]) => (JOB_STAGE_KEYS.includes(k) ? runnerSpecProblems(spec, `${where}.${k}`, forge) : [`${where}.${k} is not a setting (settings: ${JOB_STAGE_KEYS.join(", ")}, or group and labels for one GitHub runner group)`]));
+}
+
+/** Names `pass` refuses: the forges refuse a secret under these prefixes, and terragucci sets the rest in the jobs itself. */
+export const PASS_RESERVED_PREFIXES = ["GITHUB_", "GITEA_", "FORGEJO_", "TG_", "TERRAGUCCI_"];
+export const PASS_RESERVED = ["TF_IN_AUTOMATION", "TF_INPUT"];
+
+/** The problems with `pass`: lists of secret and variable names, each a name a job's environment takes, none listed twice or set by `env` too. */
+export function passProblems(v: unknown, where: string, env?: unknown): string[] {
+  if (!isObject(v)) return [`${where} must be a map (settings: secrets, vars)`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!PASS_KEYS.includes(k)) out.push(`${where}.${k} is not a setting (settings: secrets, vars)`);
+  const seen = new Set<string>();
+  for (const k of ["secrets", "vars"] as const) {
+    const list = v[k];
+    if (list === undefined) continue;
+    if (!Array.isArray(list) || list.length === 0) {
+      out.push(`${where}.${k} must be a list of ${k === "secrets" ? "secret" : "variable"} names, such as [TF_VAR_db_password]`);
+      continue;
+    }
+    for (const name of list) {
+      if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) out.push(`${where}.${k}: ${JSON.stringify(name)} is not a name; give the name of the ${k === "secrets" ? "secret" : "variable"}, such as TF_VAR_db_password, never its value`);
+      else if (PASS_RESERVED_PREFIXES.some((p) => name.toUpperCase().startsWith(p)) || PASS_RESERVED.includes(name)) out.push(`${where}.${k}: ${name} is reserved: the forge refuses a secret named ${PASS_RESERVED_PREFIXES.slice(0, 3).join(", ")}..., and terragucci sets ${PASS_RESERVED_PREFIXES.slice(3).join(", ")}..., ${PASS_RESERVED.join(" and ")} itself`);
+      else if (seen.has(name)) out.push(`${where}: ${name} is listed twice; a job gets one variable of that name`);
+      else if (isObject(env) && name in env) out.push(`${where}: env sets ${name} too; set it in env or pass it, not both`);
+      seen.add(name as string);
+    }
+  }
+  if (v.secrets === undefined && v.vars === undefined) out.push(`${where} must list secrets or vars`);
+  return out;
+}
+
+/** `cost: true`, or the secret holding the estimator's key and the command to run instead of Infracost. */
+export type CostSettings = true | { key_secret?: string; command?: string; approve_above?: number };
+
+/** The secret Infracost's key is read from when `cost.key_secret` is unset; the job gets it as this variable too. */
+export const COST_KEY_SECRET = "INFRACOST_API_KEY";
+
+/** Settings with terragucci's defaults filled in. Detection fills `roots`, `binary` and `forge` later. */
+export interface ResolvedSettings extends ProjectSettings {
+  gate: Gate;
+  drift: string | false;
+  runtime: Runtime;
+  tips: boolean;
+  env: Record<string, string>;
+}
+
+export const BUILT_IN: ResolvedSettings = {
+  gate: "on-destructive",
+  drift: false,
+  runtime: "forge",
+  tips: true,
+  env: {},
+};
+
+/**
+ * The keys a project's jobs read from the project's own terragucci.yml: the
+ * plan and apply stages, `respond`, `approve` and `check-policy` read them
+ * there, and no pipeline flag carries them. A control repo's `reconcile`
+ * writes each one its settings give the project, other than the built-in
+ * value, into that file (init.ts). Every other key reaches a project through
+ * the pipeline init writes (flags, the job's environment, its steps and
+ * files, such as `apply.resume` and `notify.webhook`). `url` is the project's
+ * own clone URL and `rollouts` belongs to a single repo, so `defaults`
+ * refuses both.
+ */
+export const PROJECT_FILE_KEYS = [
+  "policy",
+  "sources",
+  "reports",
+  "approval",
+  "approval_rules",
+  "gate",
+  "roots",
+  "waves",
+  "parallelism",
+  "synth",
+  "steps",
+  "drift",
+  "cost",
+  "tips",
+  "runtime",
+  "telemetry",
+  "respond",
+  "review",
+  "decide",
+  "audit_region",
+  "modules",
+  "terragrunt",
+  "token_env",
+  "generate",
+  "ephemeral",
+  "environments",
+  "secrets",
+] as const satisfies ReadonlyArray<keyof ProjectSettings>;
+
+export class ConfigError extends Error {
+  /** Every problem found, when the error is a validation failure. */
+  readonly problems?: string[];
+  constructor(message: string, problems?: string[]) {
+    super(message);
+    this.name = "ConfigError";
+    this.problems = problems;
+  }
+}
+
+/** A `--mode` value: dry-run or apply. */
+export function checkMode(mode: string): "dry-run" | "apply" {
+  if (mode !== "dry-run" && mode !== "apply") throw new ConfigError("--mode must be dry-run or apply");
+  return mode;
+}
+
+export const CONFIG_NAMES = ["terragucci.yml", "terragucci.yaml", "terragucci.json", "terragucci.ts"];
+
+/** The config file in `dir`, or undefined. Two of them is an error. */
+export function findConfig(dir: string): string | undefined {
+  const found = CONFIG_NAMES.filter((n) => existsSync(join(dir, n)));
+  if (found.length > 1) throw new ConfigError(`${dir} has ${found.join(" and ")}; keep one`);
+  return found.length ? join(dir, found[0]) : undefined;
+}
+
+// ── validation ───────────────────────────────────────────────────────────────
+
+export const SETTING_KEYS = new Set([
+  "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+]);
+
+export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function oneOf(v: unknown, allowed: readonly string[], where: string, problems: string[]): void {
+  if (v !== undefined && !allowed.includes(v as string)) {
+    problems.push(`${where} is ${JSON.stringify(v)}; use one of ${allowed.join(", ")}`);
+  }
+}
+
+function stringList(v: unknown, where: string, problems: string[]): void {
+  if (v !== undefined && !(Array.isArray(v) && v.every((x) => typeof x === "string"))) {
+    problems.push(`${where} must be a list of strings`);
+  }
+}
+
+export const RELEASE_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+
+/** `version`: one release for the repo, or, in a repo's own file, a map of root glob to the release those roots run. */
+function checkVersion(v: unknown, binary: unknown, where: string, problems: string[]): void {
+  if (v === undefined || typeof v === "string") return;
+  if (!isObject(v)) {
+    problems.push(`${where}.version must be a release version, or a map of root glob to release version`);
+    return;
+  }
+  if (where !== "config") {
+    problems.push(`${where}.version: a version per root glob goes in the project's own terragucci.yml, which its jobs read; here, give one release version`);
+    return;
+  }
+  if (binary === "choudoufu") problems.push(`${where}.version: choudoufu runs one release for every root; give one release version`);
+  for (const [glob, release] of Object.entries(v)) {
+    if (typeof release !== "string" || !RELEASE_VERSION.test(release)) {
+      problems.push(`${where}.version["${glob}"] must be a release version such as 1.10.6, quoted when YAML would read it as a number`);
+    }
+  }
+}
+
+function checkSettings(s: unknown, where: string, problems: string[]): void {
+  if (!isObject(s)) {
+    problems.push(`${where} must be a map of settings`);
+    return;
+  }
+  for (const k of Object.keys(s)) {
+    if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
+  }
+  stringList(s.roots, `${where}.roots`, problems);
+  oneOf(s.binary, BINARIES, `${where}.binary`, problems);
+  oneOf(s.forge, FORGES, `${where}.forge`, problems);
+  if (s.gate !== undefined && normalizeGate(s.gate) === undefined) problems.push(`${where}.gate is ${JSON.stringify(s.gate)}; use one of ${GATES.join(", ")}`);
+  if (isObject(s.approval)) {
+    for (const k of Object.keys(s.approval)) if (!(APPROVAL_KEYS as readonly string[]).includes(k)) problems.push(`${where}.approval.${k} is not a key of approval (keys: ${APPROVAL_KEYS.join(", ")})`);
+    oneOf(s.approval.mode, APPROVALS, `${where}.approval.mode`, problems);
+    if (s.approval.require_signed !== undefined && typeof s.approval.require_signed !== "boolean") problems.push(`${where}.approval.require_signed must be true or false`);
+  } else oneOf(s.approval, APPROVALS, `${where}.approval`, problems);
+  const mode = isObject(s.approval) ? s.approval.mode : s.approval;
+  if (s.apply !== undefined) checkApply(s.apply, `${where}.apply`, problems, s.forge, mode);
+  if (s.approval_rules !== undefined) checkApprovalRules(s.approval_rules, `${where}.approval_rules`, problems, mode, isObject(s.apply) && s.apply.point !== undefined);
+  if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
+  oneOf(s.locks, LOCKS, `${where}.locks`, problems);
+  if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
+  if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
+  else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
+  for (const k of ["url", "token_env"] as const) {
+    if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
+  }
+  checkVersion(s.version, s.binary, where, problems);
+  checkGenerate(s.generate, `${where}.generate`, problems);
+  if (s.audit_region !== undefined && !(typeof s.audit_region === "string" && /^[a-z]{2}(-[a-z]+)+-\d+$/.test(s.audit_region))) {
+    problems.push(`${where}.audit_region must be an AWS region, such as us-east-1`);
+  }
+  if (s.audit_log_group !== undefined && !(typeof s.audit_log_group === "string" && /^[A-Za-z0-9._\-/#]{1,512}$/.test(s.audit_log_group))) {
+    problems.push(`${where}.audit_log_group must be a CloudWatch Logs group name, such as aws-cloudtrail-logs-state`);
+  }
+  if (s.notify !== undefined) {
+    const n = s.notify;
+    const keys = NOTIFY_KEYS;
+    if (!isObject(n) || Object.keys(n).length === 0) problems.push(`${where}.notify must be a map naming the secret of a webhook (settings: ${keys.join(", ")})`);
+    else {
+      for (const [k, v] of Object.entries(n)) {
+        if (!keys.includes(k)) problems.push(`${where}.notify.${k} is not a setting (settings: ${keys.join(", ")})`);
+        else if (k === "relay") {
+          // The relay's name, as Teams shows its outgoing webhook: not a secret.
+          if (typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(v)) problems.push(`${where}.notify.relay must name your relay as your Teams outgoing webhook is named, such as terragucci`);
+          else if (n.slack === undefined && n.teams === undefined) problems.push(`${where}.notify.relay needs notify.slack or notify.teams: the buttons go on their messages`);
+        }
+        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
+      }
+      // A generic webhook is always signed, so its receiver can tell terragucci's posts from anyone's.
+      if ((n.webhook === undefined) !== (n.webhook_key === undefined)) problems.push(`${where}.notify.webhook and notify.webhook_key go together: the key signs every body posted to the webhook`);
+    }
+  }
+  if (s.cost !== undefined && s.cost !== true) {
+    if (!isObject(s.cost)) problems.push(`${where}.cost must be true or a map (settings: key_secret, command, approve_above)`);
+    else {
+      for (const k of Object.keys(s.cost)) if (!COST_KEYS.includes(k)) problems.push(`${where}.cost.${k} is not a setting (settings: key_secret, command, approve_above)`);
+      if (s.cost.approve_above !== undefined && !(typeof s.cost.approve_above === "number" && Number.isFinite(s.cost.approve_above) && s.cost.approve_above >= 0)) problems.push(`${where}.cost.approve_above must be an amount of 0 or more, in the estimator's currency a month, such as 100`);
+      if (s.cost.key_secret !== undefined && !(typeof s.cost.key_secret === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.cost.key_secret))) problems.push(`${where}.cost.key_secret must name the secret that holds the estimator's key, such as INFRACOST_API_KEY`);
+      if (s.cost.command !== undefined && !(typeof s.cost.command === "string" && s.cost.command.trim() !== "")) problems.push(`${where}.cost.command must be a command that prints Infracost's JSON`);
+    }
+  }
+  if (s.atlantis_comments !== undefined && typeof s.atlantis_comments !== "boolean") problems.push(`${where}.atlantis_comments must be true or false`);
+  if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
+    problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
+  }
+  // What the shape these keys declare refuses (./refusals.ts); config check adds the shape detection finds in the repo.
+  problems.push(...shapeProblems(declaredKind(s as ProjectSettings), s as ProjectSettings, where));
+  if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
+  if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
+  if (s.ephemeral !== undefined) checkEphemeral(s.ephemeral, `${where}.ephemeral`, problems, s);
+  if (s.runner !== undefined) problems.push(...runnerProblems(s.runner, `${where}.runner`, s.forge));
+  if (s.pass !== undefined) problems.push(...passProblems(s.pass, `${where}.pass`, s.env));
+  if (s.secrets !== undefined) problems.push(...secretsProblems(s.secrets, `${where}.secrets`, s as ProjectSettings, where === "config"));
+  if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
+    problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
+  }
+  if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
+    problems.push(`${where}.drift must be a cron schedule or false`);
+  }
+  if (s.comments !== undefined && s.comments !== false && typeof s.comments !== "string") {
+    problems.push(`${where}.comments must be a cron schedule or false`);
+  }
+  if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${COMMENTS_GITLAB_ONLY}`);
+  if (s.rollouts !== undefined && s.rollouts !== false && !(typeof s.rollouts === "string" && s.rollouts.trim() !== "")) {
+    problems.push(`${where}.rollouts must be a cron schedule or false`);
+  }
+  if (s.gitlab !== undefined) {
+    if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
+    else {
+      for (const k of Object.keys(s.gitlab)) if (!TOKEN_PROTECTION_KEYS.includes(k)) problems.push(`${where}.gitlab.${k} is not a setting (settings: token)`);
+      oneOf(s.gitlab.token, TOKEN_PROTECTIONS, `${where}.gitlab.token`, problems);
+    }
+    if (s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.gitlab is for GitLab projects; leave it unset on ${String(s.forge)}`);
+  }
+  if (s.tips !== undefined && typeof s.tips !== "boolean") problems.push(`${where}.tips must be true or false`);
+  if (s.waves !== undefined) {
+    if (!isObject(s.waves)) problems.push(`${where}.waves must be a map`);
+    else {
+      stringList(s.waves.canary, `${where}.waves.canary`, problems);
+      const after = s.waves.after;
+      if (after !== undefined) {
+        if (!isObject(after)) problems.push(`${where}.waves.after must map a root or glob to the roots or globs it applies after`);
+        else for (const [k, v] of Object.entries(after)) {
+          if (!(Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x !== ""))) problems.push(`${where}.waves.after.${k} must be a list of roots or globs`);
+        }
+      }
+      const jobs = s.waves.jobs;
+      if (jobs !== undefined && !(Number.isInteger(jobs) && (jobs as number) >= 1)) problems.push(`${where}.waves.jobs must be a whole number of 1 or more`);
+      else if (typeof jobs === "number" && jobs > 1) {
+        if (isObject(s.apply) && s.apply.when === "pull-request") problems.push(`${where}.waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
+      }
+      if (s.waves.compose !== undefined && typeof s.waves.compose !== "boolean") problems.push(`${where}.waves.compose must be true or false`);
+      const max = s.waves.compose_max;
+      if (max !== undefined && !(Number.isInteger(max) && (max as number) >= 2)) problems.push(`${where}.waves.compose_max must be a whole number of 2 or more`);
+      if (s.waves.compose === true) {
+        if (s.binary === "choudoufu") problems.push(`${where}.waves.compose: ${COMPOSE_NOT_CHOUDOUFU}`);
+        if (s.terragrunt !== undefined) problems.push(`${where}.waves.compose: ${COMPOSE_NOT_TERRAGRUNT}`);
+      }
+    }
+  }
+  if (s.env !== undefined) {
+    if (!isObject(s.env) || !Object.values(s.env).every((x) => typeof x === "string")) {
+      problems.push(`${where}.env must map names to string values`);
+    }
+  }
+  if (s.telemetry !== undefined) {
+    const t = s.telemetry;
+    if (!isObject(t)) problems.push(`${where}.telemetry must be a map (settings: headers_secret, trace_url)`);
+    else {
+      for (const k of Object.keys(t)) if (!TELEMETRY_KEYS.includes(k)) problems.push(`${where}.telemetry.${k} is not a setting (settings: headers_secret, trace_url)`);
+      if (t.headers_secret === undefined && t.trace_url === undefined) problems.push(`${where}.telemetry must set headers_secret, trace_url or both`);
+      if (t.headers_secret !== undefined && (typeof t.headers_secret !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t.headers_secret))) {
+        problems.push(`${where}.telemetry.headers_secret must name the secret holding the OTLP headers, such as OTLP_HEADERS`);
+      }
+      if (t.trace_url !== undefined && !(typeof t.trace_url === "string" && /^https?:\/\/[^\s]+$/.test(t.trace_url) && t.trace_url.includes("{trace_id}"))) {
+        problems.push(`${where}.telemetry.trace_url must be an http(s) URL with {trace_id} in it, such as https://grafana.example/explore?left=...{trace_id}...`);
+      }
+    }
+  }
+  if (s.reports !== undefined) {
+    if (!(isObject(s.reports) && typeof s.reports.bucket === "string")) problems.push(`${where}.reports must name a bucket`);
+    else if (s.reports.url !== undefined && !(typeof s.reports.url === "string" && /^https?:\/\/[^\s?#]+$/.test(s.reports.url))) {
+      problems.push(`${where}.reports.url must be the http(s) address that serves the bucket, such as https://reports.example.com`);
+    }
+    let store: BucketRef | undefined;
+    if (isObject(s.reports) && typeof s.reports.bucket === "string") {
+      try {
+        store = parseReportsBucket(s.reports.bucket);
+      } catch (e) {
+        problems.push(`${where}.${(e as Error).message}`);
+      }
+    }
+    if (isObject(s.reports) && s.reports.role !== undefined) {
+      if (store && store.kind !== "s3") problems.push(`${where}.reports.role is an AWS role, and ${s.reports.bucket} is not an S3 bucket: the job writes it with its own oidc identity`);
+      else if (typeof s.reports.role !== "string" || !/^arn:aws[\w-]*:iam::\d{12}:role\/\S+$/.test(s.reports.role)) problems.push(`${where}.reports.role must be an AWS role ARN, such as arn:aws:iam::123456789012:role/terragucci-reports`);
+      else if (isObject(s.oidc) && (s.reports.role === s.oidc.plan_role || s.reports.role === s.oidc.apply_role || (isObject(s.oidc.roles) && Object.values(s.oidc.roles).some((p) => isObject(p) && isObject(s.reports) && (p.plan === s.reports.role || p.apply === s.reports.role))))) {
+        problems.push(`${where}.reports.role is a job's own role; give reports a role of its own that can write only under the bucket's prefix`);
+      }
+    }
+  }
+  if (s.oidc !== undefined) checkOidc(s.oidc, `${where}.oidc`, problems);
+  // A repo's own file holds whole environments; a control repo's defaults and projects may each hold part of one, merged by name (resolveProject).
+  if (s.environments !== undefined) checkEnvironments(s.environments, `${where}.environments`, problems, s);
+  if (where === "config" && isObject(s.environments)) problems.push(...environmentNeeds(s as ProjectSettings, where));
+  if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
+    problems.push(`${where}.parallelism must be a whole number of 1 or more`);
+  }
+  if (s.terragrunt !== undefined) checkTerragrunt(s.terragrunt, `${where}.terragrunt`, problems);
+  if (s.atmos !== undefined) checkAtmos(s.atmos, `${where}.atmos`, problems);
+  if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
+  if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems, mode);
+  if (s.sources !== undefined) checkSources(s.sources, `${where}.sources`, problems);
+  if (s.respond !== undefined) {
+    if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
+    else {
+      for (const [event, mode] of Object.entries(s.respond)) {
+        const modes = (RESPONSES as Record<string, readonly string[]>)[event];
+        if (event === "question") problems.push(`${where}.respond.question is not supported; remove it`);
+        else if (!modes) problems.push(`${where}.respond.${event} is not an event (events: ${Object.keys(RESPONSES).join(", ")})`);
+        else if (mode === "agent") problems.push(`${where}.respond.${event}: agent is not supported; remove it, and ${event} takes its default response, ${modes[0]}`);
+        else oneOf(mode, modes, `${where}.respond.${event}`, problems);
+      }
+    }
+  }
+  if (s.agent !== undefined) {
+    const a = s.agent;
+    if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
+    else {
+      for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: via, token_env, login, comment, drift)`);
+      if (a.login !== undefined && (typeof a.login !== "string" || !AGENT_LOGIN.test(a.login))) problems.push(`${where}.agent.login must be the forge login the agent's token acts as`);
+      if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
+      else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
+      else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
+      if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
+      if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
+      if (a.drift !== undefined) {
+        checkAgentComment(a.drift, a.token_env, `${where}.agent.drift`, problems);
+        // A control repo's defaults and projects are checked apart; init checks the merged settings (render.ts).
+        if (a.drift !== false && where === "config") {
+          if (!s.drift) problems.push(`${where}.agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule`);
+          else if (responseTo(s as ProjectSettings, "drift") === "pull-request") problems.push(`${where}.respond.drift: ${AGENT_DRIFT_RESPOND}`);
+        }
+      }
+    }
+  }
+  if (s.review !== undefined) checkReview(s.review, `${where}.review`, problems);
+  if (s.decide !== undefined) checkDecide(s.decide, `${where}.decide`, problems);
+  if (s.dashboards !== undefined) checkDashboards(s.dashboards, `${where}.dashboards`, problems);
+  if (s.modules !== undefined) {
+    if (!isObject(s.modules)) problems.push(`${where}.modules must be a map`);
+    else {
+      checkModules(s.modules as Record<string, unknown>, `${where}.modules`, problems);
+      if (s.modules.test === true && s.binary === "choudoufu") problems.push(`${where}.modules.test runs the binary's test command on each module, and choudoufu has none; set binary to tofu or terraform`);
+    }
+  }
+}
+
+/** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
+export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
+export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes"];
+export const SOURCES_KEYS = ["modules", "providers"];
+/** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
+export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
+export const OIDC_KEYS = ["plan_role", "apply_role", "audience", "roles", "gcp", "azure"];
+/** The stages `oidc.audience` takes as a map: the jobs that plan a change, the jobs that apply (confirm among them), and drift. */
+export const AUDIENCE_STAGES = ["plan", "apply", "drift"] as const;
+export type AudienceStage = (typeof AUDIENCE_STAGES)[number];
+export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
+export const TOKEN_PROTECTION_KEYS = ["token"];
+export const COST_KEYS = ["key_secret", "command", "approve_above"];
+export const PASS_KEYS = ["secrets", "vars"];
+export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift"];
+
+/** A forge login, as `agent.login` takes it. */
+export const AGENT_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$/;
+
+/**
+ * `config check`'s warning when `agent.token_env` is set without
+ * `agent.login`: a pull request's author can use the agent's secret to post a
+ * review as the agent's account, and without its login nothing excludes it.
+ */
+export function agentLoginWarning(agent: { token_env?: unknown; login?: unknown } | undefined): string | undefined {
+  if (!agent || typeof agent.token_env !== "string" || !agent.token_env || (typeof agent.login === "string" && agent.login)) return undefined;
+  return `agent.token_env is set without agent.login, so the agent's account isn't excluded from approving a change: set agent.login to the login ${agent.token_env}'s token acts as`;
+}
+
+function checkSteps(v: unknown, where: string, problems: string[]): void {
+  if (!Array.isArray(v)) {
+    problems.push(`${where} must be a list of steps, each with run and before or after`);
+    return;
+  }
+  v.forEach((step, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(step)) return void problems.push(`${at} must be a map with run and before or after`);
+    for (const k of Object.keys(step)) if (!(STEP_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a setting (settings: ${STEP_KEYS.join(", ")})`);
+    if (!(typeof step.run === "string" && step.run.trim() !== "")) problems.push(`${at}.run must be the command the step runs`);
+    if (step.name !== undefined && !(typeof step.name === "string" && step.name.trim() !== "")) problems.push(`${at}.name must be a string`);
+    if ((step.before === undefined) === (step.after === undefined)) problems.push(`${at} needs one of before or after, naming ${STEP_STAGES.join(", ")}`);
+    oneOf(step.before, STEP_STAGES, `${at}.before`, problems);
+    oneOf(step.after, STEP_STAGES, `${at}.after`, problems);
+    stringList(step.roots, `${at}.roots`, problems);
+    oneOf(step.on_failure, STEP_FAILURES, `${at}.on_failure`, problems);
+    const stage = step.before ?? step.after;
+    if (step.on_failure === "approve" && (stage === "apply" || stage === "drift")) {
+      problems.push(`${at}.on_failure: approve holds the wave at its gate, which is decided after the plans and before any apply; give it a step before or after init or plan`);
+    }
+  });
+}
+
+export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
+export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
+/** A registry namespace or module name, as the Terraform module registry protocol allows them. */
+export const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
+/** A registry module's system (its target provider): lower-case letters and digits. */
+export const REGISTRY_SYSTEM = /^[0-9a-z]{1,64}$/;
+
+function checkRegistry(r: unknown, where: string, targets: unknown[], problems: string[]): void {
+  if (!isObject(r)) return void problems.push(`${where} must be a map with url, namespace, and a bucket or a dir`);
+  for (const k of Object.keys(r)) if (!REGISTRY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting; use ${REGISTRY_KEYS.join(", ")}`);
+  if ((r.bucket === undefined) === (r.dir === undefined)) problems.push(`${where} writes its files to a bucket or a dir; set one of them`);
+  if (r.bucket !== undefined) {
+    if (typeof r.bucket !== "string") problems.push(`${where}.bucket must be s3://<bucket>, gs://<bucket> or az://<account>/<container>`);
+    else {
+      try {
+        parseReportsBucket(r.bucket);
+      } catch {
+        problems.push(`${where}.bucket must be s3://<bucket>, gs://<bucket> or az://<account>/<container>, not ${r.bucket}`);
+      }
+    }
+  }
+  if (r.dir !== undefined && (typeof r.dir !== "string" || r.dir === "" || r.dir.startsWith("/") || r.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a directory in the repo, such as public`);
+  for (const k of ["endpoint", "prefix"] as const) if (r[k] !== undefined && typeof r[k] !== "string") problems.push(`${where}.${k} must be a string`);
+  if (r.endpoint !== undefined && r.bucket === undefined) problems.push(`${where}.endpoint is the bucket's address; it needs ${where}.bucket`);
+  if (typeof r.url !== "string" || !/^https:\/\/[^/\s?#]+\/?$/.test(r.url)) {
+    problems.push(`${where}.url must be the https address, with no path, that serves the files, such as https://modules.example.com: Terraform and OpenTofu find a registry at its host's root over https`);
+  } else if (!new URL(r.url).hostname.includes(".")) {
+    problems.push(`${where}.url's host is the first part of each module source, and Terraform and OpenTofu read a registry host only when it has a dot, such as modules.example.com`);
+  }
+  if (typeof r.namespace !== "string" || !REGISTRY_NAME.test(r.namespace)) problems.push(`${where}.namespace must be a registry namespace: letters, digits, - and _, such as acme`);
+  if (r.namespaces !== undefined) {
+    if (!isObject(r.namespaces)) problems.push(`${where}.namespaces must map a tag prefix (a path in the repo, such as platform/) to a namespace`);
+    else for (const [prefix, ns] of Object.entries(r.namespaces)) {
+      if (prefix === "" || prefix.startsWith("/")) problems.push(`${where}.namespaces: ${JSON.stringify(prefix)} must be a path in the repo, such as platform/`);
+      if (typeof ns !== "string" || !REGISTRY_NAME.test(ns)) problems.push(`${where}.namespaces.${prefix} must be a registry namespace: letters, digits, - and _`);
+    }
+  }
+  if (r.system !== undefined && (typeof r.system !== "string" || !REGISTRY_SYSTEM.test(r.system))) problems.push(`${where}.system must be lower-case letters and digits, such as aws`);
+  if (r.download !== undefined) {
+    if (!["tarball", "git-tags", "oci"].includes(r.download as string)) problems.push(`${where}.download is ${JSON.stringify(r.download)}; use tarball, git-tags or oci`);
+    else if (r.download === "git-tags" && !targets.includes("git-tags")) problems.push(`${where}.download: git-tags points each version at its git tag, so publish needs git-tags too`);
+    else if (r.download === "oci" && !targets.some((t) => typeof t === "string" && t.startsWith("oci://"))) problems.push(`${where}.download: oci points each version at its OCI artifact, so publish needs an oci:// target too`);
+  }
+}
+
+function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
+  for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
+  if (m.path !== undefined && typeof m.path !== "string") problems.push(`${where}.path must be a glob`);
+  const targets = Array.isArray(m.publish) ? m.publish : m.publish === undefined ? [] : [m.publish];
+  for (const t of targets) {
+    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
+      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
+    }
+  }
+  if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
+  if (m.test !== undefined && typeof m.test !== "boolean") problems.push(`${where}.test must be true or false`);
+  if (m.attest !== undefined) {
+    // true reads the public key at cosign.pub.
+    if (isObject(m.attest)) {
+      for (const k of Object.keys(m.attest)) if (k !== "key") problems.push(`${where}.attest.${k} is not a setting; use key`);
+      const key = m.attest.key;
+      if (key !== undefined && (typeof key !== "string" || key === "")) problems.push(`${where}.attest.key must be the path of the public key, such as cosign.pub`);
+    } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key`);
+    if (m.attest !== false && m.publish === undefined && m.registry === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish or ${where}.registry too`);
+  }
+  if (m.trusted !== undefined) {
+    if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, key and ledger`);
+    else {
+      m.trusted.forEach((t, i) => {
+        const at = `${where}.trusted[${i}]`;
+        if (!isObject(t)) return void problems.push(`${at} must be a map with source, key and ledger`);
+        for (const k of Object.keys(t)) if (!["source", "key", "ledger"].includes(k)) problems.push(`${at}.${k} is not a setting; use source, key, ledger`);
+        if (typeof t.source !== "string" || !/^(oci:\/\/[^/]+\/.+|(git::)?(https?|ssh):\/\/.+)$/.test(t.source)) problems.push(`${at}.source must be an oci:// prefix or a git URL, as the roots' module sources begin`);
+        if (typeof t.key !== "string" || t.key === "") problems.push(`${at}.key must be the path of the publisher's cosign public key`);
+        if (typeof t.ledger !== "string" || !/^(https?|ssh|file):\/\/.+/.test(t.ledger)) problems.push(`${at}.ledger must be the URL of the git repository whose chant/lifecycle branch holds the release ledger`);
+      });
+    }
+  }
+  if (m.require !== undefined) {
+    if (m.require !== "attested") problems.push(`${where}.require is ${JSON.stringify(m.require)}; the one setting is attested`);
+    else if (!m.attest && !(Array.isArray(m.trusted) && m.trusted.length > 0)) {
+      problems.push(`${where}.require: attested checks the releases this repo attests and the sources ${where}.trusted lists; set ${where}.attest or ${where}.trusted`);
+    }
+  }
+}
+
+/** A publisher in another repo whose releases `modules.require: attested` checks. */
+export interface TrustedModuleSource {
+  /** How the roots' module sources begin: an `oci://` prefix, or the publisher's git URL with or without `git::`. */
+  source: string;
+  /** The publisher's cosign public key, a path in this repo. */
+  key: string;
+  /** The git repository whose `chant/lifecycle` branch holds the publisher's release ledger. */
+  ledger: string;
+}
+
+export interface ModulesSettings {
+  path?: string;
+  publish?: string | string[];
+  /** Sign each release, write its provenance and SBOM, and record it in the release ledger. `true` reads the key at cosign.pub. */
+  attest?: boolean | { key?: string };
+  /** `attested`: tf-check and tf-plan refuse a root that pins a release of a checked source unless it verifies. */
+  require?: "attested";
+  /** Publishers in other repos whose releases `require` checks. */
+  trusted?: TrustedModuleSource[];
+  /** Run the binary's `test` on each module before a release of it publishes; a module with no tests, or one that fails them, is refused. */
+  test?: boolean;
+  /** Write each release as the Terraform module registry protocol, as static files a bucket or a Pages site serves. */
+  registry?: RegistrySettings;
+}
+
+/**
+ * `sources`: the module and provider sources a root may use (./sources.ts).
+ * A list that is set refuses every source of its kind that no glob in it
+ * matches, before `init` downloads anything; a list that is not set checks
+ * nothing of its kind. Read at base, as `policy` is.
+ */
+export interface SourcesSettings {
+  /** Globs of module sources, as written and without their `?` query, such as `./**` for local paths. */
+  modules?: string[];
+  /** Globs of provider addresses, such as `hashicorp/*` or `registry.example.com/acme/*`. */
+  providers?: string[];
+}
+
+/** `modules.registry`: the module registry protocol as static files. */
+export interface RegistrySettings {
+  /** The bucket the files go to: `s3://<bucket>`, `gs://<bucket>` or `az://<account>/<container>`. */
+  bucket?: string;
+  /** Or a directory in the repo, for a Pages site to serve. */
+  dir?: string;
+  /** The bucket's API address, for an S3-compatible store. */
+  endpoint?: string;
+  /** Where the files go in the bucket. The prefix is served as the host's root. */
+  prefix?: string;
+  /** The https address, with no path, that serves the files; its host is the one module sources name. */
+  url: string;
+  /** The namespace a module is published under, unless `namespaces` maps its path. */
+  namespace: string;
+  /** A tag prefix (a path in the repo, such as `platform/`) to the namespace its modules go under. The longest match wins. */
+  namespaces?: Record<string, string>;
+  /** The system (target provider) in each module's address. Default `generic`. */
+  system?: string;
+  /** What a version's download points at: a tarball beside it (the default), its git tag, or its OCI artifact. */
+  download?: "tarball" | "git-tags" | "oci";
+}
+
+/** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
+/** Why `waves.compose` is refused with `binary: choudoufu`: one run would have to carry several estates (INTENTIUS/choudoufu#2059). */
+export const COMPOSE_NOT_CHOUDOUFU = "a composed run splits one working state back into each root's state, and choudoufu keeps no state to split, so leave waves.compose unset with binary: choudoufu";
+/** Why `waves.compose` is refused in a Terragrunt repo. */
+export const COMPOSE_NOT_TERRAGRUNT = "a Terragrunt repo's units apply through terragrunt, one run per unit, so they cannot compose; leave waves.compose unset";
+export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
+/** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
+export const ROLLOUTS_SINGLE_REPO = "a control repo's rollout plans its waves across every project, and a project's pipeline sees only its own roots; leave rollouts unset and run terragucci respond rollout --mode apply on a schedule in the control repo";
+
+/** The problems `synth` finds in one project's settings: a drift schedule whose response is the pull request, a rollouts schedule, and generate. */
+export function synthProblems(s: ProjectSettings, where: string): string[] {
+  return s.synth ? shapeProblems("synth", s, where) : [];
+}
+
+/** Why `comments` is GitLab's alone: the other forges start a job for each comment. */
+export const COMMENTS_GITLAB_ONLY = "comments is for GitLab, which starts no pipeline for a merge request note; GitHub and Forgejo start the comment jobs from the comment itself, so leave comments unset";
+
+/**
+ * What GitLab's apply before merge needs. A merge request's own pipeline
+ * runs its own `.gitlab-ci.yml`, so the apply runs in a pipeline of the
+ * default branch, which the comments job starts on a `/terragucci apply`
+ * note: so `comments:` must be set, and `apply.merge_token_env` must name the
+ * variable whose token may start a pipeline on the protected default branch
+ * (and, with `merge: auto`, merge there).
+ */
+export const PR_APPLY_NEEDS_ON_GITLAB = {
+  comments: "pull-request on GitLab needs comments: <cron>: a merge request note starts no pipeline, so the comments schedule's job is what reads `/terragucci apply`",
+  token: "pull-request on GitLab needs apply.merge_token_env: the comments job starts the apply pipeline on the default branch with that variable's token, which must be allowed to merge there, so name a protected, masked variable holding one",
+};
+
+/**
+ * Why `gitlab.token: protected` needs `comments:`: no merge request pipeline
+ * then holds a token that may post the plan note, so the comments schedule's
+ * job posts it.
+ */
+export const PROTECTED_TOKEN_NEEDS_COMMENTS = "protected needs comments: <cron>: a merge request's pipeline then holds no token that may post the plan note, so the comments schedule's job posts it";
+
+/**
+ * Why `agent.comment` and `review` need `comments:` on GitLab: a merge
+ * request note starts no pipeline, and a merge request's own pipeline runs
+ * its own pipeline file, so the comments schedule's job starts the agent's and
+ * the review's pipelines on the default branch.
+ */
+export const NEEDS_COMMENTS_ON_GITLAB = {
+  agent: "agent.comment on GitLab needs comments: <cron>: a merge request note starts no pipeline, so the comments schedule's job reads `/terragucci agent` and starts the agent's pipeline on the default branch",
+  review: "review on GitLab needs comments: <cron>: a merge request's own pipeline runs the merge request's own pipeline file, so the comments schedule's job starts each review in a pipeline of the default branch",
+};
+
+/** The problems with a GitLab project's `apply.when: pull-request`, `gitlab.token: protected`, `agent.comment` and `review`, when it has any. */
+export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string): string[] {
+  const agentOn = isObject(s.agent) && s.agent.comment !== undefined && s.agent.comment !== false;
+  const reviewOn = isObject(s.review) && s.review.agent === true;
+  const token = [
+    ...(isObject(s.gitlab) && s.gitlab.token === "protected" && !s.comments ? [`${where}.gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`] : []),
+    ...(agentOn && !s.comments ? [`${where}.agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`] : []),
+    ...(reviewOn && !s.comments ? [`${where}.review: ${NEEDS_COMMENTS_ON_GITLAB.review}`] : []),
+  ];
+  const a = s.apply;
+  if (!isObject(a) || a.when !== "pull-request") return token;
+  return [
+    ...token,
+    ...(s.comments ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.comments}`]),
+    ...(a.merge_token_env ? [] : [`${where}.apply.when: ${PR_APPLY_NEEDS_ON_GITLAB.token}`]),
+  ];
+}
+
+/** Why GitLab has no plan-time locks: no merge request event runs a pipeline from the default branch. */
+export const NO_GITLAB_PLAN_LOCKS = "plan is not supported on GitLab, where no merge request event runs a job from the default branch that could hold the lock; leave locks unset, and with apply.when: pull-request a merge request locks its roots on `/terragucci apply` or `/terragucci lock`";
+
+function checkApply(a: unknown, where: string, problems: string[], forge?: unknown, approval?: unknown): void {
+  if (!isObject(a)) {
+    problems.push(`${where} must be a map (settings: ${APPLY_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(a)) if (!APPLY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${APPLY_KEYS.join(", ")})`);
+  oneOf(a.when, APPLY_WHEN, `${where}.when`, problems);
+  oneOf(a.merge, APPLY_MERGE, `${where}.merge`, problems);
+  // GitHub runs a schedule at most every 5 minutes.
+  if (a.resume !== undefined && !(Number.isInteger(a.resume) && (a.resume as number) >= 5 && (a.resume as number) <= 60)) problems.push(`${where}.resume must be the minutes between the resume job's runs, from 5 to 60`);
+  if (a.merge !== undefined && a.when !== "pull-request") problems.push(`${where}.merge is set, and only a pull request applied before it merges is merged by terragucci; set ${where}.when to pull-request or drop merge`);
+  if (a.merge_token_env !== undefined) {
+    if (!(typeof a.merge_token_env === "string" && SECRET_NAME.test(a.merge_token_env))) problems.push(`${where}.merge_token_env must name the secret holding the token the merge is made with, such as MERGE_TOKEN`);
+    // On GitLab the token also starts the apply pipeline, so it is set with merge: manual too.
+    else if (a.merge !== "auto" && forge !== "gitlab") problems.push(`${where}.merge_token_env is set, and only apply.merge: auto merges; set ${where}.merge to auto or drop merge_token_env (on GitLab, where the token also starts the apply pipeline, set forge: gitlab)`);
+  }
+  if (a.point !== undefined) {
+    if (typeof a.point !== "string" || !POINT_NAME.test(a.point)) problems.push(`${where}.point must name a decision point the workspace declares: lower case letters, digits and hyphens, starting with a letter`);
+    else if (approval !== undefined && approval !== "ledger") problems.push(`${where}.point is set, and a wave gate that asks a decision point takes its quorum from the point; set approval to ledger or drop ${where}.point`);
+  }
+  if (a.branches !== undefined) checkApplyBranches(a.branches, `${where}.branches`, problems, a.when);
+  if (a.requires !== undefined) {
+    if (!Array.isArray(a.requires) || a.requires.some((r) => !(APPLY_REQUIRES as readonly unknown[]).includes(r))) problems.push(`${where}.requires must be a list of ${APPLY_REQUIRES.join(", ")}`);
+    else if (new Set(a.requires).size !== a.requires.length) problems.push(`${where}.requires names a requirement twice`);
+    else if (a.when !== "pull-request") problems.push(`${where}.requires is set, and only a pull request applied before it merges is checked against it; set ${where}.when to pull-request or drop requires`);
+    // pr-merge merges only a head a reviewer approved, so an auto merge without the approval would never merge.
+    else if (a.merge === "auto" && !a.requires.includes("approved")) problems.push(`${where}.requires leaves out approved, and apply.merge: auto merges only an approved head; add approved or set ${where}.merge to manual`);
+  }
+}
+
+/** A job name `own_jobs` takes: one every forge's YAML reads as a plain key. */
+export const OWN_JOB_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/** The problems with `own_jobs`: a map of job name to job, or the path of a YAML file in the repo that holds one. */
+export function ownJobsProblems(v: unknown, where: string): string[] {
+  if (typeof v === "string") {
+    return v !== "" && !v.startsWith("/") && !v.split("/").includes("..") && /\.ya?ml$/.test(v)
+      ? []
+      : [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  }
+  if (!isObject(v) || Object.keys(v).length === 0) return [`${where} must be a map of job name to job, or the path of a .yml file in the repo that holds one, such as .forgejo/own-jobs.yml`];
+  const problems: string[] = [];
+  for (const [name, job] of Object.entries(v)) {
+    if (!OWN_JOB_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not a job name terragucci writes as it is; use letters, digits, "_" and "-"`);
+    else if (!isObject(job) || Object.keys(job).length === 0) problems.push(`${where}.${name} must be a job: a map of its keys, in the forge's own syntax`);
+  }
+  return problems;
+}
+
+export const EPHEMERAL_KEYS = ["roots", "ttl", "sweep"];
+
+function checkEphemeral(e: unknown, where: string, problems: string[], s: Record<string, unknown>): void {
+  if (!isObject(e)) {
+    problems.push(`${where} must be a map (settings: ${EPHEMERAL_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(e)) if (!EPHEMERAL_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${EPHEMERAL_KEYS.join(", ")})`);
+  if (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+    problems.push(`${where}.roots must be a list of root globs, such as ["envs/preview/*"]`);
+  }
+  if (e.ttl !== undefined && !(typeof e.ttl === "string" && ttlMs(e.ttl) !== undefined)) problems.push(`${where}.ttl must be a duration in minutes, hours or days, such as 30m, 24h or 3d`);
+  if (e.sweep !== undefined && !(Number.isInteger(e.sweep) && (e.sweep as number) >= 5 && (e.sweep as number) <= 60)) problems.push(`${where}.sweep must be a whole number of minutes from 5 to 60`);
+  if (s.forge === "gitlab" && isObject(s.gitlab) && s.gitlab.token === "protected") problems.push(`${where}: ${EPHEMERAL_NOT_PROTECTED}`);
+}
+
+export const APPLY_KEYS = ["when", "merge", "merge_token_env", "requires", "resume", "branches", "point"];
+
+/** A decision point's name, as chant's points file declares it. */
+export const POINT_NAME = /^[a-z][a-z0-9-]*$/;
+
+/** A branch name `apply.branches` may name: what a forge's rule and the job's shell both take as it is. */
+export const APPLY_BRANCH = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+
+/** Why `apply.branches` is refused with `apply.when: pull-request`. */
+export const BRANCHES_NOT_PR_APPLY = "apply.when: pull-request applies an open pull request into the default branch, and a push applies nothing, so no branch could apply its roots; leave apply.branches unset";
+
+function checkApplyBranches(b: unknown, where: string, problems: string[], when: unknown): void {
+  if (!isObject(b) || Object.keys(b).length === 0) {
+    problems.push(`${where} must map branch names to lists of root globs, such as release: ["envs/prod/*"]`);
+    return;
+  }
+  if (when === "pull-request") problems.push(`${where}: ${BRANCHES_NOT_PR_APPLY}`);
+  const seen = new Map<string, string>();
+  for (const [branch, globs] of Object.entries(b)) {
+    if (!APPLY_BRANCH.test(branch) || branch.split("/").some((part) => part === "" || part === "..") || branch.endsWith(".lock")) {
+      problems.push(`${where}: ${JSON.stringify(branch)} is not a branch name terragucci takes; use letters, digits, ".", "_", "-" and "/"`);
+      continue;
+    }
+    if (!Array.isArray(globs) || globs.length === 0 || !globs.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+      problems.push(`${where}.${branch} must be a list of root globs, such as ["envs/prod/*"]`);
+      continue;
+    }
+    for (const g of globs as string[]) {
+      const other = seen.get(g);
+      if (other !== undefined) problems.push(`${where}: ${g} is under both ${other} and ${branch}; a root applies from one branch`);
+      else seen.set(g, branch);
+    }
+  }
+}
+
+/** A role name, as `.chant/trust.json` names one under `roles`. */
+export const TRUST_ROLE = /^[a-z][a-z0-9-]*$/;
+
+/** Why `roles` and `not_author` need a mode that proves who approved. */
+export const LEDGER_PROVES_NOBODY = "approval: ledger does not prove who wrote an approval, so it cannot tell a role or the author; set approval to sealed or pr-review";
+
+function checkApprovalRules(v: unknown, where: string, problems: string[], mode: unknown, point: boolean): void {
+  if (!Array.isArray(v) || v.length === 0) {
+    problems.push(`${where} must be a list of rules, each with roots and count, roles or not_author, such as - roots: ["envs/prod/**"]`);
+    return;
+  }
+  if (point) problems.push(`${where} is set, and apply.point is too: a wave gate that asks a decision point takes its deciders and quorum from the point; drop one of them`);
+  const proves = mode === "sealed" || mode === "pr-review";
+  v.forEach((r, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(r)) {
+      problems.push(`${at} must be a map (keys: ${APPROVAL_RULE_KEYS.join(", ")})`);
+      return;
+    }
+    for (const k of Object.keys(r)) if (!(APPROVAL_RULE_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a key of an approval rule (keys: ${APPROVAL_RULE_KEYS.join(", ")})`);
+    if (!Array.isArray(r.roots) || r.roots.length === 0 || !r.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) {
+      problems.push(`${at}.roots must be a list of root globs, such as ["envs/prod/**"]`);
+    }
+    if (r.count !== undefined && !(Number.isInteger(r.count) && (r.count as number) >= 1)) problems.push(`${at}.count must be a whole number of 1 or more: how many distinct people approve the wave`);
+    if (r.roles !== undefined && !(Array.isArray(r.roles) && r.roles.length > 0 && r.roles.every((x) => typeof x === "string" && TRUST_ROLE.test(x)))) {
+      problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
+    }
+    if (r.not_author !== undefined && typeof r.not_author !== "boolean") problems.push(`${at}.not_author must be true or false`);
+    if (r.count === undefined && r.roles === undefined && r.not_author !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
+    if (!proves && (r.roles !== undefined || r.not_author === true)) problems.push(`${at}: ${LEDGER_PROVES_NOBODY}`);
+  });
+}
+
+/** Why an override's role needs `approval: sealed`. */
+export const OVERRIDE_ROLE_NEEDS_SEALED = "an override names whoever wrote it, and only approval: sealed proves who that was, so a role cannot be checked; set approval to sealed, or name the people in who";
+
+function checkOverride(o: unknown, where: string, problems: string[], mode: unknown): void {
+  const flat = (x: unknown): boolean => typeof x === "string" && x.trim() !== "" && !/[\r\n]/.test(x);
+  if (!Array.isArray(o) || o.length === 0 || !o.every((x) => flat(x) || isObject(x))) {
+    problems.push(`${where} must be a list of the forge identities or signers who may override a denial, such as [github:alice], or of entries with roots and who or roles`);
+    return;
+  }
+  o.forEach((e, i) => {
+    if (!isObject(e)) return;
+    const at = `${where}[${i}]`;
+    for (const k of Object.keys(e)) if (!(OVERRIDE_ENTRY_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a key of an override entry (keys: ${OVERRIDE_ENTRY_KEYS.join(", ")})`);
+    if (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every((g) => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g))) problems.push(`${at}.roots must be a list of root globs, such as ["envs/dev/**"]`);
+    if (e.who !== undefined && !(Array.isArray(e.who) && e.who.length > 0 && e.who.every(flat))) problems.push(`${at}.who must be a list of forge identities or signers, such as [github:alice]`);
+    if (e.roles !== undefined && !(Array.isArray(e.roles) && e.roles.length > 0 && e.roles.every((r) => typeof r === "string" && TRUST_ROLE.test(r)))) problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
+    if (e.rules !== undefined && !(Array.isArray(e.rules) && e.rules.length > 0 && e.rules.every((r) => typeof r === "string" && /^\S+$/.test(r)))) problems.push(`${at}.rules must be a list of rule ids, such as [main.deny_untagged]`);
+    if (e.who === undefined && e.roles === undefined) problems.push(`${at} names nobody; give who, roles or both`);
+    if (e.roles !== undefined && mode !== "sealed") problems.push(`${at}.roles: ${OVERRIDE_ROLE_NEEDS_SEALED}`);
+  });
+}
+
+function checkPolicy(p: unknown, where: string, problems: string[], mode?: unknown): void {
+  if (!isObject(p)) {
+    problems.push(`${where} must be a map (settings: ${POLICY_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(p)) if (!POLICY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${POLICY_KEYS.join(", ")})`);
+  if (p.override !== undefined) checkOverride(p.override, `${where}.override`, problems, mode);
+  oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
+  oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
+  if (p.outcomes !== undefined) {
+    const o = p.outcomes;
+    if (!Array.isArray(o) || o.length === 0 || !o.every((x) => (POLICY_OUTCOMES as readonly unknown[]).includes(x))) problems.push(`${where}.outcomes must be a list of ${POLICY_OUTCOMES.join(", ")}`);
+    else if (new Set(o).size !== o.length) problems.push(`${where}.outcomes names an outcome twice`);
+    else if (!o.includes("deny")) problems.push(`${where}.outcomes leaves out deny, and a deny rule always fails its root; list deny first, such as [deny, hold]`);
+    else if (o.some((x) => x !== "deny") && p.engine !== "opa") problems.push(`${where}.outcomes names ${o.filter((x) => x !== "deny").join(" and ")}, which only engine: opa reads (conftest reports deny, violation and warn rules alone); set engine to opa`);
+  }
+  if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
+    problems.push(`${where}.path must be a directory inside the repo, such as policy`);
+  }
+  if (p.source !== undefined && !(typeof p.source === "string" && parsePolicySource(p.source))) {
+    problems.push(`${where}.source must be a git repo and a ref, git+https://<host>/<path>@<ref>, such as git+https://github.com/acme/policy.git@v1`);
+  }
+  if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
+    problems.push(`${where}.namespace must be a Rego package name, such as terraform.plan`);
+  }
+}
+
+function checkSources(v: unknown, where: string, problems: string[]): void {
+  if (!isObject(v) || Object.keys(v).length === 0) {
+    problems.push(`${where} must be a map with modules, providers or both, each a list of globs, such as modules: ["./**"]`);
+    return;
+  }
+  for (const k of Object.keys(v)) if (!SOURCES_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${SOURCES_KEYS.join(", ")})`);
+  const glob = new RegExp(SOURCE_GLOB);
+  for (const k of SOURCES_KEYS) {
+    const list = v[k];
+    if (list === undefined) continue;
+    if (!(Array.isArray(list) && list.length > 0 && list.every((g) => typeof g === "string" && glob.test(g)))) {
+      problems.push(`${where}.${k} must be a list of source globs, such as ${k === "modules" ? '["./**", "registry.example.com/acme/*/*"]' : '["hashicorp/*", "registry.example.com/acme/*"]'}`);
+    }
+  }
+}
+
+/** Where a shared policy is fetched from: the git URL and the ref. */
+export interface PolicySource {
+  url: string;
+  ref: string;
+}
+
+/**
+ * Split `git+<scheme>://<host>/<path>@<ref>` into the URL git fetches and
+ * the ref. The ref is what follows the last `@` after the host, so a user
+ * name in the URL (`git+https://ci@host/...`) stays in the URL. https and
+ * http (a forge on a private network) and file (a repo on the job's disk).
+ * Undefined when it is not that shape.
+ */
+export function parsePolicySource(source: string): PolicySource | undefined {
+  const m = /^git\+(https?|file):\/\//.exec(source);
+  if (!m) return undefined;
+  const rest = source.slice(4);
+  const hostEnd = rest.indexOf("/", m[1].length + 3);
+  const at = rest.lastIndexOf("@");
+  if (hostEnd < 0 || at <= hostEnd) return undefined;
+  const url = rest.slice(0, at);
+  const ref = rest.slice(at + 1);
+  if (url.length <= hostEnd + 1 || !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(ref) || ref.includes("..") || /\s/.test(url)) return undefined;
+  return { url, ref };
+}
+
+export const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. */
+function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[]): void {
+  if (typeof c === "boolean") {
+    if (!c) return;
+  } else if (!isObject(c)) {
+    problems.push(`${where} must be true, false or a map (settings: ${AGENT_COMMENT_KEYS.join(", ")})`);
+    return;
+  } else {
+    for (const k of Object.keys(c)) {
+      if (!(AGENT_COMMENT_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${AGENT_COMMENT_KEYS.join(", ")})`);
+    }
+    if (c.command !== undefined && (typeof c.command !== "string" || c.command.trim() === "" || /[\r\n]/.test(c.command))) {
+      problems.push(`${where}.command must be one command line, such as claude -p --max-turns "$TG_AGENT_MAX_TURNS"`);
+    }
+    if (c.key_secret !== undefined && !(typeof c.key_secret === "string" && SECRET_NAME.test(c.key_secret))) {
+      problems.push(`${where}.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY`);
+    }
+    for (const k of ["max_turns", "timeout"] as const) {
+      if (c[k] !== undefined && !(Number.isInteger(c[k]) && (c[k] as number) >= 1)) problems.push(`${where}.${k} must be a whole number of 1 or more`);
+    }
+  }
+  if (typeof tokenEnv === "string" && tokenEnv !== "" && !SECRET_NAME.test(tokenEnv)) {
+    problems.push(`${where} reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN`);
+  }
+}
+
+/** `review`: a map of REVIEW_KEYS. */
+function checkReview(r: unknown, where: string, problems: string[]): void {
+  if (!isObject(r)) {
+    problems.push(`${where} must be a map (settings: ${REVIEW_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(r)) {
+    if (!(REVIEW_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${REVIEW_KEYS.join(", ")})`);
+  }
+  if (r.agent !== undefined && typeof r.agent !== "boolean") problems.push(`${where}.agent must be true or false`);
+  if (r.command !== undefined && (typeof r.command !== "string" || r.command.trim() === "" || /[\r\n]/.test(r.command))) {
+    problems.push(`${where}.command must be one command line that reads the prompt on stdin and prints the review, such as claude -p`);
+  }
+  if (r.key_secret !== undefined && !(typeof r.key_secret === "string" && SECRET_NAME.test(r.key_secret))) {
+    problems.push(`${where}.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY`);
+  }
+  if (r.instructions !== undefined) {
+    const p = typeof r.instructions === "string" ? r.instructions.replace(/^\.\//, "") : "";
+    if (!p || p.startsWith("/") || p.split("/").some((x) => x === ".." || x === "") || !/^[A-Za-z0-9_.\/-]+$/.test(p)) {
+      problems.push(`${where}.instructions must be a file path inside the repository, such as .terragucci/review.md`);
+    }
+  }
+  if (r.timeout !== undefined && !(Number.isInteger(r.timeout) && (r.timeout as number) >= 1)) problems.push(`${where}.timeout must be a whole number of 1 or more`);
+  if (r.agent === undefined && Object.keys(r).length > 0) problems.push(`${where}.agent is missing, so no review runs; set ${where}.agent: true`);
+}
+
+export const DECIDE_KEYS = ["backend", "url", "model", "token_env", "thresholds"];
+
+function checkDecide(d: unknown, where: string, problems: string[]): void {
+  if (!isObject(d)) {
+    problems.push(`${where} must be a map (settings: ${DECIDE_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(d)) {
+    if (!DECIDE_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${DECIDE_KEYS.join(", ")})`);
+  }
+  if (d.backend === undefined) problems.push(`${where}.backend is missing; use one of ${DECIDE_BACKENDS.join(", ")}`);
+  else oneOf(d.backend, DECIDE_BACKENDS, `${where}.backend`, problems);
+  for (const k of ["url", "model", "token_env"] as const) {
+    if (d[k] !== undefined && (typeof d[k] !== "string" || d[k] === "")) problems.push(`${where}.${k} must be a string`);
+  }
+  if (typeof d.url === "string" && !/^https?:\/\/[^/\s]+/.test(d.url)) problems.push(`${where}.url must be an http or https URL, such as http://localhost:8790`);
+  if (d.url === undefined && d.backend !== "jev" && d.backend !== undefined) problems.push(`${where}.url is missing; name the service's base URL`);
+  if (d.model === undefined && d.backend !== "laya" && d.backend !== undefined) {
+    problems.push(`${where}.model is missing; pin the model version the ${String(d.backend)} service answers as`);
+  }
+  if (typeof d.model === "string" && /(^|[-_.])(latest|preview)$/.test(d.model)) {
+    problems.push(`${where}.model is ${d.model}, an alias that moves when a new version ships; pin a versioned id, such as jev-1.13.0`);
+  }
+  if (d.backend === "jev" && d.token_env === undefined) problems.push(`${where}.token_env is missing; name the variable holding the Jev API key`);
+  if (typeof d.token_env === "string" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(d.token_env)) problems.push(`${where}.token_env must name an environment variable`);
+  if (d.thresholds !== undefined) {
+    if (!isObject(d.thresholds)) problems.push(`${where}.thresholds must map question types (${QUESTION_TYPES.join(", ")}) to a probability`);
+    else {
+      for (const [k, v] of Object.entries(d.thresholds)) {
+        if (!(QUESTION_TYPES as readonly string[]).includes(k)) problems.push(`${where}.thresholds.${k} is not a question type (types: ${QUESTION_TYPES.join(", ")})`);
+        else if (typeof v !== "number" || !(v > 0 && v <= 1)) problems.push(`${where}.thresholds.${k} must be a probability above 0 and at most 1`);
+      }
+    }
+  }
+}
+
+export const DURATION = /^(\d+(ms|s|m|h|d|w|y))+$/;
+
+function checkDashboards(d: unknown, where: string, problems: string[]): void {
+  if (typeof d === "boolean") return;
+  if (!isObject(d)) {
+    problems.push(`${where} must be true, false or a map (settings: ${DASHBOARD_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(d)) {
+    if (!(DASHBOARD_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${DASHBOARD_KEYS.join(", ")})`);
+  }
+  for (const k of DASHBOARD_KEYS) {
+    const v = d[k];
+    if (v === undefined) continue;
+    if (typeof v !== "string" || v === "") problems.push(`${where}.${k} must be a string`);
+    else if (/[\r\n]/.test(v)) problems.push(`${where}.${k} must be one line`);
+    else if ((DASHBOARD_DURATION_KEYS as readonly string[]).includes(k) && !DURATION.test(v)) problems.push(`${where}.${k} is ${JSON.stringify(v)}; use a duration such as 4h or 1d`);
+  }
+  if (typeof d.dir === "string" && (d.dir.startsWith("/") || d.dir.split("/").includes(".."))) problems.push(`${where}.dir must be a path inside the repo`);
+}
+
+export const ATMOS_KEYS = ["version"];
+/** Why a config with both an atmos and a terragrunt block is refused. */
+export const ATMOS_NOT_TERRAGRUNT = "terragucci runs an Atmos repo or a Terragrunt repo, not both; keep the block of the one this repo is";
+
+function checkAtmos(a: unknown, where: string, problems: string[]): void {
+  if (!isObject(a)) {
+    problems.push(`${where} must be a map (settings: ${ATMOS_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(a)) {
+    if (!ATMOS_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${ATMOS_KEYS.join(", ")})`);
+  }
+  if (a.version !== undefined && (typeof a.version !== "string" || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(a.version))) {
+    problems.push(`${where}.version must be a release version such as 1.230.1`);
+  }
+}
+
+function checkTerragrunt(t: unknown, where: string, problems: string[]): void {
+  if (!isObject(t)) {
+    problems.push(`${where} must be a map (settings: ${TERRAGRUNT_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(t)) {
+    if (!TERRAGRUNT_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${TERRAGRUNT_KEYS.join(", ")})`);
+  }
+  if (t.version !== undefined) {
+    const m = typeof t.version === "string" ? /^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.]+)?$/.exec(t.version) : null;
+    if (!m) problems.push(`${where}.version must be a release version such as 1.1.6`);
+    else if (Number(m[1]) < 1 || (Number(m[1]) === 1 && Number(m[2]) < 1)) {
+      problems.push(`${where}.version is ${t.version}; terragucci needs Terragrunt 1.1 or later`);
+    }
+  }
+  stringList(t.exclude, `${where}.exclude`, problems);
+  if (t.parallelism !== undefined && !(Number.isInteger(t.parallelism) && (t.parallelism as number) >= 1)) {
+    problems.push(`${where}.parallelism must be a whole number of 1 or more`);
+  }
+  oneOf(t.dependents, DEPENDENTS, `${where}.dependents`, problems);
+  if (t.credentials !== undefined) {
+    if (!isObject(t.credentials)) {
+      problems.push(`${where}.credentials must map unit path globs to a plan role and an apply role`);
+      return;
+    }
+    for (const [glob, pair] of Object.entries(t.credentials)) {
+      const at = `${where}.credentials["${glob}"]`;
+      if (!isObject(pair)) {
+        problems.push(`${at} must be a map with plan and apply`);
+        continue;
+      }
+      for (const k of Object.keys(pair)) {
+        if (k !== "plan" && k !== "apply") problems.push(`${at}.${k} is not a setting (settings: plan, apply)`);
+      }
+      for (const k of ["plan", "apply"] as const) {
+        if (typeof pair[k] !== "string" || pair[k] === "") problems.push(`${at}.${k} must name a role`);
+      }
+      if (typeof pair.plan === "string" && pair.plan === pair.apply) {
+        problems.push(`${at} uses one role for plan and apply; plan runs pull-request code, so give it a read-only role of its own`);
+      }
+    }
+  }
+}
+
+/** The GCP Workload Identity Federation provider's resource name. */
+export const WIF_PROVIDER = /^projects\/[0-9]+\/locations\/global\/workloadIdentityPools\/[^/\s]+\/providers\/[^/\s]+$/;
+
+function checkOidc(o: unknown, where: string, problems: string[]): void {
+  if (!isObject(o)) {
+    problems.push(`${where} must be a map with plan_role and apply_role (AWS), gcp, azure, or several`);
+    return;
+  }
+  for (const k of Object.keys(o)) {
+    if (!OIDC_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${OIDC_KEYS.join(", ")})`);
+  }
+  const pairSet = o.plan_role !== undefined || o.apply_role !== undefined;
+  const aws = pairSet || o.audience !== undefined || o.roles !== undefined;
+  if (!aws && o.gcp === undefined && o.azure === undefined) problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
+  if (o.roles !== undefined) checkRoles(o.roles, `${where}.roles`, problems);
+  if (isObject(o.audience)) {
+    for (const [k, v] of Object.entries(o.audience)) {
+      if (!(AUDIENCE_STAGES as readonly string[]).includes(k)) problems.push(`${where}.audience.${k} is not a stage (stages: ${AUDIENCE_STAGES.join(", ")})`);
+      else if (typeof v !== "string" || v === "") problems.push(`${where}.audience.${k} must be a non-empty audience`);
+    }
+  } else if (o.audience !== undefined && typeof o.audience !== "string") problems.push(`${where}.audience must be a string, or a map of stage (${AUDIENCE_STAGES.join(", ")}) to audience`);
+  // With roles, a pair is optional: the roots no glob matches take it, and config check names any root left with no role.
+  if (aws && (pairSet || o.roles === undefined)) {
+    for (const k of ["plan_role", "apply_role"] as const) {
+      if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
+    }
+    if (typeof o.plan_role === "string" && o.plan_role === o.apply_role) {
+      problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+    }
+  }
+  const pair = (cloud: string, c: unknown, keys: string[], stages: [string, string], what: string, optional: string[] = []): Record<string, unknown> | undefined => {
+    if (!isObject(c)) {
+      problems.push(`${where}.${cloud} must be a map with ${keys.join(", ")}`);
+      return undefined;
+    }
+    const all = [...keys, ...optional, "roles"];
+    if (c.roles !== undefined) checkRoles(c.roles, `${where}.${cloud}.roles`, problems, what);
+    for (const k of Object.keys(c)) if (!all.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${all.join(", ")})`);
+    for (const k of optional) if (c[k] !== undefined && (typeof c[k] !== "string" || c[k] === "")) problems.push(`${where}.${cloud}.${k} must be a non-empty string`);
+    for (const k of keys) if (typeof c[k] !== "string" || c[k] === "") problems.push(`${where}.${cloud}.${k} must be set`);
+    if (typeof c[stages[0]] === "string" && c[stages[0]] !== "" && c[stages[0]] === c[stages[1]]) {
+      problems.push(`${where}.${cloud}.${stages[0]} and ${stages[1]} are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
+    }
+    return c;
+  };
+  if (o.gcp !== undefined) {
+    const g = pair("gcp", o.gcp, ["workload_identity_provider", "plan_service_account", "apply_service_account"], ["plan_service_account", "apply_service_account"], "service account", ["token_url"]);
+    if (g && typeof g.token_url === "string" && g.token_url !== "" && !/^https:\/\/[^\s/]+\/\S*$/.test(g.token_url)) problems.push(`${where}.gcp.token_url must be an https URL, such as https://sts.googleapis.com/v1/token`);
+    if (g && typeof g.workload_identity_provider === "string" && g.workload_identity_provider !== "" && !WIF_PROVIDER.test(g.workload_identity_provider)) {
+      problems.push(`${where}.gcp.workload_identity_provider must be the provider's resource name, projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`);
+    }
+    for (const k of ["plan_service_account", "apply_service_account"]) {
+      if (g && typeof g[k] === "string" && g[k] !== "" && !/^[^@\s]+@[^@\s]+$/.test(g[k] as string)) problems.push(`${where}.gcp.${k} must be a service account's email`);
+    }
+    for (const [glob, p] of g && isObject(g.roles) ? Object.entries(g.roles) : []) {
+      for (const k of ["plan", "apply"]) {
+        const v = isObject(p) ? p[k] : undefined;
+        if (typeof v === "string" && v !== "" && !/^[^@\s]+@[^@\s]+$/.test(v)) problems.push(`${where}.gcp.roles["${glob}"].${k} must be a service account's email`);
+      }
+    }
+  }
+  if (o.azure !== undefined) pair("azure", o.azure, ["tenant_id", "subscription_id", "plan_client_id", "apply_client_id"], ["plan_client_id", "apply_client_id"], "client", ["audience"]);
+}
+
+/** `oidc.roles`, `oidc.gcp.roles`, `oidc.azure.roles`: a plan and an apply identity per root glob, the two different. */
+function checkRoles(r: unknown, where: string, problems: string[], what = "role"): void {
+  if (!isObject(r) || Object.keys(r).length === 0) {
+    problems.push(`${where} must map root globs to a plan and an apply ${what}, such as "envs/prod/**": { plan: <${what}>, apply: <${what}> }`);
+    return;
+  }
+  for (const [glob, pair] of Object.entries(r)) {
+    const at = `${where}["${glob}"]`;
+    if (!isObject(pair)) {
+      problems.push(`${at} must be a map with plan and apply`);
+      continue;
+    }
+    for (const k of Object.keys(pair)) if (k !== "plan" && k !== "apply") problems.push(`${at}.${k} is not a setting (settings: plan, apply)`);
+    for (const k of ["plan", "apply"] as const) if (typeof pair[k] !== "string" || pair[k] === "") problems.push(`${at}.${k} must name a ${what}`);
+    if (typeof pair.plan === "string" && pair.plan !== "" && pair.plan === pair.apply) problems.push(`${at}: plan and apply are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
+  }
+}
+
+/** The apply group of the roots in no environment, or that no glob gives an identity (./groups.ts). */
+export const DEFAULT_GROUP = "default";
+/** Names an apply group cannot take: the rest group's, and chant's own job names (decide, share-<i>). */
+export const reservedGroupName = (name: string): boolean => name === DEFAULT_GROUP || name === "decide" || /^share-\d+$/.test(name);
+/** The per-environment keys config check accepts, as its problems list them. */
+const ENVIRONMENT_ACCEPTED = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"];
+/** Why an environment's `runner.plan` is refused: a plan job plans the roots of every environment. */
+export const ENVIRONMENT_PLAN_RUNNER = "a plan job plans the roots of every environment, so an environment's runner is its apply jobs' alone; set runner: { apply: <runner> }, and runner.plan at the top level";
+/** A forge environment's name, as GitHub and GitLab both take it. */
+export const FORGE_ENVIRONMENT_NAME = /^[A-Za-z0-9_][A-Za-z0-9_./-]*$/;
+/** Why an environment cannot take a name the apply jobs use for their own. */
+export const ENVIRONMENT_RESERVED = "names the apply jobs use for their own (default holds the roots in no environment; decide and share-<n> are a wave's own jobs)";
+/** Why `environments` refuses `apply.when: pull-request`: a comment's one job applies every environment's roots. */
+export const ENVIRONMENTS_PR_APPLY = "with environments each environment's roots apply in jobs of their own, with their own identities, and apply.when: pull-request applies every wave in the one job a comment starts; leave apply.when at merge";
+/** Why `environments` refuses `apply.resume` on GitHub and Forgejo: the resume job applies every wave in one job. */
+export const ENVIRONMENTS_RESUME = "with environments each environment's roots apply in jobs of their own, and on GitHub and Forgejo the resume job applies every wave in one job; leave apply.resume unset and re-run the waiting wave's job once it is approved";
+/** Why `environments` refuses `ephemeral`: a pull request's copies apply in one job with the apply identities. */
+export const ENVIRONMENTS_EPHEMERAL = "with environments each environment's roots apply in jobs of their own, and an ephemeral copy applies in the pull request's one job; leave ephemeral unset";
+/** Why an environment's `forge_environment` is refused on Forgejo. */
+export const FORGE_ENVIRONMENT_NOT_FORGEJO = "Forgejo Actions has no deployment environments, so a job cannot run in one; leave forge_environment out of each environment";
+
+const isGlob = (g: unknown): boolean => typeof g === "string" && g.trim() !== "" && !/[\s,;=']/.test(g);
+
+/**
+ * `environments`: a map of environment name to its roots and the keys that
+ * vary for them. A control repo's defaults and projects may each hold part
+ * of one, so what a whole environment needs (its roots, the project's
+ * `oidc.gcp`) is environmentNeeds', on a repo's own file and on a control
+ * repo's merged project.
+ */
+function checkEnvironments(v: unknown, where: string, problems: string[], s: Record<string, unknown>): void {
+  if (!isObject(v) || Object.keys(v).length === 0) {
+    problems.push(`${where} must map environment names to their roots and settings, such as prod: { roots: ["envs/prod/**"], gate: always }`);
+    return;
+  }
+  const globOwner = new Map<string, string>();
+  const oidc = isObject(s.oidc) ? s.oidc : undefined;
+  for (const [name, e] of Object.entries(v)) {
+    const at = `${where}.${name}`;
+    if (!ENVIRONMENT_NAME.test(name)) problems.push(`${where}: ${JSON.stringify(name)} is not an environment name; use lower-case letters, digits, "-" and "_"`);
+    else if (reservedGroupName(name)) problems.push(`${where}: ${name} is one of the ${ENVIRONMENT_RESERVED}; name the environment another way`);
+    if (!isObject(e)) {
+      problems.push(`${at} must be a map (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
+      continue;
+    }
+    for (const k of Object.keys(e)) {
+      if (!(ENVIRONMENT_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a per-environment setting (settings: ${ENVIRONMENT_ACCEPTED.join(", ")})`);
+    }
+    if (e.runner !== undefined) {
+      // A runner for the environment's apply jobs: one runner, or { apply: <runner> }.
+      if (isObject(e.runner) && !("group" in e.runner)) {
+        for (const k of Object.keys(e.runner)) {
+          if (k === "plan") problems.push(`${at}.runner.plan: ${ENVIRONMENT_PLAN_RUNNER}`);
+          else if (k !== "apply") problems.push(`${at}.runner.${k} is not a setting (settings: apply)`);
+        }
+        if (e.runner.apply === undefined) problems.push(`${at}.runner must name the apply jobs' runner, such as { apply: [self-hosted, ${name}] }`);
+        else problems.push(...runnerProblems(e.runner.apply, `${at}.runner.apply`, s.forge));
+      } else problems.push(...runnerProblems(e.runner, `${at}.runner`, s.forge));
+    }
+    if (e.forge_environment !== undefined) {
+      if (typeof e.forge_environment !== "string" || !FORGE_ENVIRONMENT_NAME.test(e.forge_environment)) problems.push(`${at}.forge_environment must be a forge environment's name: letters, digits, "_", ".", "/" and "-"`);
+      else if (s.forge === "forgejo") problems.push(`${at}.forge_environment: ${FORGE_ENVIRONMENT_NOT_FORGEJO}`);
+    }
+    // A missing roots is environmentNeeds': required once the environment is whole.
+    if (e.roots !== undefined && (!Array.isArray(e.roots) || e.roots.length === 0 || !e.roots.every(isGlob))) {
+      problems.push(`${at}.roots must be a list of root globs, such as ["envs/${name}/**"]`);
+    } else if (Array.isArray(e.roots)) {
+      for (const g of e.roots as string[]) {
+        const other = globOwner.get(g);
+        if (other !== undefined && other !== name) problems.push(`${where}: ${g} is a root glob of both ${other} and ${name}; a root belongs to one environment`);
+        else globOwner.set(g, name);
+      }
+    }
+    if (e.gate !== undefined && normalizeGate(e.gate) === undefined) problems.push(`${at}.gate is ${JSON.stringify(e.gate)}; use one of ${GATES.join(", ")}`);
+    if (e.parallelism !== undefined && !(Number.isInteger(e.parallelism) && (e.parallelism as number) >= 1)) problems.push(`${at}.parallelism must be a whole number of 1 or more`);
+    if (e.oidc !== undefined) checkEnvironmentOidc(e.oidc, `${at}.oidc`, problems);
+    // One place for each root's identities: an environment's, or a glob-keyed setting's, never both for the same glob.
+    if (isObject(e.oidc) && Array.isArray(e.roots)) {
+      const eo = e.oidc;
+      const keyed: [string, unknown, unknown][] = [
+        ["oidc.roles", eo.plan_role, oidc?.roles],
+        ["oidc.gcp.roles", eo.gcp, isObject(oidc?.gcp) ? oidc.gcp.roles : undefined],
+        ["oidc.azure.roles", eo.azure, isObject(oidc?.azure) ? oidc.azure.roles : undefined],
+      ];
+      for (const [key, mine, roles] of keyed) {
+        if (mine === undefined || !isObject(roles)) continue;
+        for (const g of e.roots) if (typeof g === "string" && g in roles) problems.push(`${at}.oidc: ${g} has identities in both ${at}.oidc and ${key}; set them in one place`);
+      }
+    }
+  }
+}
+
+function checkEnvironmentOidc(o: unknown, where: string, problems: string[]): void {
+  if (!isObject(o) || Object.keys(o).length === 0) {
+    problems.push(`${where} must set plan_role and apply_role (AWS), gcp, azure, or several`);
+    return;
+  }
+  for (const k of Object.keys(o)) {
+    if (!(ENVIRONMENT_OIDC_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${ENVIRONMENT_OIDC_KEYS.join(", ")})`);
+  }
+  if (o.audience !== undefined && (typeof o.audience !== "string" || o.audience.trim() === "")) problems.push(`${where}.audience must be the audience of the environment's apply jobs' AWS token, such as sts.amazonaws.com/prod`);
+  if (o.plan_role !== undefined || o.apply_role !== undefined) {
+    for (const k of ["plan_role", "apply_role"] as const) if (typeof o[k] !== "string" || o[k] === "") problems.push(`${where}.${k} must name a role, one for plan and one for apply`);
+    if (typeof o.plan_role === "string" && o.plan_role !== "" && o.plan_role === o.apply_role) problems.push(`${where}.plan_role and apply_role are the same role; plan runs pull-request code, so give it a read-only role of its own`);
+  }
+  const pair = (cloud: "gcp" | "azure", keys: [string, string], what: string, shape?: RegExp): void => {
+    const c = o[cloud];
+    if (c === undefined) return;
+    if (!isObject(c)) return void problems.push(`${where}.${cloud} must be a map with ${keys.join(" and ")}`);
+    for (const k of Object.keys(c)) if (!keys.includes(k)) problems.push(`${where}.${cloud}.${k} is not a setting (settings: ${keys.join(", ")})`);
+    for (const k of keys) {
+      if (typeof c[k] !== "string" || c[k] === "") problems.push(`${where}.${cloud}.${k} must be set`);
+      else if (shape && !shape.test(c[k] as string)) problems.push(`${where}.${cloud}.${k} must be a service account's email`);
+    }
+    if (typeof c[keys[0]] === "string" && c[keys[0]] !== "" && c[keys[0]] === c[keys[1]]) problems.push(`${where}.${cloud}.${keys[0]} and ${keys[1]} are the same ${what}; plan runs pull-request code, so give it a read-only ${what} of its own`);
+  };
+  pair("gcp", ["plan_service_account", "apply_service_account"], "service account", /^[^@\s]+@[^@\s]+$/);
+  pair("azure", ["plan_client_id", "apply_client_id"], "client");
+}
+
+/**
+ * What a whole set of environments needs from the settings around it: a
+ * root glob in each, and the project's `oidc.gcp` or `oidc.azure` for an
+ * environment that names a GCP or Azure pair, since the provider, the tenant
+ * and the token come from there. A repo's own file is checked whole in
+ * checkSettings; a control repo's project once its defaults are merged in.
+ */
+export function environmentNeeds(s: ProjectSettings, where: string): string[] {
+  const out: string[] = [];
+  // Each environment's roots apply in jobs of their own (./groups.ts): what applies every wave in one job is refused beside them.
+  if (s.environments && isObject(s.environments) && Object.keys(s.environments).length > 0) {
+    if (s.apply?.when === "pull-request") out.push(`${where}.apply.when: ${ENVIRONMENTS_PR_APPLY}`);
+    if (s.apply?.resume !== undefined && s.forge !== undefined && s.forge !== "gitlab") out.push(`${where}.apply.resume: ${ENVIRONMENTS_RESUME}`);
+    if (s.ephemeral !== undefined) out.push(`${where}.ephemeral: ${ENVIRONMENTS_EPHEMERAL}`);
+  }
+  for (const [name, e] of Object.entries(s.environments ?? {})) {
+    if (!isObject(e)) continue;
+    const at = `${where}.environments.${name}`;
+    if (e.roots === undefined) out.push(`${at}.roots is missing; name the environment's roots by glob, such as ["envs/${name}/**"]`);
+    if (isObject(e.oidc) && e.oidc.gcp !== undefined && !isObject(s.oidc?.gcp)) out.push(`${at}.oidc.gcp needs oidc.gcp: the workload identity provider and the token come from there`);
+    if (isObject(e.oidc) && e.oidc.azure !== undefined && !isObject(s.oidc?.azure)) out.push(`${at}.oidc.azure needs oidc.azure: the tenant, the subscription and the token come from there`);
+  }
+  return out;
+}
+
+/** Check a parsed config and return it typed, or throw with every problem listed. */
+export function validateConfig(raw: unknown, where: string): TerragucciConfig {
+  const problems: string[] = [];
+  if (raw === undefined || raw === null) return {};
+  if (!isObject(raw)) {
+    const got = Array.isArray(raw) ? "a list" : `a ${typeof raw}`;
+    throw new ConfigError(`${where}: the config must be a mapping of setting names to values (key: value at the top level), and this file holds ${got}`);
+  }
+  const { defaults, projects, ...rest } = raw;
+  if (projects !== undefined) {
+    if (!isObject(projects)) problems.push(`${where}: projects must map <host>/<path> to settings`);
+    else {
+      for (const [key, s] of Object.entries(projects)) {
+        try {
+          parseProjectKey(key);
+        } catch (e) {
+          problems.push(`${where}: ${(e as Error).message}`);
+        }
+        checkSettings(s ?? {}, `projects["${key}"]`, problems);
+        if (isObject(s) && s.rollouts) problems.push(`projects["${key}"].rollouts: ${ROLLOUTS_SINGLE_REPO}`);
+      }
+    }
+    if (Object.keys(rest).length) {
+      problems.push(`${where}: a control repo keeps shared settings under defaults; move ${Object.keys(rest).join(", ")} there`);
+    }
+  } else {
+    checkSettings(rest, "config", problems);
+  }
+  if (defaults !== undefined) checkSettings(defaults, "defaults", problems);
+  if (isObject(defaults) && defaults.rollouts) problems.push(`defaults.rollouts: ${ROLLOUTS_SINGLE_REPO}`);
+  if (isObject(defaults) && defaults.url !== undefined) {
+    problems.push(`${where}: defaults.url would clone one repo for every project; set url on each project that needs one`);
+  }
+  if (defaults !== undefined && projects === undefined) problems.push(`${where}: defaults only makes sense with projects`);
+  if (problems.length) throw new ConfigError(`${where} has ${problems.length} problem(s):\n  ${problems.join("\n  ")}`, problems);
+  // JSON's view: an undefined property is the same as an absent one.
+  const out = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+  // An older gate name becomes the policy it names here, so every later comparison sees one value.
+  const settings = [out, out.defaults, ...(isObject(out.projects) ? Object.values(out.projects) : [])];
+  for (const s of settings) {
+    if (isObject(s) && s.gate !== undefined) s.gate = normalizeGate(s.gate);
+    if (isObject(s) && isObject(s.environments)) for (const e of Object.values(s.environments)) if (isObject(e) && e.gate !== undefined) e.gate = normalizeGate(e.gate);
+  }
+  return out as TerragucciConfig;
+}
+
+// ── loading ──────────────────────────────────────────────────────────────────
+
+export type ConfigMode = "fold" | "run" | "check";
+
+function projectFiles(root: string): Map<string, string> {
+  const files = new Map<string, string>();
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) continue;
+      if (name.endsWith(".ts") && !name.endsWith(".d.ts") && !name.endsWith(".test.ts")) {
+        files.set(relative(root, abs).split("\\").join("/"), readFileSync(abs, "utf-8"));
+      }
+    }
+  };
+  walk(root);
+  return files;
+}
+
+/** The TypeScript folder ships separately; only a `.ts` config needs it. */
+export const TSAD_INSTALL = "npm i -D @intentius/tsad-reference";
+
+async function foldConfig(path: string): Promise<unknown> {
+  let tsad: typeof import("@intentius/tsad-reference");
+  try {
+    tsad = await import("@intentius/tsad-reference");
+  } catch {
+    throw new ConfigError(`${path} is TypeScript, which needs the TypeScript folder: ${TSAD_INSTALL}`);
+  }
+  const { foldProject, EMPTY_HOST } = tsad;
+  const root = dirname(resolve(path));
+  const key = relative(root, resolve(path)).split("\\").join("/");
+  const verdict = foldProject(projectFiles(root), { ...EMPTY_HOST, profile: "data-host" }).verdicts.get(key);
+  if (!verdict) throw new ConfigError(`${path}: not found`);
+  if (verdict.kind === "run") throw new ConfigError(`${path} is not data (${verdict.rule}): ${verdict.reason}`);
+  const exports = Object.fromEntries(verdict.exports);
+  if (!("default" in exports)) throw new ConfigError(`${path} must export the config as \`export default\``);
+  return exports.default;
+}
+
+async function runConfig(path: string): Promise<unknown> {
+  const mod = (await import(pathToFileURL(resolve(path)).href)) as Record<string, unknown>;
+  if (!("default" in mod)) throw new ConfigError(`${path} must export the config as \`export default\``);
+  return mod.default;
+}
+
+const canonical = (v: unknown): string => {
+  const sort = (x: unknown): unknown =>
+    x === null || typeof x !== "object"
+      ? x
+      : Array.isArray(x)
+        ? x.map(sort)
+        : Object.fromEntries(Object.keys(x as object).sort().map((k) => [k, sort((x as Record<string, unknown>)[k])]));
+  return JSON.stringify(sort(JSON.parse(JSON.stringify(v ?? {}))));
+};
+
+/** Load and validate a config file. A `.ts` file is folded unless `mode` says otherwise. */
+export async function loadConfig(path: string, mode: ConfigMode = "fold"): Promise<TerragucciConfig> {
+  if (!existsSync(path)) throw new ConfigError(`${path} does not exist`);
+  if (path.endsWith(".ts")) {
+    if (mode === "run") return validateConfig(await runConfig(path), path);
+    const folded = await foldConfig(path);
+    if (mode === "check") {
+      const ran = await runConfig(path);
+      if (canonical(folded) !== canonical(ran)) {
+        throw new ConfigError(`${path}: folding and running the config disagree, so it is not data`);
+      }
+    }
+    return validateConfig(folded, path);
+  }
+  const text = readFileSync(path, "utf-8");
+  let raw: unknown;
+  try {
+    raw = path.endsWith(".json") ? JSON.parse(text) : text.trim() === "" ? {} : parseYAMLDocument(text);
+  } catch (e) {
+    throw new ConfigError(`${path}: ${(e as Error).message}`);
+  }
+  return validateConfig(raw, path);
+}
+
+// ── projects ─────────────────────────────────────────────────────────────────
+
+export interface ProjectKey {
+  key: string;
+  host: string;
+  /** Everything after the host: owner/name, or a GitLab group path and name. */
+  path: string;
+  owner: string;
+  name: string;
+}
+
+/** Split `<host>/<path>`. The host is the first segment; the path needs an owner and a name. */
+export function parseProjectKey(key: string): ProjectKey {
+  const clean = key.replace(/^https?:\/\//, "").replace(/\.git$/, "").replace(/\/+$/, "");
+  const parts = clean.split("/");
+  if (parts.length < 3 || parts.some((p) => p === "")) {
+    throw new ConfigError(`project key "${key}" must be <host>/<owner>/<name>, such as github.com/acme/infra`);
+  }
+  const [host, ...rest] = parts;
+  return { key, host, path: rest.join("/"), owner: rest.slice(0, -1).join("/"), name: rest[rest.length - 1] };
+}
+
+/** The forge a host belongs to, when the host says so. */
+export function forgeFromHost(host: string): ForgeName | undefined {
+  const h = host.toLowerCase().replace(/:\d+$/, "");
+  if (h === "github.com" || h.startsWith("github.")) return "github";
+  if (h === "gitlab.com" || h.startsWith("gitlab.") || h.includes(".gitlab.")) return "gitlab";
+  if (h === "codeberg.org" || h.startsWith("forgejo.") || h.startsWith("gitea.") || h.includes("forgejo")) return "forgejo";
+  return undefined;
+}
+
+/** One repo's settings: built-in defaults, then the file's own keys. */
+export function resolveRepo(config: TerragucciConfig): ResolvedSettings {
+  if (config.projects) {
+    throw new ConfigError("this config lists projects, so it belongs to a control repo; run terragucci reconcile instead");
+  }
+  return merge(BUILT_IN, config);
+}
+
+/** A control repo's project: built-in defaults, then `defaults`, then the project's own keys. */
+export function resolveProject(config: TerragucciConfig, key: string): ResolvedSettings {
+  const project = config.projects?.[key];
+  if (project === undefined) throw new ConfigError(`no project "${key}" in the config`);
+  const out = merge(merge(BUILT_IN, config.defaults ?? {}), project ?? {});
+  // Each environment is whole once the defaults' part and the project's are merged: its roots, and no glob in two environments.
+  const needs: string[] = [];
+  if (out.environments) {
+    checkEnvironments(out.environments, `projects["${key}"].environments`, needs, out as unknown as Record<string, unknown>);
+    needs.push(...environmentNeeds(out, `projects["${key}"]`));
+  }
+  if (needs.length) throw new ConfigError(`projects["${key}"] has ${needs.length} problem(s) once the defaults are merged in:\n  ${needs.join("\n  ")}`, needs);
+  return out;
+}
+
+/** `environments` merged per environment name: an environment both name takes `over`'s keys over `base`'s. */
+export function mergeEnvironments(base: Record<string, EnvironmentSettings> | undefined, over: Record<string, EnvironmentSettings> | undefined): Record<string, EnvironmentSettings> | undefined {
+  if (!base || !over) return over ?? base;
+  const out: Record<string, EnvironmentSettings> = { ...base };
+  for (const [name, e] of Object.entries(over)) out[name] = { ...base[name], ...e } as EnvironmentSettings;
+  return out;
+}
+
+function merge(base: ResolvedSettings, over: ProjectSettings): ResolvedSettings {
+  const { defaults: _d, projects: _p, ...settings } = over as TerragucciConfig;
+  const out: ResolvedSettings = { ...base, ...settings, gate: normalizeGate(settings.gate) ?? base.gate, env: { ...base.env, ...(settings.env ?? {}) } };
+  if (settings.oidc) out.oidc = { ...base.oidc, ...settings.oidc };
+  if (base.terragrunt || settings.terragrunt) out.terragrunt = { ...base.terragrunt, ...settings.terragrunt };
+  if (base.respond || settings.respond) out.respond = { ...base.respond, ...settings.respond };
+  if (base.policy || settings.policy) out.policy = { ...base.policy, ...settings.policy };
+  if (base.waves || settings.waves) out.waves = { ...base.waves, ...settings.waves };
+  if (base.apply || settings.apply) out.apply = { ...base.apply, ...settings.apply };
+  if (base.generate || settings.generate) out.generate = combineGenerate(base.generate, settings.generate);
+  if (base.environments || settings.environments) out.environments = mergeEnvironments(base.environments, settings.environments);
+  return out;
+}

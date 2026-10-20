@@ -1,0 +1,134 @@
+{
+  "binaries": [
+    {
+      "binary": "tofu",
+      "versions": [
+        {
+          "version": "1.10.6",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/dev/orders"
+            },
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/prod/orders"
+            },
+            {
+              "project": "forgejo.example/acme/shop",
+              "root": "app"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "providers": [
+    {
+      "provider": "registry.opentofu.org/hashicorp/aws",
+      "versions": [
+        {
+          "version": "5.80.0",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/dev/orders"
+            },
+            {
+              "project": "forgejo.example/acme/shop",
+              "root": "app"
+            }
+          ]
+        },
+        {
+          "version": "5.70.0",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/prod/orders"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "registry.opentofu.org/hashicorp/random",
+      "versions": [
+        {
+          "version": "3.6.3",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/dev/orders"
+            },
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/prod/orders"
+            },
+            {
+              "project": "forgejo.example/acme/shop",
+              "root": "app"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "modules": [
+    {
+      "source": "git::https://example.com/acme/nat.git",
+      "versions": [
+        {
+          "version": "v0.4.0",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/dev/orders",
+              "call": "module.vpc.module.nat"
+            },
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/prod/orders",
+              "call": "module.vpc.module.nat"
+            },
+            {
+              "project": "forgejo.example/acme/shop",
+              "root": "app",
+              "call": "module.vpc.module.nat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "registry.opentofu.org/acme/vpc/aws",
+      "versions": [
+        {
+          "version": "1.10.0",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/shop",
+              "root": "app",
+              "call": "module.vpc"
+            }
+          ]
+        },
+        {
+          "version": "1.2.0",
+          "roots": [
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/dev/orders",
+              "call": "module.vpc"
+            },
+            {
+              "project": "forgejo.example/acme/infra",
+              "root": "envs/prod/orders",
+              "call": "module.vpc"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

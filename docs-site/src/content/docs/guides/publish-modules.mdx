@@ -1,0 +1,343 @@
+---
+title: Publish your modules
+description: Version the modules beside your roots automatically, as OCI artifacts, git tags or a module registry served from a bucket, on every merge.
+claims: [modules/publish, modules/version-bump, modules/attest, modules/require, modules/recorded, modules/terragrunt-require, modules/registry]
+prompt: |
+  Read https://intentius.io/terragucci/guides/publish-modules/.
+  Add the `modules:` block, run `npx terragucci publish --dry-run`, show me what
+  would be published, run `npx terragucci init`, and open a pull request. List the
+  registry credentials I must add; do not add them. If I ask for attested
+  releases, add `attest: true` and tell me to run `cosign generate-key-pair`
+  myself; never create, read or commit a private key.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Every module that changed on the default branch released under a new number, each with a digest your roots can pin.
+
+Each level is opt-in:
+
+| Level | Config | What it adds |
+|---|---|---|
+| Publish | `modules.publish` | a git tag or OCI tag per release, pinned rollouts by pull request, and version bump jobs |
+| Registry | `modules.registry` | each release as a module registry's files in a bucket or a Pages site, so roots use registry sources and version constraints |
+| Test | `modules.test: true` | `tofu test` or `terraform test` on each module before a release of it publishes |
+| Attest | `modules.attest: true` as well | a signature, SLSA provenance and an SBOM for each release, and a record of it in the release ledger |
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| Modules in one place, such as `modules/network` and `modules/service` | each directory there is published on its own |
+| Conventional commit messages | they decide the version bump |
+| An OCI registry, or permission to push git tags to `origin` | where the versions go; Terraform has no OCI sources, so its roots pin a git tag |
+
+## Steps
+
+<Steps>
+
+1. Name the modules and where they go in `terragucci.yml`.
+
+   ```yaml
+   modules:
+     path: modules/*
+     publish: oci://registry.example.com/acme/modules
+   ```
+
+   `publish` takes an `oci://` registry address, `git-tags`, or a list of both.
+
+   | Target | Roots pin | Credentials |
+   |---|---|---|
+   | `oci://` registry | OpenTofu roots, by tag or `@sha256:` digest | the registry variables in step 4 |
+   | `git-tags` | Terraform roots, by git tag | none; the tags are pushed to `origin` |
+
+2. Preview.
+
+   ```bash
+   npx terragucci publish --dry-run
+   ```
+
+   The output lists each changed module and its next version under the [version bump rules](/terragucci/reference/stages/#version-bump-rules). For commits with no conventional type, see [`respond.version-bump`](/terragucci/reference/responses/#version-bump).
+
+3. Add the publish job.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   That adds a `publish` job, which runs with full history after `apply` on each push to the default branch.
+
+4. Give it registry credentials; no other job gets them.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       Repository secrets.
+     </TabItem>
+     <TabItem label="GitLab">
+       Protected, masked CI/CD variables.
+     </TabItem>
+     <TabItem label="Forgejo">
+       As on GitHub, repository secrets.
+     </TabItem>
+   </Tabs>
+
+   | Variable | Holds |
+   |---|---|
+   | `TERRAGUCCI_REGISTRY_USER` | the registry user |
+   | `TERRAGUCCI_REGISTRY_PASSWORD` | its password or token |
+   | `TERRAGUCCI_REGISTRY_INSECURE` | `1` for a registry without TLS |
+
+5. Merge a change to a module.
+
+   The next push to the default branch publishes, printing each version's OCI manifest digest for a root to pin: `oci://registry.example.com/acme/modules/network@sha256:...`.
+
+   With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` moved to `0.2.0` after a change while `modules/queue` stayed at `0.1.0`.
+
+   A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first; different content under an existing tag stops the run and names the tag.
+
+</Steps>
+
+## Test each release
+
+With `modules.test`, the publish job runs the binary's `test` on each module before releasing it. A module with no test files or with failing tests is refused; the other modules still publish, and the job fails at the end.
+
+```yaml
+binary: tofu
+modules:
+  path: modules/*
+  publish: git-tags
+  test: true
+```
+
+The test files are the binary's own: `*.tftest.hcl` (and `*.tofutest.hcl` for OpenTofu) in the module or in its `tests` directory.
+
+```hcl
+# modules/network/tests/main.tftest.hcl
+variables {
+  name = "dev"
+}
+
+run "names" {
+  command = plan
+
+  assert {
+    condition     = terraform_data.net.input == "dev"
+    error_message = "the name is not passed through"
+  }
+}
+```
+
+The job runs `init -backend=false` and then `test` in the module's directory. The forge token, signing key and registry credentials are withheld from it. A refused release says why, with the end of the binary's output when a test failed:
+
+```text
+network 1.1.0: refused, not published to git-tags (modules/network has no tests (no *.tftest.hcl in it or its tests directory), and modules.test publishes only a release whose tests pass)
+```
+
+`publish --dry-run` runs no tests; it says which releases it would test.
+
+## Serve a module registry
+
+With `modules.registry`, a bucket or a Pages site also serves each release as static files in the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/). Roots call the modules by registry address, with a `version` that can be a constraint:
+
+```hcl
+module "network" {
+  source  = "modules.example.com/acme/network/generic"
+  version = "~> 1.0"
+  name    = "dev"
+}
+```
+
+<Steps>
+
+1. Name the bucket, the address that serves it, and the namespace.
+
+   ```yaml
+   modules:
+     path: modules/*
+     publish: git-tags          # optional; the registry can stand alone
+     test: true
+     registry:
+       bucket: s3://acme-modules
+       url: https://modules.example.com
+       namespace: acme
+   ```
+
+   | Setting | Default | Holds |
+   |---|---|---|
+   | `url` | required | the `https://` address that serves the files, with no path. Terraform and OpenTofu look for a registry at its host's root, over HTTPS only. Its host starts each module's source |
+   | `namespace` | required | the namespace modules go under |
+   | `bucket` or `dir` | one is required | an `s3://`, `gs://` or `az://` bucket, or a directory in the repo that a Pages site deploys |
+   | `prefix` | none | where the files go in the bucket; `url` serves that prefix as its root |
+   | `endpoint` | none | an S3-compatible store's address |
+   | `namespaces` | none | a tag prefix (a path in the repo, such as `platform/`) to the namespace its modules go under; the longest prefix wins |
+   | `system` | `generic` | the third part of each address |
+   | `download` | `tarball` | what each version's download points at: a `.tar.gz` beside it, its git tag (`git-tags`, which `publish` must list), or its OCI artifact (`oci`, which `publish` must list; OpenTofu only) |
+
+   A module's address is `<host>/<namespace>/<name>/<system>`, where the name is its directory's name: `modules/network` is `modules.example.com/acme/network/generic`.
+
+2. Give the publish job write access to the bucket.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   The publish job on GitHub and Forgejo maps the bucket's key secrets as a job that [keeps reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) does: for S3 the pair `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for Azure `AZURE_STORAGE_KEY`. GitLab passes it CI/CD variables of those names.
+
+3. Serve the bucket over HTTPS at `url`: a CDN in front of it, or its own static website endpoint with a certificate. Every reader of the registry needs read access to it, and only the publish job writes it.
+
+4. After the next module change merges, the publish job writes:
+
+   | File | Holds |
+   |---|---|
+   | `.well-known/terraform.json` | service discovery: `{"modules.v1": "/v1/modules/"}` |
+   | `v1/modules/<namespace>/<name>/<system>/versions` | every published version |
+   | `v1/modules/<namespace>/<name>/<system>/<version>/download` | `{"location": ...}`, the tarball, git tag or OCI artifact |
+   | `v1/modules/<namespace>/<name>/<system>/<version>/<name>-<version>.tar.gz` | the module, with `download: tarball` |
+   | `v1/modules/<namespace>/<name>/<system>/<version>/release.json` | the commit and content digest the next publish compares against |
+
+   A static server sends no `X-Terraform-Get` header, so the download answer is a JSON body with `location`, which both binaries read. A version is listed in `versions` only after the files it points at are written.
+
+5. Pin a root to the registry and run `init`. `~> 1.0` resolves to the newest `1.x` the registry lists.
+
+</Steps>
+
+In a monorepo, each part's modules can go under a namespace of their own. Tags are `<path>/v<version>`, so the path prefix of a module is its tag prefix:
+
+```yaml
+registry:
+  bucket: s3://acme-modules
+  url: https://modules.example.com
+  namespace: acme
+  namespaces:
+    platform/: platform
+    data/: data
+```
+
+`platform/modules/network` is `modules.example.com/platform/network/generic`. Two modules at one address stop the publish and name both.
+
+With `dir`, the publish job writes the files into that directory of its checkout, beside what is there. You deploy the directory to the Pages site and keep the earlier versions in it (from the site's branch, for example), since `versions` lists only what the directory holds.
+
+A [rollout](/terragucci/guides/roll-out-a-module-version/) of `modules/network` moves the `version` of each call to its registry address. A call pinned by a constraint such as `~> 1.0` has no one version to move, and the rollout refuses it.
+
+## Attest each release
+
+With `modules.attest`, the publish job also signs each new release with a key you hold and records the version in the release ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), so a root's pin can be checked against all of it.
+
+<Steps>
+
+1. Make a cosign key pair, and commit the public half.
+
+   ```bash
+   cosign generate-key-pair
+   git add cosign.pub
+   ```
+
+   Keep `cosign.key` out of the repo. Signing never writes to Sigstore's public transparency log.
+
+2. Add two more secrets, the same way as the registry credentials in step 4.
+
+   | Variable | Holds |
+   |---|---|
+   | `COSIGN_PRIVATE_KEY` | the contents of `cosign.key` |
+   | `COSIGN_PASSWORD` | its password |
+
+3. Turn it on, and write the pipeline again.
+
+   ```yaml
+   modules:
+     path: modules/*
+     publish: git-tags
+     attest: true          # or attest: { key: keys/modules.pub }
+   ```
+
+   ```bash
+   npx terragucci init
+   ```
+
+   The publish job now installs cosign, checked against its release checksums, before it publishes.
+
+4. After a module change merges, check what was released.
+
+   ```bash
+   npx terragucci verify-release modules/service 0.2.0
+   ```
+
+   It reads the tag as it stands now and prints `verified` for each target, or `refused` and why.
+
+</Steps>
+
+terragucci runs each version through these phases from this config, with no file of your own:
+
+| Phase | Does |
+|---|---|
+| Archive | takes the bytes the tag names: the module archive for a git tag, the manifest for an OCI tag |
+| Sbom | writes SPDX 2.3 JSON from the module's HCL: each provider in `required_providers`, at its lock file's version when there is one, and each module it calls from another source |
+| Sign | signs the bytes with cosign |
+| Provenance | attests SLSA v1 provenance naming the commit and the run |
+| SbomAttestation | attests the SBOM |
+| Verify | checks all three against `cosign.pub`; a job given the wrong key stops here, before it writes anything |
+| Record | makes the release record: the module's path, the digest of those bytes, the commit, the run and the actor |
+
+| What | Where |
+|---|---|
+| The release record | a line of `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+| The bundles and the SBOM | `modules/attest/<digest>/` beside it |
+| An OCI tag's signature and attestations | attached to its manifest |
+| A git tag and its record | pushed together in one atomic push; an OCI tag is pushed only after its record |
+
+A tag pushed by hand has no record that matches it, and neither does one moved after its release; `verify-release` refuses both. To go back to an earlier version, [roll out](/terragucci/guides/roll-out-a-module-version/) that version again.
+
+## Require attested releases
+
+With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. The check report and plan note name its module call and version and say why.
+
+In a Terragrunt repo the pin is each unit's `terraform { source }`. `tf-check` runs `terragucci check-pins` over every unit, and `tf-plan` takes a refused unit out of its wave, so it fails without planning while the rest of the wave plans.
+
+```yaml
+modules:
+  publish: git-tags
+  attest: true
+  require: attested
+```
+
+Only these sources are checked; a module from anywhere else, such as the public registry, is left alone:
+
+| Source | Checked when | Key | Ledger |
+|---|---|---|---|
+| This repo's own modules | `modules.attest` is on: the repo's git URL for `git-tags`, each `oci://` target, and the host of `modules.registry` | `modules.attest.key` | `chant/lifecycle` on `origin` |
+| A publisher in another repo | `modules.trusted` lists it | its `key` | its `ledger` |
+
+```yaml
+modules:
+  require: attested
+  trusted:
+    - source: git::https://git.example.com/platform/modules.git
+      key: keys/platform-modules.pub
+      ledger: https://git.example.com/platform/modules.git
+```
+
+To trust a publisher, commit their `cosign.pub` at the path `key` names. For each pin of a checked source:
+
+| Check | Refused when |
+|---|---|
+| The pin | it names no one release: a git `ref` that is not a tag, an `oci://` source with no tag or digest, a registry source whose `version` is a constraint |
+| The record | the publisher's ledger has no record of the bytes the tag names now, from the tag's commit: a tag pushed by hand, moved, or never published |
+| The signature, provenance and SBOM | any of them is missing or does not verify against the key |
+
+| Job | Reads the setting and the keys from |
+|---|---|
+| `tf-plan` | the base branch, as it reads [the policy](/terragucci/reference/policy/#the-base-branch-decides), so a pull request cannot turn the check off or trust a key of its own |
+| `tf-check` | the base branch when its checkout has it, else the checkout |
+
+A registry source is checked where its registry says the version is: the tarball's bytes, or the git tag or OCI artifact its download points at, each checked as that kind of source is. Under `download: tarball` a release is signed and recorded in the ledger before `versions` lists it. The jobs read the registry over HTTPS, as `tofu init` does, so a private CA's certificate goes in `NODE_EXTRA_CA_CERTS`.
+
+Tags and the ledger are fetched with the jobs' own git access; an `oci://` source is read with no login, or with `TERRAGUCCI_REGISTRY_USER` and `TERRAGUCCI_REGISTRY_PASSWORD` when the job has them.
+
+## Next
+
+- [Supply chain](/terragucci/standards/supply-chain/): where everything a job runs comes from, and what is checked before it runs.
+- [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) moves your roots onto it.
+- [Environment variables and credentials](/terragucci/reference/environment/)

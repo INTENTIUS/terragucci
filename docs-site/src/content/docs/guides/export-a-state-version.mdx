@@ -1,0 +1,81 @@
+---
+title: Export a state version
+description: Download one version of a root's state to your machine, once someone else approved the request, with the export recorded on chant/lifecycle and in the audit trail.
+claims: [state/export, state/terragrunt-export, state/gcs, state/azurerm]
+prompt: |
+  Read https://intentius.io/terragucci/guides/export-a-state-version/.
+  Tell me which roots of this repo `terragucci state export` can export, and what each needs (an s3, gcs or azurerm backend that keeps versions), from the roots' backend blocks.
+  Read only: do not run `terragucci state export`, and do not read or download any state.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+One version of a root's state in a file on your machine that only you can read. A record on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) names who exported which root and version, and who approved it. The [audit trail](/terragucci/reference/audit-trail/) lists it as a `state-export` entry.
+
+The state goes only to the person who runs the command; no job writes it to the reports bucket or as an artifact. Anyone with read access to the repo can read a job's artifact while the forge keeps it (on a public repo, everyone), and a state holds every secret its resources hold. On your machine, the state reaches only someone whose own cloud identity can already read the bucket; terragucci adds another person's approval and the record.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| A root whose backend keeps versions: `s3` or `gcs` with versioning on, `azurerm` with blob versioning or `snapshot = true`, or [GitLab-managed state](#gitlab-managed-state) | the export reads a version by its id; [Find the state version an apply left](/terragucci/guides/find-a-state-version/) turns versioning on and lists the ids |
+| Your own cloud identity that can read the state object | the command runs on your machine with your credentials |
+| A checkout whose `origin` you can push to | the request and the record go to `chant/lifecycle` |
+| Someone else to approve | an approval by the person who asked does not count |
+
+A Terragrunt unit exports the same way: name the unit, such as `terragucci state export live/app`. Terragrunt prepares it as a [migration](/terragucci/guides/move-resources-between-roots/) does (`init` in the unit through its `remote_state` block), so the export reads the state Terragrunt reads and needs Terragrunt on the path. The command refuses roots with a `cloud` block. A `local` backend, or a store that keeps no versions, has no version id to export. Without `--version`, an `azurerm` backend that keeps snapshots and no blob versions gets a snapshot of the blob, whose time is the id.
+
+## Steps
+
+<Steps>
+
+1. Ask for the version. Take its id from the estate page's State versions section, or leave `--version` out for the current one:
+
+   ```bash
+   terragucci state export envs/dev/app --version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY
+   ```
+
+   It reads the version's metadata and never its body. Then it records the request and exits 3:
+
+   ```text
+   state export: alice asks for envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY; request sha256:5e0b...
+   someone other than you approves it with:
+     terragucci approve export envs/dev/app --plan sha256:5e0b...
+   then run this command again to download it.
+   ```
+
+   The request names you by git's `user.name`, or by `--actor`.
+
+2. Someone else approves the request with the command it printed. Under `approval: sealed` the approval needs a seal (`--sign`) from a key the signers file lists.
+
+3. Run the same command again. It downloads the version and records the export in `_gates/tf-state-export/done.jsonl`. Only then does it write the file:
+
+   ```text
+   state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY.tfstate: envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY, approved by bob
+   ```
+
+   The file is mode 0600 in a new directory of its own. `--out <file>` names another place outside the repo; a path inside the repo is refused, so the state is never committed by accident. When the record cannot be pushed, nothing is written.
+
+4. Delete the file when you are done.
+
+</Steps>
+
+A request exports once; running the command again records a new request for a new approval.
+
+## GitLab-managed state
+
+The version id is GitLab's serial, and `--version` takes it: `terragucci state export envs/dev/app --version 7`. Without `--version`, the export takes the current serial. The command calls GitLab with the backend's credentials: set `TF_HTTP_USERNAME` to your GitLab username and `TF_HTTP_PASSWORD` to a personal access token with the `api` scope and the Developer role or higher on the project.
+
+The request checks the version with a `HEAD` and never reads it. Without `--version`, it reads the current state for its serial, since GitLab answers the serial no other way, and keeps nothing else.
+
+## In the audit trail
+
+`terragucci audit` turns the request into an `approval-requested` entry and the approval into an `approval` entry. The export is a `state-export` entry: `who` is the person who exported and `what` the root. Its `detail` holds the location and the version id, who approved it, and the digest of the file, never its contents.
+
+## Next
+
+- [Threat model](/terragucci/reference/threat-model/#exporting-a-state) for what the approval stops and what it does not.
+- [`state export`](/terragucci/reference/cli/#state-export) for every flag.

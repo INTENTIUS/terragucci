@@ -1,0 +1,19 @@
+# The demo's Terragrunt units: network, and app (reads network). A scenario's
+# pull request adds ledger, and billing (reads ledger). Each unit is
+# terraform_data with its own state in floci; the plan reports and run views go
+# to the reports bucket there too, beside the Terraform demo's.
+forge: forgejo
+binary: tofu
+gate: on-destructive
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
+# Each job's traces and metrics go to the stack's OpenTelemetry collector:
+# the metrics on to the Prometheus and the traces on to the Tempo that
+# behold's kiosk reads (stack/demo.sh up starts all three). Each gauge is
+# labelled with its commit and run, and each trace names them too. A
+# collector or a Tempo that is down never changes a job's result.
+env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  TERRAGUCCI_METRICS_PER_RUN: "true"

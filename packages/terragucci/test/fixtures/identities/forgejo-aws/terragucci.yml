@@ -1,0 +1,15 @@
+# Forgejo, AWS: environments with their own roles. Forgejo has no deployment environments.
+forge: forgejo
+url: https://git.example.com
+binary: tofu
+oidc:
+  plan_role: arn:aws:iam::444444444444:role/plan
+  apply_role: arn:aws:iam::444444444444:role/apply
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    oidc:
+      plan_role: arn:aws:iam::444444444444:role/prod-plan
+      apply_role: arn:aws:iam::444444444444:role/prod-apply
+  dev:
+    roots: ["envs/dev/**"]

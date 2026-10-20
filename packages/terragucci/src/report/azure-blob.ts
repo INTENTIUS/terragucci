@@ -1,0 +1,367 @@
+/**
+ * Azure Blob Storage for the reports and for an azurerm backend's state,
+ * over its REST API with `fetch` and `node:crypto`: put a block blob, get
+ * one, and a SAS link to one; for a state, a blob's properties and
+ * metadata, one version or snapshot of it, a snapshot, and the blob lease
+ * the backend locks a state with.
+ *
+ * With the job's Azure OIDC identity (the ARM_* variables a job with
+ * `oidc.azure` sets), the token in ARM_OIDC_TOKEN_FILE_PATH is traded at
+ * Entra ID for a storage token (a client assertion, the way the azurerm
+ * backend does it), and a link is a user delegation SAS signed with a key
+ * the identity asks the account for. With an account key
+ * (AZURE_STORAGE_KEY), requests are signed with Shared Key and a link is a
+ * service SAS. Both SAS kinds read one blob and nothing else. An azurerm
+ * backend's `sas_token` (ARM_SAS_TOKEN) rides on each request as it is.
+ *
+ * Writes are conditional the way S3's are: If-Match the ETag read, or
+ * If-None-Match `*` when there was none. Azure answers a lost write with 412
+ * (the ETag moved) or 409 (the blob appeared).
+ */
+import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { encodePath, isoSeconds, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, xmlBlocks, xmlText, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./object-store";
+
+/** The REST version every request names, and the SAS version: the 2020-12-06 string-to-sign layouts. */
+export const AZURE_VERSION = "2021-08-06";
+
+/** Entra ID's public cloud; AZURE_AUTHORITY_HOST names a sovereign cloud's. */
+export const AZURE_AUTHORITY = "https://login.microsoftonline.com";
+
+const STORAGE_SCOPE = "https://storage.azure.com/.default";
+
+export interface AzureLocation {
+  account: string;
+  container: string;
+  /** The account's blob endpoint, no trailing slash: https://<account>.blob.core.windows.net, or an emulator's http://host:10000/<account>. */
+  endpoint: string;
+}
+
+/** The job's federated identity: an Entra app or managed identity that trusts the forge's token. */
+export interface AzureOidc {
+  tenantId: string;
+  clientId: string;
+  tokenFile: string;
+  /** Entra ID's address, https://host, no path. */
+  authority: string;
+}
+
+export type AzureTarget = AzureLocation & ({ accountKey: string } | { oidc: AzureOidc } | { sas: string });
+
+/** A blob's properties, as a HEAD answers them: never its body. */
+export interface BlobHead {
+  exists: boolean;
+  etag?: string;
+  /** x-ms-version-id: the account keeps each version of the blob. */
+  versionId?: string;
+  /** x-ms-lease-state: `leased` while a lease holds it. */
+  leaseState?: string;
+  /** Its metadata, by name without the x-ms-meta- prefix. */
+  metadata: Record<string, string>;
+}
+
+/** Which earlier state of a blob: a version (blob versioning) or a snapshot. */
+export type BlobAt = { versionid: string } | { snapshot: string };
+
+/** The target from `reports` and the job's environment. An account key wins over the job's OIDC identity. */
+export function azureFromEnv(where: { account: string; container: string; endpoint?: string }, env: NodeJS.ProcessEnv = process.env): AzureTarget {
+  const at: AzureLocation = { account: where.account, container: where.container, endpoint: (where.endpoint ?? `https://${where.account}.blob.core.windows.net`).replace(/\/+$/, "") };
+  if (env.AZURE_STORAGE_KEY) return { ...at, accountKey: env.AZURE_STORAGE_KEY };
+  const tenantId = env.ARM_TENANT_ID;
+  const clientId = env.ARM_CLIENT_ID;
+  const tokenFile = env.ARM_OIDC_TOKEN_FILE_PATH;
+  if (tenantId && clientId && tokenFile) return { ...at, oidc: { tenantId, clientId, tokenFile, authority: (env.AZURE_AUTHORITY_HOST || AZURE_AUTHORITY).replace(/\/+$/, "") } };
+  throw new StoreError(`reports.bucket is az://${where.account}/${where.container}, but the job has no credentials for it: give the job oidc.azure (it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH), or set AZURE_STORAGE_KEY`);
+}
+
+const hmac64 = (key: string, s: string): string => createHmac("sha256", Buffer.from(key, "base64")).update(s, "utf8").digest("base64");
+
+/** The headers whose values Shared Key signs by position, in order. */
+const SIGNED = ["content-encoding", "content-language", "content-length", "content-md5", "content-type", "date", "if-modified-since", "if-match", "if-none-match", "if-unmodified-since", "range"];
+
+/**
+ * The Shared Key Authorization header for a request. The resource is the
+ * account and the URL's path (an emulator's path, which starts with the
+ * account, too), then each query parameter on its own line.
+ */
+export function sharedKey(account: string, accountKey: string, method: string, rawUrl: string, headers: Record<string, string>): string {
+  const url = new URL(rawUrl);
+  const h = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  const fixed = SIGNED.map((n) => (n === "content-length" && h[n] === "0" ? "" : (h[n] ?? "")));
+  const ms = Object.keys(h).filter((n) => n.startsWith("x-ms-")).sort().map((n) => `${n}:${h[n].trim()}\n`).join("");
+  const params = new Map<string, string[]>();
+  for (const [k, v] of url.searchParams) params.set(k.toLowerCase(), [...(params.get(k.toLowerCase()) ?? []), v]);
+  const query = [...params.keys()].sort().map((k) => `\n${k}:${params.get(k)!.sort().join(",")}`).join("");
+  const toSign = [method, ...fixed].join("\n") + "\n" + ms + `/${account}${url.pathname}` + query;
+  return `SharedKey ${account}:${hmac64(accountKey, toSign)}`;
+}
+
+/** A user delegation key, as Get User Delegation Key answers it. */
+export interface DelegationKey {
+  oid: string;
+  tid: string;
+  start: string;
+  expiry: string;
+  service: string;
+  version: string;
+  value: string;
+}
+
+/** The query of a read-only SAS for one blob: a user delegation SAS with `key`, else a service SAS signed with the account key. */
+export function blobSas(t: AzureLocation, blob: string, expiry: Date, sign: { accountKey: string } | { key: DelegationKey }): string {
+  const se = isoSeconds(expiry);
+  const spr = t.endpoint.startsWith("https:") ? "https" : "";
+  const resource = `/blob/${t.account}/${t.container}/${blob}`;
+  const tail = [spr, AZURE_VERSION, "b", "", "", "", "", "", "", ""];
+  let toSign: string;
+  let params: [string, string][];
+  if ("key" in sign) {
+    const k = sign.key;
+    toSign = ["r", "", se, resource, k.oid, k.tid, k.start, k.expiry, k.service, k.version, "", "", "", "", ...tail].join("\n");
+    params = [["skoid", k.oid], ["sktid", k.tid], ["skt", k.start], ["ske", k.expiry], ["sks", k.service], ["skv", k.version]];
+  } else {
+    toSign = ["r", "", se, resource, "", "", ...tail].join("\n");
+    params = [];
+  }
+  const sig = hmac64("key" in sign ? sign.key.value : sign.accountKey, toSign);
+  const q = new URLSearchParams([["sv", AZURE_VERSION], ["sr", "b"], ["sp", "r"], ["se", se], ...(spr ? [["spr", spr] as [string, string]] : []), ...params, ["sig", sig]]);
+  return q.toString();
+}
+
+/** Entra ID's error, or the start of the body. */
+const why = (text: string): string => {
+  try {
+    const j = JSON.parse(text) as { error?: string; error_description?: string };
+    if (j.error) return [j.error, j.error_description?.split("\r\n")[0]].filter(Boolean).join(": ");
+  } catch {
+    // Not JSON: Blob Storage answers in XML.
+  }
+  return [xmlText(text, "Code"), xmlText(text, "Message")?.split("\n")[0]].filter(Boolean).join(": ") || text.slice(0, 300);
+};
+
+export class AzureBlobClient implements ObjectStore {
+  private token?: Promise<{ token: string; expires: number }>;
+  private keys = new Map<string, Promise<DelegationKey>>();
+
+  constructor(readonly target: AzureTarget, private readonly fetchFn: StoreFetch = fetch as unknown as StoreFetch, private readonly readToken: (file: string) => string = (f) => readFileSync(f, "utf-8")) {}
+
+  get location(): string {
+    return `az://${this.target.account}/${this.target.container}`;
+  }
+
+  private blobUrl(key: string, query = ""): string {
+    const t = this.target;
+    const q = [query, "sas" in t ? t.sas.replace(/^\?/, "") : ""].filter(Boolean).join("&");
+    return `${t.endpoint}/${t.container}/${encodePath(key)}${q ? `?${q}` : ""}`;
+  }
+
+  /** The storage token for the OIDC identity: once per client, again a minute before it expires. */
+  private async bearer(o: AzureOidc): Promise<string> {
+    const fetchToken = async (): Promise<{ token: string; expires: number }> => {
+      let assertion: string;
+      try {
+        assertion = this.readToken(o.tokenFile).trim();
+      } catch (e) {
+        throw new StoreError(`cannot read the OIDC token in ${o.tokenFile}: ${(e as Error).message}`);
+      }
+      if (!assertion) throw new StoreError(`the OIDC token file ${o.tokenFile} is empty`);
+      const body = new URLSearchParams({
+        client_id: o.clientId,
+        scope: STORAGE_SCOPE,
+        grant_type: "client_credentials",
+        client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        client_assertion: assertion,
+      }).toString();
+      const res = await this.fetchFn(`${o.authority}/${o.tenantId}/oauth2/v2.0/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
+      const text = await res.text();
+      if (!res.ok) throw new StoreError(`Entra ID refused the OIDC token for client ${o.clientId}: ${res.status} ${why(text)}`);
+      let j: { access_token?: string; expires_in?: number | string } = {};
+      try {
+        j = JSON.parse(text) as typeof j;
+      } catch {
+        // Reported below as no token.
+      }
+      if (!j.access_token) throw new StoreError(`Entra ID answered client ${o.clientId} without a token`);
+      return { token: j.access_token, expires: Date.now() + Number(j.expires_in ?? 3600) * 1000 };
+    };
+    const again = (): Promise<{ token: string; expires: number }> =>
+      (this.token = fetchToken().catch((e: unknown) => {
+        this.token = undefined;
+        throw e;
+      }));
+    let held = await (this.token ?? again());
+    if (held.expires - Date.now() < 60_000) held = await again();
+    return held.token;
+  }
+
+  /** The headers for one request, signed or with the bearer token. */
+  private async headers(method: string, url: string, extra: Record<string, string>): Promise<Record<string, string>> {
+    const h: Record<string, string> = { "x-ms-date": new Date().toUTCString(), "x-ms-version": AZURE_VERSION, ...extra };
+    const t = this.target;
+    if ("accountKey" in t) return { ...h, authorization: sharedKey(t.account, t.accountKey, method, url, h) };
+    if ("sas" in t) return h;
+    return { ...h, authorization: `Bearer ${await this.bearer(t.oidc)}` };
+  }
+
+  async put(key: string, body: string | Uint8Array, contentType: string, when?: StoreCondition): Promise<{ etag?: string }> {
+    const url = this.blobUrl(key);
+    const cond: Record<string, string> = !when ? {} : "ifMatch" in when ? { "if-match": when.ifMatch } : { "if-none-match": "*" };
+    const length = typeof body === "string" ? Buffer.byteLength(body) : body.byteLength;
+    const headers = await this.headers("PUT", url, { "x-ms-blob-type": "BlockBlob", "content-type": contentType, "content-length": String(length), ...cond });
+    const res = await this.fetchFn(url, { method: "PUT", headers, body });
+    if (res.status === 412 || (res.status === 409 && when)) throw new StoreConflict(`PUT ${this.location}/${key}: ${res.status}, it changed since it was read`);
+    if (!res.ok) throw new StoreError(`PUT ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    const etag = res.headers?.get("etag") ?? undefined;
+    return etag ? { etag } : {};
+  }
+
+  async read(key: string): Promise<{ body?: string; etag?: string }> {
+    const url = this.blobUrl(key);
+    const res = await this.fetchFn(url, { method: "GET", headers: await this.headers("GET", url, {}) });
+    if (res.status === 404) return {};
+    if (!res.ok) throw new StoreError(`GET ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    const etag = res.headers?.get("etag") ?? undefined;
+    return { body: await res.text(), ...(etag ? { etag } : {}) };
+  }
+
+  async get(key: string): Promise<string | undefined> {
+    return (await this.read(key)).body;
+  }
+
+  /** A blob's properties and metadata, from a HEAD: of the blob, or of one version or snapshot of it. */
+  async head(key: string, at?: BlobAt): Promise<BlobHead> {
+    const url = this.blobUrl(key, at ? new URLSearchParams(at as Record<string, string>).toString() : "");
+    const res = await this.fetchFn(url, { method: "HEAD", headers: await this.headers("HEAD", url, {}) });
+    // A HEAD has no body to say why: an id Azure never issued is a 400.
+    if (res.status === 404 || (at && res.status === 400)) return { exists: false, metadata: {} };
+    if (!res.ok) throw new StoreError(`HEAD ${this.location}/${key}: ${res.status}`);
+    const get = (n: string): string | undefined => res.headers?.get(n) ?? undefined;
+    const metadata: Record<string, string> = {};
+    const all = res.headers as unknown as { forEach?: (fn: (v: string, k: string) => void) => void } | undefined;
+    all?.forEach?.((v, k) => {
+      if (k.toLowerCase().startsWith("x-ms-meta-")) metadata[k.toLowerCase().slice("x-ms-meta-".length)] = v;
+    });
+    const etag = get("etag");
+    const versionId = get("x-ms-version-id");
+    const leaseState = get("x-ms-lease-state");
+    return { exists: true, ...(etag ? { etag } : {}), ...(versionId ? { versionId } : {}), ...(leaseState ? { leaseState } : {}), metadata };
+  }
+
+  /** One version or snapshot of a blob's text; undefined when there is none such. */
+  async readAt(key: string, at: BlobAt): Promise<string | undefined> {
+    const url = this.blobUrl(key, new URLSearchParams(at as Record<string, string>).toString());
+    const res = await this.fetchFn(url, { method: "GET", headers: await this.headers("GET", url, {}) });
+    if (res.status === 404 || res.status === 400) return undefined;
+    if (!res.ok) throw new StoreError(`GET ${this.location}/${key} ${JSON.stringify(at)}: ${res.status} ${why(await res.text())}`);
+    return res.text();
+  }
+
+  /**
+   * Every version the account keeps of one blob, from List Blobs with
+   * `include=versions`: each one's version id, its Last-Modified and whether
+   * it is the current version. A blob with no version id (blob versioning
+   * off) lists nothing. Metadata only; it needs the container's list
+   * permission.
+   */
+  async listVersions(key: string): Promise<ObjectVersion[]> {
+    const t = this.target;
+    const out: ObjectVersion[] = [];
+    let marker: string | undefined;
+    for (let page = 0; page < 1000; page++) {
+      const q = ["restype=container", "comp=list", "include=versions", `prefix=${encodeURIComponent(key)}`, ...(marker ? [`marker=${encodeURIComponent(marker)}`] : []), ...("sas" in t ? [t.sas.replace(/^\?/, "")] : [])].join("&");
+      const url = `${t.endpoint}/${t.container}?${q}`;
+      const res = await this.fetchFn(url, { method: "GET", headers: await this.headers("GET", url, {}) });
+      const xml = await res.text();
+      if (!res.ok) throw new StoreError(`list the versions of ${this.location}/${key}: ${res.status} ${why(xml)}`);
+      for (const b of xmlBlocks(xml, "Blob")) {
+        const id = xmlText(b, "VersionId");
+        const when = xmlText(b, "Last-Modified");
+        // The prefix lists any blob whose name starts with this one: only the blob itself counts.
+        if (xmlText(b, "Name") !== key || !id || !when) continue;
+        out.push({ version_id: id, written_at: new Date(when).toISOString(), latest: xmlText(b, "IsCurrentVersion") === "true" });
+      }
+      marker = xmlText(xml, "NextMarker") || undefined;
+      if (!marker) break;
+    }
+    return out.sort((a, b) => Date.parse(b.written_at) - Date.parse(a.written_at));
+  }
+
+  /** Take a snapshot of a blob: its id, the time Azure gives it. */
+  async snapshot(key: string): Promise<string> {
+    const url = this.blobUrl(key, "comp=snapshot");
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, { "content-length": "0" }) });
+    if (!res.ok) throw new StoreError(`snapshot of ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    const id = res.headers?.get("x-ms-snapshot");
+    if (!id) throw new StoreError(`snapshot of ${this.location}/${key}: Azure answered without x-ms-snapshot`);
+    return id;
+  }
+
+  /** Write a block blob with metadata, under a lease when one holds it. */
+  async putBlob(key: string, body: string, contentType: string, options: { leaseId?: string; metadata?: Record<string, string>; ifNoneMatch?: boolean } = {}): Promise<boolean> {
+    const url = this.blobUrl(key);
+    const meta = Object.fromEntries(Object.entries(options.metadata ?? {}).map(([k, v]) => [`x-ms-meta-${k}`, v]));
+    const extra: Record<string, string> = {
+      "x-ms-blob-type": "BlockBlob",
+      "content-type": contentType,
+      "content-length": String(Buffer.byteLength(body)),
+      ...meta,
+      ...(options.leaseId ? { "x-ms-lease-id": options.leaseId } : {}),
+      ...(options.ifNoneMatch ? { "if-none-match": "*" } : {}),
+    };
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, extra), body });
+    if (options.ifNoneMatch && (res.status === 409 || res.status === 412)) return false;
+    if (!res.ok) throw new StoreError(`PUT ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    return true;
+  }
+
+  /** A blob lease: acquire one that never expires with the id given (false when one holds it), or release it. */
+  async lease(key: string, action: "acquire" | "release", id: string): Promise<boolean> {
+    const url = this.blobUrl(key, "comp=lease");
+    const extra: Record<string, string> = { "x-ms-lease-action": action, "content-length": "0", ...(action === "acquire" ? { "x-ms-lease-duration": "-1", "x-ms-proposed-lease-id": id } : { "x-ms-lease-id": id }) };
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, extra) });
+    if (action === "acquire" && res.status === 409) return false;
+    if (!res.ok) throw new StoreError(`${action} the lease of ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+    return true;
+  }
+
+  /** Set a blob's metadata, all of it, under its lease when one holds it. */
+  async setMetadata(key: string, metadata: Record<string, string>, leaseId?: string): Promise<void> {
+    const url = this.blobUrl(key, "comp=metadata");
+    const extra = { "content-length": "0", ...Object.fromEntries(Object.entries(metadata).map(([k, v]) => [`x-ms-meta-${k}`, v])), ...(leaseId ? { "x-ms-lease-id": leaseId } : {}) };
+    const res = await this.fetchFn(url, { method: "PUT", headers: await this.headers("PUT", url, extra) });
+    if (!res.ok) throw new StoreError(`set the metadata of ${this.location}/${key}: ${res.status} ${why(await res.text())}`);
+  }
+
+  /** Get User Delegation Key, valid from now until `expiry`: one per expiry, so the estate's one link asks once. */
+  private delegationKey(now: Date, expiry: Date): Promise<DelegationKey> {
+    const id = isoSeconds(expiry);
+    let k = this.keys.get(id);
+    if (!k) {
+      k = (async () => {
+        const url = `${this.target.endpoint}/?restype=service&comp=userdelegationkey`;
+        const body = `<?xml version="1.0" encoding="utf-8"?><KeyInfo><Start>${isoSeconds(now)}</Start><Expiry>${id}</Expiry></KeyInfo>`;
+        const res = await this.fetchFn(url, { method: "POST", headers: await this.headers("POST", url, { "content-type": "application/xml" }), body });
+        const xml = await res.text();
+        if (!res.ok) throw new StoreError(`Get User Delegation Key on ${this.target.account}: ${res.status} ${why(xml)}`);
+        const f = (tag: string): string => {
+          const v = xmlText(xml, tag);
+          if (!v) throw new StoreError(`Get User Delegation Key on ${this.target.account} answered without ${tag}`);
+          return v;
+        };
+        return { oid: f("SignedOid"), tid: f("SignedTid"), start: f("SignedStart"), expiry: f("SignedExpiry"), service: f("SignedService"), version: f("SignedVersion"), value: f("Value") };
+      })();
+      k.catch(() => this.keys.delete(id));
+      this.keys.set(id, k);
+    }
+    return k;
+  }
+
+  /** A read-only SAS link to `key` for `seconds`. */
+  async presign(key: string, seconds: number, now = new Date()): Promise<{ url: string; expires: Date }> {
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > PRESIGN_MAX_SECONDS) throw new StoreError(`a SAS link lives 1 to ${PRESIGN_MAX_SECONDS} seconds, not ${seconds}`);
+    const expires = new Date(Math.floor(now.getTime() / 1000) * 1000 + seconds * 1000);
+    const t = this.target;
+    const sas = blobSas(t, key, expires, "accountKey" in t ? { accountKey: t.accountKey } : { key: await this.delegationKey(now, expires) });
+    return { url: `${this.blobUrl(key)}?${sas}`, expires };
+  }
+}

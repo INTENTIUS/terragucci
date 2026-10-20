@@ -1,0 +1,423 @@
+# terragucci. The kit's lifecycle Ops are not implemented yet; see the status page.
+
+default:
+    @just --list
+
+# ── checks ─────────────────────────────────────────────────────────────────
+
+[doc("Typecheck the declarations.")]
+typecheck:
+    npx tsc --noEmit -p tsconfig.json
+
+[doc("Lint the declarations with chant.")]
+lint:
+    #!/usr/bin/env bash
+    # chant lint takes one path, so each directory gets its own run. They run
+    # side by side; each one's output is printed whole, in order.
+    set -uo pipefail
+    logs="$(mktemp -d -t terragucci-lint-XXXX)"
+    trap 'rm -rf "$logs"' EXIT
+    dirs=(ci pages image-ci publish images ci-red diff-guard observability scale)
+    for d in "${dirs[@]}"; do
+      ( npx chant lint "$d" >"$logs/$d.log" 2>&1; echo $? >"$logs/$d.rc" ) &
+    done
+    wait
+    rc=0
+    for d in "${dirs[@]}"; do
+      cat "$logs/$d.log"
+      if [ "$(cat "$logs/$d.rc")" != 0 ]; then echo "  chant lint $d failed"; rc=1; fi
+    done
+    bash -n stack/smoke.sh || rc=1
+    node scripts/check-breaks.mjs || rc=1
+    exit $rc
+
+[doc("Run the unit tests, after building the bundle the bundle's own tests run. Arguments go to vitest.")]
+test *args: build-cli
+    npx vitest run --passWithNoTests {{args}}
+
+[doc("Run one of TOTAL slices of the unit tests, as each of CI's test jobs does.")]
+test-shard index total="3":
+    just test --shard={{index}}/{{total}}
+
+[doc("Score the docs with the sentences prose linter.")]
+lint-docs strictness="2" limit="8":
+    node scripts/lint-docs.mjs {{strictness}} {{limit}}
+    node scripts/lint-ui-text.mjs {{strictness}} {{limit}}
+    node scripts/lint-config-docs.mjs
+
+[doc("Fail when a page that is not a tutorial page holds a capture, or a required capture is missing. Optional captures not taken and stale ones are listed; --strict fails on them.")]
+tutorial-check *args:
+    node scripts/tutorial-check.mjs {{args}}
+
+[doc("Build the bundle and hold it to its shape: no dependencies, under budget, Node imports only.")]
+bundle-check: build-cli
+    node scripts/bundle-check.mjs
+
+[doc("Vet and test the Terraform and OpenTofu provider, and check its files are gofmt'd.")]
+provider-test:
+    cd terraform-provider-terragucci && test -z "$(gofmt -l .)" && go vet ./... && go test ./...
+
+[doc("Fail when a chant example's committed pipeline is not what chant's generator writes at the chant the tree pins. --write writes the generator's output.")]
+chant-pipelines *args:
+    node scripts/chant-pipelines.mjs {{args}}
+
+[doc("Fail when a tracked picture, video or PDF is not an LFS pointer, or a blob added since BASE is over 512 KB. With no arguments, the index against origin/main; diff-guard passes BASE HEAD.")]
+lfs-check *args:
+    scripts/lfs-check.sh {{args}}
+
+[doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial, the rendered workflows, the chant examples' pipelines and the LFS check. CI's static job.")]
+check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines lfs-check
+
+[doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle, the provider and the rendered workflows. What CI runs: its static job and its test jobs.")]
+check: check-static test
+
+# ── this repo's workflows ──────────────────────────────────────────────────
+
+# One directory per workflow, because `chant build <dir>` writes one file.
+[doc("Render the GitHub workflows from their TypeScript declarations.")]
+ci:
+    npx chant build ci -o .github/workflows/ci.yml --format yaml
+    npx chant build pages -o .github/workflows/pages.yml --format yaml
+    npx chant build image-ci -o .github/workflows/images.yml --format yaml
+    npx chant build publish -o .github/workflows/publish.yml --format yaml
+    npx chant build ci-red -o .github/workflows/ci-red.yml --format yaml
+    npx chant build diff-guard -o .github/workflows/diff-guard.yml --format yaml
+    npx chant build scale -o .github/workflows/scale.yml --format yaml
+    just render-observability
+    just render-images
+    just render-front-door
+
+[doc("Render the stack's collector and Prometheus configs from observability/, and the dashboards, rules and Grafana datasources, into stack/observability/.")]
+render-observability:
+    npx chant build observability --lexicon-output otel=stack/observability/collector.yaml --lexicon-output prometheus=stack/observability/prometheus.yml --format yaml
+    npx tsx scripts/render-dashboards.ts
+    @echo "  ✓ stack/observability/ rendered"
+
+[doc("Render the reports front door's CloudFormation template from front-door/ into the site's downloads.")]
+render-front-door:
+    npx chant build front-door -o docs-site/public/reports-front-door.json --format json >/dev/null
+    @echo "  ✓ docs-site/public/reports-front-door.json rendered"
+
+[doc("Render the CI images' Dockerfiles from images/images.ts into images/.")]
+render-images:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$(mktemp -d -t terragucci-images-XXXX)"
+    npx chant build images -o "$dir/compose.yml" --format yaml >/dev/null
+    cp "$dir"/Dockerfile.* images/
+    rm -rf "$dir"
+    echo "  ✓ images/Dockerfile.* rendered"
+
+[doc("Fail if any committed workflow, Dockerfile or stack config has drifted from its declaration.")]
+ci-check:
+    #!/usr/bin/env bash
+    # GitHub reads the YAML, so the rendered file is committed. This gate keeps
+    # the TypeScript the source of truth: a hand edit to the YAML fails here.
+    # Every render writes into its own place under one temp dir and they run
+    # side by side; the comparisons then run in order.
+    set -uo pipefail
+    out="$(mktemp -d -t terragucci-ci-XXXX)"
+    trap 'rm -rf "$out"' EXIT
+    # render NAME COMMAND...: run COMMAND in the background, its output in $out/NAME.log.
+    render() { local name="$1"; shift; ( "$@" >"$out/$name.log" 2>&1; echo $? >"$out/$name.rc" ) & }
+    # rendered NAME: whether NAME's render succeeded; prints its output when it did not.
+    rendered() {
+      [ "$(cat "$out/$1.rc")" = 0 ] && return 0
+      cat "$out/$1.log"; echo "  rendering $1 failed"; return 1
+    }
+    # same COMMITTED RENDERED SOURCE: compare one committed file with its render.
+    same() {
+      if diff -u "$1" "$2"; then
+        echo "  ✓ $1 matches $3"
+      else
+        echo "  $1 is not what $3 renders. Run 'just ci' and commit the result."
+        return 1
+      fi
+    }
+    workflows=("ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml")
+    for pair in "${workflows[@]}"; do
+      src="${pair%%:*}"
+      render "$src" npx chant build "$src" -o "$out/$src.yml" --format yaml
+    done
+    # The Dockerfiles: the docker lexicon writes them beside its (empty) compose output.
+    mkdir "$out/images"
+    render images npx chant build images -o "$out/images/compose.yml" --format yaml
+    # The stack's collector and Prometheus configs, from observability/.
+    render observability npx chant build observability --lexicon-output "otel=$out/collector.yaml" --lexicon-output "prometheus=$out/prometheus.yml" --format yaml
+    # The reports front door's template, which the site offers for download.
+    render front-door npx chant build front-door -o "$out/front-door.json" --format json
+    # The dashboards, rules and Grafana datasources the stack's Grafana and Prometheus read.
+    render dashboards npx tsx scripts/render-dashboards.ts --check
+    wait
+    rc=0
+    for pair in "${workflows[@]}"; do
+      src="${pair%%:*}"; committed="${pair#*:}"
+      if rendered "$src"; then same "$committed" "$out/$src.yml" "$src/pipeline.ts" || rc=1; else rc=1; fi
+    done
+    if rendered images; then
+      for f in "$out/images"/Dockerfile.*; do
+        same "images/$(basename "$f")" "$f" images/images.ts || rc=1
+      done
+    else
+      rc=1
+    fi
+    if rendered observability; then
+      same stack/observability/collector.yaml "$out/collector.yaml" observability/collector.ts || rc=1
+      same stack/observability/prometheus.yml "$out/prometheus.yml" observability/prometheus.ts || rc=1
+    else
+      rc=1
+    fi
+    if rendered front-door; then
+      same docs-site/public/reports-front-door.json "$out/front-door.json" front-door/stack.ts || rc=1
+    else
+      rc=1
+    fi
+    cat "$out/dashboards.log"
+    [ "$(cat "$out/dashboards.rc")" = 0 ] || rc=1
+    exit $rc
+
+# ── the published site ─────────────────────────────────────────────────────
+
+[doc("Build the docs site, the same way CI does.")]
+site:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scripts/fetch-media.sh
+    cd docs-site
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
+    npm run build
+    echo "  ✓ docs-site/dist built"
+
+[doc("Serve the docs site locally with hot reload.")]
+site-dev:
+    scripts/fetch-media.sh
+    cd docs-site && npm install && npm run dev
+
+[doc("Serve the docs with hot reload and open them in the browser, at /terragucci/ as on Pages.")]
+docs:
+    scripts/fetch-media.sh
+    cd docs-site && npm install && npm run dev -- --open
+
+[doc("Build the docs the way CI does, then serve that build and open it: the site as Pages serves it.")]
+docs-preview: site
+    cd docs-site && npm run preview -- --open
+
+# ── local validation ───────────────────────────────────────────────────────
+# A real forge, a real runner and floci on one Docker network; see
+# stack/README.md. Each target skips with a message when Docker is not there.
+
+[doc("Bring up a profile of the validation stack (aws, forgejo, github, gitlab, fountain).")]
+stack-up profile="forgejo":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available, so the validation stack cannot start."; exit 0
+    fi
+    stack/bootstrap.sh {{profile}}
+
+[doc("Bring up the stack profiles a terragucci config needs: floci and its forges.")]
+stack-for config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    profiles="$(node_modules/.bin/terragucci profiles --config {{config}})"
+    echo "{{config}} needs: $profiles"
+    for p in $profiles; do
+      case "$p" in
+        aws) ;;
+        forgejo|github|gitlab|fountain) stack/bootstrap.sh "$p" ;;
+        *) echo "  no stack profile is called $p; skipping it" ;;
+      esac
+    done
+    case " $profiles " in *" forgejo "*|*" github "*|*" gitlab "*) ;; *) stack/bootstrap.sh aws ;; esac
+
+[doc("Remove every container, network and volume the validation stack started, except the job cache (just job-cache-prune).")]
+stack-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available, so there is no stack to remove."; exit 0
+    fi
+    stack/down.sh
+
+[doc("Run one claim against a running profile. BREAK=1 breaks the property and must fail.")]
+validate forge="forgejo" claim="apply": build-cli
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available, so no claim can run."; exit 0
+    fi
+    stack/validate.sh {{forge}} {{claim}}
+
+# ── the example and its smoke claims ───────────────────────────────────────
+# example/ is the shop's 15 roots; stack/example.sh runs them on the forgejo
+# profile against floci, stack/example-gitlab.sh on the gitlab profile.
+# example-terragrunt/ is the same shop as 15 Terragrunt units, run by
+# stack/example-terragrunt.sh. stack/smoke.sh holds one claim per feature.
+
+[doc("Run every claim of one forge plain and under BREAK=1 on a running profile; fails when one is not as expected.")]
+validate-forge forge: build-cli
+    stack/validation.sh run {{forge}}
+
+[doc("Boot each forge in turn, run its claims plain and broken, and write the record the validation page shows.")]
+validation-record *forges:
+    stack/validation.sh record docs-site/src/data/validation.json {{forges}}
+
+[doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
+example *args="up":
+    stack/example.sh {{args}}
+
+[doc("The example on the stack's GitLab: up [--fresh], verify, change <scenario>, merge <scenario>, approve [wave-N], comments, plan-comment [scenario], pr-apply, logs, reset, capture, down. TGLAB=1 runs it on the GitLab lab.")]
+example-gitlab *args="up":
+    stack/example-gitlab.sh {{args}}
+
+[doc("The Terragrunt example: up, verify, change <scenario>, reset.")]
+example-terragrunt *args="up":
+    stack/example-terragrunt.sh {{args}}
+
+[doc("The looping demo behold shows, one repo per tool (example-demo/ and the other example-demo-* trees): up once, then loop [--once] [scenario...] (b-waves, failure, then tg-planned-outputs by default, or DEMO_SCENARIOS, or names) writes demo.json at every step; down removes the stack.")]
+demo *args="up":
+    stack/demo.sh {{args}}
+
+[doc("The GitHub sandbox (INTENTIUS/terragucci-sandbox), plan-only, no stack: up [--fresh], change <scenario>, merge <scenario>, approve [wave-N] [--hold], plan-comment [scenario], pr-apply, drift, capture, prove [--break] [--record FILE], reset, minutes.")]
+sandbox *args:
+    stack/sandbox-github.sh {{args}}
+
+[doc("The scale bench, on its own stack (compose project tgscale): up, run <scale>..., record [file], down. Scale 136 is 10,069 resources in 1,361 roots.")]
+scale *args:
+    stack/scale/scale.sh {{args}}
+
+[doc("The GitLab lab, on its own stack (compose project tglab): up, status, stop, down. Off until up; it takes about 5 GB of memory.")]
+gitlab-lab *args:
+    stack/gitlab/gitlab.sh {{args}}
+
+[doc("What the validation page still lacks: grid cells not proven, claims with no recorded row, captures that quote a command terragucci no longer prints, and what fills each. Reads files only.")]
+coverage-gaps *args:
+    npx tsx scripts/coverage-gaps.ts {{args}}
+
+[doc("Fill the validation page's gaps on demand, a source at a time: forgejo, terraform, choudoufu, gitlab, github, validation (--exclusive), or all. With no step it prints the plan.")]
+coverage-fill *steps:
+    scripts/coverage-fill.sh {{steps}}
+
+[doc("Run the named smoke claims on the GitLab lab, plain and under BREAK=1, in parallel, and write their GitLab rows into smoke.json.")]
+gitlab-claims +names:
+    SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
+
+[doc("Run the core smoke claims on terraform or choudoufu, plain and under BREAK=1, in parallel, and write that binary's rows into smoke.json. Names pick some of them; none runs them all.")]
+binary-claims binary *names:
+    SMOKE_BINARY={{binary}} stack/smoke.sh {{ if names == "" { "" } else { "--only '" + names + "'" } }} --record docs-site/src/data/smoke.json
+
+[doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
+see-runs:
+    stack/see-runs.sh
+
+[doc("Let a coding agent run the named claims (or `capture`) without typing run each time: `just grant <name>... [--runs N] [--hours H]`, `just grant --show`, `just grant --end`. Asks you to type run once.")]
+grant +args:
+    stack/grant.sh {{args}}
+
+[doc("Run the named smoke claims, plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to run claims for a change you name.")]
+claims +names:
+    stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
+
+[doc("Run the smoke claims the change since base can affect (stack/claims-affected.sh says why each), plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to prove a change.")]
+claims-affected base="origin/main":
+    stack/smoke.sh --affected {{base}} --record docs-site/src/data/smoke.json
+
+[doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
+smoke claim="":
+    stack/smoke.sh {{claim}}
+
+[doc("Run every claim plain and under BREAK=1, and write the record the status page shows.")]
+smoke-record:
+    stack/smoke.sh --record docs-site/src/data/smoke.json
+
+[doc("The real-AWS pilot: list, then delete, every bucket (with its objects), queue and table whose name starts with the run prefix. --list only lists; --all takes every tgsmoke- prefix.")]
+smoke-aws-cleanup *args:
+    stack/smoke-aws.sh cleanup {{args}}
+
+[doc("The real-AWS pilot: a measured run's AWS requests by service and operation, from the provider's debug log (default: the last SMOKE_AWS_MEASURE=1 run).")]
+smoke-aws-count *args:
+    stack/smoke-aws.sh count {{args}}
+
+[doc("Remove the stack's job cache volume (terragucci-job-cache: the OpenTofu binary and every provider version it fetched). The next stack-up makes it again. Stop the stack first: Docker refuses while a container mounts it.")]
+job-cache-prune:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available."; exit 0
+    fi
+    if ! docker volume inspect terragucci-job-cache >/dev/null 2>&1; then
+      echo "terragucci-job-cache does not exist"; exit 0
+    fi
+    docker volume rm terragucci-job-cache
+    echo "  ✓ terragucci-job-cache removed"
+
+[doc("Run the tutorial's steps against the example on the capture stack and record their output, notes, logs and diffs as text.")]
+tutorial-capture:
+    TG_STACK="${TG_STACK:-capture}" stack/tutorial-capture.sh
+
+[doc("Capture tutorial steps on demand, on the capture stack: `just capture <step>...`, `just capture --reuse <step>` on the running example, `just capture --list`.")]
+capture *args:
+    TG_STACK="${TG_STACK:-capture}" stack/tutorial-capture.sh {{args}}
+
+[doc("Remove the capture stack (compose project terragucci-capture) and its state; the shared stack is left alone.")]
+capture-stack-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+      echo "SKIP: Docker is not available, so there is no stack to remove."; exit 0
+    fi
+    TG_STACK=capture stack/down.sh
+
+[doc("Fail when HEAD would undo a commit BASE already has, as a rebase that keeps a stale file does, or would add a binary outside LFS: the pull request check.")]
+diff-guard base="origin/main" head="HEAD":
+    scripts/diff-guard.sh {{base}} {{head}}
+    scripts/lfs-check.sh {{base}} {{head}}
+
+[doc("Move the package and the images' version labels to VERSION, and regenerate the Dockerfiles, both examples' pipelines and patches, and the cli-json goldens with the bare new tags.")]
+version-bump version:
+    npx tsx scripts/release.ts bump {{version}}
+
+[doc("Record this version's image digests from GHCR (checked against the images workflow's RUN log when given) and regenerate the same files pinned by digest.")]
+record-digests run="":
+    npx tsx scripts/release.ts digests {{ if run == "" { "" } else { "--run " + run } }}
+
+[doc("Name the commit a release tags:the newest on main that passed CI (chant ci last-green), at VERSION. TERRAGUCCI_RELEASE_SKIP_GREEN=1 skips the green check.")]
+release-preflight version commit="":
+    scripts/release-preflight.sh {{version}} {{commit}}
+
+[doc("Create each VERSION's GitHub release on its existing tag, with its notes from the Changes page's \"In <version>\" section; the newest named is marked latest. --dry-run prints the notes.")]
+github-release *versions:
+    node scripts/github-release.mjs {{versions}}
+
+[doc("Build the terragucci CLI into one bundled file, as a release does.")]
+build-cli:
+    node scripts/build-cli.mjs
+
+[doc("Build the four CI images for one platform (default: this machine's) into the local Docker daemon.")]
+images platform="":
+    just build-cli
+    npx tsx scripts/images.ts build {{ if platform == "" { "" } else { "--platform " + platform } }}
+
+[doc("Run each CI image's tools and hold each image to its size budget in images/budget.json.")]
+images-check platform="":
+    npx tsx scripts/images.ts check {{ if platform == "" { "" } else { "--platform " + platform } }}
+
+[doc("Build terragucci on a local chant: pack chant from <chant-dir> (default: a worktree at chant origin/main), install it with --no-save, rebuild the bundle and images. --reset goes back to the pin. CHANT_LOCAL_IMAGES=0 skips the images.")]
+chant-local *args:
+    scripts/chant-local.sh {{args}}
+
+[doc("Build the opt-in decision service image, terragucci-decide (Laya on CPU), into the local Docker daemon. Not one of the CI images.")]
+decide-image platform="":
+    npx tsx scripts/images.ts build-decide {{ if platform == "" { "" } else { "--platform " + platform } }}
+
+[doc("Rewrite images/decide/requirements.txt from the pins in DECIDE_IMAGE: resolve pip, torch (CPU) and laya for linux x86_64 and aarch64 with pip's dry-run report and keep every wheel's sha256. Needs python3 with pip and network access.")]
+decide-requirements:
+    npx tsx scripts/decide-requirements.ts
+
+[doc("The decision service in the stack: up (builds the image if missing), ask (the three uses' questions, on CPU), down.")]
+decide *args="up":
+    stack/decide.sh {{args}}
+
+[doc("Rebuild both examples' changes/*.patch from the examples as committed.")]
+example-patches: build-cli
+    python3 stack/example-patches.py

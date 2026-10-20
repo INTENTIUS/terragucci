@@ -1,0 +1,20 @@
+diff --git a/modules/service/main.tf b/modules/service/main.tf
+index ccee9b6..b27f677 100644
+--- a/modules/service/main.tf
++++ b/modules/service/main.tf
+@@ -53,13 +53,13 @@ resource "aws_sqs_queue" "dead_letter" {
+   count = var.dead_letter_queue ? 1 : 0
+ 
+   name                       = "${local.prefix}-dead-letter"
+-  visibility_timeout_seconds = 30
++  visibility_timeout_seconds = 60
+   message_retention_seconds  = 1209600
+ }
+ 
+ resource "aws_sqs_queue" "jobs" {
+   name                       = "${local.prefix}-jobs"
+-  visibility_timeout_seconds = 30
++  visibility_timeout_seconds = 60
+   message_retention_seconds  = var.job_retention_seconds
+ 
+   redrive_policy = var.dead_letter_queue ? jsonencode({

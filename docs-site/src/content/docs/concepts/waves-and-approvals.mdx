@@ -1,0 +1,333 @@
+---
+title: Waves and approvals
+description: Why a change goes out in waves, what an approval binds, everything that waits for a person, and when a wave refuses to apply.
+claims: [waves/tofu, linked/states, linked/plan, estate/graph, estate/state-edges, comment/dispatch, drift/tofu, refuse/tofu, refuse/approve-plan, cost/gate, steps/gate, policy/override, migrate/split, ephemeral/pr, state/export, state/unlock, apply/branches]
+prompt: |
+  Read https://intentius.io/terragucci/concepts/waves-and-approvals/.
+  List every hold this repo's config turns on, from the section "Everything that waits for a person": read terragucci.yml on the default branch (`gate`, `environments`, `cost.approve_above`, `steps` with `on_failure: approve`, `policy.outcomes` and `policy.override`, `approval_rules`, `apply.point`, `ephemeral`) and the files in `migrations/`.
+  For each hold, say which roots it covers by matching its globs against the roots `npx terragucci init --dry-run` lists, and who can release it.
+  Then list the reads between this project and others, from the estate page's Between projects list, and which readers in this project the Cross-state edges section marks stale.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+A shared module change goes out in batches, each after the last; a batch waits only when the [gate policy](#waiting-waves) holds it.
+
+## Waves
+
+The roots in `waves.canary` go first, then one dependency layer per wave, so no root in a wave reads another in it. The report's wave 3 is the gate `wave-3`.
+
+A root's dependencies are the roots whose state it reads through `terraform_remote_state`, matched by the address each backend names in its block or in a `-backend-config` file `TF_CLI_ARGS_init` passes ([state addresses](/terragucci/guides/track-cross-state-edges/#state-addresses)). For plain roots that read nothing of each other, [`waves.after`](/terragucci/reference/config/#root-order) gives the order instead:
+
+```yaml
+waves:
+  after:
+    app: [database]
+    database: [network]
+```
+
+```text
+wave 1  network
+wave 2  database   (after network)
+wave 3  app        (after database)
+```
+
+A pull request that changes `network` plans all three, and its blast radius names `database` and `app`.
+
+Terragrunt units split the same way, the canary units' layers first. Each wave is one `terragrunt run --all` behind its own gate. Once approved, it applies exactly the plans its job saved.
+
+| Where | Terragrunt waves come from |
+|---|---|
+| `init` | `terragrunt find`; without Terragrunt on the path, the plain paths in each unit's `dependency` and `dependencies` blocks |
+| each apply job | `terragrunt find` in the job, which splits a wave whose units read each other; the last job also runs any wave past the jobs `init` wrote |
+
+## A failed root
+
+A root that fails holds only the roots that depend on it. In a push's waves of plain roots on GitHub and Forgejo, each wave's job starts once the wave before it ended, applied or failed. It plans and applies only the roots whose upstreams all applied in the run or had nothing to apply. The upstreams are the roots whose state a root reads and the ones `waves.after` puts before it.
+
+```text
+wave 1  network            applied
+wave 2  cluster-a          failed
+        cluster-b          applied
+wave 3  app-01 … app-06    blocked by cluster-a
+        app-07 … app-12    applied
+```
+
+| What | Where |
+|---|---|
+| Each root's outcome | the wave report's [`outcomes`](/terragucci/reference/report-schema/#waves): applied, unchanged, failed with its error, or blocked |
+| Each held root | the wave report's [`blocked`](/terragucci/reference/report-schema/#waves), with `blocked_by` naming the root whose failure held it, past any root blocked in between |
+| A wave none of whose roots ran | its `state` is `blocked` |
+| The run | it still fails. The last wave's job ends with its count, such as `the run: 8 applied, 1 failed, 6 blocked` |
+| A wave that waits for an approval | holds only its own roots and those behind them; a later wave whose every held root waits behind it ends as waiting, so the commit's status stays pending |
+
+Each wave's job writes its roots' outcomes beside its report, and the next wave's job reads them from the earlier jobs' report artifacts (`stage tf-apply --after`). Rerunning the failed jobs plans again what is left. A Terragrunt repo's waves, GitLab's, a [composed run](#a-composed-run) and the apply a comment starts still stop at the first wave that does not apply.
+
+## Approval binding
+
+The wave's set digest is what an approval binds, so it covers exactly those plans. Under `approval: ledger`, the default, that is all it takes, so anyone who can push to `chant/lifecycle` can approve in anyone's name. `approval: sealed` also requires its ssh seal to verify against the signers file.
+
+The `approval` key, the signers and the gates in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) come from the applied commit's first parent (the default branch before an applying pull request), so a change cannot loosen its own rule. Only a multi-commit rebase breaks this; [merge or squash such changes](/terragucci/guides/approve-a-wave/#rule-commit).
+
+A gated wave reads the newest approval of its gate:
+
+| That approval names | The wave |
+|---|---|
+| the digest it plans now | applies, after it records on `chant/lifecycle` that it used the approval |
+| another digest, which a run applied | waits for an approval of its own digest, with the command to give it |
+| another digest, which no run applied | applies nothing and exits 4: its plans changed after approval |
+
+An approval never counts for a digest other than its own. Under `on-destructive` a re-plan with no destroy applies; under `never` nothing is refused.
+
+## Plans are made late
+
+Each wave plans on real outputs after the last one applied, and an approval binds only that plan's digest. A Terragrunt unit never plans on `mock_outputs` ([details](/terragucci/guides/use-terragrunt/#differences)).
+
+## Linked roots
+
+A root that reads another root's state through `terraform_remote_state` goes in a later wave. When a pull request's change reaches both, the reading root plans on the other root's planned outputs instead of its last applied ones:
+
+| An output it reads | In the pull request's plan |
+|---|---|
+| known when the upstream plans | the new value |
+| known only once the upstream applies | `(known after apply)` |
+| of an upstream the change does not reach | the applied value |
+
+The plan note lists each root planned this way and the outputs it read before they were known. A wave that read such an output plans again once the waves it reads have applied. Nobody has seen that plan, so when it changes something the wave waits for an approval of it under `gate: always` and under `gate: on-destructive`, even when it destroys nothing. Under `gate: never` it applies without one. No digest for it appears in the note, and under `approval: pr-review` the pull request's review does not approve it. With only known outputs read, the wave plans the same digest again when its upstream applies as planned, so an approval or review of the note's digest still counts.
+
+The apply learns which reads were unknown from the first of these it can read:
+
+1. The upstream wave's plans in the same push: from this job when it planned that wave too, and from that wave's reports in the `reports` bucket. An output the root reads that any plan changing the upstream marks as known only after apply was unknown when the change was reviewed. A plan of the upstream that changes nothing has every output known. On the first run of the commit that settles it: the change left the upstream as it was applied before, so nothing the root reads was unknown. A run after an earlier run of the same commit applied the upstream (`/terragucci apply`, the resume job, or a re-run) plans it again with the change already applied, and that plan says nothing about what was reviewed, so it is skipped. The apply tells the two apart by the `reports` bucket's `changes.json`, which keeps a row for each resource a wave changed, with its commit: a row for the upstream at this commit means an earlier run applied it. Without a `reports` bucket, a plan that changes nothing is skipped.
+2. The plan report of the pull request that merged as the commit, which the forge names and the `reports` bucket holds: each root's `reads` with `unknown` outputs, and each wave's `replans_after`.
+3. Neither, as on a direct push to the default branch, a squash merge the forge maps to no pull request, or a project with no `reports` bucket: every root of the wave that changes something and reads the state of a root in an earlier wave counts, and the wave waits.
+
+The wave's log names each read that holds it: the outputs that were unknown, where that was read, and the wave that settled them, or why nothing could say. The waiting wave then prints its set digest and approval command like any waiting wave.
+
+For that plan terragucci adds `terragucci_linked.tf` with a local holding the upstream's planned outputs and points the root's references to the block at it. The files are restored after the plan. A root in Terraform's JSON syntax, such as a CDK Terrain stack's `cdk.tf.json`, is linked the same way: its backend and its `terraform_remote_state` blocks order the waves, and its references are rewritten inside their `${...}` templates. These still plan on the applied state, and the report's `roots[].reads` says why:
+
+| Case | It plans on |
+|---|---|
+| an upstream that has never applied | nothing yet: the root waits for it, and the report and note name it as waiting |
+| a block with `count` or `for_each` | the applied state |
+| a plan on the planned outputs that fails, such as a `for_each` over a value known only after apply | the applied state |
+| a block in a child module | the applied state; it does not order the waves either |
+| `terragucci plan` on your machine | the applied state |
+
+With `binary: choudoufu`, a root that reads another root's estate through `data "terraform_estate_outputs"` is linked by choudoufu itself, and its files are left alone. terragucci plans it with `-estate-outputs-from <estate>=<file>`, where the file is the upstream's `show -json` from the same run, and choudoufu answers the read from that plan. choudoufu makes no plan on an unknown value, so these reads go differently:
+
+| A read | In the pull request's plan |
+|---|---|
+| an output the upstream's plan knows | the new value; the note lists the root under the roots planned on another's planned outputs, and `roots[].reads` says `planned` |
+| an output known only once the upstream applies | not planned. The note names the output and the wave that settles it: ``reads `stamp` of net, unknown until wave 1 applies``. Its wave plans again once that wave applied, and the note gives no digest for it |
+| a sensitive output | not planned, and the root fails: choudoufu hands no sensitive output to another estate, planned or recorded |
+| an output the upstream's plan marks a no-op | the planned value as well. choudoufu recomputes an output's prior value instead of reading what the estate recorded, so an output the change adds plans as a no-op |
+| an estate that the change does not reach | the outputs it last recorded, and `roots[].reads` says why |
+
+The wave that applies the reading root plans it again on the outputs its upstream's wave recorded, without `-estate-outputs-from`.
+
+A Terragrunt unit's `dependency` is previewed through Terragrunt itself, and a unit that reads a value known only once its upstream applies is not planned at all: see [Use Terragrunt](/terragucci/guides/use-terragrunt/#later-layers).
+
+## Across projects
+
+Waves order the roots of one project. A root that reads the state of a root in another project is not ordered behind it, since each project applies on its own pipeline under its own approvals. The [estate page](/terragucci/guides/see-every-project/) shows the read.
+
+| | Within a project | Between projects |
+|---|---|---|
+| Order | the reader goes in a later wave than the root it reads (`waves/tofu`, `linked/states`) | none: each project applies on its own pipeline, in its own order |
+| A change that reaches both | the reader plans on the upstream's planned outputs, and plans again once its wave applies (`linked/plan`) | each project plans the roots its own change reaches; the reader plans on the upstream's applied state |
+| Approvals | one per wave | each project's own |
+| On the estate page | an edge with its status: `stale` when the producer applied a change after the reader's last plan, `current`, or `unknown` (`estate/state-edges`) | a dashed arrow on the graph and a line under Between projects, matched by the state address the reader names (`estate/graph`); no status |
+| Re-planning a reader | `/terragucci plan` on a pull request, a `workflow_dispatch` re-plan (`comment/dispatch`), or the next drift check (`drift/tofu`) | the same, in the reader's project |
+
+With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a root that reads another project's estate through `data "terraform_estate_outputs"` reads the outputs that estate last recorded, and the estate page draws the read the same way.
+
+A `terraform_remote_state` read whose address is not plain strings, such as one built from `var.env`, matches no root, so nothing orders it and no edge is drawn. `config check` warns about it, and the report lists it under `roots[].unknown_reads` ([Addresses that can't be matched](/terragucci/guides/track-cross-state-edges/#addresses-that-cant-be-matched)).
+
+## A composed run
+
+A composed run is opt-in, beside the waves: `waves.compose: true` in `terragucci.yml`. Without it nothing here happens. Each root plans and applies in its own run with its own state, in dependency order, and each state matches what applied to it.
+
+With it, the roots a change reaches, and every root they read followed upstream, plan as one plan and apply as one apply of the stock binary (`tofu` or `terraform`). terragucci writes a temporary root, `.terragucci-compose/`, with one module block per root. A value one root reads from another that is known only after apply is then computed in the same apply, after the resources that make it, instead of in a later wave that plans again.
+
+| Step | What the run does |
+|---|---|
+| Lock | takes each root's backend lock the way a [state migration](/terragucci/guides/move-resources-between-roots/) takes it, naming the run in the lock; a lock another run holds stops the wave before anything is pulled |
+| Pull | pulls each root's state and moves it under its module's address in one working state |
+| Plan | plans once: one digest, one approval, one note. A wave that waits or is refused releases the locks and writes nothing |
+| Apply | applies the saved plan once the gate lets it through |
+| Split and write | whether the apply finished or failed, splits the working state back by module and writes each changed state, upstreams first, with the lock held; a root that planned no change, or whose state came back as it was pulled, is not written |
+| Release | releases each lock once its state is written |
+
+Nothing about this is atomic. A failure part way leaves what applied applied, and each state is written with what applied to it. The wave's report and note name which roots applied, which did not, and each state as written. Running the wave again plans what is left against those states.
+
+A write that fails is retried five times over up to five minutes, with the lock still held. A state still not written after that is kept beside the state in the root's own backend, as `<key>.terragucci-unwritten`, under the state's own access controls, and the root's lock stays held, naming the run. The next run of the wave takes that lock over, writes the kept state first, and only then plans. If the backend cannot take the kept copy either, the job keeps it under `terragucci-report/unwritten/` in its artifacts, which never go to the reports bucket.
+
+### The composed root
+
+Each root's `backend` block is cut from its files while it is composed, so the composed root's working state is local. Each `terraform_remote_state` block that reads another root of the run is cut too, and its references point at a variable the composed root fills with that root's module outputs. A read of a root outside the run stays as it is. `import` and `removed` blocks are lifted into the composed root with the module's address in front, and `moved` blocks stay where they are. Provider blocks stay in each root, so two roots that configure one provider for two regions keep two configurations. Each root's `terraform.tfvars`, `*.auto.tfvars` and `-var-file` values become arguments of its module, and a `TF_VAR_` variable in the job's environment still sets the variable it names. Every file goes back as it was when the run ends.
+
+Steps run for each root at the same moments as on a wave. Policy and cost read each root's part of the composed plan as that root's plan, and a denied root refuses the whole run.
+
+Nothing detects one limit. A root that finds another root's resources by a lookup with known arguments, rather than by reading its state, reads them when the run plans, before anything applies. On the waves it reads them after the earlier wave applied.
+
+### Approval
+
+The approval binds the composed plan's digest, joined with the digest of each file terragucci generated for it, so an approval of one composition never applies another. The wave's digest covers the composed run as one member, beside any other root of the wave that changes something. That is the digest the plan note shows and the approval names.
+
+A composed run in which a root reads another root's value that is unknown at plan time applies values nobody reviewed, as a [linked root](#linked-roots) that plans again does. So it waits for an approval under `gate: always` and `gate: on-destructive`, and the note names each value that was unknown. Under `gate: never` it applies without one. With only known reads it gates as any wave does. Under `approval: pr-review`, an approving review of the pull request approves the composed digest it saw; a plan that differs at merge has another digest and waits.
+
+### Falling back to waves
+
+The whole change applies in waves, as without the key, and the note says why in one line, when any of these holds. terragucci never composes part of a change.
+
+| Kind | When |
+|---|---|
+| `too-many-roots` | the set has more roots than `waves.compose_max` (10 when unset) |
+| `one-root` | the set is one root |
+| `binary` | its roots run different binaries or versions, or one runs choudoufu |
+| `identity` | its roots run under different roles (`oidc.roles`), or sit in different apply groups: one process has one set of credentials |
+| `workspace` | a root plans in a workspace other than `default` |
+| `backend` | a root's backend is not one whose lock terragucci takes itself (s3 with `use_lockfile`, gcs, azurerm, local), or it has a `cloud` block |
+| `provider-lock` | two roots lock one provider at different versions |
+| `cli-args` | `TF_CLI_ARGS`, `TF_CLI_ARGS_plan` or `TF_CLI_ARGS_apply` carries `-target`, `-exclude`, `-replace` or `-var` |
+| `read` | a root reads another root of the set through a block with `count` or `for_each`, or from a child module |
+| `order-only` | two roots of the set are ordered only by `waves.after`, with no read between them |
+| `import` | an `import` block's `id` is not a literal string |
+| `path` | a root's code uses `path.root` or `path.cwd` |
+| `plan-failed` | the composed plan failed in a pull request; its roots then plan one by one, so the error shows against the root it is in |
+
+The kind and the reason are `compose.fallback` in the [report](/terragucci/reference/report-schema/).
+
+## The run view
+
+With [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/) set, each apply writes one page for its commit, `run.html`, with the waves left to right, where each stands, the commit's blast radius and a timeline of each wave's plan, wait and apply. [Read the run view](/terragucci/guides/read-the-run-view/) has what it shows and how to read a waiting or refused wave from it.
+
+## Blast radius in the plan note
+
+Pull requests get the same radius in their plan note, by wave: the roots whose plan changes something and each downstream root that reads their state. A root the run did not plan, such as one `--root` left out, is marked "not planned in this run".
+
+```text
+**Blast radius:** 1 root changes (`envs/dev/platform`), and 3 roots downstream read their state:
+
+- `envs/dev/orders` (wave 2) reads `envs/dev/platform`
+- `envs/dev/payments` (wave 2) reads `envs/dev/platform`
+- `envs/dev/search` (wave 2) reads `envs/dev/platform`
+```
+
+In a Terragrunt repo the radius is the units whose own plan changes something, not a preview, and each unit that depends on them through a `dependency` or `dependencies` block, followed through:
+
+```text
+**Blast radius:** 1 unit changes (`live/dev/vpc`), and 1 unit downstream depends on them:
+
+- `live/dev/app` (wave 2) depends on `live/dev/vpc`; not planned in this run
+```
+
+The note leaves it out when nothing reads or depends on a changed root. `report.json` carries it as `blast`.
+
+## Resources in the radius
+
+For plain roots, the note also lists each changed resource and the resources that depend on it, in its own root and in each root that reads an output it reaches:
+
+```text
+**By resource:**
+
+- `aws_sqs_queue.jobs` in `queue` (update) reaches:
+  - `aws_sqs_queue_policy.jobs`
+  - `aws_lambda_event_source_mapping.jobs` in `worker`, through output `jobs_arn` of `queue`
+  - `aws_lambda_function.worker` in `worker`, through output `jobs_arn` of `queue`
+```
+
+The edges come from each plan's references: expressions, `count`, `for_each`, `depends_on`, module arguments and outputs, and locals. Between roots, a resource is listed only when it reads an output the change reaches, through `terraform_remote_state` or `terraform_estate_outputs`. A reader of `worker`'s outputs is followed the same way. A root the run did not plan stays in the root list only. `report.json` carries the list as `blast.resources`.
+
+## Waiting waves
+
+The gate policy decides which waves wait for a person.
+
+| Policy | Waits for an approval when |
+|---|---|
+| `always` | the wave has at least one change; a wave whose plans change nothing never waits |
+| `on-destructive` | the wave's plans destroy or replace something |
+| `never` | never; only pull request review and default branch protection stand in front of it |
+
+A waiting wave exits with code 3 and prints the approval command; run it, then rerun the stage. A rerun resumes after the approval or failed root and never applies a root twice.
+
+## Everything that waits for a person
+
+The gate is one of several holds. Each binds exactly what was reviewed, a digest or a lock ID. A record in the repo releases it, so it holds the same whether the change came from a person, a [rollout](/terragucci/guides/roll-out-a-module-version/) or an agent. The keys below are read at base, the applied commit's first parent, so a pull request cannot loosen them for itself. The top-level `gate` is the exception: `init` writes it into the pipeline, so review a change to it as you would a change to the pipeline.
+
+| Hold | Turned on by | Bound to | Released by | Page |
+|---|---|---|---|---|
+| A wave at its gate (`waves/tofu`, `refuse/tofu`) | `gate: always` or `on-destructive`, the default, or an environment's `gate` | the wave's set digest | an approval the [approval mode](/terragucci/standards/access-and-identity/#approval-modes) counts: `terragucci approve`, a review under `pr-review`, or a click in chat through the relay | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
+| A wave that read an output nobody reviewed | `gate: always` or `on-destructive`, when a root read an upstream output known only once the upstream applied, through `terraform_remote_state`, `terraform_estate_outputs`, an Atmos `!terraform.state` or a Terramate `input` | the digest of the plan made after the upstream applied, which no note showed | an approval of that digest; the pull request's review does not count | [Linked roots](#linked-roots) |
+| A wave over a cost (`cost/gate`) | `cost.approve_above` | the wave's set digest | as for the gate, whatever `gate` says | [Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount) |
+| A wave whose step failed (`steps/gate`) | a step with `on_failure: approve` | the wave's set digest | as for the gate, whatever `gate` says | [Run steps around a stage](/terragucci/guides/run-steps/) |
+| A wave a policy rule holds | `hold` in `policy.outcomes`, with `engine: opa` | the wave's set digest | as for the gate, whatever `gate` says | [Holding or releasing a wave](/terragucci/reference/policy/#holding-or-releasing-a-wave) |
+| A root the policy denies (`policy/override`) | `policy`, with `policy.override` naming who may let one through | the root's plan digest and the rules that denied it | `terragucci override` by someone `policy.override` lists for that root and those rules | [Overriding a denial](/terragucci/reference/policy/#overriding-a-denial) |
+| A state migration (`migrate/split`) | a file in `migrations/` | the migration's digest: the file and each state's version before the move | `terragucci approve <name>` from a checkout; a pull request review never counts | [Move resources between roots](/terragucci/guides/move-resources-between-roots/) |
+| A pull request's ephemeral environment (`ephemeral/pr`) | `ephemeral.roots`, under the `gate` the waves use | the environment's plan digest, at gate `pr-<n>` | `terragucci approve ephemeral <n>` | [Ephemeral environments](/terragucci/guides/ephemeral-environments/#the-gate) |
+| A state export (`state/export`) | always | the request's digest: the root and the state version | `terragucci approve export` by someone other than the requester | [Export a state version](/terragucci/guides/export-a-state-version/) |
+| A state lock a killed job left (`state/unlock`) | always | the lock's ID | `terragucci approve unlock` | [Release a state lock](/terragucci/guides/release-a-state-lock/) |
+| A wave whose gate asks a decision point | `apply.point` | the wave's set digest, as the point's question | an answer from the point's deciders that meets its quorum | [A gate that asks a decision point](/terragucci/guides/approve-a-wave/#a-gate-that-asks-a-decision-point) |
+
+`approval_rules` holds nothing of its own. It asks more of the approvals that release a held wave ([More than one approver](/terragucci/guides/approve-a-wave/#more-than-one-approver)). An `allow_unattended` rule in `policy.outcomes` is the one way a rule lets a wave apply with no approval, and the cost, step and unreviewed-read holds above still hold it.
+
+## Stricter for some roots
+
+Each of these makes some roots wait or go first while the rest keep the default:
+
+| To | Use |
+|---|---|
+| wait for an approval on prod's roots and not on dev's | `environments`, each with its own `gate`; a wave with roots in both takes the stricter ([Environments](/terragucci/reference/config/#environments)) |
+| ask more approvers, a role, or someone other than the author for some roots | `approval_rules` by root glob ([More than one approver](/terragucci/guides/approve-a-wave/#more-than-one-approver)) |
+| hold a wave by what its plan does, such as an IAM change | a policy `hold` rule ([Holding or releasing a wave](/terragucci/reference/policy/#holding-or-releasing-a-wave)) |
+| hold a wave when a check of yours fails | a step with `roots` and `on_failure: approve` ([Run steps around a stage](/terragucci/guides/run-steps/)) |
+| send a few roots out first | `waves.canary` ([Waves](#waves)) |
+| apply prod's roots only from a protected branch (`apply/branches`) | `apply.branches` ([Apply from other branches](/terragucci/reference/config/#apply-from-other-branches)) |
+| keep each environment's identity to its own roots | `environments` with their own `oidc`, or `oidc.roles` ([Separate environments](/terragucci/guides/separate-environments/)) |
+
+## A wide wave across jobs
+
+`parallelism` bounds what one job runs at once, and every wave gets a single job, so a wave of a few hundred roots keeps one runner busy while the rest idle. Set `waves.jobs` to spread it over several:
+
+```yaml
+waves:
+  jobs: 3
+```
+
+| Job | What it does |
+|---|---|
+| `apply-wave-<n>` | plans every root, runs the policy, decides the gate on the set digest and records the approval it uses, then hands each plan digest to the shares and changes nothing |
+| `apply-wave-<n>-share-<s>` | plans its part again and applies each root whose digest matches what `apply-wave-<n>` decided; a root whose plan moved is named and not applied, and the job exits 4 |
+
+The shares cut the wave's roots sorted by path into contiguous runs, the first shares taking one more when they do not divide evenly: with `fleet/five`, `fleet/four`, `fleet/three` and `fleet/two` in two shares, share 1 applies `fleet/five` and `fleet/four`.
+
+Shares run side by side as far as runners are free, and the next wave starts after the last of them. Each wave still has one gate with one ledger record and one approve command. Each share copies its report to the bucket under `tf-apply-wave-<n>-share-<s>`.
+
+In a Terragrunt repo the wave's job plans every unit with one `run --all`, and each share plans and applies its own units with one `run --all --filter`. When the last wave splits, an `apply-rest` job after its shares runs any wave Terragrunt's edges cut past the pipeline's, as the last wave's job does otherwise.
+
+On GitLab the shares take each other's place in the apply resource group, which runs one job at a time, so with `waves.jobs` the apply jobs hold a lock on the remote instead, as on Forgejo; the pipeline's `CI_JOB_TOKEN` cannot push, so the project's token does. `init` refuses the key under `apply.when: pull-request`. A comment's apply and the resume job keep a single job per wave.
+
+## One apply job per identity
+
+With [`environments`](/terragucci/reference/config/#environments), or with [`oidc.roles`](/terragucci/reference/environment/#oidc) (or `oidc.gcp.roles`, `oidc.azure.roles`) that give the roots more than one set of identities, a wave of plain roots applies in one job per group of roots, so roots under different roles never share a job's token:
+
+| Job | What it does |
+|---|---|
+| `apply-wave-<n>` | plans every root of the wave with the plan identities, on the plan audience, runs the policy and decides the gate; it holds no apply identity and applies nothing |
+| `apply-wave-<n>-<group>` | plans its group's roots again with the group's apply identities and applies each one whose digest matches what `apply-wave-<n>` decided; with `waves.jobs`, `apply-wave-<n>-<group>-share-<s>` |
+
+The groups are the environments, each with the roots its globs match, and `default` for the roots in none. Without `environments`, roots that take the same identities by glob are a group, named after the glob (`envs/prod/**` is `envs-prod`), and `default` holds the roots no glob matches. A wave gets a job for each group with roots in it. Each group's job carries only its own identities in `TERRAGUCCI_ROOT_ROLES`, `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` and `TERRAGUCCI_ROOT_AZURE_CLIENTS`, and the job's own role only when one of its roots takes it. An environment's jobs also run on its `runner`, in its `forge_environment` on GitHub and GitLab, and with its `oidc.audience`. Before it takes any token, an environment's job [checks](/terragucci/reference/environment/#the-apply-jobs-own-check) that the forge runs it in that environment, on a branch it applies from and on its runner, and stops if not.
+
+One approval of the wave's set digest applies every group's job, and a refused root refuses the whole wave. The next wave needs every group's job, and `apply-done` posts the last success. The group jobs apply side by side under the run's apply lock, as shares do. With neither `environments` nor roles that tell roots apart, a wave keeps its one job. A Terragrunt repo's waves keep one job each.
+
+A [state migration](/terragucci/reference/migration-files/) runs in wave 1's deciding job, which holds the plan roles alone and cannot write a state, so a repo with groups runs none: a pull request's plan fails on a migration file that has not applied, naming it.
+
+## Applies side by side
+
+Two pushes that change different roots apply at the same time, and a root's own applies take turns at its state lock; with [choudoufu](/terragucci/concepts/glossary/#choudoufu), waves wait only for a run changing one of their resources. A wave a newer push superseded stands down. With `apply.when: pull-request`, an applying pull request also locks each root it reaches until it merges or closes. With `locks: plan`, a pull request holds that lock from its first plan. [Per forge](/terragucci/reference/pipeline/#applies-side-by-side).
+
+## Next
+
+- [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/)
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)
+- For help choosing waves and approval modes for your repos, [Intentius](https://intentius.io/work/) works with teams adopting terragucci.

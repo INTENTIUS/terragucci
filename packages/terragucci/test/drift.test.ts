@@ -1,0 +1,317 @@
+// `terragucci stage tf-drift`: a refresh-only plan of every root, the report
+// built from what drifted, and the one issue that tracks it. The binary is a
+// script that answers with recorded `show -json` output, so no provider or
+// state is needed; one test also runs the real tofu where it is installed.
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { prForgeOf, type Fetch } from "../src/forge";
+import { driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
+import { buildReport } from "../src/report/build";
+import { renderHtml } from "../src/report/html";
+import { renderNote } from "../src/report/views";
+import { runStage } from "../src/report/stage";
+import { plan, rc, RUN } from "./report-fixtures";
+import { bareFrom, git, tmp, write } from "./helpers";
+
+const queueGone = rc("module.service.aws_sqs_queue.jobs", ["delete"], { name: "shop-staging-orders-jobs", arn: "arn:aws:sqs:::x" }, null);
+const tagsMoved = rc("aws_s3_bucket.logs", ["update"], { bucket: "logs", tags: { team: "a" } }, { bucket: "logs", tags: { team: "b" } });
+const codeChange = rc("aws_s3_bucket.logs", ["update"], { bucket: "logs" }, { bucket: "logs", versioning: true });
+
+const drifted = plan([codeChange], { resource_drift: [queueGone, tagsMoved] });
+const clean = plan([codeChange], { resource_drift: [] });
+
+/** A `tofu` that records its calls and shows the plan each root's directory holds. */
+function fakeTofu(dir: string, name = "tofu"): string {
+  const path = join(dir, name);
+  writeFileSync(path, `#!/bin/sh
+chdir="\${1#-chdir=}"; shift
+echo "$chdir $*" >> "${dir}/calls.log"
+case "$1" in
+  init) exit 0 ;;
+  plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done; exit 0 ;;
+  show) if [ "$2" = "-json" ]; then cat "$chdir/plan.json"; else echo "plan text"; fi ;;
+esac
+`);
+  chmodSync(path, 0o755);
+  return path;
+}
+
+const repoWith = (plans: Record<string, unknown>) =>
+  write(tmp(), {
+    "terragucci.yml": 'roots: ["envs/*"]\n',
+    ...Object.fromEntries(Object.entries(plans).flatMap(([name, p]) => [[`envs/${name}/main.tf`, ""], [`envs/${name}/plan.json`, JSON.stringify(p)]])),
+  });
+
+describe("driftPlan", () => {
+  it("reads resource_drift as the changes, and an absent list as none", () => {
+    expect((driftPlan(drifted) as { resource_changes: unknown[] }).resource_changes).toHaveLength(2);
+    expect((driftPlan(plan([codeChange])) as { resource_changes: unknown[] }).resource_changes).toHaveLength(0);
+  });
+});
+
+describe("liveDrift", () => {
+  it("reads a full plan's changes from the other side: code before, live after, a create as gone, a destroy as outside the code", () => {
+    const p = plan([
+      rc("a.upd", ["update"], { v: "live", arn: "x" }, { v: "code", arn: null }, { after_unknown: { arn: true }, before_sensitive: { s: true }, after_sensitive: {} }),
+      rc("a.gone", ["create"], null, { v: "code" }),
+      rc("a.extra", ["delete"], { v: "live" }, null),
+      rc("a.rep", ["delete", "create"], { v: "live" }, { v: "code" }),
+      rc("a.same", ["no-op"], { v: 1 }, { v: 1 }),
+      rc("data.x.y", ["read"], null, {}, { mode: "data" }),
+    ]);
+    const d = (liveDrift(p) as { resource_drift: { address: string; change: { actions: string[]; before: unknown; after: unknown; before_sensitive: unknown; after_sensitive: unknown } }[] }).resource_drift;
+    expect(d.map((e) => [e.address, e.change.actions[0]])).toEqual([["a.upd", "update"], ["a.gone", "delete"], ["a.extra", "create"], ["a.rep", "update"]]);
+    const upd = d[0]!.change;
+    // A value known only after the apply is not drift: the live one stands for it.
+    expect(upd.before).toEqual({ v: "code", arn: "x" });
+    expect(upd.after).toEqual({ v: "live", arn: "x" });
+    expect(upd.after_sensitive).toEqual({ s: true });
+    expect(liveDrift(null)).toBeNull();
+  });
+});
+
+describe("terragucci stage tf-drift", () => {
+  it("plans a choudoufu root under live resource markers in full and reads its changes as drift; a stock root stays refresh-only", { timeout: 60_000 }, async () => {
+    const bin = tmp();
+    const live = plan([
+      rc("aws_sqs_queue.jobs", ["update"], { name: "jobs", visibility_timeout_seconds: 77 }, { name: "jobs", visibility_timeout_seconds: 30 }),
+      rc("aws_sqs_queue.dead", ["create"], null, { name: "dead" }),
+      rc("terraform_data.same", ["no-op"], { input: 1 }, { input: 1 }),
+    ]);
+    const repo = write(tmp(), {
+      "terragucci.yml": 'binary: choudoufu\nroots: ["envs/*"]\n',
+      "envs/app/main.tf": `terraform {\n  live {\n    estate = "app"\n  }\n}\n`,
+      "envs/app/plan.json": JSON.stringify(live),
+      "envs/net/main.tf": "",
+      "envs/net/plan.json": JSON.stringify(clean),
+    });
+    const result = await runStage("tf-drift", repo, { binary: fakeTofu(bin, "choudoufu"), env: { PATH: process.env.PATH } }, () => {});
+    const calls = readFileSync(join(bin, "calls.log"), "utf-8").split("\n").filter((l) => / plan /.test(l));
+    expect(calls.find((c) => c.includes("envs/app"))).not.toContain("-refresh-only");
+    expect(calls.find((c) => c.includes("envs/net"))).toContain("-refresh-only");
+    const app = result.report.roots.find((r) => r.path === "envs/app")!;
+    expect(app.changes.map((c) => [c.address, c.action])).toEqual([["aws_sqs_queue.dead", "delete"], ["aws_sqs_queue.jobs", "update"]].sort());
+    expect(app.changes.find((c) => c.action === "update")!.attributes.map((a) => a.path)).toEqual(["visibility_timeout_seconds"]);
+    expect(result.report.roots.find((r) => r.path === "envs/net")!.changes).toEqual([]);
+    // The issue names the root and the attribute that moved.
+    const issue = readFileSync(join(result.dir, "issue.md"), "utf-8");
+    expect(issue).toContain("`envs/app`");
+    expect(issue).toContain("`visibility_timeout_seconds`");
+  });
+
+  it("plans refresh-only, names the root and the queue, and ignores the code change on main", { timeout: 60_000 }, async () => {
+    const bin = tmp();
+    const repo = repoWith({ orders: drifted, search: clean });
+    const result = await runStage("tf-drift", repo, { binary: fakeTofu(bin), env: { PATH: process.env.PATH } }, () => {});
+    const calls = readFileSync(join(bin, "calls.log"), "utf-8").split("\n").filter((l) => / plan /.test(l));
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c).toContain("-refresh-only");
+
+    const { report, dir } = result;
+    expect(report.run.stage).toBe("tf-drift");
+    expect(report.waves).toEqual([]);
+    const orders = report.roots.find((r) => r.path === "envs/orders")!;
+    const search = report.roots.find((r) => r.path === "envs/search")!;
+    // The update both plans carry as a code change is not drift.
+    expect(search.changes).toEqual([]);
+    expect(orders.changes.map((c) => [c.address, c.action])).toEqual([["aws_s3_bucket.logs", "update"], ["module.service.aws_sqs_queue.jobs", "delete"]]);
+    expect(orders.fold).toBe("open");
+    expect(search.why).not.toContain("drifted");
+    expect(report.named.map((n) => [n.root, n.address, n.action])).toEqual([["envs/orders", "module.service.aws_sqs_queue.jobs", "delete"]]);
+
+    const issue = readFileSync(join(dir, "issue.md"), "utf-8");
+    expect(issue).toContain("1 of 2 roots have drifted");
+    expect(issue).toContain("`envs/orders`");
+    expect(issue).toContain("`module.service.aws_sqs_queue.jobs` (`shop-staging-orders-jobs`): no longer exists");
+    expect(issue).not.toContain("envs/search");
+    expect(existsSync(join(dir, "report.html"))).toBe(true);
+    expect(renderHtml(report)).toContain("deleted outside Terraform");
+    expect(renderNote(report)).toContain("deleted outside Terraform");
+  });
+
+  it("names who changed each drifted attribute in the issue when respond.drift is attribute", { timeout: 60_000 }, async () => {
+    const asked: { type: string; ref: string }[] = [];
+    const audit = {
+      lookup: async (q: { type: string; ref: string }) => {
+        asked.push({ type: q.type, ref: q.ref });
+        return { status: "found" as const, actor: "human" as const, who: "alice@example.com", event: "PutBucketTagging", at: "2026-10-01T09:00:00Z" };
+      },
+    };
+    const repo = repoWith({ orders: drifted });
+    writeFileSync(join(repo, "terragucci.yml"), 'roots: ["envs/*"]\nrespond:\n  drift: attribute\n');
+    const result = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
+    const issue = readFileSync(join(result.dir, "issue.md"), "utf-8");
+    expect(asked).toEqual([{ type: "aws_s3_bucket", ref: "logs" }]);
+    expect(issue).toContain("- Who changed it:");
+    expect(issue).toContain("`aws_s3_bucket.logs` `tags`: a person (audit log: PutBucketTagging by alice@example.com at 2026-10-01T09:00:00Z)");
+  });
+
+  it("asks nobody and says nothing of who when respond.drift is left at its default", { timeout: 60_000 }, async () => {
+    let asked = 0;
+    const audit = { lookup: async () => (asked++, { status: "silent" as const }) };
+    const result = await runStage("tf-drift", repoWith({ orders: drifted }), { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
+    expect(asked).toBe(0);
+    expect(readFileSync(join(result.dir, "issue.md"), "utf-8")).not.toContain("Who changed it");
+  });
+
+  it("removes an attributions.json an earlier run left in a reused report directory", { timeout: 60_000 }, async () => {
+    const audit = { lookup: async () => ({ status: "found" as const, actor: "human" as const, who: "alice@example.com", event: "PutBucketTagging", at: "2026-10-01T09:00:00Z" }) };
+    const repo = repoWith({ orders: drifted });
+    writeFileSync(join(repo, "terragucci.yml"), 'roots: ["envs/*"]\nrespond:\n  drift: attribute\n');
+    const first = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
+    const file = join(first.dir, "attributions.json");
+    expect(existsSync(file)).toBe(true);
+    // Same repo and report directory, now with attribution off: the old file must not survive.
+    writeFileSync(join(repo, "terragucci.yml"), 'roots: ["envs/*"]\n');
+    const second = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH } }, () => {});
+    expect(second.dir).toBe(first.dir);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("plans with -refresh-only only for tf-drift", async () => {
+    const bin = tmp();
+    const repo = repoWith({ a: clean });
+    await runStage("tf-plan", repo, { binary: fakeTofu(bin), env: { PATH: process.env.PATH } }, () => {});
+    expect(readFileSync(join(bin, "calls.log"), "utf-8")).not.toContain("-refresh-only");
+  });
+
+  it("keeps the issue through the forge when a token is in the environment", { timeout: 60_000 }, async () => {
+    const requests: string[] = [];
+    let stored: { body: string; number: number } | undefined;
+    const forgeFetch: Fetch = async (url, init) => {
+      const method = init?.method ?? "GET";
+      requests.push(`${method} ${new URL(url).pathname}`);
+      const body = init?.body ? JSON.parse(init.body) : undefined;
+      const json = (v: unknown) => ({ ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) });
+      if (method === "GET") return json(stored ? [{ html_url: "http://f/i/1", number: 1, title: "terragucci: drift found", body: stored.body, created_at: "2026-10-01T00:00:00Z" }] : []);
+      if (method === "POST" && url.endsWith("/issues")) { stored = { body: body.body, number: 1 }; return json({ html_url: "http://f/i/1", number: 1, created_at: "2026-10-01T00:00:00Z" }); }
+      if (method === "PATCH" && body.state === "closed") { stored = undefined; return json({}); }
+      if (method === "PATCH") { stored = { body: body.body, number: 1 }; return json({}); }
+      return json({});
+    };
+    const env = { PATH: process.env.PATH, TG_TOKEN: "t", GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "http://f", GITHUB_API_URL: "http://f/api/v1" };
+    const bin = tmp();
+    const opts = { binary: fakeTofu(bin), env, forge: "forgejo" as const, forgeFetch };
+
+    const found = await runStage("tf-drift", repoWith({ orders: drifted }), opts, () => {});
+    expect(found.issue).toMatchObject({ action: "opened" });
+    expect(stored?.body).toContain("terragucci:drift");
+    // What the jobs after it read: agent.drift runs when this run opened the issue.
+    expect(JSON.parse(readFileSync(join(found.dir, "issue.json"), "utf-8"))).toEqual({ action: "opened", number: 1, url: "http://f/i/1" });
+    const again = await runStage("tf-drift", repoWith({ orders: drifted }), opts, () => {});
+    expect(again.issue).toMatchObject({ action: "updated" });
+    expect(JSON.parse(readFileSync(join(again.dir, "issue.json"), "utf-8")).action).toBe("updated");
+    const none = await runStage("tf-drift", repoWith({ orders: clean }), opts, () => {});
+    expect(none.issue).toMatchObject({ action: "closed" });
+    expect(stored).toBeUndefined();
+    expect(requests).toContain("POST /api/v1/repos/me/infra/issues/1/comments");
+    const quiet = await runStage("tf-drift", repoWith({ orders: clean }), opts, () => {});
+    expect(quiet.issue).toMatchObject({ action: "none" });
+    expect(quiet.failed).toBe(false);
+  });
+
+  it("leaves an open issue alone when a root cannot be planned and the rest are clean", async () => {
+    const open = [{ html_url: "http://f/i/1", number: 1, body: "<!-- terragucci:drift -->\nold" }];
+    const calls: string[] = [];
+    const forgeFetch: Fetch = async (url, init) => {
+      calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
+      const v = (init?.method ?? "GET") === "GET" ? open : {};
+      return { ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) };
+    };
+    const report = buildReport({
+      run: { ...RUN, stage: "tf-drift" },
+      roots: [{ path: "a", plan: driftPlan(clean) }, { path: "b", error: "init failed" }],
+    });
+    const target = targetFromEnv("forgejo", { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "http://f" }, "t")!;
+    expect(await trackDrift(prForgeOf(target, forgeFetch), report)).toMatchObject({ action: "left-open", issue: { number: 1 } });
+    expect(calls).toEqual(["GET /api/v1/repos/me/infra/issues"]);
+    expect(renderDriftIssue(report)).toContain("could not be planned");
+  });
+});
+
+describe("the drift issue through chant", () => {
+  it("reads the open issue with no token: no credential is sent, and a pull request is never taken for it", async () => {
+    const asked: { url: string; headers: Record<string, string> }[] = [];
+    const forgeFetch: Fetch = async (url, init) => {
+      asked.push({ url, headers: init?.headers ?? {} });
+      const v = [{ html_url: "http://f/pull/2", number: 2, body: "<!-- terragucci:drift -->", pull_request: {} }, { html_url: "http://f/i/1", number: 1, body: "<!-- terragucci:drift -->\nold", created_at: "2026-09-30T00:00:00Z" }];
+      return { ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) };
+    };
+    for (const forge of ["github", "forgejo"] as const) {
+      const reader = targetFromEnv(forge, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "https://github.com" }, undefined, true)!;
+      expect(await prForgeOf(reader, forgeFetch).findIssue("<!-- terragucci:drift -->", { match: "anywhere" })).toMatchObject({ number: 1, created: "2026-09-30T00:00:00Z" });
+    }
+    expect(asked.every((a) => !Object.keys(a.headers).some((h) => h.toLowerCase() === "authorization"))).toBe(true);
+  });
+});
+
+const TOFU = spawnSync("tofu", ["version"]).status === 0;
+describe.skipIf(!TOFU)("tf-drift with tofu", () => {
+  it("does not report code waiting on main as drift", { timeout: 120_000 }, async () => {
+    const v = (size: number) => `resource "terraform_data" "keep" {\n  input = { size = ${size} }\n}\n`;
+    const repo = write(tmp(), { "terragucci.yml": 'binary: tofu\nroots: ["envs/*"]\n', "envs/a/main.tf": v(1) });
+    execFileSync("tofu", [`-chdir=${join(repo, "envs/a")}`, "apply", "-auto-approve", "-input=false", "-no-color"], { stdio: "ignore", env: { ...process.env, TF_IN_AUTOMATION: "1" } });
+    // A merged change the apply has not reached yet.
+    write(repo, { "envs/a/main.tf": v(2) });
+    const planned = await runStage("tf-plan", repo, { out: "plan-report" }, () => {});
+    expect(planned.report.roots[0].counts).toMatchObject({ update: 1 });
+    const result = await runStage("tf-drift", repo, { out: "drift-report", env: { PATH: process.env.PATH } }, () => {});
+    expect(result.failed).toBe(false);
+    expect(result.report.roots[0].changes).toEqual([]);
+    expect(result.report.totals.update).toBe(0);
+    expect(result.report.named).toEqual([]);
+  });
+});
+
+describe("tf-drift with apply.branches", () => {
+  /** orders drifted as main has it, and clean as release, which applies it, has it; search is main's own. */
+  function branched(): string {
+    const repo = write(tmp(), {
+      "terragucci.yml": 'roots: ["envs/*"]\napply:\n  branches:\n    release: ["envs/orders"]\n',
+      "envs/orders/main.tf": "",
+      "envs/orders/plan.json": JSON.stringify(drifted),
+      "envs/search/main.tf": "",
+      "envs/search/plan.json": JSON.stringify(clean),
+    });
+    const bare = bareFrom(repo);
+    git(repo, "remote", "add", "origin", bare);
+    git(repo, "checkout", "-q", "-b", "release");
+    writeFileSync(join(repo, "envs/orders/plan.json"), JSON.stringify(clean));
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-qam", "release");
+    git(repo, "push", "-q", "origin", "release");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "branch", "-q", "-D", "release");
+    return repo;
+  }
+
+  it("plans a root another branch applies from that branch, so the difference between the branches is not drift", { timeout: 60_000 }, async () => {
+    const repo = branched();
+    const bin = tmp();
+    const lines: string[] = [];
+    const r = await runStage("tf-drift", repo, { binary: fakeTofu(bin), env: { PATH: process.env.PATH } }, (l) => lines.push(l));
+    const orders = r.report.roots.find((x) => x.path === "envs/orders")!;
+    expect(orders.changes).toEqual([]);
+    expect(orders.error).toBeUndefined();
+    expect(lines.join("\n")).toMatch(/apply\.branches: envs\/orders plans from release at [0-9a-f]{8}, the branch that applies it/);
+    // orders planned in a worktree of release, search in the repo; the worktree is gone afterwards.
+    const calls = readFileSync(join(bin, "calls.log"), "utf-8").split("\n").filter((l) => / plan /.test(l));
+    expect(calls.find((c) => c.includes("envs/search"))!.startsWith(join(repo, "envs/search"))).toBe(true);
+    expect(calls.find((c) => c.includes("envs/orders"))!.startsWith(join(repo, "envs/orders"))).toBe(false);
+    expect(git(repo, "worktree", "list").trim().split("\n")).toHaveLength(1);
+    // Planned from main instead, orders reports the difference between the branches as drift.
+    const unmapped = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, config: join(write(tmp(), { "t.yml": 'roots: ["envs/*"]\n' }), "t.yml") }, () => {});
+    expect(unmapped.report.roots.find((x) => x.path === "envs/orders")!.changes).toHaveLength(2);
+  });
+
+  it("a root whose branch cannot be fetched fails with the reason, and the rest are checked", { timeout: 60_000 }, async () => {
+    const repo = branched();
+    git(repo, "push", "-q", "origin", "--delete", "release");
+    const r = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH } }, () => {});
+    const orders = r.report.roots.find((x) => x.path === "envs/orders")!;
+    expect(orders.error).toMatch(/^apply\.branches: release applies envs\/orders, so the drift check plans it from release, and git could not fetch release from origin/);
+    expect(r.report.roots.find((x) => x.path === "envs/search")!.error).toBeUndefined();
+    expect(r.failed).toBe(true);
+  });
+});

@@ -1,0 +1,571 @@
+# The local validation stack: a real forge, a real runner and an AWS emulator
+# on one Docker network. terragucci#4 is the design; stack/README.md says what is
+# validated today and what is only declared.
+#
+#   stack/bootstrap.sh forgejo     bring a profile up and print its env vars
+#   stack/validate.sh forgejo apply
+#   stack/down.sh                  remove every container, network and volume but the job cache
+#
+# Two rules every service here follows, learned on choudoufu's GitLab run:
+#
+#   * A forge's public URL is its service name (http://forgejo:3000), never
+#     localhost. Every URL a job is handed (the clone URL, the API URL) comes
+#     from it, and inside a job container localhost is the job container.
+#     The host reaches the same server through the published port, because
+#     the forge serves any Host header.
+#   * The network is named (terragucci), and each runner puts the containers
+#     it spawns on it. Jobs on the default bridge reach neither the forge nor
+#     floci.
+#
+# Host ports are deliberately off the defaults (3000, 4566, 8929) so the stack
+# can sit next to another harness on the same machine. Override any of them
+# with the TERRAGUCCI_*_PORT variables.
+#
+# Profiles:
+#   aws       floci                                    validated
+#   forgejo   floci + Forgejo + forgejo-runner         validated
+#   github    floci + mock GitHub API (+ act on the host)
+#   gitlab    floci + GitLab CE + gitlab-runner
+#   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
+#   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
+#   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
+#   observability-lite  the collector, Prometheus and a small Tempo, with no Grafana   stack/demo.sh up starts it
+#   blob      Azurite and fake-gcs-server, the Azure Blob and GCS emulators   used by the blob-azure and blob-gcs smoke claims
+#   decide    terragucci-decide, Laya on CPU behind the Jev shape   opt-in; stack/decide.sh starts it
+#   demo      Postgres for the demo's app schema           stack/demo.sh up starts it
+name: ${TG_PROJECT:-terragucci}
+
+networks:
+  default:
+    name: ${TG_PROJECT:-terragucci}
+
+volumes:
+  forgejo-data:
+    name: ${TG_PROJECT:-terragucci}-forgejo-data
+  forgejo-runner-data:
+    name: ${TG_PROJECT:-terragucci}-forgejo-runner-data
+  # Mounted at /cache in every job container forgejo-runner spawns (the
+  # runner's container.options in bootstrap.sh): the OpenTofu binary and the
+  # provider plugin cache, so a run does not download the AWS provider again.
+  # The runner service mounts it too, only so compose creates and removes it.
+  job-cache:
+    name: terragucci-job-cache
+  gitlab-runner-config:
+    name: ${TG_PROJECT:-terragucci}-gitlab-runner-config
+  fountain-pgdata:
+    name: ${TG_PROJECT:-terragucci}-fountain-pgdata
+  fountain-sandboxes:
+    name: ${TG_PROJECT:-terragucci}-fountain-sandboxes
+  otel-out:
+    name: ${TG_PROJECT:-terragucci}-otel-out
+  tempo-lite-data:
+    name: ${TG_PROJECT:-terragucci}-tempo-lite-data
+  demo-pgdata:
+    name: ${TG_PROJECT:-terragucci}-demo-pgdata
+
+services:
+  # ── aws ──────────────────────────────────────────────────────────────────
+  # The patched floci from the lex00/floci fork. Upstream 2.0.1 never returns a
+  # role's permissions boundary on read; the fork does (fix/iam-permissions-boundary).
+  # Pinned by the index digest of ghcr.io/lex00/floci:b491869 (branch
+  # fix/cfn-change-set-changes) as resolved on 2026-10-18, which also describes
+  # a change set's changes (chant 0.124.29's plan counts, chant#4084) and keeps
+  # SNS tags; the index carries linux/amd64 and linux/arm64.
+  floci:
+    image: ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d
+    container_name: ${TG_PROJECT:-terragucci}-floci
+    profiles: [aws, forgejo, github, gitlab, fountain]
+    environment:
+      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: ${TERRAGUCCI_FLOCI_IAM_ENFORCEMENT:-false}
+    ports:
+      - "${TERRAGUCCI_FLOCI_PORT:-4580}:4566"
+    networks:
+      default:
+        # The AWS provider reaches S3 Control at <account-id>.<endpoint host>,
+        # and floci's account id is twelve zeros.
+        aliases: [floci, 000000000000.floci]
+
+  # ── demo ─────────────────────────────────────────────────────────────────
+  # app's database in the looping demo (stack/demo.sh): SQL Yodeler applies
+  # example-demo/app/schema to database demo from app's wave job. Jobs reach it
+  # as demo-postgres:5432 on the stack's network; it publishes no port, and the
+  # driver works on it with docker exec. Trust auth, since only the stack's
+  # network reaches it and its rows are the demo's own. demo.sh up makes the
+  # roles and the database, and keeps the base as database demo_base, the
+  # template each reset copies back. postgres 18.6, the version SQL Yodeler's
+  # replay check runs, pinned by the index digest resolved on 2026-10-15
+  # (amd64 and arm64).
+  demo-postgres:
+    image: postgres:18.6@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    container_name: ${TG_PROJECT:-terragucci}-demo-postgres
+    profiles: [demo]
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - demo-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [demo-postgres]
+
+  # The record store front of a demo tree whose roots run on choudoufu
+  # (stack/demo.sh, records_up): choudoufu's record store addresses its bucket
+  # virtual-hosted, at demo-live-records.demo-records, and this forwards each request to
+  # floci path-style (stack/fixtures/cdf-race/s3-hold.mjs, which holds nothing
+  # unless told to). It runs in the demo's job image, which demo.sh up builds
+  # before it starts this; the AWS provider's S3 Control host is
+  # 000000000000.demo-records.
+  demo-records:
+    image: terragucci-demo-tofu:local
+    pull_policy: never
+    container_name: ${TG_PROJECT:-terragucci}-demo-records
+    profiles: [demo]
+    command: ["node", "/proxy/s3-hold.mjs"]
+    environment:
+      ALIAS: demo-records
+      UPSTREAM: floci:4566
+    volumes:
+      - ./fixtures/cdf-race:/proxy:ro
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [demo-records, demo-live-records.demo-records, 000000000000.demo-records]
+
+  # ── forgejo ──────────────────────────────────────────────────────────────
+  # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
+  # admin and its token afterwards (the forgejo-warden e2e pattern).
+  # Forgejo 15 and later, with runner 12.5 and later, serves Actions OIDC
+  # tokens to a job that sets enable-openid-connect; the signing key is
+  # generated under /data on first use, so no setting is needed here.
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    container_name: ${TG_PROJECT:-terragucci}-forgejo
+    profiles: [forgejo]
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__DOMAIN: forgejo
+      FORGEJO__server__ROOT_URL: http://forgejo:3000/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_PORT: "0"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__actions__ENABLED: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__log__LEVEL: warn
+    ports:
+      - "${TERRAGUCCI_FORGEJO_PORT:-3300}:3000"
+    volumes:
+      - forgejo-data:/data
+    networks:
+      default:
+        aliases: [forgejo]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  # The docker executor: it talks to the host's Docker through the socket and
+  # starts one job container per job, on the terragucci network (set as
+  # container.network in the config bootstrap.sh writes). It waits for that
+  # config, because the runner's credentials come from Forgejo after it boots.
+  # Root, so it can use the socket Docker Desktop mounts as root:root.
+  forgejo-runner:
+    image: data.forgejo.org/forgejo/runner:13.2.0
+    container_name: ${TG_PROJECT:-terragucci}-forgejo-runner
+    profiles: [forgejo]
+    user: "0:0"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - forgejo-runner-data:/data
+      - job-cache:/cache
+    working_dir: /data
+    command:
+      - sh
+      - -c
+      - |
+        echo "waiting for /data/config.yml (written by stack/bootstrap.sh)"
+        while [ ! -s /data/config.yml ]; do sleep 1; done
+        exec forgejo-runner daemon -c /data/config.yml
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [forgejo-runner]
+
+  # ── registry ─────────────────────────────────────────────────────────────
+  # A plain OCI registry with TLS, the shape OpenTofu's oci:// sources need.
+  # The publish smoke claim makes a throwaway CA and certificate for
+  # localhost and registry in a temp directory and points
+  # TERRAGUCCI_REGISTRY_CERTS at it (registry.crt, registry.key); the host
+  # reaches it on localhost:5050 with NODE_EXTRA_CA_CERTS set to that CA.
+  registry:
+    image: public.ecr.aws/docker/library/registry:2.8.3
+    container_name: ${TG_PROJECT:-terragucci}-registry
+    profiles: [registry]
+    environment:
+      REGISTRY_HTTP_TLS_CERTIFICATE: /certs/registry.crt
+      REGISTRY_HTTP_TLS_KEY: /certs/registry.key
+    volumes:
+      - ${TERRAGUCCI_REGISTRY_CERTS:-./registry-certs}:/certs:ro
+    ports:
+      - "${TERRAGUCCI_REGISTRY_PORT:-5050}:5000"
+    networks:
+      default:
+        aliases: [registry]
+
+  # ── blob ─────────────────────────────────────────────────────────────────
+  # The reports bucket on the other two clouds. Azurite serves Blob Storage
+  # over TLS with OAuth on (`--oauth basic` checks a bearer token's audience,
+  # issuer and lifetime, not its signature, and needs https), so a job writes
+  # with an Azure OIDC identity and a link is a user delegation SAS, which
+  # Azurite checks. The blob-azure claim makes a throwaway certificate for
+  # localhost and azurite and points TERRAGUCCI_AZURITE_CERTS at it
+  # (azurite.crt, azurite.key). Pinned by the index digest of 3.37.0 as
+  # resolved on 2026-10-07 (amd64 and arm64).
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0@sha256:830430c1da1a2d537e08f3e6764dd1f5ae00cf0346bcaf625b968ec3f0971fd5
+    container_name: ${TG_PROJECT:-terragucci}-azurite
+    profiles: [blob]
+    command: ["azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--oauth", "basic", "--cert", "/certs/azurite.crt", "--key", "/certs/azurite.key", "--inMemoryPersistence"]
+    volumes:
+      - ${TERRAGUCCI_AZURITE_CERTS:-./azurite-certs}:/certs:ro
+    ports:
+      - "${TERRAGUCCI_AZURITE_PORT:-10010}:10000"
+    networks:
+      default:
+        aliases: [azurite]
+
+  # The JSON API of Google Cloud Storage, in memory. It takes any bearer token
+  # and checks no signed URL's signature; the blob-gcs claim checks the link's
+  # signature itself. A link names gcs:4443, the public host, and is served at
+  # /<bucket>/<object> for that Host. Pinned by the index digest of 1.56.1 as
+  # resolved on 2026-10-07 (amd64 and arm64).
+  gcs:
+    image: fsouza/fake-gcs-server:1.56.1@sha256:797ce226d62f947c009dc40246b30cfb456b8473d8241407f9d6f2c04e4d69ef
+    container_name: ${TG_PROJECT:-terragucci}-gcs
+    profiles: [blob]
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "gcs:4443", "-external-url", "http://gcs:4443", "-backend", "memory"]
+    ports:
+      - "${TERRAGUCCI_GCS_PORT:-4453}:4443"
+    networks:
+      default:
+        aliases: [gcs]
+
+  # ── observability ────────────────────────────────────────────────────────
+  # Where a stage's traces and metrics go: jobs on this network send OTLP over
+  # HTTP to http://otel-collector:4318. The collector writes traces to a file
+  # in the otel-out volume and serves metrics to Prometheus. Root, so it can
+  # write to the volume, which Docker creates owned by root.
+  otel-collector: &otel-collector
+    image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+    container_name: ${TG_PROJECT:-terragucci}-otel-collector
+    profiles: [observability]
+    user: "0:0"
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ./observability/collector.yaml:/etc/otelcol/collector.yaml:ro
+      - otel-out:/out
+    ports:
+      - "${TERRAGUCCI_OTLP_PORT:-4328}:4318"
+      - "${TERRAGUCCI_OTEL_HEALTH_PORT:-13143}:13133"
+    networks:
+      default:
+        aliases: [otel-collector]
+
+  # The same collector and config for observability-lite, under the same name
+  # and alias: a stage's spans go to tempo-lite and feed the span metrics, and
+  # nothing is written to the otel-out volume. The second --config replaces
+  # the traces pipeline's exporters. A Tempo that is down or not started costs
+  # the spans it would have kept, never a job's result: the exporter's queue
+  # retries and then drops them, and the span metrics go on. Run one profile or
+  # the other, not both: the two share a container name.
+  otel-collector-lite:
+    <<: *otel-collector
+    profiles: [observability-lite]
+    command: ["--config=/etc/otelcol/collector.yaml", "--config=yaml:service::pipelines::traces::exporters: [otlp/tempo, spanmetrics]"]
+    # A demo's jobs send a few dozen points a minute; the Go heap is held
+    # well under what an idle collector takes unbounded.
+    environment:
+      GOMEMLIMIT: 160MiB
+    mem_limit: 256m
+
+  # Kept by both profiles: the full one's dashboards and the lite one's
+  # readers (behold's kiosk) ask it on :9090 inside the network.
+  prometheus:
+    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    container_name: ${TG_PROJECT:-terragucci}-prometheus
+    profiles: [observability, observability-lite]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # The SLO recording rules and pipeline alerts terragucci's dashboards come with.
+      - ./observability/terragucci/prometheus:/etc/prometheus/rules:ro
+    ports:
+      - "${TERRAGUCCI_PROMETHEUS_PORT:-9190}:9090"
+    networks:
+      default:
+        aliases: [prometheus]
+
+  # Where the collector sends the stage traces; Grafana's Runs dashboard lists
+  # them. Tempo 3's single binary (target all, no Kafka), local storage inside the container: a stack restart
+  # starts it empty. Root, so it can write /var/tempo.
+  tempo:
+    image: grafana/tempo:3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd
+    container_name: ${TG_PROJECT:-terragucci}-tempo
+    profiles: [observability]
+    user: "0:0"
+    command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports:
+      - "${TERRAGUCCI_TEMPO_PORT:-3210}:3200"
+    networks:
+      default:
+        aliases: [tempo]
+
+  # The Tempo of observability-lite, under the full profile's name and alias,
+  # sized for the demo host: traces kept 24 hours (observability/tempo-lite.yaml)
+  # in a volume, so a restart keeps them, and the container held to 384 MiB.
+  # behold's kiosk reads a run's traces from it on :3200 inside the network;
+  # the host port listens on loopback only.
+  tempo-lite:
+    image: grafana/tempo:3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd
+    container_name: ${TG_PROJECT:-terragucci}-tempo
+    profiles: [observability-lite]
+    user: "0:0"
+    command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo-lite.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-lite-data:/var/tempo
+    mem_limit: 384m
+    # Back on its own after a restart of the host or an out-of-memory kill.
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${TERRAGUCCI_TEMPO_PORT:-3210}:3200"
+    networks:
+      default:
+        aliases: [tempo]
+
+  # terragucci's dashboards, provisioned from the files `dashboards: true`
+  # writes into a repo (rendered here by scripts/render-dashboards.ts), over
+  # the stack's Prometheus and Tempo. Anonymous admin: it is a local harness.
+  grafana:
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    container_name: ${TG_PROJECT:-terragucci}-grafana
+    profiles: [observability]
+    # The rendered dashboards link the reports bucket by a placeholder for floci's
+    # published port (scripts/render-dashboards.ts); Grafana starts from copies
+    # that carry TERRAGUCCI_FLOCI_PORT.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /var/lib/grafana/dashboards/terragucci &&
+        for f in /etc/terragucci/dashboards/*.json; do
+        sed "s/TGPH0FLOCIPORT/$${FLOCI_PORT}/g" "$$f" > "/var/lib/grafana/dashboards/terragucci/$$(basename "$$f")";
+        done && exec /run.sh
+    environment:
+      FLOCI_PORT: "${TERRAGUCCI_FLOCI_PORT:-4580}"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Light or dark as the browser prefers, so the tutorial's screenshots come in both.
+      GF_USERS_DEFAULT_THEME: system
+    volumes:
+      - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/stack.yaml:ro
+      - ./observability/terragucci/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/terragucci/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+      - ./observability/terragucci/grafana/dashboards:/etc/terragucci/dashboards:ro
+    ports:
+      - "${TERRAGUCCI_GRAFANA_PORT:-3310}:3000"
+    networks:
+      default:
+        aliases: [grafana]
+
+  # ── github ───────────────────────────────────────────────────────────────
+  # GitHub has no self-hostable edition. The runner is `act` on the host (see
+  # validate.sh), with its job containers on this network; this service is the
+  # forge: mock-github/server.mjs answers the API calls terragucci makes and
+  # serves the repos' git over smart HTTP. The full node image is used because
+  # the mock shells out to git.
+  mock-github:
+    image: public.ecr.aws/docker/library/node:22-bookworm
+    container_name: ${TG_PROJECT:-terragucci}-mock-github
+    profiles: [github]
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./mock-github:/srv:ro
+    environment:
+      PORT: "8188"
+      MOCK_TOKEN: ${TERRAGUCCI_GITHUB_TOKEN:-tg-mock-github-token}
+      MOCK_PUBLIC_URL: http://localhost:${TERRAGUCCI_GITHUB_PORT:-8198}
+    ports:
+      - "${TERRAGUCCI_GITHUB_PORT:-8198}:8188"
+    networks:
+      default:
+        aliases: [mock-github]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8188/__mock/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # ── gitlab ───────────────────────────────────────────────────────────────
+  # From gitlab-warden's e2e stack. external_url is the service name, and the
+  # runner is registered with --docker-network-mode terragucci. GitLab 17 has
+  # no registration tokens: bootstrap.sh creates the runner with
+  # POST /api/v4/user/runners and passes the glrt- token it returns to
+  # `gitlab-runner register --token`. The GitLab CE image is linux/amd64 only,
+  # so on arm64 it runs under emulation; cold boot is several minutes.
+  gitlab:
+    image: gitlab/gitlab-ce:17.11.0-ce.0
+    platform: linux/amd64
+    container_name: ${TG_PROJECT:-terragucci}-gitlab
+    profiles: [gitlab]
+    shm_size: "256m"
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab:8929'
+        gitlab_rails['initial_root_password'] = 'Tg9QvK3mNt8RpLb2WdHf'
+        gitlab_rails['monitoring_whitelist'] = ['0.0.0.0/0']
+        gitlab_rails['rack_attack_git_basic_auth'] = {}
+        prometheus_monitoring['enable'] = false
+        puma['worker_processes'] = 0
+        sidekiq['max_concurrency'] = 3
+        gitlab_rails['gitlab_default_can_create_group'] = true
+    ports:
+      - "${TERRAGUCCI_GITLAB_PORT:-8939}:8929"
+    networks:
+      default:
+        aliases: [gitlab]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8929/-/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v17.11.0
+    container_name: ${TG_PROJECT:-terragucci}-gitlab-runner
+    profiles: [gitlab]
+    depends_on: [gitlab]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+      - job-cache:/cache
+    networks:
+      default:
+        aliases: [gitlab-runner]
+
+  # ── fountain ─────────────────────────────────────────────────────────────
+  # A fountain steward for the example's apply: fountain, its Postgres, and a
+  # fountain runner whose sandboxes are directories in its container. Laid out
+  # after waterpark's compose/. bootstrap.sh builds the runner's image
+  # (stack/fountain/Dockerfile: the tofu CI image plus the fountain CLI and
+  # chant), registers an account, mints its API key and starts the runner with
+  # it. stack/steward.sh declares the steward on it for the example repo.
+  # v0.21.0 is the first release whose agents take `runtime: acp` and a
+  # `runtime_command`, which a steward needs.
+  fountain-postgres:
+    image: public.ecr.aws/docker/library/postgres:16
+    container_name: ${TG_PROJECT:-terragucci}-fountain-postgres
+    profiles: [fountain]
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fountain
+    volumes:
+      - fountain-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fountain"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fountain:
+    # v0.21.0, pinned by the index digest resolved on 2026-10-04 (amd64 and arm64).
+    image: ghcr.io/managoat/fountain:v0.21.0@sha256:c90f8ceb369619a0d263ce73c1bda7b9cb0f278104b59bb471eba1350cc92208
+    container_name: ${TG_PROJECT:-terragucci}-fountain
+    profiles: [fountain]
+    depends_on:
+      fountain-postgres:
+        condition: service_healthy
+    ports:
+      - "${TERRAGUCCI_FOUNTAIN_PORT:-4010}:4000"
+    environment:
+      PHX_SERVER: "true"
+      PORT: "4000"
+      DATABASE_URL: postgres://postgres:postgres@fountain-postgres:5432/fountain
+      DATABASE_SSL: "false"
+      PUBLIC_URL: http://fountain:4000
+      # Throwaway values for a throwaway instance. Generate real ones with
+      # waterpark's compose/bin/env.sh if this ever leaves the laptop.
+      SECRET_KEY_BASE: ${TERRAGUCCI_FOUNTAIN_SECRET_KEY_BASE:-terragucci-local-only-secret-key-base-not-for-use-anywhere-else-0000000000}
+      MASTER_SECRETS_KEY: ${TERRAGUCCI_FOUNTAIN_MASTER_SECRETS_KEY:-CH2qg3r4EPKvk9BjGaOvDiWR3CKYXNySFdjpTFe08x0}
+      # Accounts verify themselves and the first one is admin.
+      EMAIL_DELIVERY: none
+      FIRST_USER_ADMIN: "true"
+      SANDBOX_PROVIDER: runner
+      SANDBOX_RUNNERS_ENABLED: "true"
+      BILLING_ENABLED: "false"
+    networks:
+      default:
+        aliases: [fountain]
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/4000"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  # The steward's machine. Built by bootstrap.sh, never pulled. A sandbox runs
+  # with this container's environment, so a steward turn reaches floci the way
+  # a forge job does, and the forge by its service name.
+  fountain-runner:
+    image: terragucci-fountain-steward:local
+    pull_policy: never
+    container_name: ${TG_PROJECT:-terragucci}-fountain-runner
+    profiles: [fountain]
+    depends_on:
+      fountain:
+        condition: service_healthy
+    environment:
+      FOUNTAIN_BASE_URL: http://fountain:4000
+      FOUNTAIN_API_KEY: ${TERRAGUCCI_FOUNTAIN_API_KEY:-}
+      RUNNER_NAME: terragucci
+      AWS_ENDPOINT_URL: http://floci:4566
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - fountain-sandboxes:/sandboxes
+    command: ["sh", "-c", "[ -n \"$$FOUNTAIN_API_KEY\" ] || { echo 'TERRAGUCCI_FOUNTAIN_API_KEY is empty; run stack/bootstrap.sh fountain' >&2; exit 1; }; exec fountain runner --name \"$$RUNNER_NAME\" --root /sandboxes"]
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [fountain-runner]
+
+  # ── decide ───────────────────────────────────────────────────────────────
+  # The opt-in decision service (terragucci#29): Laya on CPU behind the Jev
+  # /v1/systemone shape, as one pinned model. The image is built locally
+  # (`just decide-image`, from images/Dockerfile.decide) and carries its
+  # weights, so it needs no volume and no network beyond this one. A job on the
+  # terragucci network reaches it at http://decide:8790; the host at
+  # localhost:${TERRAGUCCI_DECIDE_PORT:-8790}. stack/decide.sh starts it and
+  # asks the three uses' questions.
+  decide:
+    image: terragucci-decide:local
+    container_name: ${TG_PROJECT:-terragucci}-decide
+    profiles: [decide]
+    ports:
+      - "127.0.0.1:${TERRAGUCCI_DECIDE_PORT:-8790}:8790"

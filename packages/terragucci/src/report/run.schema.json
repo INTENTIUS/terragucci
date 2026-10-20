@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/run/v1/run.schema.json",
+  "title": "terragucci.run/v1",
+  "description": "run.json under <prefix>/<project>/runs/<commit>/: the apply of one commit, every wave of it, the roots in each and the roots whose state each reads, and where each wave stands at its gate. Each tf-apply wave job rewrites its own row when it starts applying and when it ends. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "project", "commit", "updated", "roots", "waves"],
+  "$defs": {
+    "state": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "bucket": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    }
+  },
+  "properties": {
+    "schema": { "const": "terragucci.run/v1" },
+    "project": { "type": "string" },
+    "commit": { "type": "string" },
+    "updated": { "type": "string", "description": "When a wave job last wrote it." },
+    "roots": {
+      "type": "array",
+      "description": "Each root, its wave, and the roots whose state it reads through terraform_remote_state. Empty for a Terragrunt repo.",
+      "items": {
+        "type": "object",
+        "required": ["root", "wave", "reads"],
+        "properties": {
+          "root": { "type": "string" },
+          "wave": { "type": "integer" },
+          "reads": { "type": "array", "items": { "type": "string" } },
+          "state": { "$ref": "#/$defs/state", "description": "The state its backend block names, which a root of another project may read. Under choudoufu, the records of the estate its live block owns: tofu-records/<estate>, with no bucket." },
+          "external": {
+            "type": "array",
+            "description": "Its terraform_remote_state reads of a state no root of the project holds: the block's label and the state it names. Under choudoufu, its terraform_estate_outputs reads of an estate no root of the project owns, as that estate's records. The estate page matches them to other projects' roots.",
+            "items": {
+              "type": "object",
+              "required": ["data", "key"],
+              "properties": {
+                "data": { "type": "string" },
+                "bucket": { "type": "string" },
+                "key": { "type": "string" }
+              }
+            }
+          },
+          "composed": {
+            "type": "object",
+            "description": "A root in a composed run (waves.compose): wave is the run's, own_wave the wave it would be in on its own, where the dependency order puts it.",
+            "required": ["wave", "module", "own_wave"],
+            "properties": {
+              "wave": { "type": "integer" },
+              "module": { "type": "string" },
+              "own_wave": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "roots", "reads", "state", "gate"],
+        "properties": {
+          "number": { "type": "integer" },
+          "roots": { "type": "array", "items": { "type": "string" } },
+          "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read." },
+          "state": { "enum": ["not-started", "planned", "waiting", "applying", "applied", "refused", "failed", "blocked"] },
+          "gate": { "type": "string", "description": "Its gate on the ledger, wave-<n>." },
+          "policy": { "type": "string", "description": "The gate policy it ran under: always, on-destructive or never." },
+          "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
+          "digest": { "type": ["string", "null"], "description": "The set digest its gate decided on." },
+          "command": { "type": "string", "description": "The command that approves it, while it waits." },
+          "excluded": {
+            "type": "array",
+            "description": "The people whose approval of its digest did not count, because they had a hand in the change, each with the reason, such as bob asked for abc1234.",
+            "items": { "type": "object", "required": ["login", "reason"], "properties": { "login": { "type": "string" }, "reason": { "type": "string" } } }
+          },
+          "report": { "type": "string", "description": "Its report's directory, relative to the project's index.json." },
+          "shares": { "type": "integer", "description": "A wave split across jobs: how many share jobs apply it." },
+          "shares_applied": { "type": "array", "items": { "type": "integer" }, "description": "The shares that applied; the wave is applied once every share has." },
+          "changed": { "type": "array", "items": { "type": "string" }, "description": "The roots whose plan in this wave changes a resource or an output: where the run's blast radius starts." },
+          "totals": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "The wave's changes by action (create, update, replace, delete, read, no-op, forget), as its report's totals counts them, once it planned. Written by the job that plans the whole wave, not by a share of it." },
+          "totals_roots": { "type": "integer", "description": "How many of the wave's roots totals counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, less a root the policy refused." },
+          "spans": {
+            "type": "array",
+            "description": "The wave's time, oldest first: each plan, each wait at its gate (no end while it waits) and each apply (no end while it applies). At most 24.",
+            "items": {
+              "type": "object",
+              "required": ["phase", "start"],
+              "properties": {
+                "phase": { "enum": ["plan", "gate", "apply"] },
+                "start": { "type": "string" },
+                "end": { "type": "string" },
+                "share": { "type": "integer", "description": "The share of a wave split across jobs that planned or applied." }
+              }
+            }
+          },
+          "progress": {
+            "type": "object",
+            "description": "A choudoufu wave's resources while it applies and once it ended: each change its plans make, done, in flight, waiting or not applied, as its estates' records stood at the last read.",
+            "required": ["read", "resources"],
+            "properties": {
+              "read": { "type": "string", "description": "When the records were last read." },
+              "resources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "address", "action", "status"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "address": { "type": "string" },
+                    "action": { "enum": ["create", "update", "replace", "delete", "forget"] },
+                    "status": { "enum": ["done", "in-flight", "waiting", "not-applied"] },
+                    "done_at": { "type": "string", "description": "When a read first found it done." }
+                  }
+                }
+              }
+            }
+          },
+          "composed": {
+            "type": "object",
+            "description": "The wave whose job runs a composed run (waves.compose): its roots, upstreams first; the composed plan's digest once planned; the roots that read a value unknown at plan time; and, once the apply ended, how each root's part of it ended and its state. A wave whose roots all moved into the run keeps its row with no roots.",
+            "required": ["roots"],
+            "properties": {
+              "roots": { "type": "array", "items": { "type": "string" } },
+              "digest": { "type": ["string", "null"] },
+              "unknown": { "type": "array", "items": { "type": "string" } },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "module"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "module": { "type": "string" },
+                    "apply": { "enum": ["applied", "partial", "failed", "not-started", "no-changes"] },
+                    "state": { "enum": ["written", "unchanged", "not-written"] }
+                  }
+                }
+              }
+            }
+          },
+          "updated": { "type": "string" }
+        }
+      }
+    }
+  }
+}

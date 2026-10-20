@@ -1,0 +1,31 @@
+---
+// An anchor for a section that became a tab. A link to `#<id>` opens the tab
+// labelled `label` in the next tab group on the page and scrolls to it, so old
+// links such as use-a-binary/#choudoufu still land on what they named.
+interface Props {
+	id: string;
+	label: string;
+}
+const { id, label } = Astro.props;
+---
+<span id={id} class="tg-tab-anchor" data-tab-label={label}></span>
+
+<script>
+	function openTab() {
+		const id = decodeURIComponent(location.hash.slice(1));
+		if (!id) return;
+		const anchor = document.getElementById(id);
+		if (!anchor || !anchor.classList.contains('tg-tab-anchor')) return;
+		const group = [...document.querySelectorAll('starlight-tabs')].find(
+			(t) => anchor.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING,
+		);
+		const tab = [...(group?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])].find(
+			(t) => t.textContent?.trim() === anchor.dataset.tabLabel,
+		);
+		if (!tab) return;
+		tab.click();
+		anchor.scrollIntoView();
+	}
+	customElements.whenDefined('starlight-tabs').then(openTab);
+	window.addEventListener('hashchange', openTab);
+</script>

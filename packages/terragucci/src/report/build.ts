@@ -1,0 +1,522 @@
+/**
+ * Build a `terragucci.report/v1` document from each root's plan. The roots'
+ * plans become chant change-set parts (`terraformChangeSetPart`), composed
+ * into one document whose digest is the set digest, and grouped by chant's
+ * plan summary. The report adds what a reader needs on top: links to every
+ * root's full plan, every destroy by name, and what is open or folded.
+ */
+import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetEntry, type ChangeSetPart, type ChangeSetPlanner } from "@intentius/chant/change-set";
+import { groupChangeSet } from "@intentius/chant/plan-summary";
+import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
+import type { Gate } from "../config";
+import { conePlanDigest, reportCone, type PlanCone } from "../cone";
+import { changesSomething, destroysSomething } from "./changing";
+import { costMember } from "./cost";
+import { changeKind, foldChange } from "./highlight";
+import { planAppliedChanges } from "./history";
+import { planResources } from "./inventory";
+import { isObject, scrubSecrets, sensitiveStrings } from "./redact";
+import { secretCounts, type StoredSecret } from "../tips/secrets";
+import {
+  REDACTED, REPORT_MINOR, REPORT_SCHEMA,
+  type ReportUnit,
+  type ReportMockRead,
+  type ReportDeferred,
+  type ReportPolicy,
+  type ReportRootPolicy,
+  type ReportStateVersion,
+  type ReportRootVersions,
+  type ReportRecordVersions,
+  type ReportAppliedChange,
+  type ReportRootBinary,
+  type ReportStep,
+  type ReportRead,
+  type ReportUnknownRead,
+  type ReportComposedMember,
+  type ReportLive,
+  type ReportRootOutcome,
+  type WaveState,
+  type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost, type ReportApprovalRule,
+} from "./schema";
+
+type Json = Record<string, unknown>;
+
+export interface RootInput {
+  /** The root's directory, relative to the repo. */
+  path: string;
+  /** `show -json` as the binary wrote it, unredacted. Absent when the root failed to plan. */
+  plan?: unknown;
+  /** Why the root failed to plan. */
+  error?: string;
+  planner?: ChangeSetPlanner;
+  /** The binary the root ran. */
+  binary?: ReportRootBinary;
+  /** Where the root's full plan is kept, relative to the report. */
+  files?: { text?: string; json?: string };
+  job_url?: string;
+  /** `type.name` of every resource declared with `prevent_destroy = true`. */
+  preventDestroy?: ReadonlySet<string>;
+  /** Set when the root is a Terragrunt unit. */
+  terragrunt?: ReportUnit;
+  /**
+   * The policy's verdict on its plan. A root it denied (or could not check)
+   * carries both `plan` and `error`: it fails, with no plan digest, and its
+   * changes stay in the report.
+   */
+  policy?: ReportRootPolicy;
+  /** A `tf-apply` wave applied the root, or it had nothing to apply: the report lists the resources its plan leaves. */
+  applied?: boolean;
+  /** The state version the root's backend holds after the apply. */
+  state?: ReportStateVersion;
+  /** The provider and module versions it ran at the applied commit, read after its init. */
+  versions?: ReportRootVersions;
+  /** A choudoufu root's record versions after the apply, by the address the apply changed. */
+  recordVersions?: ReadonlyMap<string, ReportRecordVersions>;
+  /** The steps that ran for it. */
+  steps?: ReportStep[];
+  /** The roots whose state it reads, and which outputs it planned on. */
+  reads?: ReportRead[];
+  /** Its terraform_remote_state blocks whose state the code does not address. */
+  unknownReads?: ReportUnknownRead[];
+  /** Why the code does not address its own state. */
+  unaddressed?: string;
+  /** A Terragrunt unit's dependencies, by path. */
+  dependencies?: string[];
+  /** The environment of `environments:` the root is in. Absent when it is in none. */
+  environment?: string;
+  /** A choudoufu plan run with `-cone`: the cone it planned, whose targets join its plan digest, or why it planned in full (../cone.ts). */
+  cone?: PlanCone;
+  /** A root in a composed run: the wave that runs it and its module there. Its plan is its part of the composed plan (../compose.ts). */
+  composed?: { wave: number; module: string };  /** The secrets its plan leaves in state, each with what could keep it out (../tips/secrets.ts). */
+  secrets?: StoredSecret[];
+  /** A choudoufu root under a live block: its estate, record store and `strict { secrets }` setting. */
+  live?: ReportLive;
+}
+
+/** A root's input with its environment, when it is in one. */
+export function withEnvironment<T extends { environment?: string }>(input: T, environment: string | undefined): T {
+  return environment ? { ...input, environment } : input;
+}
+
+/**
+ * What the policy's `hold` and `allow_unattended` rules make of a wave's
+ * gate, from the verdicts of its roots that change something: `held` when
+ * any of them matched a `hold` rule, `unattended` when every one matched an
+ * `allow_unattended` rule and none holds. Undefined otherwise: `gate`
+ * decides, as with no such rule.
+ */
+export function policyGate(changing: readonly { policy?: ReportRootPolicy }[]): { outcome: "held" | "unattended"; rules: string[] } | undefined {
+  const held = [...new Set(changing.flatMap((p) => p.policy?.held_by ?? []))].sort();
+  if (held.length > 0) return { outcome: "held", rules: held };
+  if (changing.length > 0 && changing.every((p) => (p.policy?.allowed_by?.length ?? 0) > 0)) return { outcome: "unattended", rules: [...new Set(changing.flatMap((p) => p.policy!.allowed_by!))].sort() };
+  return undefined;
+}
+
+export interface WaveInput {
+  number: number;
+  roots: string[];
+  approval?: ReportWave["approval"];
+  gate?: ReportWave["gate"];
+  waitingSince?: string;
+  /** A `tf-apply` wave's gate digest, which the report shows as its set digest: the digest over the roots that change. */
+  setDigest?: string;
+  /** Why a `tf-apply` wave applied nothing although it planned. */
+  refused?: ReportWave["refused"];
+  /** The pull request whose review would approve a waiting `tf-apply` wave. */
+  review?: ReportWave["review"];
+  /** The people whose approval of the wave the rule left out, and why: they had a hand in the change. */
+  excluded?: { login: string; reason: string }[];
+  /** The roots whose `on_failure: approve` step failed: the gate holds the wave. */
+  heldBySteps?: string[];
+  /** The `approval_rules` entries its roots take, and where each stands (../approval-rules.ts). */
+  approvalRules?: ReportApprovalRule[];
+  /** A `tf-apply` wave: what the policy's hold and allow_unattended rules made of its gate. A plan's wave works it out from its roots' verdicts. */
+  policyGate?: ReportWave["policy_gate"];
+  /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
+  cost?: ReportWaveCost;
+  /** Where the wave stands. */
+  state?: WaveState;
+  /** A `tf-apply` wave's blocked roots, each with the root whose failure holds it (../blocked.ts). */
+  blocked?: ReadonlyMap<string, string>;
+  /** A `tf-apply` wave's outcome of each root, once it ended (../blocked.ts). */
+  outcomes?: readonly { root: string; outcome: ReportRootOutcome; error?: string; blockedBy?: string }[];
+  /** The waves whose roots its roots read. */
+  reads?: number[];
+  /** A `tf-plan` wave that plans again once these waves apply: no review digest binds it. */
+  replansAfter?: number[];
+  /** A `tf-apply` wave of Terragrunt units: its plans against the pull request's preview of them. */
+  preview?: ReportWave["preview"];
+  /** The environments its roots are in, with `environments:` set. */
+  environments?: string[];
+  /** A `tf-plan` wave's own gate policy, with `environments:` set (the strictest of its roots'), in place of BuildInput.gate. */
+  policy?: Gate;
+  /** The wave that carries a composed run (../compose.ts): its digests take the composed plan as one member in place of its members' parts. */
+  composed?: WaveComposedInput;
+}
+
+/** A wave's composed run, for its row. */
+export interface WaveComposedInput {
+  /** The run's target as chant knows it: `compose:wave-<k>`. */
+  target: string;
+  /** The composed plan's digest, null when it failed to plan. */
+  planDigest: string | null;
+  /** The composed plan, for whether it changes or destroys something. */
+  plan?: unknown;
+  members: ReportComposedMember[];
+  heldByUnknown?: string[];
+  error?: string;
+}
+
+export interface BuildInput {
+  run: ReportRun;
+  roots: RootInput[];
+  waves?: WaveInput[];
+  /** How many sensitive values were redacted from the stored plans. */
+  redacted?: number;
+  /** Advice to carry. Not part of any digest. Leave out with `tips: false`. */
+  tips?: ReportTip[];
+  /** Terragrunt dependencies that would have planned on mock_outputs. */
+  mockReads?: ReportMockRead[];
+  /** Terragrunt units that plan after other units apply. */
+  deferred?: ReportDeferred[];
+  /** The run's policy check, when `policy` is on. */
+  policy?: ReportPolicy;
+  /** A `tf-plan` run's gate policy: each wave then carries its review digest and whether the gate will hold it. */
+  gate?: Gate;
+}
+
+/** The files a root's full plan is kept in, relative to the report: `roots/<root>/plan.{txt,json}`. */
+export function planFiles(root: string): { text: string; json: string } {
+  return { text: `roots/${root}/plan.txt`, json: `roots/${root}/plan.json` };
+}
+
+/** The HTML anchor of a root: `root-` and its path. */
+export const rootAnchor = (root: string): string => `root-${root}`;
+export const groupAnchor = (id: string): string => `group-${id}`;
+
+interface Raw {
+  mode?: string;
+  replace_paths?: (string | number)[][];
+  importing?: string;
+}
+
+function rawChanges(plan: unknown): Map<string, Raw> {
+  const out = new Map<string, Raw>();
+  const list = isObject(plan) && Array.isArray(plan.resource_changes) ? plan.resource_changes : [];
+  for (const r of list) {
+    if (!isObject(r)) continue;
+    const change = isObject(r.change) ? r.change : {};
+    const paths = Array.isArray(change.replace_paths) ? (change.replace_paths.filter(Array.isArray) as (string | number)[][]) : [];
+    const importing = isObject(change.importing) ? String(change.importing.id ?? change.importing.identity ?? "") : undefined;
+    out.set(`${r.address}\u0000${r.deposed ?? ""}`, {
+      ...(typeof r.mode === "string" ? { mode: r.mode } : {}),
+      ...(paths.length > 0 ? { replace_paths: paths } : {}),
+      ...(importing !== undefined ? { importing } : {}),
+    });
+  }
+  return out;
+}
+
+function failedPart(r: RootInput): ChangeSetPart {
+  return {
+    member: {
+      member: r.path, lexicon: "terraform", planner: r.planner ?? "terraform", status: "failed",
+      error: r.error ?? "the root did not plan", planDigest: null, holes: [],
+    },
+    entries: [],
+  };
+}
+
+function reportChange(e: ChangeSetEntry, raw: Raw | undefined, preventDestroy: ReadonlySet<string>): ReportChange {
+  const writeOnly = e.attributes.map((a) => a.path).filter((p) => p.endsWith("_wo_version"));
+  const base = {
+    address: e.address,
+    type: e.type,
+    action: e.action,
+    ...(e.disruption ? { disruption: e.disruption } : {}),
+    ...(e.deposed !== undefined ? { deposed: e.deposed } : {}),
+    ...(e.module ? { module: e.module } : {}),
+    ...(e.index !== undefined ? { index: e.index } : {}),
+    attributes: e.attributes,
+    ...(raw?.replace_paths ? { replace_paths: raw.replace_paths } : {}),
+    ...(raw?.importing !== undefined ? { importing: raw.importing } : {}),
+    ...(writeOnly.length > 0 ? { write_only: writeOnly } : {}),
+  };
+  const kind = changeKind(e.action, e.attributes);
+  const { fold, why } = foldChange({ ...base, kind }, preventDestroy.has(`${e.type}.${e.name ?? ""}`));
+  return { ...base, ...(kind ? { kind } : {}), fold, ...(why ? { why } : {}) };
+}
+
+/** Per address, the attribute paths whose values differ between the group's roots. */
+function varies(roots: ReportRoot[]): ReportGroup["varies"] {
+  if (roots.length < 2) return [];
+  const seen = new Map<string, Map<string, Set<string>>>();
+  for (const r of roots) {
+    for (const c of r.changes) {
+      const byPath = seen.get(c.address) ?? new Map<string, Set<string>>();
+      seen.set(c.address, byPath);
+      for (const a of c.attributes) {
+        const vals = byPath.get(a.path) ?? new Set<string>();
+        byPath.set(a.path, vals);
+        vals.add(JSON.stringify(a.sensitive ? REDACTED : a.unknown ? "(known after apply)" : (a.after ?? a.before ?? null)));
+      }
+    }
+  }
+  const out: ReportGroup["varies"] = [];
+  for (const [address, byPath] of [...seen].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const paths = [...byPath].filter(([, v]) => v.size > 1).map(([p]) => p).sort();
+    if (paths.length > 0) out.push({ address, paths });
+  }
+  return out;
+}
+
+/** A root the policy refused: it planned, so its changes are known, but it fails and no gate may bind its digest. */
+const policyRefused = (r: RootInput): boolean => r.plan !== undefined && r.error !== undefined && r.policy !== undefined && r.policy.result !== "passed";
+
+function plannedPart(r: RootInput): ChangeSetPart {
+  const planned = terraformChangeSetPart({ member: r.path, plan: r.plan, planner: r.planner ?? "terraform", ...(r.terragrunt ? { scope: r.terragrunt.stack } : {}) });
+  const digest = planned.member.planDigest;
+  const part = r.cone?.record && digest ? { ...planned, member: { ...planned.member, planDigest: conePlanDigest(digest, r.cone) } } : planned;
+  if (!policyRefused(r)) return part;
+  return { ...part, member: { ...part.member, status: "failed", error: r.error, planDigest: null } };
+}
+
+/** The actions a root's change counts under in `totals_roots`: everything but a no-op and a read. */
+const COUNTED: ReadonlySet<ChangeSetAction> = new Set(["create", "update", "replace", "delete", "forget"]);
+
+/**
+ * The totals by action and how many roots they count a change of. A root the
+ * policy refused keeps its changes in the report, but they cannot apply, so
+ * the totals leave them out.
+ */
+function countTotals(actions: Record<ChangeSetAction, number>, entries: readonly ChangeSetEntry[], refused: (member: string) => boolean): { totals: Record<ChangeSetAction, number>; roots: number } {
+  const totals = { ...actions };
+  const changing = new Set<string>();
+  for (const e of entries) {
+    if (refused(e.member)) {
+      if (totals[e.action] > 0) totals[e.action]--;
+    } else if (COUNTED.has(e.action)) changing.add(e.member);
+  }
+  return { totals, roots: changing.size };
+}
+
+/**
+ * The totals of a set of roots' plans as a report counts them, and how many
+ * roots they count a change of: for a `tf-apply` wave's row in run.json,
+ * before its report is written. A root that did not plan counts nothing.
+ */
+export function planTotals(roots: readonly RootInput[]): { totals: Record<ChangeSetAction, number>; roots: number } {
+  const parts = roots.filter((r) => r.plan !== undefined && (r.error === undefined || policyRefused(r))).map(plannedPart);
+  const doc = composeChangeSet(parts);
+  const byPath = new Map(roots.map((r) => [r.path, r]));
+  return countTotals(doc.summary.actions, doc.entries, (member) => policyRefused(byPath.get(member)!));
+}
+
+export function buildReport(input: BuildInput): Report {
+  const inputRun = input.run;
+  const byPath = new Map(input.roots.map((r) => [r.path, r]));
+  const parts = input.roots.map((r) =>
+    r.plan !== undefined && (r.error === undefined || policyRefused(r)) ? plannedPart(r) : failedPart(r),
+  ).map((p, i) =>
+    // A provisional plan stays out of the change set's digest and out of every group of real plans.
+    input.roots[i].terragrunt?.provisional ? { ...p, member: { ...p.member, provisional: true as const } } : p,
+  );
+  const doc = composeChangeSet(parts);
+  const summary = groupChangeSet(doc);
+  const memberGroup = new Map<string, string>();
+  if (summary.unit === "member") for (const g of summary.groups) for (const u of g.units) memberGroup.set(u, g.id);
+  const outliers = new Set(summary.groups.filter((g) => g.outlier).flatMap((g) => g.units));
+
+  const { totals, roots: totalsRoots } = countTotals(doc.summary.actions, doc.entries, (member) => policyRefused(byPath.get(member)!));
+
+  const named: ReportNamed[] = [];
+  const roots: ReportRoot[] = doc.members.map((m) => {
+    const src = byPath.get(m.member)!;
+    const raw = rawChanges(src.plan);
+    // A value the plan marks sensitive in one attribute can sit unmarked in another, so it is cut from every attribute.
+    const secrets = src.plan !== undefined ? sensitiveStrings(src.plan) : [];
+    const counts: ReportRoot["counts"] = {};
+    const changes: ReportChange[] = [];
+    for (const e of doc.entries) {
+      if (e.member !== m.member) continue;
+      const r = raw.get(`${e.address}\u0000${e.deposed ?? ""}`);
+      // Ephemeral values exist only while one run lasts; they are not changes.
+      if (r?.mode === "ephemeral" || e.address.startsWith("ephemeral.")) continue;
+      counts[e.action] = (counts[e.action] ?? 0) + 1;
+      if (e.action === "no-op" && r?.importing === undefined) continue;
+      const c = reportChange({ ...e, attributes: scrubSecrets(e.attributes, secrets) }, r, src.preventDestroy ?? new Set());
+      changes.push(c);
+      // An import is named whether it leaves the object as found or also
+      // updates it; a destroy, replace or forget of it is named as that.
+      const action = c.action === "delete" || c.action === "replace" || c.action === "forget" ? c.action : c.importing !== undefined ? "import" : undefined;
+      if (action !== undefined) {
+        named.push({
+          root: m.member, address: c.address, type: c.type, action,
+          ...(c.deposed !== undefined ? { deposed: c.deposed } : {}),
+          ...(c.replace_paths ? { replace_paths: c.replace_paths } : {}),
+        });
+      }
+    }
+    if (m.status === "failed") named.push({ root: m.member, action: "refused", reason: m.error ?? "the root did not plan" });
+    const highlights: Highlight[] = changes.filter((c) => c.why !== undefined).map((c) => ({ address: c.address, type: c.type, action: c.action, why: c.why! }));
+    const why: string[] = [];
+    if (m.status === "failed") why.push(policyRefused(src) ? "refused by policy" : "refused to plan");
+    if (src.policy?.override) why.push(`policy overridden by ${src.policy.override.by}`);
+    const holding = (src.steps ?? []).filter((x) => x.status === "approval").map((x) => x.name);
+    if (holding.length) why.push(`step ${holding.join(", ")} asks for an approval`);
+    if (src.policy?.warnings.length) why.push(`${src.policy.warnings.length} policy warning${src.policy.warnings.length === 1 ? "" : "s"}`);
+    if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
+    if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");
+    if (highlights.length > 0) why.push(...new Set(highlights.map((h) => h.why)));
+    const group = memberGroup.get(m.member);
+    return {
+      path: m.member,
+      ...(src.environment ? { environment: src.environment } : {}),
+      ...(src.binary ? { binary: src.binary } : {}),
+      ...(src.terragrunt ? { terragrunt: src.terragrunt } : {}),
+      status: m.status,
+      ...(m.error ? { error: m.error } : {}),
+      plan_digest: m.planDigest,
+      counts,
+      ...(group ? { group } : {}),
+      plan: src.files ?? (m.status === "planned" ? planFiles(m.member) : {}),
+      // A root with no job of its own was planned by the run's job.
+      ...(src.job_url ?? inputRun.job_url ? { job_url: src.job_url ?? inputRun.job_url } : {}),
+      changes,
+      highlights,
+      fold: why.length > 0 ? "open" : "folded",
+      why,
+      ...(src.policy ? { policy: src.policy } : {}),
+      ...(src.applied && m.status === "planned" && src.plan !== undefined ? { resources: planResources(src.plan), applied_changes: withRecordVersions(planAppliedChanges(src.plan), src.recordVersions) } : {}),
+      ...(src.applied && src.state ? { state: src.state } : {}),
+      ...(src.applied && m.status === "planned" && src.versions ? { versions: src.versions } : {}),
+      ...(src.steps?.length ? { steps: src.steps } : {}),
+      ...(src.reads?.length ? { reads: src.reads } : {}),
+      ...(src.unknownReads?.length ? { unknown_reads: src.unknownReads } : {}),
+      ...(src.unaddressed ? { unaddressed: src.unaddressed } : {}),
+      ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
+      ...(src.cone ? { cone: reportCone(src.cone) } : {}),
+      ...(src.composed ? { composed: src.composed } : {}),
+      ...(m.status === "planned" && src.secrets?.length ? { secrets: secretCounts(src.secrets) } : {}),
+      ...(src.live ? { live: src.live } : {}),
+    };
+  });
+
+  const rootsByPath = new Map(roots.map((r) => [r.path, r]));
+  const groups: ReportGroup[] = summary.groups.map((g) => {
+    const members = summary.unit === "member" ? g.units.map((u) => rootsByPath.get(u)!).filter(Boolean) : [];
+    const destroys = g.destroys.length;
+    const why: string[] = [];
+    if (g.outlier) why.push("outlier: read it on its own");
+    if (destroys > 0) why.push(`${destroys} ${destroys === 1 ? "destroy or replacement" : "destroys or replacements"}`);
+    const highlighted = [...new Set(members.flatMap((r) => r.highlights.filter((h) => h.action !== "delete" && h.action !== "replace").map((h) => h.why)))];
+    why.push(...highlighted);
+    if (inputRun.stage === "tf-drift" && !g.noChanges) why.push("drifted");
+    return {
+      id: g.id,
+      ...(g.resource ? { resource: g.resource } : {}),
+      units: g.units,
+      outlier: g.outlier,
+      noChanges: g.noChanges,
+      changes: g.changes,
+      ...(g.extends ? { extends: g.extends } : {}),
+      ...(g.plus ? { plus: g.plus } : {}),
+      destroys,
+      varies: varies(members),
+      fold: why.length > 0 ? "open" : "folded",
+      why,
+    };
+  });
+
+  const order: Record<ReportNamed["action"], number> = { refused: 0, delete: 1, replace: 2, forget: 3, import: 4 };
+  named.sort((a, b) => order[a.action] - order[b.action] || (a.root < b.root ? -1 : a.root > b.root ? 1 : 0) || ((a.address ?? "") < (b.address ?? "") ? -1 : 1));
+
+  const waves: ReportWave[] = (input.waves ?? []).map((w) => {
+    // A provisional member is a preview: no wave's set digest covers it. A composed run is one member in place of its roots' parts.
+    const comp = w.composed;
+    const inRun = new Set(comp?.members.map((m) => m.root) ?? []);
+    const members = doc.members.filter((m) => w.roots.includes(m.member) && !m.provisional && !inRun.has(m.member));
+    const run = comp?.planDigest ? [{ member: comp.target, planDigest: comp.planDigest }] : [];
+    const failed = members.some((m) => m.planDigest === null) || (comp !== undefined && !comp.planDigest);
+    // With cost.approve_above the wave's cost is one more member of its digests, as the wave's gate takes it.
+    const cost = costMember(w.cost);
+    const extra = cost ? [cost] : [];
+    let review: Pick<ReportWave, "review_digest" | "waits" | "policy_gate"> = {};
+    if (input.gate) {
+      const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
+      const changing = [...members.filter((m) => changesSomething(plans.get(m.member))), ...(changesSomething(comp?.plan) ? run : [])];
+      const destroys = changing.some((m) => destroysSomething(plans.get(m.member))) || (comp !== undefined && destroysSomething(comp.plan));
+      // A composed run in which a root reads another's value unknown at plan time applies values nobody reviewed: it waits under every gate but never.
+      const unknownHold = (comp?.heldByUnknown?.length ?? 0) > 0;
+      const gate = w.policy ?? input.gate;
+      const replans = (w.replansAfter?.length ?? 0) > 0;
+      // The policy's hold and allow_unattended rules: a hold waits whatever gate says, and an allow of every changing root lifts gate alone.
+      const verdicts = new Map(input.roots.map((r) => [r.path, r.policy]));
+      const ruled = replans ? undefined : policyGate(changing.filter((m) => verdicts.has(m.member)).length === changing.length ? changing.map((m) => ({ policy: verdicts.get(m.member) })) : []);
+      const gateHolds = ruled?.outcome === "unattended" ? false : gate === "always" || (gate === "on-destructive" && destroys);
+      review = {
+        // A wave that plans again once the waves it reads apply has no digest a review can bind: that plan is not made yet.
+        review_digest: failed || changing.length === 0 || replans ? null : changeSetDigest([...changing, ...extra]),
+        // Nobody reviews the plan it makes then, so its gate holds it under every policy but never (#1012).
+        waits: (replans && gate !== "never") || (changing.length > 0 && (gateHolds || ruled?.outcome === "held" || w.cost?.over === true || (w.heldBySteps?.length ?? 0) > 0 || (unknownHold && gate !== "never"))),
+        ...(ruled && changing.length > 0 ? { policy_gate: ruled } : {}),
+      };
+    }
+    return {
+      number: w.number,
+      roots: w.roots,
+      set_digest: w.setDigest ?? (failed || members.length + run.length === 0 ? null : changeSetDigest([...members, ...run, ...extra])),
+      approval: w.approval ?? "not-requested",
+      ...review,
+      ...(w.gate ? { gate: w.gate } : {}),
+      ...(w.waitingSince && w.approval === "waiting" ? { waiting_since: w.waitingSince } : {}),
+      ...(w.refused ? { refused: w.refused } : {}),
+      ...(w.review && w.approval === "waiting" ? { review: w.review } : {}),
+      ...(w.excluded?.length ? { excluded_approvers: w.excluded.map((e) => ({ login: e.login, reason: e.reason })) } : {}),
+      ...(w.approvalRules?.length ? { approval_rules: w.approvalRules.map((r) => ({ ...r, roots: [...r.roots], approvers: [...r.approvers] })) } : {}),
+      ...(w.policyGate ? { policy_gate: w.policyGate } : {}),
+      ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
+      ...(w.cost ? { cost: w.cost } : {}),
+      ...(w.state ? { state: w.state } : {}),
+      ...(w.blocked?.size ? { blocked: [...w.blocked].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, by]) => ({ root, blocked_by: by })) } : {}),
+      ...(w.outcomes?.length ? { outcomes: w.outcomes.map((o) => ({ root: o.root, outcome: o.outcome, ...(o.error ? { error: o.error } : {}), ...(o.blockedBy ? { blocked_by: o.blockedBy } : {}) })) } : {}),
+      ...(w.reads?.length ? { reads: w.reads } : {}),
+      ...(w.replansAfter?.length ? { replans_after: w.replansAfter } : {}),
+      ...(w.preview ? { preview: w.preview } : {}),
+      ...(w.environments?.length ? { environments: w.environments } : {}),
+      ...(comp
+        ? { composed: { plan_digest: comp.planDigest, members: comp.members, ...(comp.heldByUnknown?.length ? { held_by_unknown: [...comp.heldByUnknown].sort() } : {}), ...(comp.error ? { error: comp.error } : {}) } }
+        : {}),
+    };
+  });
+
+  return {
+    schema: REPORT_SCHEMA,
+    minor: REPORT_MINOR,
+    run: input.run,
+    change_set: doc.digest,
+    unit: summary.unit,
+    units: summary.units,
+    totals,
+    totals_roots: totalsRoots,
+    groups,
+    roots,
+    waves,
+    named,
+    holes: summary.holes.map((h) => ({ root: h.member, address: h.address, ...(h.type ? { type: h.type } : {}), reason: h.reason })),
+    redaction: { marker: REDACTED, values: input.redacted ?? 0 },
+    ...(input.mockReads?.length ? { mock_reads: input.mockReads } : {}),
+    ...(input.deferred?.length ? { deferred: input.deferred } : {}),
+    ...(input.tips ? { tips: input.tips } : {}),
+    ...(input.policy ? { policy: input.policy } : {}),
+  };
+}
+
+/** Each change with its record's versions, when the apply listed them. */
+function withRecordVersions(changes: ReportAppliedChange[], versions: ReadonlyMap<string, ReportRecordVersions> | undefined): ReportAppliedChange[] {
+  if (!versions || versions.size === 0) return changes;
+  return changes.map((c) => {
+    const v = versions.get(c.address);
+    return v ? { ...c, record_versions: v } : c;
+  });
+}

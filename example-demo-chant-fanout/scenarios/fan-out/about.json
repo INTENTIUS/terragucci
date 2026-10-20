@@ -1,0 +1,5 @@
+{
+  "changes": "A pull request (a change up for review) edits the shared network. It also adds a cluster-a queue whose name AWS refuses.",
+  "watch": "chant plans fifteen stacks in three waves. After the merge, network applies first. Then cluster-a fails and its six apps are blocked. Cluster-b's six apps go ahead. A fix applies the seven left.",
+  "shows": "A failure blocks only the stacks that depend on it, and the fix applies only what was left."
+}

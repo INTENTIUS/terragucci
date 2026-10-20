@@ -1,0 +1,2655 @@
+{
+  "recorded": "2026-10-08",
+  "commit": "c51e358",
+  "forge": "forgejo",
+  "claims": [
+    {
+      "claim": "boot/tofu",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "boot/tofu",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "boot/tofu",
+      "says": "the example boots and deploys locally",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "check/tofu",
+      "says": "tf-check fails an unformatted root and names the file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "affected/tofu",
+      "says": "only the roots a change touches are planned",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "affected/tofu",
+      "says": "a merge request that changes one of two roots plans that root alone, against its target branch, and its plan note covers it alone",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "8022dedb"
+    },
+    {
+      "claim": "affected/outside-roots",
+      "says": "a change outside every root plans the roots that read it: a shared var file TF_CLI_ARGS names plans the roots that read it, a file a symlink points at plans the root that links it, a version for envs/prod/** in terragucci.yml plans those roots only, a new synth command plans every root, and a policy, approval mode or step added at head plans nothing, since they are read at the base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "note/grouped",
+      "says": "one note groups many plans",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "report/tofu",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/tofu",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "report/tofu",
+      "says": "the report is JSON and HTML, and links every root to its full plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "report/highlight",
+      "says": "destroys and outliers are open, identical groups are folded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "waves/tofu",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "waves/tofu",
+      "says": "each wave goes out only once approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "refuse/tofu",
+      "says": "a wave whose plans changed after approval applies nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "approval/sealed",
+      "says": "under approval: sealed a wave counts only an approval sealed by a key the signers file lists",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "drift/tofu",
+      "says": "drift is reported by root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift/tofu",
+      "says": "drift is reported by root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "drift/tofu",
+      "says": "with binary: choudoufu and the roots under live resource markers, drift is a config error: init and stage tf-drift exit 2 naming the roots, before any plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "rollout/tofu",
+      "says": "a module version rolls out one merge request per wave, each changing only its roots and opened only after the last wave merged and applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "modules/publish",
+      "says": "changed modules are published at a new version",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "modules/publish",
+      "says": "the publish job pushes a git tag for each changed module on a merge to main, none when no module changed, and the next version for a changed module",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "modules/attest",
+      "says": "with modules.attest each release is signed, attested and recorded in the release ledger with its tag",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "modules/require",
+      "says": "with modules.require: attested tf-plan plans a root that pins an attested release, and refuses one whose tag was moved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "modules/recorded",
+      "says": "with modules.require: attested tf-plan refuses a root that pins a version the release ledger does not record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "modules/terragrunt-require",
+      "says": "with modules.require: attested in a Terragrunt repo tf-check and tf-plan refuse a unit whose terraform source pins an unattested release, and pass one that pins an attested release",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "modules/registry",
+      "says": "with modules.registry each release is written as the module registry protocol to a bucket, and a root that pins ~> 1.0 resolves the newest 1.x from it; with modules.test an untested release is refused",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "tips/tofu",
+      "says": "tips are on by default and name their rule",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "tips/tofu",
+      "says": "the plan note on a merge request counts the tips the plan report holds, each naming its rule and page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
+      "claim": "init/zero-config",
+      "says": "with no more than a drift schedule and the canary wave in terragucci.yml, init writes the same pipeline",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "65cae39f"
+    },
+    {
+      "claim": "apply/serial",
+      "says": "two pushes to main apply one after the other, and the commit carries one terragucci/apply status",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "apply/serial",
+      "says": "two pushes to main apply one after the other, and the commit carries one terragucci/apply status",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "1813d451"
+    },
+    {
+      "claim": "apply/serial",
+      "says": "two pushes to main apply one after the other through the resource group, none is cancelled, and the commit carries one terragucci/apply success",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
+      "claim": "reconcile/tofu",
+      "says": "a control repo opens one pull request per project that changes, and the merged pipeline applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "reconcile/mixed",
+      "says": "a control repo with projects on Forgejo, on GitHub (the mock) and on a forge that does not answer opens the Forgejo pull request and the GitHub one, each with its own pipeline, names the project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "bf5dd40e"
+    },
+    {
+      "claim": "reconcile/mixed",
+      "says": "a control repo with projects on GitLab and Forgejo opens the merge request of the GitLab project, names the Forgejo project that failed, and exits 1",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "telemetry/traces",
+      "says": "each plan run is one trace, with a span per root and the binary spans inside it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/metrics",
+      "says": "the metrics of a plan run reach Prometheus with the counts in its report",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "init/terragrunt",
+      "says": "init finds Terragrunt and its 15 units on its own and writes the pipeline the Terragrunt example commits",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "waves/terragrunt",
+      "says": "the Terragrunt example boots in five waves, one job each: the dependency layers of the dev canary, then the layers of staging and prod, each with one run --all",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "check/terragrunt",
+      "says": "tf-check fails an unformatted Terragrunt file and names it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "affected/terragrunt",
+      "says": "only the units a change reaches are planned, including a file a module reads that Terragrunt misses",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "tips/terragrunt-mock",
+      "says": "a dependency whose mock_outputs can stand in for apply is named by a tip",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "linked/terragrunt-mock",
+      "says": "a unit that reads a new upstream is planned on the planned outputs of that upstream, never on its mock_outputs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "linked/terragrunt-mock-trap",
+      "says": "a new upstream and its dependent merge together and apply in order, so no mock reaches real state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/refused",
+      "says": "a refused wave names each root whose plan moved and the attributes that moved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/triage",
+      "says": "a failed apply is triaged from the known-error table",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/drift",
+      "says": "drift on a literal becomes a pull request with the live value, and import blocks for what is unmanaged",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/tips",
+      "says": "each tip becomes its own small pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/fmt",
+      "says": "fmt on request commits to the pull request branch and nowhere else",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/notes",
+      "says": "release notes come from the conventional commits that touched the module",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "linked/fresh",
+      "says": "on a fresh estate the plan job holds back a root whose upstream is unapplied, names it in the report, and stays green",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "oidc/forgejo",
+      "says": "a Forgejo job gets an OIDC token Forgejo signed for its repo and ref, and trades it for the plan or apply role",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "apply/steward",
+      "says": "tf-apply runs as a turn on a fountain steward, started by the forge job, and applies every root",
+      "needs": "273",
+      "verdict": "pending",
+      "break": null,
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "policy/tofu",
+      "says": "an opt-in policy denies a plan, fails the root in tf-plan, and names the violation",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "policy/tofu",
+      "says": "a merge request whose plan the policy on main denies fails its plan job and terragucci/plan, though it rewrites that policy, and its plan note names the denial",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "8022dedb"
+    },
+    {
+      "claim": "comment/plan",
+      "says": "a Developer /terragucci plan note starts a merge request pipeline of the same head, whose plan job passes and updates the plan note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "import/atlantis",
+      "says": "terragucci import atlantis writes terragucci.yml from an atlantis.yaml, names what it leaves out, and the pipeline init then writes plans exactly the Atlantis projects",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "ff7d397e"
+    },
+    {
+      "claim": "import/spacelift",
+      "says": "terragucci import spacelift writes terragucci.yml from spacelift_* code and .spacelift/config.yml, with context secrets to create and hooks as steps, and init then applies the roots in the order the stack dependencies ask",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
+      "claim": "import/env0",
+      "says": "terragucci import env0 writes terragucci.yml from env0_* code, env0.yml and env0-discovery.yml, and init then plans the environment roots, keeps ephemeral copies of the ones with a TTL, and holds every wave for an approval",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
+      "claim": "import/hcp",
+      "says": "terragucci import hcp reads the workspaces of an organization over the TFE API, only reading, and writes a root per workspace directory, lists a directory several workspaces run to split, names sensitive variables as secrets without their values, and init then applies in the order the run triggers ask",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "190e171f"
+    },
+    {
+      "claim": "import/scalr",
+      "says": "terragucci import scalr reads the workspaces of a Scalr account over the Scalr API, only reading, and writes their roots on tofu with the sensitive variables as secrets the pipeline passes, without their values, and names the policies of each OPA policy group",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "190e171f"
+    },
+    {
+      "claim": "import/terragrunt-scale",
+      "says": "terragucci import terragrunt-scale writes the plan and apply roles of each Gruntwork Pipelines environment as terragrunt.credentials, and every unit then assumes the roles of its environment, a unit with its own gruntwork.hcl its own",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "6792b9e1"
+    },
+    {
+      "claim": "waves/after",
+      "says": "waves.after orders plain roots that read nothing of each other: network, database and app apply in three waves, and a pull request that changes network plans all three",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "comment/atlantis",
+      "says": "with atlantis_comments on, atlantis plan re-plans a pull request, and atlantis apply and an Atlantis-only flag are refused as the terragucci forms are",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/wait-span",
+      "says": "with binary: terraform a tf-apply wave whose plan meets a state lock another Terraform plan holds waits for it under the default -lock-timeout terragucci adds, the root's plan time in the report covering the wait, and applies once the lock is released",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "1813d451"
+    },
+    {
+      "claim": "telemetry/dash-pipeline",
+      "says": "the Pipeline health dashboard init writes shows the runs, errors and results of a plan, a drift run and a gated wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/dash-changes",
+      "says": "the Change review dashboard init writes shows the roots, groups and changes by action of a pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/dash-waves",
+      "says": "the Rollouts and waves dashboard init writes shows a wave waiting for its approval, how long, and wave runs by result",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/dash-drift",
+      "says": "the Drift dashboard init writes shows the roots a drift run found drifted and how old the drift is",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/dash-estate",
+      "says": "the Estate dashboard init writes shows the roots of a project and the binary and terragucci versions it runs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/dash-runs",
+      "says": "the Runs dashboard init writes shows the slowest roots, stage durations and the trace of each run from Tempo",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/dash-slos",
+      "says": "the SLO dashboards init writes are provisioned, and the plan SLO records the plans of a project from the rules init writes",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/drill-down",
+      "says": "the plan note links the report in the bucket, the report links each root plan and the trace of the run, the trace and the dashboards link back to the report, and the index row links the commit, pull request and job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "policy/wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "policy/wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "policy/wave",
+      "says": "a tf-apply wave whose plan the policy denies applies nothing, and its report keeps the changes of the denied root with the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "check/diagnostics",
+      "says": "tf-check fails with the cause in its log for a validate error, a failing policy test and a choudoufu live-check refusal",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "comment/not-affected",
+      "says": "a re-plan comment for a root the pull request does not reach is answered that it is not affected and plans nothing, and a re-plan whose forge call fails fails its job with the cause",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "drift/attribute",
+      "says": "with respond.drift: attribute, tf-drift lists who changed each drifted attribute under its root in the drift issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "modules/version-bump",
+      "says": "with respond.version-bump: suggest, the version-bump job of the pipeline runs after the last apply on the default branch and opens a release pull request with the answer of the decision service",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/terragrunt-spans",
+      "says": "the plan of each Terragrunt unit sends its spans to the report through the TG_TF_PATH wrapper, and waits up to five minutes for the state lock",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "oidc/clouds",
+      "says": "a job with oidc.gcp and oidc.azure gets an external_account file and the ARM_* variables the google and azurerm providers read, with a token for the audience of each cloud",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "comment/apply",
+      "says": "a comment on a merged pull request re-runs its apply from the merge commit, applies a wave under approval: sealed only once its approval is sealed, and refuses an open pull request and a commenter with no write access",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "agent/comment",
+      "says": "a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "agent/comment",
+      "says": "a /terragucci agent note starts a pipeline on main whose agent sees no forge token and whose push job commits its change to the branch, refusing one to the pipeline file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "agent/review",
+      "says": "with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "agent/review",
+      "says": "the comments job starts a review on main whose note flags an unmentioned destroy with no forge token in reach, and the merged wave policy reads its risk",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "policy/review-risk",
+      "says": "a tf-apply wave gives the policy the risk the review workflow of the default branch kept as its artifact for the head of the merged pull request as input.review; the edited review job of the pull request itself keeping risk low and a forged low-risk note posted with the pipeline token change nothing, and a policy that denies risk high stops the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "report/wave",
+      "says": "the report of a tf-apply wave behind a gate says waiting and links the ledger that holds its record, and approved once an approval of its digest stands",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "policy/delete-key",
+      "says": "a pull request that deletes the policy key from terragucci.yml and adds a change the policy denies still fails tf-plan, checked against the policy of the base branch",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "report/oidc",
+      "says": "with no static keys, the plan job writes its report to the bucket as the role it assumes with its OIDC token through STS, and the index lists the run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/oidc",
+      "says": "with no static keys, the plan job assumes reports.role with its OIDC token from id_tokens, writes report.json to the bucket, and the index lists the run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "pr-apply/tofu",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "pr-apply/tofu",
+      "says": "with apply.when: pull-request, a comment on an open and approved pull request applies its head in waves and then merges it with apply.merge: auto",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "pr-apply/tofu",
+      "says": "with apply.when pull-request, /terragucci apply starts a pipeline on main with the merge token whose mr-apply applies the head and pr-merge merges it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "lock/apply",
+      "says": "with apply.when pull-request, a merge request applied on a note locks the roots it reaches: /terragucci apply on a second merge request that reaches one is refused with the root and the holder named, and applies once the first is unlocked with /terragucci unlock",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "4b61c25b"
+    },
+    {
+      "claim": "pr-apply/stale",
+      "says": "a comment on an approved pull request whose head is behind the default branch is refused as not up to date, and nothing applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "telemetry/provider-calls",
+      "says": "with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/summed-timings",
+      "says": "with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "init/foreign-checkout",
+      "says": "a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "waves/terragrunt-layers",
+      "says": "a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "waves/atmos",
+      "says": "init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "apply/atmos-workspace",
+      "says": "each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "affected/atmos",
+      "says": "a pull request that changes one Atmos instance plans that instance and the instances whose dependencies.components name it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "linked/atmos",
+      "says": "an Atmos instance whose stack reads an unapplied instance with !terraform.state is held back, never planned on a stand-in, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "check/atmos",
+      "says": "the check job of an Atmos repo runs atmos validate stacks before it writes the instances, and fails on a manifest Atmos refuses, with the error Atmos gives",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "init/atmos-version",
+      "says": "atmos.version in terragucci.yml is the Atmos release every job installs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "waves/terramate",
+      "says": "init takes the stacks of a Terramate repo as roots and cuts a wave per layer of their order: a stack after a tag or before another applies in the wave its order gives it, behind its own gate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "affected/terramate",
+      "says": "a pull request that changes one Terramate stack plans that stack and the stacks whose after or before put them after it, and no other",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "linked/terramate",
+      "says": "a Terramate stack whose input block reads an output of an unapplied stack is held back, never planned on the mock, and applies on the output of the upstream once it has applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "check/terramate",
+      "says": "the check job of a Terramate repo fails on stale generated code, naming the file terramate generate would change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "3559bac3"
+    },
+    {
+      "claim": "oidc/atmos-roles",
+      "says": "oidc.roles by stack glob gives the instances of each Atmos stack roles of their own: config check lists each role with the states of its stack, and each instance plans and applies as the role of its stack",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "0c494d98"
+    },
+    {
+      "claim": "lock/atmos",
+      "says": "with apply.when: pull-request in an Atmos repo, a pull request applied on a comment locks the Atmos instances it reaches (every instance, for a change to a stack manifest), and a second pull request that changes one is refused with the instance and the holder named, its state left as the first applied it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "init/atmos-refuse",
+      "says": "config check and init refuse the drift pull request of an Atmos repo in the same words, about the vars of the stack, never synth; respond tips proposes lock files for the components and a canary of instances",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8b686e63"
+    },
+    {
+      "claim": "policy/source",
+      "says": "a project of a control repo with no policy directory is checked against the shared policy source the control repo defaults name, at its pinned ref",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "reconcile/parallelism",
+      "says": "a project of a control repo plans with the parallelism its defaults set: reconcile writes the key into the terragucci.yml of the project, and the plan job reads it there",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "reconcile/provider",
+      "says": "the terragucci provider, applied with tofu, writes a project and the defaults into the terragucci.yml of a control repo, plans show a changed setting, and reconcile gives the project its pipeline with the setting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "29a262ee"
+    },
+    {
+      "claim": "pr-apply/requires",
+      "says": "with apply.requires: [approved] an approved pull request behind the default branch applies from its head, the default requirements refuse it as not up to date, and a pull request that conflicts with the default branch is refused as not mergeable",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/comment",
+      "says": "/terragucci lock on an open pull request locks the roots it reaches and applies nothing, and a second pull request that reaches one is refused with the root and the holder named",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "report/front-door",
+      "says": "the front door template puts CloudFront in front of the private reports bucket at its own domain, reads the bucket through Origin Access Control and runs the sign-in check on every viewer request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "approval/ledger",
+      "says": "with no approval key a wave counts an unsigned approval of its set digest, init declares no gate, and the waiting wave prints the approval command without --sign",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "approval/at-base",
+      "says": "a merge that switches approval from sealed to ledger is judged by the sealed rule of the commit before it, and the next merge by ledger",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "approval/sealed-migrate",
+      "says": "a repo whose chant.workspace.json lists the wave gates and whose config names no approval mode stays sealed, and the wave and config check say so",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "estate/tofu",
+      "says": "terragucci estate writes one page to the reports bucket from the index of every project: three projects, a waiting wave with its age and a drift, with a presigned link to the page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "behold/view",
+      "says": "the behold step of the estate job reads the reports from the bucket and publishes the view of the commit under views/behold/<commit>/ with latest.json and history.json naming it, and headless Chrome, opening views/behold/ from the bucket, draws the drift the drift check found on the card of the deleted queue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "41460da8"
+    },
+    {
+      "claim": "behold/serve",
+      "says": "behold serve, given the checkout and the reports bucket, draws both roots, marks the queue deleted outside Terraform with the time the drift check finished, gives the terragucci approve line of the waiting wave and refuses a deploy, and refuses a corrupted index.json",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "41460da8"
+    },
+    {
+      "claim": "behold/terragucci-view",
+      "says": "terragucci view, reading the bucket and project from terragucci.yml, starts the pinned behold, which draws both roots, marks the queue deleted outside Terraform with the time the drift check finished and gives the terragucci approve line of the waiting wave, and stops on SIGTERM; a corrupted index.json stops it with one line",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "54129f30"
+    },
+    {
+      "claim": "note/drift-overdue",
+      "says": "the plan of a pull request says in its note that drift checks are overdue when the drift schedule has come round twice with no drift run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "approval/pr-review",
+      "says": "with approval pr-review, a Developer approval of the merge request lets the merge commit gated wave apply, and the job names the approver",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "refuse/pr-review",
+      "says": "with approval: pr-review a wave whose plans changed between the review of the head and the merge applies nothing and prints the terragucci approve command for its new digest",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "approval/pr-review-status",
+      "says": "with approval: pr-review terragucci/approval on the head of a pull request is pending while a wave waits, and success once a writer other than the author approves the head",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "choudoufu/concurrency",
+      "says": "with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both in under 90 seconds; two that change different resources reach their record writes together and both apply, with no lock wait and no lock object; and two that change one resource at once settle on one record: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/killed",
+      "says": "with binary: choudoufu while an approved tf-apply wave applies, its run view and progress.json show the resource whose apply returned done and the slow one after it in flight; killed then, the wave leaves a record for the first and none for the second, and the wave run again applies only the second under the same approval, with no new one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/record-versions",
+      "says": "with binary: choudoufu a record changed by three tf-apply waves shows three versions, newest first, on the estate page and in its history, listed by choudoufu live-history",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/iam",
+      "says": "with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "apply/per-root",
+      "says": "a second push applies one root while the wave of the first push is still applying another: no apply job waits for another run, and the state lock of the backend keeps the applies of one root apart",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1d6ba08a"
+    },
+    {
+      "claim": "apply/stand-down",
+      "says": "a wave of a push whose commit is no longer the tip of main stands down once the newer push has landed: it applies nothing, its terragucci/apply says superseded by a newer push, and the newer push applies the root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2bdb05f3"
+    },
+    {
+      "claim": "choudoufu/rows-overlap",
+      "says": "with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/rows-wait",
+      "says": "with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "drift/choudoufu",
+      "says": "with binary: choudoufu a queue changed outside choudoufu on a root under live resource markers is drift: tf-drift plans the root in full, its report and one drift issue name the root and the attribute, and a run with no change closes the issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "choudoufu/rows-takeover",
+      "says": "with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "approval/resume",
+      "says": "terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "approval/resume-schedule",
+      "says": "with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "refuse/approve-plan",
+      "says": "terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "refuse/approve-plan",
+      "says": "terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "note/approve-command",
+      "says": "the plan note of a pull request gives the terragucci approve command with the digest its gated wave asks for after the merge, and terragucci approve in a checkout approves that wave with no digest copied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/terragrunt",
+      "says": "in a Terragrunt repo, a pull request that changes a unit whose dependencies block names a unit another open pull request applied is refused with the unit and the holder named",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/plan",
+      "says": "with locks: plan a pull request locks the roots it reaches from its first plan, a second pull request that reaches one gets a failing terragucci/lock and a reply naming the root and the holder, and after /terragucci unlock its /terragucci plan takes the lock",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/plan-release",
+      "says": "with locks: plan the merge of a pull request releases the lock its first plan took",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/plan-fmt",
+      "says": "with locks: plan a pull request whose push the fmt job formats, with a push that starts no run, has its lock answered on the formatted head",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "policy/override",
+      "says": "a tf-apply wave the policy denies applies once an approver listed under policy.override at base overrides its plan with terragucci override, and its report names the override with who, the rules, the reason and the plan digest; the next plan the policy denies exits 1 naming policy.override and the terragucci override command, an override by someone it does not list counts for nothing, and an override of a plan that moved on exits 4",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "policy/override",
+      "says": "a wave the policy denies is retried with no effect after an override by someone policy.override does not list, applies after the listed approver overrides its plan, and its report names the override",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
+      "claim": "report/azure",
+      "says": "with reports.bucket az://<account>/<container> and only the Azure OIDC identity of the job, tf-plan writes the report and both indexes to Azure Blob Storage, and terragucci estate writes the page there and prints a user delegation SAS that serves it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/gcs",
+      "says": "with reports.bucket gs://<bucket> and only the GCP OIDC identity of the job, tf-plan writes the report and both indexes to GCS through its JSON API, and terragucci estate writes the page there and prints a V4 signed URL that the service account signed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "note/diff",
+      "says": "the plan note on Forgejo shows the diff of a group as the binary prints it, with the value before and after of the attribute that changes, and the whole plan of the root in a collapsed block",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "note/split",
+      "says": "a plan over the comment limit of the forge stays one note within the limit: the largest whole plan is left out and named in a Cut line that links its plan.txt, and the rest stays",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "note/report-link",
+      "says": "with reports.bucket set and no reports.url, the plan note links report.html and each plan.txt in the bucket by presigned links, which open from floci",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "init/config-ts",
+      "says": "init writes the pipeline from a terragucci.ts folded as data, and config check refuses a terragucci.ts that reads process.env at its line",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "init/role-refused",
+      "says": "config check and init refuse an oidc block that names one role for plan and apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "review/description",
+      "says": "with respond.description: check the plan job flags a destroy the pull request description leaves out, at the top of the note and in the report, and writes intent.json; decide.backend laya, von, decider and jev each answer the check through the same client, each pinned to its model, jev with its bearer token from token_env",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "telemetry/headers",
+      "says": "telemetry.headers_secret maps the collector key into the jobs, spans reach a collector that wants it, and a collector that does not answer leaves the plan green",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "init/pinned-install",
+      "says": "a pinned binary version the image does not carry is installed in the job and checked against the SHA256SUMS of its release",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "generate/tofu",
+      "says": "terragucci generate writes the backend, provider and version files of each root from the repo, directory glob and root levels of terragucci.yml, a changed global reaches the backend file of every root, and tf-check refuses a hand-edited generated file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "generate/terragrunt",
+      "says": "in a Terragrunt repo terragucci generate writes terragucci.hcl from terragucci.yml, the check step passes it, and each unit that includes it applies with the backend key and provider settings generate gives it, while a unit that does not include it is refused by name",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "generate/terragrunt-init",
+      "says": "with generate.disable_init: false terragucci generate writes disable_init = false in the remote_state of terragucci.hcl, the check step passes it, and the apply job has Terragrunt create the missing state bucket and applies into it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "04983e3b"
+    },
+    {
+      "claim": "init/root-pins",
+      "says": "two roots of one wave plan on two OpenTofu versions, the one the .opentofu-version of a root pins, installed in the job and checked against its SHA256SUMS, and the one in the image, and the report and the plan note name the binary and version of each root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift/close",
+      "says": "a drift run that finds no drift closes the drift issue an earlier run opened",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "estate/control",
+      "says": "terragucci estate in a control repo reads each project from its own bucket with its own reports.role and writes one page to the bucket under defaults",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "estate/override",
+      "says": "the estate page counts the roots applied under a policy override, in estate.json and estate.html",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/contracts",
+      "says": "the index.json files, estate.json and report.json a run and terragucci estate write to the bucket hold to the JSON Schemas the package ships, and a project named views writes nothing under the prefix kept for viewers",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "note/stale",
+      "says": "a push to the default branch that changes a root an open pull request planned marks its plan note stale",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "pr-apply/confirm",
+      "says": "with apply.when: pull-request the push of the merge commit runs confirm, which plans every root, posts terragucci/apply success and applies nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "pr-apply/guard",
+      "says": "with apply.when: pull-request a pull request that changes the pipeline file, or whose checks failed, is refused and applies nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "lock/close-release",
+      "says": "with apply.when pull-request, closing a merge request releases the roots it locked: /terragucci lock on a second merge request then takes them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "4b61c25b"
+    },
+    {
+      "claim": "lock/terragrunt-fanout",
+      "says": "in a Terragrunt repo a change to root.hcl locks every unit and says why, and a Markdown-only change locks none",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "security/token-scrub",
+      "says": "the binary tf-plan starts gets no forge token by name or by value, and a TF_ variable passes as set",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "security/plan-token-free",
+      "says": "the plan and re-plan jobs run the code of a pull request with no forge token variable in its environment or that of its parent processes and no credential in the checkout, and the note jobs still post the note and terragucci/plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "security/fork",
+      "says": "a pull request from a fork runs check and no plan job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/sensitive",
+      "says": "IAM, security group, KMS and DNS changes are open with their reasons, and an import and a forget are named, the forget not counted as a destroy",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "approval/signer-trust",
+      "says": "init --signer writes the signers line from git config user.signingkey, and an approval sealed with that key lets the wave apply",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "rollout/control",
+      "says": "from a control repo a module rollout opens wave 1 as one pull request per project for its canaries, then each project in turn, each wave once the last applied",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "rollout/pins",
+      "says": "rollout moves a provider alone in the lock file and its exact constraint, an oci:// tag and a registry version pin, each in the shape it had",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "policy/opa",
+      "says": "with policy.engine: opa a tf-apply wave the policy denies applies nothing, and its report keeps the denial and the warnings",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "policy/hcp",
+      "says": "with policy.input: hcp an HCP Terraform policy reads input.plan and input.run and denies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "policy/hcl",
+      "says": "with a policies.hcl a mandatory policy denies the wave and an advisory one warns",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "policy/sources-module",
+      "says": "with sources.modules set, tf-plan and the check job fail a root that calls a module from an unlisted host before its init, and tf-plan fails one whose listed remote module calls an unlisted one after its init and before its plan, naming the module path; in a Terragrunt repo tf-plan fails such a unit after Terragrunt inits it and before its plan, naming the unit and the module path, and the check job fails a unit whose source is on an unlisted host before its validate",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9c265f66"
+    },
+    {
+      "claim": "policy/sources-provider",
+      "says": "with sources.providers set, tf-plan fails a root whose required_providers names an unlisted provider before its init, and one whose remote module brings in an unlisted provider after its init and before its plan, naming the module; in a Terragrunt repo tf-plan fails a unit whose source brings in an unlisted provider after Terragrunt inits it and before its plan, naming the unit and the provider",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9c265f66"
+    },
+    {
+      "claim": "policy/sources-at-base",
+      "says": "a pull request that adds an unlisted host to its own sources list is still refused, checked against the list of the base branch",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "oidc/terragrunt",
+      "says": "in a Terragrunt repo each unit assumes the plan role of the first glob its path matches, and a unit with its own iam_role keeps it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "affected/terragrunt-dependents",
+      "says": "terragrunt.dependents: plan previews the dependents of a change provisional and outside every digest, and terragrunt.exclude leaves a unit out",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "linked/terragrunt-preview",
+      "says": "a pull request previews the later layers of a Terragrunt change: a unit is planned on the planned outputs of its upstream, and one that reads a value known only once its upstream applies is named with that value and wave, never planned on a stand-in",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "linked/terragrunt-preview-gate",
+      "says": "a Terragrunt wave whose plan differs from the preview of it in the pull request says so at its gate, naming what moved, before anyone approves",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "binary/terraform",
+      "says": "with binary: terraform the pipeline runs in the terraform image, check and the plan pass, and a wave waits for its approval and then applies with Terraform",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "binary/terragrunt-terraform",
+      "says": "in a Terragrunt repo with binary: terraform the pipeline installs Terraform and Terragrunt applies every unit with it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift/tfquery",
+      "says": "with binary: terraform a root with a .tfquery.hcl gets the drift pull request with the config terraform query generated for what it lists",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "telemetry/alerts",
+      "says": "with short thresholds every alert init writes fires on its signal, and the apply-success and drift-corrected SLOs record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/gcs-key",
+      "says": "with a service_account key file the job writes the report and both indexes to GCS, and the estate link is signed with the key",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "report/azure-key",
+      "says": "with AZURE_STORAGE_KEY the job writes the report and both indexes to Azure Blob Storage, and the estate link is a SAS signed with the account key",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/index-writes",
+      "says": "two plan runs that write one index at once both land in it, and a store that answers 501 to a conditional write gets the row without the condition",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "note/footer",
+      "says": "the plan note on a merge request ends with the terragucci footer, GitLab renders its taco image, and the image answers 200 with a PNG",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "e8d2cfb"
+    },
+    {
+      "claim": "comment/dispatch",
+      "says": "a workflow_dispatch of the plan workflow with pr set re-plans that pull request: the replan job posts a new terragucci/plan status on its head and updates the same plan note, and Forgejo refuses the dispatch of a user with read access only",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "choudoufu/shared-bucket",
+      "says": "with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "choudoufu/migrate",
+      "says": "with binary: choudoufu two migrations in one change apply in one wave, each proved and approved by its digest: one moves a resource between two estates by rewriting its ownership tags and records the move on chant/lifecycle, the other adopts a root on s3 state into an estate, stamps its resources and leaves the old state as the version it was; the next plan of every root shows no change",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "init/cdktn-synth",
+      "says": "with synth set to npx cdktn synth the pipeline synthesizes the CDK Terrain stacks before check, apply and tf-plan, and tf-plan plans the stack the change reaches",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "report/outcome",
+      "says": "stage tf-apply writes how its wave ended to TG_OUTCOME_JSON as terragucci.outcome/v1: waiting with its digest, mode and approve command, refused with the digest approved and the root that moved, and failed with the root",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "audit/tofu",
+      "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "audit/tofu",
+      "says": "terragucci audit writes one record to the bucket: every approval on the ledger with its approver, digest and time and who relayed it, the request, and the apply that names its approval; --check passes and the estate page links the audit page",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "audit/override",
+      "says": "the audit record keeps a policy refusal after its report is replaced, and holds the override with its reason and rules and the apply under it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "audit/refused",
+      "says": "a wave whose plans changed after approval is in the audit record as refused, with the approver, the digest approved and the root that moved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "audit/control",
+      "says": "terragucci audit in a control repo fetches each project ledger from its url and reads each project reports into one record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "estate/inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "estate/inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate/inventory",
+      "says": "after two apply waves of the example roots the estate page lists every resource of each root by address, type and provider, with the count of each type, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate/graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "estate/graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate/graph",
+      "says": "the estate page draws the example roots by wave with an edge for each state the example reads and an edge from a root of another project that reads one, and the run view shows the blast radius of wave 1 and a timeline of the plan, gate wait and apply of each wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate/history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "estate/history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate/history",
+      "says": "one resource changed by three approved applies has a history that lists the three in order with their approvers from the audit trail, linked from the estate page, and no value",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "263ec5ea"
+    },
+    {
+      "claim": "estate/query",
+      "says": "terragucci query, run on the reports bucket with no server, answers the SQS queues changed in the last 7 days with their approvers with the rows the audit trail holds",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c30cf05d"
+    },
+    {
+      "claim": "state/versions",
+      "says": "a root whose state is in a versioned S3 bucket applies twice, and the estate page lists both state version ids newest first, each one the bucket holds, and no state content",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/versions",
+      "says": "on GitLab-managed state, each apply wave logs the state address of the root and the serial GitLab holds after it, and GitLab keeps each of those versions",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "oidc/state-roles",
+      "says": "with oidc.roles each environment root plans and applies as the role of its own environment, config check lists the state key of each role, and it warns when a prod root reads the dev state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/export",
+      "says": "terragucci state export records a request, waits for an approval by someone else, then writes the state version on the machine of the person who asked, recorded on chant/lifecycle and in the audit trail, with no state in the bucket",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/export",
+      "says": "terragucci state export of a root on GitLab-managed state asks for a serial, and once someone else approved it writes the version GitLab keeps by that serial, recorded on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "state/gcs",
+      "says": "a root whose state is in a bucket on fake-gcs-server with object versioning applies twice, each wave naming the generation it left, and terragucci state export writes the first generation once someone else approved the request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/azurerm",
+      "says": "a root whose azurerm backend on Azurite takes snapshots applies twice, each wave naming the snapshot it took of the state blob, and terragucci state export writes the first snapshot once someone else approved the request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/gcs-unlock",
+      "says": "terragucci unlock-state reads the lock a killed apply left on a gcs backend, by the generation of the lock object, and releases it only after an approval of that lock, recording who released it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/azurerm-unlock",
+      "says": "terragucci unlock-state reads the lease a killed apply left on an azurerm state blob, with the lock info in its metadata, and releases it only after an approval of that lock, recording who released it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "migrate/blob",
+      "says": "a migration moves a resource from a root whose state is on GCS to one whose state is on Azure Blob Storage: approved by digest, written under the lock object and the blob lease, and each version before and after recorded",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "oidc/cloud-roles",
+      "says": "with oidc.gcp.roles and oidc.azure.roles, the roots of each environment plan and apply with the service account and the client of their glob, from the exports of the pipeline, and never the identity of the job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "estate/state-edges",
+      "says": "the estate page lists a root that reads the state of another with its last plan against the last apply of the producer: stale after the producer alone applied, current once the consumer planned again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "migrate/resume",
+      "says": "with gate: never and apply.resume set, init still writes the resume workflow, terragucci approve with no argument approves a migration that waits in wave 1 of a Forgejo run, and one run of the resume workflow writes both states and applies, with nobody running wave 1 again",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/backends",
+      "says": "one migration moves the states of six roots to new backends, from s3, a TFE workspace, pg, kubernetes, consul and http: each source read by version, through discovery or with state pull, proved with no change, approved by digest, written under the lock of its backend, each source left as it was, and the versions read and written recorded where the backend keeps them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "migrate/split",
+      "says": "a migration file splits one root into two: the plan proves it with no change, wave 1 waits for its digest, and once approved writes both states under their locks with no change, recording each version before and after; terragucci migrate revert then writes the migration that puts each state back to the version the split recorded, refused when a state moved past the version the split left",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "estate/dora",
+      "says": "terragucci estate computes the four DORA metrics from the audit trail and the indexes into dora.json and the estate page: deployments, lead time with the share at the gate, a change failure rate counting a failed apply and an applied wave that drifted, and the time to restore each",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "notify/chat",
+      "says": "with notify naming a Slack and a Teams webhook secret and approval: pr-review, a wave of a merged pull request that waits posts the wave, its root, the digest, the approve command, the run and a link to review the pull request to each, and once that review lands the next run applies it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "notify/webhook",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a chant.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "notify/webhook",
+      "says": "with notify naming a generic webhook and its key, a wave that waits posts a chant.notify/v1 event signed with HMAC-SHA256 over its body, carrying the outcome, digest and approve command",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "cost/estimate",
+      "says": "with cost set, the plan note of a pull request gives the monthly cost change of each root and the total, from the estimator run with the key the plan job gets from its secret",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "cost/gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "cost/gate",
+      "says": "with cost.approve_above set, a wave whose monthly change is over the amount waits for an approval under gate: never, its log naming the change, the amount and the commit read, and the plan note of a pull request sets the change of each wave against the amount at base",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "cost/policy",
+      "says": "with cost set, an HCP Terraform policy set reads the cost of the root from input.run.cost_estimate and of its wave from input.cost, and its mandatory policy denies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "refuse/approval-used",
+      "says": "once a wave applied under its approval, the next merge that moves its plans waits with the approve command for the new digest, and only an approval of plans that never applied refuses",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "affected/cdktn",
+      "says": "with synth set a pull request that changes one CDK Terrain stack plans that stack alone, and the plan note says how many stacks were unchanged",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "apply/cdktn",
+      "says": "with synth set each apply wave synthesizes the CDK Terrain stacks and applies its stack behind the gate: dev once wave 1 is approved, prod once wave 2 is",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "lock/cdktn",
+      "says": "with synth and apply.when: pull-request, a pull request applied on a comment locks every CDK Terrain stack, since its change to the app can reach any, and a second pull request that changes a stack is refused with the stack and the holder named, its state left as the first applied it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "tips/cdktn",
+      "says": "with synth set the tips job synthesizes the CDK Terrain stacks and opens the canary tip, and says the pin and lock file tips are left out",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "migrate/cdktn",
+      "says": "a migration moves a resource between two CDK Terrain stacks, whose roots are cdk.tf.json: wave 1 proves it with no change on those roots, waits for its digest, and once approved writes both states under their lock files",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "init/cdktn-refuse",
+      "says": "with synth set init refuses the drift pull request and rollouts as config errors saying why, and with respond.drift: attribute the drift job runs no pull request",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "apply/branches",
+      "says": "with apply.branches mapping release to canary/*, a push to main applies the fleet roots behind the gate and never canary/one, and a push to release applies canary/one alone, waiting at the same gate until its wave is approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift/branches",
+      "says": "with apply.branches mapping release to canary, the drift run on main plans canary from release, the branch that applied it, and finds no drift where planning it from main would read the state release left behind and report a false drift",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
+      "claim": "init/own-jobs",
+      "says": "with own_jobs naming a file of jobs in terragucci.yml, init run twice keeps the job in the Forgejo pipeline as the file has it, and the job runs after the check job and passes",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "waves/jobs",
+      "says": "with waves.jobs on GitLab a wave waits at one gate, then its share jobs apply their own roots under one approval, used once, and leave no lock behind",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "steps/before-plan",
+      "says": "a step before plan writes a file the plan reads, read from terragucci.yml at base, and the plan note lists the step",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "steps/stop",
+      "says": "a step before apply that exits 1 fails the wave job before anything applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "steps/gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, naming the step, with the approve command for its digest",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "steps/gate",
+      "says": "a step with on_failure approve that fails holds its wave at the gate under gate never, naming the step, with the approve command for its digest",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "33d0387f"
+    },
+    {
+      "claim": "respond/terragrunt-fmt",
+      "says": "in a Terragrunt repo the fmt job runs terragrunt hcl fmt after a branch fails its check and pushes the formatting commit to the branch, and nowhere else",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "state/terragrunt-versions",
+      "says": "a Terragrunt unit whose state is in a versioned S3 bucket applies twice, its backend read from its remote_state block, and the estate page lists both state version ids newest first, each one the bucket holds",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "respond/terragrunt-drift",
+      "says": "a drifted Terragrunt unit gets a pull request that writes the live value into its own terragrunt.hcl inputs and leaves the module its units share alone",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift/terragrunt-attribute",
+      "says": "with respond.drift: attribute in a Terragrunt repo, tf-drift lists who changed each drifted attribute under its unit in the drift issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "migrate/terragrunt-split",
+      "says": "a migration file moves a resource from the state of one Terragrunt unit to that of another: wave 1 proves it on the units Terragrunt prepares, waits for its digest, and once approved writes both states under their locks at their remote_state keys, recording each version before and after",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "8ab80a59"
+    },
+    {
+      "claim": "init/terragrunt-root-pins",
+      "says": "three Terragrunt units of one wave plan with their own releases: the tofu the .opentofu-version of a unit pins and the Terragrunt its terragrunt_version_constraint pins, each installed and checked in the job, and the releases of the image for the third, and the report names each",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "binary/terragrunt-choudoufu",
+      "says": "in a Terragrunt repo with binary: choudoufu the jobs run in the choudoufu image with Terragrunt installed beside it, and every unit plans with choudoufu through TG_TF_PATH",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "estate/terragrunt-graph",
+      "says": "in a Terragrunt repo the plan note gives the blast radius of a changed unit through the units that depend on it, and the run view and the estate graph hold each unit by wave with an edge for each dependency block",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
+      "claim": "estate/terragrunt-remote-state",
+      "says": "a Terragrunt unit whose root.hcl remote_state builds its key from path_relative_to_include() holds that state in its run view, and the estate graph draws an edge to the root of another project that reads it through terraform_remote_state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "state/terragrunt-export",
+      "says": "terragucci state export of a Terragrunt unit prepares it through Terragrunt, asks for the version of the state its remote_state block names, and once someone else approved it writes that version on the machine of the person who asked, recorded on chant/lifecycle",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "apply/terragrunt-branches",
+      "says": "with apply.branches mapping release to live/canary/*, a push to main applies the fleet units behind the gate and never live/canary/one, and a push to release applies live/canary/one alone, waiting at the same gate until its wave is approved",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "79c43672"
+    },
+    {
+      "claim": "waves/terragrunt-stack",
+      "says": "the units of an explicit stack are generated before discovery, cut into waves by their dependencies, and applied in order from a checkout that holds none of them",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "check/terragrunt-stack",
+      "says": "the check job of a Terragrunt repo generates its explicit stack and validates the generated units, failing on a unit whose template reads a value the stack file does not feed it, and naming that unit",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "affected/terragrunt-stack",
+      "says": "a pull request that changes one value in a terragrunt.stack.hcl plans only the unit that value feeds, says so, lists the unit that depends on it as waiting, and the report and note name the stack file",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "drift/terragrunt-stack",
+      "says": "tf-drift from a checkout that holds no generated unit generates the explicit stack, reports the resource deleted outside Terraform under its generated unit, and names the stack file that unit comes from",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "5cd0d6bd"
+    },
+    {
+      "claim": "chat/slack",
+      "says": "a click on the Approve button of the Slack message of a waiting wave, signed with the signing secret of the app, reaches the relay, which maps the Slack user to their principal in the signers file, records the approval of that digest as them and says so in the thread; the resume workflow then applies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "chat/lambda",
+      "says": "the relay built as the AWS Lambda function of the guide, run under the Lambda runtime interface emulator, takes a signed Slack click as a function URL event and records the approval of that digest as the mapped principal; the resume workflow then applies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "chat/teams",
+      "says": "a Teams reply that approves a waiting wave, signed as an outgoing webhook signs it, reaches the relay, which maps the Teams user to their principal in the signers file and records the approval of that digest as them; the resume workflow then applies the wave",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "chat/replan",
+      "says": "with notify naming a Slack webhook, a drift run that finds drift posts the drifted root with a Re-plan button that opens the drift workflow, which runs on workflow_dispatch",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "linked/plan",
+      "says": "a root that reads the state of another plans in tf-plan on the planned outputs of that root, unknown where unknown, and its wave is marked to plan again once the upstream applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "65cae39f"
+    },
+    {
+      "claim": "linked/local",
+      "says": "two roots on the local backend, one reading the other through terraform_remote_state by the same path: terragucci orders them into two waves on its own, and the reader plans on the planned outputs of the writer",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "65cae39f"
+    },
+    {
+      "claim": "linked/backend-config",
+      "says": "a root whose backend block names no path, which init takes from the backend.hcl that TF_CLI_ARGS_init in terragucci.yml passes, is ordered before the root that reads its state, and the reader plans on its planned outputs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "note/blast",
+      "says": "a pull request that changes a queue gets a plan note whose blast radius lists, under the queue, its policy in the same root and the function and mapping that read its ARN in another root, and leaves out the log group that reads only another output",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "linked/states",
+      "says": "after a pull request changes an output of wave 1, wave 2 plans again once wave 1 applied, shows the new value, and waits for an approval of that plan; the run view in the bucket shows where each wave stands",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "lock/plan-none",
+      "says": "a pull request plan and a drift run plan a root while an apply holds its state lock, and neither waits for it",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "note/sensitive",
+      "says": "a change to a sensitive variable and a sensitive output keeps both values out of the plan note, the report, the job log and every object in the reports bucket",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "dbcf1dbb"
+    },
+    {
+      "claim": "apply/provider-cache-no-lock",
+      "says": "with binary: terraform, a wave of eight roots with no .terraform.lock.hcl and one whose lock names the OpenTofu registry plans at once on one shared provider cache: every root plans, the job log names one download, and no init fails with text file busy",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c87781cc"
+    },
+    {
+      "claim": "state/unlock",
+      "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "9d9e7a0b"
+    },
+    {
+      "claim": "state/unlock",
+      "says": "terragucci unlock-state refuses to release a state lock while a run that began before it is alive, and once the apply that held it is killed releases it only after an approval of its lock ID, recording who released which lock, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "terraform",
+      "commit": "1813d451"
+    },
+    {
+      "claim": "state/unlock",
+      "says": "with binary: choudoufu and a root under live resource markers, terragucci unlock-state finds no state file and no state lock: it says there is nothing to release, runs no binary, asks for no approval and records nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "binary": "choudoufu",
+      "commit": "1813d451"
+    },
+    {
+      "claim": "state/unlock",
+      "says": "terragucci unlock-state reads the lock a killed apply left on GitLab-managed state, waits for an approval of its ID, then releases it on the GitLab lock endpoint and records it, and the next wave applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "tips/moved",
+      "says": "a resource renamed on a branch plans as a destroy and a create, the plan report tips the moved block, respond tips opens a pull request into the branch that adds it, and once merged the plan moves the resource and destroys nothing",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "1468a6e6"
+    },
+    {
+      "claim": "estate/mcp",
+      "says": "an MCP client of terragucci mcp, which reads the reports bucket with the credentials of its environment, reads the last apply of a root, and the server lists only read-only tools and refuses an approve call and a token argument",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "agent/drift",
+      "says": "with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "c64d95fa"
+    },
+    {
+      "claim": "drift/github",
+      "says": "on GitHub, a drift run opens the drift issue, and a second run finds it and updates it instead of opening another",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "apply/runner-nudge",
+      "says": "on the validation stack a job left waiting after the run ahead of it in its concurrency group is cancelled, with nothing running, starts within three minutes: a wait restarts the idle runner",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "fbfefd6f"
+    },
+    {
+      "claim": "ephemeral/pr",
+      "says": "with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "ephemeral/pr",
+      "says": "the copy a pull request gets of a root on GitLab-managed state lives in the state named with the suffix -pr-<n>, apart from the state of the root, and its destroy leaves that state as it was",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "ephemeral/ttl",
+      "says": "with ephemeral naming canary/* and a TTL of one minute, a run of the sweep workflow once the TTL has passed destroys the copy of an open pull request through a planned destroy recorded with the reason expired",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "7c2ff19c"
+    },
+    {
+      "claim": "ephemeral/terragrunt",
+      "says": "in a Terragrunt repo whose remote_state key reads TERRAGUCCI_EPHEMERAL_SUFFIX, opening a pull request applies its own copy of a unit at the key suffixed -pr-<n>, prepared through Terragrunt, beside the state of the unit itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "ephemeral/cdktn",
+      "says": "with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "generate/cdktn",
+      "says": "with synth set init and terragucci generate refuse a generate key as a config error that names the CDK Terrain constructs that set a backend",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "linked/cdktn",
+      "says": "a CDK Terrain stack that reads the state of another through a remote state data source plans in tf-plan on the planned outputs of that stack, read from its cdk.tf.json, unknown where unknown",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "e67a400c"
+    },
+    {
+      "claim": "init/image",
+      "says": "with image naming an image built from the terragucci image, init writes it into every job of the pipeline and the jobs run in it: check passes, a step prints a file only that image holds, and the root applies",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "init/env",
+      "says": "with env setting TF_VAR_greeting, init writes it into the pipeline, and the apply job applies the root with that value in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "estate/local-plan",
+      "says": "terragucci plan run on a machine plans each root its glob names against the applied state: the changed root plans its one change, the others none, and the --json envelope lists them all with exit 0",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "4db5e993"
+    },
+    {
+      "claim": "init/runner-label",
+      "says": "with runner.apply naming a label only a second Forgejo runner serves, init writes it as the runs-on of the apply jobs alone, and the push to main runs check on the runner of the stack and the apply job on the labelled one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a3582cb7"
+    },
+    {
+      "claim": "init/pass-secrets",
+      "says": "with pass naming a repo secret and a repo variable, init writes their names and never their values into the jobs that plan and apply, and the apply job applies the root with both values in its state",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "a3582cb7"
+    },
+    {
+      "claim": "note/mr-widget",
+      "says": "the Terraform widget of a merge request counts the creates, updates and deletes of the plan job report, a replacement as a create and a delete",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "apply/gitlab-parallelism",
+      "says": "roots on GitLab-managed state apply at most 3 at once, and the apply job says so",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "report/keys",
+      "says": "with the bucket keys in CI/CD variables, which the pipeline maps nowhere, the plan job writes report.json to the bucket and the index lists the run",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "drift/issue",
+      "says": "the drift schedule opens one drift issue naming the root and attribute that drifted, updates the same issue when more drifts, and closes it when a run finds none",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "estate/job",
+      "says": "the estate job of the see-every-project page, pasted into .gitlab-ci.yml and run by a pipeline schedule with only its OIDC token, writes estate.html listing the project to the bucket and prints a presigned link",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "02e7f08"
+    },
+    {
+      "claim": "respond/explain-refusal",
+      "says": "after a wave is refused, the explain-refusal job of the agent-refused-wave page runs wave-refused on the wave reports and a stand-in agent prints a summary naming the root whose plan moved, and a branch pipeline still runs",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "ef2ecac5"
+    },
+    {
+      "claim": "comment/poll",
+      "says": "the comments schedule answers a Developer merge request note once across two polls, carrying its marker, and never a non-member note",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "security/protected-token",
+      "says": "with gitlab.token protected, the merge request plan job holds no token and passes, and the comments job posts its plan note and terragucci/plan",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "abe26e67"
+    },
+    {
+      "claim": "linked/gitlab-state",
+      "says": "a root that reads the GitLab-managed state of another through terraform_remote_state by its address applies in the wave after it, with its output",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "33f6c5e8"
+    },
+    {
+      "claim": "oidc/gitlab",
+      "says": "the merge request plan job holds a GitLab id_token for sts.amazonaws.com naming this project, pipeline and job, for the plan role, and the apply job on main one for the apply role; the token is verified against the keys the lab publishes, not traded with STS",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "forge": "gitlab",
+      "commit": "8022dedb"
+    },
+    {
+      "claim": "security/replan-apply-role",
+      "says": "a /terragucci plan re-plan trades its OIDC token for the plan role before any pull request code runs, and that code finds no token the apply role trusts and no way to ask for one",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2071cf73"
+    },
+    {
+      "claim": "security/replan-cache",
+      "says": "a /terragucci plan re-plan restores the Terragrunt cache and saves none, so what the code of a pull request leaves in .terragrunt-cache never reaches an apply job",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "2071cf73"
+    },
+    {
+      "claim": "oidc/audience-stages",
+      "says": "with oidc.audience a map, the plan job of a pull request and the apply job of main each hold a token for their own stage audience, a role whose trust names the apply audience refuses the plan token, and the code each job runs finds no token-request variable in its environment",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    },
+    {
+      "claim": "apply/groups",
+      "says": "with environments prod and dev, each with its own roles, a wave holding a root of each is planned and gated by one job that holds no apply role, then applied by one job per environment, each carrying the apply role of its own environment alone, under one approval; on Forgejo both jobs present the same token subject, so the roles each job is handed are all that keeps them apart",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    },
+    {
+      "claim": "apply/check-job",
+      "says": "with environments prod and dev and the condition of the apply jobs widened by hand to any push, the apply job of each environment on a branch it does not apply from fails before it trades a token, naming the expected and the found ref, and on main passes its check and trades its token; Forgejo has no deployment environments and names no runner labels to a job, so the ref is what is checked here",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    },
+    {
+      "claim": "forge/check",
+      "says": "terragucci forge check exits 0 when main is protected and each role in floci trusts exactly what config identities prints, and exits 1 with a row naming the expected and found value when main is unprotected, a role trusts any subject, or a role trusts an extra audience; it runs with a Forgejo token scoped read:repository and AWS keys granted iam:GetRole alone, and sends no request but GET and GetRole",
+      "needs": null,
+      "verdict": "pass",
+      "break": "caught",
+      "commit": "d6971afd"
+    }
+  ]
+}

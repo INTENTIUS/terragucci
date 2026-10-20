@@ -1,0 +1,10 @@
+# GitHub, AWS, no environments: a role pair, and network's roles by root glob.
+forge: github
+binary: tofu
+oidc:
+  plan_role: arn:aws:iam::555555555555:role/plan
+  apply_role: arn:aws:iam::555555555555:role/apply
+  roles:
+    network:
+      plan: arn:aws:iam::555555555555:role/network-plan
+      apply: arn:aws:iam::555555555555:role/network-apply

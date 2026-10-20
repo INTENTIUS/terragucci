@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/estate/v1/estate.schema.json",
+  "title": "terragucci.estate/v1",
+  "description": "estate.json at the top of a reports prefix, which terragucci estate builds from every project's index.json, inventory.json and changes.json. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "generated", "totals", "projects", "recent"],
+  "properties": {
+    "schema": { "const": "terragucci.estate/v1" },
+    "generated": { "type": "string", "description": "When the page was built, ISO 8601. Every age on it is as of this time." },
+    "totals": {
+      "type": "object",
+      "required": ["projects", "waiting", "drifted_projects", "drifted_roots", "failed_roots", "unreadable"],
+      "properties": {
+        "projects": { "type": "integer" },
+        "waiting": { "type": "integer", "description": "Waves waiting for an approval." },
+        "drifted_projects": { "type": "integer" },
+        "drifted_roots": { "type": "integer" },
+        "failed_roots": { "type": "integer" },
+        "unreadable": { "type": "integer", "description": "Projects whose index could not be read." },
+        "overridden_roots": { "type": "integer", "description": "Roots the newest apply waves applied under a policy override. Absent when none." },
+        "resources": { "type": "integer", "description": "Resources across every project's inventory. Absent when no project has one." },
+        "ephemeral": { "type": "integer", "description": "Live ephemeral environments across every project. Absent when none is live." }
+      }
+    },
+    "projects": { "type": "array", "items": { "$ref": "#/$defs/project" } },
+    "recent": { "type": "array", "description": "The 20 newest runs across every project, newest first.", "items": { "$ref": "#/$defs/run" } },
+    "audit": {
+      "type": "object",
+      "description": "The audit trail beside the page, when terragucci audit wrote one.",
+      "required": ["page", "entries", "generated"],
+      "properties": {
+        "page": { "type": "string" },
+        "entries": { "type": "integer" },
+        "generated": { "type": "string" }
+      }
+    },
+    "history": {
+      "type": "object",
+      "description": "The resource history beside the page (history.json and history.html), when an apply changed a resource.",
+      "required": ["page", "resources", "generated"],
+      "properties": {
+        "page": { "type": "string" },
+        "resources": { "type": "integer", "description": "Addresses with at least one apply." },
+        "generated": { "type": "string" }
+      }
+    },
+    "dora": {
+      "type": "object",
+      "description": "The DORA metrics beside the page (dora.json, terragucci.dora/v1).",
+      "required": ["file", "generated", "deployments"],
+      "properties": {
+        "file": { "type": "string" },
+        "generated": { "type": "string" },
+        "deployments": { "type": "integer", "description": "The estate's applied waves in the metrics' window." }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "description": "The dependency graph, from the run view of each project's newest applied commit: every root by wave, and an edge from each root to each root that reads its state through terraform_remote_state. An edge between two projects matched a read of a state outside the reader's project to the root of the other that holds it. Absent when no project has a run view.",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["project", "root", "wave"],
+            "properties": {
+              "project": { "type": "string" },
+              "root": { "type": "string" },
+              "wave": { "type": "integer" }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "description": "Each edge: to reads the state of from.",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "$ref": "#/$defs/graphRoot" },
+              "to": { "$ref": "#/$defs/graphRoot" }
+            }
+          }
+        }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "description": "The versions every root runs, from each project's versions.json: per binary, provider and module source, each version in use, newest first, and the roots on it. Absent until an apply records them.",
+      "required": ["binaries", "providers", "modules"],
+      "properties": {
+        "binaries": {
+          "type": "array",
+          "items": { "type": "object", "required": ["binary", "versions"], "properties": { "binary": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        },
+        "providers": {
+          "type": "array",
+          "items": { "type": "object", "required": ["provider", "versions"], "properties": { "provider": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        },
+        "modules": {
+          "type": "array",
+          "items": { "type": "object", "required": ["source", "versions"], "properties": { "source": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "versionRow": {
+      "type": "object",
+      "description": "One version in use and the roots on it. An absent version: the binary did not say, or the module's source names none.",
+      "required": ["roots"],
+      "properties": {
+        "version": { "type": "string" },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["project", "root"],
+            "properties": {
+              "project": { "type": "string" },
+              "root": { "type": "string" },
+              "call": { "type": "string", "description": "For a module, the call's address in the root." }
+            }
+          }
+        }
+      }
+    },
+    "graphRoot": {
+      "type": "object",
+      "required": ["project", "root"],
+      "properties": {
+        "project": { "type": "string" },
+        "root": { "type": "string" }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": ["create", "update", "replace", "delete"],
+      "properties": {
+        "create": { "type": "integer" },
+        "update": { "type": "integer" },
+        "replace": { "type": "integer" },
+        "delete": { "type": "integer" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "description": "A run, from its index row.",
+      "required": ["project", "commit", "stage", "finished", "roots", "refused", "totals", "destroys"],
+      "properties": {
+        "project": { "type": "string" },
+        "commit": { "type": "string" },
+        "stage": { "enum": ["tf-plan", "tf-apply", "tf-drift"] },
+        "wave": { "type": "integer" },
+        "share": { "type": "integer", "description": "The share of a tf-apply wave split across jobs." },
+        "finished": { "type": "string" },
+        "roots": { "type": "integer" },
+        "changed": { "type": "integer" },
+        "failed": { "type": "integer" },
+        "refused": { "type": "integer" },
+        "totals": { "$ref": "#/$defs/totals" },
+        "destroys": { "type": "integer", "description": "How many destroys and replacements the run has." },
+        "approval": { "enum": ["waiting", "approved", "not-required"] },
+        "waiting_since": { "type": "string" },
+        "applied": { "type": "string" },
+        "overridden": { "type": "integer" },
+        "report": { "type": "string", "description": "The run's report.html, relative to the page or absolute on another bucket's address. Absent when the page cannot link it." },
+        "pull_request": { "type": "string" },
+        "pull_request_url": { "type": "string" },
+        "job_url": { "type": "string" }
+      }
+    },
+    "waiting": {
+      "type": "object",
+      "required": ["project", "wave", "commit", "since", "age_seconds"],
+      "properties": {
+        "project": { "type": "string" },
+        "wave": { "type": "integer" },
+        "commit": { "type": "string" },
+        "since": { "type": "string", "description": "When the wave began waiting for an approval of its digest." },
+        "age_seconds": { "type": "integer", "description": "Seconds it had waited at generated." },
+        "report": { "type": "string" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": ["project", "status", "waiting", "drifted", "failed"],
+      "properties": {
+        "project": { "type": "string" },
+        "status": { "enum": ["ok", "no-index", "error"] },
+        "error": { "type": "string", "description": "Why the index could not be read." },
+        "index": { "type": "string", "description": "The project's index.html, when the page can link it." },
+        "plan": { "$ref": "#/$defs/run", "description": "The latest tf-plan." },
+        "drift": { "$ref": "#/$defs/run", "description": "The latest tf-drift." },
+        "apply": {
+          "type": "object",
+          "description": "The waves of the newest commit that ran tf-apply, by wave number.",
+          "required": ["commit", "waves"],
+          "properties": {
+            "commit": { "type": "string" },
+            "waves": { "type": "array", "items": { "$ref": "#/$defs/run" } }
+          }
+        },
+        "waiting": { "type": "array", "items": { "$ref": "#/$defs/waiting" } },
+        "drifted": { "type": "integer", "description": "Roots that drifted in the latest drift check." },
+        "failed": { "type": "integer", "description": "Roots that failed in the latest plan, drift check and apply waves." },
+        "overridden": { "type": "integer", "description": "Roots the newest commit's apply waves applied under a policy override. Absent when none." },
+        "inventory": { "$ref": "#/$defs/inventory", "description": "The resources its roots hold, from its inventory.json. Absent until an apply records them." },
+        "states": { "type": "array", "description": "Each root's state versions, from its states.json. Absent until an apply records them.", "items": { "$ref": "#/$defs/stateRoot" } },
+        "edges": { "type": "array", "description": "Each cross-state edge, from its edges.json: a consumer root, the producer root whose state it reads, the consumer's last plan and the producer's last apply that changed it. Absent until a run records an edge.", "items": { "$ref": "#/$defs/edge" } },
+        "run_view": {
+          "type": "object",
+          "description": "The run view of the project's newest applied commit, which the dependency graph read: its commit, when a wave last wrote it, and its run.html when the page can link it. Absent until a wave writes one.",
+          "required": ["commit", "updated"],
+          "properties": {
+            "commit": { "type": "string" },
+            "updated": { "type": "string" },
+            "page": { "type": "string" }
+          }
+        },
+        "applying": {
+          "type": "array",
+          "description": "The waves of that run view still applying whose resources are followed (a choudoufu wave): how many are done, in flight and waiting at the last read of the records.",
+          "items": {
+            "type": "object",
+            "required": ["wave", "read", "total", "done", "in_flight", "waiting"],
+            "properties": {
+              "wave": { "type": "integer" },
+              "read": { "type": "string" },
+              "total": { "type": "integer" },
+              "done": { "type": "integer" },
+              "in_flight": { "type": "integer" },
+              "waiting": { "type": "integer" }
+            }
+          }
+        },
+        "ephemeral": {
+          "type": "array",
+          "description": "The live ephemeral environments, from its ephemeral.json: each pull request's copy of the ephemeral roots, their state keys, and when it expires. Absent when none is live.",
+          "items": {
+            "type": "object",
+            "required": ["pull_request", "suffix", "roots", "commit", "applied", "expires", "status"],
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "pull_request_url": { "type": "string" },
+              "suffix": { "type": "string", "description": "What the copy's state keys end in: pr-<n>." },
+              "roots": { "type": "array", "items": { "type": "object", "required": ["root", "location"], "properties": { "root": { "type": "string" }, "location": { "type": "string" } } } },
+              "commit": { "type": "string", "description": "The head the copy last applied from." },
+              "applied": { "type": "string" },
+              "expires": { "type": "string" },
+              "approved_by": { "type": "string" },
+              "status": { "enum": ["live", "destroy-failed"] }
+            }
+          }
+        },
+        "secrets": {
+          "type": "object",
+          "description": "Per root, the sensitive attributes its state holds and how many a write-only argument or an ephemeral resource could keep out, and for a choudoufu root its estate, record store and strict { secrets } setting. From the newest drift check that recorded them, else the newest plan of a push, else the newest plan of a pull request. Absent until a run records them.",
+          "required": ["run", "roots"],
+          "properties": {
+            "run": { "$ref": "#/$defs/run" },
+            "roots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["root"],
+                "properties": {
+                  "root": { "type": "string" },
+                  "in_state": { "type": "integer" },
+                  "movable": { "type": "integer" },
+                  "estate": { "type": "string" },
+                  "record_store": { "type": "string" },
+                  "secrets": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "edgeRun": {
+      "type": "object",
+      "required": ["stage", "commit", "finished"],
+      "properties": {
+        "stage": { "type": "string" },
+        "commit": { "type": "string" },
+        "finished": { "type": "string" },
+        "wave": { "type": "integer" },
+        "pull_request": { "type": "string" },
+        "version_id": { "type": "string" },
+        "report": { "type": "string", "description": "The run's report.html, when the page can link it." }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "description": "One root reading another's state. stale: the producer applied a change after the consumer's last plan; current: the consumer's last plan is newer than that apply; unknown: either run is not recorded.",
+      "required": ["consumer", "producer", "via", "status"],
+      "properties": {
+        "consumer": { "type": "string" },
+        "producer": { "type": "string" },
+        "via": { "enum": ["terraform_remote_state", "dependency"] },
+        "consumer_planned": { "$ref": "#/$defs/edgeRun" },
+        "producer_applied": { "$ref": "#/$defs/edgeRun" },
+        "status": { "enum": ["current", "stale", "unknown"] }
+      }
+    },
+    "stateRoot": {
+      "type": "object",
+      "description": "One root's state: where it is, whether its backend keeps versions, and the version ids its applies left, newest first. Never the state's contents.",
+      "required": ["root", "backend", "versioning", "checked", "versions"],
+      "properties": {
+        "root": { "type": "string" },
+        "backend": { "type": "string" },
+        "location": { "type": "string" },
+        "versioning": { "enum": ["on", "off", "unknown"] },
+        "note": { "type": "string" },
+        "checked": { "type": "string", "description": "When the newest apply that recorded the root finished." },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["version_id", "commit", "finished"],
+            "properties": {
+              "version_id": { "type": "string" },
+              "commit": { "type": "string" },
+              "finished": { "type": "string" },
+              "wave": { "type": "integer" },
+              "report": { "type": "string", "description": "The wave's report.html, when the page can link it." }
+            }
+          }
+        },
+        "unrecorded": {
+          "type": "array",
+          "description": "The versions the state's store lists that no wave or migration recorded, from the audit trail's unrecorded-write entries, newest first. Absent when there are none.",
+          "items": {
+            "type": "object",
+            "required": ["version_id", "written_at", "who"],
+            "properties": {
+              "version_id": { "type": "string" },
+              "written_at": { "type": "string" },
+              "who": { "type": ["string", "null"], "description": "The writer a log of the state bucket names, else null." },
+              "deleted": { "type": "boolean", "description": "An S3 delete marker." }
+            }
+          }
+        }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "required": ["resources", "types", "roots"],
+      "properties": {
+        "resources": { "type": "integer" },
+        "types": {
+          "type": "array",
+          "description": "How many resources of each type, most first.",
+          "items": { "type": "object", "required": ["type", "count"], "properties": { "type": { "type": "string" }, "count": { "type": "integer" } } }
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "One root's resources, as its newest applied wave left them.",
+            "required": ["root", "commit", "finished", "resources"],
+            "properties": {
+              "root": { "type": "string" },
+              "commit": { "type": "string" },
+              "finished": { "type": "string" },
+              "wave": { "type": "integer" },
+              "report": { "type": "string", "description": "The wave's report.html, when the page can link it." },
+              "environment": { "type": "string", "description": "The environment of environments: in terragucci.yml the root was in when the wave applied. Absent when it was in none." },
+              "resources": { "type": "array", "items": { "$ref": "#/$defs/resource" } }
+            }
+          }
+        }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["address", "type", "provider"],
+      "properties": {
+        "address": { "type": "string" },
+        "type": { "type": "string" },
+        "provider": { "type": "string" },
+        "history": { "type": "string", "description": "Its section of history.html, when an apply changed it." },
+        "record_versions": {
+          "type": "object",
+          "description": "A choudoufu record's past versions, from its history: count when the store keeps them, kept false when it keeps none (local, kubernetes), error when they were not listed.",
+          "required": ["kept"],
+          "properties": { "kept": { "type": "boolean" }, "count": { "type": "integer" }, "error": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,51 @@
+---
+title: One note for fifteen plans
+description: Change the shared module and read twelve plans as one note, with the outlier and every destroy named.
+sidebar:
+  order: 3
+  badge:
+    text: 5 min
+    variant: note
+claims: [affected/tofu, note/grouped, report/tofu, report/highlight]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/one-note/.
+  In the terragucci clone with the example booted, run the `just example` commands on the page. Summarize what the plan note says about the twelve roots, the outlier and any destroy.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Captured from '../../../components/Captured.astro';
+import Recorded from '../../../components/Recorded.astro';
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+Every queue in every service should wait 60 seconds before retrying a job. That is one line in `modules/service`, and twelve roots call the module.
+
+<Captured step="one-note" optional />
+
+Open the pull request link it printed, on Forgejo at `localhost:3300`; the plan note is the comment in the conversation.
+
+terragucci plans only the twelve service roots the change reaches ([Roots a change plans](/terragucci/reference/report/#roots-a-change-plans)) and posts one note. Eleven roots take the identical change and appear as one group. Prod payments sits apart, because its dead-letter queue changes too.
+
+<Recorded step="one-note" view="note" alt="The plan note on the module change's pull request: 12 roots in 2 groups, the waves table, eleven roots in one group with one diff, and prod payments on its own with its dead-letter queue" optional />
+
+GitHub and GitLab get the same single comment, here for a change to one root:
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+<Recorded step="github" view="note" alt="The plan note on a GitHub pull request for a change to one root: one group, its waves table with the set digest, and the change to the jobs queue" optional />
+
+</TabItem>
+<TabItem label="GitLab">
+
+<Recorded step="gitlab" view="note" alt="terragucci's plan note on a GitLab merge request: one instance in one group, no destroys, wave 2 with its set digest, and the change to module.service.aws_sqs_queue.jobs, which keeps messages for seven days" optional />
+
+</TabItem>
+</Tabs>
+
+The note links to the full report. Its links start with `http://forgejo:3000`, which your browser cannot reach; open them at `http://localhost:3300` instead. The report opens on what differs and folds the eleven identical plans into one.
+
+Next, try `just example change replace` and `just example change destroy`. Each is named on its own, never folded into a group.

@@ -1,0 +1,132 @@
+---
+title: Tips
+description: The advice terragucci gives on how a repo is set up, and the rule behind each tip.
+---
+
+
+Each tip shows in the [plan report](/terragucci/reference/report/#tips) and its pull request note, and in the `terragucci reconcile` dry run; `tips: false` turns them off. [`terragucci-choudoufu-secrets`](#terragucci-choudoufu-secrets) for [choudoufu](/terragucci/concepts/glossary/#choudoufu) roots also shows in the `tf-check` log and check report.
+
+They only advise. None fails a run or changes a gate, and no digest includes one.
+
+Code tips read the HCL itself. Those and the [shared-module tip](#terragucci-shared-module) need `npm i -D @cdktn/hcl2json`; without it the job log says they were left out.
+
+## Code tips
+
+| Rule | The tip |
+|---|---|
+| [TF002](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002) | a provider with no version in `required_providers` |
+| [TF003](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003) | no `required_version` |
+| [TF004](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf004) | a registry module with no `version` |
+| [TF005](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf005) | a git module with no fixed `?ref=` |
+| [TF038](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf038) | an `oci://` module with no tag, or the `latest` tag |
+| [TF039](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf039) | a registry module with a version range |
+| [TF040](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040) | no committed `.terraform.lock.hcl` |
+| [TF041](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf041) | a Terragrunt `dependency` with `mock_outputs` whose allowed commands include `apply` or are not set |
+| [TF042](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf042) | a Terragrunt `dependency` that sets `skip_outputs` with `mock_outputs`, so every run reads the mocks |
+| [TF043](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf043) | a Terragrunt `terraform.source` with no version (a git ref, a `tfr` version or an `oci` tag) |
+| [TF044](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf044) | a Terragrunt config that keeps its state in a local backend |
+
+## Rollout tips
+
+### terragucci-shared-module
+
+Ten or more roots include a local module. Publish it with `tf-publish` and pin it, so `tf-rollout` moves only the pinned roots, in waves.
+
+### terragucci-floating-range
+
+A module call is pinned to a range such as `~> 1.4`, which a rollout cannot move. Pin one version.
+
+It also covers a provider range in `required_providers`, which `tf-rollout --provider` cannot cross. When TF038 or TF039 names the call, only that tip is given.
+
+### terragucci-no-canary
+
+A project has more than five roots and no `waves.canary`.
+
+### terragucci-ungated-destroy
+
+`gate` is `never` and a plan destroys or replaces something. Use `gate: on-destructive`.
+
+### terragucci-many-roots
+
+A hundred or more roots are planned on every change. Publish and pin shared modules.
+
+## config check tips
+
+`terragucci config check` prints these after `ok`, as `tip (<rule>): <text>`, and under `tips` with `--json`. They never change its exit code.
+
+### terragucci-shared-subject
+
+The repo applies each wave in [one job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), and the groups' jobs carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's. It names the groups. Roles by glob without `environments` run in no forge environment: on GitHub or GitLab, name each group's roots in [`environments`](/terragucci/reference/config/#environments), each with a `forge_environment`, and have each apply role trust its environment alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Forgejo has no deployment environments, with or without `environments`, so the jobs of one ref carry one subject: keep the roles apart with a repo or a protected branch each.
+
+On GitHub and GitLab it also fires for environments that set the same `forge_environment`, whose tokens then name the same environment.
+
+### terragucci-persistent-runner
+
+A runner that takes apply jobs could also take the plan jobs, or another environment's apply jobs. That holds when every label of one runner spec is among the other's, in the same GitHub runner group or in none. A runner kept between jobs can then carry a pull request's files, caches or processes into an apply. The tip names both stages and the labels. Give the apply runners a label of their own, and use runners that start clean for each job.
+
+| Case | When it fires |
+|---|---|
+| Plan and apply | `runner.apply` (or `default`, or one `runner` for every job) and `runner.plan` place jobs on the same runner. With `environments`, only when every environment names its own `runner`; otherwise the environment cases below cover it |
+| An environment and plan | an environment's apply runner and `runner.plan` overlap. An environment with no `runner` counts with the top-level `runner.apply` |
+| Two environments | two environments' apply runners overlap |
+
+Runners the config does not name are left out, and so are GitHub's hosted runners (labels without `self-hosted`, and no group) and GitLab.com's hosted runners (tags that all start with `saas-`).
+
+Labels keep terragucci's own jobs apart, and nothing more: `runs-on` and `tags` are in the pipeline file, so a job on any branch can ask for the apply runners' labels. The tip says what keeps those jobs off on each forge: on GitHub a runner group limited to selected workflows, and on GitLab protected runners, which take jobs of protected refs alone. Forgejo has no per-workflow limit on a runner. [Runners](/terragucci/reference/threat-model/#runners) in the threat model has the setups side by side.
+
+The tips below read `environments` and stay silent without it.
+
+### terragucci-environment-role
+
+Two or more groups apply as the project's own `oidc.apply_role` (or `oidc.gcp.apply_service_account`, or `oidc.azure.apply_client_id`), and one of them is an environment with no identity of its own. That role's trust has to accept each of those jobs, so no environment condition can hold one environment's job back from it. Give each environment its own apply identity in its `oidc`. `config check` already warns about an identity that two environments or globs name themselves; this tip leaves that case out.
+
+### terragucci-gitlab-audience
+
+This tip is for GitLab with AWS. Two or more groups' apply jobs carry the same AWS token audience, and one of them is an environment with no `oidc.audience`. AWS cannot read GitLab's environment claims, so a different audience per environment is what lets each apply role accept its own jobs alone ([Trust per environment](/terragucci/reference/environment/#trust-per-environment)). Set each environment's `oidc.audience`.
+
+## Secrets tips
+
+### terragucci-secret-in-state
+
+A plan tip. The plan leaves a sensitive value in state that the root's binary and provider could keep out of it. Every identity that can read the state can read the value. The tip names the address, the attribute and what keeps it out:
+
+| In state | Kept out by |
+|---|---|
+| a resource's sensitive attribute, such as `aws_db_instance.password` | the resource's write-only argument of the same name with `_wo`, such as `password_wo`, with its `_wo_version` when it has one. A write-only argument reaches the provider and is never stored |
+| a data source's sensitive attribute, such as `data.aws_secretsmanager_secret_version.secret_string` | the ephemeral resource of the same type, whose value can go to a write-only argument or a provider's configuration. An ephemeral resource is read on each run and never stored |
+
+The provider schema comes from `providers schema -json` in the root once it has planned, so the provider version the root locks decides it. The schema is read only when the plan leaves a sensitive value in state and the binary has write-only arguments or ephemeral resources:
+
+| Binary | Write-only arguments | Ephemeral resources |
+|---|---|---|
+| OpenTofu | 1.11 and later | 1.11 and later |
+| Terraform | 1.11 and later | 1.10 and later |
+| choudoufu | every release | every release |
+
+A root on an older binary, or on a provider version without the counterpart, gets no tip. Its report still counts the sensitive values in its state, under `roots[].secrets`: how many there are, and how many could stay out. The [estate page](/terragucci/guides/see-every-project/#secrets-in-state) lists those counts per root, so you can see which states need the tightest read access. Only names and counts are read, never a value. A Terragrunt unit and a root of a [composed run](/terragucci/concepts/waves-and-approvals/#a-composed-run) are not read. Nor is a choudoufu root whose `live` block sets `secrets = "refuse"`, since choudoufu then keeps sensitive arguments out of its records.
+
+### terragucci-choudoufu-secrets
+
+A tip in `tf-check` and in the plan report. A choudoufu root's `live` block does not set `secrets = "refuse"` in its `strict` block. The default, `store`, keeps a sensitive argument, and the value of a type that generates a secret such as `random_password`, in the estate's record store, as a state file would. The `tf-check` report shows the block to add:
+
+```hcl
+terraform {
+  live {
+    strict {
+      secrets = "refuse"
+    }
+  }
+}
+```
+
+With it, choudoufu leaves sensitive arguments out of the records and refuses resource types that generate secrets. A root whose `live` block sets nothing gets no tip when the job's environment sets `CHOUDOUFU_STRICT_PIN=1`, which makes choudoufu refuse for it. terragucci never writes the setting; the `live` block is your code. The [estate page](/terragucci/guides/see-every-project/#secrets-in-state) shows each estate's setting beside its record store.
+
+## Plan tips
+
+Plan tips read a root's plan and show only in the plan report and its note.
+
+### terragucci-moved
+
+A plan destroys one resource and creates another of the same type and provider, both in the root module and neither with a `count` or `for_each` key, and every value the create knows before apply equals the destroyed resource's: the block was renamed. Adding a `moved` block makes the plan move it instead. `terragucci respond tips --report <dir> --branch <branch> --mode apply` opens a pull request into the branch that adds it ([Responses](/terragucci/reference/responses/#tips-fmt-and-release-notes)).
+
+Values known only after apply, and sensitive ones, are not compared. No tip is given when a destroy matches more than one create, or a create more than one destroy.

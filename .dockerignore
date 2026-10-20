@@ -1,0 +1,6 @@
+# The CI images build from the repo root but need only the bundle; the decide
+# image needs only its server.
+*
+!packages/terragucci/dist/terragucci.mjs
+!images/decide/server.py
+!images/decide/requirements.txt

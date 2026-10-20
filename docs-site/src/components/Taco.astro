@@ -1,0 +1,42 @@
+---
+// terragucci's logo, the pixel-art taco with a diamond. `scale` shows the
+// 51x31 art (an SVG with a square per art pixel) at a whole multiple, so
+// every art pixel stays square and sharp; `small` is the 26x16 mark for inline
+// use, a PNG at twice that size resampled once from the sharp art.
+// Decorative by default (alt=""), since a word beside it names terragucci.
+// The art is transparent, so a taco sits on whatever is behind it.
+interface Props {
+	scale?: number | 'small';
+	alt?: string;
+	class?: string;
+}
+const { scale = 1, alt = '', class: className } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const small = scale === 'small';
+const n = small ? 1 : scale;
+---
+<span class:list={['tg-taco-tile', className]} style={`padding:${small ? 3 : 4 * n}px ${small ? 4 : 6 * n}px;border-radius:${small ? 5 : 6 * n}px`}><img
+	class="tg-taco"
+	src={small ? `${base}/brand/taco-small.png` : `${base}/brand/taco.svg`}
+	width={small ? 26 : 51 * n}
+	height={small ? 16 : 31 * n}
+	alt={alt}
+	decoding="async"
+/></span>
+
+<style>
+	/* The span keeps the taco's padding and centering; the art itself is transparent. */
+	.tg-taco-tile {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		vertical-align: middle;
+		line-height: 0;
+	}
+	.tg-taco {
+		display: inline-block;
+		max-width: none;
+		height: auto;
+		vertical-align: middle;
+	}
+</style>

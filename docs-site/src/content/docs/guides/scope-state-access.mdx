@@ -1,0 +1,132 @@
+---
+title: Keep each environment's roles to its own state
+description: Give each environment's roots a plan role and an apply role of their own, scoped to that environment's state keys, and let config check warn when a role reaches another environment's state.
+claims: [oidc/state-roles, oidc/cloud-roles]
+prompt: |
+  Read https://intentius.io/terragucci/guides/scope-state-access/.
+  In this repo, add oidc.roles to terragucci.yml with one glob per environment the roots show, using placeholder role ARNs, and run `npx terragucci config check`.
+  Write the IAM policy each role needs, from the state keys config check lists, as a file for me to review. Open a pull request.
+  Do not create a role, change a trust policy or touch a state.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Each root runs every command, steps included, with its environment's roles. In dev those are the dev roles, which your IAM policies limit to dev's state keys.
+
+| Where | What it shows |
+|---|---|
+| `terragucci config check` | each role, the roots that take it and the state keys it needs; a warning for each role that reaches another environment's state |
+| the plan and apply jobs | `TERRAGUCCI_ROOT_ROLES`, the stage's roles by glob; each root's binary gets its role as `AWS_ROLE_ARN` |
+| the [threat model](/terragucci/reference/threat-model/#state-access-per-environment) | what a role per environment stops, and what it does not |
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| [`oidc`](/terragucci/reference/pipeline/#credentials) set up with an IAM OIDC provider for your forge | each role trusts the forge's token, as `plan_role` and `apply_role` do |
+| Roots with an `s3` backend whose `bucket` and `key` are in the code | `config check` reads the state keys from the backend blocks |
+| Plain roots | a Terragrunt repo sets `terragrunt.credentials` instead, which works the same way per unit |
+
+## Steps
+
+<Steps>
+
+1. Name a pair of roles per environment, by the roots' paths. The first glob a root matches wins; a root no glob matches takes `plan_role` and `apply_role`, which you can leave out when every root matches a glob.
+
+   ```yaml
+   oidc:
+     roles:
+       "envs/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
+       "envs/prod/**": { plan: arn:aws:iam::111122223333:role/prod-plan, apply: arn:aws:iam::111122223333:role/prod-apply }
+   ```
+
+2. Run `terragucci config check`. It lists each role with the state keys its roots' backends name:
+
+   ```text
+   terragucci.yml: ok
+   approval: ledger (the default)
+   state access:
+     arn:aws:iam::444455556666:role/dev-plan (plan, envs/dev/**): s3://acme-state/dev/app.tfstate
+     arn:aws:iam::444455556666:role/dev-apply (apply, envs/dev/**): s3://acme-state/dev/app.tfstate
+     arn:aws:iam::111122223333:role/prod-plan (plan, envs/prod/**): s3://acme-state/prod/app.tfstate
+     arn:aws:iam::111122223333:role/prod-apply (apply, envs/prod/**): s3://acme-state/prod/app.tfstate
+   ```
+
+3. Scope each role's policy to those keys. The plan role only reads. With `use_lockfile` the apply role also writes and deletes the lock file beside the state it reads and writes:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::acme-state", "Condition": { "StringLike": { "s3:prefix": ["prod/*"] } } },
+       { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], "Resource": ["arn:aws:s3:::acme-state/prod/app.tfstate", "arn:aws:s3:::acme-state/prod/app.tfstate.tflock"] }
+     ]
+   }
+   ```
+
+   Trust each pair as you trust `plan_role` and `apply_role`. Plan trusts the pull-request and default branch subjects; apply trusts only the default branch's.
+
+4. Read the warnings. `config check` prints them on stderr and still exits 0:
+
+   | Warning | What to do |
+   |---|---|
+   | a role is the role of two environments | give each environment a pair of its own |
+   | a root reads the state of another environment's root | the reading root's roles need that state key too; move the output it needs, or grant that one key read-only and accept the reach |
+   | a root matches no glob and `oidc` names no pair | add a glob for it, or set `plan_role` and `apply_role` |
+
+5. Run `terragucci init` and merge the new pipeline. The plan jobs fetch the token as before and carry the plan roles; the stage sets `AWS_ROLE_ARN` for each root. Each wave applies in one job per pair of roles, each job carrying only its own pair ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)). A state migration's reads and writes, and the state version an apply records, use the root's role too.
+
+</Steps>
+
+## GCP and Azure
+
+`oidc.gcp.roles` gives a service account pair per glob, and `oidc.azure.roles` a client pair. A root no glob matches takes the job's own pair (`plan_service_account` and `apply_service_account`, `plan_client_id` and `apply_client_id`), which stay required.
+
+```yaml
+oidc:
+  gcp:
+    workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
+    plan_service_account: tg-plan@acme.iam.gserviceaccount.com
+    apply_service_account: tg-apply@acme.iam.gserviceaccount.com
+    roles:
+      "envs/prod/**": { plan: prod-plan@acme.iam.gserviceaccount.com, apply: prod-apply@acme.iam.gserviceaccount.com }
+  azure:
+    tenant_id: 7d2c0b4e-0000-4000-8000-00000000a2e1
+    subscription_id: 00000000-0000-4000-8000-000000000001
+    plan_client_id: client-plan
+    apply_client_id: client-apply
+    roles:
+      "envs/prod/**": { plan: client-prod-plan, apply: client-prod-apply }
+```
+
+| Cloud | Each root's binary gets | The identity needs |
+|---|---|---|
+| GCP | `GOOGLE_APPLICATION_CREDENTIALS`, a copy of the job's credentials file that impersonates the root's service account | Workload Identity User for the pool's principal, as the job's service accounts have |
+| Azure | `ARM_CLIENT_ID`, the root's client | a federated credential for the job's subjects |
+
+`config check` lists each service account with the `gcs` states its roots keep, and each client with the `azurerm` ones, and warns as it does for AWS roles. Grant each identity its environment's bucket prefix or container alone.
+
+## Trust each environment's apply role to its own jobs
+
+Each pair's apply role applies in jobs of its own, but those jobs carry the default branch's subject, as every apply job does, so a role that trusts the subject alone also trusts the other environments' apply jobs. Name the roots' environments in [`environments`](/terragucci/reference/config/#environments) instead of `oidc.roles`: their apply jobs then carry what a role's trust can require.
+
+| Forge | AWS | GCP | Azure |
+|---|---|---|---|
+| GitHub | the apply role trusts `sub` = `repo:<owner>/<repo>:environment:<name>` alone | the same `sub` in the provider's attribute condition, or the service account's binding | a federated credential whose subject is `repo:<owner>/<repo>:environment:<name>` |
+| GitLab | the environment's `oidc.audience` in the role's `aud` condition, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | an attribute condition on `assertion.environment`, `assertion.environment_protected` and `assertion.ref_protected` | a federated credential that matches on the same claims with a claims expression |
+| Forgejo | one ref's jobs carry the same subject, so a role cannot tell environments apart: keep them apart with a repo per environment, or a protected branch per environment | the same | the same |
+
+On GitHub, set the environment's deployment branch rule to the default branch alone, since the environment's subject does not name the ref. [Separate environments](/terragucci/guides/separate-environments/) has the forge's settings for runners and secrets too.
+
+## Limits
+
+A job's token can be exchanged for every role whose trust names the job's subject and audience. Each wave's deciding job plans every root with every environment's plan role, so code in a root it plans can read any state a plan role reaches; it holds no apply role, and its token carries the plan audience. The roles keep each root's own runs to its environment's state, and keep a backend pointed at the wrong key from reading it. The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) has the full table.
+
+## Next
+
+- [Credentials](/terragucci/reference/pipeline/#credentials) for the trust each role needs on each forge.
+- [`config check`](/terragucci/reference/cli/#config-check) for every warning.
+- [Separate environments](/terragucci/guides/separate-environments/) for the forge and cloud settings around each environment's roles.

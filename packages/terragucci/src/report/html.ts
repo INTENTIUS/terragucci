@@ -1,0 +1,363 @@
+/**
+ * The HTML report: one self-contained file, no network calls, light and
+ * dark. It is rendered from the report JSON alone, and carries that JSON
+ * inline as `<script type="application/json" id="terragucci-report">`, on
+ * lines of its own, so a script handed only the HTML still gets the data.
+ *
+ * The page opens on what a reviewer looks for. Destroys, replacements and
+ * refusals are pinned above the filters, and the roots and changes that need
+ * reading on their own are listed next. Every group, root and named change
+ * links to its root's full plan and to the CI job that produced it.
+ */
+import { groupAnchor, rootAnchor } from "./build";
+import { actionWord, binaryText, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
+import { duration } from "./spans";
+import { stepResult } from "./views";
+import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
+
+export const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/** The report JSON, safe inside a script element: `</` and `<!--` cannot end or open anything. */
+export function inlineJson(report: Report): string {
+  return JSON.stringify(report).replace(/<\//g, "<\\/").replace(/<!--/g, "<\\u0021--");
+}
+
+/** The report JSON from an HTML report, found by its script tag alone. */
+export function readInlineReport(html: string): Report {
+  const open = html.indexOf('id="terragucci-report"');
+  if (open < 0) throw new Error("no terragucci-report script in this HTML");
+  const start = html.indexOf(">", open) + 1;
+  const end = html.indexOf("</script>", start);
+  return JSON.parse(html.slice(start, end)) as Report;
+}
+
+/** A wave's state as the report's table says it: a plan that is made again after the waves it reads apply says so. */
+export function waveStateText(w: Report["waves"][number]): string {
+  const again = w.replans_after?.length ? `; plans again once wave ${w.replans_after.join(", ")} applies, and waits for an approval of that plan unless gate is never` : "";
+  return `${w.state ?? ""}${again}`.replace(/^; /, "");
+}
+
+/**
+ * What `waves.compose` came to: the composed run's roots, each one's module
+ * and changes, the values read before they were known, and on a tf-apply
+ * wave how each root's part ended and its state; or why the change applies
+ * in waves.
+ */
+function composeSection(report: Report): string {
+  const c = report.compose;
+  if (!c) return "";
+  if (c.fallback || c.wave === undefined) return `<section id="compose" data-fallback="${esc(c.fallback?.kind ?? "")}"><h3>Applies in waves</h3><p><code>waves.compose</code>: ${esc(c.fallback?.reason ?? "no wave runs the composed run")}.</p></section>`;
+  const w = report.waves.find((x) => x.number === c.wave && x.composed);
+  if (!w?.composed) return "";
+  const rows = w.composed.members.map((m) => {
+    const r = report.roots.find((x) => x.path === m.root);
+    const n = r?.counts ?? {};
+    const changes = r ? `${(n.create ?? 0) + (n.replace ?? 0)} to add, ${n.update ?? 0} to change, ${(n.delete ?? 0) + (n.replace ?? 0)} to destroy` : "did not plan";
+    const applied = m.apply ? `${esc(m.apply)}${m.changes ? `, ${m.changes.done} of ${m.changes.planned}` : ""}${m.error ? `: ${esc(m.error)}` : ""}` : "";
+    const state = m.state === "not-written" ? `not written: kept at ${esc(m.kept ?? "the job's artifacts")}${m.lock_held ? ", its lock still held" : ""}` : esc(m.state ?? "");
+    return `<tr data-root="${esc(m.root)}"><td><code>${esc(m.root)}</code></td><td><code>${esc(m.module)}</code></td><td>${changes}</td><td>${applied}</td><td>${state}</td></tr>`;
+  });
+  const unknown = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.composed && x.unknown?.length).map((x) => `<li><code>${esc(r.path)}</code> reads ${x.unknown!.map((u) => `<code>${esc(u)}</code>`).join(", ")} from <code>${esc(x.upstream)}</code></li>`));
+  return `<section id="compose" data-wave="${c.wave}"><h3>One composed run, in wave ${c.wave}</h3><p>These roots plan as one plan and apply as one apply (<code>waves.compose</code>). Each keeps its own state: the run locks each state, applies, and writes each state back with what applied to it. If the apply fails part way, what applied stays applied.</p><table><tr><th>Root</th><th>In the run as</th><th>Planned</th><th>Its apply</th><th>State</th></tr>${rows.join("")}</table>${unknown.length ? `<p>Read before they were known, so the run waits for an approval under any gate but never:</p><ul>${unknown.join("")}</ul>` : ""}</section>`;
+}
+
+/** Which roots read which, and on what outputs: the edges of the run's graph. */
+function readsList(report: Report): string {
+  const rows = report.roots.flatMap((r) => (r.reads ?? []).map((x) => {
+    const on = x.outputs === "planned" ? `planned outputs${x.unknown?.length ? `, ${x.unknown.map((u) => `<code>${esc(u)}</code>`).join(", ")} known once it applies` : ""}` : `applied state${x.why ? ` (${esc(x.why)})` : ""}`;
+    return `<li data-root="${esc(r.path)}" data-upstream="${esc(x.upstream)}"><code>${esc(r.path)}</code> reads <code>${esc(x.upstream)}</code> through <code>${esc(x.data)}</code>: ${on}</li>`;
+  }));
+  const unknown = report.roots.flatMap((r) => (r.unknown_reads ?? []).map((x) => `<li data-root="${esc(r.path)}" data-unknown="${esc(x.data)}"><code>${esc(r.path)}</code> reads unknown state through <code>${esc(x.data)}</code>: ${esc(x.why)}, so it is not ordered after the root that writes it</li>`));
+  const unaddressed = report.roots.filter((r) => r.unaddressed).map((r) => `<li data-root="${esc(r.path)}" data-unaddressed><code>${esc(r.path)}</code> keeps its state where the code does not say: ${esc(r.unaddressed!)}, so a root that reads it is not ordered after it</li>`);
+  const all = [...rows, ...unknown, ...unaddressed];
+  return all.length ? `<h3>Reads</h3><ul id="reads">${all.join("")}</ul>` : "";
+}
+
+/** The pull request the run planned, linked when its page is known. */
+function pullRequest(run: Report["run"]): string {
+  if (!run.pull_request) return "";
+  const n = `#${esc(run.pull_request)}`;
+  return `, pull request ${run.pull_request_url ? `<a href="${esc(run.pull_request_url)}">${n}</a>` : n}`;
+}
+
+/** The run's trace: a link when a viewer is configured (telemetry.trace_url), else its id as text to search by. */
+function traceLink(run: Report["run"]): string {
+  if (!run.trace_id) return "";
+  return run.trace_url
+    ? `, <a href="${esc(run.trace_url)}" id="trace">trace</a>`
+    : `, trace <code id="trace">${esc(run.trace_id)}</code>`;
+}
+
+const SYMBOL: Record<string, string> = { create: "+", update: "~", replace: "-/+", delete: "-", read: "<=", forget: "forget", "no-op": " ", import: "import", refused: "!" };
+
+function value(v: unknown): string {
+  const s = typeof v === "string" ? JSON.stringify(v) : JSON.stringify(v) ?? "null";
+  return s.length > 160 ? `${s.slice(0, 157)}...` : s;
+}
+
+function planLinks(r: Pick<ReportRoot, "plan" | "job_url">): string {
+  const out: string[] = [];
+  if (r.plan.text) out.push(`<a href="${esc(r.plan.text)}">plan</a>`);
+  if (r.plan.json) out.push(`<a href="${esc(r.plan.json)}">plan.json</a>`);
+  if (r.job_url) out.push(`<a href="${esc(r.job_url)}">job</a>`);
+  return out.length ? `<span class="links">${out.join(" ")}</span>` : "";
+}
+
+function attrLine(a: ReportChange["attributes"][number], writeOnly: boolean): string {
+  let v: string;
+  if (a.sensitive) v = "(sensitive)";
+  else if (a.unknown) v = `${a.before !== undefined ? `${esc(value(a.before))} -&gt; ` : ""}(known after apply)`;
+  else v = `${a.before !== undefined ? `${esc(value(a.before))} -&gt; ` : ""}${a.after !== undefined ? esc(value(a.after)) : "null"}`;
+  const tags = [a.forcesReplacement ? '<span class="tag bad">forces replacement</span>' : "", writeOnly ? '<span class="tag">write-only: the value is never in the plan</span>' : ""].join("");
+  return `<li><code>${esc(a.path)}</code> ${v} ${tags}</li>`;
+}
+
+function changeRow(c: ReportChange): string {
+  const action = c.importing !== undefined && c.action === "no-op" ? "import" : c.action;
+  const wo = new Set(c.write_only ?? []);
+  const why = c.why ? ` <span class="why">${esc(c.why)}</span>` : "";
+  const imp = c.importing !== undefined ? ` <span class="tag">imports id ${esc(c.importing)}</span>` : "";
+  const attrs = c.attributes.length ? `<ul class="attrs">${c.attributes.map((a) => attrLine(a, wo.has(a.path))).join("")}</ul>` : "";
+  return `<li class="change a-${esc(action)}${c.why ? " hl" : ""}" data-action="${esc(action)}"><code class="sym">${esc(SYMBOL[action] ?? action)}</code> <code>${esc(c.address)}${c.deposed !== undefined ? ` (deposed ${esc(c.deposed)})` : ""}</code>${why}${imp}${attrs}</li>`;
+}
+
+const KIND_WORD: Record<string, string> = { tags: "tags only", description: "description only", unknown: "known after apply only" };
+
+const secs = (s: number): string => duration(s * 1000);
+const table = (head: string[], rows: string[][]): string =>
+  `<table><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</table>`;
+const codeOr = (s: string | undefined): string => (s ? `<code>${esc(s)}</code>` : "");
+
+/** A root's timings, folded under its changes. */
+function timingsBlock(t: ReportRootTimings): string {
+  const head = `Time: ${secs(t.seconds)}${t.plan_seconds !== undefined ? `, plan ${secs(t.plan_seconds)}` : ""}${t.detail === "none" ? ", no per-resource timings" : ""}`;
+  let body = t.note ? `<p class="notice">${esc(t.note)}.</p>` : "";
+  if (t.resources.length) {
+    body += `<h3>Slowest resources</h3>${table(["Resource", "Action", "Time", "Refresh"], t.resources.map((r) => [codeOr(r.address), esc(r.action ?? ""), duration(r.ms), r.refresh_ms !== undefined ? duration(r.refresh_ms) : ""]))}`;
+  }
+  if (t.aggregates.length) {
+    body += `<h3>Summed by type</h3>${table(["Spans", "Type or provider", "Count", "Total", "Slowest"], t.aggregates.map((a) => [
+      esc(a.of),
+      `${codeOr(a.type ?? a.provider)}${a.method ? ` ${esc(a.method)}` : ""}${a.groups !== undefined ? ` (${a.groups} groups)` : ""}`,
+      String(a.count),
+      duration(a.ms),
+      `${duration(a.max_ms)}${a.slowest ? ` ${codeOr(a.slowest)}` : ""}`,
+    ]))}`;
+  }
+  if (t.provider_calls.length) {
+    body += `<h3>Slowest provider calls</h3>${table(["Call", "Provider", "For", "Time"], t.provider_calls.map((c) => [esc(c.method), codeOr(c.provider), codeOr(c.address ?? c.type), duration(c.ms)]))}`;
+  }
+  if (t.provider_init.length) {
+    body += `<h3>Provider start-up</h3>${table(["Provider", "Starts", "Total", "Longest"], t.provider_init.map((p) => [codeOr(p.provider), String(p.count), duration(p.ms), duration(p.max_ms)]))}`;
+  }
+  if (t.lock_waits.length) {
+    body += `<h3>State lock waits</h3>${table(["Backend", "Operation", "Attempts", "Time"], t.lock_waits.map((w) => [esc(w.backend ?? ""), esc(w.operation ?? ""), w.attempts !== undefined ? String(w.attempts) : "", duration(w.ms)]))}`;
+  }
+  return `<details class="minor timings"><summary>${esc(head)}</summary>${body}</details>`;
+}
+
+const DETAIL_WORD: Record<ReportRootTimings["detail"], string> = { resources: "per resource", aggregate: "summed by type", none: "none" };
+
+/** The run's slowest roots and resources. */
+function timingsSection(report: Report): string {
+  const t = report.timings;
+  if (!t) return "";
+  let body = t.note ? `<p class="notice">${esc(t.note)}.</p>` : "";
+  if (t.resources.length) {
+    body += `<h3>Slowest resources</h3>${table(["Root", "Resource", "Time"], t.resources.map((r) => [`<a href="#${esc(rootAnchor(r.root))}"><code>${esc(r.root)}</code></a>`, codeOr(r.address), duration(r.ms)]))}`;
+  }
+  const without = report.roots.filter((r) => r.timings && r.timings.detail === "none");
+  if (without.length && without.length === t.roots.length) {
+    const notes = [...new Set(without.map((r) => r.timings!.note).filter((n): n is string => n !== undefined))];
+    body += `<p class="notice">No root has per-resource timings. ${notes.map((n) => esc(n) + ".").join(" ")}</p>`;
+  } else if (without.length) {
+    body += `<p class="notice">${without.length} of ${t.roots.length} roots have no per-resource timings; each says why.</p>`;
+  }
+  if (t.roots.length) {
+    const shown = t.roots.slice(0, 20);
+    body += `<h3>Slowest roots</h3>${table(["Root", "Time", "Plan", "Per-resource timings"], shown.map((r) => [`<a href="#${esc(rootAnchor(r.root))}"><code>${esc(r.root)}</code></a>`, secs(r.seconds), r.plan_seconds !== undefined ? secs(r.plan_seconds) : "", esc(DETAIL_WORD[r.detail])]))}${t.roots.length > shown.length ? `<p class="notice">and ${t.roots.length - shown.length} faster roots.</p>` : ""}`;
+  }
+  return `<section id="timings"><h2>Where the time went</h2>${body}</section>`;
+}
+
+function rootBlock(r: ReportRoot, wave: number | undefined): string {
+  const shown = r.changes.filter((c) => !c.kind);
+  const folded = r.changes.filter((c) => c.kind);
+  const counts = Object.entries(r.counts).filter(([a]) => a !== "no-op").map(([a, n]) => `${n} ${a}`).join(", ") || "no changes";
+  const actions: string[] = [...new Set(r.changes.map((c) => (c.importing !== undefined && c.action === "no-op" ? "import" : c.action)))];
+  if (r.status === "failed") actions.push("refused");
+  const why = r.why.map((w) => `<span class="why">${esc(w)}</span>`).join(" ");
+  let body = `<div class="meta">${planLinks(r)} ${r.binary ? `<span class="binary">${esc(binaryText(r.binary))}</span> ` : ""}${r.group ? `<a href="#${esc(groupAnchor(r.group))}">group ${esc(r.group)}</a>` : ""} ${r.plan_digest ? `<code class="digest">${esc(r.plan_digest)}</code>` : ""}</div>`;
+  if (r.error) body += `<pre class="error">${esc(r.error)}</pre>`;
+  if (r.secrets) body += `<p class="secrets">${r.secrets.in_state} sensitive ${r.secrets.in_state === 1 ? "attribute" : "attributes"} in state${r.secrets.movable ? `, ${r.secrets.movable} of which a write-only argument or an ephemeral resource could keep out (<a href="#tips">tips</a>)` : ""}.</p>`;
+  if (r.live) body += `<p class="live">Estate <code>${esc(r.live.estate)}</code>, record store <code>${esc(r.live.record_store)}</code>, <code>secrets = "${esc(r.live.secrets)}"</code>.</p>`;
+  const o = r.policy?.override;
+  if (o) body += `<p class="notice">Policy override: ${o.rules.map((x) => `<code>${esc(x)}</code>`).join(", ")} overridden by ${esc(o.by)} at ${esc(o.at)}${o.sealed ? ", sealed" : ""}, for plan <code>${esc(o.plan_digest)}</code>: ${esc(o.reason)}</p>`;
+  if (r.policy?.warnings.length) body += `<p class="notice">Policy warnings, which fail nothing:</p><ul>${r.policy.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`;
+  if (r.steps?.length) body += `<p class="notice">Steps that ran:</p><ul class="steps">${r.steps.map((x) => `<li><code>${esc(x.when)}</code> ${esc(x.name)}: ${esc(stepResult(x))} (${x.seconds}s)</li>`).join("")}</ul>`;
+  if (shown.length) body += `<ul class="changes">${shown.map(changeRow).join("")}</ul>`;
+  if (folded.length) {
+    const kinds = [...new Set(folded.map((c) => KIND_WORD[c.kind!]))].join(", ");
+    body += `<details class="minor"><summary>${folded.length} folded: ${esc(kinds)}</summary><ul class="changes">${folded.map(changeRow).join("")}</ul></details>`;
+  }
+  if (r.timings) body += timingsBlock(r.timings);
+  return `<details class="root" id="${esc(rootAnchor(r.path))}" data-root="${esc(r.path)}" data-group="${esc(r.group ?? "")}" data-actions="${esc(actions.join(" "))}" data-wave="${wave ?? ""}"${r.fold === "open" ? " open" : ""}><summary><code>${esc(r.path)}</code> <span class="counts">${esc(counts)}</span> ${why}</summary>${body}</details>`;
+}
+
+function changeLines(g: ReportGroup): string {
+  const lines = g.extends ? (g.plus ?? []) : g.changes;
+  if (!lines.length) return "";
+  const text = lines.map((l) => {
+    let t = l.count > 1 ? `${l.line} (x${l.count})` : l.line;
+    if (l.differsFrom) t += `  [differs from group ${l.differsFrom}${l.differsIn?.length ? ` in: ${l.differsIn.join(", ")}` : ""}]`;
+    return t;
+  });
+  return `<pre class="diff">${esc(text.join("\n"))}</pre>`;
+}
+
+function groupBlock(report: Report, g: ReportGroup, roots: Map<string, ReportRoot>, waveOf: Map<string, number>): string {
+  const word = report.unit === "instance" ? "instance" : "root";
+  let title = `Group ${g.id}: ${g.units.length} ${word}${g.units.length === 1 ? "" : "s"}`;
+  if (g.resource) title += ` of ${g.resource}`;
+  if (g.outlier) title += " (outlier)";
+  title += g.noChanges ? ", no changes" : g.extends ? `, group ${g.extends}'s change plus` : g.units.length > 1 ? ", identical change" : ", change";
+  const members = g.units.map((u) => roots.get(u)).filter((r): r is ReportRoot => r !== undefined);
+  const actions = [...new Set([...g.changes, ...(g.plus ?? [])].map((c) => c.action))];
+  const waves = [...new Set(g.units.map((u) => waveOf.get(u)).filter((w) => w !== undefined))];
+  const why = g.why.map((w) => `<span class="why">${esc(w)}</span>`).join(" ");
+  const varies = g.varies.length
+    ? `<p class="varies">Differs between its roots: ${g.varies.map((v) => `<code>${esc(v.address)}</code> (${v.paths.map(esc).join(", ")})`).join("; ")}</p>`
+    : "";
+  const first = members[0];
+  const rep = first ? `<p class="meta">One of them in full: <a href="#${esc(rootAnchor(first.path))}"><code>${esc(first.path)}</code></a> ${planLinks(first)}</p>` : "";
+  const list = members.length
+    ? `<details class="units"><summary>${members.length} ${word}${members.length === 1 ? "" : "s"}</summary><ul>${members.map((r) => `<li><a href="#${esc(rootAnchor(r.path))}"><code>${esc(r.path)}</code></a> ${planLinks(r)}</li>`).join("")}</ul></details>`
+    : `<ul>${g.units.map((u) => `<li><code>${esc(u)}</code></li>`).join("")}</ul>`;
+  return `<details class="group" id="${esc(groupAnchor(g.id))}" data-group="${esc(g.id)}" data-roots="${esc(g.units.join(" "))}" data-actions="${esc(actions.join(" "))}" data-wave="${esc(waves.join(" "))}"${g.fold === "open" ? " open" : ""}><summary>${esc(title)} ${why}</summary>${changeLines(g)}${varies}${rep}${list}</details>`;
+}
+
+
+function namedRow(n: ReportNamed, roots: Map<string, ReportRoot>, stage: Report["run"]["stage"]): string {
+  const r = roots.get(n.root);
+  const forced = n.replace_paths?.length ? ` <span class="why">forced by ${n.replace_paths.map((p) => `<code>${esc(p.join("."))}</code>`).join(", ")}</span>` : "";
+  const reason = n.reason ? ` <span class="why">${esc(n.reason.split(/\s+/).join(" "))}</span>` : "";
+  return `<li class="named a-${esc(n.action)}"><span class="tag ${n.action === "delete" || n.action === "replace" || n.action === "refused" ? "bad" : ""}">${esc(actionWord(stage, n.action))}</span> <a href="#${esc(rootAnchor(n.root))}"><code>${esc(n.root)}</code></a>${n.address ? ` <code>${esc(n.address)}</code>` : ""}${n.deposed !== undefined ? ` (deposed ${esc(n.deposed)})` : ""}${forced}${reason} ${r ? planLinks(r) : ""}</li>`;
+}
+
+const CSS = `
+:root{--bg:#fbfbfa;--fg:#1d1d1b;--muted:#6b6b66;--line:#deded8;--card:#fff;--bad:#b42318;--badbg:#fdecea;--hl:#8a5a00;--hlbg:#fff5e0;--link:#1f5fbf;--code:#f1f1ee}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--fg:#ecece8;--muted:#a0a09a;--line:#34342f;--card:#1c1c1a;--bad:#ff8a80;--badbg:#3a1714;--hl:#ffc766;--hlbg:#33270f;--link:#8ab4ff;--code:#262623}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:20px 0 8px}h3{font-size:14px;margin:12px 0 4px}
+a{color:var(--link)}code,pre{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}pre{background:var(--code);padding:8px;overflow-x:auto;margin:6px 0}
+.run{color:var(--muted);margin:0 0 8px}.run code{color:var(--fg)}.notice{color:var(--muted);font-size:13px}
+details{background:var(--card);border:1px solid var(--line);border-radius:6px;margin:6px 0;padding:6px 10px}details details{margin:6px 0}
+summary{cursor:pointer}ul{margin:4px 0;padding-left:20px}.attrs{list-style:none;padding-left:16px}
+.why{display:inline-block;background:var(--hlbg);color:var(--hl);border-radius:4px;padding:0 6px;font-size:12px;margin-left:4px}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 6px;font-size:12px}.tag.bad{background:var(--badbg);color:var(--bad);border-color:transparent}
+.pinned{border:2px solid var(--bad);border-radius:8px;padding:8px 12px;background:var(--card)}.pinned h2{margin-top:0;color:var(--bad)}
+.first{border:1px solid var(--hl);border-radius:8px;padding:8px 12px;margin-top:10px;background:var(--card)}.first h2{margin-top:0}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px;position:sticky;top:0;background:var(--bg);padding:6px 0;z-index:1}
+.filters label{display:flex;gap:4px;align-items:center}select,input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font:inherit}
+.counts,.meta{color:var(--muted)}.links a{margin-right:6px}.digest{color:var(--muted);font-size:11px}.sym{display:inline-block;min-width:3ch}
+#timings table,.timings table{display:block;overflow-x:auto}
+.a-delete .sym,.a-replace .sym{color:var(--bad)}.hidden{display:none}table{border-collapse:collapse}td,th{border-bottom:1px solid var(--line);padding:3px 10px 3px 0;text-align:left}
+`;
+
+const JS = `
+(function(){
+var report=JSON.parse(document.getElementById("terragucci-report").textContent);
+function openTo(id){var el=document.getElementById(id);if(!el)return;for(var p=el;p;p=p.parentElement){if(p.tagName==="DETAILS")p.open=true;}el.scrollIntoView();}
+function onHash(){if(location.hash.length>1)openTo(decodeURIComponent(location.hash.slice(1)));}
+window.addEventListener("hashchange",onHash);onHash();
+var f={group:document.getElementById("f-group"),root:document.getElementById("f-root"),action:document.getElementById("f-action"),wave:document.getElementById("f-wave")};
+function has(list,v){return (" "+(list||"")+" ").indexOf(" "+v+" ")>=0;}
+function apply(){
+var g=f.group.value,r=f.root.value.trim(),a=f.action.value,w=f.wave?f.wave.value:"";
+document.querySelectorAll(".group").forEach(function(el){
+var ok=(!g||el.dataset.group===g)&&(!r||el.dataset.roots.indexOf(r)>=0)&&(!a||has(el.dataset.actions,a))&&(!w||has(el.dataset.wave,w));
+el.classList.toggle("hidden",!ok);});
+document.querySelectorAll(".root").forEach(function(el){
+var ok=(!g||el.dataset.group===g)&&(!r||el.dataset.root.indexOf(r)>=0)&&(!a||has(el.dataset.actions,a))&&(!w||el.dataset.wave===w);
+el.classList.toggle("hidden",!ok);});
+document.getElementById("shown").textContent=document.querySelectorAll(".root:not(.hidden)").length+" of "+report.roots.length+" roots shown";
+}
+Object.keys(f).forEach(function(k){if(f[k])f[k].addEventListener("input",apply);});apply();
+})();
+`;
+
+export function renderHtml(report: Report): string {
+  const { run } = report;
+  const roots = new Map(report.roots.map((r) => [r.path, r]));
+  const waveOf = new Map<string, number>();
+  for (const w of report.waves) for (const r of w.roots) waveOf.set(r, w.number);
+  const totals = Object.entries(report.totals).filter(([a, n]) => n > 0 && a !== "no-op").map(([a, n]) => `${n} ${a}`).join(", ") || "no changes";
+  const title = `${run.project} ${run.stage}${run.wave !== undefined ? ` wave ${run.wave}` : ""} at ${run.commit.slice(0, 12)}`;
+
+  const pinnedNamed = report.named.filter((n) => n.action === "delete" || n.action === "replace" || n.action === "refused");
+  const otherNamed = report.named.filter((n) => !pinnedNamed.includes(n));
+  const pinned = `<section class="pinned" id="pinned"><h2>${run.stage === "tf-drift" ? "Deleted, replaced and refused" : "Destroys, replacements and refusals"} (${pinnedNamed.length})</h2>${pinnedNamed.length ? `<ul>${pinnedNamed.map((n) => namedRow(n, roots, run.stage)).join("")}</ul>` : (run.stage === "tf-drift" ? "<p>None. Nothing was deleted or replaced outside Terraform.</p>" : "<p>None. Nothing in this run destroys, replaces or refuses.</p>")}${otherNamed.length ? `<h2>Imports and forgets (${otherNamed.length})</h2><ul>${otherNamed.map((n) => namedRow(n, roots, run.stage)).join("")}</ul>` : ""}</section>`;
+
+  const outliers = report.roots.filter((r) => r.why.some((w) => w.startsWith("outlier")));
+  const highlighted = report.roots.flatMap((r) => r.highlights.filter((h) => h.action !== "delete" && h.action !== "replace").map((h) => ({ root: r.path, ...h })));
+  const firstItems = [
+    ...outliers.map((r) => `<li class="outlier"><span class="why">outlier</span> <a href="#${esc(rootAnchor(r.path))}"><code>${esc(r.path)}</code></a> its change matches no other root's ${planLinks(r)}</li>`),
+    ...highlighted.map((h) => `<li class="highlight"><span class="why">${esc(h.why)}</span> <a href="#${esc(rootAnchor(h.root))}"><code>${esc(h.root)}</code></a> <code>${esc(h.address)}</code> (${esc(h.action)})</li>`),
+  ];
+  const first = firstItems.length ? `<section class="first" id="first"><h2>Read these first (${firstItems.length})</h2><ul>${firstItems.join("")}</ul></section>` : "";
+
+  const opt = (v: string, label: string) => `<option value="${esc(v)}">${esc(label)}</option>`;
+  const actions: string[] = [...new Set(report.roots.flatMap((r) => r.changes.map((c) => (c.importing !== undefined && c.action === "no-op" ? "import" : c.action))))].sort();
+  if (report.roots.some((r) => r.status === "failed")) actions.push("refused");
+  const filters = `<form class="filters" onsubmit="return false"><label>Group <select id="f-group">${opt("", "all")}${report.groups.map((g) => opt(g.id, `${g.id} (${g.units.length})`)).join("")}</select></label><label>Root <input id="f-root" placeholder="path contains" size="18"></label><label>Action <select id="f-action">${opt("", "all")}${actions.map((a) => opt(a, a)).join("")}</select></label>${report.waves.length ? `<label>Wave <select id="f-wave">${opt("", "all")}${report.waves.map((w) => opt(String(w.number), String(w.number))).join("")}</select></label>` : ""}<span id="shown" class="counts"></span></form>`;
+
+  const waves = report.waves.length
+    ? `<h2>Waves</h2><table id="waves"><tr><th>Wave</th><th>Roots</th><th>After</th><th>State</th><th>Set digest</th><th>Approval</th><th>Record</th></tr>${report.waves.map((w) => `<tr data-wave="${w.number}" data-state="${esc(w.state ?? "")}"><td>${w.number}</td><td>${w.roots.length}${w.composed ? ", composed" : ""}</td><td>${w.reads?.length ? `wave ${w.reads.join(", ")}` : ""}</td><td>${esc(waveStateText(w))}</td><td><code class="digest">${esc(w.set_digest ?? "none: a root did not plan")}</code></td><td>${esc(w.approval)}</td><td>${w.gate ? `<code>${esc(w.gate.branch)}:${esc(w.gate.path)}</code>` : ""}</td></tr>`).join("")}</table>${composeSection(report)}${readsList(report)}`
+    : composeSection(report);
+
+  const holes = report.holes.length ? `<h2>Holes (${report.holes.length})</h2><ul>${report.holes.map((h) => `<li><code>${esc(h.root)}: ${esc(h.address)}</code> ${esc(h.reason)}</li>`).join("")}</ul>` : "";
+
+  const li = (s: string): string => `<li>${s}</li>`;
+  const later = report.deferred?.length
+    ? `<section id="deferred"><h2>Planned later (${report.deferred.length})</h2><ul>${report.deferred.map((d) => li(`<code>${esc(d.unit)}</code>${d.after.length ? ` after ${esc(d.after.join(", "))}` : ""}: ${esc(d.why)}${d.previewed ? " (previewed)" : ""}`)).join("")}${(report.mock_reads ?? []).map((r) => li(`<code>${esc(r.unit)}</code> would read mock_outputs of ${esc(r.upstream)} (${esc(r.reason)})`)).join("")}</ul></section>`
+    : "";
+  const tips = report.tips
+    ? `<section id="tips"><h2>Tips (${report.tips.length})</h2><p class="notice">Advice on how your roots are set up. A tip never fails a run or changes a gate.</p>${report.tips.length ? `<ul>${report.tips.map((t) => `<li><a href="${esc(t.url)}"><code>${esc(t.rule)}</code></a>${t.root ? ` <code>${esc(t.root)}</code>` : ""} ${esc(t.message)}</li>`).join("")}</ul>` : "<p>None.</p>"}</section>`
+    : "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<meta name="color-scheme" content="light dark">
+<title>${esc(title)}</title>
+${TACO_ICON}
+<style>${CSS}${TACO_CSS}</style>
+</head>
+<body>
+<main>
+<h1 class="brand">${TACO_IMG}${esc(run.project)}: ${esc(run.stage)}${run.wave !== undefined ? `, wave ${run.wave}` : ""}</h1>
+<p class="run">commit ${run.commit_url ? `<a href="${esc(run.commit_url)}"><code>${esc(run.commit)}</code></a>` : `<code>${esc(run.commit)}</code>`}${run.base ? ` against <code>${esc(run.base)}</code>` : ""}${pullRequest(run)}, ${esc(run.binary)} on ${esc(run.runtime)}, ${esc(run.started)} to ${esc(run.finished)}${run.job_url ? `, <a href="${esc(run.job_url)}">job</a>` : ""}${traceLink(run)}<br>${report.units} ${report.unit === "instance" ? "instances" : "roots"} in ${report.groups.length} groups: ${esc(totals)}. Change set <code class="digest">${esc(report.change_set)}</code></p>
+<p class="notice">Every value a plan marks sensitive is replaced with <code>${esc(report.redaction.marker)}</code> in the stored plans (${report.redaction.values} in this run). Plan digests are taken before that, over the plans as planned.</p>
+${pinned}
+${first}
+${filters}
+${waves}
+<h2>Groups (${report.groups.length})</h2>
+${report.groups.map((g) => groupBlock(report, g, roots, waveOf)).join("\n")}
+<h2>Roots (${report.roots.length})</h2>
+${report.roots.map((r) => rootBlock(r, waveOf.get(r.path))).join("\n")}
+${holes}
+${timingsSection(report)}
+${later}${tips}
+</main>
+<script type="application/json" id="terragucci-report">
+${inlineJson(report)}
+</script>
+<script>${JS}</script>
+</body>
+</html>
+`;
+}

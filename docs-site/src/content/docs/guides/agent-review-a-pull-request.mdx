@@ -1,0 +1,154 @@
+---
+title: Have a model review a pull request
+description: Turn on review.agent, and a model on your own key compares each pull request's description with its plan and posts a note with the risk, the mismatches and its questions, on GitHub, GitLab and Forgejo.
+claims: [agent/review, policy/review-risk]
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-review-a-pull-request/.
+  Add the `review` block to terragucci.yml, write the review instructions file, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
+  List the secret I must set; do not create tokens or secrets yourself.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+One of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)), off unless `review.agent` is set.
+
+## Result
+
+After each plan of a pull request, a note with the model's review under terragucci's first lines:
+
+```markdown
+### terragucci review of `3f9c2a1e`
+
+Risk: **high**. A model compared the title and description with the diff, the plan note and the policy results. This note approves nothing.
+
+Mismatches: the plan destroys `terraform_data.old`, which the description does not mention.
+
+Questions: is `terraform_data.old` still read by anything?
+
+risk: high
+```
+
+The note neither approves nor requests changes, and it sets no status. Reviewers read it beside the plan note. A policy can act on its risk when the pull request applies ([below](#risk-in-a-policy)).
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The pipeline from [Get your first plan note](/terragucci/getting-started/) | the review runs after the pull request's plan job |
+| Actions on the default branch able to start a workflow on `workflow_run` (GitHub) or `pull_request_target` (Forgejo) | the review is a workflow of its own that the forge runs from the default branch |
+| On GitLab, [`comments:`](/terragucci/guides/re-plan-from-a-comment/) and its pipeline schedule | a merge request's own pipeline runs the merge request's pipeline file, so the `comments` job starts each review in a pipeline of the default branch |
+| Your model's API key in your forge's secrets, such as `ANTHROPIC_API_KEY` | the review runs on your model and your key |
+
+## Steps
+
+<Steps>
+
+1. On the default branch, write `.terragucci/review.md` to tell the model what matters in this repository:
+
+   ```markdown
+   Treat a destroy or replace of a database, a bucket or a DNS zone as high risk.
+   Every root under envs/prod/ needs a reason in the description.
+   ```
+
+   Only the default branch's copy counts; a pull request that edits it changes nothing until it merges, and its note says it edits the instructions.
+
+2. Turn it on in `terragucci.yml`:
+
+   ```yaml
+   review:
+     agent: true
+     key_secret: ANTHROPIC_API_KEY
+   ```
+
+   Every key is in [terragucci.yml keys](/terragucci/reference/config/#the-review).
+
+3. Check the file and write the pipeline, then open a pull request with the result:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+   `init` writes the review workflow, `.github/workflows/terragucci-review.yml` or `.forgejo/workflows/terragucci-review.yml`. The forge runs it from the default branch, so it first reviews pull requests opened after this one merges.
+
+   GitLab gets the `review` and `review-note` jobs in `.gitlab/terragucci.yml`. Once a merge request's plan job ends, the next run of the comments schedule starts a pipeline on the default branch for its head, and edits the review note to say so; when the pipeline ends, the model's text replaces it.
+
+</Steps>
+
+## Model inputs
+
+| Part | From |
+|---|---|
+| The title and description | the pull request, from the event (Forgejo) or the API (GitHub and GitLab) |
+| The diff | `git diff` of the base branch and the head |
+| The plan note | the plan job's report, from the pipeline's run of the head (on GitLab, the merge request's pipeline of the head), without its markers |
+| The policy results | each planned root's result, denials and warnings, from the same report |
+| The instructions | `review.instructions` (default `.terragucci/review.md`) on the default branch, read with `git show` |
+
+The prompt marks everything but the instructions as written by the pull request's author, and tells the model to follow nothing in it. It asks for the risk, the mismatches between the description and the plan and any questions, ending on a line `risk: low`, `risk: medium` or `risk: high`. A review with no such line, or a command that fails, gives risk `unknown`.
+
+## Job permissions
+
+| Job | Does | Holds |
+|---|---|---|
+| `review` | checks out the head with no credentials kept, fetches the plan report, writes the prompt, unpacks the default branch's files into an empty directory and runs the review command there with the prompt on stdin; keeps what it prints | the job's token (read-only on GitHub), which the command's step runs without; the model's key, in that step alone |
+| `review-note` | in a fresh container, posts the review as one note on the pull request, and edits that note on the next push | the job's token, to comment |
+
+| Guard | What it stops |
+|---|---|
+| both jobs are in the default branch's review workflow, which GitHub runs on `workflow_run` and Forgejo on `pull_request_target`; on GitLab, in a pipeline of the default branch | a pull request editing the review it gets |
+| the command's step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables; on GitLab, where every job holds the project's variables, the command starts with an empty environment but for the prompt and the model's key; neither job has a cloud role | the model commenting, pushing or calling the cloud |
+| the command runs in the default branch's files, not the checkout | a script the command names, or a setting file it reads, coming from the change |
+| `review-note` turns every HTML comment in the review into text before it posts | a review that forges terragucci's markers, such as the plan note's |
+| `review-note` posts an issue comment, never a pull request review | a review that approves |
+
+## Other models
+
+`command` takes any command line that reads the prompt on stdin and prints the review on stdout. The default is one pinned release of Claude Code in print mode with no tools:
+
+```text
+npx -y @anthropic-ai/claude-code@2.1.290 -p --max-turns 1 --permission-prompts none
+  --setting-sources user --strict-mcp-config --no-session-persistence --tools ""
+```
+
+Another program, with its own key:
+
+```yaml
+review:
+  agent: true
+  command: my-reviewer --stdin
+  key_secret: MY_MODEL_KEY
+  timeout: 5
+```
+
+| Variable | Holds |
+|---|---|
+| `TG_REVIEW_PROMPT` | the prompt's path |
+| the `key_secret` name | the model's key, under its own name |
+
+## Risk in a policy
+
+With `review.agent` and [`policy`](/terragucci/reference/policy/) set, each `tf-apply` wave passes the policy the review of the applied pull request's head as `input.review`:
+
+```rego
+package main
+
+import rego.v1
+
+deny contains msg if {
+  input.review.risk == "high"
+  msg := sprintf("the review of pull request %d says risk high", [input.review.pull_request])
+}
+```
+
+The policy gets the risk only from the review job's artifact in a run of the default branch's review workflow. On GitLab the review note names its review job, and the wave reads that job's artifact once GitLab says the job is `review` in a pipeline of the default branch. A note someone posts on the pull request or an artifact the pull request's own pipeline keeps is ignored. A denied wave applies nothing; a listed person can [override](/terragucci/reference/policy/#overriding-a-denial) one plan as for any denial. [`input.review`](/terragucci/reference/policy/#review) lists the fields.
+
+## MCP or `--json`
+
+The review command gets everything in its prompt and runs with no tools, so it needs neither. An agent at your desk that follows up on a review reads the pull request's plan reports through [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/) (`index`, then `report`), and checks a config it changes with `terragucci config check --json`.
+
+## Next
+
+- [The threat model](/terragucci/reference/threat-model/#job-access) lists the review jobs with the rest.
+- [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) runs a coding agent on a comment.

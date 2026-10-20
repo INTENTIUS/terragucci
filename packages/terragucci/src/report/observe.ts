@@ -1,0 +1,517 @@
+/**
+ * A stage run as a trace and as pipeline metrics. The stage is one trace:
+ * its waves and roots are spans, and each run of the binary is a span the
+ * binary's own spans hang under. The metrics are read from the finished
+ * report, so they match what reviewers saw.
+ *
+ * Whether or not telemetry is on, the binary's own spans are collected for
+ * the run (`spans.ts`), and the report names the slowest roots and, in each
+ * root, the slowest resources and provider calls.
+ */
+import { spawnSync } from "node:child_process";
+import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Attrs, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
+import { METRIC } from "../dashboards/names";
+import { pinVersion } from "../rollout/pins";
+import type { Report } from "./schema";
+import { drifted } from "./drift";
+import { waveGauges, waveResult, type WaveFacts } from "./wave-telemetry";
+import { rootTimings, runTimings, SpanReceiver } from "./spans";
+
+/** One module call's pin in a root, as the Estate and Rollouts dashboards count them. */
+export interface ModulePin {
+  root: string;
+  module: string;
+  version: string;
+}
+
+/**
+ * The pinned module calls of each root, from its plan's configuration: a
+ * registry module's version, or a git or OCI source's ref or tag. A local
+ * module (`./modules/x`) has no pin and is left out.
+ */
+export function modulePins(roots: { path: string; plan?: unknown }[]): ModulePin[] {
+  const out: ModulePin[] = [];
+  for (const r of roots) {
+    const calls = ((r.plan as { configuration?: { root_module?: { module_calls?: Record<string, { source?: string; version_constraint?: string }> } } } | undefined)
+      ?.configuration?.root_module?.module_calls) ?? {};
+    for (const call of Object.values(calls)) {
+      const source = call.source ?? "";
+      if (!source || source.startsWith(".") || source.startsWith("/")) continue;
+      const [base, query = ""] = source.split("?");
+      const ref = new URLSearchParams(query).get("ref") ?? new URLSearchParams(query).get("tag");
+      const version = ref ? pinVersion(ref) : call.version_constraint;
+      if (!version) continue;
+      out.push({ root: r.path, module: base.replace(/^git::/, "").replace(/\.git(\/\/|$)/, "$1"), version });
+    }
+  }
+  return out;
+}
+
+/** What a drift run found, beyond its report: when its drift was first found. */
+export interface DriftFacts {
+  /** When the open drift issue was opened, or when this run found drift with no issue to read. */
+  since?: string;
+}
+
+interface RootTiming {
+  path: string;
+  start: bigint;
+  end?: bigint;
+  /** The root's span in the phase it is timed in now. */
+  span?: Span;
+  /** Every span the root had: one, or one per phase of a tf-apply wave (its plan, then its apply). */
+  spans: Span[];
+  /** Each run of the binary in the root, in seconds. */
+  commands: { command: string; seconds: number }[];
+  /** Time between `endRoot` and `reopen`, which the root's seconds leave out. */
+  idle: bigint;
+}
+
+const seconds = (from: bigint, to: bigint): number => Number(to - from) / 1e9;
+/** Seconds to the millisecond. */
+const ms = (secs: number): number => Math.round(secs * 1000) / 1000;
+
+/** Each gauge with the run's `commit` and `run` labels, when `TERRAGUCCI_METRICS_PER_RUN` asked for them; otherwise as given. */
+export function perRunLabels(gauges: Gauge[], perRun: { run?: string } | undefined, commit: string): Gauge[] {
+  if (!perRun) return gauges;
+  const labels = { ...(commit && commit !== "unknown" ? { commit } : {}), ...(perRun.run ? { run: perRun.run } : {}) };
+  return gauges.map((x) => ({ ...x, attributes: { ...x.attributes, ...labels } }));
+}
+
+/** The binary's version, from `<binary> version -json`. */
+export function binaryVersion(binary: string, env: NodeJS.ProcessEnv): string | undefined {
+  const r = spawnSync(binary, ["version", "-json"], { encoding: "utf-8", env });
+  try {
+    const v = (JSON.parse(r.stdout) as { terraform_version?: string }).terraform_version;
+    return typeof v === "string" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export class StageObserver {
+  readonly trace?: Trace;
+  private readonly stageSpan?: Span;
+  /** The phase span open now (`phase`), which a root timed in it hangs under. */
+  private current?: Span;
+  /** Whether the stage was timed in phases: its roots then hang under the phases, not under wave spans. */
+  private phased = false;
+  /** The phase spans, so a root's span under the apply phase can say how its apply came out. */
+  private readonly phases: Span[] = [];
+  /** The forge's pipeline run and job this stage runs in, put on the trace's resource so a reader finds a run's traces. */
+  private readonly pipeline: { run?: string; job?: string };
+  private readonly start: bigint;
+  private readonly roots: RootTiming[] = [];
+  private receiver?: SpanReceiver;
+  /** Terragrunt units' times from its run report, by unit, in seconds. */
+  private readonly units = new Map<string, number>();
+  /** Terragrunt units' spans, by unit, timed from its run report. */
+  private readonly unitSpans = new Map<string, Span>();
+  /** Set by the stage before `finish`: the module pins its plans read. */
+  pins: ModulePin[] = [];
+  /** Set by a drift stage before `finish`. */
+  drift?: DriftFacts;
+  /** Set by the stage before `finish` when the report has an address (reports.url): the stage span carries it, so a trace links its report. */
+  reportUrl?: string;
+  /** Set by a tf-apply wave: its number, what it found out, and its exit code once it has one. */
+  wave?: { number: number; facts: WaveFacts; code?: number };
+
+  /** The pull request a tf-plan runs for (`TG_PR`, which the pipeline sets). */
+  private readonly pullRequest?: string;
+  /**
+   * With `TERRAGUCCI_METRICS_PER_RUN=true`, every gauge also carries the
+   * run's `commit` and the forge's pipeline `run` id, so a reader can pick
+   * one run's numbers. Each run is then a series of its own.
+   */
+  readonly perRun?: { run?: string };
+
+  /** `start`: when the stage began, Unix nanoseconds, when that was before the observer was made (a tf-apply wave's job); now otherwise. */
+  constructor(readonly telemetry: Telemetry | undefined, readonly stage: string, env: NodeJS.ProcessEnv, start: bigint = nowNanos()) {
+    this.start = start;
+    const pr = env.TG_PR?.trim();
+    if (pr) this.pullRequest = pr;
+    this.pipeline = { run: (env.GITHUB_RUN_ID || env.CI_PIPELINE_ID)?.trim() || undefined, job: (env.GITHUB_JOB || env.CI_JOB_NAME)?.trim() || undefined };
+    if (env.TERRAGUCCI_METRICS_PER_RUN?.trim().toLowerCase() === "true") {
+      const run = (env.GITHUB_RUN_ID || env.CI_PIPELINE_ID)?.trim();
+      this.perRun = run ? { run } : {};
+    }
+    if (telemetry?.traces) {
+      this.trace = new Trace(env.TRACEPARENT);
+      this.stageSpan = this.trace.start(`terragucci ${stage}`, undefined, { "terragucci.stage": stage });
+      // The stage's span covers the job from when the stage began.
+      this.stageSpan.start = start;
+    }
+  }
+
+  /**
+   * Start collecting the binary's spans for the report. Without it the
+   * report still times each root, with no per-resource timings.
+   */
+  async collectSpans(log: (line: string) => void): Promise<void> {
+    const receiver = new SpanReceiver(this.trace ? this.telemetry?.traces : undefined);
+    const problem = await receiver.listen();
+    if (problem) log(`timings: the binary's spans are not collected (${problem})`);
+    else this.receiver = receiver;
+  }
+
+  /**
+   * Open one phase of the stage as a span under the stage's span: a tf-apply
+   * wave's plan, gate, apply, report and upload. A root timed while it is
+   * open hangs under it. Undefined when not tracing. End it with `endPhase`.
+   */
+  phase(name: string, attributes: Attrs = {}, start?: bigint): Span | undefined {
+    if (!this.trace || !this.stageSpan) return undefined;
+    const span = this.trace.start(name, this.stageSpan, { "terragucci.phase": name, ...attributes });
+    if (start !== undefined) span.start = start;
+    this.phased = true;
+    this.current = span;
+    this.phases.push(span);
+    return span;
+  }
+
+  /**
+   * A gate an approval let through in this run (behold#571): its span starts
+   * when the wave began waiting, holds a `held` span from the pending record
+   * to the approval, and a `check` span for the decision this job made, from
+   * the gate span's own start to `end`. Its bar then shows the hold its
+   * words name.
+   */
+  holdGate(gate: Span | undefined, held: { since: string; approvedAt: string }, end: bigint): void {
+    if (!gate) return;
+    const since = Date.parse(held.since);
+    const approved = Date.parse(held.approvedAt);
+    if (!Number.isFinite(since) || !Number.isFinite(approved) || approved < since) return;
+    const ns = (ms: number): bigint => BigInt(Math.round(ms)) * 1_000_000n;
+    this.spanAt("held", gate, ns(since), ns(approved), { "terragucci.wait": "approval", "terragucci.gate.held_seconds": (approved - since) / 1000 });
+    this.spanAt("check", gate, gate.start, end);
+    if (ns(since) < gate.start) gate.start = ns(since);
+  }
+
+  /** A span under `parent` that ran from `start` to `end` (Unix nanoseconds), such as the hold before a gate's approval. */
+  spanAt(name: string, parent: Span | undefined, start: bigint, end: bigint, attributes: Attrs = {}): Span | undefined {
+    if (!this.trace || !parent) return undefined;
+    const span = this.trace.start(name, parent, attributes);
+    span.start = start;
+    span.end = end;
+    return span;
+  }
+
+  /** A span under the phase open now, such as one migration's writes in wave 1's `migrate` phase. Undefined when not tracing. End it with `endPhase`. */
+  child(name: string, attributes: Attrs = {}): Span | undefined {
+    if (!this.trace) return undefined;
+    return this.trace.start(name, this.current ?? this.stageSpan, attributes);
+  }
+
+  /** An event inside `span`, at `at` (an RFC 3339 time) or now. */
+  event(span: Span | undefined, name: string, attributes: Attrs = {}, at?: string): void {
+    if (!span || !this.trace) return;
+    this.trace.event(span, name, attributes, at);
+  }
+
+  endPhase(span: Span | undefined, attributes: Attrs = {}, error?: string): void {
+    if (!span || !this.trace) return;
+    this.trace.end(span, attributes, error);
+    if (this.current === span) this.current = undefined;
+  }
+
+  /** Start timing a root; end it with `endRoot`. */
+  root(path: string): RootTiming {
+    const t: RootTiming = { path, start: nowNanos(), commands: [], idle: 0n, spans: [] };
+    if (this.trace) {
+      t.span = this.trace.start(`root ${path}`, this.current ?? this.stageSpan, { "terragucci.root": path });
+      t.spans.push(t.span);
+    }
+    this.roots.push(t);
+    return t;
+  }
+
+  endRoot(t: RootTiming): void {
+    t.end = nowNanos();
+    if (t.span) t.span.end = t.end;
+  }
+
+  /**
+   * Time a root again after `endRoot`: a tf-apply wave plans every root,
+   * decides its gate, then applies. The gap is left out of the root's seconds.
+   */
+  reopen(t: RootTiming): void {
+    if (t.end === undefined) return;
+    t.idle += nowNanos() - t.end;
+    t.end = undefined;
+    // In a later phase (a wave's apply after its plan), the root gets a span of its own under that phase.
+    if (this.trace && this.current && t.span && t.span.parentSpanId !== this.current.spanId) {
+      t.span = this.trace.start(`root ${t.path}`, this.current, { "terragucci.root": t.path });
+      t.spans.push(t.span);
+    }
+  }
+
+  /**
+   * A Terragrunt unit's time, from Terragrunt's run report: Terragrunt runs
+   * the binary, not terragucci. With `at` (epoch milliseconds), the unit's
+   * span is set to the report's start and end.
+   */
+  unitTimed(path: string, secs: number, at?: { start: number; end: number }): void {
+    if (!Number.isFinite(secs) || secs < 0) return;
+    this.units.set(path, secs);
+    const span = this.unitSpans.get(path);
+    if (span && at) {
+      span.start = BigInt(Math.round(at.start * 1000)) * 1000n;
+      span.end = BigInt(Math.round(at.end * 1000)) * 1000n;
+    }
+  }
+
+  /**
+   * The variables one Terragrunt unit's run of the binary gets, beside the
+   * job's own: the span receiver's exporter with a token naming the unit and
+   * the command, and, when tracing, a `root <unit>` span the binary's spans
+   * hang under. Empty when neither is on. terragucci's `TG_TF_PATH` wrapper
+   * sets them for the one run they name.
+   */
+  unitEnv(path: string, command: string, env: NodeJS.ProcessEnv): Record<string, string> {
+    let span = this.unitSpans.get(path);
+    if (this.trace && !span) {
+      span = this.trace.start(`root ${path}`, this.current ?? this.stageSpan, { "terragucci.root": path });
+      this.unitSpans.set(path, span);
+    }
+    const traced = span ? binaryEnv(env, this.trace!, span, path) : env;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(traced)) if (v !== undefined && env[k] !== v) out[k] = v;
+    return { ...out, ...(this.receiver?.exporter(path, command) ?? {}) };
+  }
+
+  /** Run the binary inside a root, as a span of its own when tracing. */
+  command<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => R): R {
+    if (!this.trace || !t.span) return spawn(env);
+    const span = this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3);
+    const r = spawn(binaryEnv(env, this.trace, span, t.path));
+    this.trace.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
+    return r;
+  }
+
+  /**
+   * `command` for a run that does not block, so roots can plan at once. The
+   * binary's spans also go to the stage's span receiver, which a blocking
+   * run would starve.
+   */
+  async commandAsync<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => Promise<R>): Promise<R> {
+    const start = nowNanos();
+    const span = this.trace && t.span ? this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3) : undefined;
+    let runEnv = span ? binaryEnv(env, this.trace!, span, t.path) : env;
+    if (this.receiver) runEnv = this.receiver.env(runEnv, t.path, args[0]);
+    const r = await spawn(runEnv);
+    t.commands.push({ command: args[0], seconds: seconds(start, nowNanos()) });
+    if (span) this.trace!.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
+    return r;
+  }
+
+  /**
+   * Put each root's timings, and the run's slowest roots and resources, on
+   * the report. `commands` names the runs of the binary whose spans count:
+   * the plan, and on a tf-apply wave the apply too. A Terragrunt unit gets
+   * its time from Terragrunt's run report and its spans from its plan, which
+   * the `TG_TF_PATH` wrapper sent here; a unit the report does not time gets
+   * none, and the run says why.
+   */
+  addTimings(report: Report, commands: readonly string[] = ["plan"]): void {
+    const binary = report.run.binary.split("/").pop() || report.run.binary;
+    for (const r of report.roots) {
+      const t = this.roots.find((x) => x.path === r.path);
+      if (!t || t.end === undefined) {
+        const unit = this.units.get(r.path);
+        if (unit !== undefined) r.timings = rootTimings(this.receiver?.spansOf(r.path, "plan") ?? [], { binary, seconds: unit, planSeconds: unit, source: "terragrunt" });
+        continue;
+      }
+      const ran = (c: string) => t.commands.filter((x) => x.command === c).reduce<number | undefined>((n, x) => (n ?? 0) + x.seconds, undefined);
+      const plan = ran("plan");
+      const apply = commands.includes("apply") ? ran("apply") : undefined;
+      r.timings = rootTimings(commands.flatMap((c) => this.receiver?.spansOf(t.path, c) ?? []), {
+        binary,
+        seconds: seconds(t.start, t.end) - Number(t.idle) / 1e9,
+        ...(plan !== undefined ? { planSeconds: plan } : {}),
+        ...(apply !== undefined ? { applySeconds: apply } : {}),
+      });
+    }
+    const untimed = report.roots.length > 0 && report.roots.every((r) => r.timings === undefined);
+    report.timings = runTimings(report.roots, untimed ? "Terragrunt ran the binary for these units and its run report gave no times, so the report has no per-unit timings" : undefined);
+  }
+
+  /** The metrics a finished report gives. */
+  gauges(report: Report, version: string | undefined, end: bigint): Gauge[] {
+    const project = report.run.project;
+    const stage = this.stage;
+    const result = report.roots.some((r) => r.status === "failed") ? "failure" : "success";
+    // A pull request's plan names it, so Change review can show roots per pull request.
+    const pr = stage === "tf-plan" && this.pullRequest ? { pull_request: this.pullRequest } : {};
+    const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>): Gauge => ({ name, unit, description, value, attributes: { project, stage, ...pr, ...attributes } });
+    const out: Gauge[] = [
+      g("terragucci_stage_duration_seconds", "s", "How long the stage ran", seconds(this.start, end), { result }),
+      g("terragucci_roots_planned", "{root}", "Roots the stage planned, failed ones included", report.roots.length, {}),
+      g("terragucci_plan_groups", "{group}", "Groups the plans fold into", report.groups.length, {}),
+    ];
+    for (const t of this.roots) {
+      if (t.end !== undefined) out.push(g(METRIC.rootPlan, "s", "How long one root took to plan", seconds(t.start, t.end), { root: t.path }));
+    }
+    for (const [action, n] of Object.entries(report.totals)) {
+      out.push(g("terragucci_plan_changes", "{change}", "Proposed changes by action", n, { action }));
+    }
+    if (version) out.push(g("terragucci_binary_version", "", "The binary and version a stage ran", 1, { binary: report.run.binary, version }));
+    return [...out, ...this.dashboardGauges(report, end, g)];
+  }
+
+  /**
+   * The metrics a tf-apply wave sends: how long the wave's job ran, how long
+   * each root's init, plan and apply took in it, and the wave's own gauges (report/wave-telemetry.ts), which the Rollouts and
+   * waves dashboard and the waiting-wave alert read.
+   */
+  applyGauges(report: Report, end: bigint): Gauge[] {
+    const project = report.run.project;
+    const stage = this.stage;
+    const g = (name: string, unit: string, description: string, value: number, attributes: Record<string, string>): Gauge => ({ name, unit, description, value, attributes: { project, stage, ...attributes } });
+    const wave: Record<string, string> = this.wave ? { wave: String(this.wave.number) } : {};
+    const out: Gauge[] = [];
+    // The wave job's own time, from when the stage started to when it sends: the first number a reader wants.
+    if (this.wave) out.push(g(METRIC.stageDuration, "s", "How long the stage ran", ms(seconds(this.start, end)), { ...wave, result: waveResult(this.wave.code ?? 1, this.wave.facts) }));
+    for (const r of report.roots) {
+      // Each run of the binary as terragucci timed it, to the millisecond; the report's timings, rounded to 10 ms, where it ran none (a Terragrunt unit).
+      const t = this.roots.find((x) => x.path === r.path);
+      const ran = (c: string) => t?.commands.filter((x) => x.command === c).reduce<number | undefined>((n, x) => (n ?? 0) + x.seconds, undefined);
+      const init = ran("init");
+      if (init !== undefined) out.push(g(METRIC.rootInit, "s", "How long one root's init took", ms(init), { ...wave, root: r.path }));
+      const plan = ran("plan") ?? r.timings?.plan_seconds;
+      if (plan !== undefined) out.push(g(METRIC.rootPlan, "s", "How long one root took to plan", ms(plan), { ...wave, root: r.path }));
+      const apply = ran("apply") ?? r.timings?.apply_seconds;
+      if (apply === undefined) continue;
+      out.push(g(METRIC.rootApply, "s", "How long one root took to apply", ms(apply), { ...wave, root: r.path }));
+    }
+    out.push(...this.initAndLockGauges(report, g));
+    if (this.wave) out.push(...waveGauges(this.wave.number, this.wave.code ?? 1, this.wave.facts, Number(end / 1_000_000n) / 1000, g, report.totals));
+    return out;
+  }
+
+  /** Provider start-up and state lock waits per root, which a plan stage and a tf-apply wave both send. */
+  private initAndLockGauges(report: Report, g: (name: string, unit: string, description: string, value: number, attributes: Record<string, string>) => Gauge): Gauge[] {
+    const out: Gauge[] = [];
+    for (const r of report.roots) {
+      for (const p of r.timings?.provider_init ?? []) out.push(g(METRIC.providerInit, "s", "Time spent starting a provider in a root", p.ms / 1000, { root: r.path, provider: p.provider }));
+      const wait = (r.timings?.lock_waits ?? []).reduce((n, w) => n + w.ms, 0);
+      if (r.timings?.lock_waits?.length) out.push(g(METRIC.lockWait, "s", "Time spent waiting for a state lock in a root", wait / 1000, { root: r.path }));
+    }
+    return out;
+  }
+
+  /** The gauges the dashboards read beyond the plan counts (dashboards/names.ts). */
+  private dashboardGauges(report: Report, end: bigint, g: (name: string, unit: string, description: string, value: number, attributes: Record<string, string>) => Gauge): Gauge[] {
+    const at = Number(end / 1_000_000n) / 1000;
+    const out: Gauge[] = [
+      g(METRIC.lastRun, "s", "When the stage last ran, in Unix seconds", at, {}),
+      g(METRIC.rootsChanged, "{root}", "Roots whose plan changes something", report.roots.filter((r) => r.status === "planned" && r.changes.length > 0).length, {}),
+    ];
+    if (report.tips) {
+      const byRule = new Map<string, number>();
+      for (const t of report.tips) byRule.set(t.rule, (byRule.get(t.rule) ?? 0) + 1);
+      for (const [rule, n] of byRule) out.push(g(METRIC.tips, "{tip}", "Tips the run gave, by rule", n, { rule }));
+    }
+    for (const p of this.pins) out.push(g(METRIC.modulePin, "", "A module call's pin in a root", 1, { root: p.root, module: p.module, version: p.version }));
+    out.push(...this.initAndLockGauges(report, g));
+    for (const x of report.timings?.resources ?? []) out.push(g(METRIC.resource, "s", "How long one of the run's slowest resources took", x.ms / 1000, { root: x.root, address: x.address }));
+    if (report.run.stage === "tf-drift") {
+      const d = drifted(report);
+      out.push(g(METRIC.driftRoots, "{root}", "Roots the drift run found drifted", d.roots, {}));
+      if (d.roots > 0) out.push(g(METRIC.driftSince, "s", "When the open drift was first found, in Unix seconds", Date.parse(this.drift?.since ?? report.run.finished) / 1000, {}));
+      else if (d.failed === 0) out.push(g(METRIC.driftClear, "s", "When a drift run last found no drift, in Unix seconds", at, {}));
+    }
+    return out;
+  }
+
+  /** Close the trace from the report, then send the trace and the metrics. Never throws. */
+  async finish(report: Report, env: NodeJS.ProcessEnv, log: (line: string) => void, fetchFn?: OtlpFetch): Promise<void> {
+    if (this.receiver) {
+      for (const u of this.receiver.unreadable) log(`timings: a batch of spans could not be read: ${u}`);
+      const failed = await this.receiver.close();
+      if (failed.length) log(`telemetry: ${failed.length} of the binary's span batches were not forwarded: ${failed[0]}`);
+    }
+    const tel = this.telemetry;
+    if (!tel) return;
+    for (const s of tel.skipped) log(`telemetry: ${s}`);
+    const end = nowNanos();
+    const run = report.run;
+    // The metrics carry nothing that changes from run to run, so a project's gauge is one series and the
+    // dashboards' latest value is the latest run's, not the largest of any commit's. The trace names the run.
+    // TERRAGUCCI_METRICS_PER_RUN adds the commit and the run id as labels on each gauge (perRunLabels).
+    const metricsResource = { ...tel.resource, "service.version": run.terragucci, "terragucci.project": run.project };
+    // A run's traces are found by its project, commit, pipeline run and job: the labels its gauges carry with TERRAGUCCI_METRICS_PER_RUN.
+    const resource = {
+      ...metricsResource,
+      "vcs.ref.head.revision": run.commit,
+      ...(run.job_url ? { "cicd.pipeline.run.url.full": run.job_url } : {}),
+      ...(this.pipeline.run ? { "cicd.pipeline.run.id": this.pipeline.run } : {}),
+      ...(this.pipeline.job ? { "cicd.pipeline.task.name": this.pipeline.job } : {}),
+    };
+    const sent: string[] = [];
+
+    if (tel.traces && this.trace && this.stageSpan) {
+      const failed = report.roots.filter((r) => r.status === "failed").length;
+      const result = this.wave ? waveResult(this.wave.code ?? 1, this.wave.facts) : failed ? "failure" : "success";
+      this.trace.end(this.stageSpan, {
+        "terragucci.project": run.project,
+        "vcs.ref.head.revision": run.commit,
+        "terragucci.binary": run.binary,
+        "terragucci.runtime": run.runtime,
+        "terragucci.change_set": report.change_set,
+        "terragucci.roots": report.roots.length,
+        "terragucci.roots_failed": failed,
+        // How the stage or the wave ended, a dimension of the span metrics the dashboards read.
+        "terragucci.result": result,
+        ...(this.wave ? { "terragucci.wave": this.wave.number } : {}),
+        ...(this.reportUrl ? { "terragucci.report.url": this.reportUrl } : {}),
+        ...(run.job_url ? { "cicd.pipeline.run.url.full": run.job_url } : {}),
+        ...Object.fromEntries(Object.entries(report.totals).map(([a, n]) => [`terragucci.plan.${a}`, n])),
+      }, failed ? `${failed} root(s) failed` : result === "failed" ? `wave ${this.wave?.number} failed` : undefined);
+      // Waves are known once every root has planned, so their spans are set
+      // around the roots they hold.
+      // A Terragrunt unit the run report did not time ends with the stage.
+      for (const span of this.unitSpans.values()) span.end ??= end;
+      const spans = [
+        ...this.roots.flatMap((t) => t.spans.map((span) => ({ path: t.path, span }))),
+        ...[...this.unitSpans].map(([path, span]) => ({ path, span })),
+      ];
+      // A stage timed in phases keeps its roots under them: its stage span is the wave.
+      for (const w of this.phased ? [] : report.waves) {
+        const held = spans.filter((t) => w.roots.includes(t.path) && t.span.end !== undefined);
+        if (held.length === 0) continue;
+        const span = this.trace.start(`wave ${w.number}`, this.stageSpan, { "terragucci.wave": w.number, "terragucci.set_digest": w.set_digest ?? undefined, "terragucci.approval": w.approval });
+        span.start = held.reduce((m, t) => (t.span.start < m ? t.span.start : m), held[0].span.start);
+        span.end = held.reduce((m, t) => (t.span.end! > m ? t.span.end! : m), held[0].span.end!);
+        for (const t of held) t.span.parentSpanId = span.spanId;
+      }
+      // A root's status is its plan's. Under the apply phase it is how the apply came out: applied when the report
+      // lists what it applied, failed when the root or its wave failed (the rule the audit reads, report/audit.ts).
+      const applyPhases = new Set(this.phases.filter((p) => p.name === "apply").map((p) => p.spanId));
+      const waveFailed = report.waves.some((w) => w.state === "failed");
+      const applyStatus = (r: (typeof report.roots)[number]): string =>
+        r.status === "failed" || r.error ? "failed" : r.applied_changes !== undefined ? "applied" : waveFailed ? "failed" : r.status;
+      for (const t of spans) {
+        const r = report.roots.find((x) => x.path === t.path);
+        if (!r) continue;
+        Object.assign(t.span.attributes, {
+          "terragucci.status": t.span.parentSpanId && applyPhases.has(t.span.parentSpanId) ? applyStatus(r) : r.status,
+          "terragucci.plan_digest": r.plan_digest ?? undefined,
+          ...Object.fromEntries(Object.entries(r.counts).map(([a, n]) => [`terragucci.plan.${a}`, n])),
+        });
+        if (r.error) t.span.error = r.error.split("\n")[0];
+      }
+      const problem = await send(tel.traces, tracesBody(this.trace.spans, resource, run.terragucci ?? "0.0.0"), fetchFn);
+      if (problem) log(`telemetry: the trace was not sent: ${problem}`);
+      else sent.push(`trace ${this.trace.traceId} (${this.trace.spans.length} spans)`);
+    }
+
+    // A tf-apply wave sends its trace, each root's apply time and its wave gauges. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
+    if (tel.metrics) {
+      const gauges = perRunLabels(this.stage === "tf-apply" ? this.applyGauges(report, end) : this.gauges(report, binaryVersion(run.binary, env), end), this.perRun, run.commit);
+      const problem = await send(tel.metrics, metricsBody(gauges, metricsResource, run.terragucci ?? "0.0.0", end), fetchFn);
+      if (problem) log(`telemetry: the metrics were not sent: ${problem}`);
+      else sent.push(`${gauges.length} metric points`);
+    }
+    if (sent.length) log(`telemetry: sent ${sent.join(" and ")}`);
+  }
+}

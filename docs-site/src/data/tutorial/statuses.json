@@ -1,0 +1,17 @@
+{
+  "step": "statuses",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [
+    {
+      "cmd": "just example change one-root",
+      "output": "[example] pushed change/one-root at 128ef750\n[example] run 27 for 128ef750 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/27/jobs/1/attempt/1)\n[example] run 28 for 128ef750 (push): success (http://localhost:3300/terragucci-admin/example/actions/runs/28/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/10 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/27/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/28/jobs/0/attempt/1 (success)",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "checks-light": "efa0c28d7d33469c",
+    "checks-dark": "b2a40d5e979c7c48",
+    "reply-light": "cd732d9cef8881e0",
+    "reply-dark": "87aaa7547e2b6566"
+  }
+}

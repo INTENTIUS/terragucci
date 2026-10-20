@@ -1,0 +1,164 @@
+---
+title: Have an agent change a pull request
+description: Write /terragucci agent and an ask on a pull request, and a coding agent commits the change to its branch, on GitHub, GitLab and Forgejo.
+claims: [agent/comment]
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-change-a-pull-request/.
+  Add the `agent.comment` block to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
+  List the machine user, token scopes, secrets and ruleset I must set; do not create tokens or secrets yourself.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+One of four features that run a model; the others are [summarizing a refused wave](/terragucci/guides/agent-refused-wave/), [fixing drift](/terragucci/guides/agent-fix-drift/) and [reviewing a pull request](/terragucci/guides/agent-review-a-pull-request/). It is off unless `agent.comment` is set; every other feature runs without an agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
+
+## Result
+
+A pull request comment such as:
+
+```text
+/terragucci agent rename var.bucket to var.bucket_name in app and its callers
+```
+
+A coding agent makes the change and terragucci commits it to the pull request's head. The commit is planned like any other; nothing is applied or merged.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The pipeline from [Get your first plan note](/terragucci/getting-started/) | the agent jobs are written into it |
+| On GitLab, [`comments:`](/terragucci/guides/re-plan-from-a-comment/) and its pipeline schedule | a merge request note starts no pipeline; the `comments` job reads `/terragucci agent` |
+| An Anthropic API key in your forge's secrets | the default command runs Claude Code |
+| A token for the agent's commits in your forge's secrets (step 1) | a commit sent with the job's own token starts no workflow run, so the change would not be planned |
+
+## Steps
+
+<Steps>
+
+1. Make the agent's token. Keep it in a secret such as `AGENT_FORGE_TOKEN` and the model's key in `ANTHROPIC_API_KEY`.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   | Setting | Value |
+   |---|---|
+   | Who | a machine user with write access, outside `CODEOWNERS` |
+   | Token | fine-grained, for this repository alone |
+   | Contents | read and write |
+   | Pull requests | read and write |
+   | Workflows | none, so GitHub refuses any change it sends to `.github/workflows/` |
+   | Default branch ruleset | a pull request and one approval of the latest change required, with no bypass for the machine user |
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   | Setting | Value |
+   |---|---|
+   | Who | a bot user or project access token with the Developer role, outside `CODEOWNERS` |
+   | Token scopes | `api` and `write_repository` |
+   | Variable | `AGENT_FORGE_TOKEN`, masked; the model's key in `ANTHROPIC_API_KEY`, masked |
+   | Default branch | protected, with the bot off the push and merge lists |
+
+   GitLab also needs `comments:` beside the `agent` block. The `comments` job starts the agent's pipeline on the default branch with its own job token, so it runs as the user who owns the comments schedule.
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   | Setting | Value |
+   |---|---|
+   | Who | a machine user added as a collaborator with Write access |
+   | Token scopes | `write:repository` and `write:issue` |
+   | Default branch | the machine user stays off the push, approval and merge allowlists |
+
+   </TabItem>
+   </Tabs>
+
+2. Turn it on. Add the `comment` key to the `agent` block of `terragucci.yml`:
+
+   ```yaml
+   agent:
+     via: forge
+     token_env: AGENT_FORGE_TOKEN
+     comment:
+       key_secret: ANTHROPIC_API_KEY
+       max_turns: 30
+       timeout: 30
+   ```
+
+   `token_env` names the secret with the agent's token. `comment: true` takes every default, listed in [terragucci.yml keys](/terragucci/reference/config/#the-agent-comment).
+
+3. Check the file and write the pipeline, then merge to the default branch, which comment workflows run from:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+4. Ask. Write `/terragucci agent` and the ask on one line. The reply links the commit and names the files it changed.
+
+   The commit records the ask and who made it on which pull request. Its `Requested-by: <login>` trailer names you, and its `Pushed-by: <login>` trailer names the user the agent's token acts as, when the forge says. Set [`agent.login`](/terragucci/reference/config/#the-agent-comment) to the agent's account, so its review never counts on any pull request. Neither of you can approve the pull request for the gate afterwards: a review by someone who asked for one of its commits doesn't count ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). Another writer approves it.
+
+</Steps>
+
+## Agent permissions
+
+| Job | Does | Holds |
+|---|---|---|
+| `agent` | checks the [`agent` column of the refusal table](/terragucci/reference/pipeline/#ignored-comments), checks out the head with no credentials kept, runs the agent, and keeps its changes as a patch | its own read-and-comment token, which the agent's step runs without; the model's key, in the agent's step alone |
+| `agent-push` | applies the patch to the same head in a fresh container; refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), with a reply naming the paths; pushes any other as one commit without force | the agent's token |
+| the plan job | plans the pushed change with its read-only role | the plan role |
+
+On GitLab the `comments` job answers the note and starts a pipeline on the default branch with `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE` and `TERRAGUCCI_AGENT_HEAD`. Both jobs run there from the default branch's pipeline file. Each reads the merge request and the note from GitLab again before it acts. GitLab hands every job the project's variables, so the agent runs under `env -i` and gets only the prompt and turn limit plus the model's key.
+
+| Guard | What it stops |
+|---|---|
+| the ask reaches the agent as a prompt file (`TG_AGENT_PROMPT`), never on a command line | the ask running in a shell |
+| the agent's step clears `GITHUB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN` and the runner's artifact and identity token variables; on GitLab it starts with an empty environment and a checkout whose remote holds no job token; neither agent job has a cloud role, whatever `oidc` says | the agent pushing, commenting or calling the cloud itself |
+| `agent-push` refuses a patch that touches a guarded path: CI files (`.gitlab-ci.yml` and `.gitlab/` among them), `terragucci.yml`, `terragucci.components.json`, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), `.chant/`, the signers file, the policy directory, `CODEOWNERS` and agent instruction files | the agent changing the pipeline, the gate, the signers or the policy |
+| `agent-push` pushes to the same head, without force | a lost commit: when the agent fails, hits its turn limit, or the pull request moves, the branch stays as it was |
+| the command below lets the agent edit files and run `terragucci config check` and `terragucci init --dry-run`, and loads no MCP server and none of the repository's Claude Code settings | any other command, web fetches and MCP tools |
+
+The default command pins one release of Claude Code and runs it in print mode:
+
+```text
+npx -y @anthropic-ai/claude-code@2.1.290 -p --max-turns "$TG_AGENT_MAX_TURNS"
+  --permission-prompts none --setting-sources user --strict-mcp-config --no-session-persistence
+  --tools "Read,Edit,Write,Glob,Grep,Bash"
+  --allowedTools "Read" "Edit" "Write" "Glob" "Grep" "Bash(terragucci config check)" "Bash(terragucci init --dry-run)"
+  --disallowedTools "WebFetch" "WebSearch" "mcp__*" "Edit(.git/**)"
+```
+
+The flags are in the [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
+
+## Use another agent
+
+`command` takes any command line that reads a prompt on stdin and edits files in the working directory.
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  comment:
+    command: my-agent --non-interactive
+    key_secret: MY_AGENT_KEY
+```
+
+| Variable | Holds |
+|---|---|
+| `TG_AGENT_PROMPT` | the prompt's path |
+| `TG_AGENT_MAX_TURNS` | the turn limit |
+| the `key_secret` name | the model's key, under its own name |
+
+`agent-push` refuses a guarded path whichever agent wrote the patch.
+
+## MCP or `--json`
+
+| Where the agent runs | What it uses |
+|---|---|
+| in the `agent` job | the shell: `terragucci config check` and `terragucci init --dry-run`, which edit nothing. The default command loads no MCP server, and the job has no bucket credentials to give one |
+| at your desk, before you ask | [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/) to read the pull request's plan reports (`index`, then `report`) and a root's last apply; the CLI with `--json` to check a config it wrote |
+
+## Next
+
+- [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/) plans again without changing anything.
+- [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the jobs and their tokens.

@@ -1,0 +1,22 @@
+{
+  "step": "check",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [
+    {
+      "cmd": "just example change unformatted",
+      "output": "[example] pushed change/unformatted at 5fe05168\n[example] run 4 for 5fe05168 (pull_request): success (http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1)\n[example] run 5 for 5fe05168 (push): failure (http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1)\n\n  Pull request  http://localhost:3300/terragucci-admin/example/pulls/2 (the plan note is in its conversation)\n  Plan          http://localhost:3300/terragucci-admin/example/actions/runs/4/jobs/1/attempt/1 (success)\n  Check         http://localhost:3300/terragucci-admin/example/actions/runs/5/jobs/0/attempt/1 (failure)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example logs",
+      "output": "envs/dev/orders/locals.tf\n--- old/envs/dev/orders/locals.tf\n+++ new/envs/dev/orders/locals.tf\n@@ -1,4 +1,4 @@\n locals {\n-    team   = \"orders\"\n+  team  = \"orders\"\n   owner = \"shop\"\n }",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "pull-light": "53b94becb5b230d3",
+    "pull-dark": "8d4ba65f3cefcc09",
+    "log-light": "165c5fddf1a7d4fd",
+    "log-dark": "da65dc7e58c90754"
+  }
+}

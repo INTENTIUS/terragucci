@@ -1,0 +1,5 @@
+{
+  "changes": "Network replaces its release marker, so wave 1 (the first states to apply) waits for approval.",
+  "watch": "The driver (this demo's script) signs off, then pushes another change to main before the wave resumes. The wave refuses the plan (what it would change) it was given, and nothing lands.",
+  "shows": "Approval binds the exact plan that was reviewed."
+}

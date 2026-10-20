@@ -1,0 +1,382 @@
+/*
+ * terragucci's look: modern, clean and minimal. Geist for reading and
+ * headings, Geist Mono for anything a terminal or a plan would print.
+ * Zinc neutrals and one blue accent.
+ *
+ * The signal colours are colour-blind safe: blue and vermillion, from the
+ * Okabe-Ito set, stay apart under protanopia, deuteranopia and tritanopia.
+ * There is no red/green pair anywhere, and every status also carries a
+ * text label, so no meaning rests on colour alone.
+ *
+ * Starlight's dark theme lives on :root and its light theme on
+ * :root[data-theme='light'], so both palettes are set here as tokens.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+:root {
+	/* The tile every taco sits on: black in the dark theme, white in the light. */
+	--tg-taco-ground: #000000;
+	--tg-display: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font: 'Geist', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--sl-font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	/* dark: zinc, sky blue accent */
+	--sl-color-white: #fafafa;
+	--sl-color-gray-1: #e4e4e7;
+	--sl-color-gray-2: #c4c4cc;
+	--sl-color-gray-3: #a1a1aa;
+	--sl-color-gray-4: #63636d;
+	--sl-color-gray-5: #2c2c31;
+	--sl-color-gray-6: #18181b;
+	--sl-color-black: #0b0b0d;
+	--sl-color-accent-low: #10263d;
+	--sl-color-accent: #56a8ec;
+	--sl-color-accent-high: #a9d3f7;
+
+	--tg-accent: #56a8ec;   /* waiting, links, the one highlight */
+	--tg-ok: #e4e4e7;       /* applied: strong neutral, labelled */
+	--tg-warn: #f2894a;     /* destroy, refused: vermillion */
+	--tg-gold: #c9a96e;     /* fine details only: hairlines, the picked tile */
+	--tg-panel: #121215;
+	--tg-rule: #27272a;
+}
+
+:root[data-theme='light'] {
+	--tg-taco-ground: #ffffff;
+	--sl-color-white: #09090b;
+	--sl-color-gray-1: #27272a;
+	--sl-color-gray-2: #3f3f46;
+	--sl-color-gray-3: #6b6b74;
+	--sl-color-gray-4: #a1a1aa;
+	--sl-color-gray-5: #d9d9de;
+	--sl-color-gray-6: #f1f1f3;
+	--sl-color-gray-7: #f8f8f9;
+	--sl-color-black: #ffffff;
+	--sl-color-accent-low: #e3eefa;
+	--sl-color-accent: #0a64c2;
+	--sl-color-accent-high: #084a91;
+
+	--tg-accent: #0a64c2;
+	--tg-ok: #27272a;
+	--tg-warn: #b94700;
+	--tg-gold: #9a7b3f;
+	--tg-panel: #fafafa;
+	--tg-rule: #e4e4e7;
+}
+
+/* Headings: Geist, semibold, tracked in a little. */
+.sl-markdown-content :is(h1, h2, h3),
+h1#_top {
+	font-family: var(--tg-display);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+h1#_top {
+	font-size: clamp(1.75rem, 3.5vw, 2.25rem);
+}
+
+/* Site title as a wordmark. */
+.site-title {
+	font-family: var(--tg-display);
+	font-weight: 600;
+	font-size: 1.1rem;
+	letter-spacing: -0.02em;
+	color: var(--sl-color-white);
+}
+
+/* The taco beside it, at the art's own size: a sharp square per art pixel. */
+.site-title img {
+	height: 31px;
+}
+
+/* Reading text: a size down from Starlight's, quieter grey, more air between blocks. */
+.sl-markdown-content {
+	font-size: 0.9375rem;
+	line-height: 1.7;
+	color: var(--sl-color-gray-2);
+}
+.sl-markdown-content :is(strong, b):not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+	font-weight: 600;
+}
+.sl-markdown-content :is(h2, h3, h4):not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+}
+.sl-markdown-content h2:not(.not-content, .not-content *) {
+	font-size: 1.3rem;
+	margin-top: 2.75rem;
+}
+/* A small diamond, the taco's own, over each section heading. */
+.sl-markdown-content h2:not(.not-content, .not-content *)::before {
+	content: '';
+	display: block;
+	width: 17px;
+	height: 13px;
+	margin-bottom: 0.8rem;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
+.sl-markdown-content h3:not(.not-content, .not-content *) {
+	font-size: 1.05rem;
+	margin-top: 2rem;
+}
+
+/* Links: the accent, a fine underline that turns gold on hover. */
+.sl-markdown-content a:not(.not-content, .not-content *, :is(h1, h2, h3, h4) a) {
+	color: var(--tg-accent);
+	text-decoration-line: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 0.2em;
+	text-decoration-color: color-mix(in srgb, var(--tg-accent) 35%, transparent);
+}
+.sl-markdown-content a:not(.not-content, .not-content *):hover {
+	text-decoration-color: var(--tg-gold);
+}
+
+/* Bullets are tacos, and a nested list's bullets are diamonds. Ordered lists keep their numbers. */
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li {
+	position: relative;
+	padding-left: 1.4rem;
+}
+.sl-markdown-content :is(ul, ol) ul:not(.not-content, .not-content *) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.55em;
+	width: 12px;
+	height: 9px;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) {
+	padding-left: 0;
+	list-style: none;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li {
+	position: relative;
+	padding-left: 1.85rem;
+}
+.sl-markdown-content ul:not(.not-content, .not-content *, :is(ul, ol) ul) > li::before {
+	content: '';
+	position: absolute;
+	left: 0;
+	top: 0.5em;
+	width: 20px;
+	height: 12px;
+	background: url('/terragucci/brand/taco.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}
+
+/* Tables: smaller type, a tracked caps header over a gold hairline, hairline rows. */
+.sl-markdown-content table:not(.not-content, .not-content *) {
+	border-collapse: collapse;
+	font-size: 0.85rem;
+	line-height: 1.55;
+}
+.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
+	border: none;
+	border-bottom: 1px solid var(--tg-rule);
+	padding: 0.6rem 0.9rem 0.6rem 0;
+	vertical-align: top;
+}
+.sl-markdown-content th:not(.not-content, .not-content *) {
+	font-size: 0.68rem;
+	font-weight: 600;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-3);
+	background: none;
+	border-bottom: 1px solid var(--tg-gold);
+}
+.sl-markdown-content td:first-child:not(.not-content, .not-content *) {
+	color: var(--sl-color-white);
+}
+.sl-markdown-content tbody tr:hover td:not(.not-content, .not-content *) {
+	background: color-mix(in srgb, var(--tg-gold) 5%, transparent);
+}
+
+/* Inline code: a quiet grey chip. */
+.sl-markdown-content :not(pre):not(.not-content, .not-content *) > code {
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-gray-1);
+	border: 1px solid var(--tg-rule);
+	border-radius: 0.3rem;
+	padding: 0.05em 0.35em;
+}
+
+/* The home hero: a large, tight claim and a quiet tagline. */
+.hero {
+	padding-block: clamp(2.5rem, 8vw, 5rem) 1rem;
+}
+.hero h1 {
+	font-family: var(--tg-display);
+	font-weight: 600;
+	font-size: clamp(2.4rem, 6vw, 4rem);
+	line-height: 1.05;
+	letter-spacing: -0.035em;
+	text-wrap: balance;
+	color: var(--sl-color-white);
+}
+.hero .tagline {
+	font-size: clamp(1.05rem, 2vw, 1.3rem);
+	color: var(--sl-color-gray-2);
+	max-width: 42rem;
+	text-wrap: pretty;
+}
+
+/* Splash sections: generous air between them, headings set large. */
+[data-has-hero] .sl-markdown-content h2 {
+	font-size: clamp(1.5rem, 3vw, 2rem);
+	margin-top: 4rem;
+	border: none;
+}
+
+/* Components carry their own type; long identifiers wrap rather than widen the page. */
+.not-content code {
+	overflow-wrap: anywhere;
+}
+
+/* Stage and policy names stay whole in table cells. */
+.sl-markdown-content td > code {
+	white-space: nowrap;
+}
+
+/* Code shows exactly what was typed: no ligatures turning ~> or -> into arrows. */
+code, pre, kbd, samp {
+	font-variant-ligatures: none;
+	font-feature-settings: 'calt' 0, 'liga' 0;
+}
+
+/* The current page in the sidebar: a quiet tint, not a solid block. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+	background: var(--sl-color-gray-6);
+	color: var(--sl-color-white);
+	font-weight: 600;
+}
+
+/* Callouts: a neutral panel with a coloured edge, from the same two signals. */
+.starlight-aside {
+	background: var(--sl-color-gray-6);
+	border-inline-start-color: var(--tg-accent);
+	color: var(--sl-color-gray-1);
+}
+.starlight-aside .starlight-aside__title {
+	color: var(--sl-color-white);
+}
+.starlight-aside .starlight-aside__icon {
+	color: var(--tg-accent);
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+	border-inline-start-color: var(--tg-warn);
+}
+.starlight-aside--caution .starlight-aside__icon,
+.starlight-aside--danger .starlight-aside__icon {
+	color: var(--tg-warn);
+}
+/* A tip carries the taco in place of its icon. */
+.starlight-aside--tip .starlight-aside__icon {
+	width: 26px;
+	height: 16px;
+	color: transparent;
+	background: url('/brand/taco-small.png') center / contain no-repeat;
+}
+.starlight-aside a {
+	color: var(--sl-color-accent-high);
+}
+
+/* The home page (the only page without a sidebar) carries its own heading
+   in the landing block, so Starlight's title panel is hidden there. */
+:root:not([data-has-sidebar]) main > .content-panel:first-child:has(h1#_top) {
+	display: none;
+}
+
+/* The 404 page: the taco, the news, and the way back. */
+.tg-404 {
+	display: grid;
+	justify-items: center;
+	gap: 1rem;
+	padding-block: clamp(3rem, 10vw, 6rem) 2rem;
+	text-align: center;
+}
+.tg-404 p {
+	margin: 0;
+	max-width: 36rem;
+	color: var(--sl-color-gray-2);
+}
+.tg-404 .tg-404-title {
+	font-family: var(--tg-display);
+	font-size: clamp(2rem, 5vw, 3rem);
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	color: var(--sl-color-white);
+}
+.tg-404 a {
+	color: var(--sl-color-accent-high);
+	font-weight: 500;
+}
+
+/* The header logo: the taco's art is transparent, so it sits on the page itself. */
+.site-title img {
+	padding: 4px 6px;
+	box-sizing: content-box;
+}
+
+/* The launch party page's video: a phone-shaped player, centred. */
+.tg-launch-video {
+	display: block;
+	width: 100%;
+	max-width: 360px;
+	aspect-ratio: 9 / 16;
+	margin: 1.5rem auto;
+	border-radius: 0.5rem;
+	background: #000;
+}
+
+/* Sidebar: a step smaller, and the tutorial's minutes as quiet grey text, not blue blocks. */
+.sidebar-content a {
+	font-size: var(--sl-text-sm);
+}
+.sidebar-content .sl-badge {
+	font-family: var(--sl-font);
+	font-size: 0.68rem;
+	font-weight: 500;
+	color: var(--sl-color-gray-3);
+	background: none;
+	border: 1px solid var(--tg-rule);
+	border-radius: 999px;
+	padding: 0 0.4rem;
+}
+
+/* On a phone a wide table scrolls in its box, so its columns keep readable widths. */
+@media (max-width: 40rem) {
+	.sl-markdown-content table:not(.not-content, .not-content *) {
+		display: block;
+		overflow-x: auto;
+		font-size: 0.8rem;
+	}
+	.sl-markdown-content :is(th, td):not(.not-content, .not-content *) {
+		min-width: 7.5rem;
+	}
+}
+
+/* Each top-level sidebar group's label starts with the taco's diamond. */
+.sidebar-content .top-level > li > details > summary .group-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.sidebar-content .top-level > li > details > summary .group-label::before {
+	content: '';
+	flex: none;
+	width: 15px;
+	height: 11px;
+	background: url('/terragucci/brand/diamond.svg') center / contain no-repeat;
+	image-rendering: pixelated;
+}

@@ -1,0 +1,4 @@
+{
+  "problem": "Big Terraform setups split what they build across many states. This pipeline applies them in order. A person approves each plan that uses a value another state just created.",
+  "delivery": "Counted from this demo loop's own runs, where the failure scenario fails on purpose each cycle."
+}

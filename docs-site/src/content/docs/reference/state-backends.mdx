@@ -1,0 +1,48 @@
+---
+title: State backends
+description: What terragucci does with each Terraform and OpenTofu state backend, and with choudoufu's record store, by command.
+---
+
+terragucci runs your binary for plan and apply, so every backend the binary supports plans and applies. Plans and drift runs take no state lock (`-lock=false`); a wave's plan and apply wait up to five minutes for it (`-lock-timeout=5m`). The commands below read or write the state themselves, so each supports the backends listed.
+
+## By backend
+
+| Backend | Version an apply records | [`state export`](/terragucci/guides/export-a-state-version/) | [`unlock-state`](/terragucci/guides/release-a-state-lock/) | [Migrations](/terragucci/reference/migration-files/) | [Ephemeral copies](/terragucci/guides/ephemeral-environments/) |
+|---|---|---|---|---|---|
+| `s3` | `x-amz-version-id`, with bucket versioning on | yes, with bucket versioning on | with `use_lockfile = true`; a DynamoDB-only lock is refused | with `use_lockfile = true` | yes |
+| `gcs` | the object's generation, with object versioning on | yes, with object versioning on | yes: the lock object, by its generation | yes | yes |
+| `azurerm` | `x-ms-version-id` with blob versioning, else a snapshot terragucci takes with `snapshot = true` | yes, with either | yes: the blob lease | yes | yes |
+| `http`, GitLab-managed state | the serial | yes, by serial | with `lock_address` and `unlock_address` | no | yes |
+| `http`, any other server | off | no | no | yes, through the binary | no |
+| `pg` | off | no | no | yes, through the binary | no |
+| `kubernetes` | off | no | no | yes, through the binary | no |
+| `consul` | off | no | no | yes, through the binary | no |
+| `local` | off | no | no: the lock goes with the process that took it | yes | yes |
+| `remote`, or a `cloud` block | not read | no | no | a [backend move](/terragucci/reference/migration-files/) out of it only | no |
+
+Off means the backend replaces the state on each write and keeps no history; the estate page says versions are off. Not read means the backend may keep versions that terragucci does not read.
+
+"Through the binary" means the migration reads the state with `state pull` and writes it with `state push` under the backend's own lock. With no version id to bind, its approval binds the digest of each state's contents.
+
+### Migrations
+
+| Migration | Backends |
+|---|---|
+| a move or split between roots | `s3` with a lock file, `gcs`, `azurerm`, `local`, and through the binary `pg`, `kubernetes`, `consul` and `http` other than GitLab's |
+| a backend move, to the backend the root's code names | the same |
+| a backend move, from | the same, and a workspace over the TFE API (`remote` or `cloud`) or an exported state file (`file`) |
+
+A root with a `cloud` block, and GitLab-managed state, take part in no migration. [Migration files](/terragucci/reference/migration-files/) has each kind.
+
+## choudoufu record store
+
+A [choudoufu](/terragucci/concepts/glossary/#choudoufu) root under live resource markers keeps its resources as records in a record store and has no state file.
+
+| Command | With a record store |
+|---|---|
+| plan and apply | yes; two applies of one estate take no state lock ([with choudoufu](/terragucci/concepts/locking-and-staleness/#with-choudoufu)) |
+| progress while a wave applies | read from an `s3` or `local` store; a `kubernetes` store is not read, and its resources show done when the root's apply returns ([Watch a choudoufu wave apply](/terragucci/guides/watch-a-choudoufu-wave/)) |
+| record versions after an apply | listed with `choudoufu live-history` from an `s3` store; a `local` or `kubernetes` store keeps none |
+| `unlock-state` | nothing to release: no state lock is held, and it runs no binary |
+| `state export` | no; it reads a state backend |
+| migrations | a move between estates retags the resources; a `backends` migration adopts a root on `s3` (with a lock file), `gcs`, `azurerm` or `local` state into an estate |

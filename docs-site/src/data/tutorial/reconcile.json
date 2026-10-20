@@ -1,0 +1,11 @@
+{
+  "step": "reconcile",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [],
+  "shots": {
+    "pull-light": "7731088246203f8a",
+    "pull-dark": "91f36ab1dc292f7a",
+    "files-light": "5d4c30f535315a7a",
+    "files-dark": "dc87f717482f6b9e"
+  }
+}

@@ -1,0 +1,187 @@
+---
+title: Plan CDK Terrain stacks
+description: Run cdktn synth in the pipeline before tf-plan, so each pull request plans the CDK Terrain stacks its change affects.
+claims: [init/cdktn-synth, affected/cdktn, apply/cdktn, tips/cdktn, init/cdktn-refuse, migrate/cdktn, ephemeral/cdktn, generate/cdktn, linked/cdktn]
+prompt: |
+  Read https://intentius.io/terragucci/guides/plan-cdk-terrain-stacks/.
+  Add `synth: npm ci && npx cdktn synth` to terragucci.yml, add cdktf.out/ and node_modules/ to .gitignore,
+  run `npx cdktn synth` and then `npx terragucci init`, and open a pull request with the result.
+  Tell me which stacks init found and whether each one's backend keeps its state outside the job.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A pipeline whose jobs run `cdktn synth` on their own checkout, then plan or apply the stacks it wrote to `cdktf.out/stacks/`. The synthesized files stay out of git.
+
+## Already in CDK Terrain
+
+[CDK Terrain](https://cdktn.io/docs) already orders and deploys stacks:
+
+| Feature | What it does |
+|---|---|
+| [`cdktn deploy`](https://cdktn.io/docs/cli-reference/commands) | works out the order of the stacks from their cross-stack references and dependencies, and takes several stack ids or a glob such as `'*-production'` |
+| [The CDK Terrain action](https://github.com/cdktn-io/action) | runs synth, plan, or an apply or destroy with auto-approve, for one stack per step |
+
+If one deploy of every stack in order is all you need, `cdktn deploy` already does it.
+
+## Added by terragucci
+
+- A pull request plans only the stacks whose synth output differs between base and head ([Planned stacks](#planned-stacks)).
+- A stack that reads another's state plans on that stack's planned outputs, read from its `cdk.tf.json`.
+- Each wave waits at its own gate. An approval binds the wave's plan digest and counts only from someone with no hand in the change.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| A [CDK Terrain](https://cdktn.io) app ([repository](https://github.com/open-constructs/cdk-terrain)) with `cdktf.json` at the repo root | `cdktn synth` reads it and writes one directory per stack |
+| `cdktn` and `cdktn-cli` in `package.json`, such as 0.24.0 | the jobs run them with Node 22.23 from the terragucci image; cdktn 0.24 needs Node 22.19 or later |
+| A remote backend in each stack, such as `S3Backend` | each job starts from a fresh checkout, so a local state file does not outlive it |
+| `package-lock.json` committed | the job installs the app's packages with `npm ci` |
+| The [pipeline](/terragucci/getting-started/) | `init` adds the synth step to it |
+
+## Steps
+
+<Steps>
+
+1. Name the command in `terragucci.yml`:
+
+   ```yaml
+   synth: npm ci && npx cdktn synth
+   ```
+
+   It runs from the repo root. Any command that writes Terraform JSON or HCL works the same way.
+
+2. Keep the output and the packages out of git:
+
+   ```text
+   cdktf.out/
+   node_modules/
+   ```
+
+3. Synthesize once on your machine, then write the pipeline:
+
+   ```bash
+   npx cdktn synth
+   npx terragucci init
+   ```
+
+   `init` finds each stack by the backend or provider in its `cdk.tf.json` and names `cdktf.out/stacks/<stack>` as a root. With no stacks on disk it stops and asks you to run the synth command first. Run both again when you add or remove a stack.
+
+4. Read the step `init` wrote. It comes after the checkout and before any cloud credential:
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+   ```yaml
+   - name: Plan the roots the change reaches and write the plan report
+     shell: bash
+     run: |
+       ...
+       # synth in terragucci.yml: write the roots before reading them.
+       ( set -e; npm ci && npx cdktn synth ) || { tg status terragucci/plan failure "the synth command failed"; echo "terragucci: the synth command failed" >&2; exit 1; }
+       ...
+       terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'cdktf.out/stacks/dev,cdktf.out/stacks/prod' ...
+   ```
+     </TabItem>
+     <TabItem label="GitLab">
+   ```yaml
+   plan:
+     script:
+       - |-
+         bash <<'PLAN' || exit $?
+         ...
+         # synth in terragucci.yml: write the roots before reading them.
+         ( set -e; npm ci && npx cdktn synth ) || { tg status terragucci/plan failure "the synth command failed"; echo "terragucci: the synth command failed" >&2; exit 1; }
+         ...
+         terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'cdktf.out/stacks/dev,cdktf.out/stacks/prod' ...
+         PLAN
+   ```
+     </TabItem>
+     <TabItem label="Forgejo">
+   The same step as GitHub, in `.forgejo/workflows/terragucci.yml`.
+     </TabItem>
+   </Tabs>
+
+5. Open a pull request that changes one stack. The plan job's log shows the synth, the same synth on the base, and the plan of the stack that changed:
+
+   ```text
+   Generated Terraform code for the stacks: dev, prod
+   synth at the base: npm ci && npx cdktn synth, on 3f2a91c0 in a checkout of its own
+   affected: cdktf.out/stacks/prod differs from the base (cdk.tf.json differs)
+   affected: 1 of 2 synthesized roots differ from origin/main, 0 dependents after them, 1 unchanged and not planned
+   cdktf.out/stacks/prod: Plan: 0 to add, 1 to change, 0 to destroy.
+   ```
+
+   The plan note says how many stacks were left out:
+
+   ```text
+   > The synth command ran on the base (3f2a91c0) too: 1 synthesized root planned, 1 unchanged and not planned.
+   ```
+
+</Steps>
+
+## Jobs
+
+| Job | Runs the command | Then |
+|---|---|---|
+| check | yes | checks the format of the files git tracks, and validates each stack |
+| plan, and a `/terragucci plan` re-plan | yes, on the pull request's head; `tf-plan` runs it again on the base | `tf-plan` plans the stacks whose output differs |
+| each apply wave | yes | `tf-apply` plans the wave's stacks again and applies them behind the gate |
+| `/terragucci apply` | yes, after it checks out the commit to apply | the same waves |
+| tips | yes | `respond tips` opens the canary tip; see below |
+| drift | yes | `tf-drift` refreshes every stack |
+
+A command that fails ends the job; the plan job also sets `terragucci/plan` to failure. Without `synth`, a pipeline whose roots are not on disk stops with `found no roots`.
+
+| Behavior | With `synth` |
+|---|---|
+| Which stacks a pull request plans | the ones the change affects; see below |
+| Format check | the `.tf`, `.tofu` and `.tfvars` files git tracks, one directory at a time, so the packages `npm ci` installs are left out |
+| Terragrunt | not supported: `init` refuses `synth` in a Terragrunt repo |
+| [Ephemeral environments](/terragucci/guides/ephemeral-environments/#synthesized-roots) | the `ephemeral` job runs the synth command in the pull request's checkout, then copies the stacks `ephemeral.roots` names under keys suffixed `-pr-<n>` |
+| [Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots) | a stack that reads another's state through a remote state data source, such as `DataTerraformRemoteStateS3`, plans on that stack's planned outputs, read from its `cdk.tf.json` |
+| [State migrations](/terragucci/guides/move-resources-between-roots/) | a migration file names stacks by their roots, such as `cdktf.out/stacks/dev`; `tf-plan` proves it against each stack's `cdk.tf.json` after the synth, and wave 1 writes it once approved. Move the construct in the app in the same change, keeping its id, so the address in the other stack is the same |
+
+## Stack edits
+
+The stacks' files are the app's output. Git does not hold them and the next synth rewrites them, so a change a response would make to them belongs in the app.
+
+| Feature | With `synth` |
+|---|---|
+| Tips | the canary tip, which edits `terragucci.yml`; the job log says the provider pin and lock file tips are left out |
+| `respond.drift: pull-request`, the default, with a `drift` schedule | a config error: set `respond.drift` to `attribute` or `off` |
+| `respond.drift: attribute` | `tf-drift` names who changed each attribute in the drift issue; no pull request follows, and the drift job's log says why |
+| `rollouts`, or `terragucci rollout` in the repo | a config error: move the pin in the app |
+| [`generate`](/terragucci/guides/generate-root-files/#with-synth) | a config error naming the backend constructs: set the backend, providers and `required_version` in the app |
+| A [control repo](/terragucci/concepts/control-repo/)'s rollout | a project with `synth` is listed as refused, and the other projects roll out |
+
+## Planned stacks
+
+The stacks are not in git, so no diff names them ([Roots a change plans](/terragucci/reference/report/#roots-a-change-plans) has every repo shape). `tf-plan` compares what the app writes at the base with what it writes at the head:
+
+| Step | What happens |
+|---|---|
+| Base | `tf-plan` checks out the merge base of the target branch in a directory of its own and runs the synth command there |
+| Compare | each stack's directory (`cdk.tf.json`, its lock file, its assets) and every local module it calls outside it, file by file |
+| Plan | a stack whose files differ, a new stack, a removed stack, and any stack that reads one of their states |
+| Leave out | every other stack; the note counts them |
+
+| When | Then |
+|---|---|
+| The synth command fails on the base | every stack plans, and the note says the base could not be synthesized |
+| The merge base cannot be found | every stack plans, and the note says why |
+| No stack differs | nothing plans, and the note says the change reaches no root |
+
+| The base's synth | |
+|---|---|
+| Runs | in `tf-plan`, after the plan job's credentials are set |
+| Code | the target branch, which the apply jobs already run |
+| Cost | a pull request runs the synth twice, so `npm ci` takes its time twice |
+
+## Next
+
+- [terragucci.yml keys](/terragucci/reference/config/)
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)

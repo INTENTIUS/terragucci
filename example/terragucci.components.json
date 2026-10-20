@@ -1,0 +1,392 @@
+{
+  "schema": "terragucci.components/v1",
+  "generated_by": "terragucci 0.4.38",
+  "roots": {
+    "envs/dev/platform": {
+      "dir": "envs/dev/platform"
+    },
+    "envs/dev/email": {
+      "dir": "envs/dev/email"
+    },
+    "envs/dev/orders": {
+      "dir": "envs/dev/orders"
+    },
+    "envs/dev/payments": {
+      "dir": "envs/dev/payments"
+    },
+    "envs/dev/search": {
+      "dir": "envs/dev/search"
+    },
+    "envs/prod/platform": {
+      "dir": "envs/prod/platform"
+    },
+    "envs/staging/platform": {
+      "dir": "envs/staging/platform"
+    },
+    "envs/prod/email": {
+      "dir": "envs/prod/email"
+    },
+    "envs/prod/orders": {
+      "dir": "envs/prod/orders"
+    },
+    "envs/prod/payments": {
+      "dir": "envs/prod/payments"
+    },
+    "envs/prod/search": {
+      "dir": "envs/prod/search"
+    },
+    "envs/staging/email": {
+      "dir": "envs/staging/email"
+    },
+    "envs/staging/orders": {
+      "dir": "envs/staging/orders"
+    },
+    "envs/staging/payments": {
+      "dir": "envs/staging/payments"
+    },
+    "envs/staging/search": {
+      "dir": "envs/staging/search"
+    }
+  },
+  "components": [
+    {
+      "name": "envs/dev/platform",
+      "dependsOn": [],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/dev/platform",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/dev/email",
+      "dependsOn": [
+        "envs/dev/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/dev/email",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/dev/orders",
+      "dependsOn": [
+        "envs/dev/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/dev/orders",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/dev/payments",
+      "dependsOn": [
+        "envs/dev/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/dev/payments",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/dev/search",
+      "dependsOn": [
+        "envs/dev/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/dev/search",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/prod/platform",
+      "dependsOn": [
+        "envs/dev/email",
+        "envs/dev/orders",
+        "envs/dev/payments",
+        "envs/dev/search"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/prod/platform",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/staging/platform",
+      "dependsOn": [
+        "envs/dev/email",
+        "envs/dev/orders",
+        "envs/dev/payments",
+        "envs/dev/search"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/staging/platform",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/prod/email",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/prod/email",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/prod/orders",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/prod/orders",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/prod/payments",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/prod/payments",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/prod/search",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/prod/search",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/staging/email",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/staging/email",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/staging/orders",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/staging/orders",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/staging/payments",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/staging/payments",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "envs/staging/search",
+      "dependsOn": [
+        "envs/prod/platform",
+        "envs/staging/platform"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "envs/staging/search",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pipeline": {
+    "path": ".forgejo/workflows/terragucci.yml",
+    "forge": "forgejo",
+    "jobs": [
+      {
+        "name": "apply-wave-1",
+        "needs": [
+          "check"
+        ],
+        "wave": 1,
+        "applies": [
+          "envs/dev/platform"
+        ]
+      },
+      {
+        "name": "apply-wave-2",
+        "needs": [
+          "apply-wave-1"
+        ],
+        "wave": 2,
+        "applies": [
+          "envs/dev/email",
+          "envs/dev/orders",
+          "envs/dev/payments",
+          "envs/dev/search"
+        ]
+      },
+      {
+        "name": "apply-wave-3",
+        "needs": [
+          "apply-wave-2"
+        ],
+        "wave": 3,
+        "applies": [
+          "envs/prod/platform",
+          "envs/staging/platform"
+        ]
+      },
+      {
+        "name": "apply-wave-4",
+        "needs": [
+          "apply-wave-3"
+        ],
+        "wave": 4,
+        "applies": [
+          "envs/prod/email",
+          "envs/prod/orders",
+          "envs/prod/payments",
+          "envs/prod/search",
+          "envs/staging/email",
+          "envs/staging/orders",
+          "envs/staging/payments",
+          "envs/staging/search"
+        ]
+      }
+    ]
+  }
+}

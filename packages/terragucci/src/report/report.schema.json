@@ -1,0 +1,909 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/report/v1/report.schema.json",
+  "title": "terragucci.report/v1",
+  "description": "One terragucci run's plan report. A minor version only adds fields.",
+  "type": "object",
+  "required": ["schema", "minor", "run", "change_set", "unit", "units", "totals", "groups", "roots", "waves", "named", "holes", "redaction"],
+  "properties": {
+    "schema": { "const": "terragucci.report/v1" },
+    "minor": { "type": "integer", "minimum": 0 },
+    "run": {
+      "type": "object",
+      "required": ["project", "commit", "stage", "binary", "runtime", "started", "finished"],
+      "properties": {
+        "project": { "type": "string" },
+        "commit": { "type": "string" },
+        "base": { "type": "string" },
+        "stage": { "enum": ["tf-plan", "tf-apply", "tf-drift"] },
+        "wave": { "type": "integer" },
+        "share": { "type": "integer", "minimum": 1, "description": "On a tf-apply wave split across jobs (waves.jobs), the share this report applied; waves[0].roots are its roots (minor 20)." },
+        "binary": { "type": "string" },
+        "runtime": { "type": "string" },
+        "started": { "type": "string" },
+        "finished": { "type": "string" },
+        "job_url": { "type": "string" },
+        "terragucci": { "type": "string" },
+        "commit_url": { "type": "string", "description": "The commit's page on the forge (minor 4)." },
+        "pull_request": { "type": "string", "description": "The pull or merge request the run planned, by number (minor 4)." },
+        "pull_request_url": { "type": "string", "description": "The pull or merge request's page (minor 4)." },
+        "report_url": { "type": "string", "description": "Where this report.html is served, when reports.url names the bucket's address (minor 4)." },
+        "trace_id": { "type": "string", "description": "The run's trace id, when the stage sent a trace (minor 4)." },
+        "trace_url": { "type": "string", "description": "The trace in a viewer, from telemetry.trace_url (minor 4)." }
+      }
+    },
+    "change_set": { "type": "string" },
+    "unit": { "enum": ["member", "instance"] },
+    "units": { "type": "integer" },
+    "totals": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "totals_roots": { "type": "integer", "description": "How many roots totals counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, less a root the policy refused (minor 35)." },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "units", "outlier", "noChanges", "changes", "destroys", "varies", "fold", "why"],
+        "properties": {
+          "id": { "type": "string" },
+          "resource": { "type": "string" },
+          "units": { "type": "array", "items": { "type": "string" } },
+          "outlier": { "type": "boolean" },
+          "noChanges": { "type": "boolean" },
+          "changes": { "type": "array", "items": { "$ref": "#/$defs/summaryChange" } },
+          "extends": { "type": "string" },
+          "plus": { "type": "array", "items": { "$ref": "#/$defs/summaryChange" } },
+          "destroys": { "type": "integer" },
+          "varies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "paths"],
+              "properties": { "address": { "type": "string" }, "paths": { "type": "array", "items": { "type": "string" } } }
+            }
+          },
+          "fold": { "$ref": "#/$defs/fold" },
+          "why": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "status", "plan_digest", "counts", "plan", "changes", "highlights", "fold", "why"],
+        "properties": {
+          "path": { "type": "string" },
+          "environment": { "type": "string", "description": "The environment of environments: in terragucci.yml the root is in (minor 33). Absent when the config names no environments or the root is in none." },
+          "binary": {
+            "description": "The binary the root ran, its version, and where the root pinned that version when it did (minor 18).",
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" },
+              "pin": { "type": "string" },
+              "terragrunt": {
+                "description": "A Terragrunt unit: the Terragrunt release that ran it, and terragrunt_version_constraint when the unit pinned it (minor 24).",
+                "type": "object",
+                "required": ["version"],
+                "properties": {
+                  "version": { "type": "string" },
+                  "pin": { "type": "string" }
+                }
+              }
+            }
+          },
+          "terragrunt": {
+            "description": "Set when the root is a Terragrunt unit (minor 1).",
+            "type": "object",
+            "required": ["stack", "selection", "provisional", "run_result"],
+            "properties": {
+              "stack": { "type": "string" },
+              "stack_file": { "description": "The terragrunt.stack.hcl that generates the unit, when an explicit stack does (minor 29).", "type": "string" },
+              "selection": { "type": "string" },
+              "provisional": { "type": "boolean" },
+              "run_result": { "type": "string" }
+            }
+          },
+          "status": { "enum": ["planned", "failed"] },
+          "error": { "type": "string" },
+          "plan_digest": { "type": ["string", "null"] },
+          "counts": { "type": "object", "additionalProperties": { "type": "integer" } },
+          "group": { "type": "string" },
+          "plan": {
+            "type": "object",
+            "properties": { "text": { "type": "string" }, "json": { "type": "string" } }
+          },
+          "job_url": { "type": "string" },
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "action", "attributes", "fold"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "action": { "$ref": "#/$defs/action" },
+                "disruption": { "type": "string" },
+                "deposed": { "type": "string" },
+                "module": { "type": "string" },
+                "index": { "type": ["string", "integer"] },
+                "attributes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {
+                      "path": { "type": "string" },
+                      "before": {},
+                      "after": {},
+                      "unknown": { "const": true },
+                      "sensitive": { "const": true },
+                      "forcesReplacement": { "const": true }
+                    }
+                  }
+                },
+                "replace_paths": { "type": "array", "items": { "type": "array", "items": { "type": ["string", "integer"] } } },
+                "importing": { "type": "string" },
+                "write_only": { "type": "array", "items": { "type": "string" } },
+                "kind": { "enum": ["tags", "description", "unknown"] },
+                "fold": { "$ref": "#/$defs/fold" },
+                "why": { "type": "string" },
+                "perpetual": { "const": true, "description": "A tf-plan's update or replacement the root's last applied waves each made too, to the same address with the same action and attributes, from the project's changes.json in the reports bucket (minor 43). The note folds it under Changes on every run; the plan, its digests and the gate read none of it." },
+                "streak": { "type": "integer", "minimum": 1, "description": "With perpetual: how many of the root's newest applied waves in a row made the change (minor 43)." }
+              }
+            }
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "action", "why"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "action": { "$ref": "#/$defs/action" },
+                "why": { "type": "string" }
+              }
+            }
+          },
+          "fold": { "$ref": "#/$defs/fold" },
+          "why": { "type": "array", "items": { "type": "string" } },
+          "timings": { "$ref": "#/$defs/rootTimings" },
+          "policy": {
+            "description": "What the policy found in the root's plan (minor 6). A denied root is failed and keeps its changes.",
+            "type": "object",
+            "required": ["result", "denials", "warnings"],
+            "properties": {
+              "result": { "enum": ["passed", "denied", "error"] },
+              "denials": { "type": "array", "items": { "type": "string" } },
+              "rules": { "type": "array", "items": { "type": "string" }, "description": "The ids of the rules that denied, sorted (minor 10)." },
+              "warnings": { "type": "array", "items": { "type": "string" } },
+              "error": { "type": "string" },
+              "held_by": { "type": "array", "items": { "type": "string" }, "description": "With hold in policy.outcomes at base: the ids of the hold rules that matched, sorted; its wave waits for an approval (minor 40)." },
+              "holds": { "type": "array", "items": { "type": "string" }, "description": "The messages of those hold rules (minor 40)." },
+              "allowed_by": { "type": "array", "items": { "type": "string" }, "description": "With allow_unattended in policy.outcomes at base: the ids of the allow_unattended rules that matched, sorted (minor 40)." },
+              "overriders": { "type": "array", "items": { "type": "string" }, "description": "With scoped policy.override entries at base: who may override this root's denial by its rules, names then roles with their holders (minor 40)." },
+              "override": {
+                "description": "The policy override that stands for this root's plan and rules (minor 10).",
+                "type": "object",
+                "required": ["by", "at", "rules", "reason", "plan_digest", "digest", "sealed"],
+                "properties": {
+                  "by": { "type": "string" },
+                  "at": { "type": "string" },
+                  "rules": { "type": "array", "items": { "type": "string" } },
+                  "reason": { "type": "string" },
+                  "plan_digest": { "type": "string" },
+                  "digest": { "type": "string" },
+                  "sealed": { "type": "boolean" }
+                }
+              }
+            }
+          },
+          "resources": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values. Never a value (minor 14).",
+            "type": "array",
+            "items": { "$ref": "#/$defs/resource" }
+          },
+          "versions": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the providers its .terraform.lock.hcl locks and the remote module calls init recorded in .terraform/modules/modules.json, nested calls included, at the applied commit (minor 42).",
+            "type": "object",
+            "required": ["providers", "modules"],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": { "type": "object", "required": ["provider", "version"], "properties": { "provider": { "type": "string" }, "version": { "type": "string" } } }
+              },
+              "modules": {
+                "type": "array",
+                "items": { "type": "object", "required": ["call", "source"], "properties": { "call": { "type": "string" }, "source": { "type": "string" }, "version": { "type": "string" } } }
+              }
+            }
+          },
+          "applied_changes": {
+            "description": "On a tf-apply wave, a root that applied: what the apply did to each resource, and the top-level attributes an update or a replacement changed, by name. Never a value (minor 15).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["address", "type", "actions", "attributes"],
+              "properties": {
+                "address": { "type": "string" },
+                "type": { "type": "string" },
+                "actions": { "type": "array", "items": { "enum": ["create", "update", "replace", "delete", "import", "move", "forget"] } },
+                "attributes": { "type": "array", "items": { "type": "string" } },
+                "previous_address": { "type": "string" },
+                "record_versions": { "$ref": "#/$defs/record_versions" }
+              }
+            }
+          },
+          "dependencies": {
+            "description": "A Terragrunt unit's dependency and dependencies blocks: the units whose outputs it reads, as plain paths in its terragrunt.hcl (minor 23). For a plain root, the roots waves.after puts before it. Absent when it names none.",
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "state": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
+            "type": "object",
+            "required": ["backend", "versioning"],
+            "properties": {
+              "backend": { "type": "string" },
+              "location": { "type": "string" },
+              "version_id": { "type": "string" },
+              "versioning": { "enum": ["on", "off", "unknown"] },
+              "note": { "type": "string" }
+            }
+          },
+          "steps": {
+            "description": "The steps that ran for the root, in the order they ran (minor 17). failed: the root failed; approval: an on_failure: approve step failed, so the root's wave waits for an approval.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "when", "status", "exit", "seconds"],
+              "properties": {
+                "name": { "type": "string" },
+                "when": { "enum": ["before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply", "before-drift", "after-drift"] },
+                "status": { "enum": ["passed", "failed", "approval"] },
+                "exit": { "type": ["integer", "null"] },
+                "seconds": { "type": "number" }
+              }
+            }
+          },
+          "reads": {
+            "description": "The roots whose state the root reads through terraform_remote_state, or under choudoufu whose estate's outputs it reads through terraform_estate_outputs, and which outputs it planned on: planned, the upstream's plan in this run, with the outputs known only once it applies under unknown; applied, its state as it stands (minor 21).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["upstream", "data", "outputs"],
+              "properties": {
+                "upstream": { "type": "string" },
+                "data": { "type": "string" },
+                "outputs": { "enum": ["planned", "applied"] },
+                "unknown": { "type": "array", "items": { "type": "string" } },
+                "why": { "type": "string" },
+                "composed": { "const": true, "description": "A read of another root in the same composed run (waves.compose, minor 38): planned on the upstream's part of the composed plan, which the run applies before the resources that read it." }
+              }
+            }
+          },
+          "unknown_reads": {
+            "description": "Its terraform_remote_state blocks whose state the code does not address, an expression or a value the backend takes from the environment: no edge orders the root after the root that writes that state, so the edge is unknown (minor 30).",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["data", "why"],
+              "properties": {
+                "data": { "type": "string", "description": "The block's label." },
+                "why": { "type": "string" }
+              }
+            }
+          },
+          "unaddressed": { "type": "string", "description": "Why the code does not address the root's own state, when a root of the run reads state through terraform_remote_state: a reader of it is not ordered after it (minor 30)." },
+          "cone": {
+            "type": "object",
+            "description": "A choudoufu plan of a pull request's root under a live block, run with -cone=<base>: the cone it planned, or why choudoufu's guard planned the whole estate (minor 34). Absent on every other plan.",
+            "required": ["base"],
+            "properties": {
+              "base": { "type": "string", "description": "The revision the change is measured from: the pull request's base." },
+              "blocks": { "type": "integer", "description": "With a cone: the blocks it holds, when choudoufu said." },
+              "of": { "type": "integer", "description": "With a cone: the estate's blocks, when choudoufu said." },
+              "targets": { "type": "integer", "description": "With a cone: how many addresses it targets. Its targets join the root's plan digest." },
+              "fallback": {
+                "type": "object",
+                "description": "The guard planned the whole estate: its kind and why.",
+                "required": ["kind", "reason"],
+                "properties": {
+                  "kind": { "type": "string" },
+                  "reason": { "type": "string" }
+                }
+              }
+            }
+          },
+          "composed": {
+            "type": "object",
+            "description": "A root in a composed run (waves.compose, minor 38): the wave whose run holds it and its module there. Its other fields come from its part of the composed plan; its plan_digest is that part's and binds nothing on its own.",
+            "required": ["wave", "module"],
+            "properties": {
+              "wave": { "type": "integer" },
+              "module": { "type": "string" }
+            }
+          },
+          "secrets": {
+            "type": "object",
+            "description": "The sensitive attributes its state holds once its plan applies (minor 42): in_state counts each resource instance's top-level attribute marked sensitive and set, movable those a write-only argument or an ephemeral resource could keep out on the root's binary and provider versions. Never a value. Absent when its plan leaves none.",
+            "required": ["in_state", "movable"],
+            "properties": {
+              "in_state": { "type": "integer" },
+              "movable": { "type": "integer" }
+            }
+          },
+          "live": {
+            "type": "object",
+            "description": "A choudoufu root under a live block (minor 42): its estate, its record store (s3://<bucket>/<prefix>, local, or the store's type) and its strict { secrets } setting, store when unset.",
+            "required": ["estate", "record_store", "secrets"],
+            "properties": {
+              "estate": { "type": "string" },
+              "record_store": { "type": "string" },
+              "secrets": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "roots", "set_digest", "approval"],
+        "properties": {
+          "number": { "type": "integer" },
+          "roots": { "type": "array", "items": { "type": "string" } },
+          "set_digest": { "type": ["string", "null"] },
+          "approval": { "enum": ["not-requested", "waiting", "approved", "not-required"] },
+          "review_digest": { "type": ["string", "null"], "description": "A tf-plan wave's set digest over its roots whose plan changes something, which approval: pr-review binds a review to (minor 9)." },
+          "waits": { "type": "boolean", "description": "A tf-plan wave: whether the gate will hold it when it applies (minor 9)." },
+          "gate": {
+            "type": "object",
+            "required": ["branch", "path"],
+            "properties": { "branch": { "type": "string" }, "path": { "type": "string" } }
+          },
+          "waiting_since": { "type": "string", "description": "On a waiting wave, when it began waiting for an approval of this digest (minor 8)." },
+          "refused": {
+            "type": "object",
+            "description": "Why a tf-apply wave applied nothing although it planned: its plans changed after an approval, a review or an override, or the policy denied a root (minor 11).",
+            "required": ["reason", "roots"],
+            "properties": {
+              "reason": { "enum": ["approval", "review", "override", "policy"] },
+              "approved": { "type": "string" },
+              "by": { "type": "string" },
+              "roots": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "review": {
+            "type": "object",
+            "description": "A waiting tf-apply wave under approval: pr-review: the pull request whose approving review of its head would approve the wave, and the page to review it on (minor 13).",
+            "required": ["pull_request", "url"],
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "url": { "type": "string" }
+            }
+          },
+          "excluded_approvers": {
+            "type": "array",
+            "description": "A tf-apply wave: the people whose approval of its digest did not count, because they had a hand in the change; reason says how, such as bob asked for abc1234 (minor 39).",
+            "items": {
+              "type": "object",
+              "required": ["login", "reason"],
+              "properties": {
+                "login": { "type": "string" },
+                "reason": { "type": "string" }
+              }
+            }
+          },
+          "policy_gate": {
+            "type": "object",
+            "description": "What the policy's hold and allow_unattended rules did to the wave's gate: held, or unattended when every root that changes something is allowed and none holds; the rules' ids and, on a tf-apply wave, the commit the policy was read at (minor 40).",
+            "required": ["outcome", "rules"],
+            "properties": {
+              "outcome": { "enum": ["held", "unattended"] },
+              "rules": { "type": "array", "items": { "type": "string" } },
+              "commit": { "type": "string" }
+            }
+          },
+          "approval_rules": {
+            "type": "array",
+            "description": "The approval_rules entries at base the wave's roots take: what each asks for and, on a tf-apply wave, the approvers of its digest it counted and whether it is met (minor 40).",
+            "items": {
+              "type": "object",
+              "required": ["roots", "count", "approvers", "met"],
+              "properties": {
+                "roots": { "type": "array", "items": { "type": "string" } },
+                "count": { "type": "integer", "minimum": 1 },
+                "roles": { "type": "array", "items": { "type": "string" } },
+                "not_author": { "type": "boolean" },
+                "approvers": { "type": "array", "items": { "type": "string" } },
+                "met": { "type": "boolean" }
+              }
+            }
+          },
+          "held_by_steps": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The roots whose on_failure: approve step failed: the gate holds the wave whatever the gate policy says, when it changes anything (minor 17)."
+          },
+          "cost": {
+            "type": "object",
+            "description": "The wave's monthly cost, when cost is on (minor 19): the sums over its roots estimated, and with cost.approve_above at base whether the change is over it, so the wave waits for an approval whatever the gate.",
+            "required": ["currency", "monthly_delta", "monthly_total", "past_monthly_total"],
+            "properties": {
+              "currency": { "type": "string" },
+              "monthly_delta": { "type": ["number", "null"] },
+              "monthly_total": { "type": ["number", "null"] },
+              "past_monthly_total": { "type": ["number", "null"] },
+              "unestimated": { "type": "array", "items": { "type": "string" } },
+              "approve_above": { "type": "number" },
+              "over": { "type": "boolean" }
+            }
+          },
+          "state": { "enum": ["planned", "waiting", "applying", "applied", "refused", "failed", "blocked"], "description": "Where the wave stands (minor 21): a tf-plan wave is planned; a tf-apply wave waiting, applying, applied, refused or failed, or blocked when none of its roots ran because an upstream of each did not apply (minor 41)." },
+          "outcomes": {
+            "type": "array",
+            "description": "A tf-apply wave's outcome of each root once it ended (minor 41): applied, unchanged, failed (with the first line of its plan's or apply's error), waiting, refused, decided (its share or group job applies it), not-applied (another root of the wave failed to plan) or blocked (with blocked_by).",
+            "items": {
+              "type": "object",
+              "required": ["root", "outcome"],
+              "additionalProperties": false,
+              "properties": {
+                "root": { "type": "string" },
+                "outcome": { "enum": ["applied", "unchanged", "failed", "waiting", "refused", "decided", "not-applied", "blocked"] },
+                "error": { "type": "string" },
+                "blocked_by": { "type": "string" }
+              }
+            }
+          },
+          "blocked": {
+            "type": "array",
+            "description": "A tf-apply wave's roots that did not run because an upstream did not apply in this run; blocked_by names the root whose failure held it, past any root blocked in between (minor 41).",
+            "items": {
+              "type": "object",
+              "required": ["root", "blocked_by"],
+              "additionalProperties": false,
+              "properties": { "root": { "type": "string" }, "blocked_by": { "type": "string" } }
+            }
+          },
+          "reads": { "type": "array", "items": { "type": "integer" }, "description": "The waves whose roots' state its roots read (minor 21)." },
+          "replans_after": { "type": "array", "items": { "type": "integer" }, "description": "A tf-plan wave whose plans read outputs known only once these waves apply: it plans again after they apply, and when that plan changes something its gate holds it for an approval of that plan under gate always or on-destructive, but not under gate never; its review digest is null (minor 21)." },
+          "preview": {
+            "type": "object",
+            "required": ["pull_request", "units"],
+            "description": "A tf-apply wave of Terragrunt units: its plans against the preview of them the merged pull request's plan note showed (minor 25).",
+            "properties": {
+              "pull_request": { "type": "integer" },
+              "units": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["unit"],
+                  "properties": {
+                    "unit": { "type": "string" },
+                    "differences": { "type": "array", "items": { "type": "string" }, "description": "How its plan differs from the preview. Absent when it plans as previewed." }
+                  }
+                }
+              }
+            }
+          },
+          "environments": { "type": "array", "items": { "type": "string" }, "description": "The environments of environments: in terragucci.yml its roots are in, sorted (minor 33). Absent when none of its roots is in one." },
+          "composed": {
+            "type": "object",
+            "description": "The wave that carries a composed run (waves.compose, minor 38): one plan and one apply across several roots, each keeping its own state. The wave's roots list its own roots and the composed ones; its digests cover the composed plan as one member.",
+            "required": ["plan_digest", "members"],
+            "properties": {
+              "plan_digest": { "type": ["string", "null"], "description": "The composed plan's digest. Null when it failed to plan." },
+              "members": {
+                "type": "array",
+                "description": "Each root in the run, upstreams first.",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "module"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "module": { "type": "string", "description": "Its address in the run, such as module.network." },
+                    "apply": { "enum": ["applied", "partial", "failed", "not-started", "no-changes"], "description": "tf-apply only: how its part of the apply ended, from the binary's apply events." },
+                    "changes": { "type": "object", "required": ["done", "planned"], "properties": { "done": { "type": "integer" }, "planned": { "type": "integer" } }, "description": "tf-apply only: how many of its planned changes completed." },
+                    "state": { "enum": ["written", "unchanged", "not-written"], "description": "tf-apply only: its state after the run." },
+                    "kept": { "type": "string", "description": "With not-written: where the state the run holds for it was kept." },
+                    "lock_held": { "type": "boolean", "description": "With not-written: whether its lock is still held." },
+                    "error": { "type": "string", "description": "Why the write failed, or the first error of its part of the apply." }
+                  }
+                }
+              },
+              "held_by_unknown": { "type": "array", "items": { "type": "string" }, "description": "The members that read a value of another member unknown at plan time: the gate holds the run under every gate but never." },
+              "error": { "type": "string", "description": "Why the run failed, when no member's own error says it." }
+            }
+          }
+        }
+      }
+    },
+    "named": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["root", "action"],
+        "properties": {
+          "root": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "action": { "enum": ["delete", "replace", "refused", "forget", "import"] },
+          "deposed": { "type": "string" },
+          "replace_paths": { "type": "array", "items": { "type": "array", "items": { "type": ["string", "integer"] } } },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "holes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["root", "address", "reason"],
+        "properties": {
+          "root": { "type": "string" },
+          "address": { "type": "string" },
+          "type": { "type": "string" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "policy": {
+      "description": "The run's policy check, when policy is on (minor 6).",
+      "type": "object",
+      "required": ["engine", "input", "from", "denied", "warnings"],
+      "properties": {
+        "engine": { "enum": ["conftest", "opa"] },
+        "input": { "enum": ["plan", "hcp"] },
+        "namespace": { "type": "string" },
+        "from": { "enum": ["checkout", "base"] },
+        "denied": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "integer" },
+        "overridden": { "type": "array", "items": { "type": "string" }, "description": "The denied roots an override stands for (minor 10)." },
+        "overriders": { "type": "array", "items": { "type": "string" }, "description": "Who may override a denial, from policy.override at base (minor 10)." }
+      }
+    },
+    "compose": {
+      "type": "object",
+      "description": "waves.compose (minor 38), on a tf-plan and on a tf-apply wave's report when the run's config turns it on: the roots it covers, and the wave that composes them or why the change applies in waves.",
+      "required": ["roots", "max"],
+      "properties": {
+        "roots": { "type": "array", "items": { "type": "string" }, "description": "The roots the change reaches plus the roots they read, followed upstream, sorted." },
+        "max": { "type": "integer", "description": "waves.compose_max." },
+        "wave": { "type": "integer", "description": "The wave whose run composes them. Absent when the change applies in waves." },
+        "fallback": {
+          "type": "object",
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "type": "string" },
+            "root": { "type": "string" },
+            "reason": { "type": "string" }
+          },
+          "description": "Why the change applies in waves."
+        }
+      }
+    },
+    "blast": {
+      "description": "A tf-plan run's blast radius (minor 22): the roots whose plan changes a resource or an output, and every root of the repo that reads their state through terraform_remote_state (in a Terragrunt repo, every unit that depends on them through a dependency or dependencies block), followed through, nearest first. Absent when no root's plan changes anything, and on other stages.",
+      "type": "object",
+      "required": ["roots", "downstream"],
+      "properties": {
+        "roots": { "type": "array", "items": { "type": "string" } },
+        "downstream": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "reads", "depth", "planned"],
+            "properties": {
+              "root": { "type": "string" },
+              "reads": { "type": "array", "items": { "type": "string" }, "description": "The roots in the radius whose state it reads." },
+              "depth": { "type": "integer", "minimum": 1, "description": "1 when it reads a changed root's state itself, 2 when it reads such a reader's, and so on." },
+              "wave": { "type": "integer", "description": "The apply wave it is in." },
+              "planned": { "type": "boolean", "description": "Whether this run planned it." }
+            }
+          }
+        },
+        "resources": {
+          "description": "The radius by resource (minor 31), when a root is downstream: each resource a plan changes and the resources that depend on it, from the plans' references and the outputs each root reads, nearest first. A changed resource that nothing depends on is left out. Absent in a Terragrunt repo.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "address", "actions", "reaches"],
+            "properties": {
+              "root": { "type": "string" },
+              "address": { "type": "string", "description": "The changed resource instance's address." },
+              "actions": { "type": "array", "items": { "type": "string" } },
+              "reaches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["root", "address"],
+                  "properties": {
+                    "root": { "type": "string" },
+                    "address": { "type": "string", "description": "Its address in the root's configuration, with no instance key." },
+                    "depth": { "type": "integer", "minimum": 1, "description": "Its distance from the changed resource (minor 36): 1 when it refers to it, directly or through locals, variables and modules, and one more for each resource in between and each hop from a root's output into a root that reads it. Absent from a report before minor 36." },
+                    "through": {
+                      "type": "object",
+                      "required": ["root", "output"],
+                      "description": "In another root: the output it reads, and the root that makes it.",
+                      "properties": { "root": { "type": "string" }, "output": { "type": "string" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cost": {
+      "description": "The cost estimate of a tf-plan run, or of a tf-apply wave's plans (minor 19), when cost is on (minor 12): each root's monthly cost from the estimator, and the sums over the roots estimated.",
+      "type": "object",
+      "required": ["estimator", "currency", "monthly_delta", "monthly_total", "past_monthly_total", "roots"],
+      "properties": {
+        "estimator": { "type": "string" },
+        "currency": { "type": "string" },
+        "monthly_delta": { "type": ["number", "null"] },
+        "monthly_total": { "type": ["number", "null"] },
+        "past_monthly_total": { "type": ["number", "null"] },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "monthly_delta", "monthly_total", "past_monthly_total"],
+            "properties": {
+              "root": { "type": "string" },
+              "monthly_delta": { "type": ["number", "null"] },
+              "monthly_total": { "type": ["number", "null"] },
+              "past_monthly_total": { "type": ["number", "null"] },
+              "output": { "type": "string" },
+              "error": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "intent": {
+      "description": "The description check's decision (minor 5). Written by respond description; absent when it did not run.",
+      "type": "object",
+      "required": ["status", "flagged", "decision", "state_digest", "unmentioned"],
+      "properties": {
+        "status": { "type": "string" },
+        "flagged": { "type": "boolean" },
+        "decision": { "type": "string" },
+        "probability": { "type": "number" },
+        "threshold": { "type": "number" },
+        "model": { "type": "string" },
+        "state_digest": { "type": "string" },
+        "unmentioned": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "mock_reads": {
+      "description": "Terragrunt dependencies that would have planned on mock_outputs (minor 1).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["unit", "dependency", "upstream", "reason"],
+        "properties": {
+          "unit": { "type": "string" },
+          "dependency": { "type": "string" },
+          "upstream": { "type": "string" },
+          "reason": { "enum": ["no-outputs", "partial", "skip-outputs", "disabled"] },
+          "keys": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "deferred": {
+      "description": "Terragrunt units that plan after the units they wait for apply (minor 1).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["unit", "after", "why", "previewed"],
+        "properties": {
+          "unit": { "type": "string" },
+          "after": { "type": "array", "items": { "type": "string" } },
+          "why": { "type": "string" },
+          "previewed": { "type": "boolean" }
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "required": ["marker", "values"],
+      "properties": {
+        "marker": { "const": "(sensitive, redacted by terragucci)" },
+        "values": { "type": "integer" }
+      }
+    },
+    "tips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule", "message", "url"],
+        "properties": {
+          "rule": { "type": "string" },
+          "root": { "type": "string" },
+          "message": { "type": "string" },
+          "url": { "type": "string" }
+        }
+      }
+    },
+    "timings": {
+      "description": "Where the run spent its time, from the binary's spans (minor 2).",
+      "type": "object",
+      "required": ["roots", "resources"],
+      "properties": {
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "seconds", "detail"],
+            "properties": {
+              "root": { "type": "string" },
+              "seconds": { "type": "number" },
+              "plan_seconds": { "type": "number" },
+              "apply_seconds": { "type": "number" },
+              "source": { "$ref": "#/$defs/timingSource" },
+              "detail": { "$ref": "#/$defs/timingDetail" }
+            }
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["root", "address", "ms"],
+            "properties": {
+              "root": { "type": "string" },
+              "address": { "type": "string" },
+              "type": { "type": "string" },
+              "ms": { "type": "number" }
+            }
+          }
+        },
+        "note": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "record_versions": {
+      "description": "For a choudoufu root: its record's versions once the apply finished, newest first, from choudoufu live-history: each version's id, when it was written, and whether it is current or a delete marker, never what it holds. kept is false for a record store that keeps none (local, kubernetes); error is live-history's error as it printed it (minor 32).",
+      "type": "object",
+      "required": ["read"],
+      "properties": {
+        "kept": { "type": "boolean" },
+        "store": { "type": "string" },
+        "versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["version_id", "last_modified", "current", "deleted"],
+            "properties": {
+              "version_id": { "type": "string" },
+              "last_modified": { "type": "string" },
+              "current": { "type": "boolean" },
+              "deleted": { "type": "boolean" }
+            }
+          }
+        },
+        "error": { "type": "string" },
+        "read": { "type": "string" }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["address", "type", "provider"],
+      "properties": {
+        "address": { "type": "string" },
+        "type": { "type": "string" },
+        "provider": { "type": "string", "description": "The provider's source address, such as registry.opentofu.org/hashicorp/aws." }
+      }
+    },
+    "timingDetail": { "enum": ["resources", "aggregate", "none"] },
+    "timingSource": { "description": "binary: terragucci timed each run of the binary; terragrunt: from Terragrunt's run report (minor 3).", "enum": ["binary", "terragrunt"] },
+    "rootTimings": {
+      "description": "Where a root's plan spent its time, from the binary's spans (minor 2).",
+      "type": "object",
+      "required": ["seconds", "spans", "detail", "resources", "provider_calls", "provider_init", "lock_waits", "aggregates"],
+      "properties": {
+        "seconds": { "type": "number" },
+        "plan_seconds": { "type": "number" },
+        "apply_seconds": { "description": "On a tf-apply wave, the binary's apply run alone (minor 3).", "type": "number" },
+        "source": { "$ref": "#/$defs/timingSource" },
+        "spans": { "type": "integer" },
+        "detail": { "$ref": "#/$defs/timingDetail" },
+        "note": { "type": "string" },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["address", "ms"],
+            "properties": {
+              "address": { "type": "string" },
+              "type": { "type": "string" },
+              "action": { "type": "string" },
+              "provider": { "type": "string" },
+              "ms": { "type": "number" },
+              "refresh_ms": { "type": "number" }
+            }
+          }
+        },
+        "provider_calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["method", "ms"],
+            "properties": {
+              "method": { "type": "string" },
+              "provider": { "type": "string" },
+              "type": { "type": "string" },
+              "address": { "type": "string" },
+              "ms": { "type": "number" }
+            }
+          }
+        },
+        "provider_init": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "count", "ms", "max_ms"],
+            "properties": {
+              "provider": { "type": "string" },
+              "count": { "type": "integer" },
+              "ms": { "type": "number" },
+              "max_ms": { "type": "number" }
+            }
+          }
+        },
+        "lock_waits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ms"],
+            "properties": {
+              "backend": { "type": "string" },
+              "operation": { "type": "string" },
+              "attempts": { "type": "integer" },
+              "ms": { "type": "number" }
+            }
+          }
+        },
+        "aggregates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["of", "count", "detailed", "ms", "max_ms"],
+            "properties": {
+              "of": { "type": "string" },
+              "kind": { "type": "string" },
+              "type": { "type": "string" },
+              "provider": { "type": "string" },
+              "method": { "type": "string" },
+              "count": { "type": "integer" },
+              "detailed": { "type": "integer" },
+              "ms": { "type": "number" },
+              "max_ms": { "type": "number" },
+              "slowest": { "type": "string" },
+              "groups": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "action": { "enum": ["create", "update", "replace", "delete", "read", "no-op", "forget"] },
+    "fold": { "enum": ["open", "folded"] },
+    "summaryChange": {
+      "type": "object",
+      "required": ["line", "action", "count"],
+      "properties": {
+        "line": { "type": "string" },
+        "action": { "$ref": "#/$defs/action" },
+        "count": { "type": "integer" },
+        "differsFrom": { "type": "string" },
+        "differsIn": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

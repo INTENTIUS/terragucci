@@ -1,0 +1,272 @@
+---
+title: Add terragucci to a repo
+description: Write the pipeline for GitHub, GitLab or Forgejo, give it a token and cloud roles, require its status, and get a plan note on the next pull request.
+claims: [boot/tofu, check/tofu, affected/tofu, security/fork, init/runner-label]
+prompt: |
+  Read https://intentius.io/terragucci/guides/add-to-a-repo/ and https://intentius.io/terragucci/getting-started/agents/.
+  Set up terragucci in this repository for its forge.
+  Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
+  Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
+  List the token, OIDC roles and required status I must set in the forge settings.
+  Do not create secrets, variables or branch protection yourself.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import ForgePicture from '../../../components/ForgePicture.astro';
+
+## Result
+
+A plan note and a `terragucci/plan` status on every pull request or merge request, and one apply job per wave on the default branch (with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), a deciding job and its share jobs). Everything runs as jobs in your own CI and lands in your git and your bucket; there is no account to create. Pick your forge in any tab and the other forge tabs on the site follow.
+
+## Per forge
+
+| | GitHub | GitLab | Forgejo |
+|---|---|---|---|
+| Pipeline file | `.github/workflows/terragucci.yml` | `.gitlab/terragucci.yml`, included from `.gitlab-ci.yml` | `.forgejo/workflows/terragucci.yml` |
+| Hosts `init` knows | github.com | gitlab.com, `gitlab.*` | codeberg.org, `forgejo.*`, `gitea.*` |
+| Runner | Actions enabled | one that runs Docker images | Actions enabled, a runner labelled `docker` or the one [`runner`](#self-hosted-runners) names |
+| Token | the run's `github.token` | `GITLAB_TOKEN` variable, `api` scope | the run's own token |
+| Cloud roles over OIDC | GitHub's identity token | `id_tokens` | Forgejo 15 and Runner 12.5 or later |
+| Require | `terragucci/plan` in branch protection | "Pipelines must succeed" | `terragucci/plan` in branch protection |
+| Report | `terragucci-report` artifact of the run the note links | a job artifact the note links, plus the merge-request widget | `terragucci-report` artifact of the run the note links |
+| Two pushes' applies | side by side | side by side | side by side, each push to the default branch in a group of its own commit |
+
+Self-managed GitLab works the same. See [applies side by side](/terragucci/reference/pipeline/#applies-side-by-side).
+
+## Self-hosted runners
+
+```yaml
+runner:
+  default: [self-hosted, linux]
+  apply: [self-hosted, prod]
+```
+
+Every job then asks for a runner with both labels of its stage: `runs-on` on GitHub and Forgejo, `tags` on GitLab. Here the apply jobs run on runners labelled `prod`, such as ones inside the network the apply role reaches, and every other job on the rest. `runner: [self-hosted, linux]` alone puts every job on one set. On GitHub, `group: <name>` picks a runner group. Apply runners of their own also keep the apply role away from pull request code, which plan jobs run; [Runners](/terragucci/reference/threat-model/#runners) in the threat model has what each setup keeps apart.
+
+Each job runs in terragucci's image, so the runner must start containers: Docker on a GitHub runner, the Docker executor on GitLab, a `docker://` label on Forgejo. Run `npx terragucci init` to write the labels in; [Runners](/terragucci/reference/config/#runners) has the rest.
+
+## Agent features
+
+Setup and every pull request feature are plain CI jobs that need no agent; four opt-in features run a model.
+
+| CI jobs, no agent | Page |
+|---|---|
+| Setup with `init` (an agent can run it for you) | [Set up with a coding agent](/terragucci/getting-started/agents/) |
+| The plan note and `terragucci/plan` status | [Get your first plan note](/terragucci/getting-started/) |
+| Tips and policy checks | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
+| A `/terragucci plan` re-plan; on GitLab through the `comments:` schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
+| `/terragucci lock` and `/terragucci unlock` (GitHub, Forgejo, and GitLab with `comments:` and `apply.when: pull-request` set); `locks: plan` (GitHub and Forgejo) | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Apply before merge and `/terragucci apply` (GitHub, Forgejo, and GitLab with `comments:` set) | [Apply before merge](/terragucci/guides/apply-before-merge/) |
+| Approvals in every mode, `terragucci approve` | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |
+| A recorded policy override | [Override a policy denial](/terragucci/guides/approvals-runbook/#override-a-policy-denial) |
+| Drift checks | [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) |
+| Module publishing and rollouts | [Publish your modules](/terragucci/guides/publish-modules/), [roll out a version](/terragucci/guides/roll-out-a-module-version/) |
+
+| Opt-in: coding agent | Off until | Page |
+|---|---|---|
+| The `/terragucci agent <ask>` comment (GitHub and Forgejo) | `agent.comment` is set, with a model API key secret | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
+| A code change that matches what drift found, in a pull request (GitHub and Forgejo) | `agent.drift` is set, with a model API key secret | [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) |
+| A note comparing a pull request's description with its plan (on GitLab through the `comments:` schedule) | `review.agent` is set, with a model API key secret | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
+| A summary of a refused wave | you add its job by hand, with a model API key secret | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
+
+## Prerequisites
+
+| You need | For |
+|---|---|
+| Terraform or OpenTofu roots, or a Terragrunt, Atmos, Terramate or CDK Terrain repo | what `init` finds |
+| Node.js 22 or later on your machine | running `init` |
+| admin on the repo or project | the token, the cloud roles and the required status |
+
+## Steps
+
+<Steps>
+
+1. Install terragucci and run `init` from the root of the repo.
+
+   ```bash
+   npm i -D @intentius/terragucci
+   npx terragucci init
+   ```
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   wrote .github/workflows/terragucci.yml
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
+   wrote .gitlab/terragucci.yml
+   wrote .gitlab-ci.yml
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   The jobs go in `.gitlab/terragucci.yml`, and `init` touches your `.gitlab-ci.yml` only like this:
+
+   | Your `.gitlab-ci.yml` | `init` |
+   |---|---|
+   | none | writes one that includes `.gitlab/terragucci.yml` |
+   | your own jobs | adds `- local: .gitlab/terragucci.yml` to its `include:` and keeps the rest (`updated .gitlab-ci.yml`) |
+   | an `include:` that is one value, not a list | stops and names the entry to add |
+   | its own `stages:` | stops unless the list has `.gitlab/terragucci.yml`'s stages (`check`, `plan`, `apply` and the rest) in that order, and names them |
+   | a job named like one of terragucci's (`check`, `plan`, `apply-wave-1`) | stops: GitLab would merge the two jobs |
+
+   With no `stages:` of your own, GitLab's default stages put your `build` and `test` jobs before terragucci's stages and `deploy` after the apply. Your top-level `variables:` and `default:` reach terragucci's jobs too.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge forgejo (the origin remote (codeberg.org))
+   wrote .forgejo/workflows/terragucci.yml
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   For a host on another scheme or port, set `url` in `terragucci.yml`.
+
+   </TabItem>
+   </Tabs>
+
+   Pass `--forge` once for a host the table does not list; `init` records it in `terragucci.yml`.
+
+   In a Terragrunt repo `init` finds the units and writes the same files. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
+
+2. Give the pipeline a token.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   The jobs use the run's `github.token`. The plan job adds `statuses: write` and `pull-requests: write` (and `actions: read` with a `drift` schedule) and runs only for pull requests from branches in the same repo, so a fork reaches no job with them.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   Add `GITLAB_TOKEN` under Settings, CI/CD, Variables: a masked project access token with the `api` scope. `token_env` in `terragucci.yml` names another variable.
+
+   | `terragucci.yml` | Plan job | Plan note | `GITLAB_TOKEN` |
+   |---|---|---|---|
+   | no `gitlab` key (the default) | holds the token, so a merge request's code can use it as the project's bot | posted by the plan job at once | a masked variable |
+   | `gitlab: { token: protected }`, with `comments:` set | holds no token | posted by the comments schedule's job | a masked and protected variable, on a protected default branch |
+
+   [The threat model](/terragucci/reference/threat-model/) says what each choice leaves open.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   Each run brings its own token; there is no secret to add.
+
+   </TabItem>
+   </Tabs>
+
+3. Give the jobs cloud access. Set `oidc` in `terragucci.yml` and run `npx terragucci init` again:
+
+   ```yaml
+   oidc:
+     plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+     apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+   ```
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   Each role's trust policy must accept your repo.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   Roles come through `id_tokens`. GitLab-managed Terraform state limits concurrent inits, so fewer Terragrunt units run at once.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   OIDC needs Forgejo 15 and Forgejo Runner 12.5 or later; the jobs set `enable-openid-connect: true`. The issuer is your Forgejo URL plus `/api/actions`. Older versions serve no token; give their runner static credentials instead.
+
+   </TabItem>
+   </Tabs>
+
+   [Environment variables and credentials](/terragucci/reference/environment/#cloud-roles-over-oidc) has the trust policies. To keep several environments' runners, secrets and roles apart, see [Separate environments](/terragucci/guides/separate-environments/) later; nothing here needs it.
+
+4. Commit, push and open a pull request.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   ```bash
+   git switch -c add-terragucci
+   git add .github package.json package-lock.json
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   ```bash
+   git switch -c add-terragucci
+   git add .gitlab .gitlab-ci.yml package.json package-lock.json
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   ```bash
+   git switch -c add-terragucci
+   git add .forgejo package.json package-lock.json
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   </TabItem>
+   </Tabs>
+
+   Then change a line in one root and push again, since a change that touches no root has nothing to plan.
+
+5. Require the status so that a failed plan blocks the merge. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), the check also runs a live check with no cloud credentials.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   Add `terragucci/plan` to the default branch's protection rule as a required status.
+
+   <ForgePicture name="github-required" alt="A GitHub ruleset named terragucci/plan required, active on the default branch, requiring the status check terragucci/plan" />
+
+   When the check fails, so does the run; its log shows the diff `tofu fmt` would make.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   Turn on "Pipelines must succeed" under Settings, Merge requests.
+
+   <ForgePicture name="gitlab-required" alt="GitLab's merge request settings with Pipelines must succeed checked: merge requests cannot be merged if the latest pipeline did not succeed or is still running" />
+
+   The pipeline fails with the check.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   In the default branch's protection rule, enable status checks with `terragucci/plan` as the pattern.
+
+   The failed check is a red cross on the commit, and the fmt job pushes the formatting after it.
+
+   </TabItem>
+   </Tabs>
+
+6. Make approval possible. A wave that destroys something waits until a person runs `npx terragucci approve` from a checkout or, under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes), reviews the pull request. Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
+
+</Steps>
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/)
+- [The tutorial](/terragucci/tutorial/) runs all of this on a local Forgejo with a 15-root example.
+- For help setting it up in your repos, [Intentius](https://intentius.io/work/) works with teams adopting terragucci.

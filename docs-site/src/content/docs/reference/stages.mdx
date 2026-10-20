@@ -1,0 +1,292 @@
+---
+title: Stages
+description: Each stage's inputs, permissions and outputs, and how a change reaches many roots.
+prompt: |
+  Read https://intentius.io/terragucci/reference/stages/.
+  Plan a rollout of the module and version I name across this repo with `npx terragucci rollout <module> <version>` (the dry run, without `--mode apply`), and list its waves with the roots in each and any pin it cannot move, with the tip it gives.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every stage takes the root directories and the binary.
+
+| Stage | What it does | Forge permissions | Outputs |
+|---|---|---|---|
+| `tf-check` | format, `validate`, and with [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) a [live check](#check) that needs no cloud credentials; with [`policy`](/terragucci/reference/policy/) set, the policy's own tests | read the repository, with no forge token; when a branch's check fails, a separate `fmt` job pushes the formatting commit (`respond.fmt: commit`, the default; in a Terragrunt repo it runs `terragrunt hcl fmt` too; not with `gitlab.token: protected`) | pass or fail, the log, and the check report |
+| `tf-plan` | plans the affected roots in one run and posts the grouped summary; with [`policy`](/terragucci/reference/policy/) set, fails a denied root | read the repository, comment on pull requests | the grouped summary, and a plan digest per root |
+| `tf-apply` | applies one job per wave; a wave the [gate policy](#gate-policy) holds (under the default `on-destructive`, one that destroys or replaces) waits for an approval; with [`policy`](/terragucci/reference/policy/) set, refuses a denied wave | read the repository, write the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch (read only under `gate: never`), post statuses and pull request comments; with `waves.jobs`, push the run's shared lock tag | per wave, whether it waited and its approval command |
+| `tf-drift` | plans every root `-refresh-only` on a schedule and groups what changed outside Terraform | read the repository, write issues | the plan report, and one drift issue |
+| `tf-publish` | publishes each changed module as an OCI artifact or a git tag | read the repository, push tags or to the registry | the new version and its digest |
+| `tf-rollout` | opens one pull request per wave, moving the pin for that wave's roots | open pull requests, in every project of the wave | per wave, its pull requests and their state |
+
+## Exit codes
+
+Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes). Two belong to waves:
+
+| Code | Means |
+|---|---|
+| 3 | a wave waits for approval |
+| 4 | a wave's plans changed after an approval no run applied, so nothing applied |
+
+## Check
+
+`tf-check` runs on every push and fork pull request, once per root. A failing root does not stop the next, so one run shows every diagnostic. Warnings print and fail nothing. Under [`modules.require: attested`](/terragucci/guides/publish-modules/#require-attested-releases), a root whose module pins do not verify fails before `validate`, and `tf-plan` fails it before `init`.
+
+<Tabs syncKey="binary">
+  <TabItem label="Terraform">
+
+| Order | Command | A difference |
+|---|---|---|
+| 1 | `terraform fmt -check` | stops the job |
+| 2 | `terraform init -backend=false` | fails the root |
+| 3 | `terraform validate -json` | fails the root |
+  </TabItem>
+  <TabItem label="OpenTofu">
+
+| Order | Command | A difference |
+|---|---|---|
+| 1 | `tofu fmt -check` | stops the job |
+| 2 | `tofu init -backend=false` | fails the root |
+| 3 | `tofu validate -json` | fails the root |
+  </TabItem>
+  <TabItem label="Terragrunt">
+
+| Order | Command |
+|---|---|
+| 1 | the binary's `fmt -check -recursive -diff .` |
+| 2 | `terragrunt hcl fmt --check` |
+| 3 | `terragrunt hcl validate --inputs` |
+  </TabItem>
+  <TabItem label="choudoufu">
+
+:::tip[A live check before any plan]
+Every pull request learns, before any plan and with no cloud credentials, whether each resource can carry the tag that identifies it.
+
+<small>The <a href="/terragucci/guides/use-a-binary/#choudoufu">choudoufu binary</a> (the OpenTofu fork from the team behind terragucci) runs this check.</small>
+:::
+
+| Order | Command | A difference |
+|---|---|---|
+| 1 | `fmt -check` | stops the job |
+| 2 | `init -backend=false` | fails the root |
+| 3 | `validate -json` | fails the root |
+| 4 | `choudoufu live-check -json`, no cloud calls | each refusal prints its rule, reason, resource types and sites; a non-zero exit fails the check |
+  </TabItem>
+</Tabs>
+
+A failed validate prints the file, line and error:
+
+```text
+error: envs/dev/orders/main.tf:12:3-12:8: Unsupported argument
+    An argument named "bogus" is not expected here.
+FAILED envs/dev/orders: validate found 1 error(s)
+```
+
+With [`generate`](/terragucci/guides/generate-root-files/) set, the check job also runs `terragucci generate --check` before the roots' `init`, and fails on a generated file that differs from what `terragucci generate` writes:
+
+```text
+refused: envs/prod/app/backend.tf differs from what terragucci generate writes from terragucci.yml:
+    -    bucket = "hand-edited"
+    +    bucket = "acme-prod-state"
+FAILED generate: 1 generated file out of line with terragucci.yml; run terragucci generate and commit what it writes
+```
+
+When [`policy`](/terragucci/reference/policy/) is set, the last step runs `conftest verify` or `opa test`, with the tests and key read from the default branch or the pull request's target. The log is kept as `terragucci-check/report.md`.
+
+## Drift
+
+A cron schedule in `drift` adds a `drift` job that runs on it.
+
+```yaml
+drift: "0 6 * * *"
+```
+
+| Drift job | What it does |
+|---|---|
+| Plans | each root with `-refresh-only`, so merged but unapplied code is not drift; a Terragrunt repo runs one refresh-only `terragrunt run --all` per wave. A choudoufu root under live resource markers plans in full, and what its plan would change is the drift ([Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots)) |
+| Identity | with `oidc`, the plan job's read-only role; it never applies |
+| Fails | when a root cannot be refreshed; drift alone does not fail it |
+| Report | stage `tf-drift` ([the report](/terragucci/reference/report/)), kept as an artifact |
+| Issue | at most one open per project, titled `terragucci: drift found`, below |
+| By hand | `npx terragucci stage tf-drift`; with no forge token it writes the report and `issue.md` only, and `--forge` tells GitHub from Forgejo |
+
+| This run finds | The issue |
+|---|---|
+| drift, and none is open | opens, with each drifted root and what moved in it |
+| drift, and one is open | updates in place, so the issue always shows the latest run |
+| no drift in any root | closes, with a comment naming the commit |
+| no drift, but a root could not be planned | stays as it is, since that root is unknown |
+
+| Forge | Issue token | Schedule |
+|---|---|---|
+| GitHub, Forgejo | the job's own, `issues: write` | the workflow, plus `workflow_dispatch` with no `pr` |
+| GitLab | `token_env`, `api` scope | CI/CD > Schedules, by hand |
+
+### Overdue drift checks
+
+A schedule can stop with no error: GitHub turns a scheduled workflow off after 60 days with no activity in the repo, and a GitLab project runs the drift job only once someone adds a schedule. With `drift` set, each `tf-plan` checks:
+
+<Steps>
+
+1. The plan job asks the forge when the drift job last ran (scheduled or by hand).
+
+2. It counts how often the cron has come round since then (or since the pipeline file was added, if the job never ran).
+
+3. At two or more, the job log and plan note warn that the drift checks are overdue and say what to do.
+
+</Steps>
+
+| Forge | What the plan job reads | The note adds |
+|---|---|---|
+| GitHub | the workflow's scheduled and manual runs, and its state; the plan jobs get `actions: read` | the workflow is off, or how to turn it on again |
+| GitLab | the scheduled pipelines and the active schedules, with `token_env` | the project has no schedule, and the cron to add |
+| Forgejo | the repo's scheduled and manual runs | to check that Actions is on and a runner is up |
+
+A forge that does not answer leaves a line in the log, and the plan goes on.
+
+## Gated waves
+
+A wave the [gate policy](#gate-policy) holds waits for an approval bound to its set digest, and a changed plan stops it. See [Approve a waiting wave](/terragucci/guides/approve-a-wave/).
+
+A waiting wave prints its set digest and approval command.
+
+## State migrations
+
+A file in `migrations/` moves resources between roots' states. `stage tf-plan` proves the first migration not yet applied (a later one plans against the states it writes): every affected root must plan with no change against its new state, or the job fails. Wave 1 of `stage tf-apply` proves it again before planning its roots and waits on the gate `tf-migrate <name>`. An approval lets it write the new states under each state's lock and record each version before and after.
+
+| Exit code | Means |
+|---|---|
+| 3 | the migration waits on its gate |
+| 4 | a state moved since the approval |
+| 1 | the migration cannot be proved or written |
+
+See [Move resources between roots](/terragucci/guides/move-resources-between-roots/) and [Migration files](/terragucci/reference/migration-files/).
+
+## Changes that reach many roots
+
+A change reaches many roots one of three ways. Each is a reviewed pull request with its own plan, and every wave it applies waits at the same gate as a one-line change.
+
+| Change | Started by | A reviewer sees | Goes out | Watch it in |
+|---|---|---|---|---|
+| a local module (`affected/tofu`) | a pull request that edits it | one plan note for every root that calls it | in gated waves after the merge | the plan note, then the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) |
+| a module or provider at an exact pin (`rollout/tofu`, `rollout/pins`) | `terragucci rollout <module> <version> --mode apply`, or `rollout --provider` | one pull request per wave, changing only that wave's pins or lock files | the next wave's pull request opens once every pull request of the last one merged and its roots applied | the rollout's pull requests, and the dry run of `terragucci rollout`, which names the step it would take |
+| a shared default or pipeline setting (`reconcile/tofu`, `reconcile/mixed`) | `terragucci reconcile --mode apply` in a [control repo](/terragucci/concepts/control-repo/) | one pull request per project that changes, with its pipeline, its `terragucci.yml` and any generated files | each project's own team merges it, and its own pipeline applies | each project's pull request |
+
+<Tabs>
+<TabItem label="One repo">
+
+`rollouts: <cron>` in the repo's `terragucci.yml` writes a job that opens each next wave on that schedule, so nobody runs the next step by hand. Without it, run `terragucci rollout` again after each wave applies. A shared default has no second level here: change the repo's own `terragucci.yml` in a pull request.
+
+</TabItem>
+<TabItem label="Control repo">
+
+A rollout from a control repo puts every project's canaries in wave 1, then each project in config order, with a pull request per project per wave (`rollout/control`). `rollouts` is refused there, since a project's pipeline sees only its own roots: run `terragucci respond rollout --mode apply` on a schedule of your own in the control repo to open each next wave. `reconcile` carries a change to `defaults` into every project.
+
+</TabItem>
+</Tabs>
+
+A range such as `~> 1.4` is refused for a rollout, with the tip `rollout-floating-pin` (`tips/tofu`). This is a choice: a range lets a version move without a reviewed change, and no diff shows which roots it reached. Pin one version and roll the next one out. [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) walks through a rollout.
+
+## Rolling out a module version
+
+How a root takes a module decides how a new version reaches it.
+
+| The root's module source | Roots a change reaches | How it goes out |
+|---|---|---|
+| a local path, `../modules/x` | every root that includes it | one change set, applied in gated waves |
+| an exact pin: an `oci://` tag or digest, a registry `version`, a git tag | only those whose pin moved | `tf-rollout`, one pull request per wave |
+| a range such as `~> 1.4` | cannot be told from the diff | neither; terragucci refuses it and tips you to pin it |
+| a provider version, in `.terraform.lock.hcl` | everything using the provider | `tf-rollout`, moving the lock file a wave at a time |
+
+```bash
+terragucci rollout modules/network                 # dry run: the newest published version
+terragucci rollout modules/network 1.4.0 --mode apply
+terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
+```
+
+No version means the newest published tag; `--from` picks between disagreeing pins. Each run takes one step; `--mode apply` opens pull requests with `token_env`; it never applies or merges and never writes a default branch. With [`rollouts`](/terragucci/reference/config/) set, a scheduled job takes the next step for you.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | a step was taken, or the rollout is at its end |
+| 3 | a pull request waits for a merge or an apply |
+| 1 | the rollout stopped, after a closed pull request or a failed apply |
+
+[Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) walks through a rollout.
+
+A pin the rollout cannot move is reported with its reason and a tip:
+
+| The pin | Tip |
+|---|---|
+| a range such as `~> 1.4` | `rollout-floating-pin`: pin one version |
+| set from a variable or a local | `rollout-literal-pin`: write a literal, since a variable's value is not in the diff |
+| absent from the source | `rollout-pin`: add a `?ref=`, `?tag=` or `version` |
+| two versions of the module in one directory | `rollout-one-pin`: pin every call at one version |
+| a provider with no `.terraform.lock.hcl` | `rollout-lock-file`: commit the lock file |
+
+A provider rollout rewrites each lock file, and any exact `version` constraint, for that provider alone; any other change stops the wave.
+
+Reading module pins needs `npm i -D @cdktn/hcl2json`.
+
+## Publishing modules
+
+`modules.path` names the modules; `modules.publish` takes an `oci://` address, `git-tags`, or both.
+
+| Binary | Roots pin |
+|---|---|
+| OpenTofu | `oci://` sources |
+| Terraform | git tags such as `modules/network/v1.4.0` |
+
+```bash
+terragucci publish --dry-run
+terragucci publish
+```
+
+The `publish` job runs after `apply` on the default branch and alone gets the [registry credentials](/terragucci/reference/environment/). With `modules.attest` it also signs each release and records it in the release ledger on `chant/lifecycle`. See [Publish your modules](/terragucci/guides/publish-modules/).
+
+### Version bump rules
+
+A changed module is published at the version these rules give, which the [version-bump response](/terragucci/reference/responses/#version-bump) also uses.
+
+| Commit or file | Bump |
+|---|---|
+| `feat` | minor |
+| `feat!:` or `BREAKING CHANGE:` | major |
+| any other conventional commit | patch |
+| no conventional commit, with `respond.version-bump: suggest` | the typed-decision service picks; patch below its threshold or without it |
+| a `version` file in the module | overrides all of the above |
+| no earlier release | `0.1.0` |
+
+The module's interface sets the least bump. `tf-publish` compares the variables and outputs in the module's top-level `.tf` and `.tf.json` files with those at the commit the previous release was cut from.
+
+| Interface change | Least bump |
+|---|---|
+| a variable or output removed or renamed | major |
+| a new variable with no default | major |
+| a variable's default removed, or `nullable = false` set | major |
+| a variable's type changed, other than to `any` or no type | major |
+| a new variable with a default, or a new output | minor |
+| none of these | what the commits or the `version` file say |
+
+When the commits or the `version` file give a smaller bump, `tf-publish` refuses that module, names each change and the bump it needs, publishes the rest, and fails the job. Publish it with a `feat!:` or `feat:` commit, or write the version in the module's `version` file. `terragucci publish --dry-run` shows both bumps for each module, and refuses where `tf-publish` would.
+
+## The grouped summary
+
+The plan and drift stages group identical changes and name each destroy, replacement or refusal. See [the plan report](/terragucci/reference/report/).
+
+## Gate policy
+
+`tf-apply` takes one of three policies for each wave.
+
+| Policy | Waits for an approval when |
+|---|---|
+| `always` | the wave has at least one change; a wave whose plans change nothing never waits |
+| `on-destructive` | the wave's plans destroy or replace something, or a root of it that changes something read an upstream output known only once the upstream applied ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)) |
+| `never` | never; only pull request review and default-branch protection stand before the apply |
+
+With `hold` or `allow_unattended` in [`policy.outcomes`](/terragucci/reference/policy/#holding-or-releasing-a-wave), the policy's rules can hold a wave whatever the policy says, or let a wave whose every changing root they allow apply without an approval; the policy decides the waves no rule speaks to.
+
+`on-destroy` is an older name for `on-destructive`, and `terragucci.yml` and `--gate` still accept it, so a pipeline rendered with it keeps working. SQL Yodeler and chant's Op waves call the same policy `on-destructive`.
+
+Run the approval command a waiting wave prints and run the stage again.

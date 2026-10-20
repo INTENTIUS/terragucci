@@ -1,0 +1,56 @@
+---
+// The grid cells not yet proven, from the same code the grids render with
+// (src/data/coverage.ts). The site is for readers, so it names the cells only;
+// `just coverage-gaps` prints the same list with what fills each, and
+// `just coverage-fill` runs the fills.
+import { gaps } from '../data/coverage';
+
+const list = gaps();
+const WORD: Record<string, string> = { none: 'none', same: 'same code', passes: 'passes', fails: 'fails' };
+---
+<div class="tg-gaps not-content">
+	<p>{list.length} {list.length === 1 ? 'cell' : 'cells'} of the grids above are not proven yet.</p>
+	<table>
+		<thead><tr><th>Cell</th><th>Now</th></tr></thead>
+		<tbody>
+			{list.map((g) => (
+				<tr>
+					<td>{g.column}, {g.area}</td>
+					<td>{WORD[g.state]}</td>
+				</tr>
+			))}
+		</tbody>
+	</table>
+</div>
+
+<style>
+	.tg-gaps {
+		font-size: var(--sl-text-xs);
+		overflow-x: auto;
+	}
+	.tg-gaps p {
+		margin: 0.5rem 0;
+		color: var(--sl-color-gray-3);
+	}
+	table {
+		border-collapse: collapse;
+		width: 100%;
+	}
+	th,
+	td {
+		text-align: left;
+		vertical-align: top;
+		padding: 0.4rem 0.75rem 0.4rem 0;
+		border-bottom: 1px solid var(--tg-rule);
+	}
+	th {
+		font-size: 0.66rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	td:first-child {
+		color: var(--sl-color-white);
+		white-space: nowrap;
+	}
+</style>

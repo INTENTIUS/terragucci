@@ -1,0 +1,36 @@
+{
+  "model": "laya-0.3.28-english@55cf4c4ebb4e",
+  "answers": {
+    "mismatch": {
+      "type": "noul", "noul": 0.91, "confidence": 0.91, "answer_confidence": 0.91,
+      "action": { "act_probability": 1.0 }
+    },
+    "actor": {
+      "type": "choice", "choice": "controller",
+      "probabilities": { "controller": 0.84, "human": 0.11, "provider-default": 0.05 },
+      "confidence": 0.4721, "answer_confidence": 0.84,
+      "action": { "act_probability": 1.0 }
+    },
+    "bump": {
+      "type": "choice", "choice": "minor",
+      "probabilities": { "major": 0.07, "minor": 0.55, "patch": 0.38 },
+      "confidence": 0.1802, "answer_confidence": 0.55,
+      "action": { "act_probability": 1.0 }
+    },
+    "risk": {
+      "type": "score", "score": 1.1,
+      "legend": { "0": "low", "1": "medium", "2": "high" },
+      "probabilities": { "0": 0.1, "1": 0.7, "2": 0.2 },
+      "confidence": 0.2585, "answer_confidence": 0.7,
+      "action": { "act_probability": 1.0 }
+    }
+  },
+  "usage": {
+    "input_tokens": 488, "output_tokens": 0, "state_tokens": 97,
+    "state_tokens_dropped": 0, "truncated": false, "truncated_questions": []
+  },
+  "routing": {
+    "model": "english", "repo": "convaiinnovations/laya", "reason": "forced by model",
+    "detection": null, "workflow": null
+  }
+}

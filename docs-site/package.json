@@ -1,0 +1,24 @@
+{
+  "name": "terragucci-docs",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.5",
+    "astro": "7.3.5",
+    "posthog-js": "1.434.13",
+    "sharp": "^0.34.2"
+  },
+  "overrides": {
+    "@posthog/browser-common": "0.9.0",
+    "@posthog/core": "1.55.2",
+    "@posthog/types": "1.412.4",
+    "web-vitals": "6.2.2"
+  }
+}

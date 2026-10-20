@@ -1,0 +1,68 @@
+---
+title: Scale
+description: The generated pipeline run over an estate of up to 10,069 resources in 1,361 roots across 12 repos and one control repo, with the wall time and runner minutes of each phase.
+---
+
+import ScaleLine from '../../../components/ScaleLine.astro';
+import ScaleChart from '../../../components/ScaleChart.astro';
+import ScaleRuns from '../../../components/ScaleRuns.astro';
+import ScaleFlow from '../../../components/ScaleFlow.astro';
+
+The bench operates about 10,000 resources in a dozen repos through the CI jobs terragucci generates. It uses no server and one modest runner.
+
+<ScaleLine lead />
+
+The chart gives the CI time and runner minutes to expect at your estate's size.
+
+The bench times operating an estate already split into 1,361 states. Building and splitting that estate is setup, before the clock starts. What makes it hard:
+
+- Each state belongs to its own root, and roots read each other's state, so they apply in order, in waves.
+- Each root planned or applied starts its own provider process, about 800 MB.
+- The worst case is a change all of them take: a bump to a shared tags module.
+- Plan notes and reports must fit the forge's [comment limit](/terragucci/reference/report/#comment-limits) and stay readable.
+
+## Results
+
+<ScaleChart />
+
+<ScaleRuns />
+
+A run passes only when every phase succeeds and the state files hold every resource the estate declares. It runs on a local Forgejo against an AWS emulator.
+
+## The run
+
+<ScaleFlow />
+
+Each timed phase starts at its first push or merge and ends when its last run does.
+
+1. Setup: the bench builds the estate and pushes each repo with no pipeline.
+2. Reconcile: `reconcile --mode apply` in the [control repo](/terragucci/concepts/control-repo/) opens a pipeline pull request in every repo it lists, and each is checked and planned.
+3. Create: the bench merges them, and each repo's waves apply its platform root first, then the roots that read its state.
+4. Plan: a pull request in each repo changes `modules/estate`, which every root calls, so each repo gets one plan note covering all its roots.
+5. Change: the bench merges those, and the waves apply the new tags.
+6. Verify: the state files must hold every resource.
+
+## Limits
+
+- `parallelism` is 4 in each repo's `terragucci.yml`: four roots at once, each with its own provider.
+- The runner takes 3 jobs at once, so repos run side by side only that far.
+- Each root commits `.terraform.lock.hcl`. Without lock files, `init` downloads the provider again each time: on the 301-resource estate a run took 24 minutes without them and 8 with them.
+- The emulator answers at once. A cloud account adds API latency and throttling, and IAM's default quota of 1,000 roles is below the 1,496 this estate declares.
+
+## Estate setup
+
+The bench's own scripts build the estate. [choudoufu](/terragucci/concepts/glossary/#choudoufu)'s `terralith-gen` writes a terralith at a chosen scale: one root module of AWS resources. A script then carves it into roots and spreads them over repos.
+
+| Root | Holds | Repo |
+|---|---|---|
+| Platform | the network, ECS cluster and Route 53 zone | platform |
+| Service | one ECS service, its task definition and its IAM role | platform |
+| DNS | ten Route 53 records | platform |
+| Team | one team's IAM role and policies | the other repos, 100 a repo |
+| `count` or module teams | two teams | the other repos, 100 a repo |
+
+Service and DNS roots read the platform root's state. Sharing its repo lets its waves order them.
+
+## Reproduce
+
+The bench starts its own containers and calls no cloud. [CONTRIBUTING.md](https://github.com/INTENTIUS/terragucci/blob/main/CONTRIBUTING.md#the-scale-bench) says how to run it.

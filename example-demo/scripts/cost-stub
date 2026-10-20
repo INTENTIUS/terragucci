@@ -1,0 +1,4 @@
+#!/bin/sh
+# The demo's cost stub (cost.mjs beside it). terragucci names the estimator
+# after the command's first word, so the plan note reads "from cost-stub".
+exec node "$(dirname "$0")/cost.mjs"

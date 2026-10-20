@@ -1,0 +1,13 @@
+{
+  "step": "agent",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [],
+  "shots": {
+    "reply-light": "548365b1bb5b13af",
+    "reply-dark": "352b35d5a798ca99",
+    "commit-light": "f8410514a97a05ce",
+    "commit-dark": "7939bb93783b6edb",
+    "refused-light": "d2a5bbc8f7f77f8b",
+    "refused-dark": "b51680758867c737"
+  }
+}

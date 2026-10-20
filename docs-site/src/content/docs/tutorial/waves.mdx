@@ -1,0 +1,74 @@
+---
+title: Waves and approvals
+description: Merge the module change and watch it go out a wave at a time, each wave behind its own approval.
+sidebar:
+  order: 4
+  badge:
+    text: 10 min
+    variant: note
+claims: [waves/tofu]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/waves/.
+  In the terragucci clone with the example booted, run `just example change destroy` and read the plan note. Then stop and print the `just example merge destroy` and `just example approve` commands for me. Do not run either of them.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Captured from '../../../components/Captured.astro';
+import Recorded from '../../../components/Recorded.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+The apply is one job per wave, canary first.
+
+| Wave | Roots |
+|---|---|
+| 1 | the dev platform root |
+| 2 | the four dev services |
+| 3 | the staging and prod platform roots |
+| 4 | their eight services |
+
+With the default gate `on-destructive` a wave waits only when its plans destroy or replace something. This scenario makes one destroy.
+
+<Captured step="wave-waiting" cmd="just example change destroy" optional />
+
+That pull request drops the records table of staging email. Its note names the destroy at the top:
+
+<Recorded step="wave-waiting" view="note" alt="The plan note on the destroy pull request in Forgejo: the records table of staging email named under destroys, and wave 4 waiting for an approval, with the terragucci approve command for its digest" optional />
+
+The example runs `approval: sealed`, so its approvals need a key. Your own repo defaults to `ledger`, with no key:
+
+| `approval` | Where | An approval counts when |
+|---|---|---|
+| `sealed` | the example, whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists its wave gates | it is sealed by a key listed in `.chant/allowed_signers` on the default branch as it was before the merge being applied |
+| `ledger` | your own repo, by default | it approves the wave's digest; no key needed |
+
+[Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows both, and `pr-review`.
+
+<Steps>
+
+1. Merge it with `just example merge destroy`, or in Forgejo signed in with the account `just example up` printed. That command's first run also generates a key for the example's sealed mode and commits it to `.chant/allowed_signers` on main; that file lists who may approve.
+
+   <Captured step="wave-waiting" cmd="just example merge destroy" optional />
+
+2. Wave 4 plans the destroy and stops. Its job exits with code 3 and prints the approve command:
+
+   <Recorded step="wave-waiting" view="log" alt="Wave 4's apply job in Forgejo, stopped with exit code 3 and printing terragucci approve wave-4 with the plan's digest" optional />
+
+3. Read the wave's plans in the report. The [`terragucci approve`](/terragucci/reference/cli/#approve) command carries the digest the wave planned, so the approval covers those plans and no others.
+
+4. Approve with the example's generated key:
+
+   ```bash
+   just example approve
+   ```
+
+   It runs `terragucci approve wave-4` with that key.
+
+5. Run the wave's job again, and wave 4 applies. A plan that changes afterwards is not covered, as the next page shows.
+
+</Steps>
+
+To make every wave wait, set `gate: always` in `terragucci.yml`.

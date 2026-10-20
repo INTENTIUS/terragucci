@@ -1,0 +1,68 @@
+---
+title: A wave that changed
+description: Approve a wave, change one of its roots, and see the wave refuse to apply anything.
+sidebar:
+  order: 5
+  badge:
+    text: 5 min
+    variant: note
+claims: [refuse/tofu]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/changed-wave/.
+  In the terragucci clone with the example booted, run `just example change destroy` and `just example change module-bump` and summarize both plan notes. Then stop and print the page's merge and approve commands for me. Do not run them.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Captured from '../../../components/Captured.astro';
+import Recorded from '../../../components/Recorded.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+An approval covers the plans you read and no others.
+
+<Steps>
+
+1. Open the destroy change and merge it, so wave 4 waits:
+
+   ```bash
+   just example change destroy
+   just example merge destroy
+   ```
+
+2. Approve wave 4, as on the previous page:
+
+   ```bash
+   just example approve
+   ```
+
+3. Before you run the wave's job again, change the shared module, so every root in wave 4 plans again:
+
+   ```bash
+   just example change module-bump
+   just example merge module-bump
+   ```
+
+</Steps>
+
+<Captured step="wave-refused" optional />
+
+The wave's plans now differ from the approved ones, so it applies nothing:
+
+| You see | Where |
+|---|---|
+| the job fails with exit code 4 | the wave's job |
+| the approved digest beside the new one, and each root whose plan moved | the job's log |
+
+<Recorded step="wave-refused" view="log" alt="Wave 4's apply job in Forgejo, refusing: the approved digest beside the planned one, and the eight roots that planned differently" optional />
+
+`npx terragucci respond wave-refused --approved <approved report> --current <current report> --wave 4` prints what changed; [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) describes the reports.
+
+| If the new plan is | Do |
+|---|---|
+| what you meant | approve the new digest and run the job again |
+| not what you meant | revert the change |
+
+Had the job run between steps 2 and 3, wave 4 would have applied the destroy under your approval. The module bump's wave 4 would then wait for its own approval instead of refusing.

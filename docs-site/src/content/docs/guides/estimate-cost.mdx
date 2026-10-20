@@ -1,0 +1,168 @@
+---
+title: Estimate the cost of a change
+description: Put the monthly cost change of each root, and the total, in the plan note, from Infracost on your own key.
+claims: [cost/estimate, cost/gate, cost/policy]
+prompt: |
+  Read https://intentius.io/terragucci/guides/estimate-cost/.
+  Add `cost: true` to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request.
+  Tell me which secret I must create and which job gets it. Do not create the secret or an Infracost account.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A cost table in each pull request's plan note, with a row per root the change reaches (a unit, in a Terragrunt repo) and a total row. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
+
+```text
+Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
+
+| Root     | Before | After | Change |
+|----------|--------|-------|--------|
+| envs/app | 0.00   | 20.00 | +20.00 |
+| Total    | 0.00   | 20.00 | +20.00 |
+```
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The [pipeline](/terragucci/getting-started/) | `init` adds the key and the install step to the plan jobs |
+| An Infracost API key | Infracost prices each resource through its pricing API, on your key |
+
+## Steps
+
+<Steps>
+
+1. Store the key as a secret named `INFRACOST_API_KEY`.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       A repository secret under Settings, Secrets and variables, Actions.
+     </TabItem>
+     <TabItem label="GitLab">
+       A masked CI/CD variable, left unprotected, since the plan job runs in merge request pipelines.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The same as GitHub; Forgejo keeps them under Settings, Actions, Secrets.
+     </TabItem>
+   </Tabs>
+
+   The plan job runs the pull request's code, which can read the key, so give Infracost a key that can only price.
+
+2. Turn it on in `terragucci.yml`:
+
+   ```yaml
+   cost: true
+   ```
+
+   With the key under another name:
+
+   ```yaml
+   cost:
+     key_secret: COST_KEY
+   ```
+
+3. Write the pipeline again and merge it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   | Job | Gets |
+   |---|---|
+   | plan, and a `/terragucci plan` re-plan | `INFRACOST_API_KEY` from the secret, and an install step that fetches Infracost 0.10.45 and checks it against the release's checksum |
+   | each apply wave, `/terragucci apply`, and the resume job | the same: a wave prices its own plans for the policy and `approve_above` |
+   | confirm (`apply.when: pull-request`) | nothing: it runs `tf-plan --no-cost` |
+   | drift, check | nothing |
+
+4. Open a pull request. After each root plans, the job runs Infracost over its stored plan:
+
+   ```text
+   cost: envs/app: +20.00 USD a month
+   cost: +20.00 USD a month over 1 of 1 roots
+   ```
+
+</Steps>
+
+## Report contents
+
+| Where | What |
+|---|---|
+| the plan note | the line and the table above; a root Infracost could not price says why |
+| `report.json`, `cost` | the estimator, the currency, the change and the totals, and each root's figures; see [Report JSON schema](/terragucci/reference/report-schema/) |
+| `roots/<root>/cost.json` | Infracost's own output for the root, beside its `plan.json` |
+
+An estimate that fails never fails the plan. A wave's report keeps its own estimate, and the wave's change sits under `waves[].cost`.
+
+In a Terragrunt repo the estimator reads the plan the wave's `run --all` saved for each unit, and treats each unit as a root.
+
+## Hold a wave over an amount
+
+`approve_above` makes a wave wait for an approval when its monthly change is over the amount, in the estimator's currency, whatever `gate` says:
+
+```yaml
+gate: never
+cost:
+  key_secret: COST_KEY
+  approve_above: 100
+```
+
+| Case | The wave |
+|---|---|
+| the change over its roots is more than the amount | waits for an approval of its digest, as under `gate: always`, and its log names the change, the amount and the commit it was read at |
+| the change is the amount or less, or the wave lowers the cost | applies under the gate it has |
+| a root of the wave could not be estimated | waits, naming the root |
+| the wave changes nothing | applies nothing, so it waits for nothing |
+
+The amount is read from the config at base: the commit before the one applied, or the pull request's base with `apply.when: pull-request`. A change that raises or drops the amount waits under the old one, and its log says which amount counts.
+
+The amount, the currency and the wave's change join the wave's set digest. A wave priced differently after its approval applies nothing, exits 4 and names `(monthly cost)` as what moved, as it names a root whose plan moved. [Approve a wave](/terragucci/guides/approve-a-wave/) has the commands.
+
+The plan note sets each wave's change against the amount at base:
+
+```text
+Against `cost.approve_above` at base, 100.00 USD a month: wave 1 +20.00 USD, within it; wave 2 +140.00 USD, over it: it waits for an approval whatever the gate.
+```
+
+A wave the amount holds says "waits for an approval" in the note's wave table, with the command that approves its digest.
+
+## Cost in the policy
+
+With `cost` set, `tf-plan` and each `tf-apply` wave give the policy the figures as `input.cost`. [Policy](/terragucci/reference/policy/#cost) lists the fields; this one denies a root that adds more than 50 a month:
+
+```rego
+package main
+
+import rego.v1
+
+deny contains msg if {
+  input.cost.root.monthly_delta > 50
+  msg := sprintf("this root adds %v %s a month; the most is 50", [input.cost.root.monthly_delta, input.cost.currency])
+}
+```
+
+## Another estimator
+
+`command` runs any program that prints Infracost's JSON (`totalMonthlyCost`, `pastTotalMonthlyCost`, `diffTotalMonthlyCost` and `currency`). The plan jobs then install nothing.
+
+```yaml
+cost:
+  key_secret: COST_KEY
+  command: node scripts/cost.mjs
+```
+
+| The command gets | Value |
+|---|---|
+| `TG_PLAN_JSON` | the path of the root's plan, `show -json` with sensitive values redacted |
+| `TG_ROOT` | the root's path |
+| `INFRACOST_API_KEY` | the key from `key_secret` |
+| its working directory | the repo's root |
+
+It gets the job's environment less its forge tokens, as the binary does. Each root's estimate may take two minutes.
+
+## Next
+
+- [The plan report](/terragucci/reference/report/)
+- [terragucci.yml keys](/terragucci/reference/config/)

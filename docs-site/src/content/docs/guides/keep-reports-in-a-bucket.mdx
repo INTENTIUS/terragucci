@@ -1,0 +1,294 @@
+---
+title: Keep reports in a bucket
+description: Copy every plan report to an S3 bucket, a GCS bucket or an Azure Blob container, so they outlive your CI's artifact retention and share one index.
+claims: [report/tofu, report/drill-down, report/oidc, report/front-door, report/gcs, report/azure, note/report-link, report/gcs-key, report/azure-key, report/index-writes]
+prompt: |
+  Read https://intentius.io/terragucci/guides/keep-reports-in-a-bucket/.
+  Add the `reports:` block for bucket <bucket>, rerun `npx terragucci init`, write
+  the access policy the page gives for my cloud as a file for me to review, and open a pull request.
+  Do not create the role, the bucket, the container, any secret or the front door stack.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Every run's report in a bucket under one path per run, and an `index.html` that lists every plan you have run.
+
+## Prerequisites
+
+| Cloud | Store | Identity the plan job writes with |
+|---|---|---|
+| AWS | an S3 bucket, or an S3-compatible store such as R2 or MinIO | `reports.role` over OIDC, or keys |
+| GCP | a Cloud Storage bucket, through its JSON API | the plan service account of `oidc.gcp` |
+| Azure | a Blob Storage container | the plan client of `oidc.azure`, or the account key |
+
+[OIDC](/terragucci/reference/pipeline/#credentials) sets up the GCP and Azure identities.
+
+## Steps
+
+<Steps>
+
+1. Name the bucket in `terragucci.yml`.
+
+   <Tabs syncKey="cloud">
+     <TabItem label="AWS">
+   ```yaml
+   reports:
+     bucket: s3://acme-terragucci
+     prefix: reports
+     url: https://reports.acme.example
+     role: arn:aws:iam::123456789012:role/terragucci-reports
+   ```
+
+   For a store that is not AWS, add `endpoint`; without it, the job reads `AWS_ENDPOINT_URL_S3` or `AWS_ENDPOINT_URL`.
+
+   Requests are signed for `AWS_REGION` or `AWS_DEFAULT_REGION`, else `us-east-1`. To sign for another region, set it in the config's `env`:
+
+   ```yaml
+   env:
+     AWS_REGION: eu-west-2
+   ```
+     </TabItem>
+     <TabItem label="GCP">
+   ```yaml
+   reports:
+     bucket: gs://acme-terragucci
+     prefix: reports
+   ```
+
+   `endpoint` defaults to `https://storage.googleapis.com`; an emulator sets its own.
+     </TabItem>
+     <TabItem label="Azure">
+   ```yaml
+   reports:
+     bucket: az://acmeterragucci/reports
+     prefix: reports
+   ```
+
+   The bucket is `az://<storage account>/<container>`. Set `endpoint` for a sovereign cloud or an emulator; it defaults to `https://<account>.blob.core.windows.net`.
+     </TabItem>
+   </Tabs>
+
+   `url` is where a browser opens the reports, such as the front door (step 5). The plan note links `report.html` and each root's `plan.txt` there. Without `url` the note uses presigned bucket links that last up to 7 days.
+
+2. Regenerate the pipeline and commit it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+3. <span id="3-give-the-job-an-identity-that-writes-only-reports"></span>Give the job an identity that writes only reports.
+
+   The plan job runs the pull request's code, and that code can read its credentials. Limit this identity to read and write under the prefix.
+
+   <Tabs syncKey="cloud">
+     <TabItem label="AWS">
+   Allow only `s3:GetObject` and `s3:PutObject` on `arn:aws:s3:::acme-terragucci/reports/*`.
+
+   With `oidc` set, `reports.role` is that identity, assumed through STS `AssumeRoleWithWebIdentity` under a trust policy like your plan role's. `config check` refuses a `reports.role` that is the plan or apply role.
+
+   Without `oidc`, give an IAM user the same policy and store its keys as secrets. `init` passes them only to the jobs that plan, where OpenTofu sees them too.
+
+   | Secret | Needed |
+   |---|---|
+   | `AWS_ACCESS_KEY_ID` | always |
+   | `AWS_SECRET_ACCESS_KEY` | always |
+   | `AWS_SESSION_TOKEN` | when the keys are temporary |
+
+   | Order | Identity |
+   |---|---|
+   | 1 | `reports.role` |
+   | 2 | `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` |
+   | 3 | `AWS_ROLE_ARN`, which a job with `oidc` sets to its own role; that role then needs write access to the reports |
+
+   A role is assumed with the token in `AWS_WEB_IDENTITY_TOKEN_FILE`; `AWS_ENDPOINT_URL_STS` or `AWS_ENDPOINT_URL` sets the STS address. When STS refuses it, the job fails with STS's error.
+     </TabItem>
+     <TabItem label="GCP">
+   Writes go through `oidc.gcp.plan_service_account`, using the `external_account` file in `GOOGLE_APPLICATION_CREDENTIALS`.
+
+   | Grant to the plan service account | On | For |
+   |---|---|---|
+   | `roles/storage.objectUser`, with an IAM condition on the `reports/` prefix | the bucket | reading and writing reports |
+   | `roles/iam.serviceAccountTokenCreator` | the service account itself | signing the estate page's link through IAM `signBlob` |
+
+   A `service_account` key file in `GOOGLE_APPLICATION_CREDENTIALS` works too: requests carry a JWT it signs, and links are signed with the key.
+     </TabItem>
+     <TabItem label="Azure">
+   The job writes as `oidc.azure.plan_client_id`, trading its token in `ARM_OIDC_TOKEN_FILE_PATH` at Entra ID for a storage token.
+
+   | Assign to the plan client | Scope | For |
+   |---|---|---|
+   | Storage Blob Data Contributor | the container | reading and writing reports |
+   | Storage Blob Delegator | the storage account | the user delegation key that signs a link |
+
+   `AZURE_AUTHORITY_HOST` names Entra ID outside the public cloud, such as `https://login.microsoftonline.us`. Without `oidc.azure`, store the account key as the secret `AZURE_STORAGE_KEY`; `init` maps it to the jobs that plan. An account key reaches every container in the account.
+     </TabItem>
+   </Tabs>
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+   Store them as repository secrets.
+     </TabItem>
+     <TabItem label="GitLab">
+   Use unprotected CI/CD variables.
+     </TabItem>
+     <TabItem label="Forgejo">
+   Repository secrets, as on GitHub.
+     </TabItem>
+   </Tabs>
+
+   Even so, a pull request's plan can overwrite any object under the prefix, including the index. The apply job's CI artifact is the record of what was applied.
+
+4. Open a pull request. When the plan job finishes, its log says where the report went:
+
+   ```text
+   report: terragucci-report/report.html
+   copied to the bucket under reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan; index rewritten at reports/github.com/acme/infra/index.json and reports/index.json
+   served at https://reports.acme.example/reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
+   ```
+
+   Each run gets one path holding the commit's full SHA. Links inside a report are relative:
+
+   ```text
+   reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-plan/report.html
+   reports/github.com/acme/infra/2026/10/4f1a9c0d2e7b8a6c5d4e3f2a1b0c9d8e7f6a5b4c/tf-apply-wave-2/report.json
+   ```
+
+   | Forge | Commit in the path |
+   |---|---|
+   | GitHub | `GITHUB_SHA`, the merge commit on a pull request |
+   | GitLab | `CI_COMMIT_SHA` |
+   | Forgejo | `GITHUB_SHA` |
+
+5. <span id="5-serve-the-index"></span>Open the reports.
+
+   Every upload adds the run's row to two `index.json` files, one at the project's path and one at the top of the prefix, and writes `index.html` from each. A `tf-apply` wave also writes these at the project's path:
+
+   | File | Holds |
+   |---|---|
+   | `inventory.json` | the resources each applied root holds |
+   | `versions.json` | the binary, provider and module versions each applied root ran |
+   | `changes.json` | what the wave did to each resource |
+   | `states.json` | the version of each applied root's state |
+
+   Writes are retried up to 8 times:
+
+   | Store | Index write |
+   |---|---|
+   | S3, Azure Blob | conditional: `If-Match` the ETag read, or `If-None-Match: *` |
+   | GCS | conditional: `ifGenerationMatch` the generation read, or `0` |
+   | An S3-compatible store with no ETag | plain write, last run wins |
+   | An S3-compatible store that answers `501 Not Implemented` | the condition is dropped |
+
+   The bucket holds every plan, including each attribute value not marked sensitive. Keep it private and open it one of two ways:
+
+   | | Presigned link | Front door |
+   |---|---|---|
+   | You deploy | nothing | one CloudFormation stack in your account, in `us-east-1`; AWS only |
+   | Who can open it | anyone holding the link, until it expires | whoever your identity provider signs in |
+   | What opens | one object; its links to other reports need links of their own | every report and index, with their links |
+   | `reports.url` | not set: the plan note links `report.html` and each `plan.txt`, presigned | `https://<DomainName>` |
+
+   <Tabs syncKey="open-reports">
+     <TabItem label="Presigned link">
+   Sign one object for an hour:
+
+   | Cloud | Command | Longest life |
+   |---|---|---|
+   | AWS | `aws s3 presign s3://acme-terragucci/reports/github.com/acme/infra/index.html --expires-in 3600` | 7 days with an IAM user's keys; a role's session ends sooner |
+   | GCP | `gcloud storage sign-url gs://acme-terragucci/reports/github.com/acme/infra/index.html --duration 1h --impersonate-service-account <service account>` | 7 days |
+   | Azure | `az storage blob generate-sas --account-name acmeterragucci --container-name reports --name reports/github.com/acme/infra/index.html --permissions r --expiry <time> --auth-mode login --as-user --full-uri` | 7 days |
+
+   [`terragucci estate`](/terragucci/guides/see-every-project/) prints such a link to its page on each cloud.
+     </TabItem>
+     <TabItem label="Front door">
+   Deploy the template in [The front door](#the-front-door) below and set `url` to its address:
+
+   ```yaml
+   reports:
+     url: https://reports.acme.example
+   ```
+     </TabItem>
+   </Tabs>
+
+   A run that sent a trace also gets `traces/<trace id>.html` under the prefix, forwarding to its report. With `dashboards: true`, the Runs dashboard links it.
+
+   [The reports bucket](/terragucci/reference/reports-bucket/) lists every key under the prefix and the JSON Schema of each object.
+
+</Steps>
+
+Retention is your bucket's lifecycle rule.
+
+## The front door
+
+The template puts CloudFront and an OpenID Connect sign-in with a signed session cookie in front of the bucket. It runs in your account and talks to nothing of terragucci's.
+
+First register a web application with your identity provider. Give it the redirect URI `https://reports.acme.example/_terragucci/callback` and the `openid` and `email` scopes. Any provider whose token endpoint takes `client_secret_post` works; Google, Microsoft Entra ID and Okta do.
+
+<Steps>
+
+1. Store the client secret in Secrets Manager, in `us-east-1`:
+
+   ```bash
+   aws secretsmanager create-secret --region us-east-1 \
+     --name terragucci-reports-client --secret-string '<client secret>'
+   ```
+
+2. Deploy the template:
+
+   ```bash
+   curl -fsSLO https://intentius.io/terragucci/reports-front-door.json
+   aws cloudformation deploy --region us-east-1 --stack-name terragucci-reports \
+     --template-file reports-front-door.json --capabilities CAPABILITY_IAM \
+     --parameter-overrides ReportsBucket=acme-terragucci ReportsBucketRegion=us-east-1 \
+   DomainName=reports.acme.example HostedZoneId=Z0123456789ABCDEFGHIJ \
+   OidcIssuer=https://accounts.google.com OidcClientId=<client id> \
+   OidcClientSecretName=terragucci-reports-client AllowedEmailDomain=acme.example
+   ```
+
+3. Let the distribution read the bucket by adding the statement in the stack's `BucketPolicyStatement` output to the bucket's policy:
+
+   ```bash
+   aws cloudformation describe-stacks --region us-east-1 --stack-name terragucci-reports \
+     --query "Stacks[0].Outputs[?OutputKey=='BucketPolicyStatement'].OutputValue" --output text
+   ```
+
+   `WriteBucketPolicy=true` writes it instead for a bucket with no policy of its own. A bucket encrypted with your own KMS key also needs `kms:Decrypt` for `cloudfront.amazonaws.com` under the same `AWS:SourceArn` condition.
+
+4. Set `url: https://reports.acme.example` under `reports:` and run `npx terragucci init` again.
+
+</Steps>
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `ReportsBucket` | required | `reports.bucket` without `s3://` |
+| `ReportsBucketRegion` | `us-east-1` | the bucket's region |
+| `DomainName` | required | the name people open |
+| `HostedZoneId` | empty | the Route 53 zone of `DomainName`, for its A and AAAA alias records and the certificate's validation; empty writes no record |
+| `CertificateArn` | empty | an ACM certificate in `us-east-1` for `DomainName`; empty requests one |
+| `OidcIssuer` | required | such as `https://accounts.google.com` or `https://login.microsoftonline.com/<tenant>/v2.0` |
+| `OidcClientId` | required | the web application's client id |
+| `OidcClientSecretName` | required | the secret from step 1 |
+| `AllowedEmailDomain` | empty | only verified addresses at this domain get in; empty admits anyone the issuer signs in |
+| `SessionHours` | `12` | how long a sign-in lasts |
+| `WriteBucketPolicy` | `false` | `true` writes the bucket policy |
+
+| The stack makes | Named |
+|---|---|
+| CloudFront distribution, caching nothing, HTTPS only | `DistributionId` output |
+| Origin Access Control, signing every request to the bucket | the stack name |
+| Lambda@Edge function on every viewer request, and its role | the stack name |
+| Secrets Manager secret with the settings and a generated session key | the stack name |
+| ACM certificate, when `CertificateArn` is empty | its ARN |
+| Route 53 A and AAAA alias records, when `HostedZoneId` is set | `DomainName` |
+
+A request without a session cookie goes to the identity provider and then back to its report. `/_terragucci/logout` clears the session. A parameter change reaches the edge within five minutes.
+
+Deleting the stack can fail on the function while CloudFront removes its copies, which takes a few hours; delete it again after that.
+
+## Next
+
+- [The plan report](/terragucci/reference/report/) shows what a report holds.
+- [Report JSON schema](/terragucci/reference/report-schema/) is the format a script reads from the bucket.

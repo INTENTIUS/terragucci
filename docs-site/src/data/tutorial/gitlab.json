@@ -1,0 +1,67 @@
+{
+  "step": "gitlab",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [
+    {
+      "cmd": "just example-gitlab change one-root",
+      "output": "Merge request  /root/example/-/merge_requests/1 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/367 (success)\nCheck          /root/example/-/pipelines/366 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab plan-comment one-root",
+      "output": "Merge request  /root/example/-/merge_requests/1 (the plan note is updated in place)\nRe-plan        /root/example/-/pipelines/369 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab change unformatted",
+      "output": "Merge request  /root/example/-/merge_requests/2 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/371 (failed)\nCheck          /root/example/-/pipelines/370 (failed)",
+      "exit": 0
+    },
+    {
+      "cmd": "the check job of change/unformatted",
+      "output": "envs/dev/orders/locals.tf\n--- old/envs/dev/orders/locals.tf\n+++ new/envs/dev/orders/locals.tf\n@@ -1,4 +1,4 @@\n locals {\n-    team   = \"orders\"\n+  team  = \"orders\"\n   owner = \"shop\"\n }\nUploading artifacts for failed job\nUploading artifacts...\nWARNING: terragucci-check/: no matching files. Ensure that the artifact path is relative to the working directory (/builds/root/example)\nERROR: No files to upload\nCleaning up project directory and file based variables",
+      "exit": 1
+    },
+    {
+      "cmd": "just example-gitlab change destroy",
+      "output": "Merge request  /root/example/-/merge_requests/3 (the plan note is in its activity)\nPlan           /root/example/-/pipelines/375 (success)\nCheck          /root/example/-/pipelines/374 (success)",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab merge destroy",
+      "output": "Merged    merge request !3 into main\nPipeline  /root/example/-/pipelines/377 (failed)\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "exit": 0
+    },
+    {
+      "cmd": "the waiting apply job on main",
+      "output": "wave 4 of 4: planning envs/prod/email, envs/prod/orders, envs/prod/payments, envs/prod/search, envs/staging/email, envs/staging/orders, envs/staging/payments, envs/staging/search\nwave 4 of 4: envs/prod/email plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/prod/orders plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/prod/payments plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/prod/search plans on the state envs/prod/platform (wave 3) applied\nwave 4 of 4: envs/staging/email plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: envs/staging/orders plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: envs/staging/payments plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: envs/staging/search plans on the state envs/staging/platform (wave 3) applied\nwave 4 of 4: planning up to 4 roots at once (the s3 backend)\nenvs/prod/email: No changes. Your infrastructure matches the configuration.\nenvs/prod/orders: No changes. Your infrastructure matches the configuration.\nenvs/prod/payments: No changes. Your infrastructure matches the configuration.\nenvs/prod/search: No changes. Your infrastructure matches the configuration.\nenvs/staging/email: Plan: 0 to add, 1 to change, 1 to destroy.\nenvs/staging/orders: No changes. Your infrastructure matches the configuration.\nenvs/staging/payments: No changes. Your infrastructure matches the configuration.\nenvs/staging/search: No changes. Your infrastructure matches the configuration.\nwave 4 of 4: set digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28, 2 changes, 1 destroy\nwave 4 of 4: approval sealed (identity.gates in chant.workspace.json at base, with no approval key)\nwave 4 of 4: note: set approval: sealed in terragucci.yml to keep sealed approvals, or approval: ledger and run terragucci init to drop the gates\nwave 4 of 4 waits for an approval of digest jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28. Read its plans above, then approve it with:\n  chant approve tf-apply wave-4 --plan jcs1-sha256:284d6a4f3175db20ea6eb2e9a490ac387afaee4a1dc209077125cebe842f8b28 --sign",
+      "exit": 3
+    },
+    {
+      "cmd": "just example-gitlab change drift",
+      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform\nDrift run  /root/example/-/pipelines/378 (success)\nIssue      /root/example/-/issues/1",
+      "exit": 0
+    },
+    {
+      "cmd": "just example-gitlab pr-apply",
+      "output": "Merge request  /root/example/-/merge_requests/4 (merged)\nApply          /root/example/-/pipelines/385 (success)\nterragucci: started pipeline http://gitlab:8929/root/example/-/pipelines/385 on main to apply !4's head ef5a5af7 for root; its job reads !4 again before it applies\nterragucci: applied wave 1, 2, 3, 4 of !4 at ef5a5af7; pr-merge merges it next. http://gitlab:8929/root/example/-/jobs/796 \nterragucci: merged !4 at ef5a5af7 and released its locks on envs/dev/orders. http://gitlab:8929/root/example/-/pipelines/385",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "required-light": "3258877ba5abd164",
+    "required-dark": "f78d50e6f452a35a",
+    "note-light": "14ee203ed3e9f70d",
+    "note-dark": "730bb03afc39ff4d",
+    "replan-light": "e25adafd73929c01",
+    "replan-dark": "4e8ef2bcaf5ac6aa",
+    "check-light": "3eecfec229e9e100",
+    "check-dark": "9ef001ff53087a9e",
+    "waiting-light": "92c747a40b20580d",
+    "waiting-dark": "a745de2f7d21305f",
+    "drift-light": "2a55cc33b28ca368",
+    "drift-dark": "c9bf82a693089c19",
+    "apply-light": "b026846d9a4361d9",
+    "apply-dark": "f814c9c67be53c3e"
+  }
+}

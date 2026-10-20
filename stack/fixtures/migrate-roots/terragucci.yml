@@ -1,0 +1,4 @@
+forge: forgejo
+binary: tofu
+apply:
+  resume: 5

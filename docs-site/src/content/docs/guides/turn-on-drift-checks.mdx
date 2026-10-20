@@ -1,0 +1,130 @@
+---
+title: Turn on drift checks
+description: Plan every root on a schedule and get a grouped report of what changed outside Terraform.
+claims: [drift/tofu, drift/choudoufu, note/drift-overdue, drift/close, respond/drift, comment/plan, waves/tofu, drift/branches]
+prompt: |
+  Read https://intentius.io/terragucci/guides/turn-on-drift-checks/.
+  Add a `drift:` cron to terragucci.yml, run `npx terragucci config check --json`
+  and `npx terragucci init`, and open a pull request. Tell me the GitLab schedule
+  or token scope I must set.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A scheduled `tf-drift` run that plans every root, and one issue that groups what drifted like a pull-request plan.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The pipeline from [Get your first plan note](/terragucci/getting-started/) | `init` adds the drift job to it |
+| A plan role that can read your cloud | drift plans use the same read-only role as pull requests |
+| Terraform or OpenTofu roots, or Terragrunt units | the issue names roots, or units in a Terragrunt repo |
+| A cron expression in UTC | forge schedulers read cron in UTC |
+
+## Steps
+
+<Steps>
+
+1. Set a schedule in `terragucci.yml`. Pick an odd minute; forge schedulers are busiest on the hour.
+
+   ```yaml
+   drift: "17 4 * * *"
+   ```
+
+2. Check the file.
+
+   ```bash
+   npx terragucci config check
+   ```
+
+   ```text
+   terragucci.yml: ok
+   approval: ledger (the default)
+   ```
+
+   A bad value is listed as a problem, and the command exits 2.
+
+3. Write the pipeline again and merge it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       `init` adds a `drift` job with the cron. A `workflow_dispatch` with no `pr` input runs it by hand.
+     </TabItem>
+     <TabItem label="GitLab">
+       Set the same cron under CI/CD, Schedules. `GITLAB_TOKEN` (or the `token_env` variable) needs the `api` scope.
+
+       Give the drift schedule no `TERRAGUCCI_SCHEDULE` variable. A schedule with `TERRAGUCCI_SCHEDULE` set to `comments` is the [comments schedule](/terragucci/guides/re-plan-from-a-comment/), and its pipelines run no drift job.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The same job and trigger as GitHub.
+     </TabItem>
+   </Tabs>
+
+4. Wait for the first run, or start one.
+
+   `terragucci stage tf-drift` plans each root with `-refresh-only`, comparing state with real objects. Only an object changed or deleted outside Terraform counts as drift, and a merged but unapplied change does not. A [choudoufu](/terragucci/concepts/glossary/#choudoufu) root under live resource markers plans in full instead ([below](#live-roots)).
+
+5. Read the issue.
+
+   Each project has at most one open issue, `terragucci: drift found`, which every run updates. A root that cannot be refreshed fails the job; drift alone does not.
+
+   | Event | The issue |
+   |---|---|
+   | Drift found | opened, or updated if one is open |
+   | Every root clean | closed |
+   | A root could not be planned | left as it is |
+
+6. Remediate the drift.
+
+   With `respond.drift` left at its default, the drift job also opens a pull request from `terragucci/drift`. It writes the live value where the root's own resource block sets a literal, and adds an import block for a resource the state does not hold. [Responses](/terragucci/reference/responses/#drift) lists what is only reported.
+
+   | To | Do | Then |
+   |---|---|---|
+   | keep the live value | read the pull request, comment `/terragucci plan` on it for its plan note ([Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/)), and merge it | the apply job applies it in waves, behind the gate like any change |
+   | put the object back | close the pull request and apply the root again | the apply makes the object match the code |
+
+   A coding agent can take what the pull request cannot write (a value set through a variable or a module). Set [`agent.drift`](/terragucci/guides/agent-fix-drift/) and the drift issue starts an agent that returns its change as a pull request.
+
+   Nothing in the drift job applies or merges. Each wave's approval and each run's report stay in the [audit trail](/terragucci/reference/audit-trail/).
+
+   Under `respond.drift: attribute` the issue also names each attribute's changer from the audit log ([Drift attribution](/terragucci/reference/responses/#drift-attribution)).
+
+7. Watch for an overdue note.
+
+   When the schedule stops, the next pull request's plan note says why the drift checks are overdue ([Overdue drift checks](/terragucci/reference/stages/#overdue-drift-checks)).
+
+</Steps>
+
+## Roots another branch applies
+
+With [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches), the drift job checks a root that another branch applies against that branch's code. The job runs on the default branch and plans the root in a checkout of its branch fetched from `origin`. The log names the branch and its commit:
+
+```text
+apply.branches: envs/prod/app plans from release at 3f9a1c2e, the branch that applies it
+```
+
+A provider, backend or version the branch sets differently is the one the check uses, so a difference between the two branches is never reported as drift. A root whose branch cannot be fetched fails its check with the reason; it is never checked against the default branch instead. In a Terragrunt repo, a branch's units plan with one `run --all` in that branch's checkout.
+
+## Live roots
+
+A choudoufu root under live resource markers keeps no state to refresh: every plan of it reads the live system, and choudoufu refuses `-refresh-only` there. `tf-drift` plans such a root in full, and each change the plan would make is drift, read from the live side:
+
+| The plan would | The issue says |
+|---|---|
+| change an attribute | the attribute changed |
+| create a resource | it no longer exists |
+| destroy a resource | it exists outside the code |
+
+A change merged to the default branch but not applied yet also shows here, since the plan cannot tell it from a change made outside choudoufu. The rest of the drift job is the same: one issue, `respond.drift` and attribution.
+
+## Next
+
+- [Stages](/terragucci/reference/stages/) lists what `tf-drift` reads and writes.

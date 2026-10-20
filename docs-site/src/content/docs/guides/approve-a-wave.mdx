@@ -1,0 +1,393 @@
+---
+title: Approve a waiting wave
+description: Read what a wave will do, record your approval, and let the apply carry on.
+claims: [waves/tofu, approval/sealed, comment/apply, report/wave, approval/ledger, approval/at-base, approval/pr-review, refuse/pr-review, approval/pr-review-status, note/approve-command, approval/signer-trust, notify/chat, approval/resume, approval/resume-schedule]
+prompt: |
+  Read https://intentius.io/terragucci/guides/approve-a-wave/.
+  Find the waiting wave with `npx terragucci approve --dry-run`, summarize its
+  report (destroys, replacements, roots) and print the command it gives for me.
+  The `--dry-run` preview is the one form of `terragucci approve` you may run; never sign.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+One wave applied, with an approval recorded in your repo that names the exact plans you read.
+
+## Prerequisites
+
+| You need | Detail |
+|---|---|
+| A wave that ran | After a merge, or from `/terragucci apply` on an open pull request when [`apply.when`](/terragucci/reference/config/#apply-before-merge) is `pull-request`. |
+| A gate | `gate` set to `on-destructive` (the default) or `always`. With `never`, no wave waits ([Gate policy](/terragucci/reference/stages/#gate-policy)). |
+| terragucci | `npm i -D @intentius/terragucci`, where you approve. |
+| Write access | `terragucci approve` pushes a commit to `chant/lifecycle` with your own git credentials. |
+| Under `approval: sealed` only | An ssh key of yours in `.chant/allowed_signers` on the default branch ([setup](#set-up-the-signers-file), once per repo). |
+| To be a person | Nothing signs off for you. |
+
+## Approval modes
+
+`approval` in `terragucci.yml` picks one of three modes, `ledger` (the default), `pr-review` and `sealed`; [Approval modes](/terragucci/standards/access-and-identity/#approval-modes) has what each counts, its setup and what it proves. Every mode binds the wave's set digest: an approval of other plans is refused as changed.
+
+A wave reads the mode at base, like the signers file ([Rule commit](#rule-commit)). `terragucci config check` prints the mode in force and its source.
+
+| `terragucci.yml` | Mode in force |
+|---|---|
+| sets `approval` | that mode |
+| sets none, and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | `sealed`; set `approval: sealed` to say so, or `approval: ledger` and run `terragucci init` to drop the gates |
+| sets none, and no gates are listed | `ledger` |
+
+## Eligible approvers
+
+An approval counts only from someone who had no hand in the change it approves. When a wave decides its gate, it works out who is behind the plans it applies:
+
+| Who | Read from |
+|---|---|
+| the pull request's author | the forge |
+| each author, co-author and committer of the commits on the head being applied | git, for the commits after the [rule commit](#rule-commit) (merge commits left out), and the forge's list of the pull request's commits, which keeps them after a squash merge |
+| each person whose `/terragucci agent` comment produced one of those commits | the commit's `Requested-by: <login>` trailer, which the agent's push job writes ([agent](/terragucci/guides/agent-change-a-pull-request/)) |
+| for a drift pull request, the person who started the drift run, when a person did | the same trailer, on the drift agent's commit ([drift agent](/terragucci/guides/agent-fix-drift/)) |
+| the agent's account, on every pull request | [`agent.login`](/terragucci/reference/config/#the-agent-comment) in the config; without it, `config check` warns and the wave log and the plan note say the account isn't excluded |
+| the users the pipeline's token and `agent.token_env`'s token act as | the forge's `GET /user` with each token the job holds, and the `Pushed-by: <login>` trailer the agent's push job writes with its own |
+
+Logins compare without regard to case. A commit's author is known by the login the forge gives for it, by the login in a forge's noreply address, and by the address itself. On GitLab, which gives no login for a commit, an author counts by a noreply address alone.
+
+A token the forge names no user for, such as GitHub's own job token, is said in the wave's log and left unknown: its reviews are judged as anyone's. On GitHub and Forgejo the actions user's review never counts whatever the rule finds.
+
+The rule covers each kind of approval:
+
+| Approval | How its approver is known |
+|---|---|
+| a forge review, under `pr-review` | the reviewer's login |
+| a `terragucci approve` signed with `--sign` | the principal its seal names, once the seal verifies against the signers file at base |
+| an unsigned `terragucci approve` | the name it records, which whoever wrote it chose |
+
+An unsigned approval can't be tied to a person, so the rule can only refuse one that names someone behind the change. To refuse every unsigned approval on the ledger, set `approval.require_signed: true` in `terragucci.yml` ([config](/terragucci/reference/config/#keys)). Approvers then sign with `terragucci approve --sign` and need a key in the signers file ([setup](#set-up-the-signers-file)).
+
+```yaml
+approval:
+  mode: ledger
+  require_signed: true
+```
+
+A wave that has no approval left once the rule is applied waits, as it does with none. Its log names each person the rule left out and why, for example `bob asked for abc1234, so bob's approval doesn't count`. The wave's report carries the same list in `excluded_approvers`, the run view in `excluded`, and the [audit trail](/terragucci/guides/read-the-audit-trail/) beside the approval. When chant would have gone by an approval the rule leaves out, the wave records a new pending fact for its digest, so only an approval made after it counts.
+
+On GitHub and Forgejo, a pull request's plan note names the people whose review won't count, when one of its waves will wait.
+
+A drift pull request opened on a schedule has no person behind it. A review from any writer counts there, and the review of the bot whose token opened it never does.
+
+## More than one approver
+
+`approval_rules` in `terragucci.yml` asks more of the waves whose roots a glob names: a number of distinct approvers, approvers with a role, or an approver who is not the change's author.
+
+```yaml
+approval: sealed
+approval_rules:
+  - roots: ["envs/prod/**"]
+    count: 2
+    roles: [platform]
+    not_author: true
+  - roots: ["envs/staging/**"]
+    roles: [platform, app-leads]
+```
+
+| Key | Means |
+|---|---|
+| `roots` | root globs; a wave with a root one matches takes the rule |
+| `count` | how many distinct people approve the wave's digest, 1 when unset |
+| `roles` | each approver counted holds one of these roles in `.chant/trust.json` at base |
+| `not_author` | at least one approver counted is proven not to be the change's author |
+
+A wave takes every rule a root of it matches and applies once each is met by approvals of its set digest. A root no rule matches needs what the approval mode needs. The rules decide who approves a wave its gate holds: a wave its gate lets through applies as before. An approval of another digest counts toward nothing, and once a wave applies, every approval of its digest it counted is spent.
+
+Roles come from `roles` in `.chant/trust.json` at base, which maps a role to the principals that hold it:
+
+```json
+{ "schema": 1, "signers": ".chant/allowed_signers", "roles": { "platform": ["github:alice", "github:carol"] } }
+```
+
+An approval counts toward `roles`, and as one by someone who is not the author, only when it proves who made it: under `sealed`, a seal that verifies against the signers file at base; under `pr-review`, the forge login of a reviewer of the merged pull request, or a sealed `terragucci approve`. A role an approver names for themselves never counts. Under `ledger` nothing proves an approval's name, so `terragucci config check` refuses `roles` and `not_author` there and asks for `sealed` or `pr-review`, and refuses `approval_rules` beside `apply.point`, whose decision point has its own deciders and quorum. The rules, the roles and the signers are read at base, so a pull request that edits them is decided by the default branch's.
+
+An approval by someone behind the change never counts ([Eligible approvers](#eligible-approvers)), so `not_author` holds once one approval counted proves its approver.
+
+A wave that has fewer approvals than a rule asks for waits, and says where each rule stands:
+
+```text
+wave 2 of 3: approval_rules: envs/prod/**: 1 of 2 approvals (alice), needs 1 more from platform
+```
+
+`terragucci approve` prints where each rule stood when the wave recorded the pending fact it waits on, and the plan note says what each wave's approval will take. After the first approval the wave runs again, records a new pending fact and waits; approve it again, as a second person, and it applies. The wave's report lists each rule and the approvers it counted in `approval_rules`, and its `apply` entry in the [audit trail](/terragucci/guides/read-the-audit-trail/) lists every approval it applied under.
+
+## Approve by review (`approval: pr-review`)
+
+Works on every forge. GitLab's merge request approvals name no commit, so there an approval counts only after the merge request's latest push.
+
+<Steps>
+
+1. Open the pull request's plan note. Its waves table gives each wave's change digest (what the apply compares against) and whether the gate will hold it.
+
+2. Read the plans, then approve the pull request on its head.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       With write access, pick Files changed > Review changes > Approve.
+     </TabItem>
+     <TabItem label="GitLab">
+       As a member with the Developer role or higher, approve the merge request after its last push. Once withdrawn, it no longer counts.
+     </TabItem>
+     <TabItem label="Forgejo">
+       Under Files changed, choose Review > Approve. Only an official review counts; Forgejo makes a review official when its author can write to the repo.
+     </TabItem>
+   </Tabs>
+
+   The author's own approval never counts, nor does one by anyone else who had a hand in the change ([Eligible approvers](#eligible-approvers)). A review counts only on the commit it names, so a push after your review needs a fresh one; a latest review that asks for changes holds every wave back.
+
+3. Keep unreviewed changes from merging.
+
+   | Forge | Require |
+   |---|---|
+   | GitHub | `terragucci/approval` under Settings > Branches (or Rules) > the default branch > Require status checks. It is pending while a wave the gate will hold has no approving review of the head. |
+   | Forgejo | `terragucci/approval` under Settings > Branches > the default branch's rule > Status check patterns, with the same meaning. |
+   | GitLab | an approval rule under Settings > Merge requests (GitLab Premium and Ultimate); the pipeline posts no `terragucci/approval` there. |
+
+4. Merge. After that, each gated wave plans the merge commit and checks its change digest against the one the note recorded for the reviewed head.
+
+   | Digest at merge | What the wave does |
+   |---|---|
+   | same digest | records the approval on `chant/lifecycle` (`via: pr-review`, the pull request, its head and the reviewers) and applies |
+   | another digest (the plans moved after the review) | applies nothing, exits 4 and prints the `terragucci approve` command for the new digest |
+   | no row for the wave in the note, no approving review, or a direct push | waits for a `terragucci approve`, as under `ledger` |
+
+5. A wave waiting for a review can still get one. On GitHub or Forgejo, approve the merged pull request on its head. GitLab takes no approval after the merge, so there the merge request needs it while still open. Then run the wave again ([step 4 below](#approve-from-a-checkout)): it finds the review and applies. With [`notify`](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) set, the waiting wave's chat message links the review page.
+
+</Steps>
+
+## Approve from a checkout
+
+<Steps>
+
+1. Find the waiting wave and its command.
+
+   | Where | What it gives |
+   |---|---|
+   | the pull request's plan note, before the merge | each wave the gate will hold, with `terragucci approve wave-<k> --plan <digest>`; after the merge the wave asks for that digest unless its plans moved |
+   | `terragucci/apply` on the commit | the waiting wave's command, as the status's description: pending on GitHub and Forgejo, failed on GitLab, which cannot move a running status back to pending |
+   | the job's log, or a comment's reply | the same command; the job exits with code 3 |
+
+   [The tutorial's example](/terragucci/tutorial/waves/) runs `approval: sealed`, so its approve commands carry `--sign` and its approvals a seal. Under the default `ledger` they carry neither.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   The command is the last line of the job's log.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   The job fails with the command at the end of its log.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   The job fails with the command at the end of its log.
+
+   </TabItem>
+   </Tabs>
+
+2. Read what the wave will do.
+
+   The wave waits because a plan destroys or replaces something, or because `gate` is `always`. Destroys and replacements are never grouped, so they sit at the top of the report, where you read each one.
+
+3. Approve it from a checkout of the repo.
+
+   <Tabs syncKey="approval">
+     <TabItem label="ledger (default) or pr-review">
+       ```bash
+       npx terragucci approve wave-2 --plan jcs1-sha256:9f2c... --actor github:alice
+       ```
+     </TabItem>
+     <TabItem label="sealed">
+       ```bash
+       npx terragucci approve wave-2 --plan jcs1-sha256:9f2c... --actor github:alice --sign ~/.ssh/id_ed25519
+       ```
+
+       `--actor` must be your principal in `.chant/allowed_signers`. Left out, `--sign` uses git's `user.signingkey` when `gpg.format` is `ssh`.
+     </TabItem>
+   </Tabs>
+
+   | `terragucci approve` | Does |
+   |---|---|
+   | with no flag | fetches `chant/lifecycle`, finds the waiting wave, prints its roots and destroys, and records an approval of the digest that wave planned |
+   | `wave-<k>` | picks the wave when several wait |
+   | `--plan <digest>` | the digest you read: approves only a wave waiting for exactly it, and otherwise approves nothing and exits 1, naming the digest waiting. Use it whenever you read the plans somewhere other than this command's own output, such as a chat message or the plan note. |
+   | `--actor` | the name the approval records; pass it on your own machine, where it would otherwise record `$USER` |
+   | `--sign` | seals the approval; the default under `approval: sealed` |
+   | `--dry-run` | prints what it would approve and records nothing |
+   | `--no-resume` | records the approval and starts nothing |
+
+   The approval is one line appended to `_gates/tf-apply.jsonl` on `chant/lifecycle` in its own commit. The example runs `approval: sealed`, so its line is sealed.
+
+4. Let the wave run again.
+
+   `terragucci approve` restarts it with your forge token once the approval is recorded, and says so when it has no token.
+
+   | Forge | Token `terragucci approve` reads |
+   |---|---|
+   | GitHub | `GH_TOKEN`, or `gh auth login` |
+   | GitLab | `GITLAB_TOKEN` |
+   | Forgejo | `FORGEJO_TOKEN` |
+
+   With [`apply.resume`](/terragucci/reference/pipeline/#resume-after-an-approval) set, the resume job applies the wave within that many minutes of any approval. Re-run the wave by hand when `apply.resume` is unset, and after a pull request review under `approval: pr-review`:
+
+   | Situation | How to re-run |
+   |---|---|
+   | `apply.when: merge` (the default), GitHub or Forgejo | Comment `/terragucci apply` on the merged pull request (add `wave-2` to stop after that wave), or re-run the job. Needs write access. |
+   | `apply.when: merge`, GitLab | With `comments:` set, comment `/terragucci apply` on the merged merge request; the comments job retries the first apply job that did not succeed on its next run. `wave-<n>` is refused, since GitLab runs the waves after a retried one. Needs Developer or above. Without `comments:`, retry the job. |
+   | `apply.when: pull-request` | Comment `/terragucci apply` on the open pull request again. The mode and the signers come from the default branch, so the pull request cannot relax them or add its own approver. The forge's review is also required. |
+
+   The comment approves nothing.
+
+   | The wave or comment | Outcome |
+   |---|---|
+   | a wave without an approval that counts in its mode | waits, with the command in the reply |
+   | a wave whose plans changed after the approval, before they applied | refused |
+   | a wave planning anew after its approved plans applied | waits for an approval of the new plans |
+   | an approved wave | applies, resuming where it stopped |
+   | a comment that fails a check | runs nothing; the reply names the check ([the checks](/terragucci/reference/pipeline/#ignored-comments)) |
+
+   [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request) and [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) list what each refuses.
+
+   In [the tutorial's example](/terragucci/tutorial/changed-wave/) (`approval: sealed`), the module bump's wave 4 was refused and its new plans approved. Then `/terragucci apply` on the merged pull request resumed the waves and wave 4 applied.
+
+   The report then shows the wave as approved and links its record.
+
+</Steps>
+
+## Roots on HCP Terraform
+
+terragucci's gate reads neither HCP Terraform's run approvals nor its locks, so set workspaces to local execution; remote execution adds HCP's own approvals and locks.
+
+## Set up the signers file
+
+Only `approval: sealed` reads it. With that key in `terragucci.yml`, `terragucci init` lists each wave under `identity.gates`, so `terragucci approve` seals by default.
+
+<Steps>
+
+1. In a reviewed pull request to the default branch, add `.chant/allowed_signers`, one line per approver, in ssh-keygen's allowed_signers format. `terragucci init --signer github:alice` writes the first line from your `git config user.signingkey` when the file does not exist yet:
+
+   ```text
+   github:alice ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI...
+   github:bob ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ...
+   ```
+
+   | Line | Counts? |
+   |---|---|
+   | `ssh-ed25519` | yes |
+   | `sk-ssh-ed25519@openssh.com` | yes |
+   | `ssh-rsa` | yes |
+   | `namespaces="..."` | only if it lists `chant-gate` or `*` |
+   | `valid-after`, `valid-before` | ignored |
+   | `cert-authority` | ignored |
+   | a pattern principal (`*`, `?`, `!`) | ignored |
+
+   To move the file, set its path in `.chant/trust.json`, e.g. `{"schema": 1, "signers": "security/allowed_signers"}`.
+
+2. List only keys that people hold; leave out agent and CI job keys.
+
+3. Protect `chant/lifecycle` against force pushes and deletion (next section).
+
+</Steps>
+
+### Rule commit
+
+These rule files are read from base (the applied commit's first parent):
+
+- the `approval` key in `terragucci.yml`
+- the signers file
+- `.chant/trust.json`
+- `chant.workspace.json`
+
+A pull request's change to them governs only later merges. One that switches `sealed` to `ledger` is still judged sealed.
+
+| Merge method | Base is | Safe |
+|---|---|---|
+| Merge commit | the default branch before the merge | yes |
+| Squash | the default branch before the merge | yes |
+| Rebase of one commit | the default branch before the merge | yes |
+| Rebase of several commits | the pull request's own next-to-last commit | no: merge with a merge commit or a squash |
+
+| A change that turns sealing off for later merges | Applies when |
+|---|---|
+| `approval` set to `ledger` | always |
+| `chant.workspace.json` deleted, or its `identity.gates` emptied | `terragucci.yml` sets no `approval` |
+
+Give those changes the same review as the signers file; the [agent comment](/terragucci/reference/pipeline/#the-agent-comment) refuses both.
+
+## Push access to `chant/lifecycle`
+
+| Who pushes | What | With |
+|---|---|---|
+| an approver | approval records, as fast-forwards | their own credentials |
+| the apply job | pending records | its token (`github.token`, or `GITLAB_TOKEN` on GitLab); on GitHub no rule can tell it from another workflow |
+
+| Mode | What a pushed line counts for |
+|---|---|
+| `sealed` | nothing, unless its seal verifies against the signers file at base |
+| `ledger` and `pr-review` | every line of the digest counts, so who can push here is who can approve |
+
+Protection keeps history from being rewritten.
+
+| Forge | Protect `chant/lifecycle` with |
+|---|---|
+| GitHub | a ruleset or protection rule blocking force pushes and deletion, with pull requests and status checks off. |
+| GitLab | a protected branch with push and merge allowed to a role your approvers and `GITLAB_TOKEN` both hold, force push off. |
+| Forgejo | a protected branch rule with push for everyone with write access and force push off. |
+
+## A gate that asks a decision point
+
+With `apply.point` set, every wave gate asks a chant [decision point](https://intentius.io/chant/guide/ops/#a-gate-that-asks-a-decision-point) in your workspace instead of waiting for an approval. The point's deciders and quorum decide, whoever answers: from a checkout with `chant workspace points answer`, or with Approve in [chat](/terragucci/guides/approve-from-chat/#a-gate-that-asks-a-decision-point).
+
+```yaml
+approval: ledger
+apply:
+  point: prod-apply
+```
+
+The point is declared in the workspace's points file, and must declare `gate.planDigest`, so each wave's plans are their own question:
+
+```json
+{
+  "points": {
+    "prod-apply": {
+      "title": "Apply this wave's plans",
+      "question": { "type": "noul", "instructions": "Should these plans be applied?", "criteria": { "true": "Apply them.", "false": "Do not apply them." } },
+      "inputs": { "gate.component": "the op", "gate.name": "the wave's gate", "gate.planDigest": "the plans the gate binds" },
+      "deciders": [{ "kind": "quorum", "count": 2, "roles": ["maintainer"] }]
+    }
+  }
+}
+```
+
+| Step | What happens |
+|---|---|
+| The wave reaches its gate | it asks the point with `gate.component` `tf-apply`, `gate.name` `wave-<k>` and `gate.planDigest`, keeps the question on `chant/lifecycle`, and waits (exit 3), printing `chant workspace points answer <id> --answer true --by <name>` |
+| Someone clicks Approve | the relay answers the question yes as the clicker's principal, with `--relayed-by` the relay, from the default branch's tip. The relay never counts toward the quorum |
+| The clicker holds the `agent` role in `.chant/trust.json` at base | not counted; with too few people the relay replies `quorum-not-met` and nothing is answered |
+| An agent answers over MCP or ACP | counted for nobody, and refused for a wave gate, whose pending fact is marked never over MCP |
+| The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) runs | it reads the question's answer, and starts the wave again when the answer passes the gate, as it does for an approval |
+| The wave runs again | the answer passes the gate: the wave records a resolution that cites the answer record, then applies. Any other answer applies nothing (exit 4) |
+
+`chant workspace points` and `chant workspace records` list the question and its answer, with who answered and who relayed it. `terragucci approve` does not pass a gate that asks a point. Without `apply.resume`, run the wave's job again after the answer, or comment `/terragucci apply`.
+
+## Refused wave
+
+A root whose plan changed between your approval and the apply makes the wave apply nothing ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)). After a wave has applied, the next change waits for a new approval.
+
+## Next
+
+- [Approvals runbook](/terragucci/guides/approvals-runbook/)
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/)
+- [Approvals as records in your repo](/terragucci/concepts/approvals-as-records/)
+- [The audit trail](/terragucci/reference/audit-trail/): who approved which digest, and the apply it let through

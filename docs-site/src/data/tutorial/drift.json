@@ -1,0 +1,15 @@
+{
+  "step": "drift",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [
+    {
+      "cmd": "just example change drift",
+      "output": "deleted shop-staging-orders-jobs from floci, outside Terraform",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "issue-light": "53bbd3d5abb49c15",
+    "issue-dark": "217c6de88a6a8281"
+  }
+}

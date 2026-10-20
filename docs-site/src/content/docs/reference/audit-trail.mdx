@@ -1,0 +1,230 @@
+---
+title: The audit trail
+description: One record of every approval, apply, policy override and refused wave across your projects, and every state version written outside them, as JSON lines in your bucket, built from your git history, your reports and your state buckets' version lists.
+prompt: |
+  Read https://intentius.io/terragucci/reference/audit-trail/.
+  Download audit.jsonl from the top of my reports prefix with a read-only identity, run the queries
+  under "Query the record", and tell me, per project, every approval with its approver, plan digest
+  and time, every policy override with its reason, every refused wave and every failed apply in the
+  last 30 days, each with its evidence link.
+  Read only: do not run `terragucci audit` without `--check`, and write nothing to the bucket.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+`terragucci audit` writes the record as JSON lines in your reports bucket. It reads the approval ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) in each repo, the wave reports in the bucket, and the list of versions each root's state bucket keeps; no terragucci server or account holds a copy.
+
+## Write it
+
+<Steps>
+
+1. Run it where the [estate page](/terragucci/guides/see-every-project/) job runs, before `terragucci estate`:
+
+   ```bash
+   npx --yes @intentius/terragucci audit
+   npx --yes @intentius/terragucci estate
+   ```
+
+   | Run from | Projects | Ledger read from | Reports read from | Record written to |
+   |---|---|---|---|---|
+   | a [control repo](/terragucci/concepts/control-repo/) | its `projects:` | each project's repo: its `url`, else `https://<key>`, with the forge token when the job has one | each project's `reports` | `defaults.reports` |
+   | one repo | the checkout's own | `origin` | the repo's `reports` | the same bucket |
+
+2. Give the job what it reads. On top of the estate job's identity:
+
+   | Reads | Why |
+   |---|---|
+   | `chant/lifecycle` of each project, with its history | every approval, override and revocation |
+   | `<prefix>/<project>/**/tf-apply-wave-*/report.json` | every apply and its result, every refused wave |
+   | `<prefix>/audit.jsonl`, and writes it, `audit.html` and `audit.json` | the record, its page and its summary |
+   | `<prefix>/<project>/states.json` | the state versions each root's waves recorded |
+   | the list of versions of each root's state object: `s3:ListBucketVersions` on an S3 state bucket, `storage.objects.list` on a GCS one, list on an Azure container | [unrecorded writes](#unrecorded-writes); the list holds ids and times, and no state is read |
+   | with `audit_log_group`, `logs:FilterLogEvents` on that group | the writer of an unrecorded version |
+
+   The forge token is the project's `token_env`, else `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, with read access to the repo. The state buckets are listed with the job's own credentials, the variables [Reports](/terragucci/reference/environment/#reports) names.
+
+3. Read the log:
+
+   ```text
+   audit: 214 entries, 3 added
+     2026-10-08T09:12:44.000Z github.com/acme/network approval wave-2 by dana sha256:4be1...: unsigned
+     2026-10-08T09:20:03.000Z github.com/acme/network apply wave-2 by dana sha256:4be1...: applied
+     2026-10-08T10:01:17.000Z gitlab.example.com/platform/data refused wave-1 by lee sha256:9c07...: changed-after-approval
+   wrote terragucci-audit/audit.jsonl, terragucci-audit/audit.html, terragucci-audit/audit.json
+   copied to s3://acme-terragucci/reports/audit.jsonl, reports/audit.html, reports/audit.json
+   link, until 2026-10-09T10:05:00.000Z:
+   https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/audit.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
+   ```
+
+   A project whose ledger, index or `states.json` cannot be read makes the job exit 1 and is named on the page. The entries it could read still land. A root whose state's versions cannot be listed is named in the log and on the page, and leaves the exit code alone.
+
+</Steps>
+
+The estate page links `audit.html` once `audit.json` is beside it, and its [resource history](/terragucci/guides/see-every-project/#change-history) names each apply's approver from the record. Flags are on [CLI commands](/terragucci/reference/cli/#audit).
+
+## Storage
+
+| Object | What it is |
+|---|---|
+| `<prefix>/audit.jsonl` | the record: one entry per line, oldest first within each run's additions |
+| `<prefix>/audit.html` | the page: counts by kind, each project's ledger state, the newest 1000 entries with their evidence links |
+| `<prefix>/audit.json` | the summary, `terragucci.audit-summary/v1`: how many entries, how many the last run added, counts by kind, and each project's ledger state and `states` (the roots whose versions were checked, skipped with why, or not listed with the error, and how many versions were too new to judge) |
+
+## Entry fields
+
+Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.schema.json`), and holds these fields in this order:
+
+| Field | What it holds |
+|---|---|
+| `schema` | `terragucci.audit/v1`; a new field never changes an existing one |
+| `id` | `sha256:` over where the entry came from: the ledger line, the report's path and finish time, or the state's location and version id |
+| `kind` | what happened; see the next table |
+| `project` | `<host>/<path>` of the repo |
+| `at` | when: the ledger line's `timestamp`, the commit that removed a line, the run's finish, or when the store says a version was written |
+| `who` | the approver, the overrider, whoever removed the line, for an apply the approver it applied under, or for an unrecorded write the writer the bucket's log names; `null` when nobody did or no log names one |
+| `what` | the gate: `wave-<k>`, a migration's name, or for an override, a lock's release or an unrecorded write the root |
+| `digest` | the plan digest: the wave's set digest, or the digest an override binds; `null` when a root failed to plan |
+| `result` | the outcome; see the next table |
+| `evidence` | `source` (`ledger`, `report` or `state`); for the ledger `branch`, `path` and `commit`; for a report `bucket`, `key` and `job_url`; for a state its `location` and `version_id`; `url`, the commit's page or the run's `report.html`, when it is known; `deleted: true` on a report entry whose report was deleted, which has no `url` and which the page lists without a link |
+| `detail` | what else the source says, by kind |
+
+## Kinds and results
+
+| `kind` | From | `result` | `detail` |
+|---|---|---|---|
+| `approval-requested` | a pending line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl` for a migration, `_gates/tf-unlock.jsonl` for a state lock's release, `_gates/tf-state-export.jsonl` for a [state export](/terragucci/guides/export-a-state-version/), or `_gates/tf-ephemeral.jsonl` for a pull request's [ephemeral copy](/terragucci/guides/ephemeral-environments/) | `waiting` | `expires`, `run_id`, `description`, `roots`, `excluded` |
+| `approval` | an approval line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl`, `_gates/tf-unlock.jsonl`, `_gates/tf-state-export.jsonl` or `_gates/tf-ephemeral.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `relayed_by`, `committed_by`, `excluded` |
+| `approval-revoked` | an approval line a commit removed | `revoked` | `approved_by`, `approved_at`, `signer` (sealed) |
+| `override-requested` | a denial a wave recorded in `_gates/policy-override.jsonl` | `denied` | `expires`, `run_id`, `description`, `rules`, `plan_digest` |
+| `override` | an override line in `_gates/policy-override.jsonl` | `unsigned` or `sealed` | `reason`, `rules`, `plan_digest`, `signer`, `relayed_by`, `committed_by` |
+| `override-revoked` | an override line a commit removed | `revoked` | `approved_by`, `approved_at`, `signer` (sealed) |
+| `apply` | a `tf-apply` wave report | `applied`, `failed` or `waiting` | `wave`, `commit`, `roots`, `gate`, `approval` (the id of the approval entry it applied under), `approvals` and `approvers` (under [`approval_rules`](/terragucci/guides/approve-a-wave/#more-than-one-approver), the id of each approval entry the rules counted and every approver they counted), `policy` (the `outcome`, `held` or `unattended`, the `rules` and the `commit`, when the policy's [hold and allow_unattended rules](/terragucci/reference/policy/#holding-or-releasing-a-wave) decided the gate), `excluded`, `changes`, `failed`, `overrides`, `pull_request`, `state_versions` (each root's state `location`, `version_id` and `versioning`) |
+| `migration` | a line in `_gates/tf-migrate/done.jsonl`, written when a [state migration](/terragucci/reference/migration-files/) wrote its states | `applied` or `failed` | `roots` (each root's `location` and state version `before` and `after`, and both digests), `file_digest`, `error`, `commit`, `run_id` |
+| `unlock` | a line in `_gates/tf-unlock/done.jsonl`, written when [`terragucci unlock-state`](/terragucci/reference/cli/#unlock-state) released a state lock; `who` is who released it and `what` the root | `released` | `location`, `lock_id`, `operation`, `locked_by`, `locked_at` (the lock as the binary wrote it), `approved_by`, `approved_at`, `commit` |
+| `state-export` | a line in `_gates/tf-state-export/done.jsonl`, written by [`terragucci state export`](/terragucci/reference/cli/#state-export) before it writes the file; `who` is the person who exported, `what` the root | `exported` | `location`, `version_id`, `approved_by`, `approved_at`, `content_digest` (the digest of the bytes written, never the bytes) |
+| `ephemeral-apply` | a line in `_gates/tf-ephemeral/done.jsonl`, written when a pull request's [ephemeral copy](/terragucci/guides/ephemeral-environments/) applied; `who` is the forge's actor for the job, `what` the gate `pr-<n>`, `digest` the copy's plans | `applied` or `failed` | `pull_request`, `suffix`, `roots` (each root's state `location` and `result`), `expires`, `approved_by`, `commit`, `run_id` |
+| `ephemeral-destroy` | a line in `_gates/tf-ephemeral/done.jsonl`, written when a copy was destroyed; `digest` is the destroy plans' | `destroyed` or `failed` | `pull_request`, `suffix`, `roots`, `reason` (`closed` or `expired`), `commit` (the code the destroy ran), `run_id` |
+| `unrecorded-write` | a version a root's state store lists that no wave or migration recorded ([Unrecorded writes](#unrecorded-writes)); `what` is the root, `at` when the store says it was written, `digest` `null` | `unrecorded` | `location`, `recorded_version` (the newest version terragucci recorded before it, or `null`), `current_version` (the version written), `current_written_at`, `latest` (whether the store serves it now), `deleted` (an S3 delete marker), `who_source` (how `who` was found, or why it is `null`) |
+| `refused` | a `tf-apply` wave report's `waves[].refused` | `changed-after-approval`, `changed-after-review`, `changed-after-override`, `denied-by-policy`, `held-by-another-apply` or `superseded-by-a-newer-push` | `wave`, `commit`, `roots`, `pull_request`, `approved` (the digest approved), `moved` or `denied` (the roots), `rules` (by root, for a denial), `holder` (the run applying them, for `held-by-another-apply`) |
+
+`result` on an approval says how it was signed. Whether it counted is the wave's decision under the `approval:` mode at base, and the `apply` or `refused` entry of that wave records it.
+
+| The entry says | What it proves, by mode |
+|---|---|
+| `who` on an `approval` | `ledger`: the name the approver gave; anyone who can push to `chant/lifecycle` can write any name, and `detail.committed_by` is the commit's author |
+| `detail.signer` | `sealed`: the seal's signer; the wave checks it against `.chant/allowed_signers` at base |
+| `detail.via`, `pr`, `reviewers` | `pr-review`: the apply job recorded a review of that head by a writer who had no hand in the change |
+| `detail.excluded` | each person whose approval the wave left out because they had a hand in the change, with the `login` and the `reason`, such as `bob asked for abc1234` ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). On an `approval-requested` entry, the people whose approvals made the wave record a new pending fact; on an `apply` entry, those its wave left out. An `apply` entry never names an approval by someone it left out |
+| `detail.relayed_by` | the line's `relayedBy`: a service, such as a chat bot, wrote it for the person `who` names. `ledger` and `pr-review`: the relayer's word that `who` approved; the line counts like any other, and `committed_by` is the account that pushed it. `sealed`: the seal still decides; the line counts only when its seal verifies for `who`, and the seal covers the relayer's name |
+
+## Completeness
+
+| Property | How |
+|---|---|
+| Append-only | each run reads `audit.jsonl`, keeps every line, and appends the entries whose `id` it lacks; the write is conditional on the copy read, so two runs at once both land |
+| Re-derivable | the ledger is read from its git history every run, and the same records give the same `id`s; a new record built from the same sources holds the same entries |
+| Checked | `terragucci audit --check` builds the entries again, writes nothing, and exits 1 naming each one the record lacks, such as an approval on the ledger after the last run |
+| Revocations kept | removing a line from the ledger revokes it before its wave runs; the record keeps the approval and adds an `approval-revoked` entry with the commit that removed it |
+| Writes outside terragucci | each run lists the versions of every root's state and adds an `unrecorded-write` entry for each one no wave or migration recorded, one per version, so a later wave that records a newer version leaves the earlier write in the record ([Unrecorded writes](#unrecorded-writes)) |
+| Replaced reports | a second run of the same wave on the same commit replaces its report in the bucket; the record keeps the entry of the first run when an audit ran between them, so schedule the audit at least as often as waves run |
+
+## Query the record
+
+<Tabs syncKey="audit-query">
+  <TabItem label="Approvals">
+    ```bash
+    jq -r 'select(.kind == "approval") | [.at, .project, .what, .digest, .who, .result] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Overrides">
+    ```bash
+    jq -r 'select(.kind == "override") | [.at, .project, .what, .who, (.detail.rules | join(",")), .detail.reason] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Refused and failed">
+    ```bash
+    jq -r 'select(.kind == "refused" or .result == "failed") | [.at, .project, .what, .result, .evidence.url // .evidence.key] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="One wave">
+    ```bash
+    jq -c 'select(.project == "github.com/acme/network" and .what == "wave-2") | {at, kind, who, digest, result}' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Unrecorded writes">
+    ```bash
+    jq -r 'select(.kind == "unrecorded-write") | [.at, .project, .what, .detail.current_version, (.who // "unknown"), .detail.who_source] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+  <TabItem label="Applies with no approval">
+    ```bash
+    jq -r 'select(.kind == "apply" and .result == "applied" and .detail.gate == "approved" and .detail.approval == null) | [.at, .project, .what, .digest] | @tsv' audit.jsonl
+    ```
+  </TabItem>
+</Tabs>
+
+Fetch the record with the store's own CLI, such as `aws s3 cp s3://acme-terragucci/reports/audit.jsonl .`, or open the link the job prints for the page.
+
+## The records it reads
+
+| Record | Where | What it says | Written by |
+|---|---|---|---|
+| A wave asking for approval | `_gates/tf-apply.jsonl` on `chant/lifecycle`, a `"kind":"pending"` line | the wave, the plan digest it asks for, when, and when the request expires | the apply job, when the wave waits |
+| An approval | `_gates/tf-apply.jsonl`, any other line, in a commit of its own | the wave, the plan digest it binds, who (`resolvedBy`) and when (`timestamp`) | `terragucci approve`; under `approval: pr-review`, the apply job |
+| A policy override | `_gates/policy-override.jsonl` | the root, its plan digest, the rules it overrides, who, when and the reason | `terragucci override` |
+| A run's report | the bucket, under one path per commit and stage | every root's plan digest and changes, each wave's set digest, approval state and, when it applied nothing, why (`waves[].refused`) | every `tf-plan`, `tf-apply` wave and `tf-drift` run |
+| The index | `index.json` at the project's path | one row per run; `terragucci audit` reads its `tf-apply` rows to find the reports |
+| The state versions | `states.json` at the project's path | each root's state location and the versions its waves recorded, with when each wave started and finished | every `tf-apply` wave's upload |
+| A migration's writes | `_gates/tf-migrate/done.jsonl` on `chant/lifecycle` | each root's state version before and after the migration wrote it | the apply job, when a [state migration](/terragucci/reference/migration-files/) writes |
+| A state's versions | the state's own bucket or container, through its list of versions | each version's id, when it was written, and whether it is current | your backend, and anything else that writes the state | every upload |
+
+A wave's report names its approval record's branch and path (`waves[].gate`) and never copies it. [Report JSON schema](/terragucci/reference/report-schema/) has every field. Without a bucket, each report is a CI artifact of its job and `terragucci audit` has nothing to read; [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) sets one up.
+
+## Unrecorded writes
+
+Each `tf-apply` wave records the version of each root's state it left, and each state migration the version after its write. An apply from a laptop, or anything else holding the state bucket's credentials, writes a version neither recorded. It shows up in a plan only when the result differs from the code; `terragucci audit` finds it from the versions the bucket keeps.
+
+For each root in a project's `states.json` or its migrations, the run lists the versions of the state where it is now: the location the newest wave recorded, or the one a newer migration moved it to. It reads ids and times from the store's list call and never the state. A version gets an `unrecorded-write` entry when it is:
+
+| Test | Why |
+|---|---|
+| newer than the oldest version terragucci recorded for the root that the store still lists | versions from before terragucci recorded the root are not judged |
+| neither a version a wave recorded in `states.json` nor one a migration recorded after its write | those are terragucci's own |
+| not written while a wave that recorded the root was running, from its report's start to its finish | the binary can write the state more than once during an apply, and the wave records the version it left |
+| written more than 6 hours before the run | a wave still applying has that long to upload its report; the run counts a younger version in `audit.json` and judges it on a later run |
+
+A root is skipped, and counted with why in `audit.json`, when its backend keeps no versions (`versioning: off`), terragucci does not read them (`unknown`), the state is not in `s3://`, `gs://` or `az://`, or the store lists no versions of it, such as an Azure container with blob versioning off.
+
+The estate page lists each root's unrecorded writes among its state versions, marked written outside a wave or migration, with the writer when one is named. [`terragucci notify unrecorded`](/terragucci/reference/cli/#notify), run after `terragucci audit`, posts the ones the run added to Slack and Teams.
+
+### The writer
+
+`who` names a writer only from a log of the bucket's object writes:
+
+| State | `who` |
+|---|---|
+| S3, with [`audit_log_group`](/terragucci/reference/config/#keys) set | the principal of the write in that CloudWatch Logs group whose `x-amz-version-id` is the version's, read through the `aws` CLI in `audit_region` as [drift attribution](/terragucci/reference/responses/) reads CloudTrail; the group is where a CloudTrail trail delivers the state buckets' S3 data events |
+| S3, without it | `null`: CloudTrail's event history, which drift attribution reads, keeps no S3 object writes |
+| GCS or Azure | `null`: terragucci reads no log of their object writes |
+
+`detail.who_source` says which write named the writer, or why `who` is `null`, such as the aws CLI missing from the job's image or no write in the group naming the version.
+
+## Matching an apply to its approval
+
+| Step | Read | Match |
+|---|---|---|
+| 1 | the `apply` entry: `digest`, `detail.commit` | the digest the wave applied, and the commit it applied from |
+| 2 | `detail.approval` | the `id` of the `approval` entry whose `what` and `digest` it applied under |
+| 3 | that entry's `evidence.commit` | the commit on `chant/lifecycle` that added the approval line |
+
+A wave whose plans moved after approval applied nothing and exited 4: its entry is `refused`, with the digest approved and the roots that moved ([Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)).
+
+## Retention
+
+| Record | Kept |
+|---|---|
+| The audit record | your bucket's lifecycle rule; leave `audit.jsonl` out of any expiry |
+| The ledger | as long as the `chant/lifecycle` branch; every change is a commit. Protect it against force pushes and deletion ([per forge](/terragucci/guides/approve-a-wave/#push-access-to-chantlifecycle)) |
+| Reports and the index in a bucket | your bucket's lifecycle rule; an index keeps its newest 500 rows and the newest of each stage and wave |
+| Traces and metrics | your telemetry backend's retention ([Traces and metrics](/terragucci/reference/observability/)) |

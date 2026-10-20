@@ -1,0 +1,187 @@
+---
+title: Choose choudoufu, Terraform, OpenTofu or Terragrunt
+description: Pick the binary your roots run with, and see what each one gives the pipeline.
+claims: [check/diagnostics, drift/choudoufu, choudoufu/rows-overlap, choudoufu/rows-wait, choudoufu/rows-takeover, choudoufu/concurrency, choudoufu/iam, choudoufu/shared-bucket, init/pinned-install, init/root-pins, binary/terraform, binary/terragrunt-terraform, init/terragrunt-root-pins, binary/terragrunt-choudoufu, choudoufu/migrate]
+prompt: |
+  Read https://intentius.io/terragucci/guides/use-a-binary/.
+  Run `npx terragucci init --dry-run --json` and tell me which binary it picked and why.
+  Set `binary:` in terragucci.yml only if that pick is wrong, run `npx terragucci init`, and open a pull request.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import TabFromHash from '../../../components/TabFromHash.astro';
+
+## Already in OpenTofu
+
+OpenTofu plans and applies. Its [core workflow](https://opentofu.org/docs/intro/core-workflow/) page leaves building a shared CI environment out of its scope and points teams to [TACOS](https://opentofu.org/docs/intro/tacos/), which build on that workflow for problems unique to teams. That is the part terragucci covers, in your own CI.
+
+Your roots set up [encryption](https://opentofu.org/docs/language/state/encryption/) of state and plan files with OpenTofu itself; terragucci does not provide it.
+
+## Binary features
+
+Every binary runs the same four stages: `tf-check`, `tf-plan`, `tf-apply` and `tf-drift`. choudoufu is the OpenTofu fork for AWS and Kubernetes from the team behind terragucci, and it adds [thirteen features](#choudoufu) on top of OpenTofu's.
+
+| | choudoufu | Terraform | OpenTofu | Terragrunt |
+|---|---|---|---|---|
+| State | one record per resource in an S3 backend, and a tag on each resource; the state file is a cache | your backend | your backend | each unit's backend |
+| What `tf-check` runs | `fmt -check`, `validate`, [`live-check`](/terragucci/reference/stages/#check) | `fmt -check`, `validate` | `fmt -check`, `validate` | `hcl fmt --check`, `hcl validate` |
+| What the report times | each resource; [slow provider calls](/terragucci/reference/observability/#report-contents), [summed timings](/terragucci/reference/observability/#report-contents) on a large estate and [lock waits](/terragucci/reference/observability/#state-lock-waits) on a locking backend | per-resource timings: not reported (Terraform sends no traces) | each resource | each unit, from Terragrunt's run report |
+| CI image | `terragucci-choudoufu`, choudoufu 0.28.0 | `terragucci-terraform`, Terraform 1.14.9 | `terragucci-tofu`, OpenTofu 1.13.1 | `terragucci-terragrunt`, Terragrunt 1.1.6 and OpenTofu 1.13.1 |
+| Version pin | `version` only | `version`, `.terraform-version`, or an exact `required_version`; per root too | `version`, `.opentofu-version`, or an exact `required_version`; per root too | `terragrunt.version`, or an exact `terragrunt_version_constraint`; per unit too, with the binary's pins |
+
+A pin the image does not carry is installed in the job and checked against the release's SHA256SUMS. Images are pinned by digest.
+
+### A version per root
+
+A root pinned by its own `.opentofu-version`, `.terraform-version` or exact `required_version` runs that version; the rest of its wave runs the job's. `version` in `terragucci.yml` can also be a map of root glob to version:
+
+```yaml
+binary: tofu
+version:
+  "envs/legacy/*": "1.9.1"
+```
+
+The plan and apply jobs install each pinned version once and run each root with its own. The plan note and the report name each root's binary and version:
+
+```text
+Binaries: tofu 1.10.6 for `old` (.opentofu-version); tofu 1.13.1 for 1 root.
+```
+
+Run `npx terragucci init` after adding a pin, so the check job validates each root with its version too. [A version per root](/terragucci/reference/config/#a-version-per-root) gives the order pins are read in.
+
+### Cone plans
+
+With `binary: choudoufu`, a pull request plans each root under a `live` block with `plan -cone=<base>`, where `<base>` is the pull request's target branch (`origin/main`). choudoufu plans the blocks the change touches and every block that reads them, not the whole estate. The plan note names each cone's size:
+
+```text
+Cone plans of the change since `origin/main`: `envs/app` 3 of its 40 blocks; `envs/net` the whole estate, since a provider block changed: aws (guard `provider-changed`).
+```
+
+choudoufu's guard plans the whole estate instead, and the note gives its reason, in cases such as these: the base is not a commit, a provider, `terraform` or `live` block or the lock file changed, a moved, removed or import block names an address no block declares, the cone holds over 30% of the estate's blocks, or the plan finds a marked object outside the cone that no block declares.
+
+| Plan | Cone |
+|---|---|
+| A pull request's `tf-plan`, and a [`/terragucci plan`](/terragucci/guides/re-plan-from-a-comment/) re-plan | yes |
+| A wave that applies an open pull request ([`apply.when: pull-request`](/terragucci/guides/apply-before-merge/)) | yes |
+| A wave that applies a merge commit, and `tf-drift` | no: the whole estate |
+| A root with no `live` block, or an `estate.chdf.hcl` estate | no |
+| A root planned on another estate's planned outputs ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)) | no: the whole estate, as choudoufu plans it with `-estate-outputs-from` |
+| A pull request under `approval: pr-review` whose waves apply after merge | no: the review binds the pull request's plans to the merge commit's, which plan the whole estate |
+
+A cone's addresses are part of its root's plan digest, so an approval of one cone counts for no other. A wave that plans again after its approval and finds another cone, because the change or its base moved, refuses as a changed wave (exit 4). choudoufu's `apply` checks the same cone again from the record it writes beside the plan file. Under `apply.when: merge`, the merge commit's waves plan the whole estate, so their digests are not the pull request's: approve a wave with a cone-planned root when it waits.
+
+## Your binary in `terragucci.yml`
+
+<TabFromHash id="choudoufu" label="choudoufu" />
+
+<Tabs syncKey="binary">
+<TabItem label="choudoufu">
+
+```yaml
+binary: choudoufu
+```
+
+On [choudoufu](https://github.com/INTENTIUS/choudoufu), the stages add:
+
+| You get | Where you see it |
+|---|---|
+| A live check in `tf-check` on every push, before the apply waves, with no cloud credentials | [the `tf-check` log and check report](/terragucci/reference/stages/#check) |
+| One record per resource in an S3 backend, each write conditional, with no lock table or database to run. The state file is a cache: never the record of what you own, and losing it costs a refresh | [Record writes](/terragucci/concepts/locking-and-staleness/#record-writes) |
+| Each address finds its real resource: the apply writes a tag on each resource and the next plan reads it back | [Live resource markers](/terragucci/concepts/locking-and-staleness/#live-resource-markers) |
+| How long a wave waited for a state lock, and how many tries it took, on a backend that locks | [the report, the trace and a metric](/terragucci/reference/observability/#state-lock-waits) |
+| Which provider calls were slow, and the resource each was for | [the report's provider calls](/terragucci/reference/observability/#report-contents) |
+| Reports that stay readable past a span budget on a large estate, with timings summed by resource type | [the report's summed timings](/terragucci/reference/observability/#report-contents) |
+| Two applies of one estate that change different resources run at the same time; one that changes a resource another is applying waits for it, or, from a comment, is refused, before it reaches the cloud. A killed apply leaves nothing to release, and the next one refuses a plan it made stale | [Locking with choudoufu](/terragucci/concepts/locking-and-staleness/#with-choudoufu) |
+| A role scoped to one estate by its ownership tag: it applies that estate and is refused on another estate's resources | [your cloud's IAM](/terragucci/concepts/locking-and-staleness/#live-resource-markers) |
+| One record store bucket for every estate, each under its own prefix | [your bucket](/terragucci/concepts/locking-and-staleness/#one-backend-for-all-your-estates) |
+| A resource moved to another estate by rewriting its tags, or a state adopted into an estate, through a migration approved by digest | [Estates](/terragucci/guides/move-resources-between-roots/#estates) |
+| A root that reads another estate's outputs through `data "terraform_estate_outputs"` applies after the root whose `live` block owns that estate | the layers `init --dry-run` counts, and each wave's apply order |
+| In a pull request that plans both, that root plans on the outputs the upstream's plan makes, through choudoufu's `plan -estate-outputs-from`. A read of an output known only once the upstream applies leaves it unplanned, and the note names the output and the wave that settles it | the plan note's roots planned on another's planned outputs, and [Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots) |
+| Drift checks on roots under live resource markers: each plan reads the live system, so `tf-drift` plans the root in full and reports what the plan would change back as drift | [the drift issue](/terragucci/guides/turn-on-drift-checks/#live-roots) |
+| A pull request plans the cone of its change in each root under a `live` block: the blocks it touches and every block that reads them | [Cone plans](#cone-plans), and the plan note |
+
+`init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
+
+A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
+
+A root whose `live` block does not set `strict { secrets = "refuse" }` gets the tip [`terragucci-choudoufu-secrets`](/terragucci/reference/tips/#terragucci-choudoufu-secrets) in `tf-check` and in the plan report: by default, secret values can reach the estate's record store.
+</TabItem>
+<TabItem label="Terraform">
+
+```yaml
+binary: terraform
+```
+
+A `.terraform-version` file makes `init` pick it; the table in step 1 below has the full order.
+
+</TabItem>
+<TabItem label="OpenTofu">
+
+```yaml
+binary: tofu
+```
+
+`init` picks it for a `.opentofu-version` file or `.tofu` files, and when nothing points elsewhere.
+
+</TabItem>
+<TabItem label="Terragrunt">
+
+```yaml
+binary: tofu   # or terraform: the tool Terragrunt calls
+```
+
+A `root.hcl` or `terragrunt.hcl` turns on Terragrunt, and each unit is a root. Under Terragrunt, `binary` is `tofu`, `terraform` or `choudoufu`, which Terragrunt calls through `TG_TF_PATH`. Terraform is installed in the job; with `choudoufu` the jobs run in the choudoufu image and install Terragrunt. [Use Terragrunt](/terragucci/guides/use-terragrunt/) has the rest.
+
+</TabItem>
+
+</Tabs>
+
+## Steps
+
+<Steps>
+
+1. See what `init` picked. The first line names the binary and why.
+
+   ```bash
+   npx terragucci init --dry-run
+   ```
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   ```
+
+   `binary:` in `terragucci.yml` comes first, then `--binary`, then:
+
+   | Order | Source | Binary |
+   |---|---|---|
+   | 1 | `.opentofu-version` | `tofu` |
+   | 2 | `.terraform-version` | `terraform` |
+   | 3 | `.tofu` files in a root | `tofu` |
+   | 4 | `tofu` on the path | `tofu` |
+   | 5 | `terraform` on the path | `terraform` |
+   | 6 | nothing found | `tofu` |
+
+   If it picked the one you want, stop here.
+
+2. Put your tab's `binary:` line in `terragucci.yml`, or run `npx terragucci init --binary <name>`.
+
+3. Write the pipeline again and commit it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (terragucci.yml), forge github (the origin remote (github.com))
+   updated .github/workflows/terragucci.yml
+   using terragucci.yml
+   ```
+
+</Steps>
+
+## Next
+
+- [Supply chain](/terragucci/standards/supply-chain/): where everything a job runs comes from, and what is checked before it runs.
+- [Use Terragrunt](/terragucci/guides/use-terragrunt/) if your roots are Terragrunt units.
+- [Stages](/terragucci/reference/stages/) lists the inputs, permissions and outputs of each stage.

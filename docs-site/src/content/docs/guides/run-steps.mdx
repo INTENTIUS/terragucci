@@ -1,0 +1,149 @@
+---
+title: Run steps around a stage
+description: Run your own commands before and after each root's init, plan, apply and drift, hold a wave for an approval when one fails, and run the jobs in your own image.
+claims: [steps/before-plan, steps/stop, steps/gate]
+prompt: |
+  Read https://intentius.io/terragucci/guides/run-steps/.
+  Propose the steps block for terragucci.yml that runs my repo's checks before each plan, with on_failure: approve on any check that should hold a wave for a person rather than fail it.
+  Add it to terragucci.yml, run `npx terragucci config check`, and open a pull request. Tell me that the steps take effect once it merges, and why.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+On every forge, your commands run inside the job that already runs each root's `init`, `plan` and `apply`. The plan note and the report list every step that ran:
+
+```text
+**Steps (2):**
+
+| Root     | When        | Step   | Result                         |
+|----------|-------------|--------|--------------------------------|
+| envs/app | before-plan | tfvars | passed                         |
+| envs/app | after-plan  | verify | asks for an approval, exit 1   |
+```
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The [pipeline](/terragucci/getting-started/) | the stages run the steps |
+| Whatever your commands call, in the job's image | the steps run in the job's container; [your own image](#run-the-jobs-in-your-own-image) can carry it |
+
+## Steps
+
+<Steps>
+
+1. List the steps in `terragucci.yml`:
+
+   ```yaml
+   steps:
+     - name: tfvars
+       run: ./scripts/write-tfvars.sh > step.auto.tfvars
+       before: plan
+     - name: verify
+       run: cosign verify-blob --key cosign.pub --signature module.sig module.tgz
+       after: init
+       roots: ["prod/*"]
+       on_failure: approve
+   ```
+
+   | Key | Meaning |
+   |---|---|
+   | `run` | a shell command, run in the root's directory |
+   | `before` or `after` | one of them, naming `init`, `plan`, `apply` or `drift` |
+   | `name` | what the log, the note and the report call it; the command's first line when unset |
+   | `roots` | globs of the roots it runs for; every root when unset |
+   | `on_failure` | `fail`, the default, or `approve` |
+
+2. Check the file, then merge it:
+
+   ```bash
+   npx terragucci config check
+   ```
+
+   Later changes pick them up once this one merges ([why](#steps-are-read-at-base)).
+
+</Steps>
+
+## Step timing
+
+| Job | Runs the steps of |
+|---|---|
+| plan, and a `/terragucci plan` re-plan | `init`, then `plan`, for each root the change reaches |
+| `apply-wave-<k>`, and `apply-comment` with `apply.when: pull-request` | `init` and `plan` for each root of the wave, then `apply` once the gate lets the wave through |
+| drift | `init`, then `drift` around the refresh-only plan |
+| check | none |
+
+A root's steps run in this order: `before-init`, `init`, `after-init`, `before-plan`, the plan, `after-plan`. On an apply wave `before-apply`, the apply and `after-apply` follow once the gate decides. Roots that plan side by side run their steps side by side.
+
+Each step gets the job's environment minus its forge tokens (as the binary does), plus these:
+
+| Variable | Value |
+|---|---|
+| `TG_STAGE` | `tf-plan`, `tf-apply` or `tf-drift` |
+| `TG_STEP` | the moment, such as `before-plan` |
+| `TG_ROOT` | the root's path from the repo |
+| `TG_REPO` | the checkout's path |
+| `TG_PLAN_FILE` | after a plan and before an apply: the saved plan, which `tofu show -json "$TG_PLAN_FILE"` reads |
+
+A step's output goes to the job log with each line prefixed by the root and step name. The report keeps its name, moment, result, exit code and time, never its output.
+
+## In a Terragrunt repo
+
+A wave of units plans with one `run --all` and applies with another, so each moment comes once per wave. A step then runs in turn in each unit directory its `roots` globs match, and `TG_ROOT` names the unit:
+
+| Moment | Runs |
+|---|---|
+| `before-init`, `before-plan` | before the wave's `run --all plan`; on a pull request's plan a unit whose step fails is refused and the rest plan |
+| `after-plan` | after it, with `TG_PLAN_FILE` the unit's saved plan; `on_failure: approve` holds the wave at its gate |
+| `before-apply`, `after-apply` | around the `run --all apply`, for the units that change |
+| `before-drift`, `after-drift` | around the drift job's refresh-only `run --all` |
+
+Terragrunt inits each unit inside `run --all plan` and leaves no gap before its plan. `after: init` is therefore refused; use `before: plan`. A provisional preview of dependents runs no steps.
+
+## Step failures
+
+| `on_failure` | A non-zero exit |
+|---|---|
+| `fail`, the default | fails the root, and its later steps do not run. On a plan the root is refused; on an apply wave nothing in the wave applies. A failure after the apply fails the job, though the root has applied |
+| `approve` | holds the root's wave at its gate. The steps after it still run. The wave waits for an approval of its set digest, whatever `gate` says, and the plan note shows the wave as one that waits |
+
+An `approve` step must run before the gate decides, so `config check` accepts it only around `init` or `plan`.
+
+The wave waits through the same ledger as every other gated wave: [`terragucci approve`](/terragucci/reference/cli/#approve) of its digest on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), under the [approval mode](/terragucci/guides/approve-a-wave/#approval-modes) at base. A wave that changes nothing applies nothing, so it never waits. With `waves.jobs`, a share job whose `approve` step fails applies nothing unless the wave's job decided under an approval.
+
+## Steps are read at base
+
+Each run reads the steps from `terragucci.yml` at its base, which the change cannot alter:
+
+| Run | Reads the steps at |
+|---|---|
+| a pull request's plan | the target branch |
+| an apply after a merge | the applied commit's first parent, as the approval mode is read |
+| `apply.when: pull-request` | the base the pull request applies onto |
+| drift | the default branch, which it checks out |
+
+A change therefore cannot add, edit or remove a step that runs with its apply credentials, nor drop an `approve` step to skip the gate. An unreadable base file fails the stage when the checkout names steps; when it names none, no steps run. The [threat model](/terragucci/reference/threat-model/#steps) has the rest.
+
+## Run the jobs in your own image
+
+Build your own image `FROM` terragucci's when a step needs a tool it lacks, and set `image`. terragucci's images are Debian, so tools come from `apt-get`:
+
+```dockerfile
+FROM ghcr.io/intentius/terragucci-tofu:<the tag init names>
+RUN apt-get update && apt-get install -y --no-install-recommends jq
+```
+
+```yaml
+image: registry.example.com/infra/terragucci-tofu:1
+```
+
+`npx terragucci init` then writes it into each job. Since it must keep terragucci and the binary, build it from the tag the pipeline's header names and rebuild it on each terragucci upgrade. One image serves every job: the plan job plans every root a change reaches, so a root cannot have an image of its own.
+
+## Next
+
+- [Approve a wave](/terragucci/guides/approve-a-wave/)
+- [The plan report](/terragucci/reference/report/)
+- [terragucci.yml keys](/terragucci/reference/config/)

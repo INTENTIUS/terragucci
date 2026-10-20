@@ -1,0 +1,6 @@
+{
+  "ghcr.io/intentius/terragucci-tofu:0.4.38-tofu1.13.1": "sha256:70ae91327e2be3db8ad34e8d26f541d5e4b57548d5d249a97432158286fc4cbc",
+  "ghcr.io/intentius/terragucci-terraform:0.4.38-tf1.14.9": "sha256:9522152f7d9674a57dcd17db2ccbb7122e9bdc5b2abde6d2166e6b539fa78f23",
+  "ghcr.io/intentius/terragucci-terragrunt:0.4.38-tg1.1.6-tofu1.13.1": "sha256:7fa8e65aaa5057757ad739ae60bf30063480551c0d569d886342d9947e43623f",
+  "ghcr.io/intentius/terragucci-choudoufu:0.4.38-choudoufu0.28.0": "sha256:eec0e3c04072a20a83549ac4c7c5ba976d81f3fde520f8285bad5493cc87c377"
+}

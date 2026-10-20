@@ -1,0 +1,114 @@
+---
+title: Roll out a new module version
+description: Move a module's pin one wave at a time, as one pull request per wave, across the roots and repos that use it.
+claims: [rollout/tofu, rollout/control, rollout/pins]
+prompt: |
+  Read https://intentius.io/terragucci/guides/roll-out-a-module-version/.
+  Run `npx terragucci rollout <module>` (the preview only), fix any pin it refuses
+  in a pull request, and print the `--mode apply` command for me to run.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Every root that pins the module moved to the new version through one pull request per wave.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| Roots that pin the module exactly by `oci://` tag or digest, registry `version` or git tag | a range cannot move ([Stages](/terragucci/reference/stages/#rolling-out-a-module-version) lists the cases) |
+| The new version published ([Publish your modules](/terragucci/guides/publish-modules/)) | the rollout pins roots to it |
+| The HCL parser beside terragucci: `npm i -D @cdktn/hcl2json` | the rollout edits each root's pin with it |
+| A forge token that can open pull requests, in the variable `token_env` names | the apply run and the rollout job open the rollout's pull requests with it |
+| Optional: `waves.canary` in `terragucci.yml` | it picks the roots that move first |
+| Optional: `rollouts` in `terragucci.yml` | a scheduled job opens each next wave, so nobody runs step 5 |
+
+## Steps
+
+<Steps>
+
+1. Preview the rollout.
+
+   ```bash
+   npx terragucci rollout modules/network
+   ```
+
+   Name the module by path or by source without the pin, and leave out the version to get the newest published. The dry run changes nothing. When pins disagree, `--from` picks which moves.
+
+   For a module that [`modules.registry`](/terragucci/guides/publish-modules/#serve-a-module-registry) publishes, `modules/network` also names the calls whose `source` is its registry address, such as `modules.example.com/acme/network/generic`, and their `version` moves. With no version named, the newest the registry lists counts too.
+
+2. Fix any pin it refuses. The preview lists each pin it cannot move, with a tip:
+
+   | The pin | Tip |
+   |---|---|
+   | a range such as `~> 1.4` | `rollout-floating-pin`: pin one version |
+   | set from a variable or a local | `rollout-literal-pin`: write a literal, since a variable's value is not in the diff |
+   | absent from the source | `rollout-pin`: add a `?ref=`, `?tag=` or `version` |
+   | two versions of the module in one directory | `rollout-one-pin`: pin every call at one version |
+
+   Do that in its own pull request, then run the preview again.
+
+3. Open the first wave.
+
+   ```bash
+   npx terragucci rollout modules/network 1.4.0 --mode apply
+   ```
+
+   `--mode apply` writes to the forge and runs no `terraform apply`; roots apply after the merge. It opens one pull request for the canary wave, or the first in dependency order. Only that wave's files change, and each pin keeps its shape.
+
+4. Review and merge it. The apply stage runs on the merge commit.
+
+5. Let the next wave open. With `rollouts` set, `init` writes a job that runs `terragucci respond rollout --mode apply` on that schedule:
+
+   ```yaml
+   rollouts: "*/15 * * * *"
+   token_env: ROLLOUT_TOKEN
+   ```
+
+   Each run opens the next wave of every rollout whose last wave merged and applied, so a wave opens within one interval. A rollout with a pull request still open, or one closed unmerged, is left alone.
+
+   | Forge | Job | Token | Schedule |
+   |---|---|---|---|
+   | GitHub | its own workflow, `terragucci-rollout.yml`, which you can also start by hand | the secret `token_env` names, else the job's own; GitHub runs no workflow for a pull request the job's own token opens, so name a secret holding a token that can push branches and open pull requests | the `rollouts` cron |
+   | Forgejo | the same | the secret `token_env` names, else the job's own | the `rollouts` cron |
+   | GitLab | the `rollout` job in the pipeline | the `token_env` variable | a pipeline schedule with that cron and the variable `TERRAGUCCI_SCHEDULE` set to `rollouts`; `init` prints the steps |
+
+   `token_env` is the project's forge token variable, shared beyond the rollout: on GitLab every job that pushes or opens a merge request reads it, and on GitHub and Forgejo the fmt, tips, version-bump and drift jobs export their own token under that name. `respond.rollout: off` leaves the rollout job out.
+
+   Without `rollouts`, run the rollout again after each merge. Each run takes at most one step:
+
+   ```bash
+   npx terragucci rollout modules/network 1.4.0 --mode apply
+   ```
+
+   Either way, the next wave waits for the last to merge and apply. The apply status it checks is `apply/<path>` per directory, else `terragucci/apply`. A pull request closed unmerged or a failed apply stops the rollout. It never merges or writes a default branch.
+
+   | Exit code | Meaning |
+   |---|---|
+   | 0 | a step was taken, or the rollout is complete |
+   | 3 | a pull request waits for a merge or an apply |
+   | 1 | the rollout stopped |
+
+   From a [control repo](/terragucci/concepts/control-repo/), wave 1 holds every project's canaries and later waves follow in config order. Each project gets its own pull request per wave. `rollouts` is a single repo's key, since a project's pipeline sees only its own roots; in a control repo, run `terragucci respond rollout --mode apply` on a schedule of your own.
+
+</Steps>
+
+## Provider upgrades
+
+The same flow moves a provider in the lock file:
+
+```bash
+npx terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
+```
+
+Each lock file is rewritten for that provider alone, and an exact `version` constraint moves too. The wave stops unless every other provider stays where it was.
+
+## Next
+
+- [Changes that reach many roots](/terragucci/reference/stages/#changes-that-reach-many-roots) puts rollouts beside local modules and `reconcile`.
+- [Tips](/terragucci/reference/tips/) names setups that make rollouts hard.
+- The estate page's [versions](/terragucci/guides/see-every-project/#versions) list which roots run which version of the module or provider, from each applied wave.
+- [The JSON output of rollout](/terragucci/reference/cli-json/#rollout) lists each wave's state for scripts.

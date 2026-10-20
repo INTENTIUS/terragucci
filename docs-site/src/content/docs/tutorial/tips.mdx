@@ -1,0 +1,38 @@
+---
+title: Tips
+description: Let a provider version float and read the tip terragucci gives.
+sidebar:
+  order: 8
+  badge:
+    text: 5 min
+    variant: note
+claims: [tips/tofu]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/tips/.
+  In the terragucci clone with the example booted, run `just example change float` and summarize the tip the plan note and report give, and where it differs from the page.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Recorded from '../../../components/Recorded.astro';
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+```bash
+just example change float
+```
+
+Dev search now lets the AWS provider float to any 6.x release (`~> 6.0`).
+
+| What | Where |
+|---|---|
+| tip | `terragucci-floating-range`, naming the root and how to pin the version |
+| plan note | a line counting the tips |
+| report | a Tips section |
+
+<Recorded step="tips" view="note" alt="The plan note on a pull request that lets dev search's AWS provider float, with its line counting the tips on how the roots are set up" optional />
+
+<Recorded step="tips" view="report" alt="The Tips section of the HTML report, from its heading through its last tip: terragucci-floating-range for envs/dev/search among them, each tip linked to its rule's page" optional />
+
+Tips never fail a run or change a plan or its digest; `tips: false` removes them. [Tips](/terragucci/reference/tips/) lists the rules.

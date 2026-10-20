@@ -1,0 +1,43 @@
+---
+title: Supply chain
+description: Where every binary, image, tool, provider and module a job runs comes from, how it is pinned, what is checked before it runs, and the key that tightens it.
+claims: [init/pinned-install, init/image, init/atmos-version, modules/publish, modules/attest, modules/require, modules/recorded, modules/terragrunt-require, modules/registry, policy/tofu]
+prompt: |
+  Read https://intentius.io/terragucci/standards/supply-chain/.
+  List every module and provider source in this repo's roots, and say for each whether it is attested (a release `modules.require: attested` would verify), pinned to one version or hash (a `version`, `?ref=`, `oci://` tag or a lock file entry), or neither.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+Every binary and image a job installs is pinned and checked before it runs, your own modules carry signed provenance a root can require, and all of it lands in your own registry, bucket and repo.
+
+| What a job runs | Comes from | Pinned by | Checked before it runs | Tightened by |
+|---|---|---|---|---|
+| the terragucci image | `ghcr.io/intentius/terragucci-<binary>`, or your own image built `FROM` it (`init/image`) | its digest, which `init` writes into the pipeline | the runner pulls it by that digest | [`image`](/terragucci/reference/config/#keys), to run your own build of it |
+| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu) | the image; a release the image does not carry, from the binary's releases | the image's tag, or a root's own pin ([Versions and pins](/terragucci/reference/versions-and-pins/)) | an installed release against its SHA256SUMS (`init/pinned-install`) | a pin per root |
+| Terragrunt and Atmos | Terragrunt's image for a Terragrunt repo, and the tools' releases for any other version | `terragrunt.version` and the units' own constraints; `atmos.version` (`init/atmos-version`) | SHA256SUMS | a pin |
+| Terramate | its releases | the release terragucci pins | its release's checksums | an upgrade of terragucci |
+| the policy engine | conftest's or OPA's releases | the release terragucci pins | a SHA-256 written into terragucci, never the release's own checksum file; an engine already on the runner's path is used as it is | your image, with the engine you vet |
+| cosign, with `modules.attest` | cosign's releases | the release terragucci pins | its release's checksums | |
+| providers | the registry each root names | `.terraform.lock.hcl` in each root | the binary's `init`, against the lock file's hashes | [`sources.providers`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), which refuses a provider address no glob lists |
+| your own modules | your OCI registry, git tags, or [your module registry](/terragucci/guides/publish-modules/#serve-a-module-registry) (`modules/registry`) | a tag or version a root pins | with `modules.require: attested`, the release's signature, provenance and its line in the release ledger (`modules/require`, `modules/recorded`, `modules/terragrunt-require`) | `modules.require: attested`, and `modules.trusted` for other teams' publishers |
+| other modules | the registries and repos the roots name | a `version`, `?ref=` or `oci://` tag | the binary's `init` | [`sources.modules`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), and the tips that flag a missing pin |
+
+`sources` is read at base when the base sets it, so a pull request cannot widen its own allow list.
+
+## Your own modules
+
+| Step | What it leaves | Page |
+|---|---|---|
+| Publish | each changed module at the next version the [bump rules](/terragucci/reference/stages/#version-bump-rules) give, as an `oci://` artifact, a git tag or registry files (`modules/publish`) | [Publish your modules](/terragucci/guides/publish-modules/) |
+| Attest | with `modules.attest`, a cosign signature with your key, SLSA v1 provenance in an in-toto statement and an SPDX 2.3 SBOM, and a line in `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) (`modules/attest`); nothing goes to Sigstore's public log | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
+| Require | `modules.require: attested`: `tf-check` and `tf-plan` refuse a root whose pin does not verify, or that the ledger does not record; `tf-plan` reads the setting at base | [Require attested releases](/terragucci/guides/publish-modules/#require-attested-releases) |
+| Verify by hand | `terragucci verify-release` runs the same check on one release | [verify-release](/terragucci/reference/cli/#verify-release) |
+
+## Provider lock files
+
+Each root keeps its `.terraform.lock.hcl` in the repo, and the binary's `init` checks each provider package it installs against the hashes there. `terragucci rollout --provider` moves a provider's lock entries, and any exact version constraint for it, one wave of roots at a time, and nothing else ([Rolling out a module version](/terragucci/reference/stages/#rolling-out-a-module-version)). A root without a lock file gets the tip `TF040`, and a provider rollout reports it with `rollout-lock-file` and leaves it out.
+
+## Next
+
+- [Versions and pins](/terragucci/reference/versions-and-pins/) for where each pin lives and what moves it.
+- [Threat model](/terragucci/reference/threat-model/#module-and-provider-sources) for what the source checks stop.

@@ -1,0 +1,422 @@
+---
+title: Environment variables and credentials
+description: Every variable terragucci reads, which job gets it, and how cloud roles are assumed.
+prompt: |
+  Read https://intentius.io/terragucci/reference/environment/.
+  List every variable and secret this repo's pipeline needs and which job gets each. Print names only.
+  Do not write secret values anywhere. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The config names variables and never holds a value. Put secrets in your forge's secret store and expose them to the job that needs them.
+
+<Tabs syncKey="forge">
+  <TabItem label="GitHub">
+    A repository secret (Settings > Secrets and variables > Actions), read as `secrets.<NAME>`. The run's own token is `github.token`.
+  </TabItem>
+  <TabItem label="GitLab">
+    A masked CI/CD variable (Settings > CI/CD > Variables). `GITLAB_TOKEN`, a project access token with the `api` scope, is its forge token.
+  </TabItem>
+  <TabItem label="Forgejo">
+    As on GitHub, under Settings > Actions > Secrets.
+  </TabItem>
+</Tabs>
+
+## Forge tokens
+
+| Variable | Used by | Needs |
+|---|---|---|
+| the run's own token (`github.token` on GitHub and Forgejo) | the generated jobs that post or push | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and `fmt` pushes to the branch |
+| `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable; with `comments:` set it also needs the Developer role; with `gitlab.token: protected` it is also a protected variable, and only default-branch jobs get it |
+| `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
+| `TG_TOKEN` | the comment, status, note and respond steps | set by the job; set it yourself outside a pipeline |
+| `GITEA_TOKEN` | nothing | dropped with the other runner tokens from every step that runs a pull request's code |
+
+`token_env` renames the variable. Those commands never merge, so the token needs no merge rights.
+
+| Never reaches the binary or Terragrunt | Where |
+|---|---|
+| `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITLAB_TOKEN`, `CI_JOB_TOKEN`, `FORGEJO_TOKEN`, `GITEA_TOKEN`, `ACTIONS_RUNTIME_TOKEN` | the plan, apply, drift and respond stages, and `validate`, `live-check` and the policy engine in the check job |
+| any variable holding the value of `TG_TOKEN` or `TG_MERGE_TOKEN` | the same |
+| `TF_` variables | pass as set, so a provider's token goes in a `TF_VAR_` variable | [What this covers](/terragucci/reference/pipeline/#pull-request-code-access).
+
+### Jobs that run a pull request's code
+
+On GitHub and Forgejo these jobs hold no forge token while the change's code runs.
+
+| Guard | Covers |
+|---|---|
+| checkouts keep no credentials in the git config | every job below |
+| the steps that run the change's code start without `TG_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` or `ACTIONS_RUNTIME_TOKEN` | every job below |
+| those steps start their shell again without the token | Forgejo, whose runner gives every step its token whatever `permissions:` says |
+| with `oidc` set, those steps fetch their cloud tokens first and start again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | Forgejo, where the request token is the run's own token |
+| the step that runs the change's code is the job's last: the checkout is a script with no post step, the Terragrunt cache is restored and never saved, and the report goes on as the job's outputs to a job in a fresh container, which keeps it as the same artifact | every job below: a later step would hold a token (on GitHub, the checkout action's post step has `github.token` and an upload has `ACTIONS_RUNTIME_TOKEN`) and start with what the code wrote to `GITHUB_ENV` and `GITHUB_PATH` |
+
+| Job | The token is used by |
+|---|---|
+| `check` | the checkout; after a failed check on a branch, the `fmt` job pushes the formatting, and the `check-report` job keeps the check report |
+| `plan` | the step before the checkout, which posts `terragucci/plan` pending, and the checkout; the `plan-note` job then keeps the plan report and posts the note and the status from it |
+| `replan` | the step that reads the comment, before the head is checked out, and the two checkouts; the `replan-note` job keeps the report and posts |
+
+The GitLab check job drops `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITLAB_TOKEN` (or the `token_env` variable) and `CI_JOB_TOKEN` before it runs anything; the `fmt` job pushes the formatting. `GITLAB_TOKEN` stays with the plan job unless `gitlab.token: protected` makes it a protected variable. [Where the scrub ends](/terragucci/reference/threat-model/#token-scrub-limits).
+
+### GitLab-managed state
+
+The binary never gets `CI_JOB_TOKEN`, so the `http` backend takes its credentials from `TF_` variables in `env:` ([pipeline reference](/terragucci/reference/pipeline/#gitlab-managed-state)).
+
+## Reports
+
+Set these on the plan job when `reports.bucket` is set, and in the environment `terragucci mcp` starts in. `AWS_` variables are read for an `s3://` bucket only.
+
+| Variable | Meaning |
+|---|---|
+| `AWS_WEB_IDENTITY_TOKEN_FILE` | the job's OIDC token, which a job with `oidc` writes; with `reports.role` the job assumes that role with it |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | bucket credentials without `reports.role`, from same-named secrets |
+| `AWS_SESSION_TOKEN` | for temporary credentials, when set; mapped from the secret of the same name like the two keys |
+| `AWS_ROLE_ARN` | the role assumed with no `reports.role` and no keys |
+| `AWS_ROLE_SESSION_NAME` | the session name of an assumed role; `terragucci-report` when not set |
+| `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL` | a store that is not AWS; `reports.endpoint` takes precedence |
+| `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL` | the STS that answers `AssumeRoleWithWebIdentity`; `https://sts.<region>.amazonaws.com` when neither is set |
+| `AWS_REGION`, `AWS_DEFAULT_REGION` | the bucket's region, in that order; `us-east-1` by default |
+| `GOOGLE_APPLICATION_CREDENTIALS` | a `gs://` bucket: the credentials file, which a job with `oidc.gcp` writes |
+| `AZURE_STORAGE_KEY` | an `az://` container: the account key, from the same-named secret; it wins over the job's OIDC identity |
+| `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` | an `az://` container without a key: the identity and token a job with `oidc.azure` gets |
+| `AZURE_AUTHORITY_HOST` | Entra ID's address for that token; `https://login.microsoftonline.com` when not set |
+
+## State
+
+What reads a root's state where it is (the version an apply records, `state export`, `unlock-state`, a migration) uses the credentials the backend would: those its configuration names, else these.
+
+| Variable | Meaning |
+|---|---|
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | `gcs`: a bearer token, as the backend's `access_token` |
+| `GOOGLE_BACKEND_CREDENTIALS`, `GOOGLE_CREDENTIALS` | `gcs`: a credentials file, or its JSON, as the backend's `credentials` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `gcs`: the credentials file when none of the above is set, which a job with `oidc.gcp` writes |
+| `GOOGLE_BACKEND_IMPERSONATE_SERVICE_ACCOUNT`, `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` | `gcs`: the service account to act as, as the backend's `impersonate_service_account` |
+| `GOOGLE_BACKEND_STORAGE_CUSTOM_ENDPOINT`, `GOOGLE_STORAGE_CUSTOM_ENDPOINT` | `gcs`: the JSON API's address, as the backend's `storage_custom_endpoint` |
+| `ARM_ACCESS_KEY`, `ARM_SAS_TOKEN` | `azurerm`: the account key or a SAS, as the backend's `access_key` and `sas_token` |
+| `ARM_TENANT_ID`, `ARM_CLIENT_ID`, `ARM_OIDC_TOKEN_FILE_PATH` | `azurerm` without a key or SAS: the identity a job with `oidc.azure` gets, which reads blobs through Entra ID |
+| `ARM_ENVIRONMENT`, `ARM_METADATA_HOSTNAME`, `ARM_METADATA_HOST` | `azurerm`: the cloud (`public`, `china`, `usgovernment`), or the host of its metadata, which names the storage suffix |
+| `ARM_SNAPSHOT` | `azurerm`: `true` as the backend's `snapshot = true` |
+| `AZURE_CLIENT_ID` | set to a root's client with `azure.roles`, when the job sets it |
+
+## Secrets the config names
+
+| Config key | Default name | Holds |
+|---|---|---|
+| `agent.comment.key_secret` | `ANTHROPIC_API_KEY` | the model's API key, given to the agent's step alone |
+| `agent.token_env` | none, required | the token the agent's change is pushed with |
+| `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto`, and on GitLab with `apply.when: pull-request` | a token that may push to the default branch |
+| `cost.key_secret` | `INFRACOST_API_KEY` | the cost estimator's API key; the plan jobs get it as `INFRACOST_API_KEY` |
+| `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
+| `notify.slack` | none | a Slack incoming webhook address; the apply jobs get it as `TERRAGUCCI_SLACK_WEBHOOK` |
+| `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
+| `notify.webhook` | none | a webhook's address for the JSON event; the apply jobs get it as `TERRAGUCCI_WEBHOOK` |
+| `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the apply jobs get it as `TERRAGUCCI_WEBHOOK_KEY` |
+
+The drift job also gets `notify.slack` and `notify.teams`. The apply jobs get `notify.relay`, a name rather than a secret, as `TERRAGUCCI_RELAY`.
+
+## Secrets and variables you pass
+
+```yaml
+pass:
+  secrets: [TF_VAR_db_password]
+  vars: [TF_VAR_region]
+```
+
+| Forge | The job's environment |
+|---|---|
+| GitHub, Forgejo | `TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}` and `TF_VAR_region: ${{ vars.TF_VAR_region }}` in plan, re-plan, every apply job, `apply-comment`, `confirm`, `resume`, drift, and the ephemeral job and its sweep |
+| GitLab | unchanged: every job reads the project's CI/CD variables by name already |
+
+The pipeline holds the names alone. The check job, the note jobs, `fmt`, `tips`, `publish` and the agent jobs get none. The plan job runs a pull request's code, so a passed secret reaches that code, as the providers' credentials do; a fork's pull request gets no plan job. Forgejo keeps a secret's or variable's name in capitals and reads it in any case, so the job gets `TF_VAR_db_password` spelled as the root's variable is.
+
+## Secrets from a cloud's store
+
+With [`secrets`](/terragucci/reference/config/#from-a-clouds-secret-store), the stage that runs a root (plan, re-plan, each apply job, `confirm`, drift) reads each of the root's values from the store after it gives the root its identity, and sets it in that root's binary environment alone. The pipeline holds no value and no path. Each store is read as the identity the root runs with in that job:
+
+| `from` | Reads | As | Address |
+|---|---|---|---|
+| `aws` | Secrets Manager `GetSecretValue` | the root's role from `oidc.roles` (or its environment's), else the job's role, assumed with the job's token; in a re-plan, the keys its trade step left | `AWS_ENDPOINT_URL_SECRETS_MANAGER`, else `AWS_ENDPOINT_URL`, else the region's |
+| `gcp` | Secret Manager's `versions/<version>:access`, `latest` unless the path names one | the root's service account from `oidc.gcp.roles`, else the job's; in a re-plan, the token its trade step left | `https://secretmanager.googleapis.com` |
+| `azure` | Key Vault's `secrets/<name>`, its current version unless the path names one | the root's client from `oidc.azure.roles`, else the job's, traded at Entra ID for a token for the vault | the vault's host: `<vault>.vault.azure.net` for a bare name |
+
+A value that cannot be read fails the root before its `init`, naming the variable, the store, the path and the identity that asked; the error the store answered follows, and no value is printed. The identity needs read access to that secret alone: `secretsmanager:GetSecretValue` on its ARN, Secret Manager Secret Accessor on the secret, or a Key Vault role or access policy that lets it get secrets.
+
+Each value read is kept out of what terragucci writes:
+
+| Where | How |
+|---|---|
+| The plan and its text | a value counts as one the plan marks sensitive, so it is replaced wherever it is a whole value, at any length |
+| The note, the report and its files | each value of eight characters or more is replaced wherever it appears |
+| The job's log | each value of eight characters or more is replaced in what terragucci prints; on GitHub and Forgejo, where `GITHUB_ACTIONS` is `true`, each value is also masked with `::add-mask::`, which the runner applies to the whole log |
+
+No step gets a value. The binary holds it, as it holds a value from `pass.secrets`: a provider or an `external` data source in the root's code can read it, and on a pull request that is the pull request's code. The plan file the binary writes in the job's work directory holds it too, as it holds every variable's value.
+
+## The relay
+
+[`terragucci relay`](/terragucci/guides/approve-from-chat/) reads these from its own environment, in your cloud. No generated job gets them.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TERRAGUCCI_RELAY_REPO` | none, required | the repo's https clone address, with no credential in it |
+| `TERRAGUCCI_RELAY_TOKEN` | none, required | the approve-only token; the relay refuses to start with a token that administers the repo, may push to its default branch, or on GitLab has the `api` scope |
+| `TERRAGUCCI_RELAY_FORGE` | read from the host | `github`, `gitlab` or `forgejo`, for a host other than github.com and gitlab.com |
+| `TERRAGUCCI_RELAY_PRINCIPAL` | `terragucci-relay` | the name each approval records as `relayedBy` |
+| `SLACK_SIGNING_SECRET` | none | the Slack app's signing secret; without it the relay refuses every Slack request |
+| `TEAMS_WEBHOOK_SECRET` | none | the key Teams showed when you made the outgoing webhook; without it the relay refuses every Teams request |
+| `TERRAGUCCI_RELAY_SLACK_RESPONSE` | `https://hooks.slack.com/,https://hooks.slack-gov.com/` | the address prefixes a Slack `response_url` may have; the relay posts its answer to no other |
+| `PORT` | `8080` | the port it serves on |
+| `telemetry.headers_secret` | none | the value of `OTEL_EXPORTER_OTLP_HEADERS` |
+| `token_env` | by forge, see above | the forge token |
+
+## Module publishing
+
+Only the `publish` job gets these, as secrets or, on GitLab, protected masked variables.
+
+| Variable | Meaning |
+|---|---|
+| `TERRAGUCCI_REGISTRY_USER` | the registry user |
+| `TERRAGUCCI_REGISTRY_PASSWORD` | its password or token |
+| `TERRAGUCCI_REGISTRY_INSECURE` | `1` for a registry without TLS |
+| `COSIGN_PRIVATE_KEY` | with `modules.attest`, the private key of the cosign key pair, as `cosign generate-key-pair` writes it |
+| `COSIGN_PASSWORD` | with `modules.attest`, that key's password |
+
+Git tags and the release ledger are pushed to `origin` with the job's checkout, so they need no variable.
+
+## Cloud roles over OIDC
+
+With `oidc`, jobs trade the forge's token for cloud roles.
+
+```yaml
+oidc:
+  plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+  apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+  audience: sts.amazonaws.com
+```
+
+| Key | Meaning |
+|---|---|
+| `plan_role` | the read-only role the plan job assumes |
+| `apply_role` | the write role, for apply jobs only, including [apply before merge](/terragucci/reference/pipeline/#apply-before-merge) |
+| `audience` | the AWS token's audience; `sts.amazonaws.com` when omitted. A map of `plan`, `apply` and `drift` gives each stage's jobs their own ([Audience per stage](#audience-per-stage)) |
+| `roles` | AWS roles by root glob, `{ plan, apply }` each: a root plans and applies with the pair of the first glob it matches, and a root no glob matches with `plan_role` and `apply_role`, which are then optional. Plain roots only; a Terragrunt repo sets [`terragrunt.credentials`](/terragucci/reference/pipeline/#credentials) |
+| `gcp.workload_identity_provider` | `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
+| `gcp.plan_service_account`, `gcp.apply_service_account` | the service accounts the plan and apply jobs impersonate |
+| `gcp.token_url` | the STS endpoint; `https://sts.googleapis.com/v1/token` when omitted |
+| `gcp.roles` | service accounts by root glob, `{ plan, apply }` each; a root no glob matches takes `gcp.plan_service_account` and `gcp.apply_service_account`. Plain roots only |
+| `azure.audience` | `api://AzureADTokenExchange` when omitted; `...USGov` or `...China` for those clouds |
+| `azure.tenant_id`, `azure.subscription_id` | the Entra ID tenant and the subscription the jobs work in |
+| `azure.plan_client_id`, `azure.apply_client_id` | the identities plan and apply sign in as |
+| `azure.roles` | client IDs by root glob, `{ plan, apply }` each; a root no glob matches takes `azure.plan_client_id` and `azure.apply_client_id`. Plain roots only |
+
+Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
+
+Under `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets each root's `AWS_ROLE_ARN` from it; the binary and steps assume that role with the job's token, as does the state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
+
+`gcp.roles` and `azure.roles` work the same way, through `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` and `TERRAGUCCI_ROOT_AZURE_CLIENTS`. A root's binary gets a copy of the job's credentials file that impersonates its service account, as `GOOGLE_APPLICATION_CREDENTIALS`, and its client as `ARM_CLIENT_ID`. Each client needs a federated credential for the same subjects as the job's.
+
+Your role's trust policy must accept the forge's issuer and your repo. Forgejo needs version 15 and Runner 12.5 or later. [Credentials](/terragucci/reference/pipeline/#credentials) covers GCP and Azure.
+
+| Forge | Issuer |
+|---|---|
+| GitHub | `https://token.actions.githubusercontent.com` |
+| GitLab | your GitLab URL |
+| Forgejo | your Forgejo URL followed by `/api/actions` |
+
+The plan role is used on the pull request and on the default branch: re-plan, drift and `confirm` run the default branch's workflow. Trust both subjects for plan, and only the default branch's for apply. A re-plan trades its token for the plan role before the pull request's code runs, so that code never holds a token the apply role trusts. With `oidc.azure` it does not: the azurerm provider takes only the token ([Re-plan](/terragucci/reference/threat-model/#re-plan)).
+
+| Forge | Plan role trusts | Apply role trusts |
+|---|---|---|
+| GitHub | `repo:<owner>/<repo>:pull_request` and `repo:<owner>/<repo>:ref:refs/heads/<default branch>` | `repo:<owner>/<repo>:ref:refs/heads/<default branch>` |
+| GitLab | `project_path:<group>/<project>:ref_type:branch:ref:*` | `project_path:<group>/<project>:ref_type:branch:ref:<default branch>` |
+| Forgejo | `repo:<owner>-<owner id>/<repo>-<repo id>:pull_request` and `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` | `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` |
+
+With [`environments`](/terragucci/reference/config/#environments), an environment's apply jobs on GitHub run in its forge environment, so their subject is `repo:<owner>/<repo>:environment:<name>` in place of the ref's, and the environment's apply role trusts that subject alone ([Trust per environment](#trust-per-environment)). Plan jobs run in no forge environment and keep the subjects above.
+
+On GitLab a merge request's plan job carries its source branch in the subject, so the plan role trusts every branch of the project. Anyone who can push a branch can assume it; keep it read-only. Azure matches a federated credential's subject exactly, so on GitLab the plan identity needs a credential that matches on a claims expression instead.
+
+A repo with Actions on before Forgejo 16 keeps `repo:<owner>/<repo>` until Actions is toggled. `GET /api/v1/repos/<owner>/<repo>` shows both IDs.
+
+Older Forgejo or runner versions need `oidc` unset and static credentials on the runner.
+
+In a Terragrunt repo, roles can follow unit paths ([The generated pipeline](/terragucci/reference/pipeline/#terragrunt)).
+
+### Audience per stage
+
+A string `audience`, or none, gives every job's AWS token the same audience. A map gives each stage's jobs their own, so a role's trust can tell a plan job's token from an apply job's even when both carry the default branch's subject:
+
+```yaml
+oidc:
+  plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+  apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+  audience:
+    plan: terragucci-plan
+    apply: terragucci-apply
+    drift: terragucci-drift
+```
+
+| Key | Jobs whose AWS token carries it |
+|---|---|
+| `plan` | `plan`, `replan` |
+| `apply` | the apply waves and their share and group jobs (an environment's `oidc.audience` replaces it for its group's jobs), `apply-comment`, `mr-apply`, `confirm`, `resume`, `ephemeral` and the ephemeral sweep. A wave split into a job per identity decides in a job that carries the plan audience |
+| `drift` | `drift` |
+
+A stage the map leaves out keeps `sts.amazonaws.com`. `config check` refuses any other key and an empty audience.
+
+Each role's trust condition on `aud` lists the audiences of the jobs that assume it. The apply role lists the apply audience alone. The plan role lists the plan audience, the drift audience when `drift` is set, and the apply audience when `apply.when: pull-request` is set: `confirm` is an apply job that plans with the plan role. GCP and Azure tokens keep their audiences.
+
+With the map, a GitHub step that takes the job's cloud identity fetches its tokens first, then starts again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`. On Forgejo every such step does this whenever `oidc` is set, map or not: there `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is the same token as the run's `ACTIONS_RUNTIME_TOKEN`, which the forge accepts as the run's token. On GitLab, each job's `id_tokens` declares its stage's audience alone ([Token audiences per stage](/terragucci/reference/threat-model/#token-audiences-per-stage)).
+
+### Trust per environment
+
+With [`environments`](/terragucci/reference/config/#environments) each environment's roots apply in jobs of their own ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)), which carry the environment's forge environment and its `oidc.audience`:
+
+```yaml
+oidc:
+  plan_role: arn:aws:iam::111122223333:role/terragucci-plan
+  apply_role: arn:aws:iam::111122223333:role/terragucci-apply
+environments:
+  prod:
+    roots: ["envs/prod/**"]
+    oidc:
+      plan_role: arn:aws:iam::444455556666:role/prod-plan
+      apply_role: arn:aws:iam::444455556666:role/prod-apply
+      audience: terragucci-prod
+```
+
+A role's trust tells one environment's apply job from another's on the default branch by the claims each forge gives it:
+
+| Forge | AWS | GCP | Azure |
+|---|---|---|---|
+| GitHub | the apply role trusts `sub` = `repo:<owner>/<repo>:environment:<name>` alone | the same `sub` in the provider's attribute condition, or the service account's binding | a federated credential whose subject is `repo:<owner>/<repo>:environment:<name>` |
+| GitLab | the environment's `oidc.audience` in the role's `aud` condition, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | an attribute condition on `assertion.environment`, `assertion.environment_protected` and `assertion.ref_protected` | a federated credential that matches on the same claims with a claims expression |
+| Forgejo | one ref's jobs carry the same subject, so a role cannot tell environments apart: keep them apart with a repo per environment, or a protected branch per environment | the same | the same |
+
+On GitHub the environment's subject no longer names the ref, so set the environment's deployment branch rule to the default branch alone; it is what keeps another branch's job out. A job in no environment (the wave's deciding job, and the `default` group's job) keeps the ref's subject, so the plan roles and the top-level apply role keep trusting it. On GitLab, protect the environment so that only those who may deploy to it can run its jobs. With an environment's `audience`, every group's job and the deciding job on GitHub and Forgejo fetch their tokens first and drop the token-request variables, as with the audience map.
+
+### The apply job's own check
+
+Each environment's apply job starts with `terragucci check-job`, before it fetches or trades any token. It compares what the forge tells the job with the environment's settings and stops the job, naming the expected and the found value, when one differs:
+
+| Forge | Forge environment | Ref | Runner |
+|---|---|---|---|
+| GitHub | the `environment` claim of an OIDC token the check requests for the audience `terragucci-check-job` and then drops; only in a job with `oidc`, which may request one | `GITHUB_REF` is the default branch, or a branch of `apply.branches` | with `self-hosted` among the runner's labels, the token's `runner_environment` (else `RUNNER_ENVIRONMENT`) is `self-hosted`; GitHub does not expose the labels |
+| GitLab | `CI_ENVIRONMENT_NAME` | `CI_COMMIT_REF_NAME` is the default branch, or a branch of `apply.branches`, and `CI_COMMIT_REF_PROTECTED` is `true` | `CI_RUNNER_TAGS` holds each of the job's tags |
+| Forgejo | not checked: Forgejo has no environments | `GITHUB_REF`, as on GitHub | with `self-hosted` among the labels, `RUNNER_ENVIRONMENT` is `self-hosted` when the runner sets it; not checked when it does not |
+
+The expected values are written into the job when `init` renders it, so the check does not read `terragucci.yml` from the commit the job runs. Jobs outside an environment (the deciding job, the `default` group's) run no check, and a repo without `environments` renders none.
+
+The check catches a mistake: a hand edit to the workflow, a renamed job, a dropped `environment:` or a mistyped runner label. It does not stop someone who can edit the workflow, since they can delete the check too. What keeps such a job out is the forge's settings (the environment's protection rules and deployment branches, protected runners and runner groups) and each role's trust (above).
+
+## Agent integrations
+
+`agent.token_env` holds the agent's forge token; the agent's jobs hold no cloud role. See [Responses](/terragucci/reference/responses/#runtime).
+
+| Variable | Set for |
+|---|---|
+| `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent's step of `agent.comment` and `agent.drift`: the prompt's path and the turn limit |
+| `TG_ISSUE` | `drift-agent-push`: the drift issue the drift job opened, which the pull request names and is linked on |
+
+## Traces and metrics
+
+The [observability reference](/terragucci/reference/observability/#turning-it-on) explains how to turn them on.
+
+| Variable | Meaning |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | the collector's OTLP/HTTP base URL |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | one signal's full URL |
+| `OTEL_EXPORTER_OTLP_HEADERS` | headers sent with every request; `telemetry.headers_secret` maps a secret into it |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS`, `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | headers for one signal, added to the shared ones |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | `grpc` is refused, since terragucci sends OTLP over HTTP |
+| `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` | `none` turns one signal off |
+| `OTEL_SDK_DISABLED` | `true` turns both off |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | the service name, `terragucci` by default, and extra resource attributes |
+| `TERRAGUCCI_METRICS_PER_RUN` | `true` labels each metric with its run's `commit` and `run` id |
+| `TRACEPARENT` | the parent span of the stage's trace |
+
+## Forge check
+
+[`terragucci forge check`](/terragucci/reference/cli/#forge-check) reads these on the machine that runs it. Each needs [read-only scopes](/terragucci/reference/cli/#read-only-credentials).
+
+| Variable | Meaning |
+|---|---|
+| `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | the forge's token, by the config's forge; `token_env` renames it |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS keys for `iam:GetRole` |
+| `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE` | without keys in the environment: the profile (`default` when unset) whose static keys the shared credentials file (`~/.aws/credentials` by default) holds |
+| `AWS_ENDPOINT_URL_IAM` | IAM's address, in place of the partition's |
+| `GOOGLE_OAUTH_ACCESS_TOKEN` | a GCP access token for the workload identity provider |
+| `AZURE_GRAPH_TOKEN` | a Microsoft Graph access token for the apps' federated credentials |
+
+## Other variables you can set
+
+| Variable | Flag | Meaning |
+|---|---|---|
+| `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
+| `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
+| `TERRAGUCCI_TERRAMATE` | | the `terramate` executable `init` and `terragucci terramate generate` run; `terramate` on the path by default |
+| `TERRAGUCCI_ATMOS` | | the `atmos` executable `init`, `terragucci atmos write` and, with `oidc.roles`, `terragucci config check` run; `atmos` on the path by default |
+| `TOFU_INSTALL_DIR` |  | where `terragucci install` and the stages put the binary, one directory per tool and version, so a runner that keeps it reuses each version; `$RUNNER_TEMP/terragucci-bin` or the temp directory by default |
+| `RUNNER_TEMP` |  | set by GitHub and Forgejo runners |
+| `TF_CLI_ARGS`, `TF_CLI_ARGS_plan`, `TF_CLI_ARGS_apply` |  | a `-lock-timeout` here replaces the default `-lock-timeout=5m` |
+| `TF_DATA_DIR`, `TF_WORKSPACE` |  | where a root's initialised backend is recorded and which workspace it runs in; a `tf-apply` wave reads both to find the state whose version it records |
+| `TG_LOCK_STALE` |  | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), seconds after which a wave takes over the resources another run holds, whatever its forge says of that run; 7200 by default |
+| `TG_BACKEND_BOOTSTRAP` |  | Terragrunt repos, `tf-apply`: when the job sets it, the wave passes it to Terragrunt as it is, so `false` keeps the wave from creating or changing a bucket that `generate.disable_init: false` would bootstrap |
+| `TG_LOCK_POLL` |  | with choudoufu, seconds between a waiting wave's checks of the resources another run holds; 10 by default |
+| `TG_PROGRESS_SECONDS` |  | with choudoufu, seconds between an applying wave's reads of its estates' records for [its progress](/terragucci/concepts/waves-and-approvals/#progress); 5 by default |
+| `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
+| `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
+| `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
+| `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
+| `TG_STAGE`, `TG_STEP`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [step](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the moment (such as `before-plan`), the root, the checkout's path and, after a plan and before an apply, the plan file |
+| `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `terragucci approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
+| `GITHUB_TRIGGERING_ACTOR`, else `GITHUB_ACTOR` |  | in `drift-agent-push`, when `GITHUB_EVENT_NAME` is `workflow_dispatch`: the person who started the drift run, named in the agent commit's `Requested-by:` trailer, whose review of the pull request then doesn't count |
+| `env:` in the config |  | variables every job gets; values only, never secrets |
+
+## Forge variables
+
+A local run needs none of these.
+
+| Forge | Variables |
+|---|---|
+| GitHub and Forgejo | `GITHUB_ACTIONS`, `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
+| GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
+| An environment's apply job ([its check](#the-apply-jobs-own-check)) | GitHub and Forgejo: `GITHUB_REF`, `RUNNER_ENVIRONMENT`; GitLab: `CI_ENVIRONMENT_NAME`, `CI_COMMIT_REF_NAME`, `CI_COMMIT_REF_PROTECTED`, `CI_RUNNER_TAGS` |
+| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_NAME`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+
+## Generated job variables
+
+Internal; a value set in `env:` is overwritten.
+
+| Variable | Set for |
+|---|---|
+| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; on GitLab also the `comments` job, which starts the `mr-apply` pipeline with it; no job running pull request code has it |
+| `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
+| `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE`, `TERRAGUCCI_AGENT_HEAD` | GitLab, `agent.comment`: the variables the `comments` job starts the agent's pipeline with, naming the merge request, the `/terragucci agent` note and the head; `agent` and `agent-push` each read the merge request and the note again from GitLab |
+| `TERRAGUCCI_REVIEW_MR`, `TERRAGUCCI_REVIEW_HEAD` | GitLab, `review.agent`: the variables the `comments` job starts the review's pipeline with, naming the merge request and the head to review |
+| `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
+| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
+| `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
+| `TG_REF` | Forgejo, the `replan` job's checkout of the pull request's head: the ref it fetches, `refs/pull/<n>/head` |
+| `TERRAGUCCI_EPHEMERAL_SUFFIX` | Terragrunt repos, the `ephemeral` job, while it prepares a unit: `-pr-<n>`, which a unit's `remote_state` key reads; empty in every other job |
+| `TG_ACTION` | the `ephemeral` job on GitHub and Forgejo: the pull request event's action; `closed` destroys the pull request's [ephemeral environment](/terragucci/guides/ephemeral-environments/) |
+| `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
+| `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
+| `TG_NO_OIDC_REQUEST`, `TERRAGUCCI_OIDC_FILE`, `TERRAGUCCI_OIDC_GCP_FILE`, `TERRAGUCCI_OIDC_AZURE_FILE` | GitHub with `oidc.audience` a map, and Forgejo with any `oidc`: a step that took the job's cloud identity, once its shell has started again without the token-request variables, and the files its tokens were fetched into before that ([Audience per stage](#audience-per-stage)) |
+| `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
+| `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
+| `TG_BACKEND_BOOTSTRAP` | Terragrunt repos, a `tf-apply` wave, when `generate` gives a unit `disable_init: false` and the job does not set it: `true`, so Terragrunt creates or updates the state bucket ([Bucket bootstrap](/terragucci/guides/generate-root-files/#bucket-bootstrap)) |
+| `TERRAGUCCI_TG_NEXT`, `TERRAGUCCI_TG_PHASE` | Terragrunt repos, the plan stage: the binary the `TG_TF_PATH` wrapper runs, and whether Terragrunt is planning or checking for mock reads, so a later layer is planned on its upstream's planned outputs |
+| `TERRAGUCCI_SOURCES_NEXT` | Terragrunt repos with [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), a plan stage or `tf-apply` wave: the binary the `TG_TF_PATH` wrapper runs once a unit's fetched modules and locked providers pass the check |
+| `TERRAGUCCI_OIDC`, `TERRAGUCCI_GCP_TOKEN_FILE`, `TERRAGUCCI_OIDC_GCP`, `TERRAGUCCI_OIDC_AZURE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc` |
+| `TERRAGUCCI_ROOT_ROLES` | jobs with `oidc.roles`: the stage's roles by root glob, as JSON `[[glob, role], ...]`; each root's `AWS_ROLE_ARN` comes from it |
+| `TERRAGUCCI_TRADED` | a re-plan's plan step: the file of the plan identities' keys and tokens its trade step left, which each root, the reports' bucket and Terragrunt's auth provider read in place of the OIDC token ([Re-plan](/terragucci/reference/threat-model/#re-plan)) |
+| `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent comment's job: the prompt file and the turn limit |
+| `TG_REVIEW_PROMPT` | the review command's step: the prompt file, which is also its stdin |
+| `TG_DEFAULT_BRANCH` | the review job: the default branch, read from the event, that the instructions come from |
+| `TF_HTTP_ADDRESS`, `TF_PLUGIN_CACHE_DIR` | read from your job: GitLab state lowers parallelism; the roots of a stage share the cache, or one of the stage's own when it is unset |
+| `TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE` | set to `true` for a root whose `.terraform.lock.hcl` does not pin its providers at the binary's registry, so its init takes them from the shared cache instead of downloading over a copy another plan is running ([Applies side by side](/terragucci/reference/pipeline/#applies-side-by-side)) |
+| `TF_HTTP_USERNAME`, `TF_HTTP_PASSWORD`, `TF_HTTP_LOCK_ADDRESS`, `TF_HTTP_UNLOCK_ADDRESS`, `TF_HTTP_LOCK_METHOD`, `TF_HTTP_UNLOCK_METHOD` | read from your job or shell, as the binary reads them, on [GitLab-managed state](/terragucci/reference/pipeline/#gitlab-managed-state): the serial each apply records, `state export`, `unlock-state` and ephemeral copies |
+
+

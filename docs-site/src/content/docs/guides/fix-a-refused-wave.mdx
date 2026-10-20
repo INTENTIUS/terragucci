@@ -1,0 +1,84 @@
+---
+title: Fix a refused wave
+description: A wave that applied nothing because a plan changed after its approval. Read the diff, then approve again or stop.
+claims: [refuse/tofu, respond/refused]
+prompt: |
+  Read https://intentius.io/terragucci/guides/fix-a-refused-wave/.
+  Fetch both reports, run `npx terragucci respond wave-refused ... --json`,
+  and tell me in five lines which roots moved and why. The decision is mine.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Result
+
+A decision on a refused wave: the new plan approved and applied, or the change that moved it removed.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| A wave that stopped with a refusal | the job says the set digest no longer matches its approval, and nothing in the wave applied |
+| The apply job's log | unless `respond.wave-refused` is `off`, it prints the diff from step 3 |
+| The job's artifact, `terragucci-report-apply-wave-<k>` | it holds both reports the diff compares |
+
+## Steps
+
+<Steps>
+
+1. Understand why it refused.
+
+   An approval binds a wave's set digest. The wave applies nothing if any root's plan changes between the approval and the apply. The usual cause is another merge touching a root in the wave, or a data source reading a new value. An approval the wave already applied under refuses nothing: the next plans wait.
+
+   In [the tutorial's example](/terragucci/tutorial/changed-wave/), approve the waiting wave and then merge the module bump. Its job stops and names the roots that moved.
+
+2. Get the two reports.
+
+   The artifact `terragucci-report-apply-wave-<k>` holds the refused job's `terragucci-report/`, with the approved report in `approved/report.json` and the job's own in `current/report.json`. Fetch it to a local `terragucci-report/` directory.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       ```bash
+       gh run download <run-id> -n terragucci-report-apply-wave-2 -D terragucci-report
+       ```
+     </TabItem>
+     <TabItem label="GitLab">
+       The `apply-wave-2` job's page > Job artifacts > Download, then unzip it in the checkout; the archive holds `terragucci-report/`.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The run's page > Artifacts > `terragucci-report-apply-wave-2`, then unzip it into `terragucci-report/`.
+     </TabItem>
+   </Tabs>
+
+   The approved report also stays on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) at `_gates/tf-apply/wave-<k>/<digest>.json` (`:` written as `_`):
+
+   ```bash
+   git fetch origin chant/lifecycle
+   git show origin/chant/lifecycle:_gates/tf-apply/wave-2/jcs1-sha256_<hex>.json
+   ```
+
+3. Print the diff.
+
+   ```bash
+   npx terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2
+   ```
+
+   It lists each root whose plan digest moved and what changed inside it. `--json` prints one envelope.
+
+4. Decide.
+
+   | Choice | Command | Result |
+   |---|---|---|
+   | Keep the new plan | `npx terragucci approve wave-2 --plan <digest>` from a checkout, with the new digest the job printed. It approves it, signs under `approval: sealed`, and restarts the wave ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)) | The new plans apply. |
+   | Drop it | Revert the change on the default branch. | The old approval does not come back: the refused run recorded a newer pending fact, so the wave waits for a fresh approval. |
+
+</Steps>
+
+An agent may [summarize the diff](/terragucci/guides/agent-refused-wave/), but it does not re-approve.
+
+## Next
+
+- [Approvals runbook](/terragucci/guides/approvals-runbook/)
+- [Responses to pipeline events](/terragucci/reference/responses/#wave-refused)
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/)

@@ -1,0 +1,19 @@
+{
+  "step": "approved",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [
+    {
+      "cmd": "just example approve",
+      "output": "\n  Approved  wave-4, signed as terragucci-admin",
+      "exit": 0
+    }
+  ],
+  "shots": {
+    "record-light": "0ef313504cab8666",
+    "record-dark": "bd4d39a5d25ed397",
+    "reply-light": "2dd0bbd1838e364f",
+    "reply-dark": "b8bc0189ca22b8e5",
+    "log-light": "dac8ef843304dbd8",
+    "log-dark": "fb820efbc6eec66f"
+  }
+}

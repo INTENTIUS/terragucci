@@ -1,0 +1,74 @@
+{
+  "schema": "terragucci.components/v1",
+  "generated_by": "terragucci 0.4.15",
+  "roots": {
+    "live/network": {
+      "dir": "live/network"
+    },
+    "live/app": {
+      "dir": "live/app"
+    }
+  },
+  "components": [
+    {
+      "name": "live/network",
+      "dependsOn": [],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "live/network",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "live/app",
+      "dependsOn": [
+        "live/network"
+      ],
+      "deploy": [
+        {
+          "phase": "Apply",
+          "steps": [
+            {
+              "kind": "terraform-apply",
+              "root": "live/app",
+              "noRollback": "applied by terragucci's pipeline; a failed wave leaves what applied, and a re-run finishes it"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pipeline": {
+    "path": ".forgejo/workflows/terragucci.yml",
+    "forge": "forgejo",
+    "jobs": [
+      {
+        "name": "apply-wave-1",
+        "needs": [
+          "check"
+        ],
+        "wave": 1,
+        "applies": [
+          "live/network"
+        ]
+      },
+      {
+        "name": "apply-wave-2",
+        "needs": [
+          "apply-wave-1"
+        ],
+        "wave": 2,
+        "applies": [
+          "live/app"
+        ]
+      }
+    ]
+  }
+}

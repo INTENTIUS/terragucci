@@ -1,0 +1,246 @@
+---
+title: Report JSON schema
+description: The fields of report.json, which every plan, apply and drift run writes beside its HTML report.
+prompt: |
+  Read https://intentius.io/terragucci/reference/report-schema/.
+  Write a jq script that reads terragucci-report/report.json and prints every destroy and replacement by address, with its root and the wave that applies it.
+  Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+`report.json` sits beside every `report.html`, which also carries it inline:
+
+```bash
+sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '.named[] | select(.action == "delete") | .address'
+```
+
+## Fields
+
+| Field | Holds |
+|---|---|
+| `schema` | `terragucci.report/v1`; a minor version only adds fields |
+| `minor` | the minor version of the schema the report was written with |
+| `run` | project, commit, base, stage, binary, runtime, start and finish times, and the job |
+| `run.wave`, `run.terragucci` | the wave a `tf-apply` report is for, and the terragucci version that wrote the report |
+| `run.share` | on a `tf-apply` wave split across jobs (`waves.jobs`), the share the report applied; its `waves[0].roots` are the share's roots |
+| `run.commit_url`, `run.pull_request`, `run.pull_request_url` | the commit's page, and the pull or merge request the run planned with its page |
+| `run.report_url` | where this `report.html` is served from the bucket, when `reports.url` is set |
+| `run.trace_id`, `run.trace_url` | the run's trace, when the stage sent one, and its link when `telemetry.trace_url` is set |
+| `change_set` | the set digest over every root's plan digest, the digest an approval names |
+| `unit`, `units` | what the groups count: `member` or `instance`, and how many |
+| `groups[]` | a stable id per normalized change, its roots and the change |
+| `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
+| `totals_roots` | how many roots `totals` counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, a root planned on its upstream's planned outputs included, and no root the policy denied. The note's total line reads `3 to add, 2 to change, 0 to destroy across 3 roots` from the two (minor 35) |
+| `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
+| `roots[].changes[].perpetual`, `roots[].changes[].streak` | on a `tf-plan` with `reports` set, a change on every run (minor 43): an update or replacement the root's last 3 applied waves in a row each made too, to the same address with the same action and top-level attributes, from the project's `changes.json`; `streak` is how many of its newest applied waves in a row made it. Only the note reads them: the plan, its digests and the gate are the same without them |
+| `waves[]` | one entry per wave; [its fields](#waves) are below |
+| `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
+| `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
+| `roots[].plan` | paths to the root's full plan text and JSON, and the job that ran it |
+| `roots[].environment` | the [environment](/terragucci/reference/config/#environments) the root is in; absent when `environments` is not set or the root is in none (minor 33) |
+| `roots[].binary` | the binary a root or Terragrunt unit ran: `name` (`tofu`, `terraform` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu)), `version`, and `pin`, where the root pinned that version (`.opentofu-version`, `.terraform-version`, `required_version` or `terragucci.yml version <glob>`); `pin` is absent for a root that runs the job's binary unpinned; for a unit, `terragrunt` with the Terragrunt `version` that ran it and `pin: terragrunt_version_constraint` when the unit pinned it (minor 24) |
+| `deferred[]` | Terragrunt units planned once the units they wait for apply, and what each waits for |
+| `mock_reads[]` | Terragrunt dependencies that would have read `mock_outputs`, with the upstream and the reason |
+| `roots[].terragrunt` | for a Terragrunt unit: its `stack` (the directory of the explicit stack that generates it, else its parent directory), `stack_file`, the `terragrunt.stack.hcl` that generates it (minor 29), why it was selected, whether its plan is a provisional preview, and its result in Terragrunt's run report |
+| `intent` | the description check's decision: status, whether it flagged the pull request, the decision, probability and threshold, model, `state_digest` and the destroys and replacements the text leaves out (`unmentioned`); present only after `respond description` ran on the report |
+| `cost` | with `cost` set, on a `tf-plan` run or a `tf-apply` wave: the estimator, the currency, the monthly change and the totals before and after over the roots estimated, and per root (`roots[]`) the same three figures, the path of the estimator's output (`output`) or why there is no estimate (`error`) |
+| `policy` | the policy check, when `policy` is on: engine, input mode, namespace, whether the policy came from the checkout or the base branch, the roots it denied and the warning count; with `policy.override` at base, `overriders` and the denied roots an override stands for, `overridden` |
+| `roots[].policy` | the policy's verdict on the root's plan: `passed`, `denied` or `error`, the denial messages, the ids of the rules that denied (`rules`), the warnings and, for `error`, why it could not run; a denied root is `failed` and keeps its `changes` |
+| `roots[].policy.overriders` | a denied root under [scoped overriders](/terragucci/reference/policy/#scoped-overriders) (minor 40) | who may override its denial by its rules: names, then each role as `role <name> (<holders>)` |
+| `roots[].policy.held_by`, `roots[].policy.allowed_by` | a root a `hold` or `allow_unattended` rule matched (minor 40) | the ids of those rules; `roots[].policy.holds` has the hold rules' messages |
+| `roots[].policy.override` | the [override](/terragucci/reference/policy/#overriding-a-denial) that stands for the root's plan and rules: `by`, `at`, `rules`, `reason`, `plan_digest`, the ledger line's `digest`, and `sealed`; on a `tf-apply` wave the root then applies and is `planned` |
+| `redaction` | the marker that replaced sensitive values, and how many it replaced |
+| `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
+| `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
+| `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
+| `roots[].versions` | on a `tf-apply` wave, for a root that applied or had nothing to apply: `providers`, each provider its `.terraform.lock.hcl` locks with its `version`, and `modules`, each remote module call `init` recorded in `.terraform/modules/modules.json`, nested calls included, with its `call` (`module.vpc.module.nat`), its `source` without the `?` query, and its `version`: the registry version `init` resolved, else the source's `ref`, `tag` or `version`, absent when it names none; local calls are left out (minor 42) |
+| `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
+| `roots[].applied_changes[].record_versions` | for a choudoufu root: the record's versions after the apply, from `choudoufu live-history`: `kept`, `store`, `versions` (`version_id`, `last_modified`, `current`, `deleted`), `error` when they could not be listed, and `read` (minor 32) |
+| `roots[].state` | on a `tf-apply` wave, for a root that applied or had nothing to apply: the state its backend holds afterwards, read from the object's metadata and never its contents: `backend`, `location` (`s3://<bucket>/<key>`, `gs://<bucket>/<key>`, `az://<account>/<container>/<key>` or the local file), `version_id` (S3's version id, a GCS generation, an Azure version id or snapshot), `versioning` (`on`; `off` when the backend keeps no history, as `local`, `pg`, `kubernetes`, `consul` and a plain `http` backend do; `unknown` when it may keep versions terragucci does not read) and a `note` saying why there is no version |
+| `roots[].dependencies` | a Terragrunt unit's `dependency` and `dependencies` blocks: the units whose outputs it reads, as plain paths in its `terragrunt.hcl`; for a plain root, the roots [`waves.after`](/terragucci/reference/config/#waves) puts before it; absent when it names none |
+| `roots[].steps` | the [steps](/terragucci/guides/run-steps/) that ran for the root, in order: `name`, `when` (such as `before-plan`), `status` (`passed`; `failed`, which failed the root; `approval`, a failed `on_failure: approve` step that holds the wave), `exit` and `seconds`; the steps' output stays in the job log |
+| `roots[].reads` | the roots whose state the root reads through `terraform_remote_state`, the roots whose estate's outputs a choudoufu root reads through `terraform_estate_outputs`, or a Terragrunt unit's upstreams whose planned outputs it read through its `dependency` blocks: `upstream`, the block's label (`data`), and `outputs`: `planned`, the upstream's plan in the same run, with `unknown` naming the outputs known only once it applies, or `applied`, its state as it stands, with `why` in a pull request's plan |
+| `roots[].unknown_reads` | the root's `terraform_remote_state` blocks whose [address](/terragucci/guides/track-cross-state-edges/#state-addresses) is not plain strings in the code: `data`, the block's label, and `why`; no edge orders the root after the root that writes that state (minor 30) |
+| `roots[].cone` | a choudoufu root planned with `-cone=<base>` ([Cone plans](/terragucci/guides/use-a-binary/#cone-plans)): `base`; with a cone, `blocks` and `of`, its blocks and the estate's, and `targets`, how many addresses it targets, which are part of the root's plan digest; when choudoufu planned the whole estate, `fallback` with the guard's `kind` and its `reason`; absent on every other plan (minor 34) |
+| `compose` | with [`waves.compose`](/terragucci/concepts/waves-and-approvals/#a-composed-run) on, on a `tf-plan` and on every `tf-apply` wave's report: `roots`, the roots the change reaches and the roots they read, sorted; `max`, `waves.compose_max`; `wave`, the wave that runs them as one composed run; or, when the change applies in waves, `fallback` with its `kind`, the `root` it is about and the `reason` (minor 38) |
+| `roots[].composed` | a root of a composed run: the `wave` that runs it and its `module` there. Its other fields come from its part of the composed plan; its `plan_digest` is that part's, which groups it and binds nothing on its own (minor 38) |
+| `roots[].reads[].composed` | `true` on a read of another root in the same composed run: `outputs` is `planned`, and `unknown` names the outputs known only once that root's part of the run applies (minor 38) |
+| `roots[].secrets` | the sensitive attributes the root's state holds once its plan applies: `in_state`, each resource instance's top-level attribute marked sensitive and set, and `movable`, those a write-only argument or an ephemeral resource could keep out on the root's binary and provider versions ([`terragucci-secret-in-state`](/terragucci/reference/tips/#terragucci-secret-in-state)); counts only, never a value; absent when its plan leaves none (minor 42) |
+| `roots[].live` | a choudoufu root under a `live` block: its `estate`, its `record_store` (`s3://<bucket>/<prefix>`, `local`, or the store's type) and its `strict { secrets }` setting as `secrets`, `store` when unset ([`terragucci-choudoufu-secrets`](/terragucci/reference/tips/#terragucci-choudoufu-secrets)) (minor 42) |
+| `roots[].unaddressed` | when a root of the run reads state through `terraform_remote_state`: why the root's own state has no address, so a reader of it is not ordered after it (minor 30) |
+| `blast` | on a `tf-plan` run in which a root's plan changes something: `roots`, the roots whose plan changes a resource or an output, and `downstream`, nearest first, each root that reads the state of a root in the radius through `terraform_remote_state` or that `waves.after` puts after one (in a Terragrunt repo, each unit whose `dependency` or `dependencies` block names a unit in the radius), with the roots it reads there (`reads`), `depth` (1 when it reads a changed root itself), its `wave`, and whether the run `planned` it |
+| `blast.resources` | when a root is downstream, for plain roots: each resource a plan changes (`root`, `address`, `actions`) and `reaches`, nearest first, each resource that depends on it with its `root`, its configuration `address`, and in another root `through`, the output it reads and the root that makes it (minor 31), and its `depth`, its distance from the changed resource: 1 when it refers to it, directly or through locals, variables and modules, and one more for each resource in between and each hop from a root's output into a root that reads it, so a resource in a reading root that reads an output made from the changed resource is 2 (minor 36) |
+| `waves[].held_by_steps` | the roots whose `on_failure: approve` step failed, so the gate holds the wave when it changes anything, whatever `gate` says |
+| `roots[].timings` | the root's wall time, its plan's and, on a `tf-apply` wave, its apply's (`apply_seconds`); the slowest resources, provider calls, provider start-up and lock waits from the binary's spans; summed spans of a large estate; `source: terragrunt` when the times come from Terragrunt's run report; and a `note` when the binary sent nothing per resource |
+
+### waves
+
+| Field | On | Holds |
+|---|---|---|
+| `number`, `roots`, `set_digest` | every wave | the wave's number, its roots and the set digest |
+| `approval` | every wave | `waiting`, `approved` or `not-required` on a `tf-apply` wave; `not-requested` on a plan |
+| `gate` | a gated wave | the ledger's branch and path |
+| `waiting_since` | a waiting wave | when it began waiting for an approval of this digest |
+| `refused` | a `tf-apply` wave that planned but applied nothing | the `reason` (`approval`, `review` or `override` when its plans changed after one, `policy` when the policy denied a root), the digest `approved` and `by` whom, and the `roots` that moved or were denied |
+| `review` | a waiting `tf-apply` wave under `approval: pr-review` | the `pull_request` whose approving review of its head would approve the wave, and the `url` to review it on |
+| `policy_gate` | a wave the policy's `hold` or `allow_unattended` rules decided (minor 40) | the `outcome`, `held` or `unattended`, the `rules` that decided it and, on a `tf-apply` wave, the `commit` the policy was read at |
+| `approval_rules` | a wave whose roots `approval_rules` at base names (minor 40) | each rule it takes: its `roots`, `count`, `roles` and `not_author`, and on a `tf-apply` wave the `approvers` of its digest the rule counted and whether it is `met` |
+| `excluded_approvers` | a `tf-apply` wave whose approval left someone out (minor 39) | each person whose approval of the wave's digest did not count because they had a hand in the change: their `login`, and the `reason`, such as `bob asked for abc1234` |
+| `review_digest` | a plan's wave | the set digest over the roots whose plan changes something, which `approval: pr-review` binds a review to |
+| `waits` | a plan's wave | whether the gate or `cost.approve_above` will hold it |
+| `state` | every wave | `planned` on a plan; on a `tf-apply` wave `waiting`, `applying` (its share jobs apply), `applied`, `refused` or `failed`, or `blocked` (minor 41) when none of its roots ran because an upstream of each did not apply |
+| `outcomes` | a `tf-apply` wave of plain roots on GitHub or Forgejo (minor 41) | each root's `root` and `outcome` once the wave ended: `applied`, `unchanged`, `failed` with the first line of its plan's or apply's `error`, `waiting`, `refused`, `decided` (its share or group job applies it), `not-applied` (another root of the wave failed to plan) or `blocked` with `blocked_by` |
+| `blocked` | a `tf-apply` wave with roots an upstream that did not apply holds (minor 41) | each such `root` and `blocked_by`, the root whose failure held it, past any root blocked in between. These roots are not in `roots` |
+| `reads` | a wave whose roots read other roots' state | the waves those roots are in |
+| `replans_after` | a plan's wave that read outputs known only once these waves apply | it plans again after they apply and waits for an approval of that plan; its `review_digest` is null |
+| `preview` | a `tf-apply` wave of Terragrunt units the merged pull request previewed (minor 25) | the `pull_request`, and per previewed unit (`units[]`) its `differences` from the preview, absent when it plans as previewed |
+| `environments` | a wave with a root in an [environment](/terragucci/reference/config/#environments) (minor 33) | the environments its roots are in, sorted |
+| `composed` | the wave that carries a composed run (minor 38) | `plan_digest`, the composed plan's digest, null when it failed to plan; `members`, each root upstreams first with its `module`, and on a `tf-apply` wave `apply` (`applied`, `partial`, `failed`, `not-started` or `no-changes`), `changes` (`done` of `planned`), `state` (`written`, `unchanged` or `not-written`, with `kept` and `lock_held`) and `error`; `held_by_unknown`, the roots that read a value of another root unknown at plan time; `error` when the run failed and no root's own error says why. The wave's `roots` list its own roots and the composed ones |
+| `cost` | a wave, with `cost` set | the wave's monthly change and totals over the roots it estimated, the roots it could not estimate (`unestimated`), and with `cost.approve_above` at base the amount (`approve_above`) and whether the change is `over` it |
+
+Its JSON Schema is `@intentius/terragucci/report.schema.json` in the package. [The reports bucket](/terragucci/reference/reports-bucket/) lists where each object lives and the schema of each.
+
+## Reading it
+
+| To find | Read |
+|---|---|
+| every destroy, replacement and refusal | `named[]`, filtered on `action` |
+| the roots a group folds | `groups[].units`, matched to `roots[].path` |
+| the digest an approval binds | `waves[].set_digest` of a `tf-apply` wave, over the `roots[].plan_digest` of each root whose plan changes something and, with `cost.approve_above` at base, the amount, the currency and the wave's monthly change; a plan's waves carry the same digest as `review_digest` |
+| the digest a pull request review binds | `waves[].review_digest` in the plan report, compared with the same digest the wave plans after the merge |
+| why a root is shown open | `roots[].why` |
+| the full plan of a root | `roots[].plan` |
+| the slowest resources of a run | `timings.resources`, then `roots[].timings.resources` |
+| how long a root waited for its state lock | `roots[].timings.lock_waits`, with the attempts it took |
+| what the policy denied or warned about in a root | `roots[].policy` |
+| who overrode a denial, and why | `roots[].policy.override` |
+| the binary and version each root ran | `roots[].binary` |
+| the provider and module versions each root applied with | `roots[].versions` |
+| the trace of the run, to search your tracing backend | `run.trace_id` |
+
+Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it.
+
+## The index and the estate page
+
+Every `index.json` in the bucket is `terragucci.report-index/v1` (JSON Schema `dist/report-index.schema.json`), one row per run, newest first.
+
+| Row field | What it holds |
+|---|---|
+| `project`, `commit`, `stage`, `wave`, `finished`, `path` | the run, and its directory relative to the index |
+| `share` | the share of a `tf-apply` wave split across jobs; each share has its own row |
+| `roots`, `groups`, `totals`, `refused` | the report's counts |
+| `failed` | roots that failed to plan or apply; on a `tf-apply` wave whose apply failed, every root of the wave |
+| `changed` | roots with a change; on a `tf-drift` row, the roots that drifted |
+| `wave_digests` | on a `tf-plan` row, each wave's set digest and review digest: the digests an apply of the same plans binds |
+| `drifted_roots` | on a `tf-drift` row, up to 50 of the roots that drifted |
+| `drift_since` | on a `tf-drift` row that found drift, when the project's open drift was first found |
+| `drift_cleared` | on a `tf-drift` row that found none after one that found some: `since`, when that drift was first found, and its `roots`; a later check of the same commit replaces the row that found it, so this row keeps it |
+| `approval`, `waiting_since` | a `tf-apply` wave's gate, and when a waiting wave began waiting |
+| `applied` | when a `tf-apply` wave finished applying |
+| `overridden` | roots the policy denied that a recorded override let through; absent when none |
+| `destroys`, `destroys_total` | up to 50 destroys and replacements, and how many there are when the row lists fewer |
+| `commit_url`, `pull_request`, `pull_request_url`, `job_url`, `trace_url` | links |
+| `secrets` | on a `tf-plan` or `tf-drift` row, each root's `roots[].secrets` with its `root`; absent when none |
+| `estates` | on a `tf-plan` or `tf-drift` row, each choudoufu root's `roots[].live` with its `root`; absent when none |
+
+In the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view)'s `run.json`, each wave that planned carries `waves[].totals` and `waves[].totals_roots`, counted the same way over the wave's roots, so a page can show each wave's total while it applies. The job that plans the whole wave writes them; a share's or a group's job does not.
+
+From those rows and each project's newest run view, [`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, schema `terragucci.estate/v1` (`dist/estate.schema.json`):
+
+| Field | What it holds |
+|---|---|
+| `generated` | when the page was built; every `age_seconds` is as of then |
+| `totals` | projects, waiting waves, drifted projects and roots, failed roots, unreadable indexes, `overridden_roots` when an override let a root through, and `resources` when a project has an inventory |
+| `projects[]` | each project's latest plan, latest drift check, the waves of its newest applied commit, its waiting waves with `age_seconds`, `status` (`ok`, `no-index` or `error`), `inventory`: its resource count, the count of each type (`types`) and each root's resources with the wave that recorded them and its `environment` when it is in one (`roots`), `states`: each root's state location, `versioning` and the version ids its applies left, newest first, each with its commit, wave and `report`, `edges`: each root that reads another's state (`consumer`, `producer`, `via`), with the consumer's last plan (`consumer_planned`) and the producer's last apply that changed it (`producer_applied`), each a run's `stage`, `commit`, `finished`, `wave`, `pull_request`, `version_id` and `report`, and a `status`: `stale` when the producer applied after that plan, `current`, or `unknown`, `run_view`: the commit of the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) the graph read, when a wave last wrote it (`updated`) and its `page`, and `ephemeral`: each live [ephemeral environment](/terragucci/guides/ephemeral-environments/), with its `pull_request`, its `roots` and each one's state `location`, the `commit` it `applied` from, when it `expires`, `approved_by`, and `status` (`live`, or `destroy-failed` until the sweep destroys it), and `secrets`: the `run` that recorded them and, per root, `in_state` and `movable`, and for a choudoufu root `estate`, `record_store` and `secrets` |
+| `recent[]` | the 20 newest runs across every project |
+| `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |
+| `history` | the resource history beside the page: `page`, how many addresses it holds (`resources`) and `generated`, once an apply changed a resource; each listed resource with a history links its section as `history` |
+| `graph` | the dependency graph, once a project has a run view: `nodes`, each root by `project`, `root` and `wave`, and `edges`, each `from` a root `to` a root that reads its state through `terraform_remote_state`, or a Terragrunt unit `to` a unit that depends on it; an edge between two projects matched a read of a state outside the reader's project to the root of the other whose backend holds it |
+| `versions` | once an apply recorded them, from each project's `versions.json`: `modules`, by `source`, `providers`, by `provider`, and `binaries`, by `binary`, each with `versions`, newest first, each a `version` (absent when the source names none or the binary did not say) and its `roots`, each by `project` and `root`, with the module's `call` |
+| `dora` | the [delivery metrics](/terragucci/reference/delivery-metrics/) beside the page: `file` (`dora.json`), `generated`, and the estate's applied waves in their window as `deployments` |
+
+A project's `inventory.json` is `terragucci.inventory/v1` (`dist/inventory.schema.json`). A `tf-apply` wave's upload replaces the list of each root it applied, unless the file holds a newer one.
+
+| Field | What it holds |
+|---|---|
+| `roots[]` | by root path: `root`, the `commit`, `wave` and `finished` time of the wave that recorded the list, the wave's directory as `path`, relative to the project's `index.json`, and `resources`, each with `address`, `type` and `provider` |
+
+Its `versions.json` is `terragucci.versions/v1` (`dist/versions.schema.json`). A `tf-apply` wave's upload replaces the entry of each root it applied, unless the file holds a newer one.
+
+| Field | What it holds |
+|---|---|
+| `roots[]` | by root path: `root`, the `commit`, `wave` and `finished` time of the wave that recorded it, the wave's directory as `path`, relative to the project's `index.json`, and the root's `environment` when it is in one |
+| `roots[].binary` | the binary it ran, as `roots[].binary` of the report names it: `name`, `version` and `pin` |
+| `roots[].providers`, `roots[].modules` | its provider and module versions, as `roots[].versions` of the report holds them |
+
+Its `changes.json`, `terragucci.changes/v1` (`dist/changes.schema.json`), has one row per resource each applied `tf-apply` wave changed, newest first, up to 20,000 rows. A rerun of the same wave replaces its rows.
+
+| Row field | What it holds |
+|---|---|
+| `address`, `type`, `actions`, `attributes`, `previous_address` | what the wave did to the resource, as in `roots[].applied_changes` |
+| `root`, `commit`, `wave`, `finished`, `path` | the root and the wave, and the wave's directory relative to the project's `index.json` |
+| `plan_digest`, `set_digest` | the root's plan digest, and the wave's set digest, which its approval binds |
+| `pull_request` | the pull or merge request the wave applied |
+
+`terragucci estate` also builds `history.json` beside the page, `terragucci.history/v1` (`dist/history.schema.json`), from every project's `changes.json` and the audit trail.
+
+| Field | What it holds |
+|---|---|
+| `generated` | when it was built |
+| `audit` | whether `audit.jsonl` was read for the approvers |
+| `resources[]` | each address by `project` and `root`, with its `type`, its `id` (the anchor on `history.html`) and `applies`, oldest first: the row's actions, attributes, commit, wave, time and digests, the `report` link, and `approver` from the wave's apply entry in the audit trail, with that entry's `approval` id; `approver` is `null` when no gate held the wave, and absent when the audit trail has no entry for it |
+
+## State versions
+
+A project's `states.json` holds the version ids its roots' applies left (never a state's contents); its `schema` is `terragucci.state-versions/v1`, checked by `dist/state-versions.schema.json`. When a wave uploads its report, every root it applied adds its version, unless the root already lists that version. A root keeps its newest 20.
+
+| Field | What it holds |
+|---|---|
+| `roots[].root`, `backend`, `location` | the root, its backend type, and `s3://<bucket>/<key>` or the local file |
+| `roots[].versioning`, `note` | `on`, `off` (the backend keeps no history) or `unknown` (it may keep versions terragucci does not read) as the newest apply found it, and why there is no version |
+| `roots[].checked` | when that apply finished |
+| `roots[].versions[]` | newest first: `version_id`, the `commit`, `wave`, `started` and `finished` times of the wave that recorded it, and its directory as `path`. `terragucci audit` counts a version its store says was written between `started` and `finished` as that wave's ([Unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes)) |
+
+## Estate rosters
+
+An estate's roster lists every resource it holds, so a viewer can draw the estate without reading the cloud. Each `tf-apply` wave's upload reads one from the plan it applied. After an estate migration writes its markers, wave 1 reads one out of each plan that verifies the write. Both reuse plans the job already made. The key is `<prefix>/estates/<estate>/roster.json`, and an example looks like this.
+
+```json
+{
+  "estate": "team",
+  "at": "2026-10-16T12:03:00.000Z",
+  "resources": [
+    { "address": "aws_sqs_queue.jobs", "type": "aws_sqs_queue", "live_id": "q-jobs", "marked": true },
+    { "address": "aws_sqs_queue_policy.jobs", "type": "aws_sqs_queue_policy", "marked": false, "follows": "aws_sqs_queue.jobs" }
+  ]
+}
+```
+
+| Field | What it holds |
+|---|---|
+| `estate` | the estate a `live` block names; for stock code, its directory path (`root` for the repo's top) |
+| `at` | when the job read it: the wave's end, or the migration's write |
+| `resources[]` | every managed resource the plan leaves, child modules included, by `address` |
+| `resources[].type` | the resource type |
+| `resources[].live_id` | the live resource's id, when the migration that wrote the roster retagged or stamped it |
+| `resources[].marked` | `true` when the planned object's `tofu-estate` marker (in `tags`, `tags_all`, or a Kubernetes object's metadata labels) names the estate; always `false` for stock code |
+| `resources[].follows` | the address of the resource it moved with in a retag, for an instance with no marker write of its own |
+
+Attribute values stay out of it: of the marker, only whether it names the estate is kept. An older roster never replaces a newer one at the same key. Stock code takes its path as the estate, so two projects with stock code at the same path share one key.
+
+`<prefix>/estates.json`, beside the reports index, is `terragucci.estates/v1` (`dist/estates.schema.json`). It has one entry per estate.
+
+| Field | What it holds |
+|---|---|
+| `estates[]` | by estate name: `estate`, its resource `count`, the roster's `at`, the `project` and `root` that wrote it, and `roster`, the roster's key relative to `estates.json` |
+
+## Cross-state edges
+
+A project's `edges.json` holds, for each root, the roots whose state it reads and the runs that planned and applied it, as root paths and run facts with no state contents or output values. Its `schema` is `terragucci.state-edges/v1`, checked by `dist/state-edges.schema.json`. An upload writes it when a root of the report reads another's state, or when a `tf-apply` wave changed a root.
+
+| Field | What it holds |
+|---|---|
+| `roots[].root` | the root |
+| `roots[].reads[]` | the roots whose state it reads, `root` and `via` (`terraform_remote_state` from the report's `roots[].reads`, `dependency` from `roots[].dependencies`), as the newest plan or apply of the default branch found them; a pull request's code and a drift check never set them |
+| `roots[].reads_seen` | when that run finished |
+| `roots[].planned` | the newest run that planned the root (a pull request's plan, a drift check or an apply wave's plan; never a Terragrunt preview): `stage`, `commit`, `finished`, `wave`, `pull_request` and its directory as `path` |
+| `roots[].applied` | the newest `tf-apply` wave that changed one of its resources, the same fields and the state `version_id` it left |

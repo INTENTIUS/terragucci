@@ -1,0 +1,40 @@
+---
+title: Plan grouping
+description: What grouping does to two hundred plans, what it never folds away, and why no approval is bound to it.
+---
+
+
+A shared module change can reach two hundred roots with near-identical plans, and a reviewer scrolling for the odd one out can miss a destroy.
+
+## Grouping
+
+terragucci normalizes each root's changes and groups the roots whose changes are the same.
+
+```text
+180 roots: identical change (update aws_iam_role.app, tags)
+ 15 roots: the same, plus replace aws_lambda_function.worker
+  5 roots: read these individually
+destroys: prod-eu/db (delete aws_db_instance.main)
+```
+
+The reviewer reads the shared change once, then the 20 roots that differ.
+
+## Rules by change
+
+| Change | In the report |
+|---|---|
+| destroys, replacements, refusals, imports, forgets | named, never grouped; a forget is not counted as a destroy |
+| roots that differ from every group | open |
+| IAM and security group changes | open |
+| KMS and DNS changes | open |
+| groups of identical changes | folded |
+| updates to tags or descriptions only | folded |
+| values known after apply | folded |
+| roots with no changes | folded |
+
+Each root and group links to its full plan in text and JSON. Approvals bind the plan digests, taken before redaction or rendering, so the summary's wording never changes what was approved.
+
+## Next
+
+- [The plan report](/terragucci/reference/report/) shows the note, the HTML report and the JSON.
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/)

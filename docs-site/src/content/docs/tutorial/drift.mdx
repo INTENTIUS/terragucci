@@ -1,0 +1,44 @@
+---
+title: Drift
+description: Delete a queue outside Terraform and see the drift report name the root.
+sidebar:
+  order: 6
+  badge:
+    text: 5 min
+    variant: note
+claims: [drift/tofu]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/drift/.
+  In the terragucci clone with the example booted, run the `just example` commands on the page. Summarize what the drift issue names, and where it differs from the page.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Captured from '../../../components/Captured.astro';
+import Recorded from '../../../components/Recorded.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step.
+:::
+
+Someone deletes a queue in the console.
+
+<Steps>
+
+1. The scenario deletes it through the API.
+
+   <Captured step="drift" optional />
+
+2. Run the `drift` job by hand from the Actions tab, or wait for six in the morning. Its `-refresh-only` plan of every root compares state with what exists in [floci](/terragucci/concepts/glossary/#floci) and never reads the code, so a change waiting on main is not drift. The report lists the deleted queue under deletes, in `envs/staging/orders` as `module.service.aws_sqs_queue.jobs`.
+
+   :::note
+   floci does not keep tags, so unlike AWS it shows tags as drifted on every root. Look for the entry marked deleted outside Terraform.
+   :::
+
+3. Open the issue the job opened, `terragucci: drift found`. It names `envs/staging/orders` and the queue `shop-staging-orders-jobs`. A second run updates it.
+
+   <Recorded step="drift" view="issue" alt="The drift issue in Forgejo, naming envs/staging/orders and its deleted queue shop-staging-orders-jobs" optional />
+
+</Steps>
+
+Applying the code recreates the queue, which `just example reset` does. The next drift run then closes the issue on AWS; on floci the tag entries keep it open.

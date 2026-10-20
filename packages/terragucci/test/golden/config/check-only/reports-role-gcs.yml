@@ -1,0 +1,4 @@
+# reports.role is an AWS role, and the bucket is not S3.
+reports:
+  bucket: gs://acme-reports
+  role: arn:aws:iam::123456789012:role/r

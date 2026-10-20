@@ -1,0 +1,13 @@
+# OpenTofu's CLI config for the demo's fan-out roots (example-demo-fanout's
+# terragucci.yml names it in TF_CLI_CONFIG_FILE): hashicorp/aws comes from the
+# image's filesystem mirror and never from the registry. Every other provider
+# installs as it always does, and no other tree reads this file.
+provider_installation {
+  filesystem_mirror {
+    path    = "/opt/terragucci-demo/providers"
+    include = ["registry.opentofu.org/hashicorp/aws"]
+  }
+  direct {
+    exclude = ["registry.opentofu.org/hashicorp/aws"]
+  }
+}

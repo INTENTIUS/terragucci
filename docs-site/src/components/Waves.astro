@@ -1,0 +1,117 @@
+---
+// A rollout in waves: a gated wave's approval covers exactly the plans it was shown, by their digest.
+// The taco marks the wave terragucci applied.
+import Taco from './Taco.astro';
+const waves = [
+	{ label: 'wave 1', roots: 3, digest: 'set:4f1a…c09e', state: 'applied', note: 'the canary roots, approved by alex' },
+	{ label: 'wave 2', roots: 97, digest: 'set:b77d…12a4', state: 'waiting', note: 'npx terragucci approve wave-2' },
+	{ label: 'wave 3', roots: 100, digest: 'planned when wave 2 applies', state: 'next', note: 'planned once wave 2 has applied' },
+];
+---
+<div class="tg-waves not-content">
+	<ol>
+		{waves.map((w) => (
+			<li class={w.state}>
+				<span class="label">{w.label}</span>
+				<span class="roots">{w.roots} roots</span>
+				<code class="digest">{w.digest}</code>
+				<span class="state">{w.state === 'applied' && <Taco scale="small" />}{w.state}</span>
+				<span class="note">{w.note}</span>
+			</li>
+		))}
+	</ol>
+	<p class="refusal">
+		<span>refused</span>
+		A plan in wave 2 changed after the approval, so wave 2 applied nothing and named both digests.
+	</p>
+</div>
+
+<style>
+	.tg-waves {
+		display: grid;
+		gap: 1rem;
+	}
+	ol {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
+		gap: 0;
+	}
+	li {
+		margin: 0;
+		padding: 1rem 1.25rem 1rem 0;
+		display: grid;
+		gap: 0.3rem;
+		align-content: start;
+		border-top: 2px solid var(--tg-rule);
+		min-width: 0;
+	}
+	li.applied {
+		border-top-color: var(--tg-ok);
+	}
+	li.waiting {
+		border-top-color: var(--tg-accent);
+	}
+	.label {
+		font-family: var(--tg-display);
+		font-size: 1.4rem;
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+	.roots {
+		font-family: var(--sl-font-mono);
+		font-variant-numeric: tabular-nums;
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-2);
+	}
+	.digest {
+		font-family: var(--sl-font-mono);
+		font-size: 0.8rem;
+		background: none;
+		padding: 0;
+		color: var(--sl-color-gray-3);
+		overflow-wrap: anywhere;
+	}
+	.state {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+	}
+	.applied .state {
+		color: var(--tg-ok);
+	}
+	.waiting .state {
+		color: var(--tg-accent);
+	}
+	.note {
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-2);
+		overflow-wrap: anywhere;
+	}
+	.refusal {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		align-items: baseline;
+		color: var(--sl-color-gray-2);
+		font-size: 0.92rem;
+	}
+	.refusal span {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--tg-warn);
+		border: 1px solid var(--tg-warn);
+		border-radius: 99rem;
+		padding: 0.05rem 0.5rem;
+	}
+</style>

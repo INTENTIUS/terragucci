@@ -1,0 +1,498 @@
+---
+title: Threat model
+description: What each forge's jobs can reach, what approval modes and policy overrides allow, the trust apply before merge and the chat relay need, where the forge-token scrub ends, and the branch protection each forge relies on.
+prompt: |
+  Read https://intentius.io/terragucci/reference/threat-model/.
+  For this repo's forge, compare the branch protection, the merge methods and the apply role's trust policy with the page's "Branch protection" tab, reading them through the forge's API or CLI.
+  List each setting that differs and what it leaves open; do not change settings, tokens or trust policies yourself.
+  Then read `runner` in terragucci.yml and the forge's runner settings, and say whether a plan job and an apply job can run on the same machine, and which other jobs can run on the apply runners (the page's "Runners" section).
+  Do not run `terragucci override`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+claims: [init/runner-label, apply/runner-nudge, security/plan-token-free, security/fork, security/token-scrub, security/protected-token, oidc/state-roles, apply/provider-cache]
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage gets the least it needs, and the runner settings let you put apply on machines that pull request code never reaches.
+
+## Each job's reach
+
+| Guard | What it keeps apart | Section |
+|---|---|---|
+| The plan job holds no apply role, and on GitHub and Forgejo no forge token in the steps that run the change's code | a pull request's code from the apply role and, in those steps, from the forge token | [Job access](#job-access) |
+| Forks get no plan job | an outside author's code from every cloud role | [Job access](#job-access) |
+| Forge tokens removed from the binary's, Terragrunt's and the policy engine's environment | a root's code from the job's forge token | [Token scrub limits](#token-scrub-limits) |
+| A plan and an apply role per environment | one environment's roots from another's state | [State access per environment](#state-access-per-environment) |
+| `runner.apply` on runners of its own | the apply role, and the network its runners reach, from the machines where pull request code runs | [Runners](#runners) |
+| Signing keys in `publish` alone; on GitLab, as protected variables | the jobs that run a pull request's code from the keys that sign module releases | [Job access](#job-access) |
+
+## Trust
+
+| Who | Trusted to | Kept in check by |
+|---|---|---|
+| Anyone with write access | run CI jobs, and the plan role through a pull request | the plan role is read-only; its trust names your repo |
+| Reviewers | decide what reaches the default branch | branch protection |
+| Approvers: under `approval: ledger` anyone who can push to `chant/lifecycle`, under `sealed` the people `.chant/allowed_signers` lists | release a gated wave | the plan digest the approval names, and under `sealed` its seal |
+| Overriders: the people `policy.override` lists at base | let one denied plan of one root through `tf-apply` | the root, plan digest and rules the override names, and under `sealed` its seal |
+| The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
+| On GitLab, anyone allowed to run a pipeline on the default branch | start `mr-apply` with any variables | `mr-apply` reads the merge request, the note and the head from GitLab, and refuses a head the merge request does not have |
+| The review command, with `review.agent` | read a change and write a note about it | no forge token and no cloud role in its step; the note approves nothing ([The review](#the-review)) |
+| The drift agent's command, with `agent.drift` | edit files after the drift job opens the drift issue | no forge token and no cloud role in its step; its change comes back as a pull request, refused when it touches a guarded path, that plans and applies like any other |
+| An agent connected to `terragucci mcp` | read the estate, reports, state versions, audit trail and DORA figures | the server's tools only read, and it holds the reports bucket's read credentials from its own environment, never from the agent |
+| An agent connected to `terragucci mcp --propose` | push a branch other than the default branch, `chant/lifecycle` and the `apply.branches` branches, open a pull request from it, and comment `/terragucci plan` | the pull request plans and goes through the gate like any other; no tool approves, applies, overrides or merges; the forge token is the server's, and what it can do is what the token can do |
+| An agent in a checkout with cloud credentials in its shell | whatever those credentials allow: an apply, a destroy or a state edit outside the pipeline | `terragucci guard` refuses the binaries' apply, destroy, import, state edits and `-auto-approve` in a pipeline root, and a hook refuses them in Claude Code's Bash tool; it does not stop a binary run by a path the hook does not see, from a script, or after the agent edits the hook or `PATH`. The control is the credentials: a plan role that cannot write, per-environment state roles (`oidc.roles`), and approvals bound to the plan digest |
+| A fork's author | nothing | forks get no plan job and never apply |
+| The [chat relay](#the-chat-relay), in your cloud | under `ledger` and `pr-review`, record an approval of a waiting digest in the name of a chat user the signers file lists | Slack's or Teams' signature on each request, the signers file on the default branch, the digest waiting, and an approve-only token |
+
+## Job access
+
+"Change" means code from a branch or a pull request that has not merged. A pull request or merge request from a branch of the repo runs the pipeline file as the change has it, so its author can edit any job that runs on it.
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+| Job | Runs on | Code | Forge token | Cloud identity |
+|---|---|---|---|---|
+| `check` | a push to any branch; a fork's pull request | the pushed branch | `github.token`, `contents: read`, only in the checkout, before the branch's code; the step that runs that code is the job's last | none |
+| `check-report` | after `check` | none of the change's; the check job's report read as data | `github.token`, `contents: read` | none |
+| `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | `github.token`, `contents: write` | none |
+| `plan` | a pull request from the repo | the change | `github.token`, `statuses: write`, only in the step before the checkout and in the checkout; the step that runs the change's code is the job's last | plan role |
+| `plan-note` | after `plan` | none of the change's; the plan job's report, note and status read as data | `github.token`: statuses and pull requests write | none |
+| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | `github.token`: statuses and pull requests write, only in the step that reads the comment and the two checkouts, before the head's code runs; the step that runs it is the job's last | plan role, as keys traded for the job's OIDC token before the change's code runs; with `oidc.azure`, the token ([Re-plan](#re-plan)) |
+| `replan-note` | after `replan` | as `plan-note` | as `plan-note` | none |
+| `apply-wave-<k>` | a push to the default branch | merged code | `github.token`, `contents: write` | apply role; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
+| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | `github.token`, `contents: write` | apply role |
+| `apply-wave-<k>-<group>`, and `-share-<s>` with `waves.jobs` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | `github.token`, `contents: write` | its group's apply identities alone; an environment's group runs in its forge environment |
+| `apply-done` | with `waves.jobs` or groups, after the last wave's share or group jobs | none | `github.token`, `statuses: write` | none |
+| `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | `github.token`, `contents: write` | apply role |
+| `pr-merge` | `apply.merge: auto` | none of the change's | the merge token | none |
+| `pr-lock` | `pull_request_target` and lock comments, with `locks: plan` | none of the change's; its diff read as data, from the default branch's workflow | `github.token`, `contents: write`, statuses and pull requests write | none |
+| `confirm` | a push, with `apply.when: pull-request` | merged code | contents read, statuses write | plan role |
+| `approval` | a review of a pull request from the repo, with `approval: pr-review` | none of the change's; the head's plan note read as data | `github.token`: statuses write, pull requests read | none |
+| `drift` | the `drift` schedule | the default branch | `contents: write`, issues | plan role |
+| `tips` | a push to the default branch | merged code | `contents: write`, pull requests | none |
+| `version-bump` | after the last apply, with `respond.version-bump: suggest` | merged code; it opens release pull requests | `github.token`, `contents: write`, pull requests; the `decide` key when set | none |
+| `publish` | after the last apply, with `modules.publish` | merged code; it pushes module tags | `github.token`, `contents: write`; the registry secrets, and with `modules.attest` `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`, which no other job holds | none |
+| `resume` | the resume schedule, with `apply.resume` | merged code: the default branch's commit | `github.token`, `contents: write` | apply role |
+| `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else `github.token`; `contents: write`, pull requests | none |
+| `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the job's own, kept from the agent's step | none |
+| `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
+| `drift-agent` | after `drift` opens the drift issue, with `agent.drift` | the default branch, with no credentials in the checkout; the drift report as data in a prompt | `github.token`, `contents: read`, kept from the agent's step | none |
+| `drift-agent-push` | after `drift-agent` | a patch, never run | the `agent.token_env` secret | none |
+| `review` | `workflow_run` after the pipeline's run of a pull request from the repo, with `review.agent`; the review workflow is the default branch's | the change's diff, title and description, and its run's plan report, as data in a prompt; the command and the instructions from the default branch | `github.token`: contents, actions and pull requests read, kept from the command's step | none |
+| `review-note` | after `review` | none of the change's; the review read as data | `github.token`, `pull-requests: write` | none |
+
+| OIDC subject | Jobs |
+|---|---|
+| `repo:<owner>/<repo>:pull_request` | `plan` |
+| `repo:<owner>/<repo>:environment:<name>` | with `environments`, an environment's `apply-wave-<k>-<group>` jobs, which run in its forge environment; the environment's deployment branch rule decides which refs may run them |
+| the default branch's ref | every other job a comment, a schedule or a push to the default branch starts |
+
+</TabItem>
+<TabItem label="GitLab">
+
+| Job | Runs on | Code | Forge token | Cloud identity |
+|---|---|---|---|---|
+| `check` | a push to any branch | the pushed branch | `GITLAB_TOKEN` and the job token, dropped before the branch's code runs; no `GITLAB_TOKEN` with `gitlab.token: protected` | none |
+| `fmt` | a failed `check` on a branch other than the default; not with `gitlab.token: protected` | the branch's files, formatted, never run | `GITLAB_TOKEN` | none |
+| `plan` | a merge request from the project | the change | `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` | plan role |
+| `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
+| `apply-wave-<k>-<group>` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | `GITLAB_TOKEN` | its group's apply identities alone; an environment's group runs in its forge environment, whose claims its token carries, with its `oidc.audience` as `aud` when set |
+| `apply-done` | with groups, after the last wave's group jobs | none | `GITLAB_TOKEN` | none |
+| `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
+| `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
+| `version-bump` | after the last apply, with `respond.version-bump: suggest` | merged code; it opens release merge requests | `GITLAB_TOKEN` | none |
+| `publish` | after the last apply, with `modules.publish` | merged code; it pushes module tags | `GITLAB_TOKEN`; the registry variables, and with `modules.attest` `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`; GitLab hands project variables to every job, so mark them Protected and Masked | none |
+| `resume` | the schedule with `TERRAGUCCI_SCHEDULE=resume`, with `apply.resume` | none; it retries the default branch's waiting apply job through the API | `GITLAB_TOKEN` | none |
+| `rollout` | the schedule with `TERRAGUCCI_SCHEDULE=rollouts`, with `rollouts:` | the default branch; it edits pins and opens merge requests, and runs none of their code | `GITLAB_TOKEN` | none |
+| `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked; with `gitlab.token: protected`, the plan job's note and status read as data | `GITLAB_TOKEN`, to reply, post plan notes, and start or retry pipelines; with `apply.when: pull-request` also the merge token | none |
+| `mr-apply` | a default-branch pipeline `comments` starts, with `apply.when: pull-request` | the default branch's pipeline file, then the open change's head | `GITLAB_TOKEN` | apply role |
+| `pr-merge` | after `mr-apply`, with `apply.merge: auto` | none of the change's, and none of `mr-apply`'s artifacts | the merge token | none |
+| `confirm` | a push, with `apply.when: pull-request` | merged code | `GITLAB_TOKEN` | plan role |
+
+| GitLab fact | What it means |
+|---|---|
+| no agent comment | no job pushes to a merge request's branch |
+| a merge request's own pipeline never applies | with `apply.when: pull-request` the apply runs in a pipeline of the default branch, so its OIDC subject is the default branch's and the apply role keeps trusting that alone |
+| the `comments` job starts that pipeline with the merge token | the one token that may run a pipeline on the protected default branch; protected and scoped to the `terragucci-merge` environment, which only `comments` and `pr-merge` name |
+| the pipeline's variables name the merge request, the note and the head | they are pointers: `mr-apply` reads the note, its author's role, the merge request and its head from GitLab before any credential, and refuses a head that differs |
+| by default a merge request's code runs with `GITLAB_TOKEN` | its author can edit any job in the merge request's pipeline, and the token acts as the project's bot: it posts notes and statuses and pushes branches, `chant/lifecycle` included, so under `approval: ledger` it can write an approval line |
+| `gitlab: { token: protected }` | `GITLAB_TOKEN` is a protected variable, which no merge request or branch pipeline gets; the plan job writes its note and status into its report and stops if it sees the token, and the comments job posts them |
+| a pipeline on any protected branch gets protected variables | with `gitlab.token: protected`, whoever may push to a protected branch, `chant/lifecycle` among them, can read the token there |
+| the bot's approval never counts | under `approval: pr-review` and in `apply.requires`, an approval by the user the token acts as is the pipeline's, so it releases nothing |
+| the OIDC subject carries the pipeline's branch | a merge request's plan job has its source branch, so the plan role trusts every branch |
+
+</TabItem>
+<TabItem label="Forgejo">
+
+| Job | Runs on | Code | Forge token | Cloud identity |
+|---|---|---|---|---|
+| `check` | a push to any branch; a fork's pull request | the pushed branch | the run's own in the steps before the branch's code, dropped from the step that runs it, which is the job's last | none |
+| `check-report` | after `check` | none of the change's; the check job's report read as data | the run's own | none |
+| `fmt` | a failed `check` of a push to a branch other than the default | the pushed branch's files, formatted, never run | the run's own | none |
+| `plan` | a pull request from the repo | the change | the run's own in the steps before the change's code, dropped from the step that runs it, which is the job's last | plan role |
+| `plan-note` | after `plan` | none of the change's; the plan job's report, note and status read as data | the run's own | none |
+| `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | the run's own in the steps before the change's code, dropped from the step that runs it, which is the job's last | plan role, as keys traded for the job's OIDC token before the change's code runs; with `oidc.azure`, the token ([Re-plan](#re-plan)) |
+| `replan-note` | after `replan` | as `plan-note` | the run's own | none |
+| `apply-wave-<k>` | a push to the default branch | merged code | the run's own | apply role; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
+| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | the run's own | apply role |
+| `apply-wave-<k>-<group>`, and `-share-<s>` with `waves.jobs` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | the run's own | its group's apply identities alone, on a token with the same subject as every other group's |
+| `apply-done` | with `waves.jobs` or groups, after the last wave's share or group jobs | none | the run's own | none |
+| `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | the run's own | apply role |
+| `pr-merge` | `apply.merge: auto` | none of the change's | the merge token, required | none |
+| `pr-lock` | `pull_request_target` and lock comments, with `locks: plan` | none of the change's; its diff read as data, from the default branch's workflow | the run's own | none |
+| `confirm` | a push, with `apply.when: pull-request` | merged code | the run's own | plan role |
+| `approval` | a review of a pull request from the repo, with `approval: pr-review` | none of the change's; the head's plan note read as data | the run's own | none |
+| `drift` | the `drift` schedule | the default branch | the run's own | plan role |
+| `tips` | a push to the default branch | merged code | the run's own | none |
+| `version-bump` | after the last apply, with `respond.version-bump: suggest` | merged code; it opens release pull requests | the run's own; the `decide` key when set | none |
+| `publish` | after the last apply, with `modules.publish` | merged code; it pushes module tags | the run's own; the registry secrets, and with `modules.attest` `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`, which no other job holds | none |
+| `resume` | the resume schedule, with `apply.resume` | merged code: the default branch's commit | the run's own | apply role |
+| `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else the run's own | none |
+| `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the run's own, kept from the agent's step | none |
+| `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
+| `drift-agent` | after `drift` opens the drift issue, with `agent.drift` | the default branch, with no credentials in the checkout; the drift report as data in a prompt | the run's own, kept from the agent's step | none |
+| `drift-agent-push` | after `drift-agent` | a patch, never run | the `agent.token_env` secret | none |
+| `review` | `pull_request_target` of a pull request from the repo, with `review.agent`; the review workflow is the base branch's | the change's diff, title and description, and its run's plan report, as data in a prompt; the command and the instructions from the default branch | the run's own, which can write, kept from the command's step | none |
+| `review-note` | after `review` | none of the change's; the review read as data | the run's own | none |
+
+Forgejo sets the run token's scope itself; a job with a cloud role asks only for `id-token: write`, with `enable-openid-connect: true`. `plan`'s OIDC subject ends in `:pull_request`; the rest use the default branch's ref.
+
+</TabItem>
+</Tabs>
+
+With groups, a root's code in an `apply-wave-<k>-<group>` job holds its group's apply identities and no other group's, so it reaches the states those identities reach. Its token can still be traded for any role whose trust admits the token's subject and audience, so on GitHub and GitLab each apply role's trust names its own environment ([State access per environment](#state-access-per-environment)). On Forgejo every group's token has the same subject.
+
+With `reports.bucket` set and no `reports.role`, the bucket keys also reach `plan`, `replan` and `drift` ([Credentials](/terragucci/reference/pipeline/#credentials)).
+
+## Runners
+
+A plan job runs the change's code. An apply job holds the apply role. On a runner that keeps anything between jobs, the first can leave files or processes behind for the second: a changed provider in a cache, a script on the path, a process that waits for the apply's credentials. [`runner`](/terragucci/reference/config/#runners) puts the plan and apply stages on runners of their own, so `runner.apply` is an isolation setting as well as a placement one.
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+| Runner | What a plan job can leave for a later apply | Kept apart by |
+|---|---|---|
+| GitHub-hosted (`ubuntu-latest` and the other hosted labels) | nothing: each job gets a new virtual machine | the forge |
+| Self-hosted, one job per runner (registered with `--ephemeral`, or a scale set of Actions Runner Controller) | nothing on the runner; only what its host keeps outside it, such as a mounted volume or the Docker daemon's images | a runner per job, started from a clean image |
+| Self-hosted, kept between jobs, taking plan and apply jobs | files in the runner's work and home directories, a cache directory a job sets, Docker images, containers and volumes, and processes the runner does not stop | `runner.plan` and `runner.apply` on different labels or [runner groups](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access), or one job per runner |
+
+Who can run a job on the apply runner: any workflow in the repository, unless its runner group is limited to selected workflows. A label in `runner.apply` keeps terragucci's own plan jobs off the runner and nothing more, since a branch can edit its workflow to ask for the label.
+
+</TabItem>
+<TabItem label="GitLab">
+
+| Runner | What a plan job can leave for a later apply | Kept apart by |
+|---|---|---|
+| GitLab.com's hosted runners (`saas-` tags) | nothing: each job gets a new virtual machine | the forge |
+| Self-managed, one job per machine (an autoscaler with `max_use_count = 1`) | nothing on the machine | a machine per job, started from a clean image |
+| Self-managed, kept between jobs, taking plan and apply jobs | with the Docker executor, the cache and build volumes it reuses for the project and the Docker daemon's images; with the shell executor, everything the runner's user can write | `runner.plan` and `runner.apply` on different tags, or one job per machine |
+
+Who can run a job on the apply runner: any job of the project, unless the runner is [protected](https://docs.gitlab.com/ci/runners/configure_runners/#prevent-runners-from-revealing-sensitive-information), which limits it to jobs on protected branches and tags.
+
+</TabItem>
+<TabItem label="Forgejo">
+
+| Runner | What a plan job can leave for a later apply | Kept apart by |
+|---|---|---|
+| A runner you register, one job per runner ([ephemeral](https://forgejo.org/docs/latest/admin/actions/security/#ephemeral-runners)) | nothing on the runner; only what its host keeps outside it, such as a mounted volume or the Docker daemon's images | a runner per job |
+| Kept between jobs, with `docker://` labels, taking plan and apply jobs | each job's container is new; the Docker daemon's images and volumes, and anything `container.valid_volumes` lets a job mount, stay | `runner.plan` and `runner.apply` on different labels, or one job per runner |
+| Kept between jobs, with host labels | everything the runner's user can write, and processes the runner does not stop | as above |
+
+Who can run a job on the apply runner: any job of a repository the runner is registered to, whether that is the repository, its organization or the instance. Forgejo has no limit by workflow or branch.
+
+</TabItem>
+</Tabs>
+
+The provider cache and the binaries terragucci installs live in the job's temporary directory by default. A runner that sets `TF_PLUGIN_CACHE_DIR` or `TOFU_INSTALL_DIR` to a directory it keeps shares that directory with every later job on it, a plan's included ([Applies side by side](/terragucci/reference/pipeline/#applies-side-by-side)). On a runner that takes both stages, leave them unset, or give the apply runners a directory no plan job writes.
+
+A runner whose host holds credentials of its own (an instance profile, a metadata endpoint, mounted keys, cloud config files) gives them to every job it takes, with no OIDC token and no trust condition in the way. That holds for a one-job runner too. [Runner hosts](/terragucci/guides/separate-environments/#runner-hosts) lists each and how to keep it off.
+
+| Guard | Covers | Does not cover |
+|---|---|---|
+| `runner.plan` and `runner.apply` on different labels or groups | terragucci's plan jobs landing on the apply runners | another job that asks for the apply labels: a branch's edited workflow, or another workflow in the repository |
+| a GitHub runner group limited to selected workflows; GitLab protected runners | other workflows' jobs, and on GitLab unprotected refs' jobs, on the apply runners | Forgejo, which has neither; on GitLab, every job of a protected ref |
+| one job per runner | leftovers from one job reaching the next | credentials the host gives every job; anything the host keeps outside the runner |
+| the tip [`terragucci-persistent-runner`](/terragucci/reference/tips/#terragucci-persistent-runner) from `config check` | a config whose plan and apply runners, or two environments' apply runners, one runner can take | whether a runner is kept between jobs: `config check` reads the config, never the runners |
+| with `environments`, each apply job's [own check](/terragucci/reference/environment/#the-apply-jobs-own-check) | an environment's apply on a runner without its GitLab tags, or, on GitHub and Forgejo, on a hosted runner when its `runner` is self-hosted | someone who edits the workflow and removes the check |
+
+## State access per environment
+
+Whatever root a job runs, its role reaches every state the role's IAM policy grants. One `plan_role` and one `apply_role` means every root runs as the same pair: a dev root's plan can read prod's state and a dev apply can write it.
+
+With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt.credentials` for units), each root runs with the pair of the first glob it matches. Grant each pair only its own environment's state keys. Then nothing a root runs (init, plan, apply or a step) holds an identity that reaches another environment's state. A mistake in one environment's code, or a backend pointed at the wrong key, is refused by the cloud.
+
+| Guard | Covers | Does not cover |
+|---|---|---|
+| a pair per environment, scoped to its state keys | a root reading or writing another environment's state with the identity it runs as | code that reads the job's token file and assumes another role itself: one job's token is good for every role whose trust names the job's subject and audience |
+| one apply job per pair ([per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)), each carrying only its own roles | a role's ARN reaching another environment's job through `TERRAGUCCI_ROOT_ROLES` | a role whose trust names only the default branch's subject, which every apply job carries |
+| with `environments`, each apply job [checking its forge environment, ref and runner](/terragucci/reference/environment/#the-apply-jobs-own-check) before it takes a token | a hand edit, a renamed job, a dropped `environment:` or a mistyped runner label that would run an environment's apply somewhere else | someone who can edit the workflow and removes the check: the forge's environment, branch and runner settings and each role's trust are what keep such a job out |
+| with `environments`, each apply role trusting its environment's claims (below) | a root's code in one environment's apply job assuming another environment's apply role with its job's token | Forgejo, whose token cannot tell environments apart on one ref; the wave's deciding job, which plans every root with every environment's plan role (never an apply role, and on the plan audience), so a root's code planned there can read every state a plan role reaches |
+| `config check` | warns when one role is two environments' role, when a root reads another environment's state through `terraform_remote_state` (its roles must reach that state), and when a root is left with no role; lists each role's roots and the state keys it needs | the IAM policy itself: `config check` reads the roots' code, never the cloud, so a policy wider than the keys it lists goes unseen |
+| state contents never in the reports bucket | reports, `states.json`, `edges.json` and the estate page hold version ids and root paths only | a provider or step that prints state values into a job log |
+
+The environment condition each forge and cloud can check:
+
+| Forge | AWS | GCP | Azure |
+|---|---|---|---|
+| GitHub | `sub` = `repo:<owner>/<repo>:environment:<name>`; the environment's deployment branch rule keeps other branches out | the same `sub` in the attribute condition | a federated credential for the environment's subject |
+| GitLab | the environment's `oidc.audience` in `aud`, with `sub` limited to the default branch's ref; AWS cannot read GitLab's environment claims | a condition on `environment`, `environment_protected` and `ref_protected` | a claims expression on the same claims |
+| Forgejo | none: one ref's jobs share a subject; use a repo or a protected branch per environment | none | none |
+
+The runners and secrets each environment's jobs reach are the forge's settings: [Separate environments](/terragucci/guides/separate-environments/) lists them for each forge.
+
+### Exporting a state
+
+[`terragucci state export`](/terragucci/guides/export-a-state-version/) downloads one version of a root's state to the machine of whoever runs it, and nowhere else.
+
+| Guard | Stops | Does not stop |
+|---|---|---|
+| a request on `chant/lifecycle`, and an approval of its digest by someone other than the requester | an export nobody else agreed to, through terragucci | someone whose own identity reads the bucket downloading the object with the cloud's CLI; scope who holds such an identity |
+| under `approval: sealed`, the approval's seal | a forged approval line | a listed approver's stolen key |
+| the record in `_gates/tf-state-export/done.jsonl`, written before the file | an export the audit trail does not name | a requester name chosen by the person running it: under `ledger` it is git's `user.name` or `--actor` |
+| no job artifact, no bucket copy | the state reaching everyone with read access to the repo, or the bucket's readers | the requester's own copy once written |
+
+## Token audiences per stage
+
+By default every job's AWS token carries one audience: `sts.amazonaws.com`, or `oidc.audience` when it is a string. A role's trust can then tell jobs apart only by subject, and `replan`, `drift` and `confirm` carry the default branch's subject, which the apply role trusts. On GitLab with AWS, the audience is the only claim besides `sub` that a role's trust can check.
+
+To harden this, set `oidc.audience` to a map of `plan`, `apply` and `drift` ([Audience per stage](/terragucci/reference/environment/#audience-per-stage)), and have the apply role trust the apply audience alone.
+
+| Guard | Covers | Does not cover |
+|---|---|---|
+| the apply role trusting the apply audience alone | a `plan`, `replan` or `drift` token assuming the apply role, whatever its subject | `confirm`, an apply job, whose token carries the apply audience |
+| on GitLab, each job's `id_tokens` declaring its stage's audience alone | a job holding a token for another stage's audience | the job's own token, which the code it runs can read |
+| on GitHub, and on Forgejo with any `oidc`, a step that takes the job's cloud identity fetching its tokens first and starting again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | the binary, a root's code and the step's other commands asking for a token for another audience | in a job that runs merged code, the job's other steps, which keep the variables; in `plan` and `replan` those steps end before the change's code runs, and none runs after it ([Token scrub limits](#token-scrub-limits)); the step's own token, which the code it runs can read |
+
+GCP and Azure tokens keep their audiences.
+
+## Approval modes
+
+The gate policy decides when a wave waits: `always`, `on-destructive` (the default) or `never`. When it waits, the `approval` key in `terragucci.yml` at base decides which approvals count; with no key, [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) at base does. Base is the applied commit's first parent. [Approval modes](/terragucci/standards/access-and-identity/#approval-modes) defines each mode; this table is what each one stops.
+
+| Mode | Set by | An approval counts when | Stops | Does not stop |
+|---|---|---|---|---|
+| No gate | `gate: never` | no wave waits | nothing past review and branch protection | any merged change applying |
+| `ledger`, the default | `approval: ledger` at base, or no key and no gate under [`identity.gates`](/terragucci/concepts/glossary/#identitygates) | a line on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) approves the wave's set digest, newer than its pending fact | a wave whose plans moved after approval | anyone who can push to `chant/lifecycle` writing that line: every writer, and the apply jobs' token; on GitLab without `gitlab.token: protected`, a merge request's code through that token |
+| `pr-review` | `approval: pr-review` at base | as under `ledger`, or the merged pull request's head was approved by a writer who had no hand in the change (on GitLab, an approval by a Developer or higher after the merge request's latest push) and the wave plans the digest its plan note recorded | as under `ledger`, a review standing for plans that moved after it, and a review by anyone behind the change: its author, its commits' authors and committers, the person an agent's commit was made for, and the users the pipeline's and the agent's tokens act as | as under `ledger`; anyone who can edit the plan note's comment can change the digest it records; a review by a token's user the forge names no user for |
+| `sealed` | `approval: sealed` at base, or no key and `identity.gates` listing gates at base; then every wave gate needs a seal | as above, and [`terragucci approve --sign`](/terragucci/reference/cli/#approve) sealed it with a key the signers file at base lists for that approver | forged lines from writers and job tokens; a change editing the `approval` key, the signers file, `.chant/trust.json` or `chant.workspace.json` to pass itself; signed fields edited later; moved plans; an approver releasing a change they had a hand in, when their principal is their forge login or a commit address | a listed approver's stolen key; an approver whose principal names neither their login nor an address on the change's commits; a rebase merge of several commits, whose base is the change's own commit |
+
+### People behind the change
+
+In every mode an approval counts only from someone who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). The wave reads the people behind the change from the forge and from git, and leaves out a review, or a ledger approval, by any of them. A signed approval is judged by the principal its seal verifies for; an unsigned one by the name it records.
+
+| Guard | Stops | Does not stop |
+|---|---|---|
+| the people behind the change, read when the wave decides its gate | the pull request's author, a commit's author, co-author or committer, or the person whose `/terragucci agent` comment made a commit (its `Requested-by:` trailer), approving it; a review by the agent's token's user once its push names it (`Pushed-by:`) | a person whose forge login matches nothing on the change: a commit made under an address the forge ties to no login; on GitLab, an author whose commits carry their own address rather than a noreply one |
+| unsigned ledger approvals named for someone behind the change | an honest approver approving their own change | an unsigned line in another person's name, which anyone who can push to `chant/lifecycle` can write |
+| `approval.require_signed: true` at base | every unsigned approval on the ledger, so each one is tied to the principal whose key signed it | a listed approver's stolen key |
+| `agent.login` at base | a review as the agent's account, which a pull request's author can post by editing the workflow in their own pull request to use `agent.token_env`'s secret | that self-approval by proxy when `agent.login` is unset; `config check` warns then |
+| a token the forge names no user for is left unknown | the rule assuming a bot is some person and refusing their review | that bot's review counting, apart from the actions users GitHub and Forgejo name, which never count |
+
+A wave about to apply under an approval marks it used in `_gates/tf-apply/applied.jsonl` on `chant/lifecycle`. A used approval of other plans makes the wave wait (exit 3) where it would refuse (exit 4); it approves nothing, so a forged line there releases no wave.
+
+No approval counts when sealing is on and base has no signers file. A reviewed change that sets `approval: ledger`, or with no key empties `identity.gates`, turns sealing off for the merges after it. [Which commit the rule is read from](/terragucci/guides/approve-a-wave/#rule-commit).
+
+## Policy overrides
+
+An override lets `tf-apply` apply one root's denied plan. It never edits the policy, and `tf-plan` still fails the root. `policy.override` in the config at base lists who may write one, for every root or, with an entry, for the roots and rules it names; with no key there, no override counts ([steps](/terragucci/reference/policy/#overriding-a-denial)). A role in an entry counts only under `sealed`, by the grants in `.chant/trust.json` at base.
+
+| Mode | An override counts when | Stops | Does not stop |
+|---|---|---|---|
+| `ledger` or `pr-review` | a line on `chant/lifecycle` names the root, its plan digest and the rules that denied it, is newer than the recorded denial, gives a reason, and names someone listed at base | a change adding its author to `policy.override` to pass itself; an override standing for a plan or rules that changed; a line by someone unlisted; a line a job recorded (`via`) | anyone who can push to `chant/lifecycle` writing that line in a listed name, the apply jobs' token included |
+| `sealed` | as above, and sealed by a key the signers file at base lists for that person | as above, and forged lines from writers and job tokens | a listed person's stolen key; a listed person overriding their own change |
+
+No generated job runs `terragucci override` or writes an override line: the wave records the denial, and before it applies under an override it marks that override used in `_gates/policy-override/applied.jsonl`. A used override of another plan makes the wave record the new denial and exit 1 where it would exit 4; it lets nothing through, so a forged line there applies nothing. A root the policy could not check is never overridden.
+
+## Apply before merge
+
+With `apply.when: pull-request`, the open change's head runs with the apply role. The reviewer who approves the head is the guard. On GitLab the `comments` job runs the checks, and `mr-apply` runs them again.
+
+| Check before any credential | Stops |
+|---|---|
+| Forks never apply | outside code meeting the apply role |
+| A reviewer other than the author approved the head; no reviewer's last review asks for changes (on GitLab, an approval after the latest push) | unreviewed code meeting the apply role |
+| On GitLab, the head the pipeline's variable names is the merge request's head now | a pipeline started by hand for code nobody approved |
+| The head did not move while the comment was read, and contains the default branch as it is now | applying code nobody reviewed, or undoing merged changes |
+| The change does not edit the pipeline file | a change rewriting the job that applies it |
+| Waves, gate, signers, policy, config and `steps` come from the default branch | a change loosening its own gate, or adding a step that runs with the apply role |
+| No other open pull request holds a lock on its roots | two changes applying the same root |
+
+After the checks the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token; review them before approving the head ([what they can reach](/terragucci/reference/pipeline/#pull-request-code-access)).
+
+## The chat relay
+
+[`terragucci relay`](/terragucci/guides/approve-from-chat/) turns a Slack click or a Teams reply into an approval line on `chant/lifecycle`. It runs in your cloud, and terragucci hosts no part of it.
+
+| Guard | Stops |
+|---|---|
+| Each request is verified: Slack's signing secret over the timestamp and the body, within five minutes; the Teams outgoing webhook's HMAC over the body | anyone else posting a click, and a Slack click replayed later |
+| The chat user maps to a principal only through their line of the signers file on the default branch, which a reviewed merge changes | an unlisted chat user approving, and a pull request adding its author's chat id to pass its own wave |
+| The approval names the digest the message showed, and only a wave waiting for that digest takes it | a click approving plans that moved after the message |
+| Under `approval: sealed` the relay records nothing | a relay, or whoever holds its token, releasing a sealed gate |
+| The token is approve-only: the relay refuses one that administers the repo or may push to the default branch, and on GitLab one with the `api` scope; it uses the token only to fetch the repo and push `chant/lifecycle`, and starts no job | a stolen relay token merging, applying or changing settings |
+| The answer goes to Slack's own `response_url` hosts only | the relay posting to an address a request names |
+
+| It does not stop | Because |
+|---|---|
+| A stolen chat account approving as its owner | the chat platform's login is the identity the relay checks |
+| Whoever holds the relay's token or its secrets writing approval lines in any listed name | under `ledger` and `pr-review` an approval line is the relay's word, as any writer's is; `sealed` does not count them |
+| A Teams reply replayed while the same digest still waits | Teams signs the body with no timestamp; the replay approves only that digest, in the same person's name |
+| A Slack retry within five minutes | the second click finds the wave approved and records nothing |
+
+The relay's token pushes `chant/lifecycle` like any approver's, so it is one more writer the [approval modes](#approval-modes) account for.
+
+## Steps
+
+[`steps`](/terragucci/guides/run-steps/) are commands the stage runs in the plan, apply and drift jobs, with the job's cloud identity (the apply role on an apply wave) and without its forge tokens. The stage reads them from `terragucci.yml` at base only.
+
+| Run | Steps read at | So a change cannot |
+|---|---|---|
+| a pull request's plan | the target branch | run a step it adds with the plan role, or skip one it removes |
+| an apply after a merge | the applied commit's first parent, as the approval mode | run a step it adds with the apply role on its own merge, or drop an `on_failure: approve` step to pass its own gate |
+| `apply.when: pull-request` | the base the head applies onto | run a step it adds with the apply role before it merges |
+| drift | the default branch's checkout | (drift runs no change) |
+
+If the base's file cannot be read, the stage fails when the checkout names steps and runs none otherwise; it never runs the change's. An edit to `steps` takes effect for the changes after it merges.
+
+This does not stop a step from running whatever its command runs at the time: a step that calls a script in the repo runs the change's copy. Keep what a step runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without steps. An `on_failure: approve` step holds a wave at the same gate as the gate policy, so the [approval mode](#approval-modes) decides who can release it.
+
+## Module and provider sources
+
+Policy reads the plan, so a change's modules and providers have run by the time a rule can deny it. With [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) set, `tf-check`, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a source it uses matches no entry. The stages that plan check again after `init`, before `plan`. The list is read at base, as `steps` are.
+
+| Checked | When |
+|---|---|
+| each `module` block's `source` in the root's own files, and in each local (`./`, `../`) module it calls, down the tree | before `init` |
+| each `required_providers` entry, and `hashicorp/<name>` for a provider a module uses with no entry | before `init` |
+| a Terragrunt unit's `terraform { source }`, and a local source's module | before `init` |
+| each module call inside a module `init` downloaded (`.terraform/modules/modules.json`), as written in the module that makes it | after `init`, before `plan` |
+| each provider in `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
+| in a Terragrunt repo, the same two files in each unit's working directory, the unit's source and what it calls | after Terragrunt inits the unit, before it plans it |
+
+In a Terragrunt repo, a wave inits and plans its units in one `run --all`. With `sources` set, terragucci points the run's `TG_TF_PATH` at a wrapper. When Terragrunt asks the binary to plan a unit, the wrapper first has the stage check that unit's working directory, and a refused unit exits before its `plan` runs. A `plan` call the wrapper cannot tie to a unit does not run, and a unit that planned without being checked fails, so a check that did not run never lets a plan through. The check job runs `terragucci check-sources --units` before `hcl validate` fetches any unit's source.
+
+| Not checked | |
+|---|---|
+| a source Terragrunt builds from an expression | matched as written |
+| the unit templates `terragrunt stack generate` fetches for an explicit stack | it runs before either check |
+| a pipeline written before the key was set | its check job runs `check-sources` once `terragucci init` writes it again |
+
+| Code | Runs |
+|---|---|
+| `steps` with `before: init` | before the check before `init` |
+| the binary's `init`: downloads only, no module or provider code | after the check before `init`, for a root that passes |
+| `steps` with `after: init` | after the check after `init` |
+| providers, modules and external data sources | in `plan`, after both checks |
+
+With no `sources` key, nothing is checked and nothing is read for it.
+
+## The review
+
+The review command reads text the change's author wrote: the title, the description and the diff. A model can follow an instruction hidden in them.
+
+| Guard | What it stops |
+|---|---|
+| the review jobs are a workflow of their own, which the forge runs from the default branch: GitHub on `workflow_run`, Forgejo on `pull_request_target`; the head is checked out without credentials and nothing in it runs | a pull request editing the review jobs it gets |
+| the command's step holds the model's key and no forge token: the step clears the runner's token variables, and on GitHub the job's token only reads | the model posting, pushing or approving anything itself |
+| neither review job has a cloud role | the model reaching the cloud through the pipeline |
+| the instructions are read from the default branch with `git show`, and the command runs in the default branch's files | a pull request rewriting what the model is told, or the script the command names |
+| `review-note` posts one issue comment, with every HTML comment in the review turned into text | a review that approves, or that carries a marker another job reads, such as the plan note's waves |
+| `input.review` is read from the `terragucci-review-<head>` artifact only when the forge says a run of the default branch's review workflow kept it: on GitHub a `workflow_run` run of `terragucci-review.yml`; on Forgejo a `pull_request_target` run of it whose event names the default branch as base and the merged pull request and head. The artifact must also say it reviewed that pull request and head against the default branch | an artifact of the same name kept by any other run, the pull request's own pipeline or its edited copy of the review workflow included; a review of the head against another base |
+| no note is read for `input.review` | a note, posted by any user or by any run's token (another branch's run included), setting the risk a policy reads |
+
+A hidden instruction can still steer the note, such as risk `low` for a risky change. The note informs reviewers and never approves. A policy on `input.review.risk` holds back what the model flags and cannot vouch for what the model misses. The plan note and policy results in the prompt come from the plan job of the pull request's own run, which the pull request can edit so it shows a plan it does not make, as for every job in [Job access](#job-access). Git itself supplies the review job's diff, so such an edit shows in what the model reads and in the merged head's diff, where reviewers see it. On Forgejo the review waits up to 30 minutes for that plan before reviewing without it. Anything posted with the pipeline's token from any run changes what people read on the pull request and leaves the policy's input alone.
+
+The review job keeps the verdict as the command's output plus the pull request, head and base that the previous step wrote. A review command that runs tools could rewrite them in the job; the default command runs no tools.
+
+Forgejo runs a `pull_request_target` workflow from the pull request's base, which may be a branch other than the default. A writer who opens a pull request against a branch whose review workflow they edited gets a run of that copy; its artifact is passed over, since the run's event names another base. There is no `workflow_run` on Forgejo.
+
+A Forgejo `pull_request_target` run's token can write, and the runner gives it to every step of the `review` job but the command's. Only a command that runs tools and leaves a process behind could read it, in the step that keeps the review.
+
+## Re-plan
+
+A re-plan runs the change's code from the default branch's workflow, so its OIDC token carries the default branch's subject, which the apply role trusts. The change's code never holds that token.
+
+| Step of `replan` | Holds |
+|---|---|
+| Trade, after the head's checkout and before any of its code runs | the token; `terragucci oidc-trade` trades it for each plan identity (`plan_role`, `oidc.roles`, Terragrunt's `credentials`, `reports.role`, the GCP plan service accounts) and deletes it |
+| Plan, which runs the change's code | the plan identities' keys and tokens; no OIDC token, no `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, here or in its parent processes |
+| Plan's end | in the job's container, every process the step started is killed, so none reads a later step's environment |
+
+With `oidc.azure` a re-plan has no trade step: the azurerm provider and backend take only the token itself. Its plan step fetches the token and runs the change's code beside it, as the plan job does, and its log warns that the token carries the default branch's subject. To plan an Azure change without that token, push to the pull request instead of commenting `/terragucci plan`.
+
+## Token scrub limits
+
+terragucci starts the binary, Terragrunt and the policy engine with every forge token removed by name and by value ([the list](/terragucci/reference/environment/#forge-tokens)). On GitHub and Forgejo, jobs that run a pull request's code also keep the token from the steps that run it ([which steps](/terragucci/reference/environment/#jobs-that-run-a-pull-requests-code)). Elsewhere a change's code can still reach one.
+
+| Where | Forge token reachable |
+|---|---|
+| The binary, Terragrunt and the policy engine, started by `terragucci stage`, `respond`, `check-root` and `check-policy` | no; a `TF_` variable passes as set, even holding a token |
+| On GitHub and Forgejo, the steps of `check`, `plan` and `replan` that run the change's code, their parent processes and their checkout's git config | no |
+| On Forgejo with `oidc` set, the token-request variables `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | no in any step that runs the change's code: `ACTIONS_ID_TOKEN_REQUEST_TOKEN` is the same token as the run's `ACTIONS_RUNTIME_TOKEN`, which the forge accepts as the run's token, so every step that takes the job's cloud identity fetches its tokens first and starts again without both variables, before any of the change's code runs; the `check` job gets no OIDC token |
+| On GitHub and Forgejo, a process the change's code leaves running in the `check`, `plan` or `replan` job's container, or a file it writes to `GITHUB_ENV` or `GITHUB_PATH` | no: the step that runs the code is the job's last, so no later step runs beside that process or starts with those files. No action in the job has a post step: the checkout is a git script, and the Terragrunt cache is restored and never saved. The job hands its report on as its outputs, and the container is gone before the job that keeps the report and posts the note starts |
+| GitLab's `check` job | no variable once its script starts; the runner's job token stays in the checkout's remote |
+| GitLab's `plan` job | yes: `GITLAB_TOKEN`, `api` scope, and the job token in the checkout's remote; with `gitlab.token: protected`, only the job token |
+| `apply-comment` and `mr-apply` with `apply.when: pull-request` | yes: the job's token, in the job's environment and the checkout, which the stage pushes the locks and the gate's records with |
+| The jobs that run merged code: the apply waves and their share jobs, `confirm`, `drift`, `tips`, `version-bump`, `publish`, `resume`, `rollout` | yes: the job's token, and in `publish` the registry and signing secrets; the code there was reviewed and merged, and `rollout` runs none of the pull requests it opens |
+| A change that edits its own pipeline file | whatever that pipeline asks for |
+
+Each of these is a writer's own code in a job the forge gives a token to; branch protection keeps that token from reaching the default branch.
+
+## Branch protection
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+| Where | Setting | Relied on for |
+|---|---|---|
+| Default branch | Require a pull request, with one approval | every push there applies; `contents: write` tokens can push |
+| Default branch | Dismiss stale approvals when new commits are pushed | the reviewed code is the merged code |
+| Default branch | Require the `terragucci/plan` status | only planned changes merge |
+| Default branch | Block force pushes and deletion | base, the first parent, stays the reviewed history |
+| Repo settings | Allow merge commits or squash; turn off rebase merging | a rebase of several commits makes base the change's own commit |
+| `chant/lifecycle` | A ruleset blocking force pushes and deletion, with pull requests and status checks off | approval history stays; approvers and jobs push records |
+| Apply role | Trust only `repo:<owner>/<repo>:ref:refs/heads/<default branch>` | no branch or pull request assumes it |
+
+</TabItem>
+<TabItem label="GitLab">
+
+| Where | Setting | Relied on for |
+|---|---|---|
+| Default branch | Protected: push allowed to no one, merge to the role that reviews, force push off | every push there applies |
+| Merge requests | Pipelines must succeed | only planned changes merge |
+| Merge requests | An approval rule requiring one approval, with approval by the author prevented (GitLab Premium and Ultimate) | a second person reads each change |
+| Merge requests | Merge commit; with fast-forward merges, squash commits set to Require | a fast-forward of several commits makes base the change's own commit |
+| `chant/lifecycle` | Protected: push and merge for a role your approvers and `GITLAB_TOKEN` both hold, force push off | approval history stays |
+| `apply.merge_token_env` variable | Protected, masked, environment scope `terragucci-merge`; a token whose role may merge into the default branch | only `comments` and `pr-merge` read it, and neither runs a change's code |
+| `GITLAB_TOKEN` variable, with `gitlab.token: protected` | Protected and masked | no merge request or branch pipeline reads it |
+| Apply role | Trust only `project_path:<group>/<project>:ref_type:branch:ref:<default branch>`, never `ref:*` | no branch assumes it |
+
+By default `GITLAB_TOKEN` reaches every branch's pipeline, so give it a role no wider than posting notes and statuses and pushing `chant/lifecycle` need. `gitlab.token: protected` keeps it to protected branches.
+
+</TabItem>
+<TabItem label="Forgejo">
+
+| Where | Setting | Relied on for |
+|---|---|---|
+| Default branch | A protection rule: push disabled, one required approval, stale approvals dismissed, merge blocked on rejected reviews | every push there applies |
+| Default branch | Status checks required: `terragucci/plan` | only planned changes merge |
+| Default branch | Force push off | base stays the reviewed history |
+| Repo settings | Merge commits or squash; rebase off | a rebase of several commits makes base the change's own commit |
+| `chant/lifecycle` | A rule with push for everyone with write access and force push off | approval history stays; approvers and jobs push records |
+| Apply role | Trust only `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<default branch>` | no branch or pull request assumes it |
+| `apply.merge: auto` | `merge_token_env` holds a token of a user who may push to the default branch | Forgejo refuses a merge with the run's own token |
+
+</TabItem>
+</Tabs>
+
+## Next
+
+- [The generated pipeline](/terragucci/reference/pipeline/) has each job and check in full.
+- [Approvals runbook](/terragucci/guides/approvals-runbook/) for the day-to-day approval commands.
+- [Separate environments](/terragucci/guides/separate-environments/) for the forge and cloud settings that keep each environment's runners, secrets and roles apart.
+- [Handle secrets](/terragucci/guides/keep-secrets-out-of-notes/) for a secret's path from the forge's store to the state.
+- [Read at base](/terragucci/concepts/setting-levels/#read-at-base) lists every key a pull request cannot change for itself.
+- [Access and identity](/terragucci/standards/access-and-identity/) maps each action to the forge, approval mode or cloud role that decides it.
+- For help reviewing this model against your own controls, [Intentius](https://intentius.io/work/) works with teams adopting terragucci.

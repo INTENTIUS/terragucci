@@ -1,0 +1,13 @@
+{
+  "step": "responses",
+  "source_hash": "ac868b48e3e584a9",
+  "commands": [],
+  "shots": {
+    "drift-light": "dbe1bdbd422fa3f3",
+    "drift-dark": "32329bb69b948573",
+    "drift-files-light": "64ea08ef810b5239",
+    "drift-files-dark": "0cf5f790a28e8722",
+    "fmt-light": "cd0cb370dce3eead",
+    "fmt-dark": "cebf490cade67548"
+  }
+}

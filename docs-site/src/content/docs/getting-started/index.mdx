@@ -1,0 +1,207 @@
+---
+title: Get your first plan note
+description: Add terragucci to a Terraform, OpenTofu, Terragrunt, Atmos or CDK Terrain repo and see one grouped plan note on a pull request, in about 10 minutes.
+claims: [init/zero-config]
+prompt: |
+  Read https://intentius.io/terragucci/getting-started/ and https://intentius.io/terragucci/getting-started/agents/.
+  Set up terragucci in this repository.
+  Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
+  Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
+  Do not create secrets.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Badge, CardGrid, LinkCard, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+import PlanNote from '../../../components/PlanNote.astro';
+
+<Badge text="About 10 minutes" variant="note" size="medium" />
+
+CI does this: everything runs as jobs in your CI and lands in your git and your bucket. No account, no sign-in, no platform.
+
+| You get | Where it is shown |
+|---|---|
+| No server to host | [What runs where](/terragucci/concepts/how-it-works/#components) |
+| GitHub, GitLab or Forgejo | [Per forge](/terragucci/guides/add-to-a-repo/#per-forge) |
+| Object storage on AWS, GCP or Azure, for state and reports | [Credentials](/terragucci/reference/pipeline/#credentials), [Keep reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) |
+| Tracing and metrics | [Send traces and metrics](/terragucci/guides/send-traces-and-metrics/) |
+| Rich lifecycles | [Architecture](/terragucci/concepts/how-it-works/) |
+| Gated waves | [Waves and approvals](/terragucci/concepts/waves-and-approvals/) |
+| Aggregated plan output | [Plan grouping](/terragucci/concepts/why-plans-are-grouped/) |
+| Module publishing and pinned rollouts | [Publish your modules](/terragucci/guides/publish-modules/), [roll out a version](/terragucci/guides/roll-out-a-module-version/) |
+
+<CardGrid>
+<LinkCard title="Try it on an example first" description="A 15-root example on your laptop, with no cloud account." href="/terragucci/tutorial/" />
+<LinkCard title="Hand it to my agent" description="Optional. A prompt for Claude Code, Codex or Cursor that stops at a pull request." href="/terragucci/getting-started/agents/" />
+<LinkCard title="I use Terragrunt" description="Each unit is a root, and dependency order decides the waves." href="/terragucci/guides/use-terragrunt/" />
+<LinkCard title="Switching from Atlantis or OpenTaco" description="Their commands and settings, and the terragucci equivalent of each." href="/terragucci/guides/coming-from-atlantis-or-opentaco/" />
+<LinkCard title="Switching from HCP Terraform, Scalr or OTF" description="Workspaces to roots, and state moved to your bucket by hand." href="/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/" />
+<LinkCard title="Switching from Spacelift or env zero" description="Stacks and environments to roots, and managed state moved to your bucket by hand." href="/terragucci/guides/coming-from-spacelift-or-env-zero/" />
+</CardGrid>
+
+## Result
+
+A pull request with one plan note that groups the roots a change reaches and names every destroy.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| a repo of Terraform or OpenTofu roots, or a Terragrunt, Atmos or CDK Terrain repo, on GitHub, GitLab or Forgejo | terragucci reads the roots and the forge from the repo |
+| Node.js 22 or later, on your machine only | `init` is an npm package; the pipeline runs in terragucci's CI image |
+| a way for CI to read your state and providers | the plan job runs `plan`; see [Environment variables and credentials](/terragucci/reference/environment/) |
+| push access to the repo | you commit the generated pipeline |
+
+## Steps
+
+<Steps>
+
+1. Install terragucci from the root of the repo.
+
+   ```bash
+   npm i -D @intentius/terragucci
+   ```
+
+2. Preview what it finds. This writes nothing.
+
+   ```bash
+   npx terragucci init --dry-run
+   ```
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   would write .github/workflows/terragucci.yml
+   no terragucci.yml needed (defaults fit)
+   dry run: nothing was written
+   ```
+
+   | Found | Means | If wrong |
+   |---|---|---|
+   | [roots](/terragucci/concepts/glossary/#root) | directories with a backend, `cloud` block, [choudoufu](/terragucci/concepts/glossary/#choudoufu) `live` block or provider; in a Terragrunt repo, the units `terragrunt find` lists | `--json` says why |
+   | layers | dependency order, the [waves](/terragucci/concepts/glossary/#wave) | |
+   | [binary](/terragucci/guides/use-a-binary/) | `tofu` or `terraform` and its version; Terragrunt runs it underneath | `--binary` |
+   | forge | the `origin` remote | `--forge` |
+
+   If you have a `terragucci.yml`, run `npx terragucci config check` first. It names the approval mode and any unknown key, with the keys it accepts. The example's output.
+
+3. Write the pipeline.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   wrote .github/workflows/terragucci.yml
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge gitlab (the origin remote (gitlab.com))
+   wrote .gitlab/terragucci.yml
+   wrote .gitlab-ci.yml
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   The jobs go in `.gitlab/terragucci.yml`. A `.gitlab-ci.yml` you already have keeps its jobs and gains an `include:` of that file; [add terragucci to a repo](/terragucci/guides/add-to-a-repo/) has the cases.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge forgejo (the origin remote (codeberg.org))
+   wrote .forgejo/workflows/terragucci.yml
+   no terragucci.yml needed (defaults fit)
+   ```
+
+   </TabItem>
+   </Tabs>
+
+   The defaults need no `terragucci.yml`; [terragucci.yml keys](/terragucci/reference/config/) lists every key.
+
+4. Give the pipeline a token.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   The jobs use the run's `github.token`, so there is nothing to add.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   Add `GITLAB_TOKEN` under Settings, CI/CD, Variables: a masked project access token with the `api` scope.
+
+   | `terragucci.yml` | Plan job | Plan note | `GITLAB_TOKEN` |
+   |---|---|---|---|
+   | no `gitlab` key (the default) | holds the token, so a merge request's code can use it as the project's bot | posted by the plan job at once | a masked variable |
+   | `gitlab: { token: protected }`, with `comments:` set | holds no token | posted by the comments schedule's job | a masked and protected variable, on a protected default branch |
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   Each run brings its own token, so no secret is needed.
+
+   </TabItem>
+   </Tabs>
+
+   Cloud roles over OIDC and the required status are in [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/).
+
+5. Commit and open a pull request.
+
+   ```bash
+   git switch -c add-terragucci
+   git status
+   git add -A
+   git commit -m "Add terragucci"
+   git push -u origin add-terragucci
+   ```
+
+   `git status` should list the pipeline files `init` wrote and the two package files. Put `node_modules` in `.gitignore`. Open the pull request, then change a line in one root, since a change that touches no root has nothing to plan.
+
+6. Read the plan note. The plan job leaves one comment and a `terragucci/plan` status:
+
+   <PlanNote />
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+
+   A pull request comment, with the status in the checks box.
+
+   </TabItem>
+   <TabItem label="GitLab">
+
+   A merge request note; the widget above it counts creates, updates and deletes.
+
+   </TabItem>
+   <TabItem label="Forgejo">
+
+   A pull request comment, with terragucci/plan among the commit statuses.
+
+   </TabItem>
+   </Tabs>
+
+   [The plan report](/terragucci/reference/report/) explains each part.
+
+</Steps>
+
+## First approval
+
+With the default [gate](/terragucci/concepts/glossary/#gate), a wave waits for a person only when its plan destroys or replaces something. You approve it from your machine with [`terragucci approve`](/terragucci/reference/cli/#approve).
+
+| Approval mode | Set up once |
+|---|---|
+| `ledger`, the default | nothing |
+| `pr-review`, a pull request review counts | `approval: pr-review` in `terragucci.yml`; to hold unreviewed changes, require `terragucci/approval` on GitHub or Forgejo, or an approval rule on GitLab: [approve by review](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review) |
+| `sealed`, signed approvals | the same, and your ssh public key in `.chant/allowed_signers` on the default branch before the first change that destroys something: [set up the signers file](/terragucci/guides/approve-a-wave/#set-up-the-signers-file) |
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/) when a change destroys something.
+- [Turn on drift checks](/terragucci/guides/turn-on-drift-checks/) to find changes made outside Terraform.
+- [Govern many repos from one place](/terragucci/guides/govern-many-repos/) with a [control repo](/terragucci/concepts/control-repo/) once one repo works.
+- [Threat model](/terragucci/reference/threat-model/) for what the jobs can reach and the branch protection they rely on.

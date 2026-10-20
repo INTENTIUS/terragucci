@@ -1,0 +1,31 @@
+name: ci-red
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ci-red
+  cancel-in-progress: false
+
+jobs:
+  alarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: '0'
+      - name: Open, comment on or close the main is red issue
+        run: scripts/ci-red
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          TERRAGUCCI_RED_HOURS: '${{ vars.TERRAGUCCI_RED_HOURS || ''6'' }}'
+          TERRAGUCCI_RED_MENTION: '${{ vars.TERRAGUCCI_RED_MENTION }}'

@@ -1,0 +1,12 @@
+diff --git a/live/dev/orders/terragrunt.hcl b/live/dev/orders/terragrunt.hcl
+index ff12aef..b8b4c2b 100644
+--- a/live/dev/orders/terragrunt.hcl
++++ b/live/dev/orders/terragrunt.hcl
+@@ -25,5 +25,6 @@ inputs = {
+   env                   = local.env.locals.env
+   name                  = "orders"
+   logs_bucket           = dependency.platform.outputs.logs_bucket
+-  job_retention_seconds = local.common.locals.job_retention_seconds
++  # Orders in dev keeps unclaimed jobs for seven days instead of four.
++  job_retention_seconds = 604800
+ }

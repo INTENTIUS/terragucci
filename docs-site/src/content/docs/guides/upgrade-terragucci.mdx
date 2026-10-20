@@ -1,0 +1,49 @@
+---
+title: Upgrade terragucci
+description: Move a repo to a new terragucci release in one reviewed pull request, with the pipeline and its image moved together.
+claims: [boot/tofu, init/image]
+prompt: |
+  Read https://intentius.io/terragucci/guides/upgrade-terragucci/.
+  Upgrade terragucci in this repo to the version I name: run `npm i -D @intentius/terragucci@<version>`, then `npx terragucci config check` and `npx terragucci init`, and open a pull request with package.json, package-lock.json and the files init wrote.
+  In the pull request's description, list the image the pipeline names before and after, and any other change init made to the pipeline.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+The repo's pipeline runs the new release, moved by a pull request you reviewed, like any other version.
+
+## Steps
+
+<Steps>
+
+1. Install the new release where the repo pins it:
+
+   ```bash
+   npm i -D @intentius/terragucci@<version>
+   ```
+
+2. Check the config against it and write the pipeline again:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+   `init` writes the pipeline with the new release's image, by tag and digest. [Changes in each release](/terragucci/reference/whats-new/) lists what moved.
+
+3. Open a pull request with `package.json`, `package-lock.json` and the files `init` wrote. The pipeline's diff shows the image moving and anything else the release changed in the jobs.
+
+4. Merge it. The jobs run the new release from the next push. Approvers update the terragucci they run `terragucci approve` with the same way.
+
+</Steps>
+
+With [`image`](/terragucci/reference/config/#keys) set, the jobs run your own image, built `FROM` terragucci's: rebuild it from the new release's image and name it in `image` before step 2.
+
+In a [control repo](/terragucci/concepts/control-repo/), upgrade the control repo's own install and run `terragucci reconcile --mode apply`: each project gets a pull request with its new pipeline.
+
+## Next
+
+- [Versions and pins](/terragucci/reference/versions-and-pins/) for every other version a job runs.

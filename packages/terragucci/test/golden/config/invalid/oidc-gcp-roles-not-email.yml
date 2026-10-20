@@ -1,0 +1,7 @@
+oidc:
+  gcp:
+    workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
+    plan_service_account: tg-plan@shop.iam.gserviceaccount.com
+    apply_service_account: tg-apply@shop.iam.gserviceaccount.com
+    roles:
+      "envs/prod/**": { plan: prod-plan, apply: prod-apply@shop.iam.gserviceaccount.com }

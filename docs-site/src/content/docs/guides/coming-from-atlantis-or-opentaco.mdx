@@ -1,0 +1,114 @@
+---
+title: Coming from Atlantis or OpenTaco
+description: Each Atlantis and OpenTaco (Digger) comment command and setting, the terragucci command or key that does the same job, and what terragucci leaves out on purpose.
+claims: [comment/plan, import/atlantis, comment/atlantis]
+prompt: |
+  Read https://intentius.io/terragucci/guides/coming-from-atlantis-or-opentaco/.
+  Run `npx terragucci import atlantis --dry-run` (or `import digger --dry-run` for a digger.yml) and report what it would write and each setting it lists as not mapped or left out on purpose.
+  Then run it without --dry-run, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml and the generated pipeline.
+  Do not delete atlantis.yaml or digger.yml, and do not create secrets.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+## Result
+
+A `terragucci.yml` that matches your Atlantis or OpenTaco setup, and jobs `init` writes for your forge's CI. There is no server and no account; the jobs write to your git and bucket.
+
+## Import the settings
+
+```bash
+npx terragucci import atlantis   # reads atlantis.yaml
+npx terragucci import digger     # reads digger.yml
+npx terragucci init
+```
+
+[`import`](/terragucci/reference/cli/#import) writes `terragucci.yml` by the [settings table](#settings) below and prints each setting as one of:
+
+- written as a key
+- done with no key
+- not mapped, and why
+- [left out on purpose](#left-out-on-purpose), with the rule and what to do instead
+
+The projects' directories become `roots`, so the generated pipeline plans the same projects. `--dry-run` prints it all and writes nothing.
+
+Atlantis and OpenTaco apply before merge, so the import writes `apply.when: pull-request` and takes `apply.requires` from the projects' `apply_requirements`. `--apply-when merge` keeps terragucci's default. On GitLab it keeps `apply.when: merge` and says why: applying before merge there needs [`comments:` and a merge token](/terragucci/reference/config/#apply-before-merge-on-gitlab).
+
+A project's `depends_on` is read against the repo. A dependency the roots' `terraform_remote_state` reads already give needs no key. The rest go into [`waves.after`](/terragucci/reference/config/#root-order), each root after the roots it depends on, named by its `dir`. A cycle that `depends_on` and the reads make together is listed as not mapped, and no order is written.
+
+## Comment commands
+
+Comment commands run on GitHub and Forgejo. GitLab starts no pipeline for a merge request note, so there [`comments:`](/terragucci/guides/re-plan-from-a-comment/) adds a scheduled job that answers `/terragucci plan` and `/terragucci apply` on its next run. With `apply.when: pull-request` it also answers `/terragucci lock` and `/terragucci unlock`.
+
+| To do this | Atlantis | OpenTaco | terragucci |
+|---|---|---|---|
+| Plan what the change reaches | `atlantis plan` | `digger plan` | push to the pull request, or comment `/terragucci plan` |
+| Plan one project | `atlantis plan -d <dir>` or `-p <project>` | `digger plan -p <project>` | `/terragucci plan <root>`, the root's path from the repo root |
+| Plan one workspace | `atlantis plan -w <workspace>` | a project's `workspace` | no flag: each root is a directory with one state |
+| Pass flags to the binary | `atlantis plan -- <flags>` | a workflow step | none |
+| Apply | `atlantis apply`, before merge | `digger apply`, before merge by default | merge: the default branch's wave jobs apply ([before merge](#apply-before-or-after-merge) is a setting) |
+| Apply part of the change | `atlantis apply -d <dir>` or `-p <project>` | `digger apply -p <project>` | `/terragucci apply wave-<n>` applies the approved waves up to wave n; no single-root apply |
+| Re-run an approved apply | `atlantis apply` | `digger apply` | `/terragucci apply` on the merged pull request |
+| Lock | at plan time | `digger lock`, or at plan time | with [`locks: plan`](/terragucci/reference/config/#plan-locks) (GitHub, Forgejo), from the first plan; otherwise when it applies before merge or on `/terragucci lock`, with `apply.when: pull-request` |
+| Unlock | `atlantis unlock` | `digger unlock` | `/terragucci unlock`, with `apply.when: pull-request` or `locks: plan` |
+| Import | `atlantis import <address> <id>` | none | refused; [an `import` block](#left-out-on-purpose) in the change |
+| Remove from state | `atlantis state rm <address>` | none | refused; [a `removed` block](#left-out-on-purpose) in the change |
+| Pass a failed policy | `atlantis approve_policies` | none | refused from a comment; a person `policy.override` lists runs [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) for one root's plan |
+| Approve | the forge's review | the forge's review | [`terragucci approve`](/terragucci/reference/cli/#approve) for a wave its gate holds, or the forge's review under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes) |
+
+With [`atlantis_comments: true`](/terragucci/reference/config/#keys), `atlantis plan`, `atlantis plan -d <dir>` and `atlantis apply` work as the `/terragucci` comments. The alias changes only the words. `atlantis apply` on an open pull request is still refused unless `apply.when: pull-request` is set and its requirements pass. `-p`, `-w`, `--` and `atlantis apply -d` are refused with the reason from the tables here.
+
+A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlock` gets a reply that a comment never runs it. What each command accepts is under [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms).
+
+## Settings
+
+| Setting | Atlantis | OpenTaco (`digger.yml`) | terragucci (`terragucci.yml`) |
+|---|---|---|---|
+| Which directories | `projects[].dir`, `autodiscover` | `projects[].dir`, `generate_projects` | detected: every directory with a backend, `cloud` block or provider; `roots` globs to narrow, which an import writes from the projects' directories |
+| Project name | `projects[].name` | `projects[].name` | none: a root goes by its path from the repo root |
+| Workspace | `projects[].workspace` | `projects[].workspace` | none: each root is a directory with one state |
+| What triggers a plan | `autoplan.when_modified`, `autoplan.enabled` | `include_patterns`, `exclude_patterns`, `on_pull_request_pushed` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
+| Binary version | `terraform_version` | a project's `opentofu`, or the action's `terraform-version` or `opentofu-version` input | `binary` and `version`, or the pins the roots carry |
+| Order | `execution_order_group`, `depends_on`, `abort_on_execution_order_fail` | `depends_on`, layering | waves from `terraform_remote_state` reads; `waves.after`, which an import writes from `depends_on`, for an order the reads do not give; `waves.canary` puts roots first; Terragrunt's dependency layers |
+| Concurrency | `parallel_plan`, `parallel_apply` | | `parallelism` within a job: 1 when either is false, otherwise read from the state backend; `waves.jobs` to spread one wave over several jobs (plain roots on GitHub and Forgejo) |
+| Required approval | `apply_requirements: [approved]` | `apply_requirements: [approved]` | branch protection for a merge; with `apply.when: pull-request`, `apply.requires: [approved]`: a reviewer other than the author approved the head |
+| Checks green | `apply_requirements: [mergeable]` | `apply_requirements: [mergeable]` | with `apply.when: pull-request`, `apply.requires: [mergeable, checks]`: the forge can merge it, no status failed or running, and `terragucci/plan` passed |
+| Up to date | `apply_requirements: [undiverged]` | `apply_requirements: [undiverged]` | with `apply.when: pull-request`, `apply.requires: [undiverged]`: the head contains the default branch |
+| Plan requirements | `plan_requirements` | | none: every pull request from the repo itself plans, and a comment plans for someone with write access |
+| Apply on merge | | `on_commit_to_default: [digger apply]` | the default, `apply.when: merge` |
+| Merge after apply | `automerge` | `auto_merge` | `apply.merge: auto` with `apply.when: pull-request` |
+| Lock at plan time | `repo_locks.mode: on_plan` | `pr_locks` | `locks: plan` (GitHub, Forgejo); unset, a root locks when it applies before merge |
+| Release locks on close | automatic | `on_pull_request_closed: [digger unlock]`, `on_commit_to_default: [digger unlock]` | automatic: a lock whose pull request merged or closed counts as released |
+| Policy | conftest, set in the server's config; a workflow's `policy_check`; a project's `custom_policy_check` | a conftest step you add | `policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides |
+| Custom steps | `workflows` | `workflows` | none: the jobs are generated; `env` sets variables every job gets, which an import writes from the workflows' `env` steps that set a fixed value |
+| Cloud credentials | the server's environment | `aws-role-to-assume` in your workflow, or a project's `aws_role_to_assume`, over OIDC | `oidc`: a plan role and an apply role per cloud, from the forge's identity token |
+| Many repos | the server's repo config | | a [control repo](/terragucci/concepts/control-repo/)'s `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/)) |
+| Terragrunt | a custom workflow, or terragrunt-atlantis-config | `generate_projects` with Terragrunt parsing, or a project's `terragrunt` | detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/)) |
+| Drift | drift webhooks | drift detection | `drift`, a cron schedule |
+
+[Roots a change plans](/terragucci/reference/report/#roots-a-change-plans) lists, per repo shape, which roots a change plans.
+
+## Apply before or after merge
+
+| | Atlantis | OpenTaco | terragucci |
+|---|---|---|---|
+| Default | before merge | before merge; `on_commit_to_default` applies after | after merge |
+| The other way | | `on_commit_to_default` | `apply.when: pull-request`; on GitLab with `comments:` set |
+
+[Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) sets it up; the open change's settings, gate and signers then come from the default branch.
+
+## Left out on purpose
+
+| Not here | In `atlantis.yaml` or `digger.yml` | terragucci's rule | Do this instead |
+|---|---|---|---|
+| `import` or `state rm` from a comment | a workflow's `import` or `state_rm`, `import_requirements` | every state change comes from a reviewed commit, through a plan and the gate | an `import` or `removed` block in the change: it plans, shows in the plan note and waits at the gate like any other change |
+| Passing a failed policy from a comment | | a policy decides from the base branch; an override names one root's plan and its rules, and only a person the base lists can write one | change the code, change the policy in a reviewed pull request, or [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a listed approver |
+| Approving from a comment | | an approval binds the wave's set digest, which a comment does not carry | `terragucci approve` from a checkout, a review under `approval: pr-review`, or a Slack or Teams click through [`terragucci relay`](/terragucci/guides/approve-from-chat/) in your own cloud, which approves the digest the message showed; the approval is signed only under `approval: sealed`, which the relay leaves to the approver's own key |
+| Applying one root of a wave | | an approval covers the wave's plans as one set | split the change, or `waves.canary` to send roots out first |
+| Flags at run time | a step's `extra_args` | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml` |
+| A server or web UI | | the jobs run in your CI and write to your git and your bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+
+## Next
+
+- [Get your first plan note](/terragucci/getting-started/) to add terragucci next to what you run now.
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/) for the one step that differs most.
+- For help with the move, [Intentius](https://intentius.io/work/#moving-from-another-runner) works with teams coming from another runner.

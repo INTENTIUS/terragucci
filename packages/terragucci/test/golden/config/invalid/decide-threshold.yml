@@ -1,0 +1,4 @@
+decide:
+  backend: laya
+  url: http://laya
+  thresholds: { noul: 1.5 }

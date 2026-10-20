@@ -1,0 +1,95 @@
+# Hand-written for the stack's first pass. terragucci's stages (tf-check,
+# tf-plan, tf-apply) are not built yet, so nothing generates this file. When
+# they are, the generated workflow replaces it and the claims in
+# stack/validate.sh stay the same.
+#
+# check  every push: fmt check, init, validate.
+# apply  push to main only: init, plan to a file, apply that file to floci.
+#
+# Jobs run in node:22-bookworm containers on the terragucci network, so
+# floci is http://floci:4566 and the checkout comes from http://forgejo:3000.
+name: tofu
+
+on:
+  push:
+    branches: ["**"]
+
+env:
+  TOFU_VERSION: "1.13.1"
+  AWS_ENDPOINT_URL: http://floci:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  check:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      # TOFU_INSTALL_DIR is set by the stack's runner to a volume shared by
+      # job containers, so the binary downloads once per stack, not per job.
+      - name: Install OpenTofu
+        run: |
+          set -eu
+          case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+          dir="${TOFU_INSTALL_DIR:-/tmp/tofu}/$TOFU_VERSION"
+          if [ ! -x "$dir/tofu" ]; then
+            mkdir -p "$dir"
+            tmp="$(mktemp -d "$dir.XXXX")"
+            curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_${arch}.tar.gz" | tar -xz -C "$tmp" tofu
+            mv -f "$tmp/tofu" "$dir/tofu"
+            rm -rf "$tmp"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: tofu fmt -check
+        run: tofu fmt -check -recursive -diff infra
+
+      - name: tofu init
+        run: tofu -chdir=infra init -backend=false
+
+      - name: tofu validate
+        run: tofu -chdir=infra validate
+
+  apply:
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenTofu
+        run: |
+          set -eu
+          case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+          dir="${TOFU_INSTALL_DIR:-/tmp/tofu}/$TOFU_VERSION"
+          if [ ! -x "$dir/tofu" ]; then
+            mkdir -p "$dir"
+            tmp="$(mktemp -d "$dir.XXXX")"
+            curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_${arch}.tar.gz" | tar -xz -C "$tmp" tofu
+            mv -f "$tmp/tofu" "$dir/tofu"
+            rm -rf "$tmp"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Wait for floci
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -m 2 -w '%{http_code}' "$AWS_ENDPOINT_URL/" || true)
+            [ -n "$code" ] && [ "$code" != "000" ] && { echo "floci answered with $code"; exit 0; }
+            sleep 2
+          done
+          echo "floci did not answer on $AWS_ENDPOINT_URL"
+          exit 1
+
+      - name: tofu init
+        run: tofu -chdir=infra init
+
+      - name: tofu plan
+        run: tofu -chdir=infra plan -out=tfplan
+
+      - name: tofu apply
+        run: tofu -chdir=infra apply tfplan

@@ -1,0 +1,934 @@
+// stack/demo.sh runs under `set -euo pipefail`, where a pipeline whose reader
+// exits early (head -1, grep -q) kills its writer with SIGPIPE and the driver
+// with 141. v0.4.17's tree_bucket did that on every `up` (behold#571).
+import { spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+import { AWS_CLI } from "../packages/terragucci/src/render";
+
+const root = join(__dirname, "..");
+const demo = readFileSync(join(root, "stack", "demo.sh"), "utf8");
+
+/** One function of demo.sh, from its `name() {` line to the `}` that closes it. */
+function fn(name: string): string {
+  const start = demo.indexOf(`\n${name}() {`);
+  expect(start, `${name} in stack/demo.sh`).toBeGreaterThan(-1);
+  const end = demo.indexOf("\n}\n", start);
+  return demo.slice(start + 1, end + 2);
+}
+
+/** Run `body` after demo.sh's tree functions, with the driver's shell options. */
+function run(body: string) {
+  const script = `set -euo pipefail\n${fn("tree_keys")}\n${fn("tree_bucket")}\n${body}`;
+  return spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8" });
+}
+
+describe("stack/demo.sh under pipefail", () => {
+  it("reads the terraform tree's state bucket without dying of SIGPIPE", () => {
+    // Several roots each name the bucket: the old head -1 died on this every time.
+    for (let i = 0; i < 5; i++) {
+      const r = run(`b="$(tree_bucket example-demo)"; echo "$b"`);
+      expect(r.stderr).toBe("");
+      expect(r.status).toBe(0);
+      expect(r.stdout.trim()).toBe("demo-terraform-state");
+    }
+  });
+
+  it("reads the terragrunt tree's state bucket and unit keys", () => {
+    const r = run(`tree_bucket example-demo-terragrunt; tree_keys example-demo-terragrunt terragrunt`);
+    expect(r.status).toBe(0);
+    const lines = r.stdout.trim().split("\n");
+    expect(lines[0]).toBe("demo-terraform-state");
+    expect(lines.length).toBeGreaterThan(1);
+    for (const l of lines.slice(1)) expect(l).toMatch(/^\S+ \S+$/);
+  });
+
+  it("reads the terraform tree's root keys", () => {
+    const r = run(`tree_keys example-demo terraform`);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim().split("\n").map((l) => l.split(" ")[0])).toEqual(["app", "edge", "network", "other"]);
+  });
+
+  it("reads the chant tree's state bucket and root keys, its components' Terraform roots", () => {
+    const r = run(`tree_bucket example-demo-chant; tree_keys example-demo-chant chant`);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["demo-chant-state", "app app.tfstate", "edge edge.tfstate", "network network.tfstate"]);
+  });
+
+  it("runs the chant repo's jobs in the image up builds, with full history and no install step", () => {
+    const image = /^CHANT_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1];
+    expect(image).toBe("terragucci-demo-chant:local");
+    const pipeline = readFileSync(join(root, "example-demo-chant", ".forgejo", "workflows", "chant-pr.yml"), "utf8");
+    // Both jobs, plan and apply.
+    expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
+    // chant measures the change from a base commit, so each checkout has the whole history.
+    expect(pipeline.match(/^ *fetch-depth: 0$/gm)).toHaveLength(2);
+    // Every run step is chant's own command: nothing installs OpenTofu, chant or packages at job time.
+    const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
+    expect(runs.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
+    expect(pipeline).not.toMatch(/opentofu|npm |curl /);
+    // A Forgejo runner reads as GitHub Enterprise Server, where upload-artifact and download-artifact v4 refuse to run (chant#4008).
+    expect(pipeline).not.toMatch(/(upload|download)-artifact@v[4-9]/);
+    expect(pipeline.match(/uses: \S+\/upload-artifact@v3$/gm)).toHaveLength(2);
+    // The image carries chant and OpenTofu, at the version the tree's lockfile pins.
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant.Dockerfile"), "utf8");
+    expect(dockerfile).toMatch(/npm ci --omit=dev/);
+    expect(demo).toContain(`-f "$HERE/demo-chant.Dockerfile" "$HERE/../$(tool_tree chant)"`);
+  });
+
+  it("reads the fan-out tree's fifteen stacks from its chant.config.ts, in order", () => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_stacks")}\ntree_stacks example-demo-chant-fanout`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(r.stdout.trim().split("\n")).toEqual(["network", "cluster-a", "cluster-b", ...apps]);
+  });
+
+  it("runs the fan-out repo's jobs in the image up builds, each building, linting and streaming its events", () => {
+    const image = /^FANOUT_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1];
+    expect(image).toBe("terragucci-demo-chant-fanout:local");
+    const pipeline = readFileSync(join(root, "example-demo-chant-fanout", ".forgejo", "workflows", "chant-pr.yml"), "utf8");
+    expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
+    expect(pipeline.match(/^ *fetch-depth: 0$/gm)).toHaveLength(2);
+    const runs = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]);
+    // Per job, all of it chant's generated pipeline: the templates built, the project linted, then chant's stage,
+    // which reads deployed outputs and copies its events itself.
+    expect(runs).toHaveLength(6);
+    expect(runs.filter((r) => r === "ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build")).toHaveLength(2);
+    expect(runs.filter((r) => r === "chant lint")).toHaveLength(2);
+    expect(pipeline).not.toContain("seed-outputs");
+    const stages = runs.filter((r) => r.startsWith("chant components "));
+    expect(stages.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
+    for (const r of stages) {
+      expect(r).toContain('--events-json --report-url "s3://demo-reports/demo/chant/${{ github.repository }}"');
+      expect(r).toContain("--forge forgejo");
+    }
+    expect(stages[1]).toContain("--require-review --resume .chant/pr-resume/pr-apply.json");
+    expect(pipeline).not.toMatch(/(upload|download)-artifact@v[4-9]/);
+    expect(pipeline).not.toMatch(/opentofu|npm (ci|install)|curl /);
+    // The image's node_modules is the one each job links into its checkout.
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant-fanout.Dockerfile"), "utf8");
+    expect(dockerfile).toContain("COPY package.json package-lock.json /opt/demo-chant-fanout/");
+    // The generated pipeline names no endpoint: the image points the AWS CLI and chant at the stack's floci.
+    expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
+    expect(pipeline).toContain("ln -s /opt/demo-chant-fanout/node_modules node_modules");
+    expect(demo).toContain(`-f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)"`);
+  });
+
+  it("installs the AWS CLI release terragucci's drift job pins, checked against the same sha256", () => {
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant-fanout.Dockerfile"), "utf8");
+    expect(dockerfile).toContain(`ARG AWS_CLI_VERSION=${AWS_CLI.version}\n`);
+    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
+    expect(dockerfile).toContain(`*) a=x86_64; sum=${AWS_CLI.sha256.x86_64} ;;`);
+    expect(dockerfile).toContain('sha256sum -c -');
+  });
+
+  it("reads each member's status from the table at the end of pr-apply's log", () => {
+    const log = [
+      "2026-10-18T10:00:01Z fan-out: 15 selected",
+      "2026-10-18T10:00:01Z   wave 2: cluster-a, cluster-b",
+      "2026-10-18T10:00:09Z pr-apply: failed",
+      "2026-10-18T10:00:09Z   network              applied      create 0 update 0 replace 0 delete 0",
+      "2026-10-18T10:00:09Z   cluster-a            failed       create 0 update 0 replace 0 delete 0  Resource handler returned message: The name of a FIFO queue can only end with '.fifo'",
+      "2026-10-18T10:00:09Z   app-01               blocked      create 0 update 0 replace 0 delete 0",
+    ].join("\n");
+    const script = `set -euo pipefail\n${fn("fanout_status")}\nlog="$(cat)"\nfor m in network cluster-a app-01 cluster-b; do echo "$m=$(fanout_status "$log" "$m")"; done`;
+    const r = spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8", input: log });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["network=applied", "cluster-a=failed", "app-01=blocked", "cluster-b="]);
+  });
+
+  it("reads the fan-out tree's state bucket and its fifteen roots' keys", () => {
+    const r = run(`tree_bucket example-demo-fanout; tree_keys example-demo-fanout tofu-fanout`);
+    expect(r.status, r.stderr).toBe(0);
+    const [bucket, ...keys] = r.stdout.trim().split("\n");
+    expect(bucket).toBe("demo-fanout-state");
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(keys).toEqual([...apps, "cluster-a", "cluster-b", "network"].map((root) => `${root} ${root}.tfstate`));
+  });
+
+  it("tags the job image for choudoufu too, and the choudoufu tree's jobs run under that name", () => {
+    expect(readFileSync(join(root, "example-demo-choudoufu-fanout", "terragucci.yml"), "utf8")).toContain("image: terragucci-demo-choudoufu:local\n");
+    expect(demo).toContain('docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU"');
+    expect(fn("operator_run")).toContain('"$DEMO_IMAGE_CHOUDOUFU"');
+  });
+
+  it("installs the fan-out tree's hashicorp/aws from the demo image's mirror, checked against the release's sums", () => {
+    const config = readFileSync(join(root, "example-demo-fanout", "terragucci.yml"), "utf8");
+    expect(config).toContain("image: terragucci-demo-tofu:local\n");
+    expect(config).toContain("TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc");
+    const tfrc = readFileSync(join(root, "stack", "demo-yodel", "tofu-mirror.tfrc"), "utf8");
+    expect(tfrc).toContain('path    = "/opt/terragucci-demo/providers"');
+    expect(tfrc.match(/registry\.opentofu\.org\/hashicorp\/aws/g)).toHaveLength(2);
+    const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("COPY tofu-mirror.tfrc /etc/terragucci-demo/tofu-mirror.tfrc");
+    expect(dockerfile).toContain("COPY --from=awsprovider /providers /opt/terragucci-demo/providers");
+    expect(dockerfile).toMatch(/sha256sum -c -; \\\n.*SHA256SUMS \| sha256sum -c -/);
+    const sums = readFileSync(join(root, "stack", "demo-yodel", "aws-provider.sha256"), "utf8").split("\n").filter((l) => /^\d/.test(l));
+    expect(sums.map((l) => l.split(" ").slice(0, 2).join(" "))).toEqual(["6.67.0 amd64", "6.67.0 arm64"]);
+    // Every root pins the version the image mirrors.
+    for (const r of ["network", "cluster-a", "app-12"]) expect(readFileSync(join(root, "example-demo-fanout", r, "main.tf"), "utf8")).toContain('version = "6.67.0"');
+  });
+
+  it("has a pull request and a fix that differ only in cluster-a's queue name", () => {
+    const at = (d: string) => readFileSync(join(root, "example-demo-fanout", "scenarios", "fan-out-tofu", d, "cluster-a", "main.tf"), "utf8");
+    expect(at("pull").replace('name                       = "fan-out-network-events"', 'name                       = "fan-out-cluster-a-events"')).toBe(at("fix"));
+    // The name network's queue has, with another visibility timeout: SQS refuses it at apply.
+    expect(readFileSync(join(root, "example-demo-fanout", "network", "main.tf"), "utf8")).toContain('name                       = "fan-out-network-events"');
+  });
+
+  it("gives no two demo trees a cloud resource of the same name, since every scenario shares one floci", () => {
+    // Each tree's AWS resources by their physical name: a resource's own `name` in .tf (two spaces in, so a
+    // nested block's name, such as a DynamoDB attribute's, is left out) and the names a chant source sets.
+    const names = new Map<string, Set<string>>();
+    const walk = (tree: string, dir: string): void => {
+      for (const e of readdirSync(join(root, dir), { withFileTypes: true })) {
+        const rel = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "node_modules" && !e.name.startsWith(".")) walk(tree, rel);
+          continue;
+        }
+        const text = readFileSync(join(root, rel), "utf8");
+        const found = e.name.endsWith(".tf")
+          ? [...text.matchAll(/^resource "aws_[^"]+" "[^"]+" \{\n(?:(?!^\}).*\n)*?^ {2}name\s+=\s+"([^"$]+)"/gm)].map((m) => m[1])
+          : e.name.endsWith(".ts") ? [...text.matchAll(/(?:QueueName|TopicName|LogGroupName|tableName):\s*"([^"$]+)"/g)].map((m) => m[1]) : [];
+        for (const n of found) names.set(n, new Set([...(names.get(n) ?? []), tree]));
+      }
+    };
+    const trees = readdirSync(root).filter((d) => d.startsWith("example-demo"));
+    expect(trees).toEqual(expect.arrayContaining(["example-demo-fanout", "example-demo-choudoufu-fanout"]));
+    for (const t of trees) walk(t, t);
+    expect(names.size).toBeGreaterThan(20);
+    expect([...names].filter(([, ts]) => ts.size > 1).map(([n, ts]) => `${n}: ${[...ts].join(", ")}`)).toEqual([]);
+  });
+
+  it("reads the choudoufu fan-out tree's fifteen roots, which name estates and no state file", () => {
+    const tree = join(root, "example-demo-choudoufu-fanout");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_roots")}\ntree_roots example-demo-choudoufu-fanout`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const apps = Array.from({ length: 12 }, (_, i) => `app-${String(i + 1).padStart(2, "0")}`);
+    expect(r.stdout.trim().split("\n")).toEqual([...apps, "cluster-a", "cluster-b", "network"]);
+    for (const root of ["network", "cluster-a", "app-07"]) {
+      const tf = readFileSync(join(tree, root, "main.tf"), "utf8");
+      expect(tf).toContain(`estate = "fo-${root}"`);
+      expect(tf).toContain('bucket = "demo-live-records"');
+      expect(tf).not.toMatch(/backend "/);
+    }
+    expect(readFileSync(join(tree, "terragucci.yml"), "utf8")).toMatch(/^binary: choudoufu$/m);
+  });
+
+  it("keeps an undeclared resource in app-01's estate alone, so the operator's queue and the pipeline's apply both land", () => {
+    const tree = join(root, "example-demo-choudoufu-fanout");
+    expect(readFileSync(join(tree, "app-01", "main.tf"), "utf8")).toContain('undeclared_tagged = "keep"');
+    for (const root of ["app-02", "cluster-a", "network"]) expect(readFileSync(join(tree, root, "main.tf"), "utf8")).not.toContain("undeclared_tagged");
+    // The operator adds one queue, applied with -target on it alone, and the reset destroys that one.
+    const operator = readFileSync(join(tree, "scenarios", "fan-out-choudoufu", "operator", "app-01", "operator.tf"), "utf8");
+    expect(operator.match(/^resource "/gm)).toHaveLength(1);
+    expect(operator).toContain('resource "aws_sqs_queue" "alarms"');
+    expect(demo).toContain('OPERATOR_TARGET="aws_sqs_queue.alarms"');
+    expect(fn("operator_beat")).toContain("-target=$OPERATOR_TARGET");
+    expect(fn("operator_back")).toContain("choudoufu destroy -auto-approve -input=false -no-color -target=$OPERATOR_TARGET");
+    // app-01's apply waits for the operator, who waits for it, and both mark their starts and ends (ci/operator-gate.mjs).
+    expect(fn("operator_beat")).toContain("node ../ci/operator-gate.mjs operator-before; choudoufu apply -auto-approve");
+    expect(fn("fan_out_failed")).toMatch(/operator_expect\n\s+merge_pull/);
+    const config = readFileSync(join(tree, "terragucci.yml"), "utf8");
+    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-before\n    before: apply\n    roots: [\"app-01\"]");
+    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-after\n    after: apply\n    roots: [\"app-01\"]");
+    expect(config).toContain("TG_DEMO_OPERATOR_MARKERS: http://floci:4566/demo-reports/demo/operator/demo-choudoufu-fanout");
+    expect(demo).toContain('OPERATOR_MARKERS_IN_STACK="http://floci:4566/$REPORT_BUCKET/$REPORT_PREFIX/operator/demo-choudoufu-fanout"');
+  });
+
+  it("tells the two applies overlapped only when each started before the other ended", () => {
+    const check = (marks: Record<string, string>) => {
+      const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }\nnow() { date +%s; }\nPOLL=0`;
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stub}\n${fn("operator_overlapped")}\nif operator_overlapped; then echo yes; else echo no; fi`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    const t = (s: number) => `2026-10-19T10:00:${String(s).padStart(2, "0")}.000Z`;
+    expect(check({ "operator-applying": t(10), "operator-applied": t(14), "pipeline-applying": t(11), "pipeline-applied": t(13) })).toBe("yes");
+    expect(check({ "operator-applying": t(10), "operator-applied": t(12), "pipeline-applying": t(13), "pipeline-applied": t(15) })).toBe("no");
+  });
+
+  it("writes a highlight on the steps that carry one, and null on every other", () => {
+    const at = (scenario: string, fix: string, step: string, extra = "") => {
+      const script = [fn("highlight_title"), fn("highlight_body"), fn("highlight_json"), `SCENARIO=${scenario} FIX="${fix}" CONE_BLOCKS=1 CONE_OF=5 ${extra}`, `highlight_json ${step}`].join("\n");
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout);
+    };
+    expect(at("fan-out-tofu", "", "planned").title).toBe("Same orchestration as the commercial platforms");
+    expect(at("fan-out-tofu", "", "failed").title).toBe("A failure stops only what depends on it");
+    expect(at("fan-out-tofu", "1", "planned").title).toBe("The fix re-runs only what was blocked");
+    expect(at("fan-out-choudoufu", "1", "planned").body).toContain("The fix reaches 1 of cluster-a's 5 blocks");
+    expect(at("fan-out-choudoufu", "1", "applying", "HIGHLIGHT_AT=landed").title).toBe("Two applies on one estate, and no lock");
+    expect(at("fan-out-choudoufu", "1", "applying")).toBeNull();
+    expect(at("fan-out-tofu", "1", "applying")).toBeNull();
+    expect(at("b-waves", "", "planned")).toBeNull();
+    expect(at("fan-out", "", "planned").title).toBe("chant runs the whole rollout");
+    expect(at("fan-out", "", "failed").body).toContain("chant held back its six apps");
+    expect(at("fan-out", "1", "applying").title).toBe("The fix applies only the seven");
+    expect(at("fan-out", "1", "planned")).toBeNull();
+    expect(fn("demo_write")).toContain('--argjson highlight "$(highlight_json "$step" 2>/dev/null || echo null)"');
+    // Only the write that says both applies overlapped carries the operator's highlight.
+    const beat = fn("operator_beat");
+    expect(beat.match(/HIGHLIGHT_AT=landed demo_write/g)).toHaveLength(1);
+    expect(beat).toMatch(/if operator_overlapped; then\n\s+HIGHLIGHT_AT=landed demo_write applying "Both landed, and neither waited/);
+  });
+
+  it("writes the operator's apply as demo.json's outside", () => {
+    const script = [fn("outside_json"), demo.split("\n").find((l) => l.startsWith("iso()"))!, 'OPERATOR_TARGET="aws_sqs_queue.alarms"', 'outside_json applied 2026-10-18T00:31:14Z 2026-10-18T00:31:40Z "$(printf "a\\nb\\n\\nApply complete!")"'].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const o = JSON.parse(r.stdout);
+    expect(o).toMatchObject({ who: "an operator", estate: "fo-app-01", state: "applied", resources: ["aws_sqs_queue.alarms"], log: ["a", "b", "Apply complete!"] });
+    expect([o.started_at, o.ended_at]).toEqual(["2026-10-18T00:31:14Z", "2026-10-18T00:31:40Z"]);
+  });
+
+  it("times the operator's apply from its marks, to the second, and from the step only when a mark is missing", () => {
+    const at = (marks: Record<string, string>, name: string) => {
+      const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }`;
+      const script = [stub, demo.split("\n").find((l) => l.startsWith("iso()"))!, fn("operator_time"), `operator_time ${name} 1792000000`].join("\n");
+      const r = spawnSync("bash", ["-c", `set -euo pipefail\n${script}`], { cwd: root, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    expect(at({ "operator-applying": "2026-10-18T00:31:14.836Z" }, "operator-applying")).toBe("2026-10-18T00:31:14Z");
+    expect(at({}, "operator-applied")).toBe("2026-10-14T17:46:40Z");
+    const beat = fn("operator_beat");
+    expect(beat).toContain('outside_json applying "$(operator_time operator-applying "$started")"');
+    expect(beat).toContain('"$(operator_time operator-applied "$(now)")"');
+  });
+
+  it("numbers the fan-out steps in four chapters, and gives every other scenario's steps none", () => {
+    const cases = [
+      ["fan-out", "", "pull-request"],
+      ["fan-out", "", "applying"],
+      ["fan-out", "", "failed"],
+      ["fan-out", "1", "pull-request"],
+      ["fan-out", "1", "merged"],
+      ["fan-out", "1", "applied"],
+      ["fan-out", "1", "reset"],
+      ["fan-out", "", "reset"],
+      ["fan-out-tofu", "", "pull-request"],
+      ["fan-out-tofu", "", "applying"],
+      ["fan-out-tofu", "", "failed"],
+      ["fan-out-tofu", "1", "pull-request"],
+      ["fan-out-tofu", "1", "merged"],
+      ["fan-out-tofu", "1", "applied"],
+      ["fan-out-tofu", "1", "reset"],
+      ["fan-out-tofu", "", "reset"],
+      ["b-waves", "", "applying"],
+      ["base", "", "reset"],
+    ];
+    const lines = cases.map(([s, f, step]) => `SCENARIO=${s} FIX="${f}"; echo "$(demo_chapter ${step})"`).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    expect(got.map((c) => c?.n ?? null)).toEqual([1, 1, 2, 3, 3, 4, 4, null, 1, 1, 2, 3, 3, 4, 4, null, null, null]);
+    for (const c of got.filter(Boolean)) expect(c.of).toBe(4);
+    expect(got[2].headline).toBe("cluster-a breaks. Only its 6 apps stop; the other 8 stacks ship anyway");
+    const shorts = ["The change goes out", "The change goes out", "cluster-a breaks", "The fix", "The fix", "Done", "Done"];
+    expect(got.filter(Boolean).map((c) => c.short)).toEqual([...shorts, ...shorts]);
+    expect(got[10].headline).toBe(got[2].headline);
+  });
+
+  it("has a pull request and a fix that differ only in the queue's name", () => {
+    const at = (d: string) => readFileSync(join(root, "example-demo-chant-fanout", "scenarios", "fan-out", d, "src", "cluster-a", "resources.ts"), "utf8");
+    expect(at("pull").replace('QueueName: "fan-out-estate-cluster-a-events"', 'QueueName: "fan-out-estate-cluster-a-events.fifo"')).toBe(at("fix"));
+    expect(at("pull")).toContain("FifoQueue: true");
+  });
+
+  it("gives the choudoufu fan-out its own chapter 3, the fix as a cone, with the cone's counts once the report has them", () => {
+    const steps = [["", "", "pull-request"], ["", "", "failed"], ["1", "", "pull-request"], ["1", "1 5", "applying"], ["1", "1 5", "reset"]];
+    const lines = steps.map(([f, cone, step]) => `SCENARIO=fan-out-choudoufu FIX="${f}"; read -r CONE_BLOCKS CONE_OF <<<"${cone}" || true; echo "$(demo_chapter ${step})"`).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("demo_chapter")}\n${fn("chapter_headline")}\n${fn("chapter_short")}\n${lines}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const got = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    expect(got.map((c) => [c.n, c.short])).toEqual([[1, "The change goes out"], [2, "cluster-a breaks"], [3, "The fix, as a cone"], [3, "The fix, as a cone"], [4, "Done"]]);
+    expect(got[2].headline).toBe("The fix plans as a cone");
+    expect(got[3].headline).toBe("The fix plans as a cone: 1 of cluster-a's 5 blocks");
+    expect(got[4].headline).toBe("All 15 are in, and no state file was locked or restored");
+  });
+
+  it("reads the fix's cone from its plan report, and stalls on a full plan of cluster-a or a plan of another estate", () => {
+    const apps = Array.from({ length: 6 }, (_, i) => ({ path: `app-0${i + 1}`, cone: { base: "origin/main", fallback: { kind: "empty-cone", reason: "the change reaches no block" } } }));
+    const read = (roots: unknown[]) => {
+      const script = `set -euo pipefail\nfail() { echo "FAIL: $*"; exit 1; }\nPULL=9\n${demo.split("\n").find((l) => l.startsWith("FIX_CONE_PLANNED="))!}\n${fn("fix_cone_read")}\nfix_cone_read "$1"\necho "$CONE_BLOCKS of $CONE_OF"`;
+      return spawnSync("bash", ["-c", script, "x", JSON.stringify({ roots })], { cwd: root, encoding: "utf8" }).stdout.trim();
+    };
+    expect(read([...apps, { path: "cluster-a", cone: { base: "origin/main", blocks: 1, of: 5 } }])).toBe("1 of 5");
+    expect(read([...apps, { path: "cluster-a", cone: { base: "origin/main", fallback: { kind: "cone-too-large", reason: "the cone holds 2 of 3 blocks" } } }])).toBe("FAIL: cluster-a planned its whole estate: the cone holds 2 of 3 blocks (guard cone-too-large)");
+    expect(read([...apps, { path: "cluster-a", cone: { base: "origin/main", blocks: 1, of: 5 } }, { path: "network" }])).toMatch(/^FAIL: pull request 9 planned app-01 .* network, not cluster-a and its six apps$/);
+  });
+
+  it("gives cluster-a enough blocks that the fix's one changed block stays under a cone's 30%", () => {
+    const blocks = (f: string) => (readFileSync(join(root, "example-demo-choudoufu-fanout", f), "utf8").match(/^(resource|data) "/gm) ?? []).length;
+    const fix = blocks("scenarios/fan-out-choudoufu/fix/cluster-a/main.tf");
+    expect(fix).toBe(5);
+    expect(1 / fix).toBeLessThan(0.3);
+    expect(blocks("cluster-a/main.tf")).toBe(4);
+  });
+
+  it("has no pipeline whose reader exits before its writer is done", () => {
+    for (const f of ["demo.sh", "bootstrap.sh", "lib.sh"]) {
+      const text = readFileSync(join(root, "stack", f), "utf8");
+      const bad = text
+        .split("\n")
+        .map((l, i) => [i + 1, l] as const)
+        .filter(([, l]) => !l.trimStart().startsWith("#"))
+        .filter(([, l]) => /\|\s*(head\b|grep\s+-[A-Za-z]*[qm]|sed\s+(-n\s+)?'?\d*q)|\byes\s*\|/.test(l));
+      expect(bad, `stack/${f}`).toEqual([]);
+    }
+  });
+});
+
+// behold#571: the driver checks out each step's commit in <DEMO_VIEWS>/<repo>.change
+// before it writes the step, so the kiosk's graph draws the change.
+describe("view_follow", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const sh = (cmd: string, cwd: string) => {
+    const r = spawnSync("bash", ["-c", cmd], { cwd, encoding: "utf8" });
+    expect(r.status, `${cmd}: ${r.stderr}`).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("checks out the step's commit, and writes no FETCH_HEAD or reflog with the remote in it", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-view-"));
+    made.push(tmp);
+    const git = "git -c user.name=t -c user.email=t@t -c init.defaultBranch=main";
+    sh(`${git} init -q origin && cd origin && echo a > a.tf && ${git} add . && ${git} commit -qm base`, tmp);
+    sh(`git clone -q origin views/demo.change`, tmp);
+    const head = sh(`cd origin && ${git} checkout -qb pull && mkdir live && echo b > live/b.tf && ${git} add . && ${git} commit -qm pull && git rev-parse HEAD`, tmp);
+    // The admin's remote, by another path than the checkout's origin: nothing in .git may name it.
+    sh(`ln -s origin admin-remote`, tmp);
+    const body = `log() { echo "$*" >&2; }\nVIEWS=${tmp}/views VIEW_OWNER="" VIEW_TRIES=1 REPO=admin/demo REMOTE=${tmp}/admin-remote COMMIT=${head}\n${fn("view_follow").replace(/^VIEW_AT=""\n/, "")}\nVIEW_AT=""\nview_follow`;
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    const dir = join(tmp, "views", "demo.change");
+    expect(sh("git rev-parse HEAD", dir)).toBe(head);
+    expect(existsSync(join(dir, "live", "b.tf"))).toBe(true);
+    expect(existsSync(join(dir, ".git", "FETCH_HEAD"))).toBe(false);
+    expect(sh("grep -rl admin-remote .git || true", dir)).toBe("");
+  });
+
+  it("does nothing without DEMO_VIEWS, and logs a missing checkout", () => {
+    const body = `log() { echo "$*" >&2; }\nREPO=admin/demo REMOTE=/nowhere COMMIT=abc VIEW_OWNER="" VIEW_TRIES=1\n${fn("view_follow")}`;
+    const off = spawnSync("bash", ["-c", `set -euo pipefail\nVIEWS=""\nVIEW_AT=""\n${body}\nview_follow`], { cwd: root, encoding: "utf8" });
+    expect(off.status).toBe(0);
+    expect(off.stderr).toBe("");
+    const missing = spawnSync("bash", ["-c", `set -euo pipefail\nVIEWS=/nowhere\nVIEW_AT=""\n${body}\nview_follow`], { cwd: root, encoding: "utf8" });
+    expect(missing.status).toBe(0);
+    expect(missing.stderr).toContain("view: no checkout /nowhere/demo.change");
+  });
+});
+
+// behold#571: the chant scenario writes its steps through demo_write like the
+// others, so its .change checkout follows the pull request's head, then the
+// merge. A checkout that fails is not remembered as done: the next step on the
+// same commit tries again.
+describe("view_follow in the chant scenario", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const sh = (cmd: string, cwd: string) => {
+    const r = spawnSync("bash", ["-c", cmd], { cwd, encoding: "utf8" });
+    expect(r.status, `${cmd}: ${r.stderr}`).toBe(0);
+    return r.stdout.trim();
+  };
+
+  /** A demo-chant remote with a base, a pull request's head and its merge, and a .change checkout at the base. */
+  function fixture() {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-view-chant-"));
+    made.push(tmp);
+    const git = "git -c user.name=t -c user.email=t@t -c init.defaultBranch=main";
+    const base = sh(`${git} init -q origin && cd origin && mkdir app && echo a > app/main.tf && ${git} add . && ${git} commit -qm 'base [skip ci]' && git rev-parse HEAD`, tmp);
+    sh(`cd origin && ${git} branch chant/lifecycle`, tmp);
+    sh(`git clone -q origin views/demo-chant.change`, tmp);
+    const head = sh(`cd origin && ${git} checkout -qb demo-chant-pr-loop && echo b >> app/main.tf && ${git} commit -qam pull && git rev-parse HEAD`, tmp);
+    const merge = sh(`cd origin && ${git} checkout -q main && ${git} merge -q --no-ff demo-chant-pr-loop -m merge && git rev-parse HEAD`, tmp);
+    return { tmp, base, head, merge };
+  }
+
+  /** Run scenario_chant_pr_loop and the applied step with the forge stubbed, and list "<step> <.change HEAD>" as each step was written. */
+  function cycle(tmp: string, merge: string, head: string, afterPlan = "") {
+    const stubs = [
+      'log() { echo "$*" >&2; }',
+      `VIEWS=${tmp}/views VIEW_OWNER="" VIEW_TRIES=1 REPO=admin/demo-chant REMOTE=${tmp}/origin TOKEN=""`,
+      `DEMO_STATE=${tmp}/state CYCLE=797 SCENARIO=chant-pr-loop TITLE=t STARTED="" PULL="" COMMIT="" ABOUT=null HOLD=0 TOOL=chant`,
+      `TREE=${tmp} WORK=${tmp}/work INIT_PULL="" HELD="" VIEW_AT="" RUN_STATUS="" RUN_URL="" OUTCOME="" LIMIT_PLAN=1 LIMIT_RUN=1 URL=http://forge POLL=0`,
+      `mkdir -p ${tmp}/state`,
+      "now() { date +%s; }",
+      'iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }',
+      "demo_where() { echo '{}'; }",
+      `demo_put() { echo "$(jq -r .step "$DEMO_STATE/demo.json") $(git -C ${tmp}/views/demo-chant.change rev-parse HEAD)" >> ${tmp}/steps; }`,
+      'say() { echo "$1"; }',
+      'clone_main() { mkdir -p "$1"; }',
+      "overlay() { :; }",
+      "last_run_id() { echo 0; }",
+      `push_as_author() { echo ${head}; }`,
+      "pr_open() { echo 20; }",
+      "run_started() { :; }",
+      "runs_mark() { :; }",
+      `run_ended() { RUN_STATUS=success; ${afterPlan} }`,
+      "chant_note() { :; }",
+      "chant_approve() { :; }",
+      "quiet() { :; }",
+      "as_author() { :; }",
+      `api() { echo '{"merge_commit_sha":"${merge}"}'; }`,
+    ].join("\n");
+    const fns = ["view_follow", "demo_write", "demo_hold", "open_pull", "merge_pull", "scenario_chant_pr_loop"].map(fn).join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\n${fns}\nscenario_chant_pr_loop\ndemo_write applied done reset`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return { steps: readFileSync(join(tmp, "steps"), "utf8").trim().split("\n"), log: r.stderr };
+  }
+
+  it("moves demo-chant.change to the pull request's head, then to the merge", () => {
+    const { tmp, head, merge } = fixture();
+    const { steps } = cycle(tmp, merge, head);
+    expect(steps).toEqual([
+      `pull-request ${head}`,
+      `planned ${head}`,
+      `waiting ${head}`,
+      `approved ${head}`,
+      `merged ${merge}`,
+      `applying ${merge}`,
+      `applied ${merge}`,
+    ]);
+  });
+
+  it("tries again at the next step when a checkout fails, rather than leaving the base through every step", () => {
+    const { tmp, base, head, merge } = fixture();
+    // git's lock is held at the first step, as when something else is in the checkout, and let go before the second.
+    const lock = join(tmp, "views", "demo-chant.change", ".git", "index.lock");
+    sh(`touch ${lock}`, tmp);
+    const { steps, log } = cycle(tmp, merge, head, `[ ! -e ${lock} ] || mv ${lock} ${lock}.gone;`);
+    expect(steps).toEqual([
+      `pull-request ${base}`,
+      `planned ${head}`,
+      `waiting ${head}`,
+      `approved ${head}`,
+      `merged ${merge}`,
+      `applying ${merge}`,
+      `applied ${merge}`,
+    ]);
+    expect(log).toMatch(/view: could not check out \w+ in \S+ after 1 tries; the next step tries again: .*index\.lock/);
+  });
+});
+
+// behold#571: the delivery (DORA) numbers. After each cycle's audit the driver
+// runs terragucci estate on the reports prefix, in the background while the
+// reset works; a failed or slow one is logged and the cycle goes on.
+describe("audit_trail and estate_page", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** A scratch WORK and a fake terragucci whose body is `script`; it records its arguments and environment. */
+  const setup = (script: string) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-estate-"));
+    made.push(tmp);
+    const bin = join(tmp, "terragucci");
+    writeFileSync(bin, `#!/usr/bin/env bash\necho "$*" > "${tmp}/args"\nenv > "${tmp}/env"\n${script}\n`);
+    chmodSync(bin, 0o755);
+    return { tmp, bin };
+  };
+  const driver = (tmp: string, bin: string, body: string, extra = "") =>
+    spawnSync(
+      "bash",
+      ["-c", `set -euo pipefail\nlog() { echo "[demo] $*" >&2; }\nnow() { date +%s; }\nWORK=${tmp}/work CYCLE=7 TOOL=terraform TERRAGUCCI=${bin} REPORT_BUCKET=demo-reports REPORT_PREFIX=demo FLOCI=http://127.0.0.1:4580 LIMIT_ESTATE=60 REPO=admin/demo ${extra}\n${fn("audit_trail")}\nESTATE_PID=""\n${fn("estate_page")}\n${fn("estate_wait")}\n${body}`],
+      { cwd: root, encoding: "utf8", timeout: 30_000 },
+    );
+
+  it("runs terragucci estate on the reports prefix, sends the gauges to the collector's host port, and logs the DORA line", () => {
+    const { tmp, bin } = setup(`echo "estate: 2 projects"\necho "dora: 3.5 deployments per week, lead time 2m, change failure rate 25%, time to restore 1m"\necho "sent 18 DORA gauges"`);
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("carried-on");
+    expect(r.stderr).toContain("[demo] estate: dora: 3.5 deployments per week, lead time 2m, change failure rate 25%, time to restore 1m sent 18 DORA gauges");
+    expect(readFileSync(join(tmp, "args"), "utf8").trim()).toBe(`estate --bucket s3://demo-reports --bucket-endpoint http://127.0.0.1:4580 --bucket-prefix demo --out ${tmp}/work/c7/estate/page --link-hours 1`);
+    const env = readFileSync(join(tmp, "env"), "utf8");
+    expect(env).toContain("OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4328\n");
+    expect(env).toContain("OTEL_TRACES_EXPORTER=none\n");
+  });
+
+  it("logs a failed estate and carries on", () => {
+    const { tmp, bin } = setup(`echo "the index could not be read" >&2\nexit 1`);
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("carried-on");
+    expect(r.stderr).toContain("estate: terragucci estate failed; the delivery numbers stay as they were");
+    expect(r.stderr).toContain("the index could not be read");
+  });
+
+  it("stops an estate past its limit and carries on", () => {
+    const { tmp, bin } = setup("exec sleep 30");
+    const started = Date.now();
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on", "LIMIT_ESTATE=1");
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("carried-on");
+    expect(r.stderr).toContain("estate: terragucci estate ran past 1s and was stopped");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("runs no estate for the chant repo, whose pipeline writes no terragucci reports", () => {
+    const { tmp, bin } = setup("echo ran");
+    const r = driver(tmp, bin, "estate_page\nestate_wait\necho carried-on", "TOOL=chant");
+    expect(r.status, r.stderr).toBe(0);
+    expect(existsSync(join(tmp, "args"))).toBe(false);
+  });
+
+  it("audits twice in one cycle, as the failure scenario does, each in a clone of its own", () => {
+    const { tmp, bin } = setup(`echo "audit: 3 entries, 1 added"`);
+    const git = "git -c user.name=t -c user.email=t@t -c init.defaultBranch=main";
+    const init = spawnSync("bash", ["-c", `${git} init -q origin && cd origin && echo a > a && ${git} add . && ${git} commit -qm base`], { cwd: tmp, encoding: "utf8" });
+    expect(init.status, init.stderr).toBe(0);
+    const r = driver(tmp, bin, "audit_trail\naudit_trail", `REMOTE=${tmp}/origin`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain("could not clone");
+    expect(r.stderr.match(/\[demo\] audit: audit: 3 entries, 1 added/g)).toHaveLength(2);
+  });
+});
+
+// A rollback to the release before SQL Yodeler's migrations (0.4.22) runs that
+// release's loop, or its up, on what this one's up left (behold#571).
+describe("up, for a rollback", () => {
+  it("replaces base-tree and base.sha only once the base applied, after the last step that can fail", () => {
+    const up = fn("up_repo");
+    const swap = up.indexOf('mv "$bt" "$RSTATE/base-tree"');
+    expect(swap).toBeGreaterThan(-1);
+    // Before the swap, the base is built and pushed from base-tree.new alone.
+    expect(up.slice(0, swap).match(/"\$RSTATE\/base-tree"/g)).toEqual(['"$RSTATE/base-tree"']);
+    expect(up).toContain('rm -rf "$RSTATE/base-tree"\n  mv "$bt" "$RSTATE/base-tree"');
+    expect(up.indexOf('echo "$sha" > "$RSTATE/base.sha"')).toBeGreaterThan(swap);
+    for (const step of ["wait_run", "db_snapshot", "has no state in floci after the base applied"]) expect(up.indexOf(step)).toBeLessThan(swap);
+  });
+
+  it("writes its snapshots to <state>/snapshots and leaves the older release's <state>/base as it was", () => {
+    expect(fn("snapshot")).toContain('"$RSTATE/snapshots/');
+    const writes = demo.split("\n").filter((l) => /RSTATE\/base\//.test(l));
+    expect(writes).toEqual([expect.stringContaining('cp -p "$RSTATE/base/"*.tfstate "$RSTATE/snapshots/"')]);
+  });
+});
+
+// behold#571: next.from is when the driver started waiting for next's action,
+// so the kiosk can draw how far the wait has gone. It stays put while the
+// driver writes the same action and deadline again.
+describe("demo_write's next.from", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+
+  /** Run demo_write's calls with the clock at each T, and read back each write's next. */
+  function writes(calls: string[]): Array<{ action: string; from?: string; at: string | null } | null> {
+    const state = mkdtempSync(join(tmpdir(), "demo-next-"));
+    made.push(state);
+    const stubs = [
+      `log() { :; }`,
+      `view_follow() { :; }`,
+      `demo_where() { echo '{}'; }`,
+      `now() { echo "$T"; }`,
+      `demo_put() { jq -c .next "$DEMO_STATE/demo.json" >> "$DEMO_STATE/nexts"; }`,
+      demo.split("\n").find((l) => l.startsWith("iso()"))!,
+    ].join("\n");
+    const setup = `DEMO_STATE=${state} CYCLE=1 SCENARIO=s TITLE=t STARTED=1792000000 PULL="" COMMIT="" ABOUT=null`;
+    const body = `${stubs}\n${setup}\nNEXT_KEY="" NEXT_FROM=""\n${fn("demo_write")}\n${calls.join("\n")}`;
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return readFileSync(join(state, "nexts"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  }
+
+  it("writes from as the time the wait started, and keeps it while the action and deadline repeat", () => {
+    const n = writes([
+      `T=1792000000; demo_write waiting "w" "approve wave-2" 1792000020`,
+      `T=1792000005; demo_write waiting "w" "approve wave-2" 1792000020`,
+      `T=1792000020; demo_write approved "a" "follow the waves"`,
+      `T=1792000030; demo_write applying "b" "follow the waves"`,
+      `T=1792000040; demo_write applied "c"`,
+      `T=1792000050; demo_write reset "r" "follow the waves"`,
+    ]);
+    expect(n[0]).toEqual({ action: "approve wave-2", from: "2026-10-14T17:46:40Z", at: "2026-10-14T17:47:00Z" });
+    expect(n[1]).toEqual(n[0]);
+    expect(n[2]).toEqual({ action: "follow the waves", from: "2026-10-14T17:47:00Z", at: null });
+    expect(n[3]).toEqual(n[2]);
+    expect(n[4]).toBeNull();
+    // A write with no next ends the wait: the same action after it starts a new one.
+    expect(n[5]).toEqual({ action: "follow the waves", from: "2026-10-14T17:47:30Z", at: null });
+  });
+
+  it("starts a new wait when the deadline moves", () => {
+    const n = writes([
+      `T=1792000000; demo_write applied "c" reset 1792000020`,
+      `T=1792000010; demo_write applied "c" reset 1792000030`,
+    ]);
+    expect(n.map((x) => x?.from)).toEqual(["2026-10-14T17:46:40Z", "2026-10-14T17:46:50Z"]);
+  });
+});
+
+// #1131: a migration in wave 1 that waits for its digest, read from the run's log.
+describe("run_outcome on a waiting migration", () => {
+  const outcome = (logs: string, approved = "") => {
+    const body = [
+      `run_logs() { printf '%s\\n' ${JSON.stringify(logs)}; }`,
+      "api() { echo '[]'; }",
+      `REPO=admin/demo RUN_ID=9 RUN_STATUS=failure URL=http://forge MIGRATIONS_APPROVED=${JSON.stringify(approved)}`,
+      fn("run_outcome"),
+      'run_outcome; echo "$OUTCOME ${MIGRATION:-} ${MIGRATE_DIGEST:-} ${WAVE:-}"',
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${body}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("names the migration and the digest it waits for", () => {
+    expect(outcome("2026-10-16T10:00:00Z migration adopt waits for an approval of digest sha256:4e1f. Read the proof above, then approve it with:")).toBe("migrate adopt sha256:4e1f 1");
+  });
+
+  it("reads past a migration this cycle approved at that digest, to the wave that waits after it", () => {
+    const logs = "migration split waits for an approval of digest sha256:77. Read the proof above\nterragucci approve wave-2 --plan x";
+    expect(outcome(logs, " split@sha256:77")).toBe("waiting   2");
+  });
+});
+
+// The driver goes on once a run's waves have ended and only its tips job is
+// left: that job opens advice pull requests and writes nothing behold reads.
+// terragucci#1161: Forgejo marks a run failed once one wave failed, while a later wave, which starts after a failure, still runs.
+describe("jobs_ended", () => {
+  const ended = (jobs: unknown) => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("jobs_ended")}\nif jobs_ended "$1"; then echo yes; else echo no; fi`, "x", typeof jobs === "string" ? jobs : JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+  const job = (name: string, status: string) => ({ id: 1, name, status });
+
+  it("waits for a later wave of a run Forgejo already marked failed", () => {
+    expect(ended([job("apply-wave-1", "success"), job("apply-wave-2", "failure"), job("apply-wave-3", "running")])).toBe("no");
+    expect(ended([job("apply-wave-2", "failure"), job("apply-wave-3", "waiting")])).toBe("no");
+    expect(ended([job("apply-wave-2", "failure"), job("apply-wave-3", "failure"), job("tips", "skipped")])).toBe("yes");
+  });
+
+  it("takes a reply that is no job list as ended, as before the check", () => {
+    expect(ended("")).toBe("yes");
+    expect(ended({ message: "not found" })).toBe("yes");
+  });
+
+  it("is checked by run_ended before it takes a run as over, and by quiet for the newest failed runs", () => {
+    expect(fn("run_ended")).toMatch(/success\|failure\|cancelled\|skipped\)\n\s+jobs_ended "\$\(api [^\n]*\/jobs[^\n]*\)" && break/);
+    expect(fn("quiet")).toContain('jobs_ended "$(api "$URL/api/v1/repos/$REPO/actions/runs/$id/jobs"');
+  });
+});
+
+describe("only_tips_left", () => {
+  const left = (jobs: unknown) => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("only_tips_left")}\nif only_tips_left "$1"; then echo yes; else echo no; fi`, "x", JSON.stringify(jobs)], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+  const job = (name: string, status: string) => ({ id: 1, name, status, needs: null, task_id: 1 });
+
+  it("passes a run whose waves succeeded while tips waits or runs", () => {
+    expect(left([job("check", "success"), job("apply-wave-1", "success"), job("apply-wave-2", "success"), job("tips", "running")])).toBe("yes");
+    expect(left([job("check", "success"), job("apply-wave-1", "success"), job("tips", "waiting")])).toBe("yes");
+    expect(left([job("check", "success"), job("apply-comment", "success"), job("apply-wave-1", "skipped"), job("tips", "blocked")])).toBe("yes");
+  });
+
+  it("waits while a wave runs or waits, and for a run with no tips job or tips ended", () => {
+    expect(left([job("check", "success"), job("apply-wave-1", "running"), job("tips", "waiting")])).toBe("no");
+    expect(left([job("check", "success"), job("apply-wave-1", "success"), job("apply-wave-2", "waiting"), job("tips", "blocked")])).toBe("no");
+    expect(left([job("check", "success"), job("apply-wave-1", "success")])).toBe("no");
+    expect(left([job("apply-wave-1", "success"), job("tips", "success")])).toBe("no");
+    expect(left([job("tips", "running")])).toBe("no");
+  });
+
+  it("never passes a wave that failed or was cancelled, nor a reply that is not a job list", () => {
+    expect(left([job("check", "success"), job("apply-wave-1", "failure"), job("tips", "waiting")])).toBe("no");
+    expect(left([job("check", "success"), job("apply-wave-1", "cancelled"), job("tips", "waiting")])).toBe("no");
+    expect(left({ message: "not found" })).toBe("no");
+    expect(left("")).toBe("no");
+  });
+
+  it("is checked by run_ended, which counts it as success", () => {
+    const body = fn("run_ended");
+    expect(body).toContain("only_tips_left");
+    expect(body.indexOf("only_tips_left")).toBeGreaterThan(body.indexOf("success|failure|cancelled|skipped) break"));
+    expect(body).toMatch(/only_tips_left[\s\S]*status=success/);
+  });
+});
+
+// Every scenario holds each step DEMO_HOLD (20 s) unless DEMO_HOLD_<SCENARIO>
+// names its own, and the loop sets HOLD from the scenario before each cycle.
+describe("scenario_hold", () => {
+  const hold = (scenario: string, env = "") => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${env}\nHOLD_DEFAULT="\${DEMO_HOLD:-20}"\n${fn("scenario_hold")}\nscenario_hold ${scenario}`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout.trim();
+  };
+
+  it("is DEMO_HOLD's 20 s for every scenario by default", () => {
+    for (const s of ["b-waves", "failure", "tg-planned-outputs", "chant-pr-loop", "fan-out-choudoufu"]) expect(hold(s)).toBe("20");
+    expect(hold("b-waves", "DEMO_HOLD=30")).toBe("30");
+  });
+
+  it("takes DEMO_HOLD_<SCENARIO> for that scenario alone", () => {
+    expect(hold("fan-out-tofu", "DEMO_HOLD_FAN_OUT_TOFU=8 DEMO_HOLD=30")).toBe("8");
+    expect(hold("fan-out-choudoufu", "DEMO_HOLD_FAN_OUT_TOFU=8")).toBe("20");
+  });
+
+  it("is what the loop holds each cycle for", () => {
+    expect(demo).toMatch(/^HOLD_DEFAULT="\$\{DEMO_HOLD:-20\}"$/m);
+    expect(demo).toContain('        HOLD="$(scenario_hold "$s")"\n');
+  });
+});
+
+// The cycle's publish, audit and DORA numbers run in the background once its
+// reset is written, so the next cycle's pull request does not wait for them.
+describe("housekeeping", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  const go = (body: string) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-hk-"));
+    made.push(tmp);
+    const stubs = [
+      'log() { echo "[demo] $*" >&2; }',
+      "now() { date +%s; }",
+      `WORK=${tmp}/work DEMO_STATE=${tmp}/state CYCLE=7 LIMIT_HOUSEKEEPING=20`,
+      `mkdir -p ${tmp}/work ${tmp}/state`,
+      `HK_PID_FILE=${tmp}/state/housekeeping.pid HK_AUDIT=""`,
+      `printf '{"step":"applied"}\\n{"step":"reset"}\\n' > ${tmp}/state/timeline.jsonl`,
+      // The publish reads the timeline it is given a second after it starts, as a slow one would.
+      `cycle_publish() { sleep 1; cp "$1" ${tmp}/published; echo "$WORK" > ${tmp}/publish-work; }`,
+      `audit_trail() { echo audit >> ${tmp}/order; }`,
+      `estate_page() { echo estate >> ${tmp}/order; }`,
+      "estate_wait() { :; }",
+      fn("housekeeping_start"),
+      fn("housekeeping_wait"),
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\n${body}`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    const read = (f: string) => (existsSync(join(tmp, f)) ? readFileSync(join(tmp, f), "utf8") : "");
+    return { r, tmp, read };
+  };
+
+  it("returns at once, and publishes the timeline as the reset left it, though the next cycle empties it", () => {
+    const { r, read, tmp } = go(`s=$(date +%s)\nhousekeeping_start\necho "took $(( $(date +%s) - s ))"\n: > "$DEMO_STATE/timeline.jsonl"\nhousekeeping_wait`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(Number(/took (\d+)/.exec(r.stdout)![1])).toBeLessThanOrEqual(0);
+    expect(read("published")).toBe('{"step":"applied"}\n{"step":"reset"}\n');
+    expect(read("publish-work").trim()).toBe(`${tmp}/work/hk`);
+    expect(read("order")).toBe("");
+  });
+
+  it("runs the audit and then the DORA numbers after cycle_end, and only then", () => {
+    const { r, read } = go("HK_AUDIT=1\nhousekeeping_start\nhousekeeping_wait\nhousekeeping_start\nhousekeeping_wait");
+    expect(r.status, r.stderr).toBe(0);
+    expect(read("order")).toBe("audit\nestate\n");
+  });
+
+  it("is waited for by the next housekeeping, the reports prune, putting chant/lifecycle back, the audits outside it and the loop's exit", () => {
+    expect(fn("housekeeping_start").indexOf("housekeeping_wait")).toBeLessThan(fn("housekeeping_start").indexOf("&\n"));
+    expect(fn("reports_prune")).toContain("housekeeping_wait");
+    const back = fn("lifecycle_back");
+    expect(back.indexOf("housekeeping_wait")).toBeGreaterThan(back.indexOf('remote_head "$REPO" chant/lifecycle'));
+    expect(fn("failure_failed").indexOf("housekeeping_wait")).toBeLessThan(fn("failure_failed").indexOf("audit_trail"));
+    const cycle = fn("run_cycle");
+    expect(cycle.indexOf("housekeeping_wait")).toBeLessThan(cycle.indexOf("audit_trail"));
+    expect(demo).toMatch(/\[ -z "\$ONCE" \] \|\| break\n {4}done\n {4}# The last cycle's housekeeping[^\n]*\n {4}housekeeping_wait\n/);
+  });
+
+  it("leaves the audit out of cycle_end, which resets, holds and writes reset, and starts the housekeeping from reset_written", () => {
+    const end = fn("cycle_end");
+    expect(end).not.toContain("audit_trail");
+    expect(end).not.toContain("estate_page");
+    expect(end.indexOf("HK_AUDIT=1")).toBeLessThan(end.indexOf("reset_written"));
+    expect(end.indexOf("reset_work")).toBeLessThan(end.indexOf("reset_written"));
+    expect(fn("reset_written")).toContain("housekeeping_start");
+    expect(fn("reset_written")).not.toContain("cycle_publish");
+  });
+});
+
+// The reset prunes Forgejo and the bucket every DEMO_PRUNE_EVERY-th cycle (10).
+describe("prune_due", () => {
+  const due = (cycle: number, every = 10) => {
+    const r = spawnSync("bash", ["-c", `PRUNE_EVERY=${every} CYCLE=${cycle}\n${demo.split("\n").find((l) => l.startsWith("prune_due()"))}\nif prune_due; then echo yes; else echo no; fi`], { cwd: root, encoding: "utf8" });
+    return r.stdout.trim();
+  };
+
+  it("is due every 10th cycle by default, and every cycle at 1", () => {
+    expect([9, 10, 11, 20].map((c) => due(c))).toEqual(["no", "yes", "no", "yes"]);
+    expect([9, 10, 11].map((c) => due(c, 1))).toEqual(["yes", "yes", "yes"]);
+    expect(demo).toMatch(/^PRUNE_EVERY="\$\{DEMO_PRUNE_EVERY:-10\}"/m);
+  });
+
+  it("gates every prune in the reset, and still copies the runs when none is due", () => {
+    const work = fn("reset_work");
+    for (const p of ["pulls_prune", "reports_prune", 'runs_export force "$FORGE_RUNS"']) {
+      for (let i = work.indexOf(p); i >= 0; i = work.indexOf(p, i + 1)) {
+        expect(work.slice(0, i).lastIndexOf("prune_due"), p).toBeGreaterThan(-1);
+      }
+    }
+    expect(work).toMatch(/else\n\s+runs_export\n/);
+  });
+});
+
+// quiet holds a push only for a run with a wave still to end: a run whose
+// tips job alone is left does not hold the reset or the next pull request.
+describe("quiet", () => {
+  const made: string[] = [];
+  afterAll(() => {
+    for (const d of made) rmSync(d, { recursive: true, force: true });
+  });
+  /** quiet with Forgejo stubbed: `runs` lists the runs, and run <id>'s jobs are jobs[id], until the poll `until`, when no run is left. */
+  const go = (runs: unknown[], jobs: Record<string, unknown[]>, until = 1000) => {
+    const tmp = mkdtempSync(join(tmpdir(), "demo-quiet-"));
+    made.push(tmp);
+    writeFileSync(join(tmp, "n"), "0");
+    for (const [id, j] of Object.entries(jobs)) writeFileSync(join(tmp, `jobs-${id}`), JSON.stringify(j));
+    writeFileSync(join(tmp, "runs"), JSON.stringify(runs));
+    const stubs = [
+      'log() { echo "[demo] $*" >&2; }',
+      'fail() { echo "FAIL: $*" >&2; exit 1; }',
+      "now() { date +%s; }",
+      'URL=http://forge REPO=admin/demo-choudoufu HELD="" LIMIT_QUIET=5 POLL=0',
+      "runner_watch() { :; }",
+      "runs_export() { :; }",
+      // Each look at the runs counts as a poll; from poll `until` on, no run is left.
+      `runs() { n=$(( $(cat ${tmp}/n) + 1 )); echo $n > ${tmp}/n; if [ "$n" -ge ${until} ]; then echo '[]'; else cat ${tmp}/runs; fi; }`,
+      `api() { id="\${1##*/runs/}"; id="\${id%/jobs}"; cat ${tmp}/jobs-$id; }`,
+      fn("only_tips_left"),
+      fn("jobs_ended"),
+      fn("quiet"),
+    ].join("\n");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${stubs}\nquiet\necho quiet`], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    return { r, polls: Number(readFileSync(join(tmp, "n"), "utf8")) };
+  };
+  const waves = [{ name: "wave-1", status: "success" }, { name: "wave-2", status: "success" }];
+
+  it("goes on at once past a run whose waves ended and whose tips job alone runs", () => {
+    const { r, polls } = go([{ id: 7, status: "running" }], { 7: [...waves, { name: "tips", status: "running" }] });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("quiet");
+    // One look for the runs in progress, one for the failed runs.
+    expect(polls).toBe(2);
+    expect(r.stderr).not.toContain("waiting for run");
+  });
+
+  it("waits for a run with a wave still running, says so once in the log, then goes on", () => {
+    const { r } = go([{ id: 7, status: "running" }], { 7: [waves[0], { name: "wave-2", status: "running" }, { name: "tips", status: "waiting" }] }, 4);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim()).toBe("quiet");
+    expect(r.stderr.match(/\[demo\] quiet: waiting for run 7 of admin\/demo-choudoufu to end before the next push/g)).toHaveLength(1);
+  });
+
+  it("still waits for a failed run with a later wave running (terragucci#1161)", () => {
+    const { r } = go([{ id: 8, status: "failure" }], { 8: [{ name: "wave-1", status: "failure" }, { name: "wave-2", status: "running" }] }, 4);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toMatch(/waiting for run 8 of/);
+  });
+});

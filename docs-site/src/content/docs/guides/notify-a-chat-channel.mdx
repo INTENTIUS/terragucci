@@ -1,0 +1,220 @@
+---
+title: Tell a chat channel when a wave stops
+description: Post a Slack or Microsoft Teams message, or a signed JSON event to a webhook, when a wave waits for approval, is refused, or fails, with its roots, the approve command and the run, and post drift with a Re-plan button.
+claims: [notify/chat, notify/webhook, chat/replan]
+prompt: |
+  Read https://intentius.io/terragucci/guides/notify-a-chat-channel/.
+  Add a `notify:` block to terragucci.yml naming the secret SLACK_WEBHOOK_URL (or TEAMS_WEBHOOK_URL), run
+  `npx terragucci config check` and `npx terragucci init`, and open a pull request. Tell me which secret I must create.
+  Do not create the webhook or the secret, and never write a webhook address into any file.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A message in your channel each time an apply job stops at a wave or the drift job finds a change. The message approves nothing; a person approves with `terragucci approve` from a checkout, which records the approval on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). Under `approval: pr-review` an approving review of the pull request counts too.
+
+| You want | You set up |
+|---|---|
+| a notice in Slack or Teams, and under `approval: pr-review` a link straight to the review that approves the wave | `notify:` and an incoming webhook for the channel. Nothing to install or host. |
+| Approve and Decline buttons that record the approval on `chant/lifecycle` as the person who clicked | `terragucci relay`, in your own cloud ([Approve from Slack and Teams](/terragucci/guides/approve-from-chat/)) |
+
+| The wave | Exit | The message says |
+|---|---|---|
+| waits for an approval | 3 | the wave, its roots, its plan digest, the [`terragucci approve`](/terragucci/reference/cli/#approve) command for that digest, and the run; under `approval: pr-review`, first a link to review the pull request ([below](#approve-from-the-message-by-review)) |
+| is refused: its plans changed after approval | 4 | the wave, its roots, the outcome line, `npx terragucci approve wave-<k> --plan <digest>` for the new digest, and the run |
+| fails, or the policy denies it | 1 | the wave, its roots, the outcome line, that there is nothing to approve, and the run |
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| The [pipeline](/terragucci/getting-started/) | `init` maps the secret into the apply jobs |
+| An incoming webhook for the channel | the apply job posts to it |
+| A secret in your forge's store holding the webhook's address | the address is a credential: anyone holding it can post |
+
+## Steps
+
+<Steps>
+
+1. Make a webhook for the channel.
+
+   <Tabs syncKey="chat">
+     <TabItem label="Slack">
+       Turn on Incoming Webhooks in a Slack app and add a webhook to the channel. Copy its `https://hooks.slack.com/services/...` address.
+     </TabItem>
+     <TabItem label="Teams">
+       In the channel, add the Workflows template "Post to a channel when a webhook request is received", and copy the address it gives. terragucci posts an Adaptive Card, the body that template reads.
+     </TabItem>
+   </Tabs>
+
+2. Store the address as a secret.
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       A repository secret under Settings, Secrets and variables, Actions.
+     </TabItem>
+     <TabItem label="GitLab">
+       A masked CI/CD variable. Mark it Protected so only default-branch pipelines, where the apply jobs run, see it.
+     </TabItem>
+     <TabItem label="Forgejo">
+       The same as GitHub; Forgejo keeps them under Settings, Actions, Secrets.
+     </TabItem>
+   </Tabs>
+
+3. Name the secret in `terragucci.yml`. Use either key, or both:
+
+   ```yaml
+   notify:
+     slack: SLACK_WEBHOOK_URL
+     teams: TEAMS_WEBHOOK_URL
+   ```
+
+   The value is the secret's name. `config check` refuses an address.
+
+4. Write the pipeline again and merge it.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   The apply jobs get the secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and each runs `terragucci notify` when its wave stops. With a [drift schedule](/terragucci/guides/turn-on-drift-checks/), so does the drift job; no plan job gets it.
+
+5. Read the next message.
+
+   <Tabs syncKey="chat">
+     <TabItem label="Slack">
+   ```text
+   terragucci: wave 2 of github.com/acme/infra waits for an approval
+   Roots: envs/prod/app, envs/prod/db
+   Digest: jcs1-sha256:9f2c...
+   Approve: terragucci approve wave-2 --plan jcs1-sha256:9f2c...
+   Run: https://github.com/acme/infra/actions/runs/42
+   ```
+     </TabItem>
+     <TabItem label="Teams">
+       An Adaptive Card titled with the same first line. Its facts are Wave, Roots, Digest, Approve and Run. Its button opens the run.
+     </TabItem>
+   </Tabs>
+
+</Steps>
+
+| If the webhook | The job |
+|---|---|
+| answers 2xx | logs `terragucci notify: posted to Slack` (or Teams) |
+| answers a 4xx | logs the status and goes on; the wave's own exit code stands |
+| answers a 5xx, or not within 10 seconds | tries twice more, then logs the last status and goes on; the wave's own exit code stands |
+
+A comment that applies (`/terragucci apply`) posts the same messages from its job.
+
+## Drift, with a Re-plan button
+
+With a [drift schedule](/terragucci/guides/turn-on-drift-checks/), the drift job posts to Slack and Teams when its refresh-only plans find drift, or a root cannot be refreshed. A run that finds nothing posts nothing.
+
+```text
+terragucci: drift in github.com/acme/infra: 1 root changed outside Terraform
+Drifted: envs/prod/app
+Run: https://github.com/acme/infra/actions/runs/57
+```
+
+The Re-plan button opens the page where you run the check again under your own login; it holds no token and starts nothing itself.
+
+| Forge | Re-plan opens |
+|---|---|
+| GitHub | the workflow's page, where Run workflow is |
+| Forgejo | the workflow's runs, where Run workflow is |
+| GitLab | the pipeline schedules, where each schedule has a run button |
+
+The generic webhook gets no drift event: its events are a wave's.
+
+## State versions written outside a wave
+
+The estate job's `terragucci audit` step records each state version that no wave or migration wrote ([Unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes)). Give that job the webhook secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and run `terragucci notify unrecorded` after the audit step; it posts the writes that run added, and nothing when it added none:
+
+```text
+terragucci: 1 state version written outside every wave and migration
+github.com/acme/infra envs/prod/app: Ox6LTnNaF7lxBz8JmbUJ1rTsr0e0v7qa at 2026-10-09T14:02:11.000Z, writer unknown (`s3://acme-state/envs/prod/app.tfstate`)
+Run: https://github.com/acme/control/actions/runs/91
+```
+
+The generic webhook gets no event for them either.
+
+## Approve from the message, by review
+
+With [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approve-by-review-approval-pr-review), a waiting wave's message opens with a link to the pull request's review page when an approving review of its head would approve the wave. The approval is still a person's own review on the forge, and it binds the plans the pull request's note recorded. The chat app holds no key and approves nothing.
+
+```text
+terragucci: wave 2 of github.com/acme/infra waits for an approval
+Review and approve: pull request 12, then run the wave again
+Roots: envs/prod/app, envs/prod/db
+Digest: jcs1-sha256:9f2c...
+Or approve: terragucci approve wave-2 --plan jcs1-sha256:9f2c...
+Run: https://github.com/acme/infra/actions/runs/42
+```
+
+In Teams, the card's first button (Review and approve) opens the same page.
+
+| Forge | The link opens | Given when |
+|---|---|---|
+| GitHub | the pull request's Files changed tab, where Review changes > Approve is | the wave's pull request has no approving review of its head, or a reviewer asked for changes, and its plan note has a digest for the wave |
+| Forgejo | the pull request's Files changed tab, where Review > Approve is | the same |
+| GitLab | the merge request, where Approve is | the same, and the merge request is still open (applied before it merges): GitLab takes no approval of a merged one |
+
+A direct push gets no link, and neither does a refused wave or one the pull request's note has no digest for: no review of that head can approve those plans. The message then offers the approve command alone.
+
+After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-with-chant)). The wave finds the approving review of the head and records it on `chant/lifecycle` with `via: pr-review`, then applies.
+
+## Send events to your own webhook
+
+`notify` can also post one JSON event to an HTTPS endpoint of yours and sign it with a key you hold. A chat bot, an incident tool or a relay that approves from chat can read it; the chat setup above needs none of this.
+
+<Steps>
+
+1. Store two secrets in your forge's store, as in step 2 above: the endpoint's address, and a random key of 32 bytes or more, for example from `openssl rand -hex 32`. Give the receiver the same key.
+
+2. Name both in `terragucci.yml`. They can sit beside `slack` and `teams`.
+
+   ```yaml
+   notify:
+     webhook: TERRAGUCCI_HOOK_URL
+     webhook_key: TERRAGUCCI_HOOK_KEY
+   ```
+
+   `config check` refuses one without the other: an event is never sent unsigned.
+
+3. Run `npx terragucci init` and merge. The apply jobs get the secrets as `TERRAGUCCI_WEBHOOK` and `TERRAGUCCI_WEBHOOK_KEY`.
+
+4. Verify each request before reading it. The body is a [`chant.notify/v1`](/terragucci/reference/notify-event/) event from `source: "terragucci"`.
+
+   | Header | Holds |
+   |---|---|
+   | `X-Terragucci-Signature` | `sha256=` and the hex HMAC-SHA256, with the key, of `<timestamp>.<body>`: the timestamp header, a dot, and the raw body |
+   | `X-Terragucci-Timestamp` | when the job signed it, in seconds since the epoch; refuse one more than five minutes from your clock |
+   | `X-Terragucci-Event` | `waiting`, `refused` or `failed` |
+   | `X-Terragucci-Delivery` | the event's `id`, the same for each post of one wave's event about one digest; drop a repeat |
+
+   ```js
+   import { createHmac, timingSafeEqual } from "node:crypto";
+
+   function verified(rawBody, headers, key, now = Math.floor(Date.now() / 1000)) {
+     const ts = headers["x-terragucci-timestamp"] ?? "";
+     if (!/^\d+$/.test(ts) || Math.abs(now - Number(ts)) > 300) return false;
+     const want = Buffer.from("sha256=" + createHmac("sha256", key).update(`${ts}.${rawBody}`).digest("hex"));
+     const got = Buffer.from(headers["x-terragucci-signature"] ?? "");
+     return got.length === want.length && timingSafeEqual(got, want);
+   }
+   ```
+
+</Steps>
+
+The event carries the wave's outcome as the stage wrote it, in `detail` ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
+
+To approve from a chat click, [`terragucci relay`](/terragucci/guides/approve-from-chat/) does it without this event: the buttons carry the wave and its digest, and the relay checks who clicked.
+
+## Next
+
+- [Approve from Slack and Teams](/terragucci/guides/approve-from-chat/)
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/)

@@ -1,0 +1,63 @@
+---
+title: Publishing and pinning modules
+description: Publish the module at a version, pin the roots to it, and roll a new version out one pull request per wave.
+sidebar:
+  order: 7
+  badge:
+    text: 10 min
+    variant: note
+claims: [modules/publish, rollout/tofu]
+prompt: |
+  Read https://intentius.io/terragucci/tutorial/modules/.
+  In the terragucci clone with the example booted, run `just example change pin` and summarize the rollout pull request it opens: the roots it covers and the `ref` each moves.
+  `just example change pin` runs the rollout against the local Forgejo, which opens that pull request; that is the one exception to the line below.
+  Then stop and print the page's merge and `just example rollout` commands for me. Never merge the rollout pull request.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import Captured from '../../../components/Captured.astro';
+import Recorded from '../../../components/Recorded.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+:::note[Where the example stands]
+Booted with `just example up`. `just example reset` gets you back to that from any step, and removes the release tags this page makes.
+:::
+
+When roots pin a published version, a module change reaches no root until a pin moves. `tf-publish` publishes a module version, and `tf-rollout` moves the pins with one pull request per wave.
+
+<Steps>
+
+1. Run the scenario:
+
+   ```bash
+   just example change pin
+   ```
+
+   It tags `modules/service` at `1.0.0` with `tf-publish` and pins the twelve service roots to that tag on main. The changed module then goes out as `1.1.0`, and `terragucci rollout modules/service --mode apply` runs. Here `apply` means opening the pull request; no `terraform apply` runs until it merges.
+
+   <Captured step="pin" optional />
+
+2. Read the canary wave's pull request, for the four dev services. The rollout took the newest version and moved each of their pins:
+
+   <Recorded step="pin" view="pull" alt="The description of the rollout's wave 1 pull request: modules/service 1.0.0 to 1.1.0 for the four dev service roots, and wave 2 opening once they have merged and applied" optional />
+
+   <Recorded step="pin" view="files" alt="The pull request's files: each dev service main.tf moves its ref from modules/service/v1.0.0 to v1.1.0" optional />
+
+   | Version | Git tag, the roots' `ref` | Roots pinned to it |
+   |---|---|---|
+   | `1.0.0` | `modules/service/v1.0.0` | every service root whose wave has not merged |
+   | `1.1.0` | `modules/service/v1.1.0` | the dev services, once this pull request merges |
+
+3. Merge it, and let the apply on the merge commit finish.
+
+4. Open the next wave:
+
+   ```bash
+   just example rollout
+   ```
+
+   It runs the same `terragucci rollout` command. Each run takes at most one step, so the next wave opens only once the last has applied.
+
+</Steps>
+
+[Publish your modules](/terragucci/guides/publish-modules/) adds the publish job, and [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) has every step.

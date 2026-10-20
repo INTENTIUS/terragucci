@@ -1,0 +1,11 @@
+{
+  "use": "#31 drift attribution when the defaults table and the audit log say nothing",
+  "question": "driftActor",
+  "expect": "human",
+  "state": {
+    "resource": "aws_security_group.bastion",
+    "attribute": "ingress",
+    "in_code": "port 443 from 10.0.0.0/8",
+    "live": "port 443 from 10.0.0.0/8; port 22 from 0.0.0.0/0, description \"temp debug access\""
+  }
+}

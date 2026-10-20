@@ -1,0 +1,114 @@
+---
+title: Separate environments
+description: Which forge and cloud settings keep a branch's job away from prod's apply runner, secrets and role on GitHub, GitLab and Forgejo, and what terragucci renders and checks beside them.
+claims: [apply/groups, apply/check-job, identities/trust-policy, oidc/audience-stages, oidc/state-roles, oidc/cloud-roles]
+prompt: |
+  Read https://intentius.io/terragucci/guides/separate-environments/.
+  Check this repo's forge and cloud settings and say whether a branch job can reach the prod apply runner, secrets or role.
+  Read `environments` in terragucci.yml and the output of `npx terragucci config identities`, then the forge's environments, runners, runner groups, secrets or variables and branch protection through its API or CLI, and each apply role's trust through the cloud's CLI.
+  Answer each row of the page's table for this forge with what is set, and list each gap with the setting that closes it.
+  Do not change forge settings, runners, secrets, variables or trust policies yourself.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This page is optional reading for a repo that applies more than one environment, such as dev and prod. terragucci runs without any of it.
+
+## Result
+
+A job from a branch, or from another environment, cannot run on prod's apply runner, read prod's secrets or assume prod's apply role. Most of that is set on the forge and in the cloud. terragucci writes each environment's apply jobs to match those settings, and checks for mistakes.
+
+A check inside a job catches mistakes, such as a hand-edited workflow or a mistyped runner label. Someone who can edit the workflow can delete the check too, so it is the forge's settings and the cloud's trust that enforce the separation.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| Each environment's roots named in [`environments`](/terragucci/reference/config/#environments), with its own apply role or identity and, where it has one, its own `runner` | each environment then applies in [jobs of its own](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), which the settings below can tell apart |
+| [`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc) set up | the cloud's trust can only check a token's claims |
+
+## Settings per forge
+
+Each row is a question, the setting that answers it, and who enforces that setting. Pick your forge; the other forge tabs on the site follow.
+
+<Tabs syncKey="forge">
+<TabItem label="GitHub">
+
+| Question | Setting | Enforced by |
+|---|---|---|
+| Which jobs may use the apply runners | a [runner group](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access) for prod's apply runners, open to selected repositories and, on plans that offer it, selected workflows. A label alone keeps nothing out: a branch can edit its workflow to ask for it | forge |
+| Which refs may run an environment's apply | an [environment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments) whose [deployment branches](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#deployment-branches-and-tags) are the default branch alone, with [required reviewers](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers) if you want a person on each run. On a private repository, environments depend on your plan | forge |
+| Which jobs see an environment's secrets | [environment secrets](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#environment-secrets): only a job in that environment, past its branch rule, reads them. A repository secret reaches every workflow run in the repository, a branch's push included | forge |
+| What the cloud trust can require | the environment's subject, `repo:<owner>/<repo>:environment:<name>` ([GitHub's OIDC claims](https://docs.github.com/en/actions/reference/security/oidc#example-subject-claims)), in [AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html#idp_oidc_Create_GitHub), [GCP](https://docs.cloud.google.com/iam/docs/workload-identity-federation#conditions) or [Azure](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-create-trust); [Trust per environment](/terragucci/reference/environment/#trust-per-environment) has each cloud's form | cloud |
+| What terragucci renders | each environment's apply jobs with its `runner` as `runs-on` (labels or a runner group), its roles, `environment: <forge_environment>` and its `oidc.audience` | terragucci |
+| What terragucci checks | [`config check` tips](/terragucci/reference/tips/#config-check-tips) for shared runners, subjects and roles; [`check-job`](/terragucci/reference/environment/#the-apply-jobs-own-check) at the start of each apply job; [`config identities`](/terragucci/reference/cli/#config-identities) prints the subject and audience each role should trust, and [`forge check`](/terragucci/reference/cli/#forge-check) reads the environments, their branch rules, the apply runner group and each role's trust and says which differ | terragucci |
+
+The environment's subject does not name a ref, so the deployment branch rule is what keeps another branch's job from taking it.
+
+</TabItem>
+<TabItem label="GitLab">
+
+| Question | Setting | Enforced by |
+|---|---|---|
+| Which jobs may use the apply runners | [protected runners](https://docs.gitlab.com/ci/runners/configure_runners/#prevent-runners-from-revealing-sensitive-information), which run only jobs on protected branches and tags, with tags that only an environment's `runner` names. Keep the list of protected branches short: each one's pipeline can use them | forge |
+| Which refs may run an environment's apply | a protected default branch, and a [protected environment](https://docs.gitlab.com/ci/environments/protected_environments/) (Premium and Ultimate) that lets only the people who may deploy to it run its jobs | forge |
+| Which jobs see an environment's secrets | [protected variables](https://docs.gitlab.com/ci/variables/#protect-a-cicd-variable), which reach only protected refs, each with the forge environment's name as its [environment scope](https://docs.gitlab.com/ci/variables/#environment-scope) | forge |
+| What the cloud trust can require | on AWS, the environment's `oidc.audience` with `sub` limited to the default branch's ref, since AWS cannot read GitLab's environment claims; on GCP and Azure, the [token's](https://docs.gitlab.com/ci/secrets/id_token_authentication/) `environment`, `environment_protected` and `ref_protected` claims, in a [GCP attribute condition](https://docs.cloud.google.com/iam/docs/workload-identity-federation#conditions) or an [Azure claims expression](https://learn.microsoft.com/en-us/entra/workload-id/workload-identities-flexible-federated-identity-credentials). [Trust per environment](/terragucci/reference/environment/#trust-per-environment) has each form | cloud |
+| What terragucci renders | each environment's apply jobs with its `runner` as `tags`, its roles, `environment: { name: <forge_environment> }` and its `oidc.audience` in `id_tokens` | terragucci |
+| What terragucci checks | [`config check` tips](/terragucci/reference/tips/#config-check-tips), [`terragucci-gitlab-audience`](/terragucci/reference/tips/#terragucci-gitlab-audience) among them; [`check-job`](/terragucci/reference/environment/#the-apply-jobs-own-check) at the start of each apply job, which also requires a protected ref; [`config identities`](/terragucci/reference/cli/#config-identities) prints the claims each role should trust, and [`forge check`](/terragucci/reference/cli/#forge-check) reads the environments' protection, the apply runners' protection, the variables' scopes and each role's trust and says which differ | terragucci |
+
+</TabItem>
+<TabItem label="Forgejo">
+
+| Question | Setting | Enforced by |
+|---|---|---|
+| Which jobs may use the apply runners | a runner [registered](https://forgejo.org/docs/latest/admin/actions/registration/) to the repository rather than an organization, user or the instance. Forgejo has no limit by workflow or branch, so any branch whose workflow asks for the runner's labels can use it | forge |
+| Which refs may run an environment's apply | a [protected branch](https://forgejo.org/docs/latest/user/repository/protection/) per environment, which limits who can push to it. Forgejo has no deployment environments | forge |
+| Which jobs see an environment's secrets | none by environment: a repository's [secrets](https://forgejo.org/docs/latest/user/actions/reference/#secrets) reach every workflow run in it, a branch's push included | forge |
+| What the cloud trust can require | the ref alone, in the subject `repo:<owner>-<owner id>/<repo>-<repo id>:ref:refs/heads/<branch>`, in [AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html), [GCP](https://docs.cloud.google.com/iam/docs/workload-identity-federation#conditions) or [Azure](https://learn.microsoft.com/en-us/entra/workload-id/workload-identity-federation-create-trust) | cloud |
+| What terragucci renders | each environment's apply jobs with its `runner` as `runs-on`, its roles and its `oidc.audience` | terragucci |
+| What terragucci checks | [`config check`](/terragucci/reference/cli/#config-check) refuses `forge_environment` and gives the tip [`terragucci-shared-subject`](/terragucci/reference/tips/#terragucci-shared-subject); [`check-job`](/terragucci/reference/environment/#the-apply-jobs-own-check) checks each apply job's ref and runner; [`config identities`](/terragucci/reference/cli/#config-identities) prints each subject, and [`forge check`](/terragucci/reference/cli/#forge-check) reads the branch protections and each role's trust and says which differ | terragucci |
+
+Read [One ref, one subject](#forgejo-one-ref-one-subject) below before you rely on these.
+
+</TabItem>
+</Tabs>
+
+[`config identities`](/terragucci/reference/cli/#config-identities) prints, for each environment, the subject, audience, forge environment and runner of its plan, deciding, apply and drift jobs. The Terraform provider's [`terragucci_environments` and `terragucci_trust_policy`](/terragucci/guides/manage-the-control-repo-with-terraform/#read-the-environments-trust) give the same values to the resources that make your roles, environments and runner groups.
+
+## Runner hosts
+
+A runner that holds credentials of its own gives them to every job it takes, with no token and no trust condition in the way. Keep these off the hosts that run apply jobs, and off every other runner:
+
+| Credential | Where it comes from | Keep it off by |
+|---|---|---|
+| An instance's role | an AWS instance profile, a GCP VM's service account, an Azure managed identity | giving the runner's machine no role, or one that reaches nothing terragucci manages |
+| The metadata endpoint | `169.254.169.254` and `metadata.google.internal`, which hand out the instance's credentials | blocking it from the job containers; on AWS, requiring IMDSv2 with a hop limit of 1 keeps a container on a bridge network from reaching it |
+| Mounted keys | a volume the runner mounts into each job, or a key file on a host that runs jobs without a container | mounting nothing the jobs do not need; Forgejo's [`container.valid_volumes`](https://forgejo.org/docs/latest/admin/actions/security/#runner-configuration) left empty |
+| Cloud config files | `~/.aws`, `~/.config/gcloud`, `~/.azure` in the runner user's home | a runner user with no cloud login |
+
+A runner that keeps files or processes between jobs can also carry one job's state into the next. The tip [`terragucci-persistent-runner`](/terragucci/reference/tips/#terragucci-persistent-runner) names apply runners that the plan jobs, or another environment's apply jobs, could also take. Give them labels of their own, and use runners that start clean for each job, such as Forgejo's [ephemeral runners](https://forgejo.org/docs/latest/admin/actions/security/#ephemeral-runners).
+
+## Forgejo: one ref, one subject
+
+A Forgejo token's subject names the repository and the ref, nothing else. Two environments that apply from the same branch carry the same subject, so no cloud trust can tell their jobs apart: prod's apply role trusts dev's apply job as well. The runner and the secrets cannot be held to one environment either, as the table shows. Two ways out:
+
+| Way | How | What it separates |
+|---|---|---|
+| A repository per environment | each environment's roots in a repository of its own, with its own `terragucci.yml`, a runner registered to that repository and its own secrets; each apply role trusts its own repository's subject | runner, secrets and role |
+| A protected branch per environment | [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) maps a branch such as `release` to prod's roots; protect `release`, and have prod's apply role trust `ref:refs/heads/release` alone | the role; the runner and the repository's secrets stay open to every branch's workflow |
+
+## Check the live setup
+
+Settings drift after setup: an environment's branch rule gets widened, a runner stops being protected, a role's trust grows a wildcard. [`terragucci forge check`](/terragucci/reference/cli/#forge-check) reads the forge's and each cloud's settings with read-only credentials, compares them with what [`config identities`](/terragucci/reference/cli/#config-identities) expects, and exits 1 when one differs. No pipeline job runs it; run it yourself, or from a scheduled job you add. The [`terragucci_forge_check`](/terragucci/guides/manage-the-control-repo-with-terraform/#check-the-live-setup) data source returns the same rows for a Terraform `check` block.
+
+## An agent check
+
+The prompt at the top of this page asks a coding agent to read the repo's forge and cloud settings, answer each row of the table, and list the gaps. It changes nothing; you make the changes it lists.
+
+## Next
+
+- [Trust per environment](/terragucci/reference/environment/#trust-per-environment) for each forge's and cloud's trust condition.
+- [Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/) for the roles' policies.
+- The [threat model](/terragucci/reference/threat-model/#state-access-per-environment) for what each guard covers and what it does not.

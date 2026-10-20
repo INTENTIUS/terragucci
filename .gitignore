@@ -1,0 +1,15 @@
+node_modules
+dist/
+.chant/
+
+# Built by `just site`; the Pages workflow publishes it and nothing commits it.
+docs-site/dist/
+docs-site/.astro/
+packages/terragucci/dist/
+
+# Tarballs and the commit from `just chant-local`.
+.chant-local/
+__pycache__/
+
+# Large site media, downloaded by scripts/fetch-media.sh from the site-media release.
+docs-site/public/media/launch-party.mp4

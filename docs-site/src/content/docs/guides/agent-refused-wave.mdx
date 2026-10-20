@@ -1,0 +1,162 @@
+---
+title: Have an agent summarize a refused wave
+description: Give an agent the diff between an approved plan and the current one, and read a short summary of what moved.
+claims: []
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-refused-wave/.
+  Add the explain-refusal job for wave <k> to the own-jobs file the guide's tab
+  for this forge names, set own_jobs in terragucci.yml to that file, run
+  `npx terragucci init`, give the job no permission beyond what that tab gives,
+  and open a pull request.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+One of four features that run a model; the others are the [`/terragucci agent` comment](/terragucci/guides/agent-change-a-pull-request/), the [drift agent](/terragucci/guides/agent-fix-drift/) and the [pull request review](/terragucci/guides/agent-review-a-pull-request/). It is off until you add its job by hand; every other feature runs without an agent ([what needs an agent](/terragucci/#opt-in-coding-agent)).
+
+## Result
+
+One comment on what changed between the approved plan and the refused one. The agent never approves, applies or merges, and its prompt forbids running terragucci.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| [Fix a refused wave](/terragucci/guides/fix-a-refused-wave/) done once by hand | the agent reads the same diff you print there |
+| An API key for the model | the job runs Claude Code |
+| On GitHub, a forge token that can comment but not push, approve or merge | the action posts the summary as a comment; on GitLab and Forgejo the summary is in the job's log and the job needs no token |
+| The refused wave's artifact, `terragucci-report-apply-wave-<k>` | it holds the approved report and the refused one |
+
+## Steps
+
+<Steps>
+
+1. Produce the diff, the agent's input, without a model:
+
+   ```bash
+   npx terragucci respond wave-refused --approved terragucci-report/approved --current terragucci-report/current --wave 2 --json
+   ```
+
+   The envelope lists each root whose plan digest moved and what moved inside it.
+
+2. Add the job to a file of your own jobs, and name the file in `terragucci.yml`. Each time `init` rewrites its pipeline file, it writes every job the file holds after its own, unchanged. `reconcile` does the same in each project of a [control repo](/terragucci/concepts/control-repo/).
+
+   ```yaml
+   # terragucci.yml
+   own_jobs: ci/own-jobs.yml
+   ```
+
+   | What | Value |
+   |---|---|
+   | Runs | when a wave's apply job fails on a refusal |
+   | Wave jobs | `apply-wave-<k>`; with [`waves.jobs`](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs), the wave's deciding job is `apply-wave-<k>` and a refused share keeps no approved report |
+   | Input | the artifact `terragucci-report-apply-wave-<k>`, holding `approved/report.json` and `current/report.json` when refused |
+   | Wave in the examples | 2; change the number everywhere for another |
+   | Claude Code | pinned to 2.1.290, the release the [agent comment](/terragucci/guides/agent-change-a-pull-request/) job runs |
+
+   <Tabs syncKey="forge">
+     <TabItem label="GitHub">
+       `ci/own-jobs.yml`. The job runs in the `terragucci` workflow after the wave's job, only when that job failed, and reads that run's artifact. A bare `failure()` would also run it on a branch push whose check failed, where the wave never ran.
+
+       ```yaml
+       explain-refusal:
+         needs: apply-wave-2
+         if: failure() && needs.apply-wave-2.result == 'failure'
+         runs-on: ubuntu-latest
+         permissions:
+           contents: read
+           pull-requests: write
+           issues: write
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/download-artifact@v4
+             continue-on-error: true
+             with: { name: terragucci-report-apply-wave-2, path: reports }
+           - run: >
+               test -d reports/approved || exit 0;
+               npx -y @intentius/terragucci respond wave-refused
+               --approved reports/approved --current reports/current --wave 2
+               --json > refusal.json
+           - if: hashFiles('refusal.json') != ''
+             uses: anthropics/claude-code-action@v1
+             with:
+               anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+               github_token: ${{ secrets.AGENT_FORGE_TOKEN }}
+               prompt: |
+                 Read refusal.json. Summarize which roots changed since the approval and why
+                 the plan moved, in five lines or fewer. Do not run
+                 terragucci or any apply command.
+       ```
+     </TabItem>
+     <TabItem label="GitLab">
+       `ci/own-jobs.yml`. `init` writes the job into `.gitlab/terragucci.yml`, which your `.gitlab-ci.yml` includes. After the wave's job fails, it finds the artifact unpacked at `terragucci-report/`. Sharing the apply jobs' rule keeps it out of a branch's pipeline, which has no `apply-wave-2`, and `on_failure` with `needs` runs it only when `apply-wave-2` failed. A wave that failed for another reason leaves no approved report, and the job stops there. Give it `ANTHROPIC_API_KEY` as a masked variable. The summary stays in the job log; nothing is posted.
+
+       ```yaml
+       explain-refusal:
+         stage: apply
+         needs: [apply-wave-2]
+         rules:
+           - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"
+             when: on_failure
+         image: node:24
+         script:
+           - test -d terragucci-report/approved || exit 0
+           - >
+             npx -y @intentius/terragucci respond wave-refused
+             --approved terragucci-report/approved --current terragucci-report/current --wave 2
+             --json > refusal.json
+           - >
+             npx -y @anthropic-ai/claude-code@2.1.290 -p
+             "Read refusal.json. Summarize which roots changed since the approval and why
+             the plan moved, in five lines or fewer. Do not run
+             terragucci or any apply command."
+       ```
+     </TabItem>
+     <TabItem label="Forgejo">
+       `ci/own-jobs.yml`. Forgejo's runner takes `actions/download-artifact@v3`, which reads only its own run's artifacts, so the job runs in the `terragucci` workflow beside the wave's job, only when that job failed. `anthropics/claude-code-action` is a GitHub app, so the job runs the CLI and the summary stays in its log. The key is a repository secret; the job needs no write token.
+
+       ```yaml
+       explain-refusal:
+         needs: apply-wave-2
+         if: failure() && needs.apply-wave-2.result == 'failure'
+         runs-on: docker
+         container: node:24
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/download-artifact@v3
+             with: { name: terragucci-report-apply-wave-2, path: reports }
+           - run: >
+               test -d reports/approved || exit 0;
+               npx -y @intentius/terragucci respond wave-refused
+               --approved reports/approved --current reports/current --wave 2
+               --json > refusal.json
+           - run: >
+               test -f refusal.json || exit 0;
+               npx -y @anthropic-ai/claude-code@2.1.290 -p
+               "Read refusal.json. Summarize which roots changed since the approval and why
+               the plan moved, in five lines or fewer. Do not run
+               terragucci or any apply command."
+             env:
+               ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+       ```
+     </TabItem>
+   </Tabs>
+
+   Then run `npx terragucci init` and commit the pipeline with the file. A job name `init` already gives one of its own jobs is refused.
+
+3. Read the summary and choose between approving the new plan and reverting the change. The choice and the approval ([`terragucci approve`](/terragucci/reference/cli/#approve)) are yours.
+
+</Steps>
+
+## MCP or `--json`
+
+| Where the agent runs | What it uses |
+|---|---|
+| in the explain-refusal job | `respond wave-refused --json` from the shell, on the wave's artifact: the job has the two reports and no bucket credentials |
+| at your desk | [`terragucci mcp`](/terragucci/guides/agent-read-over-mcp/): `run_view` for where each wave of the commit stands, `report` for the refused wave's report, and `waiting` for each wave that waits for an approval, with the command a person runs to approve it |
+
+## Next
+
+- [Approve a waiting wave](/terragucci/guides/approve-a-wave/)
+- [Waves and approvals](/terragucci/concepts/waves-and-approvals/)

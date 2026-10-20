@@ -1,0 +1,168 @@
+---
+title: Locking and staleness
+description: Two changes meeting on one root, and a plan that no longer matches. What the backend's state lock covers, the layers terragucci adds per root on every binary and repo shape, and choudoufu, which takes no state lock at all.
+claims: [lock/apply, lock/close-release, lock/comment, lock/plan, lock/terragrunt, lock/terragrunt-fanout, lock/atmos, lock/cdktn, apply/serial, apply/per-root, apply/stand-down, refuse/tofu, audit/refused, refuse/approve-plan, pr-apply/stale, note/stale, lock/plan-none, lock/wait-span, telemetry/terragrunt-spans, state/unlock, choudoufu/rows-overlap, choudoufu/rows-wait, choudoufu/rows-takeover, choudoufu/concurrency, choudoufu/iam, choudoufu/shared-bucket, choudoufu/killed]
+---
+
+import LockTiers from '../../../components/LockTiers.astro';
+import LockingClaims from '../../../components/LockingClaims.astro';
+
+Two changes can meet on one root at the same time. A plan can also stop matching: something else landed between the plan and its apply. Three tiers handle this.
+
+<LockTiers />
+
+## Backend state lock
+
+Your backend gives one lock per state file, held while a binary writes it: an S3 backend with `use_lockfile`, a DynamoDB table, a GCS lock object, an Azure blob lease, GitLab-managed state. That is what a plain repo with a CI script, or a Terragrunt `run --all`, works with. It keeps two writers off one state file. It does not decide which change goes first, and it does not check that a plan still matches.
+
+## terragucci layers
+
+terragucci adds these on every binary and repo shape. Each works per root, or per Terragrunt unit, Atmos instance or Terramate stack, never per resource: one state file cannot take two writers.
+
+### Pull request locks
+
+Under `apply.when: pull-request` a pull request holds each root it reaches until it merges or closes; `/terragucci lock` takes the hold without applying. Another pull request that reaches a held root is refused with the holder named. With `locks: plan` the hold starts at the first plan. In a Terragrunt repo dependency blocks extend the reach; in an Atmos repo a stack manifest change reaches every instance; with `synth`, such as a CDK Terrain app, a change to the app reaches every stack. [Apply before merge](/terragucci/guides/apply-before-merge/#locks), [plan locks](/terragucci/reference/pipeline/#plan-locks).
+
+### Applies kept apart
+
+Two pushes that change different roots apply side by side. A root's own applies take turns at its state lock. A push's wave whose commit is no longer the branch tip stands down before it applies, and the newer push applies the whole tree. [Applies side by side](/terragucci/reference/pipeline/#applies-side-by-side).
+
+### Stale plans
+
+An approval covers the plan digest it was shown. A wave whose plans moved after the approval applies nothing and names the root that moved. A pull request behind the default branch is refused, and its plan note is marked stale once the default branch changes a root it planned; a re-plan brings it up to date. [Approval binding](/terragucci/concepts/waves-and-approvals/#approval-binding), [re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/).
+
+### Lock waits
+
+Pull request plans and drift runs take no lock (`-lock=false`) and never wait for an apply. A wave's plan and apply wait up to five minutes for the state lock (`-lock-timeout=5m`); with Terraform and OpenTofu the wait shows in the root's plan time, and choudoufu on a backend that locks records each wait as a span and a metric. [State lock waits](/terragucci/reference/observability/#state-lock-waits).
+
+### Releasing a state lock
+
+A job killed mid-apply leaves its state lock held. `terragucci unlock-state` releases it only when no run that began before the lock is alive, after an approval of that lock's ID, and records who released it on `chant/lifecycle`. [Release a state lock](/terragucci/guides/release-a-state-lock/).
+
+### Claims
+
+A gap is a claim that has not run on that forge or binary yet.
+
+<LockingClaims tier="terragucci" />
+
+## With choudoufu
+
+`binary: choudoufu`, the OpenTofu fork from the team behind terragucci ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), takes no state lock at all. Each resource is a record, and every write to it is conditional. Changes to different resources of one estate apply at the same time, an overlapping change waits (or is refused) before it reaches the cloud, and a plan made stale by another apply is refused. A killed apply leaves nothing to release, and keeps the records of what it finished.
+
+Each row names the check that proves it: terragucci's on [Validation](/terragucci/reference/validation/), choudoufu's by claim number on its site.
+
+<LockingClaims tier="choudoufu" />
+
+### Two applies of one estate
+
+| What the second wave meets | A push's wave | The apply a comment starts |
+|---|---|---|
+| a run applying other resources of the estate | applies beside it (`choudoufu/rows-overlap`) | the same |
+| a run applying a resource it changes | waits for that run, then plans again and applies, with no call to the cloud while it waits (`choudoufu/rows-wait`) | refused at once; the reply names the run, and you comment `/terragucci apply` again once it is done |
+| a run that was killed while applying it | takes over what that run held, with nothing to release; the apply re-reads the live system and refuses a plan the killed run made stale (`choudoufu/rows-takeover`), and what the killed run finished applying has its record (`choudoufu/killed`), so a gated wave applies the rest under the same approval ([Stopped applies](/terragucci/reference/pipeline/#stopped-applies), `cdf-resume`) | the same |
+
+Once the gate lets a wave through, and before its apply re-reads the live system, the wave holds each resource its plans create, update, delete, replace or forget. Data reads and resources with no change hold nothing. A resource is keyed by its estate and address, by the address it moved from, and for an update or a delete by the live object's ID, so two estates that manage one object meet on it.
+
+| | How |
+|---|---|
+| Where the wave keeps them | one file on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), `_locks/apply-rows.json`, taken in one commit: all of the wave's resources or none |
+| When it lets go | when the wave ends, applied or not |
+| A run that is gone | its forge says the run ended, or its entry is two hours old (`TG_LOCK_STALE`): the next wave takes everything that run held over in the same commit |
+| Plans | hold nothing, so every pull request plans at once |
+| Pull request locks | stay per root ([plan locks](/terragucci/reference/pipeline/#plan-locks)) |
+
+Only choudoufu applies this way. Holding a resource means something only when its apply writes that resource alone and checks its plan per resource:
+
+| Two applies inside one root | choudoufu | Stock |
+|---|---|---|
+| Writes | one record per resource, each write conditional | one state file, so the second apply waits for the state lock |
+| A plan another apply staled | refused only when one of its own changes moved | refused when anything in the root moved ("Saved plan is stale") |
+| A killed apply's work | marked in each create call, and recorded when its apply returns, so the next run finds it | a resource created after the last state write is unknown to the next plan |
+
+An apply that does not go through the pipeline, such as `choudoufu apply` on a laptop, holds nothing, so the pipeline cannot wait for it; [the table below](#stock-and-choudoufu) says how the two settle. To keep the pipeline the only writer, give the apply role a trust policy that only your CI's identity on the default branch can assume ([credentials](/terragucci/reference/pipeline/#credentials)), and no person that role. A role scoped to one estate by its ownership tag ([live resource markers](#live-resource-markers)) confines each pipeline to its own estate.
+
+### Stock and choudoufu
+
+Terraform and OpenTofu (stock) keep a state file behind a lock. choudoufu keeps an estate with a [record store](#record-writes).
+
+| | Stock | choudoufu |
+|---|---|---|
+| A killed apply | the state lock stays held until [`terragucci unlock-state`](/terragucci/guides/release-a-state-lock/) frees it after an approval (`state/unlock`) | no lock is held, so there is nothing to release, and `force-unlock` refuses ([claim 2](https://intentius.io/choudoufu/docs/claims/no-self-managed-locks/)) |
+| What a killed apply created | a resource created after the last state write is unknown to the next plan, and the re-run creates a second one ([claim 5](https://intentius.io/choudoufu/docs/claims/recovery-is-a-rerun/), its markers withheld) | a resource marked in its create call is named by the next plan and bound by the re-run, with no duplicate; a resource whose apply returned before the kill already has its record, so the next plan leaves it alone (`choudoufu/killed`); [claim 42](https://intentius.io/choudoufu/docs/claims/a-killed-apply-hides-nothing/) names the types marked only after their create |
+| A stale saved plan | a wave applies only plans whose digest the approval covered (`audit/refused`) | the same, and the apply re-reads the live system: if one of the plan's changes moved in address, action, live object or value, it refuses and names it ([claim 15](https://intentius.io/choudoufu/docs/claims/apply-what-was-approved/)); for an attribute the cloud holds, such as a queue's visibility timeout, this re-read is what refuses the second of two saved plans ([an attribute the cloud holds](https://intentius.io/choudoufu/docs/model/concurrency/#an-attribute-the-cloud-holds)) |
+| Two applies that meet outside the pipeline, such as a laptop and CI | the second waits for the state lock (`lock/wait-span`) | on different resources, both land and neither waits (`choudoufu/concurrency`): two waves that each add a resource whose apply takes 60 seconds overlap, so from the first apply's start to the last one's end is under 90 seconds, container start-up and plan time not counted; on one record, one lands, the other fails naming it and overwrites nothing, and its re-plan shows the value that landed; on an attribute the cloud holds and no record keeps, two plain applies are last-writer-wins, and only applies of saved plans refuse ([an attribute the cloud holds](https://intentius.io/choudoufu/docs/model/concurrency/#an-attribute-the-cloud-holds)) |
+| Ownership | the root's state file | a tag on each resource; a role scoped by the estate tag is refused on another estate's resources (`choudoufu/iam`); one bucket for every estate (`choudoufu/shared-bucket`) |
+| Lock-wait metrics | with choudoufu as the binary, each wait is a `State lock wait` span in the report and `terragucci_lock_wait_seconds` (`lock/wait-span`) | none: no lock, and the report lists no waits (`choudoufu/concurrency`) |
+
+A wave applies the plan file it saved, so claim 15's check runs inside the wave.
+
+The state file is a cache: never the record of what you own, and losing it costs a refresh ([claim 5](https://intentius.io/choudoufu/docs/claims/recovery-is-a-rerun/)).
+
+### Record writes
+
+The estate's record store bucket holds one record per resource, and every write to it is one conditional S3 `PutObject`. The cloud's API therefore settles two runs that reach one resource:
+
+| Record write | Condition | When another run got there first |
+|---|---|---|
+| create | `If-None-Match: *` | the write fails, because the record exists |
+| update | `If-Match: <the version it read>` | the write fails, because the version moved |
+
+### Live resource markers
+
+Each resource carries its identity as tags. The create call writes them; for the few types whose create takes no tags, the next call does.
+
+| Tag | Holds |
+|---|---|
+| `tofu-estate` | the estate that owns the resource |
+| `tofu-address` | the resource's address in the configuration |
+
+| What the tags give you | How |
+|---|---|
+| Each address finds its real resource | the next plan matches the address to the resource that carries it in its tags |
+| An estate any cloud tool can list | filter on the tag, for example `aws ec2 describe-instances --filters Name=tag:tofu-estate,Values=prod` |
+| A role scoped to one estate | an IAM condition on the tag: the role applies its own estate, and IAM refuses it a change to another estate's resources |
+
+The scoped role's write statement, for an estate called `prod`:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["ec2:CreateTags", "ec2:DeleteTags", "ec2:TerminateInstances"],
+  "Resource": "*",
+  "Condition": { "StringEquals": { "aws:ResourceTag/tofu-estate": "prod" } }
+}
+```
+
+The role also reads with `ec2:Describe*`. [choudoufu's marker spec](https://github.com/INTENTIUS/choudoufu/blob/main/live/MARKERS.md) publishes the whole grant, creates included.
+
+### One backend for all your estates
+
+Values the cloud has nowhere to keep go in a record store: an S3 bucket you own. One bucket serves every estate, and each root names its estate and the bucket:
+
+```hcl
+terraform {
+  live {
+    estate = "prod-eu"
+
+    record_store "s3" {
+      bucket = "acme-records"
+    }
+  }
+}
+```
+
+| In the shared bucket | What you get |
+|---|---|
+| `tofu-records/<estate>/` | each estate's records, one per resource, under a prefix of its own |
+| the `tofu-estate` tag on each object | every record carries its estate's tag |
+| estates whose names start alike, such as `prod` and `prod-eu` | no shared keys: each holds only its own records, and the next plan of both shows no change |
+
+The apply checks the bucket before it writes a record:
+
+| Bucket setting | Value |
+|---|---|
+| versioning | enabled |
+| lifecycle | a rule that expires noncurrent versions |
+| public access blocks | all four on |
+
+[choudoufu's bucket page](https://intentius.io/choudoufu/docs/use/bucket/) has the IAM policy for a role per estate.

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+# The validation claims per forge, run in bulk.
+#
+#   stack/validation.sh run FORGE              every claim of FORGE, plain, then
+#                                              under BREAK=1 (it must fail); exits
+#                                              1 when any claim is not as expected.
+#                                              The profile must already be up.
+#   stack/validation.sh record FILE [FORGE...] boot each forge's profile in turn,
+#                                              run its claims plain and broken, tear
+#                                              the stack down, and merge the verdicts
+#                                              into FILE (other forges' rows are kept).
+#
+# A row is pass when the claim held and caught when it failed under BREAK=1.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A person starts it (stack/human-gate.sh).
+. "$HERE/human-gate.sh"; human_gate "the per-forge claims; record takes the whole shared stack down before and after"
+
+# forge|claim|what the claim shows
+CLAIMS='aws|boot/s3|floci starts and answers S3
+forgejo|check/tofu|a push that is formatted goes green, and one with an unformatted file goes red naming the file
+forgejo|apply/tofu|a push to main applies the root, and the bucket exists afterwards
+forgejo|check/terragrunt|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
+forgejo|apply/terragrunt|the generated workflow for a Terragrunt repo applies both of its units on the default branch
+forgejo|check/choudoufu|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
+forgejo|apply/choudoufu|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
+forgejo|approval/pr-review|with approval: pr-review a pull request approved on its head by a second user with write access merges, and its gated wave applies with no terragucci approve
+github|check/tofu|the generated workflow fails an unformatted root and names the file
+github|apply/tofu|the generated workflow applies the root on the default branch
+github|reconcile/tofu|a control repo opens one pull request per project that changes, and the merged pipeline applies both roots
+github|check/terragrunt|the generated workflow for a Terragrunt repo fails an unformatted unit file and names it
+github|apply/terragrunt|the generated workflow for a Terragrunt repo applies both of its units on the default branch
+github|check/choudoufu|the generated workflow for a choudoufu estate fails a resource that live-check refuses and names it
+github|apply/choudoufu|the generated workflow for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
+gitlab|check/tofu|the generated pipeline fails an unformatted root and names the file
+gitlab|apply/tofu|the generated pipeline applies the root on the default branch
+gitlab|reconcile/tofu|a control repo opens one merge request per project that changes, and the merged pipeline applies both roots
+gitlab|check/terragrunt|the generated pipeline for a Terragrunt repo fails an unformatted unit file and names it
+gitlab|apply/terragrunt|the generated pipeline for a Terragrunt repo applies both of its units on the default branch
+gitlab|check/choudoufu|the generated pipeline for a choudoufu estate fails a resource that live-check refuses and names it
+gitlab|apply/choudoufu|the generated pipeline for a choudoufu estate applies it on the default branch, and the bucket carries the estate marker
+gitlab|approval/gate|a wave that waits for its approval ends its job with exit code 3 and fails the terragucci/apply status with its approval command, so the pipeline ends
+gitlab|init/own-jobs|init adds an include to a repo with its own .gitlab-ci.yml, and the pipeline runs that repo job in its stage beside the generated check
+gitlab|approval/pr-review|with approval: pr-review a merge request approval given before the latest push leaves the wave waiting, and one given after it applies the wave
+gitlab|approval/approve|terragucci approve in a clone finds the waiting wave and approves its digest, and the next push applies it
+gitlab|comment/plan|a /terragucci plan note from a Developer starts a merge request pipeline on the next play of the comments schedule; a root that is not one is refused, a Reporter gets no reply, and a second play answers nothing again
+gitlab|comment/apply|/terragucci apply on a merged merge request retries its waiting wave at the merge commit, which waits again with no approval and applies with one; an open merge request is refused
+gitlab|comment/drift-schedule|a drift schedule with no TERRAGUCCI_SCHEDULE runs the drift job alone, and the comments schedule the comments job alone
+gitlab|pr-apply/tofu|with apply.when: pull-request a /terragucci apply note on an approved merge request starts a pipeline on main that applies its head in waves and then merges it with apply.merge: auto
+gitlab|pr-apply/stale|a /terragucci apply note on an approved merge request whose head is behind main is refused as not up to date, and no pipeline starts
+gitlab|lock/apply|a second merge request that reaches a root an open merge request applied is refused by its mr-apply job with the root and the holder named
+gitlab|pr-apply/trust|a pipeline on main whose TERRAGUCCI_HEAD names another commit than the merge request head is refused by mr-apply, and nothing applies
+gitlab|security/protected-token|with gitlab.token: protected a job the merge request adds to its own pipeline finds GITLAB_TOKEN empty, and the comments schedule posts the plan note and terragucci/plan
+gitlab|approval/pr-review-bot|under approval: pr-review an approval by the user the pipeline token acts as leaves the wave waiting, and nothing applies
+gitlab|security/check-token|with GITLAB_TOKEN an unprotected variable the synth command of a branch runs in the check job with no forge token variable, and the check passes
+gitlab|state/gitlab-managed|a root on GitLab-managed state applies with its backend password passed as TF_HTTP_PASSWORD from the job token, and GitLab holds its state'
+ALL_FORGES="aws forgejo github gitlab"
+
+claims_of() { grep "^$1|" <<<"$CLAIMS" | cut -d'|' -f2; }
+
+one() { # forge claim -> prints "pass|caught|fail"
+  local forge="$1" claim="$2" plain broken
+  if "$HERE/validate.sh" "$forge" "$claim" >&2; then plain=pass; else plain=fail; fi
+  if BREAK=1 "$HERE/validate.sh" "$forge" "$claim" >&2; then broken=not-caught; else broken=caught; fi
+  echo "$plain $broken"
+}
+
+case "${1:-}" in
+  run)
+    forge="${2:?usage: validation.sh run FORGE}"
+    rc=0
+    for claim in $(claims_of "$forge"); do
+      read -r plain broken < <(one "$forge" "$claim")
+      echo "VALIDATION forge=$forge claim=$claim verdict=$plain break=$broken"
+      [ "$plain" = pass ] && [ "$broken" = caught ] || rc=1
+    done
+    exit $rc
+    ;;
+  record)
+    out="${2:?usage: validation.sh record FILE [FORGE...]}"; shift 2
+    forges="${*:-$ALL_FORGES}"
+    rows=()
+    rc=0
+    # The record a release publishes runs the published images init pins;
+    # `run`, the CI gate, runs this tree's build (validate-generated.sh).
+    export TG_KEEP_DIGESTS=1
+    for forge in $forges; do
+      "$HERE/down.sh" >&2
+      "$HERE/bootstrap.sh" "$forge" >&2
+      for claim in $(claims_of "$forge"); do
+        read -r plain broken < <(one "$forge" "$claim")
+        [ "$plain" = pass ] && [ "$broken" = caught ] || rc=1
+        says="$(grep "^$forge|$claim|" <<<"$CLAIMS" | cut -d'|' -f3)"
+        rows+=("$(jq -n --arg f "$forge" --arg c "$claim" --arg s "$says" --arg v "$plain" --arg b "$broken" \
+          '{forge: $f, claim: $c, says: $s, verdict: $v, break: $b}')")
+      done
+    done
+    "$HERE/down.sh" >&2
+    new="$(printf '%s\n' "${rows[@]}" | jq -s .)"
+    old='[]'; [ -f "$out" ] && old="$(jq .claims "$out")"
+    # New rows replace the old ones for the same forge and claim; the rest stay,
+    # in the order CLAIMS lists them.
+    merged="$(jq -n --argjson old "$old" --argjson new "$new" --arg order "$CLAIMS" '
+      ($order | split("\n") | map(split("|") | .[0] + " " + .[1])) as $ord
+      | (($old + $new) | group_by(.forge + " " + .claim) | map(last))
+      | sort_by(. as $r | ($ord | index($r.forge + " " + $r.claim)) // 99)')"
+    # recorded: the day each forge's rows were last written, so a forge this
+    # run left alone keeps its own date.
+    was='{}'; [ -f "$out" ] && was="$(jq '.recorded // {}' "$out")"
+    jq -n --argjson c "$merged" --argjson was "$was" --arg at "$(date -u +%Y-%m-%d)" --arg forges "$forges" \
+      '{recorded: ($was + ($forges | split(" ") | map(select(. != "")) | map({key: ., value: $at}) | from_entries)), claims: $c}' > "$out"
+    echo "wrote $out" >&2
+    exit $rc
+    ;;
+  *) echo "usage: validation.sh run FORGE | record FILE [FORGE...]" >&2; exit 2 ;;
+esac

@@ -1,0 +1,167 @@
+---
+title: Apply a pull request before it merges
+description: Turn on apply.when pull-request, apply an approved change from a comment on GitHub, GitLab or Forgejo, and merge it once every wave applied.
+claims: [pr-apply/tofu, lock/apply, pr-apply/stale, pr-apply/requires, lock/comment, lock/plan, lock/plan-release, lock/terragrunt, pr-apply/confirm, pr-apply/guard, lock/close-release, lock/terragrunt-fanout, lock/atmos, lock/cdktn]
+prompt: |
+  Read https://intentius.io/terragucci/guides/apply-before-merge/.
+  Add `apply.when: pull-request` to terragucci.yml, run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with the result.
+  List the merge token and the branch protection I must set; do not create tokens or change branch protection yourself.
+  Never comment `/terragucci apply`, `/terragucci lock` or `/terragucci unlock`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+## Result
+
+An open change that applies from its head in the same waves and gates as a merge. It merges once every wave applied, and the push after the merge applies nothing.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| Plain roots or a Terragrunt repo on GitHub, GitLab or Forgejo, set up as in [Get your first plan note](/terragucci/getting-started/) or [Use Terragrunt](/terragucci/guides/use-terragrunt/) | the pipeline `init` writes holds the jobs below |
+| On GitLab, [`comments:`](/terragucci/guides/re-plan-from-a-comment/) and its pipeline schedule | a merge request note starts no pipeline; the `comments` job reads `/terragucci apply` |
+| Branch protection on the default branch that requires a review | the review is the guard: the applying job runs the change's code with the apply role |
+| The [trade](/terragucci/reference/config/#apply-before-merge) accepted | [what the pull request's code can reach](/terragucci/reference/pipeline/#pull-request-code-access) with the apply role |
+
+## Steps
+
+<Steps>
+
+1. Add the `apply` block to `terragucci.yml`:
+
+   ```yaml
+   apply:
+     when: pull-request
+     merge: auto      # or manual, the default, to merge by hand
+     merge_token_env: MERGE_TOKEN
+   ```
+
+   Leave `waves.jobs` unset, since `config check` refuses it with `apply.when: pull-request`.
+
+   With `merge: auto`, add that secret, holding a token of a user who may push to the default branch. Only `pr-merge`, which runs none of the change's code, gets it.
+
+   <Tabs syncKey="forge">
+   <TabItem label="GitHub">
+   The token is optional. Without it the merge uses the job's own token and starts no `confirm`; the next push confirms it.
+   </TabItem>
+   <TabItem label="GitLab">
+   It is required, under `merge: manual` too. The `comments` job starts the apply pipeline on the default branch with it, and only a token allowed to merge there may. Add `forge: gitlab` and `comments:` beside the block.
+
+   | Variable setting | Value |
+   |---|---|
+   | Key | the name `merge_token_env` gives, such as `TERRAGUCCI_MERGE_TOKEN` |
+   | Value | a project access token with the `api` scope and a role the default branch's protection allows to merge |
+   | Protected, Masked | on: only default-branch pipelines read it |
+   | Environment scope | `terragucci-merge`: only `comments` and `pr-merge` name that environment, and neither runs the change's code |
+
+   Under Settings, CI/CD, Variables, the minimum role allowed to use pipeline variables must include that token's role: the apply pipeline is started with variables naming the merge request.
+   </TabItem>
+   <TabItem label="Forgejo">
+   It is required, since Forgejo refuses a merge made with the job's own token.
+   </TabItem>
+   </Tabs>
+
+2. Run `npx terragucci init` and merge the result in its own pull request. Nothing changes until it lands; after that, default-branch commits run `confirm` instead of the apply waves.
+
+3. Open the change as usual and get its head approved on the forge by a reviewer other than its author. A push after the review needs a fresh approval.
+
+4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#ignored-comments).
+
+   | Check (`apply.requires`) | Fails when | Fix |
+   |---|---|---|
+   | `approved` | no reviewer other than the author approved the head, or a reviewer's last review asks for changes | get the head approved; a push needs a fresh approval |
+   | `undiverged` | the head is behind the default branch | merge or rebase the default branch in, then get a new plan and approval |
+   | `mergeable` | the forge says it does not merge: conflicts with the default branch, or on GitHub a branch protection rule blocks it | resolve the conflicts, or meet the rule |
+   | `checks` | a status or check on the head failed or has not passed yet | fix and push, or wait for it |
+
+   [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, the comment also needs:
+
+   - `terragucci/plan` passing on the head
+   - the pipeline file left unchanged
+   - each root the change reaches free of another open pull request's lock
+
+5. Approve a waiting wave. A wave the `gate` policy holds stops, and the reply gives the command that approves it ([Approve a waiting wave](/terragucci/guides/approve-a-wave/)). Then comment `/terragucci apply` again.
+
+6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
+
+   After the merge, `confirm` plans every root (every unit in a Terragrunt repo). Its `terragucci/apply` status passes when nothing plans a change.
+
+</Steps>
+
+## On GitLab
+
+GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothing applies there; the apply runs in a default-branch pipeline.
+
+| Step | Job | What happens |
+|---|---|---|
+| 1 | `comments`, on its schedule | reads a Developer's `/terragucci apply`, `lock` or `unlock` note on an open merge request; for `apply`, checks `apply.requires` and refuses by name |
+| 2 | `comments` | starts a pipeline on the default branch with the merge token and `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` |
+| 3 | `mr-apply`, from the default branch's pipeline file | reads the merge request and the note again from GitLab, refuses a head other than the merge request's, checks every requirement again and takes the locks |
+| 4 | `mr-apply` | applies the head wave by wave with the apply role, behind the same gates, and replies |
+| 5 | `pr-merge`, with `merge: auto` | merges once the reply says every wave applied |
+
+`approved` needs an approval given after the latest push by a Developer or above who is not the author. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
+
+## Config source
+
+The apply of an open change takes its settings from the default branch. Edits to `terragucci.yml` in the change count only once it merges.
+
+| Setting | Read from |
+|---|---|
+| Waves, `binary`, `gate`, `canary`, the apply role | the default branch's pipeline |
+| `policy` and the policy directory | the default branch; if it has no `policy` key, a change adding one is checked against its own |
+| `approval`, the gate rule ([`identity.gates`](/terragucci/concepts/glossary/#identitygates) in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson)) and the signers file | the default branch |
+| `reports`, `telemetry`, `parallelism` and every other key of `terragucci.yml` | the default branch |
+| `respond` | the default branch; if unreadable, no response |
+| The roots, units, modules and code that plan and apply | the change's head |
+
+An unreadable default-branch config fails the wave before anything applies.
+
+## Locks
+
+Pull request locks hold roots. With `binary: choudoufu` ([set it up](/terragucci/guides/use-a-binary/#choudoufu)), a killed apply leaves no state lock behind ([locking with choudoufu](/terragucci/concepts/locking-and-staleness/#with-choudoufu)).
+
+| Event | Lock |
+|---|---|
+| The change applies | each root it reaches is locked |
+| `/terragucci lock` on the change, by anyone with write access (on GitLab, a Developer or above) | each root it reaches is locked, and nothing applies; the reply names the roots |
+| With [`locks: plan`](/terragucci/reference/config/#plan-locks), the change is opened, pushed to or re-planned with `/terragucci plan` | each root its head reaches is locked; roots it no longer reaches are released; `terragucci/lock` passes, naming them |
+| Another change reaches a locked root | refused; the reply names the root and the holder, and with `locks: plan` its `terragucci/lock` fails |
+| The holder merges or closes | released |
+| `/terragucci unlock` on the holder, by anyone with write access | released; the reply names what it released |
+
+A second pull request that reaches a locked root is refused, and `/terragucci unlock` on the holder releases it.
+
+A plan lock refusal is not queued: comment `/terragucci plan` on the refused change after the holder's locks are released.
+
+In a Terragrunt repo the locks are on units. terragucci works them out from git without running Terragrunt:
+
+| The change touches | Locked |
+|---|---|
+| a file in a unit's directory | that unit, and every unit whose `dependency` or `dependencies` block names it by a plain path, followed through |
+| a file in no unit's directory, such as `root.hcl` or a module | every unit; the reply says which file |
+| Markdown files only | nothing |
+
+A Terragrunt change applies its waves of units from the head, one dependency layer at a time, so a unit applies before the units that read its outputs.
+
+In an Atmos repo the locks are on instances, worked out from git without running Atmos:
+
+| The change touches | Locked |
+|---|---|
+| a file in a component's directory | the instances of that component, and every instance that depends on one |
+| a stack manifest, a catalog or `atmos.yaml` | every instance; the reply says which file |
+| Markdown files only | nothing |
+
+With `synth`, such as a CDK Terrain app, the locks are on the stacks the command writes. Git holds none of them, and the command is the pull request's own code, so terragucci does not run it to see which stacks a change reaches:
+
+| The change touches | Locked |
+|---|---|
+| any file but Markdown, such as `main.js` | every stack; the reply says which file |
+| Markdown files only | nothing |
+
+## Next
+
+- [The generated pipeline](/terragucci/reference/pipeline/#apply-before-merge) lists the jobs, the checks and the credentials.
+- [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/) has every comment command.
