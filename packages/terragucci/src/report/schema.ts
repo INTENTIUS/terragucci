@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 42;
+export const REPORT_MINOR = 43;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -103,6 +103,13 @@ export interface ReportChange {
   kind?: "tags" | "description" | "unknown";
   fold: Fold;
   why?: string;
+  /**
+   * A `tf-plan`'s update or replacement that the root's last applied waves
+   * each made too (minor 43, ./perpetual.ts). Only the note reads it.
+   */
+  perpetual?: true;
+  /** With `perpetual`: the root's newest applied waves in a row that made it. */
+  streak?: number;
 }
 
 /** What a Terragrunt run adds about a unit (minor 1). */

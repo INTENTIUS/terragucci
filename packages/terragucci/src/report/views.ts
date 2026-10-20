@@ -15,6 +15,7 @@ import { ruleAsks } from "../approval-rules";
 import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
+import { perpetualChanges } from "./perpetual";
 import { duration } from "./spans";
 import { TACO_NOTE_URL } from "./taco";
 
@@ -428,12 +429,20 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     if (g.resource) title += ` of ${code(g.resource)}`;
     if (g.outlier) title += " (outlier)";
     title += g.noChanges ? ", no changes" : g.extends ? `, group ${g.extends}'s change plus` : g.units.length > 1 ? ", identical change" : ", change";
+    // A group whose every change is one on every run shows its attribute names alone; the section after the groups has them.
+    const recurringOnly = !g.noChanges && g.units.every((u) => {
+      // A unit is a root, or in a one-root report an instance address.
+      const of = report.unit === "instance" ? report.roots.flatMap((r) => r.changes.filter((c) => c.address === u)) : (report.roots.find((r) => r.path === u)?.changes ?? []);
+      const changes = of.filter((c) => c.action !== "no-op" && c.action !== "read");
+      return changes.length > 0 && changes.every((c) => c.perpetual);
+    });
+    if (recurringOnly) title += ", on every run";
     const heading = `#### ${title}\n\n`;
     const lines = g.extends ? (g.plus ?? []) : g.changes;
     const names = lines.length > 0 ? "```\n" + lines.map(changeText).join("\n") + "\n```\n\n" : "";
     const shown = g.units.slice(0, 20).map(code).join(", ");
     const members = `${unitsWord}: ${shown}${g.units.length > 20 ? `, and ${g.units.length - 20} more in the report` : ""}\n\n`;
-    const diff = g.noChanges ? undefined : groupDiff(report, g.units, options.plans);
+    const diff = g.noChanges || recurringOnly ? undefined : groupDiff(report, g.units, options.plans);
     if (!diff) {
       blocks.push({ kind: "group", units: g.units.length, text: heading + names + members });
       continue;
@@ -447,6 +456,8 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     if (differs.length > 0 || g.varies.length > 0) t += "\n";
     blocks.push({ kind: "group", units: g.units.length, text: t + members, short: heading + names + members });
   }
+  const recurring = recurringBlock(report, (root) => to(code(root), rootAnchor(root)));
+  if (recurring) blocks.push({ kind: "line", units: 0, text: recurring });
   // Each root's whole plan, collapsed, as Atlantis comments it.
   let first = true;
   for (const r of report.roots) {
@@ -520,6 +531,24 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     else cut.lines++;
   }
   return top + blocks.map((b) => b.text).join("") + notice() + foot;
+}
+
+/** The usual fix of a change on every run, under the note's table of them. */
+export const RECURRING_TIP = "These changes are in every plan, whatever the pull request changes: an archive hash a build rebuilds each time (build the artifact reproducibly), a timestamp or a value set outside the config (`lifecycle { ignore_changes }`), or a value the provider normalises differently from the config (pin the provider version that normalises it).";
+
+/**
+ * The note's folded section of changes on every run (./perpetual.ts): each
+ * with its attributes and the applied waves in a row that made it, after
+ * the groups. Nothing when no change is marked.
+ */
+export function recurringBlock(report: Pick<Report, "roots">, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
+  const found = perpetualChanges(report);
+  if (found.length === 0) return undefined;
+  let t = `<details><summary>Changes on every run (${found.length})</summary>\n\n| Resource | Attribute | Applied waves in a row |\n|---|---|---|\n`;
+  // A pipe in an address or a key would end the cell, code span or not.
+  const cell = (s: string): string => s.replaceAll("|", "\\|");
+  for (const f of found) t += `| ${cell(`${name(f.root)}: ${code(f.change.address)}`)}${f.change.action === "replace" ? " (replace)" : ""} | ${cell(f.attributes.map(code).join(", "))} | ${f.change.streak ?? ""} |\n`;
+  return `${t}\n${RECURRING_TIP}\n\n</details>\n\n`;
 }
 
 /**

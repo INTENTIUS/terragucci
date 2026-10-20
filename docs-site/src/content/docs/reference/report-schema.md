@@ -31,6 +31,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `totals` | the run's changes by action, over the roots whose plan can apply; a root the policy denied is left out, though its `changes` stay in the report. GitLab's `reports:terraform` counts come from it |
 | `totals_roots` | how many roots `totals` counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, a root planned on its upstream's planned outputs included, and no root the policy denied. The note's total line reads `3 to add, 2 to change, 0 to destroy across 3 roots` from the two (minor 35) |
 | `roots[]` | path, plan digest, counts by action, its group, its changes and why it is open |
+| `roots[].changes[].perpetual`, `roots[].changes[].streak` | on a `tf-plan` with `reports` set, a change on every run (minor 43): an update or replacement the root's last 3 applied waves in a row each made too, to the same address with the same action and top-level attributes, from the project's `changes.json`; `streak` is how many of its newest applied waves in a row made it. Only the note reads them: the plan, its digests and the gate are the same without them |
 | `waves[]` | one entry per wave; [its fields](#waves) are below |
 | `named[]` | every destroy, replacement and refusal by address, and every import and forget apart from them |
 | `holes[]` | a resource instance the report could not read a change for, with its root, address and the reason; always present, and empty when nothing is missing |
