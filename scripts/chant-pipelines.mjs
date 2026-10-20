@@ -23,6 +23,16 @@ export const PIPELINES = {
     file: ".forgejo/workflows/chant-pr.yml",
     args: ["build", "--components", "--generate", "forgejo", "--pr-loop", "--env", "demo", "--image", "terragucci-demo-chant:local"],
   },
+  // The fan-out estate's pipeline: each job builds the fifteen templates (cfn-deploy applies dist/), and each
+  // stage copies its events, report and change set to the reports bucket, where behold reads them.
+  "example-demo-chant-fanout": {
+    file: ".forgejo/workflows/chant-pr.yml",
+    args: [
+      "build", "--components", "--generate", "forgejo", "--pr-loop", "--env", "demo", "--image", "terragucci-demo-chant-fanout:local",
+      "--events-json", "--report-url", "s3://demo-reports/demo/chant/${{ github.repository }}",
+      "--pr-build-command", "ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build",
+    ],
+  },
 };
 
 /** The example trees that are chant projects: a chant.config.ts at their root. */

@@ -141,7 +141,7 @@ export function cardProblems(root = ".") {
   const intro = read("example-demo/scenarios/intro.json");
   check("example-demo/scenarios/intro.json", "problem", intro?.problem);
   check("example-demo/scenarios/intro.json", "delivery", intro?.delivery);
-  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios", "example-demo-fanout/scenarios", "example-demo-choudoufu-fanout/scenarios"]) {
+  for (const dir of ["example-demo/scenarios", "example-demo-terragrunt/scenarios", "example-demo-chant/scenarios", "example-demo-chant-fanout/scenarios", "example-demo-fanout/scenarios", "example-demo-choudoufu-fanout/scenarios"]) {
     for (const d of readdirSync(join(root, dir), { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
       const file = `${dir}/${d.name}/about.json`;
       const about = read(file);
