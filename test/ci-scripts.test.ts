@@ -71,6 +71,51 @@ describe("diff-guard", () => {
   });
 });
 
+describe("lfs-check", () => {
+  // Without git-lfs's filter configured (GIT_CONFIG_GLOBAL=/dev/null), `git
+  // add` stores what is on disk: a PNG's bytes as a plain blob, or a pointer
+  // written out by hand as the pointer.
+  const png = "\x89PNG\r\n\x1a\n" + "x".repeat(2000);
+  const pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "a".repeat(64) + "\nsize 2008\n";
+
+  it("fails on a tracked PNG that is a plain blob, naming the file and the fix, and passes an LFS pointer", () => {
+    const dir = repo();
+    commit(dir, { "README.md": "r\n", "site/logo.png": png }, "start");
+    const bad = run(dir, "lfs-check.sh", []);
+    expect(bad.status).toBe(1);
+    expect(bad.out).toContain("site/logo.png: a plain git blob");
+    expect(bad.out).toContain(`git lfs track "*.png"`);
+    expect(bad.out).toContain("git add --renormalize site/logo.png");
+    expect(run(dir, "lfs-check.sh", ["main", "main"]).status).toBe(1);
+    commit(dir, { "site/logo.png": pointer, "site/Shot.PNG": pointer, "notes.txt": "x".repeat(4000) }, "through LFS");
+    expect(run(dir, "lfs-check.sh", [])).toMatchObject({ status: 0, out: expect.stringContaining("2 binary files in the index are LFS pointers") });
+    expect(run(dir, "lfs-check.sh", ["main", "main"]).status).toBe(0);
+  });
+
+  it("checks the extension in any case", () => {
+    const dir = repo();
+    commit(dir, { "Shot.JPG": png }, "start");
+    expect(run(dir, "lfs-check.sh", []).out).toContain("Shot.JPG: a plain git blob");
+  });
+
+  it("fails a branch that adds a blob over 512 KB in any of its commits, even one a later commit deletes", () => {
+    const dir = repo();
+    commit(dir, { "a.txt": "a\n" }, "start");
+    git(dir, "checkout", "-q", "-b", "pr");
+    commit(dir, { "dump.bin": "z".repeat(600 * 1024) }, "add a dump");
+    git(dir, "rm", "-q", "dump.bin");
+    git(dir, "commit", "-q", "-m", "drop it");
+    const pr = git(dir, "rev-parse", "HEAD");
+    const r = run(dir, "lfs-check.sh", ["main", pr]);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain(`dump.bin: a ${600 * 1024}-byte blob added since`);
+    expect(r.out).toContain(`git lfs track "dump.bin"`);
+    // Under the limit, or on main itself, it passes.
+    expect(run(dir, "lfs-check.sh", ["main", pr], { LFS_CHECK_MAX: String(700 * 1024) }).status).toBe(0);
+    expect(run(dir, "lfs-check.sh", ["main", "main"]).status).toBe(0);
+  });
+});
+
 describe("release-preflight", () => {
   const setup = () => {
     const origin = tmp();

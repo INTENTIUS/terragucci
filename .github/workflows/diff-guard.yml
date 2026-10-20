@@ -33,3 +33,8 @@ jobs:
           BASE_REF: '${{ github.base_ref }}'
           HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
           DIFF_GUARD_ALLOW: '${{ contains(github.event.pull_request.labels.*.name, ''revert'') && ''1'' || '''' }}'
+      - name: The pull request adds no binary outside LFS
+        run: scripts/lfs-check.sh "origin/$BASE_REF" "$HEAD_SHA"
+        env:
+          BASE_REF: '${{ github.base_ref }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'

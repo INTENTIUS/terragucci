@@ -118,7 +118,7 @@ The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/rend
 
 | Workflow | Runs | What it does |
 |---|---|---|
-| `diff-guard.yml` | every pull request to main | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has |
+| `diff-guard.yml` | every pull request to main | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has; `scripts/lfs-check.sh origin/main <head>`: fails when the pull request adds a binary outside Git LFS |
 | `ci.yml` | every pull request, each push to main, and by hand | `just check-static` in `static`, `just test-shard <n>` in `test (<n>/3)` |
 | `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
 | `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
@@ -132,6 +132,12 @@ A rebase that keeps a stale copy of a file puts back the lines that a commit mer
 ```bash
 just diff-guard             # origin/main against HEAD
 ```
+
+### Binaries go through Git LFS
+
+Every clone downloads every version of a plain git blob, so pictures, videos and PDFs go through Git LFS: `.gitattributes` tracks `*.png`, `*.jpg`, `*.jpeg`, `*.gif`, `*.webp`, `*.ico`, `*.mp4`, `*.webm` and `*.pdf` across the repo. Install it once with `git lfs install`; after that `git add` stores the pointer and the file goes to LFS on push. The pages workflow checks out with `lfs: true`, so the site gets the real files.
+
+`scripts/lfs-check.sh` enforces it. `just check` runs it on the index (`just lfs-check`), and `diff-guard` runs it on the pull request's head. It fails when a tracked file of one of those types is not an LFS pointer, or when a commit on the branch adds a blob over 512 KB, of any type. It names the file and the fix: `git lfs track "*.<ext>"` for a type `.gitattributes` lacks, then `git add --renormalize <file>`. A large blob stays in the branch's history until the commit that added it is rewritten, so amend or rebase it out before pushing.
 
 ### Green commits
 
