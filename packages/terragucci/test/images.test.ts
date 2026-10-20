@@ -41,9 +41,9 @@ describe("images", () => {
   ] as const)("a %s pipeline runs every job in the pinned image", (forge, shape) => {
     const image = `ghcr.io/intentius/terragucci-tofu:${imageTag("tofu")}@${DIGEST}`;
     const out = renderPipeline({ forge, binary: "tofu", version: TOOL_VERSIONS.tofu, image, layers: [["a"]], env: {} }).content;
-    // check, fmt, plan, one apply wave, tips; GitHub and Forgejo also render the plan-note job, the comment re-plan job and its note job, and the comment apply job;
-    // Forgejo also the check-report job, which keeps the report the check job hands on.
-    expect(out.split(shape + image).length - 1).toBe(forge === "gitlab" ? 5 : forge === "forgejo" ? 10 : 9);
+    // check, fmt, plan, one apply wave, tips; GitHub and Forgejo also render the plan-note job, the comment re-plan job and its note job, the comment apply job,
+    // and the check-report job, which keeps the report the check job hands on.
+    expect(out.split(shape + image).length - 1).toBe(forge === "gitlab" ? 5 : 10);
     expect(out).toContain("pinned by digest");
     expect(out).not.toContain("terragucci install");
     // No tool is downloaded: no curl, no unzip (as words; the report hand-over's zlib.gunzipSync is neither).

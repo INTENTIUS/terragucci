@@ -188,7 +188,7 @@ import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
 import { EARLIER_DIR } from "./blocked";
 import { groupsArg, type ApplyGroup } from "./groups";
 import { CHECK_DIR } from "./check";
-import { forgejoCheckoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./forgejo-handover";
+import { checkoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./handover";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
   cacheExports,
@@ -1724,11 +1724,11 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
  * `plan-note` job (plan-note.ts), on GitLab with `gitlab.token: protected`
  * the comments job (plan-note-gitlab.ts). A re-plan names its root
  * (`TG_ROOT`) and reads its range from `TG_BASE`; its checkout must be the
- * head the comment's decision read. On Forgejo (`handover`, on by default
- * there) the step is the job's last, and when it ends its report directory
- * goes on as the job's outputs (./forgejo-handover.ts).
+ * head the comment's decision read. On GitHub and Forgejo the step is the
+ * job's last, and when it ends its report directory goes on as the job's
+ * outputs (./handover.ts).
  */
-export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean; traded?: boolean; sweep?: boolean; handover?: boolean } = {}): string {
+export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean; traded?: boolean; sweep?: boolean } = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1751,8 +1751,8 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
     ...(options.tokenCheck ? [options.tokenCheck] : []),
     // A re-plan that holds no token: what the change's code leaves running dies with the step.
     ...(options.replan && options.sweep !== false ? [LEFTOVER_SWEEP] : []),
-    // On Forgejo the step is the job's last: its report goes on as the job's outputs (./forgejo-handover.ts).
-    ...((options.handover ?? forge === "forgejo") ? handoverTrap(REPORT_DIR, options.replan && options.sweep !== false) : []),
+    // On GitHub and Forgejo the step is the job's last: its report goes on as the job's outputs (./handover.ts).
+    ...(forge !== "gitlab" ? handoverTrap(REPORT_DIR, forge, options.replan && options.sweep !== false) : []),
     // The OIDC token request; no forge token is in the job. A re-plan's identities were traded before this step.
     ...(forge !== "gitlab" && oidc && !options.traded ? [forgeApi(forge)] : []),
     ...(options.replan ? ['if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi'] : []),
@@ -2728,13 +2728,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
   const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
-  // A job that runs the change's code checks it out with no credentials left in the git config.
-  // On Forgejo it is a script, not actions/checkout, whose post step would run at the job's end with the token.
-  const fj = forge === "forgejo";
+  // A job that runs the change's code checks it out with no credentials left in the git config, and with a script,
+  // not actions/checkout, whose post step runs at the job's end with the token as its input (./handover.ts).
   const bareCheckout = (history: boolean, ref?: string, cond?: string, name = "Check out the change"): InstanceType<typeof Step> =>
-    fj
-      ? new Step({ ...(cond ? { if: cond } : {}), name, shell: "bash", env: { TG_TOKEN: "${{ github.token }}", ...(ref ? { TG_REF: ref } : {}) }, run: forgejoCheckoutScript(history) })
-      : new Step({ ...(cond ? { if: cond } : {}), uses: "actions/checkout@v4", with: { ...(ref ? { ref } : {}), ...(history ? { "fetch-depth": 0 } : {}), "persist-credentials": false } });
+    new Step({ ...(cond ? { if: cond } : {}), name, shell: "bash", env: { TG_TOKEN: "${{ github.token }}", ...(ref ? { TG_REF: ref } : {}) }, run: checkoutScript(history) });
   // The steps between the checkout and the main step of a job that runs the change's code. A job that runs a pull
   // request's code from the default branch's workflow (the re-plan) restores the cache and never saves it: it saves
   // into the default branch's scope, which the apply jobs restore from (GHSA-75r4-jwvp-8pg3).
@@ -2752,41 +2749,28 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Check runs for a push, and for a fork's pull request, which has no push here. It runs the branch's code
   // (synth, validate's providers, the policy engine) and holds no forge token: the checkout keeps no credentials,
   // and the step starts without the runner's token variables.
-  // On Forgejo the check step is the job's last, and the check-report job keeps its report.
+  // The check step is the job's last, and the check-report job keeps its report.
   const check = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'push' || (github.event_name == 'pull_request' && ${isFork})`,
     env: { TG_BRANCH: "${{ github.event.repository.default_branch }}" },
-    ...(fj ? { outputs: handoverOutputs("check") } : {}),
+    outputs: handoverOutputs("check", forge),
     steps: [
       // The policy tests read the policy from the default branch, so with `policy:` the checkout has the history.
       bareCheckout(Boolean(input.policy)),
       ...toolSteps(false, false),
-      fj
-        ? new Step({ id: "check", name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${handoverTrap(CHECK_DIR).join("\n")}\n${checkBody}` })
-        : new Step({ name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${checkBody}` }),
-      // The check report stays with the run, beside the job summary.
-      ...(fj
-        ? []
-        : [
-            new Step({
-              name: "Keep the check report",
-              if: "always()",
-              uses: upload,
-              with: { name: CHECK_DIR, path: `${CHECK_DIR}/`, "if-no-files-found": "ignore" },
-            }),
-          ]),
+      new Step({ id: "check", name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${handoverTrap(CHECK_DIR, forge).join("\n")}\n${checkBody}` }),
     ],
   } as never);
-  // Forgejo: a fresh container that runs none of the change's code keeps the check report the check job handed on.
+  // A fresh container that runs none of the change's code keeps the check report the check job handed on, beside the job summary.
   const checkReport = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
     needs: "check",
     if: "always() && (needs.check.result == 'success' || needs.check.result == 'failure')",
     steps: [
-      new Step({ name: "Take the check report from the check job", shell: "bash", run: takeOverScript("check", CHECK_DIR) }),
+      new Step({ name: "Take the check report from the check job", shell: "bash", run: takeOverScript("check", CHECK_DIR, forge) }),
       new Step({ name: "Keep the check report", if: "always()", uses: upload, with: { name: CHECK_DIR, path: `${CHECK_DIR}/`, "if-no-files-found": "ignore" } }),
     ],
   } as never);
@@ -2796,7 +2780,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // runs for a fork, whose pull requests carry no token and no OIDC. It holds
   // no forge token while that code runs: it posts the pending status before
   // the checkout, writes the note and the status into its report, and the
-  // plan-note job posts them. On Forgejo the plan step is the job's last: the plan-note job keeps the report it hands on,
+  // plan-note job posts them. The plan step is the job's last: the plan-note job keeps the report it hands on,
   // and the job restores the Terragrunt cache and saves none, since a save is a step after it.
   const plan = new Job({
     "runs-on": "ubuntu-latest",
@@ -2813,28 +2797,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...costEnv,
       ...reportKeyEnv(forge, input.reports),
     },
-    ...(fj ? { outputs: handoverOutputs("plan") } : {}),
+    outputs: handoverOutputs("plan", forge),
     steps: [
       new Step({ name: "Say on the head that the plan started", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: [forgeApi(forge), 'tg status terragucci/plan pending "planning"'].join("\n") }),
       bareCheckout(true),
-      ...toolSteps(true, true, undefined, fj),
-      new Step({ ...(fj ? { id: "plan" } : {}), name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
-      // The report stays with the run, and the plan-note job reads the note and the status from it.
-      ...(fj
-        ? []
-        : [
-            new Step({
-              name: "Keep the plan report",
-              if: "always()",
-              uses: upload,
-              with: { name: REPORT_DIR, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
-            }),
-          ]),
+      ...toolSteps(true, true, undefined, true),
+      new Step({ id: "plan", name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
     ],
   } as never);
-  // The note job of a plan: a fresh container that checks nothing out and runs none of the change's code. It reads the
-  // plan job's note and status as data and posts them with the job's token. On Forgejo it takes the report from the plan
-  // job's outputs and keeps it as the artifact the plan job keeps elsewhere; Forgejo's artifact store speaks the v3 protocol.
+  // The note job of a plan: a fresh container that checks nothing out and runs none of the change's code. It takes the
+  // report from the plan job's outputs, keeps it as the run's artifact (Forgejo's artifact store speaks the v3 protocol),
+  // reads the note and the status from it as data, and posts them with the job's token.
   const noteJob = (needs: string, cond: string, artifact: string, env: Record<string, string>, replan: boolean): InstanceType<typeof Job> =>
     new Job({
       "runs-on": "ubuntu-latest",
@@ -2844,12 +2817,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       permissions: { statuses: "write", "pull-requests": "write", ...driftRead },
       env: { TG_TOKEN: "${{ github.token }}", TG_PLAN_RESULT: `\${{ needs.${needs}.result }}`, ...env },
       steps: [
-        ...(fj
-          ? [
-              new Step({ name: "Take the plan report from the plan job", shell: "bash", run: takeOverScript(needs, REPORT_DIR) }),
-              new Step({ name: "Keep the plan report", if: "always()", uses: upload, with: { name: artifact, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
-            ]
-          : [new Step({ name: "Fetch the plan report", uses: download, "continue-on-error": true, with: { name: artifact, path: REPORT_DIR } } as never)]),
+        new Step({ name: "Take the plan report from the plan job", shell: "bash", run: takeOverScript(needs, REPORT_DIR, forge) }),
+        new Step({ name: "Keep the plan report", if: "always()", uses: upload, with: { name: artifact, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         // The post runs whatever the steps before it did: a plan job that failed before its report still fails terragucci/plan.
         new Step({ name: "Post the plan note and terragucci/plan", if: "always()", shell: "bash", run: planNoteScript(forge, { replan, prReview, ...(agentLogin ? { agentLogin } : {}) }) }),
       ],
@@ -2883,7 +2852,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
     ...(Object.keys(replanEnv).length ? { env: replanEnv } : {}),
-    outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", sha: "${{ steps.decide.outputs.sha }}", root: "${{ steps.decide.outputs.root }}", ...(fj ? handoverOutputs("plan") : {}) },
+    outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", sha: "${{ steps.decide.outputs.sha }}", root: "${{ steps.decide.outputs.root }}", ...handoverOutputs("plan", forge) },
     steps: [
       bareCheckout(false, undefined, undefined, "Check out the workflow's commit"),
       new Step({ id: "decide", name: "Read the comment and decide whether it re-plans", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: replanDecideScript(layers, forge, input.agentComment !== undefined) }),
@@ -2897,7 +2866,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       new Step({
         if: go,
-        ...(fj ? { id: "plan" } : {}),
+        id: "plan",
         name: "Re-plan the pull request on request and write the plan report",
         shell: "bash",
         env: { TG_PR: "${{ steps.decide.outputs.pr }}", TG_SHA: "${{ steps.decide.outputs.sha }}", TG_ROOT: "${{ steps.decide.outputs.root }}", TG_BASE: "origin/${{ steps.decide.outputs.base }}" },
@@ -2905,24 +2874,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
           ? `${dropForgeTokens()}\n${REPLAN_AZURE_WARNING}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, sweep: false })}`
           : `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: trades })}`,
       }),
-      // On Forgejo the re-plan's step is the job's last, and the replan-note job keeps the report.
-      ...(fj
-        ? []
-        : [
-            new Step({
-              name: "Keep the plan report",
-              if: `always() && ${go}`,
-              uses: upload,
-              with: { name: `${REPORT_DIR}-replan`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
-            }),
-          ]),
+      // The re-plan's step is the job's last, and the replan-note job keeps the report.
     ],
   } as never);
   const replanNote = noteJob("replan", "needs.replan.outputs.go == '1'", `${REPORT_DIR}-replan`, { TG_PR: "${{ needs.replan.outputs.pr }}", TG_SHA: "${{ needs.replan.outputs.sha }}", TG_ROOT: "${{ needs.replan.outputs.root }}" }, true);
   const entities = new Map<string, never>([
     ["workflow", workflow as never],
     ["check", check as never],
-    ...(fj ? [["check-report", checkReport as never] as [string, never]] : []),
+    ["check-report", checkReport as never],
     ["plan", plan as never],
     ["plan-note", planNote as never],
     ["replan", replan as never],

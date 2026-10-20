@@ -411,10 +411,10 @@ export const REVIEW_PATHS = {
 /** The event each forge runs the review workflow on, from the default branch's copy of it. */
 export const REVIEW_EVENTS = { github: "workflow_run", forgejo: "pull_request_target" } as const;
 
-/** The pipeline's workflow file and the artifact its plan job keeps the report in (render.ts PIPELINE_PATHS and REPORT_DIR). */
+/** The pipeline's workflow file and the artifact its run keeps the plan report in (render.ts PIPELINE_PATHS and REPORT_DIR). */
 export const PIPELINE_WORKFLOW = "terragucci.yml";
 export const PLAN_REPORT_ARTIFACT = "terragucci-report";
-/** The job that keeps that artifact on Forgejo: the plan job hands its report on, and plan-note keeps it (forgejo-handover.ts). */
+/** The job that keeps that artifact: the plan job hands its report on, and plan-note keeps it (handover.ts). Forgejo waits for it. */
 export const REPORT_KEEPER_JOB = "plan-note";
 
 /** The artifact the review job keeps the review of a head in, and a wave reads the verdict from. */

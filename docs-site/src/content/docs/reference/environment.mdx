@@ -51,13 +51,13 @@ On GitHub and Forgejo these jobs hold no forge token while the change's code run
 | the steps that run the change's code start without `TG_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `GITEA_TOKEN`, `FORGEJO_TOKEN` or `ACTIONS_RUNTIME_TOKEN` | every job below |
 | those steps start their shell again without the token | Forgejo, whose runner gives every step its token whatever `permissions:` says |
 | with `oidc` set, those steps fetch their cloud tokens first and start again without `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` | Forgejo, where the request token is the run's own token |
-| the step that runs the change's code is the job's last: the checkout is a script with no post step, the Terragrunt cache is restored and never saved, and the report goes on as the job's outputs to a job in a fresh container, which keeps it as the same artifact | Forgejo, for the same reason |
+| the step that runs the change's code is the job's last: the checkout is a script with no post step, the Terragrunt cache is restored and never saved, and the report goes on as the job's outputs to a job in a fresh container, which keeps it as the same artifact | every job below: a later step would hold a token (on GitHub, the checkout action's post step has `github.token` and an upload has `ACTIONS_RUNTIME_TOKEN`) and start with what the code wrote to `GITHUB_ENV` and `GITHUB_PATH` |
 
 | Job | The token is used by |
 |---|---|
-| `check` | no step on GitHub, and the checkout on Forgejo; after a failed check on a branch, the `fmt` job pushes the formatting; on Forgejo the `check-report` job keeps the check report |
-| `plan` | the step before the checkout, which posts `terragucci/plan` pending, and on Forgejo the checkout; the `plan-note` job then posts the note and the status from the plan report |
-| `replan` | the step that reads the comment, before the head is checked out, and on Forgejo the two checkouts; the `replan-note` job posts |
+| `check` | the checkout; after a failed check on a branch, the `fmt` job pushes the formatting, and the `check-report` job keeps the check report |
+| `plan` | the step before the checkout, which posts `terragucci/plan` pending, and the checkout; the `plan-note` job then keeps the plan report and posts the note and the status from it |
+| `replan` | the step that reads the comment, before the head is checked out, and the two checkouts; the `replan-note` job keeps the report and posts |
 
 The GitLab check job drops `TG_TOKEN`, `TG_MERGE_TOKEN`, `GITLAB_TOKEN` (or the `token_env` variable) and `CI_JOB_TOKEN` before it runs anything; the `fmt` job pushes the formatting. `GITLAB_TOKEN` stays with the plan job unless `gitlab.token: protected` makes it a protected variable. [Where the scrub ends](/terragucci/reference/threat-model/#token-scrub-limits).
 

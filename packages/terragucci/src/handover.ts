@@ -1,33 +1,48 @@
 /**
- * On Forgejo, the jobs that run the change's code (`check`, `plan`,
- * `replan`) end with the step that runs it. Forgejo's runner gives the run's
- * token to every step of a job (as ACTIONS_RUNTIME_TOKEN, and to an action as
- * its `token` input), and a later step in the same container runs beside
- * whatever the change's code left running there, and runs the binaries and
- * reads the files that code could have replaced. So no step comes after it:
- * no artifact upload, no cache save, and no checkout action, whose post step
- * runs at the job's end with the token.
+ * On GitHub and Forgejo, the jobs that run the change's code (`check`,
+ * `plan`, `replan`) end with the step that runs it. A later step in the same
+ * container holds a token. Forgejo's runner gives the run's token to every
+ * step (as ACTIONS_RUNTIME_TOKEN, and to an action as its `token` input).
+ * GitHub's runner gives every JavaScript action ACTIONS_RUNTIME_TOKEN and its
+ * inputs as INPUT_* variables, defaults included, in its post step too, and
+ * actions/checkout's `token` input defaults to `github.token`. Such a step
+ * runs beside whatever the change's code left running in the container, runs
+ * the binaries and reads the files that code could have replaced, and starts
+ * with what the code wrote to GITHUB_ENV and GITHUB_PATH (LD_PRELOAD, say, or
+ * its own `git` ahead on the path). So no step comes after it: no artifact
+ * upload, no cache save, and no checkout action, whose post step runs at the
+ * job's end with the token.
  *
  * The step hands its report directory on as the job's outputs instead, which
  * the runner reports itself once the step ends: every regular file, gzipped
- * JSON in base64, cut into HANDOVER_PARTS outputs of HANDOVER_CHUNK
- * characters at most (Forgejo keeps an output to 1 MiB). The job after it
+ * JSON in base64, cut to the forge's HANDOVER_LIMITS. The job after it
  * (`check-report`, `plan-note`, `replan-note`) starts in a fresh container,
  * writes the files back, keeps them as the artifact the job kept before, and
  * posts. What it reads is the change's: it is data, written only under the
  * report directory, by a path of plain segments.
  *
- * The checkout is a script (forgejoCheckoutScript), with the job's token for
- * its fetches alone.
+ * The checkout is a script (checkoutScript), with the job's token for its
+ * fetches alone.
  */
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 
-/** The most characters one output holds: under Forgejo's 1 MiB for an output's value. */
-export const HANDOVER_CHUNK = 1_000_000;
-/** How many outputs a job hands its report on in. */
-export const HANDOVER_PARTS = 4;
-/** The outputs' names: report_0, report_1, ... */
-export const HANDOVER_KEYS = Array.from({ length: HANDOVER_PARTS }, (_, i) => `report_${i}`);
+/** The forges whose jobs hand their report on. */
+export type HandoverForge = "github" | "forgejo";
+
+/**
+ * How many outputs a job hands its report on in, and the most characters
+ * each holds. Forgejo keeps each output's value to 1 MiB. GitHub keeps a
+ * job's outputs to 1 MB together, sized as UTF-16 (two bytes a base64
+ * character), so its one output of 450,000 leaves room for the re-plan's
+ * other outputs.
+ */
+export const HANDOVER_LIMITS: Record<HandoverForge, { chunk: number; parts: number }> = {
+  forgejo: { chunk: 1_000_000, parts: 4 },
+  github: { chunk: 450_000, parts: 1 },
+};
+
+/** The outputs' names on a forge: report_0, report_1, ... */
+export const handoverKeys = (forge: HandoverForge): string[] => Array.from({ length: HANDOVER_LIMITS[forge].parts }, (_, i) => `report_${i}`);
 
 /** The files a note job reads, which a report too large to hand on whole is cut to. */
 function noteFiles(): string[] {
@@ -40,11 +55,12 @@ function noteFiles(): string[] {
  * cut to the files the note job reads, and to none when even those are too
  * large; the log says which.
  */
-export function packJs(): string {
+export function packJs(forge: HandoverForge): string {
+  const { chunk, parts } = HANDOVER_LIMITS[forge];
   return [
     'const fs=require("fs"),p=require("path"),z=require("zlib");',
     "const [dir,out]=process.argv.slice(1);",
-    `const CHUNK=${HANDOVER_CHUNK},PARTS=${HANDOVER_PARTS},NOTE=${JSON.stringify(noteFiles())};`,
+    `const CHUNK=${chunk},PARTS=${parts},NOTE=${JSON.stringify(noteFiles())};`,
     "const all={};",
     "const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+\"/\"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString(\"base64\")}};",
     'walk(dir,"");',
@@ -85,16 +101,16 @@ export const UNPACK_JS = [
  * outputs. With `sweep` (a re-plan's LEFTOVER_SWEEP) the processes the step
  * started are killed first.
  */
-export function handoverTrap(dir: string, sweep = false): string[] {
+export function handoverTrap(dir: string, forge: HandoverForge, sweep = false): string[] {
   return [
-    `tg_handover() { node -e '${packJs()}' ${dir} "\${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }`,
+    `tg_handover() { node -e '${packJs(forge)}' ${dir} "\${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }`,
     sweep ? "trap 'tg_sweep; tg_handover' EXIT" : "trap tg_handover EXIT",
   ];
 }
 
 /** A job's outputs that carry the report its step `step` handed on. */
-export function handoverOutputs(step: string): Record<string, string> {
-  return Object.fromEntries(HANDOVER_KEYS.map((k) => [k, `\${{ steps.${step}.outputs.${k} }}`]));
+export function handoverOutputs(step: string, forge: HandoverForge): Record<string, string> {
+  return Object.fromEntries(handoverKeys(forge).map((k) => [k, `\${{ steps.${step}.outputs.${k} }}`]));
 }
 
 /**
@@ -102,11 +118,11 @@ export function handoverOutputs(step: string): Record<string, string> {
  * `dir`. Each output comes in as toJSON's string, one line of a quoted heredoc
  * whose end no JSON string can be, so the change's outputs stay data.
  */
-export function takeOverScript(job: string, dir: string): string {
+export function takeOverScript(job: string, dir: string, forge: HandoverForge): string {
   return [
     "set -u",
     `node -e '${UNPACK_JS}' ${dir} <<'END_OF_REPORT'`,
-    ...HANDOVER_KEYS.map((k) => `\${{ toJSON(needs.${job}.outputs.${k}) }}`),
+    ...handoverKeys(forge).map((k) => `\${{ toJSON(needs.${job}.outputs.${k}) }}`),
     "END_OF_REPORT",
   ].join("\n");
 }
@@ -119,7 +135,7 @@ export function takeOverScript(job: string, dir: string): string {
  * the fetches alone, through the environment, never the git config. A
  * workspace already checked out is cleaned first, as actions/checkout does.
  */
-export function forgejoCheckoutScript(history: boolean): string {
+export function checkoutScript(history: boolean): string {
   const fetch = history
     ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"`
     : 'git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"';
