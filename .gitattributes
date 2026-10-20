@@ -1,1 +1,12 @@
-docs-site/public/media/*.mp4 filter=lfs diff=lfs merge=lfs -text
+# Binaries go through Git LFS, so a clone carries pointers and not every
+# version of every picture. `just lfs-check` (in `just check` and diff-guard)
+# fails on a tracked file of these types that is not an LFS pointer.
+*.png filter=lfs diff=lfs merge=lfs -text
+*.jpg filter=lfs diff=lfs merge=lfs -text
+*.jpeg filter=lfs diff=lfs merge=lfs -text
+*.gif filter=lfs diff=lfs merge=lfs -text
+*.webp filter=lfs diff=lfs merge=lfs -text
+*.ico filter=lfs diff=lfs merge=lfs -text
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+*.webm filter=lfs diff=lfs merge=lfs -text
+*.pdf filter=lfs diff=lfs merge=lfs -text

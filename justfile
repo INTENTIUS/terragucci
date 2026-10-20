@@ -61,8 +61,12 @@ provider-test:
 chant-pipelines *args:
     node scripts/chant-pipelines.mjs {{args}}
 
-[doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial, the rendered workflows and the chant examples' pipelines. CI's static job.")]
-check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines
+[doc("Fail when a tracked picture, video or PDF is not an LFS pointer, or a blob added since BASE is over 512 KB. With no arguments, the index against origin/main; diff-guard passes BASE HEAD.")]
+lfs-check *args:
+    scripts/lfs-check.sh {{args}}
+
+[doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial, the rendered workflows, the chant examples' pipelines and the LFS check. CI's static job.")]
+check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines lfs-check
 
 [doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle, the provider and the rendered workflows. What CI runs: its static job and its test jobs.")]
 check: check-static test
@@ -361,9 +365,10 @@ capture-stack-down:
     fi
     TG_STACK=capture stack/down.sh
 
-[doc("Fail when HEAD would undo a commit BASE already has, as a rebase that keeps a stale file does: the pull request check.")]
+[doc("Fail when HEAD would undo a commit BASE already has, as a rebase that keeps a stale file does, or would add a binary outside LFS: the pull request check.")]
 diff-guard base="origin/main" head="HEAD":
     scripts/diff-guard.sh {{base}} {{head}}
+    scripts/lfs-check.sh {{base}} {{head}}
 
 [doc("Move the package and the images' version labels to VERSION, and regenerate the Dockerfiles, both examples' pipelines and patches, and the cli-json goldens with the bare new tags.")]
 version-bump version:
