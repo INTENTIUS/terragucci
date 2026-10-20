@@ -51,6 +51,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 | `tips[]` | advice, each with the rule that produced it; absent with `tips: false` |
 | `timings` | the run's roots or Terragrunt units, slowest first, and its slowest resource instances across roots |
 | `roots[].resources` | on a `tf-apply` wave, for a root that applied or had nothing to apply: every managed resource it holds afterwards, from the plan's planned values, each with `address`, `type` and `provider`; never a value |
+| `roots[].versions` | on a `tf-apply` wave, for a root that applied or had nothing to apply: `providers`, each provider its `.terraform.lock.hcl` locks with its `version`, and `modules`, each remote module call `init` recorded in `.terraform/modules/modules.json`, nested calls included, with its `call` (`module.vpc.module.nat`), its `source` without the `?` query, and its `version`: the registry version `init` resolved, else the source's `ref`, `tag` or `version`, absent when it names none; local calls are left out (minor 42) |
 | `roots[].applied_changes` | on a `tf-apply` wave, for a root that applied: what the apply did to each resource (`actions`: `create`, `update`, `replace`, `delete`, `import`, `move` or `forget`), the top-level `attributes` an update or a replacement changed, by name, and `previous_address` for a move; never a value |
 | `roots[].applied_changes[].record_versions` | for a choudoufu root: the record's versions after the apply, from `choudoufu live-history`: `kept`, `store`, `versions` (`version_id`, `last_modified`, `current`, `deleted`), `error` when they could not be listed, and `read` (minor 32) |
 | `roots[].state` | on a `tf-apply` wave, for a root that applied or had nothing to apply: the state its backend holds afterwards, read from the object's metadata and never its contents: `backend`, `location` (`s3://<bucket>/<key>`, `gs://<bucket>/<key>`, `az://<account>/<container>/<key>` or the local file), `version_id` (S3's version id, a GCS generation, an Azure version id or snapshot), `versioning` (`on`; `off` when the backend keeps no history, as `local`, `pg`, `kubernetes`, `consul` and a plain `http` backend do; `unknown` when it may keep versions terragucci does not read) and a `note` saying why there is no version |
@@ -110,6 +111,7 @@ Its JSON Schema is `@intentius/terragucci/report.schema.json` in the package. [T
 | what the policy denied or warned about in a root | `roots[].policy` |
 | who overrode a denial, and why | `roots[].policy.override` |
 | the binary and version each root ran | `roots[].binary` |
+| the provider and module versions each root applied with | `roots[].versions` |
 | the trace of the run, to search your tracing backend | `run.trace_id` |
 
 Approvals stay on your repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. The report names each record's branch and path and never copies it.
@@ -148,6 +150,7 @@ From those rows and each project's newest run view, [`terragucci estate`](/terra
 | `audit` | the [audit trail](/terragucci/reference/audit-trail/) beside the page: `page`, `entries` and `generated`, when `terragucci audit` wrote one |
 | `history` | the resource history beside the page: `page`, how many addresses it holds (`resources`) and `generated`, once an apply changed a resource; each listed resource with a history links its section as `history` |
 | `graph` | the dependency graph, once a project has a run view: `nodes`, each root by `project`, `root` and `wave`, and `edges`, each `from` a root `to` a root that reads its state through `terraform_remote_state`, or a Terragrunt unit `to` a unit that depends on it; an edge between two projects matched a read of a state outside the reader's project to the root of the other whose backend holds it |
+| `versions` | once an apply recorded them, from each project's `versions.json`: `modules`, by `source`, `providers`, by `provider`, and `binaries`, by `binary`, each with `versions`, newest first, each a `version` (absent when the source names none or the binary did not say) and its `roots`, each by `project` and `root`, with the module's `call` |
 | `dora` | the [delivery metrics](/terragucci/reference/delivery-metrics/) beside the page: `file` (`dora.json`), `generated`, and the estate's applied waves in their window as `deployments` |
 
 A project's `inventory.json` is `terragucci.inventory/v1` (`dist/inventory.schema.json`). A `tf-apply` wave's upload replaces the list of each root it applied, unless the file holds a newer one.
@@ -155,6 +158,14 @@ A project's `inventory.json` is `terragucci.inventory/v1` (`dist/inventory.schem
 | Field | What it holds |
 |---|---|
 | `roots[]` | by root path: `root`, the `commit`, `wave` and `finished` time of the wave that recorded the list, the wave's directory as `path`, relative to the project's `index.json`, and `resources`, each with `address`, `type` and `provider` |
+
+Its `versions.json` is `terragucci.versions/v1` (`dist/versions.schema.json`). A `tf-apply` wave's upload replaces the entry of each root it applied, unless the file holds a newer one.
+
+| Field | What it holds |
+|---|---|
+| `roots[]` | by root path: `root`, the `commit`, `wave` and `finished` time of the wave that recorded it, the wave's directory as `path`, relative to the project's `index.json`, and the root's `environment` when it is in one |
+| `roots[].binary` | the binary it ran, as `roots[].binary` of the report names it: `name`, `version` and `pin` |
+| `roots[].providers`, `roots[].modules` | its provider and module versions, as `roots[].versions` of the report holds them |
 
 Its `changes.json`, `terragucci.changes/v1` (`dist/changes.schema.json`), has one row per resource each applied `tf-apply` wave changed, newest first, up to 20,000 rows. A rerun of the same wave replaces its rows.
 

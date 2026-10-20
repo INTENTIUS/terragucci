@@ -35,6 +35,7 @@ Each approver is the one the [audit trail](/terragucci/reference/audit-trail/) r
 | Table | One row per | Read from |
 |---|---|---|
 | `inventory` | resource a root holds, as its newest applied wave left it | each project's `inventory.json` |
+| `versions` | binary, provider or module version a root runs, as its newest applied wave left it: `kind` is `binary`, `provider` or `module`, `name` the binary, the provider's address or the module's source, and `call` the module call | each project's `versions.json` |
 | `changes` | resource an applied wave changed | each project's `changes.json` |
 | `history` | change, with its wave's `approver` and `approval` entry id | `changes.json` joined to `audit.jsonl` |
 | `audit` | audit trail entry | `audit.jsonl` |

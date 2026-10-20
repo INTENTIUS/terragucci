@@ -17,6 +17,7 @@ prompt: |
 | `<prefix>/index.json`, `index.html` | every upload | every project's runs, newest first |
 | `<prefix>/<project>/index.json`, `index.html` | every upload | one project's runs, newest first |
 | `<prefix>/<project>/inventory.json` | a `tf-apply` wave's upload | the resources each root holds, from its newest applied wave |
+| `<prefix>/<project>/versions.json` | a `tf-apply` wave's upload | the binary, provider and module versions each root runs, from its newest applied wave |
 | `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first |
 | `<prefix>/<project>/migrations/<name>.json` | wave 1 of `tf-apply`, when it runs a [state migration](/terragucci/reference/migration-files/) | the migration's record: each root's state version and digest before and after, never a state's contents |
 | `<prefix>/<project>/migrations/<name>/progress.jsonl` | wave 1 of `tf-apply`, every few seconds while an [estate migration](/terragucci/reference/migration-files/#progress) writes, and once when it ends | one line per resource as its write lands, with the migration's counts so far |
@@ -67,6 +68,7 @@ Each object a program reads names its schema in its `schema` field, except a ros
 | `estate.json` | `terragucci.estate/v1` | `dist/estate.schema.json` |
 | each line of `audit.jsonl` | `terragucci.audit/v1` | `dist/audit.schema.json` |
 | `inventory.json` | `terragucci.inventory/v1` | `dist/inventory.schema.json` |
+| `versions.json` | `terragucci.versions/v1` | `dist/versions.schema.json` |
 | `changes.json` | `terragucci.changes/v1` | `dist/changes.schema.json` |
 | `history.json` | `terragucci.history/v1` | `dist/history.schema.json` |
 | `states.json` | `terragucci.state-versions/v1` | `dist/state-versions.schema.json` |
@@ -82,7 +84,7 @@ npm pack @intentius/terragucci
 tar -xzf intentius-terragucci-*.tgz package/dist/estate.schema.json
 ```
 
-[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `changes.json`, `history.json`, `states.json`, `edges.json`, `estates.json` and each roster, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#entry-fields) the fields of an audit entry.
+[Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) lists the fields of `index.json`, `estate.json`, `inventory.json`, `versions.json`, `changes.json`, `history.json`, `states.json`, `edges.json`, `estates.json` and each roster, [Delivery metrics](/terragucci/reference/delivery-metrics/#dorajson) the fields of `dora.json`, and [The audit trail](/terragucci/reference/audit-trail/#entry-fields) the fields of an audit entry.
 
 ## The views prefix
 
@@ -96,6 +98,7 @@ Whatever serves the bucket serves `views/` too. A presigned link opens one objec
 |---|---|
 | every project's runs and the estate | `GetObject` on `<prefix>/*index.json` and `<prefix>/estate.json` |
 | every project's resources | `GetObject` on `<prefix>/*inventory.json` |
+| every root's binary, provider and module versions | `GetObject` on `<prefix>/*versions.json` |
 | every root's state versions | `GetObject` on `<prefix>/*states.json` |
 | every root's cross-state edges | `GetObject` on `<prefix>/*edges.json` |
 | every estate's roster and count | `GetObject` on `<prefix>/estates.json` and `<prefix>/estates/*` |

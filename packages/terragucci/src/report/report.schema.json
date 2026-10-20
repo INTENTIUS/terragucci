@@ -202,6 +202,21 @@
             "type": "array",
             "items": { "$ref": "#/$defs/resource" }
           },
+          "versions": {
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the providers its .terraform.lock.hcl locks and the remote module calls init recorded in .terraform/modules/modules.json, nested calls included, at the applied commit (minor 42).",
+            "type": "object",
+            "required": ["providers", "modules"],
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": { "type": "object", "required": ["provider", "version"], "properties": { "provider": { "type": "string" }, "version": { "type": "string" } } }
+              },
+              "modules": {
+                "type": "array",
+                "items": { "type": "object", "required": ["call", "source"], "properties": { "call": { "type": "string" }, "source": { "type": "string" }, "version": { "type": "string" } } }
+              }
+            }
+          },
           "applied_changes": {
             "description": "On a tf-apply wave, a root that applied: what the apply did to each resource, and the top-level attributes an update or a replacement changed, by name. Never a value (minor 15).",
             "type": "array",

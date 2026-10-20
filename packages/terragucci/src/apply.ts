@@ -51,7 +51,8 @@
  * binary's spans as `stage tf-plan` reads them. For each root that applied,
  * or had nothing to apply, it names the state version the root's backend
  * holds afterwards (./backend.ts): an S3 version id, read from the state
- * object's metadata, never from its contents.
+ * object's metadata, never from its contents, and the provider and module
+ * versions its lock file and modules.json hold (./report/versions.ts).
  *
  * A Terragrunt wave (`--terragrunt`) is one dependency layer of the repo's
  * units: the pipeline's wave, split again by the edges `terragrunt find`
@@ -159,6 +160,7 @@ import type { ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
 import { readRecords, recordStoreOf } from "./cdf-records";
 import { recordVersions, versionsLine } from "./cdf-history";
+import { rootVersions } from "./report/versions";
 import { planAppliedChanges, readChanges } from "./report/history";
 import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
@@ -1784,7 +1786,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     const state = w.states?.get(p.root);
     const versions = w.recordVersions?.get(p.root);
     const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
+    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(join(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
   }
   if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);

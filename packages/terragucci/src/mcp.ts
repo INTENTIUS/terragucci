@@ -224,7 +224,7 @@ export const LAST_APPLY_REPORTS = 50;
 export const TOOLS: Tool[] = [
   {
     name: "estate",
-    description: "The estate page's data (estate.json, terragucci.estate/v1), as `terragucci estate` last wrote it: every project, its waiting waves, drift, failed roots, inventory and state versions.",
+    description: "The estate page's data (estate.json, terragucci.estate/v1), as `terragucci estate` last wrote it: every project, its waiting waves, drift, failed roots, inventory and state versions, and the module, provider and binary versions every root runs.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run(_a, ctx) {
       const { store, prefix } = ctx.top();

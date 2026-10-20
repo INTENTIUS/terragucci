@@ -23,6 +23,7 @@ import { unrecordedWrites } from "../src/report/unrecorded";
 import { RUN_SCHEMA, runSkeleton, withWave } from "../src/report/run-view";
 import { EDGES_SCHEMA } from "../src/report/state-edges";
 import { ESTATES_SCHEMA } from "../src/report/roster";
+import { VERSIONS_SCHEMA } from "../src/report/versions";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import type { Report } from "../src/report/schema";
 import { copyToRun, INDEX_DESTROYS, INDEX_SCHEMA, runPath, uploadReport, VIEWS_DIR, writeReportDir } from "../src/report/store";
@@ -43,6 +44,7 @@ const HISTORY = schema("history.schema.json");
 const DORA = schema("dora.schema.json");
 const RUN_VIEW = schema("run.schema.json");
 const ESTATES = schema("estates.schema.json");
+const VERSIONS = schema("versions.schema.json");
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1" };
@@ -83,7 +85,7 @@ function runs(): Report[] {
     buildReport({ run: { ...RUN, project: WEB, stage: "tf-drift", finished: at(4, 17) }, roots: smallFixture().slice(0, 2) }),
     // The next check finds none: its row names the drift it cleared.
     buildReport({ run: { ...RUN, project: WEB, commit: "f".repeat(40), stage: "tf-drift", finished: at(5, 17) }, roots: [{ path: "envs/dev/orders", planner: "tofu", plan: plan([]) }] }),
-    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", environment: "prod", plan: created, applied: true, recordVersions: new Map([["aws_s3_bucket.logs", { kept: true, store: "s3", versions: [{ version_id: "r1", last_modified: at(8, 54), current: true, deleted: false }], read: at(8, 55) }]]), state: { backend: "s3", location: "s3://state/a.tfstate", version_id: "v1", versioning: "on", note: "n" }, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
+    buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 1, finished: at(8, 55) }, roots: [{ path: "a", environment: "prod", binary: { name: "tofu", version: "1.10.6", pin: ".opentofu-version" }, plan: created, applied: true, versions: { providers: [{ provider: "registry.opentofu.org/hashicorp/aws", version: "5.80.0" }], modules: [{ call: "module.vpc", source: "registry.opentofu.org/acme/vpc/aws", version: "1.2.0" }] }, recordVersions: new Map([["aws_s3_bucket.logs", { kept: true, store: "s3", versions: [{ version_id: "r1", last_modified: at(8, 54), current: true, deleted: false }], read: at(8, 55) }]]), state: { backend: "s3", location: "s3://state/a.tfstate", version_id: "v1", versioning: "on", note: "n" }, policy: { result: "denied", denials: ["no"], rules: ["main.deny"], warnings: [], override } }], waves: [{ number: 1, roots: ["a"], approval: "not-required" }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 2, finished: at(10) }, roots: smallFixture().slice(0, 2), waves: [{ number: 2, roots: ["envs/dev/orders", "envs/dev/search"], approval: "waiting", waitingSince: at(9) }] }),
     buildReport({ run: { ...RUN, project: NET, commit: b, stage: "tf-apply", wave: 3, finished: at(10, 30) }, roots: smallFixture().slice(0, 1), waves: [{ number: 3, roots: ["envs/dev/orders"], approval: "approved" }] }),
     // A share of a wave split across jobs (waves.jobs).
@@ -133,7 +135,7 @@ const named = (s: Json): string[] => Object.keys(s.properties ?? {});
 
 describe("the reader contracts' schemas", () => {
   it("use only the keywords the check reads, and name the schema id the writer puts in `schema`", () => {
-    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA], [EDGES, EDGES_SCHEMA], [ESTATES, ESTATES_SCHEMA]] as const) {
+    for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA], [EDGES, EDGES_SCHEMA], [ESTATES, ESTATES_SCHEMA], [VERSIONS, VERSIONS_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
       expect(s.properties.schema.const).toBe(id);
@@ -143,7 +145,7 @@ describe("the reader contracts' schemas", () => {
 
   it("ship beside report.schema.json: the build copies each one into dist, which the package publishes", () => {
     const shipped = readdirSync(SRC).filter((f) => f.endsWith(".schema.json")).sort();
-    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "estates.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "run.schema.json", "state-edges.schema.json", "state-versions.schema.json"]);
+    expect(shipped).toEqual(["audit.schema.json", "changes.schema.json", "dora.schema.json", "estate.schema.json", "estates.schema.json", "history.schema.json", "inventory.schema.json", "report-index.schema.json", "report.schema.json", "run.schema.json", "state-edges.schema.json", "state-versions.schema.json", "versions.schema.json"]);
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "../package.json"), "utf-8"));
     expect(pkg.files).toContain("dist");
     const build = readFileSync(join(import.meta.dirname, "../../../scripts/build-cli.mjs"), "utf-8");
@@ -272,6 +274,10 @@ describe("terragucci.estate/v1", () => {
     const edges: Json[] = projects.flatMap((p) => p.edges ?? []);
     expect([...keys(edges)].sort()).toEqual(named(ESTATE.$defs.edge).sort());
     expect([...keys(edges.flatMap((e) => [e.consumer_planned, e.producer_applied]))].sort()).toEqual(named(ESTATE.$defs.edgeRun).sort());
+    expect([...keys([page.versions])].sort()).toEqual(named(ESTATE.properties.versions).sort());
+    const rows: Json[] = ["binaries", "providers", "modules"].flatMap((k) => page.versions[k].flatMap((g: Json) => g.versions));
+    expect([...keys(rows)].sort()).toEqual(named(ESTATE.$defs.versionRow).sort());
+    expect([...keys(rows.flatMap((r) => r.roots))].sort()).toEqual(named(ESTATE.$defs.versionRow.properties.roots.items).sort());
     const copies: Json[] = projects.flatMap((p) => p.ephemeral ?? []);
     expect([...keys(copies)].sort()).toEqual(named(ESTATE.$defs.project.properties.ephemeral.items).sort());
     expect([...keys(copies.flatMap((c) => c.roots))].sort()).toEqual(named(ESTATE.$defs.project.properties.ephemeral.items.properties.roots.items).sort());
@@ -299,6 +305,23 @@ describe("terragucci.inventory/v1", () => {
     // Only a wave whose roots applied writes one.
     expect(objects.has(`acme-reports:reports/${WEB}/inventory.json`)).toBe(false);
     expect(validate(INVENTORY, { ...inv, roots: [{ ...inv.roots[0], resources: [{ address: "x", type: "t" }] }] })).toEqual(["$.roots[0].resources[0]: missing provider"]);
+  });
+});
+
+describe("terragucci.versions/v1", () => {
+  it("holds the versions.json an applied wave's upload writes, and every field it names is one the upload writes", async () => {
+    const { objects, s3 } = bucket();
+    await upload(s3, runs());
+    const file = JSON.parse(objects.get(`acme-reports:reports/${NET}/versions.json`)!);
+    expect(validate(VERSIONS, file)).toEqual([]);
+    expect([...keys([file])].sort()).toEqual(named(VERSIONS).sort());
+    const roots: Json[] = file.roots;
+    expect([...keys(roots)].sort()).toEqual(named(VERSIONS.properties.roots.items).sort());
+    expect([...keys(roots.flatMap((r) => r.providers))].sort()).toEqual(named(VERSIONS.properties.roots.items.properties.providers.items).sort());
+    expect([...keys(roots.flatMap((r) => r.modules))].sort()).toEqual(named(VERSIONS.properties.roots.items.properties.modules.items).sort());
+    // Only a wave whose roots applied writes one.
+    expect(objects.has(`acme-reports:reports/${WEB}/versions.json`)).toBe(false);
+    expect(validate(VERSIONS, { ...file, roots: [{ ...file.roots[0], providers: [{ provider: "x" }] }] })).toEqual(["$.roots[0].providers[0]: missing version"]);
   });
 });
 
