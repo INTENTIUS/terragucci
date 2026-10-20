@@ -1329,7 +1329,8 @@ export const pendingWhy = (p: PendingEstateRoot): string =>
  * The roots a pending choudoufu estate migration plans for, by root: each
  * root a `backends` migration adopts into an estate, and each root a `moves`
  * migration between estates retags resources into. Pending means not
- * recorded applied in `_gates/tf-migrate/done.jsonl` on chant/lifecycle, nor
+ * recorded applied in `_gates/tf-migrate/done.jsonl` on chant/lifecycle as
+ * origin holds it now (fetched here, since a later wave's job has no copy), nor
  * in `applied` (the migrations this job applied). Such a root is not planned
  * on its own: choudoufu refuses a plan while a live object at a resource's
  * identity carries no marker of the root's estate, which is how an adopted
@@ -1347,6 +1348,13 @@ export function pendingEstateMigrations(repo: string, applied: ReadonlySet<strin
     return out;
   }
   if (migrations.length === 0) return out;
+  // A wave after the first runs no migration step, and its checkout may hold no copy of chant/lifecycle. Without this fetch
+  // every migration read as pending there, and the wave left its roots unplanned. When origin cannot be read, the copy at hand stands.
+  try {
+    readLedger(repo, MIGRATE_LEDGER);
+  } catch {
+    // The migration step reports a remote it cannot read.
+  }
   const show = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${MIGRATE_DONE}`]);
   const done = doneMigrations(show.status === 0 ? show.stdout : "");
   for (const m of migrations) {
