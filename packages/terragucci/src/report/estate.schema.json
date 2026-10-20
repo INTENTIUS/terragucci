@@ -85,9 +85,48 @@
           }
         }
       }
+    },
+    "versions": {
+      "type": "object",
+      "description": "The versions every root runs, from each project's versions.json: per binary, provider and module source, each version in use, newest first, and the roots on it. Absent until an apply records them.",
+      "required": ["binaries", "providers", "modules"],
+      "properties": {
+        "binaries": {
+          "type": "array",
+          "items": { "type": "object", "required": ["binary", "versions"], "properties": { "binary": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        },
+        "providers": {
+          "type": "array",
+          "items": { "type": "object", "required": ["provider", "versions"], "properties": { "provider": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        },
+        "modules": {
+          "type": "array",
+          "items": { "type": "object", "required": ["source", "versions"], "properties": { "source": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        }
+      }
     }
   },
   "$defs": {
+    "versionRow": {
+      "type": "object",
+      "description": "One version in use and the roots on it. An absent version: the binary did not say, or the module's source names none.",
+      "required": ["roots"],
+      "properties": {
+        "version": { "type": "string" },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["project", "root"],
+            "properties": {
+              "project": { "type": "string" },
+              "root": { "type": "string" },
+              "call": { "type": "string", "description": "For a module, the call's address in the root." }
+            }
+          }
+        }
+      }
+    },
     "graphRoot": {
       "type": "object",
       "required": ["project", "root"],

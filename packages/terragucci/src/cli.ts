@@ -63,7 +63,7 @@
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
- *   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, in process)
+ *   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (SQL over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, in process)
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
  *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   (an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, read-only; with --propose it also pushes a branch, opens a pull request and reads its plan; credentials from the environment)
  *   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   (write wrappers for the binaries and a Claude Code hook that refuse an apply in a pipeline root; see guard.ts)
@@ -193,7 +193,7 @@ const USAGE = `usage:
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
-  terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, changes, history, audit trail and state edges in the reports bucket, run in this process
+  terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, run in this process
   terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   an MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures, read-only; with --propose, push a branch and open a pull request too; credentials from the environment
   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   refuse apply, destroy and -auto-approve in this repo's pipeline roots, for a coding agent's shell

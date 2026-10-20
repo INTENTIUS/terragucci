@@ -25,6 +25,7 @@ A scheduled job rebuilds `estate.html` and `estate.json` at the top of your repo
 | each project's roots by wave, an arrow from each root to the roots that read its state, dashed between projects, and a list of the reads between projects | the run view of each project's newest applied commit, `runs/<commit>/run.json` |
 | the 20 newest runs | every project's `index.json` |
 | the resources each root holds, by project, root and type, with a filter box | each project's `inventory.json` |
+| per module, provider and binary, the versions in use and the roots on each | each project's `versions.json` |
 | each resource's change history, on `history.html` | each project's `changes.json`, and `audit.jsonl` for the approvers |
 | each root's state versions, newest first, or that its bucket keeps none | each project's `states.json` |
 | among them, each version written outside a wave or migration, with its writer when a log names one | the `unrecorded-write` entries in `audit.jsonl` ([Unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes)) |
@@ -75,7 +76,7 @@ In a Terragrunt repo the graph groups units into the waves their apply cut from 
    {
      "Version": "2012-10-17",
      "Statement": [
-       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/*edges.json", "arn:aws:s3:::acme-terragucci/reports/*/runs/*/run.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
+       { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*versions.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/*edges.json", "arn:aws:s3:::acme-terragucci/reports/*/runs/*/run.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
        { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/audit.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] }
      ]
    }
@@ -219,6 +220,18 @@ A `tf-apply` wave records the resources held by every root it applied or found n
 
 No attribute value is ever recorded, sensitive or not. A root is listed from the first wave that applies it, and keeps its last list after you remove it from the repo.
 
+## Versions
+
+The same waves record the versions each root ran at the applied commit: its binary and version as the root pins it, each provider version its `.terraform.lock.hcl` locks, and each remote module call `init` recorded in `.terraform/modules/modules.json`, nested calls included. A module's version is the registry version `init` resolved, or the `ref`, `tag` or `version` its source names. The upload keeps each root's newest entry in `versions.json`.
+
+| On the page | What it holds |
+|---|---|
+| per module source | each version in use, newest first, and the roots and module calls on it |
+| per provider | each locked version and the roots on it |
+| per binary | each version and the roots that ran it |
+
+Each module or provider's heading counts its versions live. When a [rollout](/terragucci/guides/roll-out-a-module-version/) has applied every wave, its module shows one version. Local module calls are left out, and a root keeps its last entry after you remove it from the repo. A Terragrunt unit lists the providers of the lock file Terragrunt copies back beside its `terragrunt.hcl`; its modules sit in Terragrunt's cache and are not listed.
+
 ## Change history
 
 Each `tf-apply` wave also records what it did to each resource of the roots it applied, and the upload adds one row per resource to the project's `changes.json`. From these the estate job writes `history.html` and `history.json` beside the page, listing every resource address with each apply that changed it, oldest first. Each resource on the page links to its history.
@@ -292,4 +305,4 @@ Give the step `continue-on-error: true` on GitHub and Forgejo, or `allow_failure
 - [CLI commands](/terragucci/reference/cli/#estate) lists the flags.
 - [The audit trail](/terragucci/reference/audit-trail/) describes every entry of `audit.jsonl`.
 - [Delivery metrics](/terragucci/reference/delivery-metrics/) defines each DORA metric and the fields of `dora.json`.
-- [Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) describes `estate.json`, the index rows, `inventory.json`, `changes.json` and `history.json`.
+- [Report JSON schema](/terragucci/reference/report-schema/#the-index-and-the-estate-page) describes `estate.json`, the index rows, `inventory.json`, `versions.json`, `changes.json` and `history.json`.

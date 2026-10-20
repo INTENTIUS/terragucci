@@ -24,6 +24,8 @@ Every version a job runs is pinned in the repo and moved by a reviewed pull requ
 
 [Tips](/terragucci/reference/tips/) has each rule, and [Supply chain](/terragucci/standards/supply-chain/) what proves where each piece comes from.
 
+Each applied wave records the binary, provider and module versions its roots ran in the project's `versions.json`. The estate page lists them per module, provider and binary with the roots on each version ([Versions](/terragucci/guides/see-every-project/#versions)), and `terragucci query` reads them as its `versions` table.
+
 ## Ranges
 
 A version range is refused for a rollout and allowed through a registry, for two different reasons:

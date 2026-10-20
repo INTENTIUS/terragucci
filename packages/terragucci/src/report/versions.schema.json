@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intentius.io/terragucci/schemas/versions/v1/versions.schema.json",
+  "title": "terragucci.versions/v1",
+  "description": "versions.json in a project's directory of a reports prefix: the binary, provider and module versions each root runs, as its newest applied tf-apply wave left them. Within v1 fields are only added, and an existing field never changes meaning.",
+  "type": "object",
+  "required": ["schema", "roots"],
+  "properties": {
+    "schema": { "const": "terragucci.versions/v1" },
+    "roots": {
+      "type": "array",
+      "description": "By root path.",
+      "items": {
+        "type": "object",
+        "required": ["root", "commit", "finished", "path", "providers", "modules"],
+        "properties": {
+          "root": { "type": "string" },
+          "commit": { "type": "string", "description": "The applied commit the versions were read at." },
+          "finished": { "type": "string", "description": "When the wave that recorded them finished." },
+          "wave": { "type": "integer" },
+          "path": { "type": "string", "description": "The wave's run directory, relative to the project's index.json." },
+          "environment": { "type": "string", "description": "The environment of environments: in terragucci.yml the root was in when the wave applied. Absent when it was in none." },
+          "binary": {
+            "type": "object",
+            "description": "The binary the root ran, as the report's roots[].binary names it: its name, its version, and where the root pinned it.",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" },
+              "pin": { "type": "string" },
+              "terragrunt": {
+                "type": "object",
+                "required": ["version"],
+                "properties": { "version": { "type": "string" }, "pin": { "type": "string" } }
+              }
+            }
+          },
+          "providers": {
+            "type": "array",
+            "description": "Each provider the root's .terraform.lock.hcl locks, by its full address.",
+            "items": {
+              "type": "object",
+              "required": ["provider", "version"],
+              "properties": { "provider": { "type": "string" }, "version": { "type": "string" } }
+            }
+          },
+          "modules": {
+            "type": "array",
+            "description": "Each remote module call init recorded in .terraform/modules/modules.json, nested calls included. Local calls are left out.",
+            "items": {
+              "type": "object",
+              "required": ["call", "source"],
+              "properties": {
+                "call": { "type": "string", "description": "The call's address: module.vpc, or module.vpc.module.nat for a nested call." },
+                "source": { "type": "string", "description": "The source modules.json records, without its ? query." },
+                "version": { "type": "string", "description": "The registry version init resolved, else the ref, tag or version the source's query names. Absent when the source names none." }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
