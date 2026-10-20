@@ -56,6 +56,7 @@ import { sourceChecker, type SourceChecker } from "../sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "../sources-terragrunt";
 import { describeTips, repoTips } from "../tips";
 import { renamesIn } from "../tips/moved";
+import { liveEstate, rootSecrets } from "../tips/secrets";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf, type Drifted } from "../respond/drift";
@@ -1361,6 +1362,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
       } catch {
         return failed(`show -json printed no plan:\n${tail(json.stderr || json.stdout)}`, `${root}: show -json failed`);
       }
+      // The secrets the plan leaves in state, and what could keep each out, from the provider schema the root initialised (../tips/secrets.ts).
+      // A choudoufu estate under secrets = "refuse" keeps sensitive arguments out of its records, so its own setting governs them.
+      const estateLive = liveEstate(dir);
+      const held: Awaited<ReturnType<typeof rootSecrets>> = estateLive?.secrets === "refuse" ? { secrets: [] } : await rootSecrets(plan, bin, () => run("providers", "schema", "-json"));
+      if (held.note) lines.push(`${root}: ${held.note}`);
       if (live.has(root)) plan = liveDrift(plan);
       if (!drift) upstreamPlans.set(root, plan);
       if ([...estateOwner].some(([e, r]) => r === root && readEstates.has(e))) {
@@ -1385,7 +1391,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(planCone ? { cone: planCone } : {}), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...unaddressedOf.get(root) },
+        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(planCone ? { cone: planCone } : {}), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...(held.secrets.length ? { secrets: held.secrets } : {}), ...(estateLive ? { live: estateLive } : {}), ...unaddressedOf.get(root) },
       };
     } finally {
       observer.endRoot(timing);
@@ -2176,7 +2182,8 @@ async function finish(
     const destroying = [...new Set(report.named.filter((n) => n.action === "delete" || n.action === "replace").map((n) => n.root))];
     try {
       const renames = inputs.flatMap((i) => (i.plan && !i.error ? renamesIn(i.path, i.plan) : []));
-      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}) });
+      const secrets = inputs.flatMap((i) => (i.secrets?.length ? [{ root: i.path, binary: `${i.binary?.name ?? binary}${i.binary?.version ? ` ${i.binary.version}` : ""}`, secrets: i.secrets }] : []));
+      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}), ...(secrets.length ? { secrets } : {}), env });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];

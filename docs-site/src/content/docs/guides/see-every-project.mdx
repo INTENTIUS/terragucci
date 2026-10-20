@@ -256,6 +256,19 @@ For a [choudoufu](/terragucci/concepts/glossary/#choudoufu) estate, each wave al
 
 A `tf-apply` wave records the version id of each root's state from the bucket's versioning. The page lists them per root, newest first. When the backend keeps no history (a bucket with versioning off, or a `local`, `pg`, `kubernetes`, `consul` or plain `http` backend), it says versions are off. When the backend may keep versions terragucci does not read, such as `remote`, it says versions not read, and why. [Find the state version an apply left](/terragucci/guides/find-a-state-version/) sets this up and says how to go back to a version.
 
+## Secrets in state
+
+Each plan and drift check counts, per root, the sensitive values its state holds and how many a write-only argument or an ephemeral resource could keep out ([`terragucci-secret-in-state`](/terragucci/reference/tips/#terragucci-secret-in-state)). For a choudoufu root it also records the estate, the record store and the `live` block's `strict { secrets }` setting ([`terragucci-choudoufu-secrets`](/terragucci/reference/tips/#terragucci-choudoufu-secrets)). The page shows them per project from the newest drift check, else the newest plan of a push, else the newest plan of a pull request:
+
+| Column | What it holds |
+|---|---|
+| Sensitive attributes in state | each resource instance's sensitive attribute that is set |
+| Could stay out | those a write-only argument or an ephemeral resource could keep out; each has a tip on the plan |
+| Estate and record store | a choudoufu root's estate and where its records are |
+| `secrets` | `refuse`, or `store`, which keeps secret values in the records |
+
+No value is ever recorded, only names and counts. Terragrunt units and the roots of a composed run are not counted. With the state roles per environment, the counts say which states need the tightest read access.
+
 ## Cross-state edges
 
 A root that reads another root's state (`terraform_remote_state` or a Terragrunt `dependency` block) is marked stale when the producer applied a change after the consumer's last plan. [Track the roots that read other roots' state](/terragucci/guides/track-cross-state-edges/) covers the edge sources and fixing a stale one.

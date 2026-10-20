@@ -322,6 +322,25 @@
               "wave": { "type": "integer" },
               "module": { "type": "string" }
             }
+          },
+          "secrets": {
+            "type": "object",
+            "description": "The sensitive attributes its state holds once its plan applies (minor 42): in_state counts each resource instance's top-level attribute marked sensitive and set, movable those a write-only argument or an ephemeral resource could keep out on the root's binary and provider versions. Never a value. Absent when its plan leaves none.",
+            "required": ["in_state", "movable"],
+            "properties": {
+              "in_state": { "type": "integer" },
+              "movable": { "type": "integer" }
+            }
+          },
+          "live": {
+            "type": "object",
+            "description": "A choudoufu root under a live block (minor 42): its estate, its record store (s3://<bucket>/<prefix>, local, or the store's type) and its strict { secrets } setting, store when unset.",
+            "required": ["estate", "record_store", "secrets"],
+            "properties": {
+              "estate": { "type": "string" },
+              "record_store": { "type": "string" },
+              "secrets": { "type": "string" }
+            }
           }
         }
       }

@@ -254,6 +254,29 @@
               "status": { "enum": ["live", "destroy-failed"] }
             }
           }
+        },
+        "secrets": {
+          "type": "object",
+          "description": "Per root, the sensitive attributes its state holds and how many a write-only argument or an ephemeral resource could keep out, and for a choudoufu root its estate, record store and strict { secrets } setting. From the newest drift check that recorded them, else the newest plan of a push, else the newest plan of a pull request. Absent until a run records them.",
+          "required": ["run", "roots"],
+          "properties": {
+            "run": { "$ref": "#/$defs/run" },
+            "roots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["root"],
+                "properties": {
+                  "root": { "type": "string" },
+                  "in_state": { "type": "integer" },
+                  "movable": { "type": "integer" },
+                  "estate": { "type": "string" },
+                  "record_store": { "type": "string" },
+                  "secrets": { "type": "string" }
+                }
+              }
+            }
+          }
         }
       }
     },

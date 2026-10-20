@@ -179,7 +179,20 @@ export interface EstateProject {
   /** The waves of that run view still applying that follow their resources (a choudoufu wave): how many are done, in flight and waiting at the last read. */
   applying?: { wave: number; read: string; total: number; done: number; in_flight: number; waiting: number }[];
   /** The live ephemeral environments, from its ephemeral.json: each pull request's copy and when it expires. Absent when none is live. */
-  ephemeral?: EphemeralRow[];
+  ephemeral?: EphemeralRow[];  /** The secrets its states hold and its choudoufu estates' settings, from one run's index row. Absent until a run records them. */
+  secrets?: EstateSecrets;
+}
+
+/**
+ * Per root, the sensitive attributes its state holds and how many a
+ * write-only argument or an ephemeral resource could keep out, and for a
+ * choudoufu root its estate, record store and `strict { secrets }` setting.
+ * From the newest drift check that recorded them, else the newest plan of a
+ * push, else the newest plan of a pull request.
+ */
+export interface EstateSecrets {
+  run: EstateRun;
+  roots: { root: string; in_state?: number; movable?: number; estate?: string; record_store?: string; secrets?: string }[];
 }
 
 /** A run of an edge, linked to its report when the page can link it. */
@@ -250,6 +263,18 @@ function run(e: IndexEntry, base: string | undefined): EstateRun {
 const dirOf = (base: string | undefined): string | undefined => (base === undefined || base === "" || base.endsWith("/") ? base : `${base}/`);
 
 const newest = (rows: IndexEntry[]): IndexEntry | undefined => rows.reduce<IndexEntry | undefined>((a, r) => (!a || at(r.finished) > at(a.finished) ? r : a), undefined);
+
+/** The project's secrets in state and estates' settings, from the newest row that recorded them (EstateSecrets). */
+function secretsOf(rows: IndexEntry[], base: string | undefined): EstateSecrets | undefined {
+  const recorded = rows.filter((r) => r.secrets || r.estates);
+  const row = newest(recorded.filter((r) => r.stage === "tf-drift")) ?? newest(recorded.filter((r) => r.stage === "tf-plan" && !r.pull_request)) ?? newest(recorded.filter((r) => r.stage === "tf-plan"));
+  if (!row) return undefined;
+  const byRoot = new Map<string, EstateSecrets["roots"][number]>();
+  const of = (root: string) => byRoot.get(root) ?? byRoot.set(root, { root }).get(root)!;
+  for (const r of row.secrets ?? []) Object.assign(of(r.root), { in_state: r.in_state, movable: r.movable });
+  for (const e of row.estates ?? []) Object.assign(of(e.root), { estate: e.estate, record_store: e.record_store, secrets: e.secrets });
+  return { run: run(row, base), roots: [...byRoot.values()].sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0)) };
+}
 
 /** A project's resources from its inventory. */
 function inventoryOf(inv: Inventory, base: string | undefined): EstateInventory {
@@ -356,6 +381,10 @@ export function projectState(p: ProjectIndex, now: Date): EstateProject {
     ...applyingOf(p.run),
     ...(p.edges && edgesOf(p.edges).length > 0 ? { edges: edgesOfProject(p.edges, base) } : {}),
     ...ephemeral,
+    ...((): Pick<EstateProject, "secrets"> => {
+      const secrets = secretsOf(rows, base);
+      return secrets ? { secrets } : {};
+    })(),
   };
 }
 
@@ -610,6 +639,31 @@ function statesSection(estate: Estate, now: Date): string {
   return blocks.join("\n");
 }
 
+/**
+ * The secrets section: per project, each root's sensitive attributes in
+ * state and how many could stay out of it, and each choudoufu estate's record
+ * store and `secrets` setting, from the run that recorded them.
+ */
+function secretsSection(estate: Estate, now: Date): string {
+  const projects = estate.projects.filter((p) => p.secrets && p.secrets.roots.length > 0);
+  if (projects.length === 0) return `<p class="none">No plan or drift check has recorded a secret in state or a choudoufu estate yet.</p>`;
+  const tip = (name: string) => `<a href="https://intentius.io/terragucci/reference/tips/#${name}"><code>${name}</code></a>`;
+  const blocks = projects.map((p) => {
+    const s = p.secrets!;
+    const rows = s.roots.map((r) => {
+      const held = r.in_state === undefined ? `<td>0</td><td></td>` : `<td>${r.in_state}</td><td>${r.movable ? `<span class="warn">${r.movable}</span>` : "0"}</td>`;
+      const store = r.estate !== undefined ? `<td><code>${esc(r.estate)}</code> <code>${esc(r.record_store ?? "")}</code></td><td>${r.secrets === "refuse" ? "<code>refuse</code>" : `<span class="warn"><code>${esc(r.secrets ?? "store")}</code></span>`}</td>` : `<td></td><td></td>`;
+      return `<tr data-root="${esc(r.root)}"><td><code>${esc(r.root)}</code></td>${held}${store}</tr>`;
+    });
+    return `<h3>${link(p.index, esc(p.project))}</h3>
+<p><small>From ${link(s.run.report, esc(s.run.stage))} ${short(s.run.commit)}, ${when(s.run.finished, now)}.</small></p>
+<div class="scroll"><table><thead><tr><th>Root</th><th>Sensitive attributes in state</th><th>Could stay out</th><th>Estate and record store</th><th><code>secrets</code></th></tr></thead>
+${rows.join("\n")}
+</table></div>`;
+  });
+  return `<p>Each count under Could stay out has a ${tip("terragucci-secret-in-state")} tip on the plan naming the attribute and its write-only argument or ephemeral resource. An estate whose <code>secrets</code> is not <code>refuse</code> has a ${tip("terragucci-choudoufu-secrets")} tip.</p>\n${blocks.join("\n")}`;
+}
+
 /** The dependency graph section: the picture, and its edges between projects as a list. */
 function graphSection(estate: Estate): string {
   const g = estate.graph;
@@ -736,6 +790,8 @@ ${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id=
 ${versionsSection(estate)}
 <h2 id="state-versions">State versions</h2>
 ${statesSection(estate, now)}
+<h2 id="secrets">Secrets in state</h2>
+${secretsSection(estate, now)}
 <h2 id="state-edges">Cross-state edges</h2>
 ${edgesSection(estate, now)}
 </main>

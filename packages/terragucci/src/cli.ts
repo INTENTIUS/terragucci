@@ -494,7 +494,7 @@ export async function main(argv: string[]): Promise<number> {
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
-        const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd, pins ? { pins } : {});
+        const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd, { ...(pins ? { pins } : {}), tips: settings.tips });
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }

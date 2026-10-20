@@ -104,6 +104,8 @@ On [choudoufu](https://github.com/INTENTIUS/choudoufu), the stages add:
 `init` never picks choudoufu on its own: set `binary: choudoufu` or run `npx terragucci init --binary choudoufu`.
 
 A `live-check` refusal fails `tf-check` and names its rule in the log. terragucci does not read a root's `required_version` as a choudoufu release.
+
+A root whose `live` block does not set `strict { secrets = "refuse" }` gets the tip [`terragucci-choudoufu-secrets`](/terragucci/reference/tips/#terragucci-choudoufu-secrets) in `tf-check` and in the plan report: by default, secret values can reach the estate's record store.
 </TabItem>
 <TabItem label="Terraform">
 

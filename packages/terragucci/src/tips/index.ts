@@ -31,6 +31,7 @@ import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044"
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
+import { choudoufuSecretsMessage, secretInStateMessage, type StoredSecret } from "./secrets";
 
 /** Chant's checks that become tips, by rule id. */
 export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
@@ -54,6 +55,11 @@ export const ENVIRONMENT_ROLE_TIP = "terragucci-environment-role";
 /** config check's tip when, on GitLab with AWS, environments' apply jobs carry one audience (../environment-tips.ts). */
 export const SHARED_AUDIENCE_TIP = "terragucci-gitlab-audience";
 
+/** A plan's tip for a sensitive attribute in state that a write-only argument or an ephemeral resource could keep out (./secrets.ts). */
+export const SECRET_IN_STATE_TIP = "terragucci-secret-in-state";
+/** tf-check's and tf-plan's tip for a choudoufu root whose live block does not refuse secrets (./secrets.ts). */
+export const CHOUDOUFU_SECRETS_TIP = "terragucci-choudoufu-secrets";
+
 /** A local module is shared widely at this many roots. */
 export const SHARED_MODULE_ROOTS = 10;
 /** A project has more than a few roots above this many. */
@@ -75,6 +81,10 @@ export interface TipOptions {
   configDirs?: readonly string[];
   /** The renames the plans show (./moved.ts). Known only after a plan. */
   renames?: readonly Rename[];
+  /** Each root's secrets in state, with the binary it planned with as the log names it (./secrets.ts). Known only after a plan. */
+  secrets?: readonly { root: string; binary: string; secrets: readonly StoredSecret[] }[];
+  /** The job's environment, for CHOUDOUFU_STRICT_PIN. */
+  env?: NodeJS.ProcessEnv;
 }
 
 const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${rule.toLowerCase()}` });
@@ -207,6 +217,15 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
       `${r.from} is destroyed and ${r.to} created with the same configuration, so the block was renamed. A moved block (from = ${r.from}, to = ${r.to}) makes the plan move it instead; terragucci respond tips --report opens a pull request that adds it.`,
       r.root,
     ));
+  }
+
+  for (const r of options.secrets ?? []) {
+    for (const secret of r.secrets) if (secret.counterpart) tips.push(ownTip(SECRET_IN_STATE_TIP, secretInStateMessage(secret, r.binary), r.root));
+  }
+
+  for (const root of roots) {
+    const message = choudoufuSecretsMessage(repo, root, options.env);
+    if (message) tips.push(ownTip(CHOUDOUFU_SECRETS_TIP, message, root));
   }
 
   const planned = options.planned ?? roots.length;

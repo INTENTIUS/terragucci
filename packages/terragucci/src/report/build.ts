@@ -16,6 +16,7 @@ import { changeKind, foldChange } from "./highlight";
 import { planAppliedChanges } from "./history";
 import { planResources } from "./inventory";
 import { isObject, scrubSecrets, sensitiveStrings } from "./redact";
+import { secretCounts, type StoredSecret } from "../tips/secrets";
 import {
   REDACTED, REPORT_MINOR, REPORT_SCHEMA,
   type ReportUnit,
@@ -32,6 +33,7 @@ import {
   type ReportRead,
   type ReportUnknownRead,
   type ReportComposedMember,
+  type ReportLive,
   type ReportRootOutcome,
   type WaveState,
   type Highlight, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRun, type ReportTip, type ReportWave, type ReportWaveCost, type ReportApprovalRule,
@@ -85,7 +87,10 @@ export interface RootInput {
   /** A choudoufu plan run with `-cone`: the cone it planned, whose targets join its plan digest, or why it planned in full (../cone.ts). */
   cone?: PlanCone;
   /** A root in a composed run: the wave that runs it and its module there. Its plan is its part of the composed plan (../compose.ts). */
-  composed?: { wave: number; module: string };
+  composed?: { wave: number; module: string };  /** The secrets its plan leaves in state, each with what could keep it out (../tips/secrets.ts). */
+  secrets?: StoredSecret[];
+  /** A choudoufu root under a live block: its estate, record store and `strict { secrets }` setting. */
+  live?: ReportLive;
 }
 
 /** A root's input with its environment, when it is in one. */
@@ -392,6 +397,8 @@ export function buildReport(input: BuildInput): Report {
       ...(src.dependencies?.length ? { dependencies: src.dependencies } : {}),
       ...(src.cone ? { cone: reportCone(src.cone) } : {}),
       ...(src.composed ? { composed: src.composed } : {}),
+      ...(m.status === "planned" && src.secrets?.length ? { secrets: secretCounts(src.secrets) } : {}),
+      ...(src.live ? { live: src.live } : {}),
     };
   });
 
