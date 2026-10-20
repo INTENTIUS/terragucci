@@ -18,7 +18,7 @@ prompt: |
 | `<prefix>/<project>/index.json`, `index.html` | every upload | one project's runs, newest first |
 | `<prefix>/<project>/inventory.json` | a `tf-apply` wave's upload | the resources each root holds, from its newest applied wave |
 | `<prefix>/<project>/versions.json` | a `tf-apply` wave's upload | the binary, provider and module versions each root runs, from its newest applied wave |
-| `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first |
+| `<prefix>/<project>/changes.json` | a `tf-apply` wave's upload | what each applied wave did to each resource, newest first; the plan job reads it for the note's [changes on every run](/terragucci/reference/report/#the-plan-note) |
 | `<prefix>/<project>/migrations/<name>.json` | wave 1 of `tf-apply`, when it runs a [state migration](/terragucci/reference/migration-files/) | the migration's record: each root's state version and digest before and after, never a state's contents |
 | `<prefix>/<project>/migrations/<name>/progress.jsonl` | wave 1 of `tf-apply`, every few seconds while an [estate migration](/terragucci/reference/migration-files/#progress) writes, and once when it ends | one line per resource as its write lands, with the migration's counts so far |
 | `<prefix>/<project>/states.json` | a `tf-apply` wave's upload | the state version id each root's applies left, newest first; never a state's contents |

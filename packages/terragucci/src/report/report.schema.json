@@ -147,7 +147,9 @@
                 "write_only": { "type": "array", "items": { "type": "string" } },
                 "kind": { "enum": ["tags", "description", "unknown"] },
                 "fold": { "$ref": "#/$defs/fold" },
-                "why": { "type": "string" }
+                "why": { "type": "string" },
+                "perpetual": { "const": true, "description": "A tf-plan's update or replacement the root's last applied waves each made too, to the same address with the same action and attributes, from the project's changes.json in the reports bucket (minor 43). The note folds it under Changes on every run; the plan, its digests and the gate read none of it." },
+                "streak": { "type": "integer", "minimum": 1, "description": "With perpetual: how many of the root's newest applied waves in a row made the change (minor 43)." }
               }
             }
           },

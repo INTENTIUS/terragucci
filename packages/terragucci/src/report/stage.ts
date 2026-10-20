@@ -77,7 +77,9 @@ import { blastRadius } from "./graph";
 import { blastRootsOf, resourceBlast } from "./resource-blast";
 import { branchCheckouts } from "../branch-checkouts";
 import { changesSomething } from "./changing";
-import { bucketReportUrl, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
+import { bucketReportUrl, changesKey, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
+import { readChanges } from "./history";
+import { markPerpetual, PERPETUAL_WAVES } from "./perpetual";
 import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
@@ -2083,6 +2085,33 @@ async function baseApprovalRules(repo: string, options: StageOptions, env: NodeJ
   }
 }
 
+/**
+ * Mark the plan's changes on every run (./perpetual.ts) from the project's
+ * changes.json in the reports bucket. Without a bucket, or when it cannot be
+ * read, nothing is marked and the log says why; the plan goes on either way.
+ */
+export async function markRecurring(report: Report, reports: { bucket: string; endpoint?: string; prefix?: string; role?: string } | undefined, env: NodeJS.ProcessEnv, fetchFn: S3Fetch | undefined, log: (line: string) => void): Promise<number> {
+  if (!reports?.bucket) {
+    log("changes on every run: no change is marked, since reports is not set and the applied waves are read from the bucket's changes.json");
+    return 0;
+  }
+  const key = changesKey(report.run.project, reports.prefix);
+  let text: string | undefined;
+  try {
+    text = await storeFromEnv(reports, env, fetchFn).get(key);
+  } catch (e) {
+    log(`changes on every run: no change is marked, since ${key} could not be read: ${(e as Error).message.split("\n")[0]}`);
+    return 0;
+  }
+  if (text === undefined) {
+    log(`changes on every run: no change is marked, since ${key} holds no applied wave yet`);
+    return 0;
+  }
+  const marked = markPerpetual(report, readChanges(text).changes);
+  log(`changes on every run: ${marked} marked, each made by its root's last ${PERPETUAL_WAVES} applied waves or more (${key})`);
+  return marked;
+}
+
 /** Where the policy key is read: the config file and the project the run reads. */
 function policyTrust(repo: string, options: StageOptions): TrustedOptions {
   const configPath = options.config ?? findConfig(repo);
@@ -2211,6 +2240,7 @@ async function finish(
       log(`the note links no copy in the bucket: ${(e as Error).message}`);
     }
   }
+  if (stage === "tf-plan") await markRecurring(report, reports, env, options.fetch, log);
   const limit = noteLimit(options.forge ?? settings.forge ?? forgeOfEnv(env), report);
   // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
   const notices: string[] = [...selection];
