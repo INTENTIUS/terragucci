@@ -7,7 +7,7 @@
 // and an applied commit's run view at runs/<commit>/ (report/run-view.ts).
 // Every other object there (index.json, changes.json, inventory.json, ...) is
 // the project's own and stays.
-import type { AuditEntry, AuditSummary } from "../packages/terragucci/src/report/audit";
+import { entryLine, type AuditEntry, type AuditSummary } from "../packages/terragucci/src/report/audit";
 import type { ChangeRow, History } from "../packages/terragucci/src/report/history";
 import type { StateVersions } from "../packages/terragucci/src/report/state-versions";
 import type { IndexEntry, ReportIndex } from "../packages/terragucci/src/report/store";
@@ -20,6 +20,13 @@ export const REPORTS_KEEP_MIN = 20;
 export const REPORTS_DELETE_MAX = 5000;
 /** A commit with an object written this recently, in seconds, is kept: a run may be writing it. */
 export const REPORTS_GRACE = 900;
+/**
+ * A run that finished this recently, in seconds, keeps its audit.jsonl report
+ * entries, its changes.json rows and its history applies when its report
+ * objects go, marked deleted so no page links them: the DORA numbers then
+ * count a full day of applies, and fall at no prune.
+ */
+export const REPORTS_TRAIL_SECONDS = 86_400;
 
 /** One object of a bucket listing: its key, and when it was written (null when the listing does not say). */
 export interface Listed {
@@ -63,6 +70,9 @@ export const projectOfRepo = (project: string, repo: unknown): boolean => typeof
 const rowKind = (r: IndexEntry): string => `${r.project}\n${r.stage}\n${r.wave ?? ""}\n${r.share ?? ""}`;
 
 const at = (iso: unknown): number => (typeof iso === "string" ? Date.parse(iso) || 0 : 0);
+
+/** Whether a time is at or after `since` (ms); never when `since` is undefined. */
+const recent = (iso: unknown, since: number | undefined): boolean => since !== undefined && at(iso) >= since;
 
 /**
  * The commits a project's documents need beyond the newest kept: the newest
@@ -206,8 +216,12 @@ export function pruneIndex(text: string | undefined, project: string, kept: Read
   return dropped === 0 ? null : { index: { ...(parsed as ReportIndex), reports }, dropped };
 }
 
-/** changes.json without the rows of runs that go. */
-export function pruneChanges(text: string | undefined, kept: ReadonlySet<string>): { doc: { schema: string; changes: ChangeRow[] }; dropped: number } | null {
+/**
+ * changes.json without the rows of runs that go. A row of a run that goes but
+ * finished at or after `since` (ms) stays, marked deleted, so the history
+ * lists it without a report link.
+ */
+export function pruneChanges(text: string | undefined, kept: ReadonlySet<string>, since?: number): { doc: { schema: string; changes: ChangeRow[] }; dropped: number; marked: number } | null {
   if (!text) return null;
   let parsed: { schema?: string; changes?: ChangeRow[] };
   try {
@@ -217,12 +231,17 @@ export function pruneChanges(text: string | undefined, kept: ReadonlySet<string>
   }
   if (!Array.isArray(parsed.changes)) return null;
   const keep = keeps(kept);
-  const changes = parsed.changes.filter((c) => {
+  let marked = 0;
+  const changes = parsed.changes.flatMap((c) => {
     const commit = typeof c?.path === "string" ? runCommit(c.path) : null;
-    return commit === null || keep(commit);
+    if (commit === null || keep(commit)) return [c];
+    if (!recent(c.finished, since)) return [];
+    if (c.deleted) return [c];
+    marked++;
+    return [{ ...c, deleted: true }];
   });
   const dropped = parsed.changes.length - changes.length;
-  return dropped === 0 ? null : { doc: { ...(parsed as { schema: string }), changes }, dropped };
+  return dropped === 0 && marked === 0 ? null : { doc: { ...(parsed as { schema: string }), changes }, dropped, marked };
 }
 
 /** states.json without the versions whose run goes. The newest version of each root is protected, so it never goes. */
@@ -255,8 +274,12 @@ const reportLinkCommit = (link: unknown): string | null => {
   return m ? m[1] : null;
 };
 
-/** history.json without the applies of runs that go, for each project in `kept`; a resource left with none goes too. */
-export function pruneHistory(text: string | undefined, kept: ReadonlyMap<string, ReadonlySet<string>>): { history: History; dropped: number } | null {
+/**
+ * history.json without the applies of runs that go, for each project in
+ * `kept`; a resource left with none goes too. An apply of a run that goes but
+ * finished at or after `since` (ms) stays, without its report link.
+ */
+export function pruneHistory(text: string | undefined, kept: ReadonlyMap<string, ReadonlySet<string>>, since?: number): { history: History; dropped: number; marked: number } | null {
   if (!text) return null;
   let parsed: Partial<History>;
   try {
@@ -267,17 +290,23 @@ export function pruneHistory(text: string | undefined, kept: ReadonlyMap<string,
   if (!Array.isArray(parsed.resources)) return null;
   const keepers = new Map([...kept].map(([p, s]) => [p, keeps(s)]));
   let dropped = 0;
+  let marked = 0;
   const resources = parsed.resources.flatMap((r) => {
     const keep = r && keepers.get(r.project);
     if (!keep || !Array.isArray(r.applies)) return [r];
-    const applies = r.applies.filter((a) => {
+    const applies = r.applies.flatMap((a) => {
       const c = reportLinkCommit(a?.report) ?? (typeof a?.commit === "string" ? a.commit : null);
-      return c === null || keep(c);
+      if (c === null || keep(c)) return [a];
+      if (!recent(a.finished, since)) return [];
+      if (a.report === undefined) return [a];
+      marked++;
+      const { report: _gone, ...rest } = a;
+      return [rest];
     });
     dropped += r.applies.length - applies.length;
     return applies.length > 0 ? [{ ...r, applies }] : [];
   });
-  return dropped === 0 ? null : { history: { ...(parsed as History), resources }, dropped };
+  return dropped === 0 && marked === 0 ? null : { history: { ...(parsed as History), resources }, dropped, marked };
 }
 
 /** A report entry's run commit: its evidence key is `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>/report.json`. */
@@ -317,10 +346,11 @@ export interface LedgerHeld {
  * commit that added or removed its line (each cycle puts the branch back to
  * its base, so `terragucci audit` never builds it again), and it is older
  * than its project's oldest kept report, so the DORA numbers' gate times
- * cover the same runs the reports do.
+ * cover the same runs the reports do. One at or after `since` stays, as the
+ * report entries of that day do.
  */
-function ledgerGone(e: AuditEntry, ledger: LedgerHeld | undefined): boolean {
-  if (!ledger || e.evidence?.source !== "ledger") return false;
+function ledgerGone(e: AuditEntry, ledger: LedgerHeld | undefined, since: number | undefined): boolean {
+  if (!ledger || e.evidence?.source !== "ledger" || recent(e.at, since)) return false;
   const repo = [...ledger.commits.keys()].find((r) => projectOfRepo(e.project, r));
   if (repo === undefined) return false;
   const commit = e.evidence.commit;
@@ -336,14 +366,17 @@ function ledgerGone(e: AuditEntry, ledger: LedgerHeld | undefined): boolean {
  * other line stays, in its place: a ledger entry chant/lifecycle still holds
  * (`terragucci audit --check` finds the record holds every entry its sources
  * do), and a line that is not an entry. The record's entries after it are
- * returned too.
+ * returned too. A report entry of a run that goes but recorded at or after
+ * `since` (ms) stays, marked deleted and without its url, so the page lists
+ * it without a link.
  */
-export function pruneAudit(text: string | undefined, kept: ReadonlyMap<string, ReadonlySet<string>>, ledger?: LedgerHeld): { text: string; entries: AuditEntry[]; dropped: number } | null {
+export function pruneAudit(text: string | undefined, kept: ReadonlyMap<string, ReadonlySet<string>>, ledger?: LedgerHeld, since?: number): { text: string; entries: AuditEntry[]; dropped: number; marked: number } | null {
   if (!text) return null;
   const keepers = new Map([...kept].map(([p, s]) => [p, keeps(s)]));
   const lines: string[] = [];
   const entries: AuditEntry[] = [];
   let dropped = 0;
+  let marked = 0;
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
     let e: AuditEntry | undefined;
@@ -355,14 +388,27 @@ export function pruneAudit(text: string | undefined, kept: ReadonlyMap<string, R
     }
     const keep = e ? keepers.get(e.project) : undefined;
     const c = e && keep ? entryCommit(e) : null;
-    if ((e && keep && c !== null && !keep(c)) || (e && ledgerGone(e, ledger))) {
+    if (e && keep && c !== null && !keep(c) && recent(e.at, since)) {
+      if (e.evidence.deleted) {
+        lines.push(line);
+        entries.push(e);
+        continue;
+      }
+      const { url: _gone, ...evidence } = e.evidence;
+      const marks: AuditEntry = { ...e, evidence: { ...evidence, deleted: true } };
+      marked++;
+      lines.push(entryLine(marks));
+      entries.push(marks);
+      continue;
+    }
+    if ((e && keep && c !== null && !keep(c)) || (e && ledgerGone(e, ledger, since))) {
       dropped++;
       continue;
     }
     lines.push(line);
     if (e) entries.push(e);
   }
-  return dropped === 0 ? null : { text: lines.length ? lines.join("\n") + "\n" : "", entries, dropped };
+  return dropped === 0 && marked === 0 ? null : { text: lines.length ? lines.join("\n") + "\n" : "", entries, dropped, marked };
 }
 
 /** audit.json's counts for the record after the prune; null when it is not the summary terragucci audit writes. */

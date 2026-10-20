@@ -12,6 +12,7 @@ import {
   reportEntry,
   reportEntryId,
   summarize,
+  type AuditEntry,
 } from "../src/report/audit";
 import { createHash } from "node:crypto";
 import { gateLedgerLinesFromLog, type GateLedgerLine } from "@intentius/chant/lifecycle/gate-audit";
@@ -139,5 +140,18 @@ describe("the record", () => {
     expect(html).toContain("<b>1</b><span>approval</span>");
     expect(html).toContain("<td>bob</td>");
     expect(html).toContain('id="terragucci-audit"');
+  });
+
+  it("lists an entry whose report was deleted without a link", () => {
+    const at = "2026-10-08T00:00:00.000Z";
+    const base = { schema: "terragucci.audit/v1", project: P, at, who: null, what: "wave-1", digest: null, result: "applied" } as const;
+    const live: AuditEntry = { ...base, id: "sha256:live", kind: "apply", evidence: { source: "report", key: "k/live/report.json", url: "https://r/live/report.html" } };
+    const gone: AuditEntry = { ...base, id: "sha256:gone", kind: "apply", evidence: { source: "report", key: "k/gone/report.json", deleted: true } };
+    // A url left on a deleted entry is not linked either.
+    const stale: AuditEntry = { ...base, id: "sha256:stale", kind: "apply", evidence: { source: "report", key: "k/stale/report.json", url: "https://r/stale/report.html", deleted: true } };
+    const html = renderAuditHtml(summarize([live, gone, stale], 0, [], new Date(at)), [live, gone, stale]);
+    expect(html).toContain('<a href="https://r/live/report.html">report</a>');
+    expect(html).not.toContain("https://r/stale/report.html");
+    expect(html.match(/<td>report <small>\(deleted\)<\/small><\/td>/g)).toHaveLength(2);
   });
 });
