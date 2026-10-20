@@ -164,6 +164,8 @@ A file whose roots mix estates and roots with a state is refused, as is any othe
 
 The job adds `-progress-json` to each `live-mv` and `live-import -approve` it runs when the binary's `live-mv -help` lists that flag. choudoufu then prints a JSON line on stderr for each resource once its tags are written. Each line is appended to `terragucci-report/migrations/<name>/progress.jsonl` the moment it arrives. With a [reports bucket](/terragucci/reference/reports-bucket/), the file and the record are copied to `<prefix>/<project>/migrations/` every `TG_PROGRESS_SECONDS` seconds (5 by default) while lines arrive, and once more when the writes end. A binary whose help does not list the flag writes no progress file and runs as before.
 
+A follower has no write of its own, and choudoufu prints its line with each write it follows. A follower of two resources, such as a policy attachment that follows both its role and its policy, gets one line in the file and one event in the trace, plus another only if a later write gives it a different outcome.
+
 ```json
 {"at":"2026-10-17T04:39:52.1Z","estate_from":"mono","estate_to":"team","address":"aws_sqs_queue.jobs","live_id":"https://sqs.us-east-1.amazonaws.com/000000000000/jobs","outcome":"moved","migration":"carve","counts":{"moved":36,"stamped":0,"refused":0,"skipped":0,"left":43}}
 ```
@@ -172,7 +174,7 @@ The job adds `-progress-json` to each `live-mv` and `live-import -approve` it ru
 |---|---|
 | `at`, `estate_from`, `estate_to`, `address`, `live_id`, `outcome`, `reason`, `follows` | the line as choudoufu wrote it: `outcome` is `moved`, `stamped`, `refused` or `skipped`, `estate_from` is empty for an adoption, and `follows` names the resource a follower moved with |
 | `migration` | its name |
-| `counts` | how many resources hold each outcome once this line arrived, and how many are `left` with no line yet |
+| `counts` | how many resources hold each outcome once this line arrived, each resource once and by its last line, and how many are `left` with no line yet |
 
 In the [trace](/terragucci/guides/send-traces-and-metrics/), each line is also an event on the span `migration <name>`, which hangs under wave 1's `migrate` span.
 
