@@ -116,6 +116,7 @@ import { buildReport, planFiles, planTotals, policyGate, withEnvironment, type R
 import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
+import { named } from "./estate";
 import type { ObjectStore } from "./report/object-store";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
 import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportComposedMember, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
@@ -1717,7 +1718,7 @@ async function noteRunView(repo: string, options: ApplyWaveOptions, w: WaveRun, 
     const spans = waveSpans(w);
     const timing = { ...(spans.length ? { spans } : {}), ...(w.changedRoots ? { changed: w.changedRoots } : {}) };
     const key = await updateRunView(storeFromEnv(settings.reports, env), settings.reports.prefix, skeleton, { number: options.wave, gate: waveGate(options.wave), policy: options.gate, ...timing, ...waveTotals(options, w), ...row });
-    if (!quiet) console.log(`wave ${options.wave}: run view at ${key}`);
+    if (!quiet) console.log(`wave ${options.wave}: run view written to ${named(settings.reports.bucket)}/${key}`);
   } catch (e) {
     console.log(`wave ${options.wave}: the run view was not written: ${(e as Error).message}`);
   }

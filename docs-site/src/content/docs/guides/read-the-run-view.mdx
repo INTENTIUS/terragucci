@@ -19,7 +19,7 @@ One page for each applied commit, `<prefix>/<project>/runs/<commit>/run.html`, t
 | Where | Link |
 |---|---|
 | the [estate page](/terragucci/guides/see-every-project/) | each project's latest apply, each wave applying now, and each project on the dependency graph (`estate/graph`) |
-| the wave's job log | `wave 2: run view at <key>`, the page's key in the bucket |
+| the wave's job log | `wave 2: run view written to s3://<bucket>/<key>`, the page's object in the reports bucket (`gs://<bucket>/<key>` on GCS, `az://<account>/<container>/<key>` on Azure) |
 | `terragucci mcp` | the `run_view` tool returns `run.json` for a commit (`estate/mcp`) |
 
 It needs [`reports.bucket`](/terragucci/guides/keep-reports-in-a-bucket/): without one, no job writes it. The plan note links the pull request's report, not the run view.
