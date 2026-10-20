@@ -50,6 +50,8 @@ export interface AuditEvidence {
   url?: string;
   /** Report: the CI job that ran the wave. */
   job_url?: string;
+  /** Report: true when the report was deleted after the entry was recorded. The entry then has no `url`, and the page lists it without a link. */
+  deleted?: boolean;
   /** State: where the state is, and the version its store lists. */
   location?: string;
   version_id?: string;
@@ -499,7 +501,8 @@ const short = (d: string | null): string => (d ? `<code title="${esc(d)}">${esc(
 
 /**
  * The page: counts by kind, the projects and whether their ledger was read,
- * and the newest entries, each with a link to its evidence. It reads with
+ * and the newest entries, each with a link to its evidence (none when the
+ * report it names was deleted). It reads with
  * scripts off; the summary rides inline as JSON.
  */
 export function renderAuditHtml(summary: AuditSummary, entries: AuditEntry[]): string {
@@ -519,7 +522,13 @@ export function renderAuditHtml(summary: AuditSummary, entries: AuditEntry[]): s
     return `<tr><td>${esc(p.project)}</td><td>${ledger}</td><td>${p.reports}${p.ledger !== "error" && p.error ? ` <span class="bad">${esc(p.error)}</span>` : ""}</td><td>${states}</td></tr>`;
   });
   const rows = newest.map((e) => {
-    const link = e.evidence.url ? `<a href="${esc(e.evidence.url)}">${e.evidence.source}</a>` : e.evidence.source === "state" && e.evidence.location ? `state <code>${esc(e.evidence.location)}</code>` : esc(e.evidence.source);
+    const link = e.evidence.deleted
+      ? `${esc(e.evidence.source)} <small>(deleted)</small>`
+      : e.evidence.url
+        ? `<a href="${esc(e.evidence.url)}">${esc(e.evidence.source)}</a>`
+        : e.evidence.source === "state" && e.evidence.location
+          ? `state <code>${esc(e.evidence.location)}</code>`
+          : esc(e.evidence.source);
     const cls = e.kind === "refused" || e.kind === "unrecorded-write" || e.result === "failed" || e.kind.endsWith("-revoked") ? ` class="warn"` : "";
     return `<tr${cls}><td><time datetime="${esc(e.at)}">${esc(e.at)}</time></td><td>${esc(e.project)}</td><td>${esc(e.kind)}</td><td>${esc(e.what)}</td><td>${esc(e.who ?? "")}</td><td>${short(e.digest)}</td><td>${esc(e.result)}</td><td>${link}</td></tr>`;
   });

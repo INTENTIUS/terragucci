@@ -20,7 +20,12 @@
 // top index.json (and their index.html), changes.json, states.json,
 // history.json and history.html beside the estate page, and audit.jsonl, from
 // which it drops the report entries of those runs (audit.json and audit.html
-// are written again with the new counts). It drops audit.jsonl's ledger
+// are written again with the new counts). A run that finished in the last 24
+// hours (REPORTS_TRAIL_SECONDS) keeps its audit.jsonl report entries, its
+// changes.json rows and its history applies even when its objects go, so the
+// delivery numbers on the estate page count a full day of applies and fall at
+// no prune (#1180); those are marked deleted, and the audit and history pages
+// list them without a link. It drops audit.jsonl's ledger
 // entries too once the repo's chant/lifecycle no longer holds their commit
 // (each cycle puts it back to its base, stack/demo.sh lifecycle_back) and
 // they are older than the project's oldest kept report; one the branch holds
@@ -58,6 +63,7 @@ import {
   REPORTS_DELETE_MAX,
   REPORTS_KEEP,
   REPORTS_KEEP_MIN,
+  REPORTS_TRAIL_SECONDS,
 } from "./demo-reports-lib";
 
 const env = (k: string, def?: string): string => {
@@ -69,6 +75,8 @@ const env = (k: string, def?: string): string => {
 const bucket = env("DEMO_REPORTS_BUCKET_URL").replace(/\/+$/, "");
 const prefix = env("DEMO_REPORTS_PREFIX", "demo").replace(/^\/+|\/+$/g, "");
 const keep = Number(env("DEMO_REPORTS_KEEP", String(REPORTS_KEEP)));
+// A run that finished since then keeps its trail lines and history rows when its reports go.
+const since = Date.now() - REPORTS_TRAIL_SECONDS * 1000;
 
 // Never hold up a reset: the whole prune has two minutes.
 setTimeout(() => {
@@ -202,7 +210,7 @@ async function planProject(project: string, demo: unknown[]): Promise<Plan | nul
   });
   if (top) await put(k(prefix, "index.html"), renderIndexHtml(top, "Plan reports"), HTML_TYPE);
   await rewrite(k(prefix, project, "changes.json"), JSON_TYPE, (t) => {
-    const p = pruneChanges(t, kept);
+    const p = pruneChanges(t, kept, since);
     return p && { body: json(p.doc), value: p.dropped };
   });
   await rewrite(k(prefix, project, "states.json"), JSON_TYPE, (t) => {
@@ -261,7 +269,7 @@ async function main(): Promise<void> {
   const ledger: LedgerHeld = { commits: ledgerCommits(), oldest: new Map(plans.flatMap((p) => (p.oldest === undefined ? [] : [[p.project, p.oldest] as [string, number]]))) };
   try {
     const record = await rewrite(k(prefix, AUDIT_FILES.record), "application/x-ndjson", (t) => {
-      const p = pruneAudit(t, kept, ledger);
+      const p = pruneAudit(t, kept, ledger, since);
       return p && { body: p.text, value: p };
     });
     if (record) {
@@ -270,10 +278,10 @@ async function main(): Promise<void> {
         await put(k(prefix, AUDIT_FILES.summary), json(summary), JSON_TYPE);
         await put(k(prefix, AUDIT_FILES.page), renderAuditHtml(summary, record.entries), HTML_TYPE);
       }
-      console.error(`reports: dropped ${record.dropped} entries of pruned runs and of gate lines chant/lifecycle no longer holds from ${AUDIT_FILES.record}`);
+      console.error(`reports: dropped ${record.dropped} entries of pruned runs and of gate lines chant/lifecycle no longer holds from ${AUDIT_FILES.record}, and kept ${record.marked} of runs from the last 24 hours without their report`);
     }
     const history = await rewrite(k(prefix, "history.json"), JSON_TYPE, (t) => {
-      const p = pruneHistory(t, kept);
+      const p = pruneHistory(t, kept, since);
       return p && { body: json(p.history), value: p.history };
     });
     if (history) await put(k(prefix, "history.html"), renderHistoryHtml(history), HTML_TYPE);
