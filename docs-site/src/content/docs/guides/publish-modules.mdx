@@ -51,7 +51,7 @@ Each level is opt-in:
 
    | Target | Roots pin | Credentials |
    |---|---|---|
-   | `oci://` registry | OpenTofu roots, by tag or `@sha256:` digest | the registry variables in step 4 |
+   | `oci://` registry | OpenTofu roots, by `?tag=` or `?digest=` | the registry variables in step 4 |
    | `git-tags` | Terraform roots, by git tag | none; the tags are pushed to `origin` |
 
 2. Preview.
@@ -92,11 +92,15 @@ Each level is opt-in:
 
 5. Merge a change to a module.
 
-   The next push to the default branch publishes, printing each version's OCI manifest digest for a root to pin: `oci://registry.example.com/acme/modules/network@sha256:...`.
+   The next push to the default branch publishes, printing each version's OCI manifest digest for a root to pin: `oci://registry.example.com/acme/modules/network?digest=sha256:...`, or `?tag=0.2.0` for the tag.
+
+   Each OCI version is an OpenTofu module package: an image manifest with the artifact type `application/vnd.opentofu.modulepkg`, an empty config, and one `archive/zip` layer. The zip holds the module directory at its root, so `//<dir>` selects a directory inside it. The same files give the same zip and the same manifest digest.
+
+   terragucci 0.4.40 and earlier pushed the layer as a gzipped tar, which `tofu init` cannot install. The publish job finds those versions and pushes each one again under its tag as a zip of the same files, with the same commit and content. It prints one line for each: `network 0.1.0: republished as archive/zip to oci://...`. Under `modules.attest`, the new manifest is signed and recorded like any release. A root that pins such a version by digest still names the tar, so pin the tag or the new digest.
 
    With `git-tags`, each version is a tag on the repo, `<module>/v<version>`. Here `modules/service` moved to `0.2.0` after a change while `modules/queue` stayed at `0.1.0`.
 
-   A published version never changes, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first; different content under an existing tag stops the run and names the tag.
+   A published version's files never change, so a rerun publishes nothing. Git-tag publishing fetches `origin`'s tags first; different content under an existing tag stops the run and names the tag.
 
 </Steps>
 
@@ -326,6 +330,7 @@ To trust a publisher, commit their `cosign.pub` at the path `key` names. For eac
 | The pin | it names no one release: a git `ref` that is not a tag, an `oci://` source with no tag or digest, a registry source whose `version` is a constraint |
 | The record | the publisher's ledger has no record of the bytes the tag names now, from the tag's commit: a tag pushed by hand, moved, or never published |
 | The signature, provenance and SBOM | any of them is missing or does not verify against the key |
+| The OCI artifact | its manifest has no `archive/zip` layer, so `tofu init` cannot install it |
 
 | Job | Reads the setting and the keys from |
 |---|---|

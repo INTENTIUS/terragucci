@@ -24,19 +24,20 @@
  * (./interface.ts). The previous interface is read at the commit that release
  * was cut from.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, posix } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { appendLifecycle } from "../apply";
 import { loadHclParser } from "../rollout/parser";
 import { globMatch } from "../detect";
 import { ConfigError, type RegistrySettings, type ResolvedSettings } from "../config";
-import { gzip, moduleTar, moduleTarAt, sha256 } from "./archive";
+import { gunzip, gzip, moduleTar, moduleTarAt, moduleZip, sha256, tarEntries } from "./archive";
 import { commitsSince, git, hasCommit, tryGit } from "./git";
 import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
 import { fetchLedger, LEDGER_PATH } from "./ledger";
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
-import { CONTENT, REVISION, Registry, moduleManifest, parseOci, type Fetch } from "./oci";
+import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
 import { applyBump, bumpBetween, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "./semver";
 import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
@@ -55,7 +56,8 @@ export interface Release {
 export interface Published {
   module: string;
   target: string;
-  status: "published" | "unchanged" | "skipped" | "refused";
+  /** `republished`: a version an earlier terragucci pushed as a tar, pushed again under its tag as the zip OpenTofu installs. */
+  status: "published" | "republished" | "unchanged" | "skipped" | "refused";
   version?: string;
   /** The OCI manifest digest, or for a git tag the content digest. A pin can name it. */
   digest?: string;
@@ -107,6 +109,20 @@ interface Target {
   attach?(mod: Module, digest: string, attested: Attested, signer: Signer): Promise<void>;
   /** False for a target that only points at a release another target wrote and attested. */
   attests?: boolean;
+  /** OCI: the versions an earlier terragucci pushed as a gzipped tar, which OpenTofu cannot install. */
+  legacy?(mod: Module): Promise<Legacy[]>;
+  /** OCI: push a legacy version again under its tag, as the zip, with its own revision and content. */
+  republish?(mod: Module, version: Semver, ctx: PublishContext): Promise<string>;
+}
+
+/** A version published as a tar: its tag, annotations and the tar its layer holds, or why it cannot be republished. */
+interface Legacy {
+  version: Semver;
+  ref: string;
+  revision: string;
+  content: string;
+  tar?: Buffer;
+  refused?: string;
 }
 
 export interface Module {
@@ -212,19 +228,58 @@ function ociTarget(url: string, opts: PublishOptions): Target {
     ...(insecure ? { insecure } : {}),
     ...(env.NODE_EXTRA_CA_CERTS ? { ca: env.NODE_EXTRA_CA_CERTS } : {}),
   };
+  /** Each semver tag of a module with its manifest, read once a run. */
+  const scans = new Map<string, Promise<{ v: Semver; tag: string; manifest?: Manifest }[]>>();
+  const scan = (name: string) => {
+    if (!scans.has(name)) {
+      scans.set(
+        name,
+        (async () => {
+          const out: { v: Semver; tag: string; manifest?: Manifest }[] = [];
+          for (const tag of await registry.tags(`${repo}/${name}`)) {
+            const v = parseSemver(tag);
+            if (v) out.push({ v, tag, manifest: (await registry.manifest(`${repo}/${name}`, tag))?.manifest });
+          }
+          return out.sort((a, b) => compareSemver(a.v, b.v));
+        })(),
+      );
+    }
+    return scans.get(name)!;
+  };
+  /** The manifest bytes for a release, and the zip they name. */
+  const built = (version: Semver, ctx: PublishContext): { zip: Buffer; manifest: Buffer } => {
+    const zip = moduleZip(ctx.tar);
+    return { zip, manifest: moduleManifest(zip, annotations(version, ctx)) };
+  };
   return {
     label: url,
     async latest({ name }) {
-      const tags = await registry.tags(`${repo}/${name}`);
-      let best: { v: Semver; tag: string } | undefined;
-      for (const tag of tags) {
-        const v = parseSemver(tag);
-        if (v && (!best || compareSemver(v, best.v) > 0)) best = { v, tag };
-      }
+      const best = (await scan(name)).at(-1);
       if (!best) return undefined;
-      const found = await registry.manifest(`${repo}/${name}`, best.tag);
-      const notes = found?.manifest.annotations ?? {};
+      const notes = best.manifest?.annotations ?? {};
       return { version: best.v, revision: notes[REVISION] ?? "", content: notes[CONTENT] ?? "" };
+    },
+    async legacy({ name }) {
+      const out: Legacy[] = [];
+      for (const { v, tag, manifest } of await scan(name)) {
+        const layer = manifest && legacyLayer(manifest);
+        if (!layer) continue;
+        const notes = manifest.annotations ?? {};
+        const row: Legacy = { version: v, ref: `${url}/${name}:${tag}`, revision: notes[REVISION] ?? "", content: notes[CONTENT] ?? "" };
+        const gz = await registry.blob(`${repo}/${name}`, layer.digest);
+        let tar: Buffer | undefined;
+        try {
+          tar = gz && gunzip(gz);
+        } catch {
+          tar = undefined;
+        }
+        if (!tar) row.refused = `its layer ${layer.digest} is ${gz ? "not a gzipped tar" : "not in the registry"}`;
+        else if (sha256(tar) !== row.content) row.refused = `its layer holds other content than its ${CONTENT} annotation names`;
+        else if (!row.revision) row.refused = `it names no ${REVISION}`;
+        else row.tar = tar;
+        out.push(row);
+      }
+      return out;
     },
     async publish({ name }, version, ctx) {
       const path = `${repo}/${name}`;
@@ -232,11 +287,20 @@ function ociTarget(url: string, opts: PublishOptions): Target {
       if (await registry.manifest(path, tag)) throw new ConfigError(`${url}/${name}:${tag} exists already and a published version never changes`);
       // Attested: the record goes first, so a tag never stands without one; a record whose push then fails names a tag no root can pin.
       ctx.pushWithRecord?.([]);
-      return registry.pushModule(path, tag, gzip(ctx.tar), annotations(version, ctx));
+      return registry.pushModule(path, tag, built(version, ctx).zip, annotations(version, ctx));
+    },
+    async republish({ name }, version, ctx) {
+      const path = `${repo}/${name}`;
+      const tag = formatSemver(version);
+      const found = await registry.manifest(path, tag);
+      if (!found || !legacyLayer(found.manifest) || found.manifest.annotations?.[CONTENT] !== ctx.content) {
+        throw new ConfigError(`${url}/${name}:${tag} changed while it was being republished; run publish again`);
+      }
+      ctx.pushWithRecord?.([]);
+      return registry.pushModule(path, tag, built(version, ctx).zip, annotations(version, ctx));
     },
     subject({ name }, version, ctx) {
-      const bytes = moduleManifest(gzip(ctx.tar), annotations(version, ctx));
-      return { ref: `${host}/${repo}/${name}:${formatSemver(version)}`, bytes };
+      return { ref: `${host}/${repo}/${name}:${formatSemver(version)}`, bytes: built(version, ctx).manifest };
     },
     async attach({ name }, digest, attested, signer) {
       await signer.attachOci?.(`${host}/${repo}/${name}@${digest}`, attested.predicates, access);
@@ -296,6 +360,7 @@ function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], 
       const registry = new Registry(host, { fetch: opts.fetch, scheme: insecure ? "http" : "https", user: env.TERRAGUCCI_REGISTRY_USER, password: env.TERRAGUCCI_REGISTRY_PASSWORD });
       const found = await registry.manifest(`${path}/${name}`, v);
       if (found?.manifest.annotations?.[CONTENT] !== ctx.content) throw new ConfigError(`the registry points ${addr(mod).source} ${v} at ${ociUrl}/${name}:${v}, which ${found ? "holds other content" : "is not published"}; publish to ${ociUrl} first`);
+      if (!installable(found.manifest)) throw new ConfigError(`the registry points ${addr(mod).source} ${v} at ${notInstallable(`${ociUrl}/${name}:${v}`, found.manifest)}; publish to ${ociUrl} first`);
       return `${ociUrl}/${name}?tag=${v}`;
     }
     return `${base}/${addr(mod).path}/${v}/${tarballName(addr(mod), v)}`;
@@ -381,6 +446,36 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
     }
     return attesting;
   };
+  /**
+   * Push a version an earlier terragucci published as a tar again under its
+   * tag, as the zip of the same tar, with its own revision and content. When
+   * attested, the new manifest is signed and recorded as the original was,
+   * from the version's own commit, with its SBOM read from the tar's files.
+   */
+  const republishLegacy = async (mod: Module, target: Target, old: Legacy): Promise<{ digest: string; detail?: string }> => {
+    const ctx: PublishContext = { dir: join(repo, mod.rel), rel: mod.rel, revision: old.revision, content: old.content, tar: old.tar! };
+    const deps = await attestDeps();
+    if (!deps) return { digest: await target.republish!(mod, old.version, ctx) };
+    const dir = mkdtempSync(join(tmpdir(), "terragucci-republish-"));
+    try {
+      for (const e of tarEntries(old.tar!)) {
+        mkdirSync(dirname(join(dir, e.path)), { recursive: true });
+        writeFileSync(join(dir, e.path), e.data);
+      }
+      const subject = target.subject(mod, old.version, ctx);
+      const attested = await attestRelease(
+        { module: mod.rel, dir, version: formatSemver(old.version), target: target.label, ref: subject.ref, bytes: subject.bytes, commit: old.revision },
+        { ...deps, ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}) },
+      );
+      ctx.pushWithRecord = (refs) =>
+        appendLifecycle(repo, LEDGER_PATH, [JSON.stringify(attested.record)], attested.files, `Release record: ${mod.rel} ${formatSemver(old.version)} ${attested.digest} (republished as archive/zip)`, refs);
+      const digest = await target.republish!(mod, old.version, ctx);
+      await target.attach?.(mod, attested.digest, attested, deps.signer);
+      return { digest, detail: `signed and recorded in the release ledger as ${attested.digest}` };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
   for (const mod of modules) {
     const dir = join(repo, mod.rel);
     const tar = moduleTar(dir);
@@ -398,6 +493,18 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
     };
     for (const target of list) {
       const row = { module: mod.name, target: target.label };
+      for (const old of (await target.legacy?.(mod)) ?? []) {
+        const v = formatSemver(old.version);
+        if (old.refused) {
+          results.push({ ...row, status: "refused", version: v, detail: `${old.ref} is a tar OpenTofu cannot install, and it cannot be republished as archive/zip: ${old.refused}` });
+          continue;
+        }
+        if (opts.dryRun) {
+          results.push({ ...row, status: "republished", version: v, detail: "dry run: would republish it" });
+          continue;
+        }
+        results.push({ ...row, status: "republished", version: v, ...(await republishLegacy(mod, target, old)) });
+      }
       const last = await target.latest(mod);
       let version: Semver;
       let bumps: { commits: Bump; iface: Bump; changes: InterfaceChange[] } | undefined;
@@ -493,6 +600,9 @@ export function describePublish(results: Published[]): string {
       const at = r.version ? ` ${r.version}` : "";
       const digest = r.digest ? ` ${r.digest}` : "";
       if (r.status === "refused") return `${r.module}${at}: refused, not published to ${r.target} (${r.detail})`;
+      if (r.status === "republished") {
+        return `${r.module}${at}: republished as archive/zip to ${r.target}${digest}; the earlier artifact was a tar OpenTofu cannot install${r.detail ? ` (${r.detail})` : ""}`;
+      }
       return `${r.module}${at}: ${r.status} to ${r.target}${digest}${r.detail ? ` (${r.detail})` : ""}`;
     })
     .join("\n");
@@ -547,6 +657,11 @@ export async function verifyPublished(repo: string, settings: Pick<ResolvedSetti
       });
       const ref = `${host}/${path}/${mod.name}:${formatSemver(v)}`;
       const bytes = await registry.manifestBytes(`${path}/${mod.name}`, formatSemver(v));
+      const manifest = bytes && (JSON.parse(bytes.toString("utf-8")) as Manifest);
+      if (manifest && !installable(manifest)) {
+        out.push({ ...row, ref, refused: `${notInstallable(ref, manifest)}; publish republishes it as archive/zip` });
+        continue;
+      }
       subject = { ref, ...(bytes ? { bytes } : {}) };
     }
     if (!subject.bytes) {
