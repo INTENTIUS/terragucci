@@ -246,7 +246,7 @@ The gate policy decides which waves wait for a person.
 |---|---|
 | `always` | the wave has at least one change; a wave whose plans change nothing never waits |
 | `on-destructive` | the wave's plans destroy or replace something |
-| `never` | never; only pull request review and default branch protection stand in front of it |
+| `never` | never; only pull request review and default branch protection stand in front of it ([Run without approvals](/terragucci/guides/run-without-approvals/)) |
 
 A waiting wave exits with code 3 and prints the approval command; run it, then rerun the stage. A rerun resumes after the approval or failed root and never applies a root twice.
 

@@ -1,0 +1,83 @@
+---
+title: Run without approvals
+description: Keep the plan notes, waves, reports and traces, and let every wave apply on merge with no one to approve it.
+prompt: |
+  Read https://intentius.io/terragucci/guides/run-without-approvals/.
+  Run `npx terragucci init --gate never --dry-run` and show me what it would change; if terragucci.yml sets another gate, show me both and ask before passing `--force`.
+  Then run `npx terragucci init --gate never` and `npx terragucci config check`, and open a pull request with the files it wrote.
+  List any hold that still waits under `gate: never` from the section "Holds that stay", reading terragucci.yml and `migrations/`.
+  Tell me whether `oidc` gives plan an identity of its own; do not change cloud roles yourself.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+Under `gate: never` no wave waits for a person. Merging the pull request is the approval, and pull request review and branch protection are what stand in front of an apply. Nobody runs `terragucci approve`, and no signers file is needed.
+
+Everything else works as before. Pull requests still get the plan note, and changes still go out in waves from the canary roots. The report, the audit trail and the traces still record each run.
+
+If you want approvals only for deletes, keep the default, `gate: on-destructive`. A wave then waits only when its plans destroy or replace something.
+
+## Steps
+
+<Steps>
+
+1. Write the gate into `terragucci.yml` and the pipeline:
+
+   ```bash
+   npx terragucci init --gate never
+   ```
+
+   ```text
+   found 2 roots in 1 layer, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   updated .github/workflows/terragucci.yml
+   updated terragucci.yml
+   unchanged terragucci.components.json
+   terragucci.yml records gate: never
+   ```
+
+   When `terragucci.yml` already sets another gate, `init` exits 2 and names both gates. Pass `--force` to replace it. `--dry-run` shows the change without writing it.
+
+2. Open a pull request with the files and merge it.
+
+   Its plan note says that the change loosens `gate`. Its own merge still applies under the old gate, because each wave takes the stricter of the pipeline's gate and `gate` at base, the commit before the merge. `never` takes effect from the next merge.
+
+</Steps>
+
+## Holds that stay
+
+These still hold a wave under `gate: never`, each once you set it:
+
+| Hold | Set by |
+|---|---|
+| A wave over a cost | `cost.approve_above` |
+| A wave whose step failed | a step with `on_failure: approve` |
+| A wave a policy rule holds | `hold` in `policy.outcomes`; the job's log adds "although gate is never" |
+| The roots of a stricter environment | an `environments` entry with its own `gate`; a wave takes the stricter gate of its roots |
+| Wave 1 of a state migration | a file in `migrations/` |
+
+[Everything that waits for a person](/terragucci/concepts/waves-and-approvals/#everything-that-waits-for-a-person) lists every hold.
+
+Under `gate: never` a wave that read an upstream output known only after the upstream applied also goes out without anyone seeing its new plan ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)).
+
+## Destroys in the plan note
+
+For each root that plans a destroy or replacement, the plan note carries the [`terragucci-ungated-destroy`](/terragucci/reference/tips/#terragucci-ungated-destroy) tip, so a reviewer sees it before merging. `tips: false` turns it off along with every other tip.
+
+## A read-only plan identity
+
+The plan job runs the pull request's code. With no approvals, the plan role is the main thing between a pull request and your cloud, so keep it read-only.
+
+Set `oidc` with a read-only identity for plan and a write identity for apply ([Credentials](/terragucci/reference/pipeline/#credentials)); terragucci refuses one identity for both. With `oidc` unset, the jobs use whatever credentials the runner has. If those can write, anyone who can open a pull request can change the cloud from a plan. [The threat model](/terragucci/reference/threat-model/) lists what each job can reach.
+
+## Turning approvals back on
+
+```bash
+npx terragucci init --gate on-destructive --force
+```
+
+Merge the pull request. A stricter gate takes effect on its own merge, so that merge's waves already wait under it.
+
+A change to `gate` is a change to the pipeline. Give `terragucci.yml` the same code owners as the workflow.
