@@ -143,7 +143,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    |---|---|
    | `on-destructive` (the default) | its plans destroy or replace something |
    | `always` | it changes anything |
-   | `never` | never; pull request review and branch protection stand before the apply |
+   | `never` | never; pull request review and branch protection stand before the apply ([Run without approvals](/terragucci/guides/run-without-approvals/)) |
 
    ```bash
    npx terragucci init --gate never

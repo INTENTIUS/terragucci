@@ -137,6 +137,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Approve a waiting wave', slug: 'guides/approve-a-wave' },
+								{ label: 'Run without approvals', slug: 'guides/run-without-approvals' },
 								{ label: 'Fix a refused wave', slug: 'guides/fix-a-refused-wave' },
 								{ label: 'Approvals runbook', slug: 'guides/approvals-runbook' },
 								{ label: 'Roll out a new module version', slug: 'guides/roll-out-a-module-version' },
