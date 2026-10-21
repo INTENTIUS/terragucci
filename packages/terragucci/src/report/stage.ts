@@ -46,7 +46,7 @@ import { discoverUnits, refineWaves, unitWaves, walkUnits } from "../terragrunt"
 import { detectShape, fullDriftPlans, plansOnPlannedEstates, type Shape } from "../shape";
 import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
-import { backendStrings, DIRS_FILE, missingOutput, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
+import { backendStrings, DIRS_FILE, missingOutput, NO_FETCH_FROM_STATE, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
 import { ForgeApiError } from "@intentius/chant/pr-forge";
 import { prForgeOf, type Fetch } from "../forge";
 import { buildReport, planFiles, withEnvironment, type RootInput, type WaveInput } from "./build";
@@ -625,7 +625,7 @@ async function planUnits(
     return (file, args, opts) => {
       // The plan itself, apart from the mock check's render and output calls before it.
       const phase = args.includes("--all") && args[args.indexOf("--") + 1] === "plan" ? "plan" : "check";
-      return exec(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper, TERRAGUCCI_TG_NEXT: opts.env.TG_TF_PATH ?? binary, [PHASE_ENV]: phase } });
+      return exec(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper, TERRAGUCCI_TG_NEXT: opts.env.TG_TF_PATH ?? binary, [NO_FETCH_FROM_STATE]: "true", [PHASE_ENV]: phase } });
     };
   };
   /** One group's run: Terragrunt calls the group's binary through the wrappers, the spans one sending each unit's plan spans to the stage. */

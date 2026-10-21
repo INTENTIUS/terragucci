@@ -70,6 +70,8 @@ export const TERRAMATE_ROLLOUTS = "a rollout moves a pin in each root's files, a
 export const TERRAMATE_GENERATE = "terramate generate writes each stack's generated code, its backend and providers among it, and a file terragucci generate wrote would declare a second backend beside it; set them in a generate_hcl block and leave generate unset";
 /** A unit an explicit stack generates: `terragrunt stack generate` writes its files, so git holds none of them. */
 export const STACK_UNIT_DRIFT_PR = "generates this unit, so its terragrunt.hcl is not in the repo; set the live value in that stack file's values or the unit's template";
+/** A stack `unit` block expanded with `expansion`, or with a path built from an expression: Terragrunt alone knows the units it generates. */
+export const STACK_EXPANDED_GENERATE = "generate reads the units a stack file names in its unit blocks; only Terragrunt can list the units an expansion block or an interpolated path generates, so give each unit its own unit block with a plain path, or leave generate unset";
 export const STACK_NESTED_GENERATE = "generate reads the units a stack file names in its unit blocks; only Terragrunt can list a nested stack's units, so give each unit its own unit block, or leave generate unset";
 /** `waves.after` orders plain roots; a Terragrunt, Atmos or Terramate repo states its order in its own files. */
 export const WAVES_AFTER_NOT_TERRAGRUNT = "a Terragrunt unit's order is its dependency and dependencies blocks, so remove waves.after and add a dependencies block to the unit's terragrunt.hcl";

@@ -103,6 +103,8 @@ A wave of units plans with one `run --all` and applies with another, so each mom
 
 Terragrunt inits each unit inside `run --all plan` and leaves no gap before its plan. `after: init` is therefore refused; use `before: plan`. A provisional preview of dependents runs no steps.
 
+Under Terragrunt 1.2 a unit's generated `providers.tf` and `versions.tf` are read-only links shared with other units. A step that changes one should write a new file in its place rather than append to it (`>>`) or truncate it, or the change reaches every unit that shares the file. Setting `mutable = true` on the `generate` block, or `TG_NO_CAS=true` in the job's `env`, gives each unit its own copy ([Generated provider files](/terragucci/guides/use-terragrunt/#generated-provider-files)).
+
 ## Step failures
 
 | `on_failure` | A non-zero exit |

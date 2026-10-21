@@ -16,7 +16,7 @@ import { checkTerragruntVersion, type TerragruntExec } from "@intentius/chant-le
 import { stackOfUnit as parentOfUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import { terragruntExec } from "./binary-env";
 import { ConfigError } from "./config";
-import { STACK_NESTED_GENERATE } from "./refusals";
+import { STACK_EXPANDED_GENERATE, STACK_NESTED_GENERATE } from "./refusals";
 
 /** Where `terragrunt stack generate` writes a stack's units, beside its `terragrunt.stack.hcl`. */
 export const STACK_DIR = ".terragrunt-stack";
@@ -87,13 +87,17 @@ export async function generateStacks(repo: string, options: { terragrunt?: strin
  * `terragrunt.stack.hcl` without running Terragrunt, so generate keys them in
  * terragucci.hcl before they exist. Each with the template it is copied from
  * when that is in the repo. A `stack` block nests a stack whose units only
- * Terragrunt can list, so it is refused.
+ * Terragrunt can list, so it is refused, and so is a `unit` block Terragrunt
+ * expands into several units (an `expansion` block) or whose `path` is an
+ * expression: its generated paths are known only once Terragrunt evaluates it.
  */
 export function explicitStackUnits(repo: string, stacks: readonly string[]): { unit: string; file: string; name: string; template?: string }[] {
   const out: { unit: string; file: string; name: string; template?: string }[] = [];
   for (const stack of stacks) {
     const file = stackFile(stack);
     const text = readFileSync(join(repo, file), "utf-8");
+    const expanded = expandedUnit(text);
+    if (expanded) throw new ConfigError(`${file}: unit "${expanded.name}" ${expanded.why}, and ${STACK_EXPANDED_GENERATE}`);
     for (const b of readTerragruntStackFile(repo, file, text)) {
       // A source under ${get_repo_root()} is in the repo too.
       if (b.template === undefined) {
@@ -106,6 +110,57 @@ export function explicitStackUnits(repo: string, stacks: readonly string[]): { u
       if (b.type === "stack") throw new ConfigError(`${file}: stack "${b.name}" nests a stack, and ${STACK_NESTED_GENERATE}`);
       out.push({ unit: b.generated, file, name: b.name, ...(b.template !== undefined ? { template: b.template } : {}) });
     }
+  }
+  return out;
+}
+
+/**
+ * The first `unit` block of a stack file whose generated paths only Terragrunt
+ * knows: one with an `expansion` block (Terragrunt 1.2's for_each or count
+ * over a unit), or with a `path` that is not a plain string. Comments are
+ * left out first, so a commented-out block is not read.
+ */
+export function expandedUnit(text: string): { name: string; why: string } | undefined {
+  const clean = text.replace(/(^|[^:"$])(#|\/\/).*$/gm, "$1");
+  const head = /\bunit\s+"([^"]+)"\s*\{/g;
+  for (let m = head.exec(clean); m; m = head.exec(clean)) {
+    const body = depthZero(blockText(clean, head.lastIndex));
+    if (/^\s*expansion\s*(\{|=)/m.test(body)) return { name: m[1], why: "is expanded with an expansion block" };
+    const path = /^\s*path\s*=\s*(.+?)\s*$/m.exec(body);
+    if (path && !/^"[^"$]*"$/.test(path[1])) return { name: m[1], why: `builds its path from an expression (path = ${path[1]})` };
+  }
+  return undefined;
+}
+
+/** The text between the brace before `start` and its matching close, skipping strings. */
+function blockText(text: string, start: number): string {
+  let depth = 1;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === "\\") i++;
+    } else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return text.slice(start, i);
+  }
+  return text.slice(start);
+}
+
+/** A block body with what its nested blocks, maps and lists hold blanked, so only its own attributes and block heads remain. */
+function depthZero(body: string): string {
+  let depth = 0;
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '"') {
+      const from = i;
+      for (i++; i < body.length && body[i] !== '"'; i++) if (body[i] === "\\") i++;
+      if (depth === 0) out += body.slice(from, i + 1);
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      if (depth++ === 0) out += c;
+    } else if ((c === "}" || c === "]") && depth > 0) depth--;
+    else if (depth === 0 || c === "\n") out += c;
   }
   return out;
 }

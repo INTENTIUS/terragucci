@@ -152,6 +152,15 @@ export function readRecord(text: string): Map<string, string[]> {
   return out;
 }
 
+/**
+ * Keeps Terragrunt reading a dependency's outputs with `TG_TF_PATH output -json`.
+ * From 1.2 it reads an upstream with s3, gcs or azurerm `remote_state` straight
+ * from the state, so the wrapper would never be asked and no unit after the
+ * first layer would plan on planned outputs. Every Terragrunt job sets it, and
+ * so does each preview run.
+ */
+export const NO_FETCH_FROM_STATE = "TG_NO_DEPENDENCY_FETCH_OUTPUT_FROM_STATE";
+
 /** The phase a wrapper answered in: `plan` for a layer's `run --all` plan, `check` for the mock check's render and output calls. */
 export const PHASE_ENV = "TERRAGUCCI_TG_PHASE";
 
