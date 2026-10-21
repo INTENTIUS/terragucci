@@ -1,14 +1,20 @@
 ---
-title: Changes in 0.4.39
-description: "terragucci 0.4.39, released 2026-10-20."
+title: Changes in 0.4.40
+description: "terragucci 0.4.40, released 2026-10-20."
 ---
 
-Release `0.4.39` is on npm as `@intentius/terragucci@0.4.39`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.39) lists every change.
+Release `0.4.40` is on npm as `@intentius/terragucci@0.4.40`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.40) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.39 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.40 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.40
+
+- A wave's gate is the stricter of the pipeline's `--gate` and the top-level `gate` in `terragucci.yml` at base, as every other hold key already was (#1202). A pull request that loosens `gate` applies its own merge under the old gate, its plan note says so, and the new gate takes effect from the next merge. One that tightens `gate` takes effect on its own merge. When the config at base cannot be read, a wave under `gate: never` does not apply. The apply jobs can now write [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) under every gate, so run `init` to pick up the new pipeline.
+- `terragucci init --gate never|on-destructive|always` writes `gate:` into `terragucci.yml` and renders the pipeline with it. A config that already sets another gate makes `init` exit 2 unless you pass `--force` (#1201). The agent setup prompt asks whether waves should wait for an approval.
+- A new guide, [Run without approvals](/terragucci/guides/run-without-approvals/), covers `gate: never`, the holds that still wait under it, and keeping the plan identity read-only (#1203).
 
 ## In 0.4.39
 
