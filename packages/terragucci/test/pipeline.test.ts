@@ -129,9 +129,8 @@ describe("the check job", () => {
     const remote = 'git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"';
     expect(publishScript("gitlab")).toContain(remote);
     expect(applyScript("tofu", layers, "gitlab")).toContain(remote);
-    // A policy denial is recorded on chant/lifecycle for an override, so a wave under gate: never pushes too when policy is set.
-    expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1, gate: "never" })).not.toContain(remote);
-    expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1, gate: "never", policy: true })).toContain(remote);
+    // The gate at base can hold a wave whatever --gate says, so a wave under gate: never pushes too.
+    expect(applyScript("tofu", layers, "gitlab", undefined, { wave: 1, gate: "never" })).toContain(remote);
     const policyNever = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true, gate: "never" }).content;
     expect(body(policyNever)["apply-wave-1"].script.join("\n")).toContain(remote);
     const all = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content;
@@ -205,8 +204,6 @@ describe("apply concurrency", () => {
   it("choudoufu: a wave holds the resources it changes on chant/lifecycle, so its job may push there", () => {
     const doc = body(renderPipeline({ forge: "github", binary: "choudoufu", version: "0.25.0", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
     for (const job of ["apply-wave-1", "apply-wave-2", "apply-comment"]) expect(doc.jobs[job].permissions.contents, job).toBe("write");
-    const tofu = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
-    expect(tofu.jobs["apply-wave-1"].permissions.contents).toBe("read");
     expect(applyScript("choudoufu", layers, "gitlab", undefined, { wave: 1, gate: "never" })).toContain("git remote set-url");
   });
 });
@@ -1170,14 +1167,15 @@ describe("credentials", () => {
     expect(flat(jobs.check)).not.toMatch(/role/);
   });
 
-  it("github: id-token is written for plan and apply; only an apply wave that can wait writes contents, for its gate record", () => {
+  it("github: id-token is written for plan and apply; an apply wave writes contents, for its gate record, under any gate", () => {
     const doc = body(render("github", OIDC));
     for (const j of ["plan", "apply-wave-1", "apply-wave-2"]) expect(doc.jobs[j].permissions["id-token"]).toBe("write");
     expect(doc.jobs.plan.permissions.contents).toBe("read");
     expect(doc.jobs["apply-wave-1"].permissions.contents).toBe("write");
     expect(doc.permissions).toEqual({ contents: "read" });
+    // The wave's job takes the stricter of --gate and the top-level gate at base, so a wave under gate: never may wait too.
     const never = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, gate: "never" }).content);
-    expect(never.jobs["apply-wave-1"].permissions.contents).toBe("read");
+    expect(never.jobs["apply-wave-1"].permissions.contents).toBe("write");
   });
 
   it("github: with a drift schedule the note jobs read the drift job's runs, and without one they do not", () => {

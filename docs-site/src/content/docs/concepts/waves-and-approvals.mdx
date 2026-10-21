@@ -252,7 +252,7 @@ A waiting wave exits with code 3 and prints the approval command; run it, then r
 
 ## Everything that waits for a person
 
-The gate is one of several holds. Each binds exactly what was reviewed, a digest or a lock ID. A record in the repo releases it, so it holds the same whether the change came from a person, a [rollout](/terragucci/guides/roll-out-a-module-version/) or an agent. The keys below are read at base, the applied commit's first parent, so a pull request cannot loosen them for itself. The top-level `gate` is the exception: `init` writes it into the pipeline, so review a change to it as you would a change to the pipeline.
+The gate is one of several holds. Each binds exactly what was reviewed, a digest or a lock ID. A record in the repo releases it, so it holds the same whether the change came from a person, a [rollout](/terragucci/guides/roll-out-a-module-version/) or an agent. The keys below are read at base, the applied commit's first parent, so a pull request cannot loosen them for itself. That includes the top-level `gate`: `init` writes it into the pipeline as `--gate`, and each wave takes the stricter of `--gate` and `gate` at base. A pull request that loosens `gate` applies its own merge under the old gate, its plan note says so, and the new gate takes effect from the merge after it. One that tightens `gate` takes effect on its own merge. When the config at base cannot be read, a wave under `gate: never` does not apply, and the job names the error.
 
 | Hold | Turned on by | Bound to | Released by | Page |
 |---|---|---|---|---|

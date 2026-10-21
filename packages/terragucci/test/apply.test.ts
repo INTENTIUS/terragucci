@@ -175,6 +175,65 @@ describe("a wave behind its gate", () => {
     expect(existsSync(log)).toBe(false);
   });
 
+  describe("the top-level gate at base", () => {
+    const replace = { resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["delete", "create"], before: { input: "1" }, after: { input: "2" }, after_unknown: {} } }] };
+    const commit = (work: string, msg: string) => git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-am", msg);
+    const LINE = "wave 1: gate on-destructive, the top-level gate at base, which is stricter than the pipeline's --gate never; a looser gate takes effect from the merge after the change that sets it";
+
+    it("gates a change that loosens it, on its own merge, and lets the merge after it through", async () => {
+      const { work, bin, log } = setup({ "terragucci.yml": "gate: on-destructive\n" });
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      writeFileSync(join(process.env.PLANS!, "a.json"), JSON.stringify(replace));
+      // The change sets gate: never and renders its pipeline again, so its merge's pipeline passes --gate never.
+      write(work, { "terragucci.yml": "gate: never\n" });
+      commit(work, "gate: never");
+      const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: {} };
+      expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+      expect(out.mock.calls.flat()).toContain(LINE);
+      // The next merge's base has gate: never.
+      commit(work, "next");
+      out.mockClear();
+      expect(await applyWave(work, { ...opts, now: T(2) })).toBe(0);
+      expect(existsSync(log)).toBe(true);
+      expect(out.mock.calls.flat().join("\n")).not.toContain("the top-level gate at base");
+    });
+
+    it("lets a change that tightens it gate its own merge, by its own --gate", async () => {
+      const { work, bin, log } = setup({ "terragucci.yml": "gate: never\n" });
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      writeFileSync(join(process.env.PLANS!, "a.json"), JSON.stringify(replace));
+      write(work, { "terragucci.yml": "gate: on-destructive\n" });
+      commit(work, "gate: on-destructive");
+      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "on-destructive", env: {}, now: T(1) })).toBe(3);
+      expect(existsSync(log)).toBe(false);
+      expect(out.mock.calls.flat().join("\n")).not.toContain("the top-level gate at base");
+    });
+
+    it("takes on-destructive from a base that sets no gate, and on-destroy as on-destructive", async () => {
+      for (const at of ["", "gate: on-destroy\n"]) {
+        const { work, bin, log } = setup({ "terragucci.yml": `${at}parallelism: 2\n` });
+        const out = vi.spyOn(console, "log").mockImplementation(() => {});
+        writeFileSync(join(process.env.PLANS!, "a.json"), JSON.stringify(replace));
+        write(work, { "terragucci.yml": "gate: never\n" });
+        commit(work, "gate: never");
+        expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1) })).toBe(3);
+        expect(existsSync(log)).toBe(false);
+        expect(out.mock.calls.flat()).toContain(LINE);
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("refuses to apply under --gate never when the config at base cannot be read, and names why", async () => {
+      const { work, bin, log } = setup({ "terragucci.yml": "gate: sometimes\n" });
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      write(work, { "terragucci.yml": "gate: never\n" });
+      commit(work, "gate: never");
+      await expect(applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1) })).rejects.toThrow(/^the top-level gate is read from the config at base, and it could not be read \(could not read the config at [0-9a-f]+: [\s\S]*config\.gate is "sometimes"[\s\S]*\), so the wave does not apply under --gate never$/);
+      expect(existsSync(log)).toBe(false);
+    });
+  });
+
   it("refuses a --gate that names no policy, and lists the current names", async () => {
     const { work, bin } = setup();
     await expect(applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "on-delete" as never, env: {}, now: T(1) })).rejects.toThrow("--gate must be one of always, on-destructive, never");

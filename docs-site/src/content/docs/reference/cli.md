@@ -254,7 +254,7 @@ Both `stage tf-plan` and `stage tf-drift` write the report even when a root refu
 | Flag | Environment | Meaning |
 |---|---|---|
 | `--wave` | | the wave to apply |
-| `--gate` | | `always`, `on-destructive` (the default) or `never` |
+| `--gate` | | `always`, `on-destructive` (the default) or `never`; a wave takes the stricter of it and the top-level `gate` in the config at base, and under `never` refuses to apply when that config cannot be read |
 | `--approval` | | the mode when the config at base names none and `chant.workspace.json` there lists no gate; a control repo's pipeline passes it |
 | `--base` | `TG_BASE`, for the policy ref only | the ref that holds the wave's policy, approval mode, gate rule, signers file and other config; an open pull request's job passes `origin/<default branch>`. Without it the gate rule comes from the commit before the one applied |
 | `--shares` | | `waves.jobs`: split the wave's roots into up to this many shares. Without `--share` the stage plans every root, decides the gate, writes each root's plan digest to `terragucci-wave/wave-<n>.json` and applies nothing |

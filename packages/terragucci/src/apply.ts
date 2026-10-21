@@ -164,7 +164,7 @@ import { rootVersions } from "./report/versions";
 import { planAppliedChanges, readChanges } from "./report/history";
 import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
-import { anyRootGate, environmentOf, waveGate as rootsGate } from "./environments";
+import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./groups";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
@@ -1192,9 +1192,13 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     if (rule?.point && rule.mode !== "ledger") throw new ConfigError(`apply.point is set at base and approval is ${rule.mode}; a wave gate that asks a decision point takes its quorum from the point, so set approval to ledger or drop apply.point`);
     if (rule?.point && rule.approvalRules) throw new ConfigError("apply.point and approval_rules are both set at base; a wave gate that asks a decision point takes its deciders and quorum from the point, so drop one of them");
     if (rule?.mode === "ledger" && rule.approvalRules?.some((r) => r.roles?.length || r.not_author)) throw new ConfigError(`approval_rules at base names roles or not_author, and approval is ledger (${rule.source}): ${LEDGER_PROVES_NOBODY}`);
-    // Each wave's gate: the pipeline's --gate, or with `environments` at base the strictest gate of the wave's roots (./environments.ts).
-    // A composed run's wave takes the strictest gate of its own roots and the run's.
-    const gates = await environmentWaveGates(repo, base, configPath, options, options.composition && typeof specWaves !== "number" ? wavesWithRun(applyWaves(options.layers, options.canary), options.composition, false) : specWaves);
+    // Each wave's gate: the stricter of the pipeline's --gate and the top-level gate at base, or with `environments` at base the
+    // strictest gate of the wave's roots (./environments.ts). A composed run's wave takes the strictest gate of its own roots and the run's.
+    const { gates, top } = await environmentWaveGates(repo, base, configPath, options, options.composition && typeof specWaves !== "number" ? wavesWithRun(applyWaves(options.layers, options.canary), options.composition, false) : specWaves);
+    if (top !== options.gate) {
+      console.log(`wave ${options.wave}: gate ${top}, the top-level gate at base, which is stricter than the pipeline's --gate ${options.gate}; a looser gate takes effect from the merge after the change that sets it`);
+      options = { ...options, gate: top };
+    }
     if (typeof specWaves !== "number" && gates[options.wave - 1] !== options.gate) {
       console.log(`wave ${options.wave}: gate ${gates[options.wave - 1]}, the strictest of its roots' environments at base`);
       options = { ...options, gate: gates[options.wave - 1]! };
@@ -1405,29 +1409,34 @@ function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): 
 }
 
 /**
- * Each wave's gate, read at base like the approval mode: with no
- * `environments` there, the pipeline's `--gate` for every wave. With them, a
- * wave of plain roots takes the strictest gate of its roots, each root its
- * environment's gate or, in none or one that sets no gate, `--gate`
- * (waveGate in ./environments.ts). A Terragrunt wave finds its units when it
- * plans, after the spec is written, so it takes the strictest of `--gate`
- * and every environment's gate (one entry, for every wave this job runs). A
- * base whose config cannot be read keeps `--gate` when the checkout has no
- * environments either, as before environments; otherwise the wave fails,
- * since its gate cannot be decided.
+ * Each wave's gate, read at base like the approval mode. `top` is the
+ * stricter of the pipeline's `--gate` and the top-level `gate` at base
+ * (on-destructive when the base sets none): the pipeline is the applied
+ * commit's own, so a change that loosens `gate` and renders its pipeline
+ * again is still gated by the base's. With no `environments` there, every
+ * wave takes `top`. With them, a wave of plain roots takes the strictest gate
+ * of its roots, each root its environment's gate or, in none or one that
+ * sets no gate, `top` (waveGate in ./environments.ts). A Terragrunt wave
+ * finds its units when it plans, after the spec is written, so it takes the
+ * strictest of `top` and every environment's gate (one entry, for every wave
+ * this job runs). A base whose config cannot be read keeps `--gate` when it
+ * is stricter than never and the checkout has no environments either;
+ * otherwise the wave fails, since its gate cannot be decided.
  */
-async function environmentWaveGates(repo: string, base: string, configPath: string | undefined, options: ApplyWaveOptions, waves: string[][] | number): Promise<Gate[]> {
-  const flat = (): Gate[] => (typeof waves === "number" ? [options.gate] : waves.map(() => options.gate));
+async function environmentWaveGates(repo: string, base: string, configPath: string | undefined, options: ApplyWaveOptions, waves: string[][] | number): Promise<{ gates: Gate[]; top: Gate }> {
+  const flat = (top: Gate): { gates: Gate[]; top: Gate } => ({ gates: typeof waves === "number" ? [top] : waves.map(() => top), top });
   const read = await configAtBase(repo, base, configPath ? { config: configPath } : {});
   if ("error" in read) {
     const checkout = configPath ? await loadConfig(configPath).catch(() => undefined) : undefined;
-    if (!checkout?.environments) return flat();
-    throw new ConfigError(`environments are read from the config at base, and it could not be read (${read.error}), so the wave's gate cannot be decided`);
+    if (checkout?.environments) throw new ConfigError(`environments are read from the config at base, and it could not be read (${read.error}), so the wave's gate cannot be decided`);
+    if (options.gate === "never") throw new ConfigError(`the top-level gate is read from the config at base, and it could not be read (${read.error}), so the wave does not apply under --gate never`);
+    return flat(options.gate);
   }
   const at = read.config;
-  if (!at.environments) return flat();
-  if (typeof waves === "number") return [anyRootGate(at, options.gate)];
-  return waves.map((roots) => rootsGate(roots, at, options.gate));
+  const top = strictestGate([options.gate, topGate(at)]);
+  if (!at.environments) return flat(top);
+  if (typeof waves === "number") return { gates: [anyRootGate(at, top)], top };
+  return { gates: waves.map((roots) => rootsGate(roots, at, top)), top };
 }
 
 /** What every call of a wave's job reads. */

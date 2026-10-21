@@ -129,13 +129,14 @@ These keys are read from the config at base, the applied commit's first parent f
 | `policy`, its directory or `source`, `policy.override` and `policy.outcomes` | what the policy denies, holds or lets through, and who may override; a base with no `policy` keeps the checkout's, so a pull request can add a policy and cannot loosen one |
 | `sources` | the allowed module and provider sources, the same way as `policy` |
 | `steps` | the commands run around each stage |
+| `gate` | each wave's gate, with the pipeline's `--gate`: a wave takes the stricter of the two |
 | `cost.approve_above` | the amount over which a wave waits |
 | `environments` | each wave's gate |
 | `ephemeral` | the roots a pull request copies, and the copies' lifetime |
 | `modules`, once the base has `require: attested` | which releases a root may pin |
 | `agent.login`, `agent.token_env` | the accounts whose approvals never count |
 
-The signers file, the roles in `.chant/trust.json` and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) are read at base too. The top-level `gate` is not among them: `init` writes it into the pipeline, so review a change to it as you would a change to the pipeline.
+The signers file, the roles in `.chant/trust.json` and [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) are read at base too.
 
 A pull request applied before merge reads every other key at base as well ([Apply before merge](/terragucci/reference/config/#apply-before-merge)).
 

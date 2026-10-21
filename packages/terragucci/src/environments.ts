@@ -14,7 +14,8 @@
  *                so the pipeline carries it in ROOT_ROLES_ENV and its kin, as
  *                it carries any glob's pair
  *   gate         read at base by the wave's job: a wave takes the strictest
- *                gate of its roots (waveGate)
+ *                gate of its roots (waveGate), where a root in no environment
+ *                takes the stricter of --gate and the top-level gate at base
  *   parallelism  read by the stage: a layer plans as many roots at once as the
  *                fewest any of its roots' environments allows (../report/stage.ts)
  *   runner, forge_environment, oidc.audience
@@ -53,11 +54,16 @@ export interface RootSettings {
 /** The default gate, as BUILT_IN gives it. */
 const DEFAULT_GATE: Gate = "on-destructive";
 
+/** The top-level gate `settings` set, under its current name; on-destructive when it sets none. */
+export function topGate(settings: Pick<ProjectSettings, "gate">): Gate {
+  return normalizeGate(settings.gate) ?? DEFAULT_GATE;
+}
+
 /** The settings `root` runs with: its environment's gate, identities, runner and parallelism over the top-level ones. */
 export function settingsForRoot(root: string, settings: ProjectSettings): RootSettings {
   const name = environmentOf(root, settings);
   const top: RootSettings = {
-    gate: normalizeGate(settings.gate) ?? DEFAULT_GATE,
+    gate: topGate(settings),
     ...(settings.oidc ? { oidc: settings.oidc } : {}),
     ...(settings.runner !== undefined ? { runner: settings.runner } : {}),
     ...(settings.parallelism !== undefined ? { parallelism: settings.parallelism } : {}),

@@ -283,8 +283,6 @@ export interface PipelineInput {
    * pipeline schedule with TERRAGUCCI_SCHEDULE=resume starts it.
    */
   resume?: number;
-  /** The repo carries state migration files (migrate.ts migrationFiles): under gate: never, GitHub's apply jobs still need to write chant/lifecycle, where a migration's gate is. */
-  migrations?: boolean;
   /** GitLab only, `gitlab.token`: with `protected`, no merge request pipeline holds the token, and the comments job posts the plan notes. */
   gitlabToken?: GitLabToken;
   /** Globs for the canary wave, which applies first. Plain roots only: a Terragrunt repo's layers are its waves already. */
@@ -293,8 +291,6 @@ export interface PipelineInput {
   waveJobs?: number;
   /** When a wave waits for an approval. Default on-destructive. */
   gate?: Gate;
-  /** The gates `environments` sets, which the wave's job reads at base: one other than never can hold a wave whatever `gate` is, so the jobs record a waiting wave. */
-  environmentGates?: Gate[];
   /** A control repo's `approval:`, which the project's repo has no config to carry: the waves' `--approval`. */
   approval?: Approval;
   /** `approval: pr-review`: on GitHub and Forgejo the plan job and a review job post `terragucci/approval` on the pull request's head. */
@@ -1030,8 +1026,6 @@ export interface ApplyWaveInput {
   /** Globs for wave 1, from `waves.canary`. */
   canary?: string[];
   gate?: Gate;
-  /** An environment's gate can hold the wave whatever `gate` is (PipelineInput.environmentGates), so the job records a waiting wave. */
-  environmentWaits?: boolean;
   /** The waves' `--approval`, when the pipeline carries one (PipelineInput.approval). */
   approval?: Approval;
   /** The response to each event; apply-failed and wave-refused are called from the wave's exit code. */
@@ -1042,10 +1036,6 @@ export interface ApplyWaveInput {
   synth?: string;
   /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
   notify?: boolean;
-  /** `policy:` is set: a denial is recorded on chant/lifecycle for an override, whatever the gate. */
-  policy?: boolean;
-  /** `cost.approve_above` is set: a wave over it waits, and records its plan on chant/lifecycle, whatever the gate. */
-  costGate?: boolean;
   /** `waves.jobs`, on the job of a wave that splits across jobs: it decides the wave, and its share jobs apply. */
   shares?: number;
   /** With `shares`: the share this job applies, from 1. */
@@ -1135,10 +1125,11 @@ export function applyScript(
     // whatever the scope; otherwise only a repo-wide scope serializes, and a push's wave stands down for a newer push.
     ...(input.sharedLock ? [...(forge === "gitlab" ? [gitlabPushRemote] : []), sharedApplyLock(input.sharedLock, forge)] : repoWide && forge === "forgejo" ? [forgejoLock()] : forge === "github" || forge === "forgejo" ? [STAND_DOWN] : []),
     ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
-    // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, under any
-    // gate, so the job's checkout must be able to push. GitLab's own job token cannot.
+    // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, so the job's checkout
+    // must be able to push; GitLab's own job token cannot. Under any gate: the wave's job takes the stricter of --gate and the
+    // top-level gate at base, and a cost, a step, a policy, a migration or an environment can hold a wave whatever --gate says.
     // A wave that holds the resources it changes (scope resource) records them there too.
-    ...(forge === "gitlab" && !input.sharedLock && (gate !== "never" || input.environmentWaits || input.policy || input.costGate || scope === "resource") ? [gitlabPushRemote] : []),
+    ...(forge === "gitlab" && !input.sharedLock ? [gitlabPushRemote] : []),
     'outcome="$(mktemp)"',
     ...(input.notify ? [OUTCOME_JSON] : []),
     ...(triage ? ['log="$(mktemp)"'] : []),
@@ -2230,8 +2221,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destructive";
-  // An environment whose gate can hold a wave, which the wave's job reads at base (../environments.ts).
-  const environmentWaits = (input.environmentGates ?? []).some((g) => g !== "never");
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
   const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
@@ -2272,7 +2261,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const name = `apply-wave-${wave}`;
     if (groups) {
       // The wave's job plans every root with the plan identities and decides; then a job per group with roots in the wave.
-      const waveInput: ApplyWaveInput = { wave, canary: input.canary, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(waveJobs ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), groups: groupsFlag!, ...(blockOnly ? { after: true } : {}) };
+      const waveInput: ApplyWaveInput = { wave, canary: input.canary, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...synth, ...notifyOn, ...(waveJobs ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), groups: groupsFlag!, ...(blockOnly ? { after: true } : {}) };
       const decider = audienceMap(oidc);
       applyJobs.push({ name, wave, needs: before, step: `Plan wave ${wave} of ${waveCount} and decide its gate`, body: applyScript(binary, layers, forge, decider, { ...waveInput, sharedLock: name }), decides: true, applies: [], ...(decider !== oidc ? { oidc: decider } : {}), ...later(wave, true) });
       before = [];
@@ -2293,7 +2282,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       continue;
     }
     const n = sharesOf(i);
-    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), ...(blockOnly ? { after: true } : {}) };
+    const waveInput: ApplyWaveInput = { wave, ...(tg ? {} : { canary: input.canary }), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...synth, ...notifyOn, ...(n > 1 ? { shares: waveJobs } : {}), ...(applyBranches ? { branches: applyBranches } : {}), ...(blockOnly ? { after: true } : {}) };
     applyJobs.push({ name, wave, needs: before, step: n > 1 ? `Plan wave ${wave} of ${waveCount} and decide its gate` : `Apply wave ${wave} of ${waveCount}`, body: applyScript(binary, layers, forge, oidc, { ...waveInput, ...(sharedLock ? { sharedLock: name } : {}) }), applies: n > 1 ? [] : [...cut[i]!], ...(n > 1 ? { decides: true } : {}), ...later(wave, true) });
     before = [name];
     if (n > 1) {
@@ -2306,7 +2295,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // The last wave's shares end side by side: one job after them all posts the success. In a Terragrunt repo that job
   // also runs, with --rest, any wave Terragrunt's edges cut past the pipeline's, so it applies like a wave's job.
   if (before.length > 1 && tg) {
-    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(environmentWaits ? { environmentWaits } : {}), ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(input.policy ? { policy: true } : {}), ...(input.cost?.approveAbove ? { costGate: true } : {}), ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
+    const rest: ApplyWaveInput = { wave: waveCount + 1, gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...tgApply, ...notifyOn, ...(sharedLock ? { sharedLock: "apply-rest" } : {}) };
     applyJobs.push({ name: "apply-rest", wave: waveCount + 1, needs: before, step: "Apply any wave past the pipeline's, then say every wave applied", body: applyScript(binary, layers, forge, oidc, rest), applies: [] });
   } else if (before.length > 1 || (groups && before.length > 0)) {
     applyJobs.push({ name: "apply-done", wave: waveCount, needs: before, step: "Say every wave applied", body: applyDoneScript(layers, forge), done: true, applies: [] });
@@ -2328,10 +2317,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ? [{ name: forge === "gitlab" ? "mr-apply" : "apply-comment", needs: [], applies: roots }]
     : applyJobs.map((j) => ({ name: j.name, needs: j.needs.length === 0 && forge !== "gitlab" && !j.done ? ["check"] : [...j.needs], wave: j.wave, applies: j.applies }));
   const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
-  // A wave that waits records its plan on the chant/lifecycle branch; under gate: never only cost.approve_above makes one wait.
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
-  // A state migration waits in wave 1 whatever the gate, so a repo that carries one writes the ledger under gate: never too.
-  const writesLedger = gate !== "never" || environmentWaits || input.cost?.approveAbove === true || (forge === "github" && input.migrations === true);
   const what = tg ? "unit" : "root";
   // The fmt commit: the binary's fmt, and in a Terragrunt repo terragrunt hcl fmt too. The drift pull request, for roots and units:
   // respond finds a Terragrunt repo's drifted units in the stage's report. With synth the config refuses respond.drift:
@@ -2926,8 +2912,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     "runs-on": "ubuntu-latest",
     container: { image },
     if: `github.event_name == 'issue_comment' && ${APPLY_COMMENT}`,
-    // Before merge it also pushes the root locks and merges (contents: write), and reads the head's checks.
-    permissions: { contents: writesLedger || prApply || sharedLock || scope === "resource" ? "write" : "read", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
+    // It records a waiting wave on chant/lifecycle (contents: write); before merge it also pushes the root locks and merges, and reads the head's checks.
+    permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...(prApply && forge === "github" ? { checks: "read" } : {}), ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
@@ -3030,8 +3016,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // a wave before it that was skipped or cancelled skips it.
       needs: job.needs.length === 0 ? "check" : job.needs.length === 1 ? job.needs[0] : job.needs,
       if: job.afterFailure ? `!cancelled() && ${job.needs.map((n) => `(needs.${n}.result == 'success' || needs.${n}.result == 'failure')`).join(" && ")} && (${applyIf})` : applyIf,
-      // contents: write only to record a waiting wave's plan on the chant/lifecycle branch, and with a wave split across jobs to hold the shared lock's tags.
-      permissions: { contents: writesLedger || sharedLock || scope === "resource" ? "write" : "read", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
+      // contents: write to record a waiting wave's plan on the chant/lifecycle branch under any --gate, since the job takes the stricter of it and
+      // the top-level gate at base, and with a wave split across jobs to hold the shared lock's tags.
+      permissions: { contents: "write", statuses: "write", "pull-requests": "write", ...reviewRead, ...(needsToken ? { "id-token": "write" } : {}) },
       ...openid(needsToken),
       // A group's forge environment: its token's subject names it, and its protection rules decide which refs may run the job (GitHub).
       ...(job.environment !== undefined ? { environment: job.environment } : {}),
