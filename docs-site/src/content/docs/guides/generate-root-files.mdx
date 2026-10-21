@@ -177,6 +177,36 @@ generate:
 
 A pull request that plans a unit before its bucket exists fails. The first apply creates the bucket, so the apply role needs the rights to create and configure buckets. No job touches the bucket while `disable_init` is unset or `true`. A unit set to `false` needs a backend. The key is for Terragrunt units only; `generate` refuses it on a plain root, whose backend is the binary's.
 
+### Azure Storage bootstrap
+
+For an `azurerm` backend, Terragrunt 1.2 bootstraps the resource group, the storage account and the container. `location` and the other bootstrap arguments are Terragrunt's own; it removes them before `init`. It needs `location` to create a missing resource group or storage account.
+
+```yaml
+generate:
+  disable_init: false
+  backend:
+    azurerm:
+      resource_group_name: tfstate
+      storage_account_name: acmestate
+      container_name: tfstate
+      key: "{root}.tfstate"
+      location: westeurope
+      use_azuread_auth: true
+```
+
+| Terragrunt | When | The apply identity needs |
+|---|---|---|
+| creates the resource group | the storage account is missing, unless `skip_resource_group_creation: true` | `Microsoft.Resources/subscriptions/resourceGroups/write` on the subscription, which Contributor there grants |
+| creates the storage account (StorageV2, Standard, LRS, TLS 1.2 unless `minimum_tls_version` says TLS1_3) | it is missing, unless `skip_storage_account_creation: true` | Storage Account Contributor on the resource group |
+| turns on blob versioning | it is off, unless `skip_versioning: true` | Storage Account Contributor on the account |
+| turns on soft delete | `enable_soft_delete: true` | Storage Account Contributor on the account |
+| creates the container | it is missing, unless `skip_container_creation: true` | the account's keys, which Storage Account Contributor can list; with `use_azuread_auth: true`, Storage Blob Data Contributor on the account |
+| assigns Storage Blob Data Contributor on the account to the apply identity, or to `principal_id` | `assign_blob_data_role: true` | `Microsoft.Authorization/roleAssignments/write` on the account, which Role Based Access Control Administrator grants |
+
+The work on the resource group and the account needs a Microsoft Entra identity, such as the apply client of [`oidc.azure`](/terragucci/guides/scope-state-access/#gcp-and-azure). With `ARM_ACCESS_KEY` or a SAS token, Terragrunt creates the container alone. To keep the apply identity off the subscription, create the resource group yourself and set `skip_resource_group_creation: true`.
+
+Before 1.2, Terragrunt bootstrapped an `azurerm` backend only behind its `azure-backend` experiment. A wave whose unit would bootstrap one on an older Terragrunt fails before it plans, naming the unit and the version. The terragrunt CI image carries 1.2.0. Terragrunt's [state backend page](https://docs.terragrunt.com/features/units/state-backend#azure-storage-azurerm-backend) lists every bootstrap argument.
+
 ## With synth
 
 `generate` beside [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/) is a config error. The roots are synth's output, so a file written into one is gone at the next synth; the app sets these values through its constructs instead:

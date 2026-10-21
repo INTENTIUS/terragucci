@@ -51,7 +51,7 @@ Each level is opt-in:
 
    | Target | Roots pin | Credentials |
    |---|---|---|
-   | `oci://` registry | OpenTofu roots, by `?tag=` or `?digest=` | the registry variables in step 4 |
+   | `oci://` registry | OpenTofu roots, by `?tag=` or `?digest=`, and Terragrunt 1.2 units in `terraform { source }` ([Use Terragrunt](/terragucci/guides/use-terragrunt/#modules-from-an-oci-registry)) | the registry variables in step 4 |
    | `git-tags` | Terraform roots, by git tag | none; the tags are pushed to `origin` |
 
 2. Preview.
@@ -298,7 +298,7 @@ A tag pushed by hand has no record that matches it, and neither does one moved a
 
 With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. The check report and plan note name its module call and version and say why.
 
-In a Terragrunt repo the pin is each unit's `terraform { source }`. `tf-check` runs `terragucci check-pins` over every unit, and `tf-plan` takes a refused unit out of its wave, so it fails without planning while the rest of the wave plans.
+In a Terragrunt repo the pin is each unit's `terraform { source }`, and for a unit an explicit stack generates from a remote source, its `unit` block's `source` in `terragrunt.stack.hcl`. An `oci://` source that picks a directory with `//` is checked as the release of the whole package. `tf-check` runs `terragucci check-pins` over every unit, and `tf-plan` takes a refused unit out of its wave, so it fails without planning while the rest of the wave plans.
 
 ```yaml
 modules:

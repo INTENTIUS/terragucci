@@ -112,6 +112,8 @@ The `waiting` tool prints each waiting wave's `terragucci approve` command for a
 | get a change planned by the pipeline: push a branch, open a pull request, read its plan | `terragucci mcp --propose` ([propose a change](/terragucci/guides/agent-propose-over-mcp/)) |
 | approve, apply, override or merge | neither: a person does it |
 
+Terragrunt's experimental `terragrunt mcp` serves Terragrunt operations to an agent, and with `--dangerously-allow-apply` it serves tools that apply and destroy. `terragucci mcp` runs no Terragrunt and no binary: it reads the reports, the audit trail and the DORA figures the estate already holds. To keep an agent's own shell from applying a root the pipeline owns, write [`terragucci guard`](/terragucci/reference/cli/#guard).
+
 ## Next
 
 - [Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/) adds the tools that open a pull request.

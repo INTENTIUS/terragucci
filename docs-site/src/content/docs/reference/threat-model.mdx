@@ -367,6 +367,7 @@ Policy reads the plan, so a change's modules and providers have run by the time 
 | each `module` block's `source` in the root's own files, and in each local (`./`, `../`) module it calls, down the tree | before `init` |
 | each `required_providers` entry, and `hashicorp/<name>` for a provider a module uses with no entry | before `init` |
 | a Terragrunt unit's `terraform { source }`, and a local source's module | before `init` |
+| the remote `source` of the stack `unit` block that generates a unit | before the unit's `init` |
 | each module call inside a module `init` downloaded (`.terraform/modules/modules.json`), as written in the module that makes it | after `init`, before `plan` |
 | each provider in `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
 | in a Terragrunt repo, the same two files in each unit's working directory, the unit's source and what it calls | after Terragrunt inits the unit, before it plans it |
@@ -376,7 +377,7 @@ In a Terragrunt repo, a wave inits and plans its units in one `run --all`. With 
 | Not checked | |
 |---|---|
 | a source Terragrunt builds from an expression | matched as written |
-| the unit templates `terragrunt stack generate` fetches for an explicit stack | it runs before either check |
+| the download of a stack unit's template | `terragrunt stack generate` fetches it before either check; the unit is refused before its `init` |
 | a pipeline written before the key was set | its check job runs `check-sources` once `terragucci init` writes it again |
 
 | Code | Runs |

@@ -143,7 +143,7 @@ import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { applyWaveGroups, dirOf, groupUnits, planWaveGroups, UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { backendBootstrap } from "./generate";
+import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./roles";
@@ -3839,6 +3839,20 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     if (bad.length > 0) {
       w.failed = bad;
       console.log(`${label}: a pinned release could not be installed, so nothing in it was planned or applied`);
+      return EXIT.failed;
+    }
+  }
+  if (bootstrap) {
+    // Terragrunt bootstraps an azurerm backend from 1.2 on; an older release would skip the storage account and the container.
+    const azure = new Set(bootstrapUnits(repo, settings).filter((b) => b.backend === "azurerm").map((b) => b.unit));
+    const old = roots.flatMap((u) => {
+      const why = azure.has(u) ? azureBootstrapRefusal(u, tools.get(u)?.report.terragrunt?.version) : undefined;
+      return why ? [{ u, why }] : [];
+    });
+    if (old.length > 0) {
+      w.failed = old.map((o) => o.u);
+      for (const o of old) console.log(`FAILED ${o.u}: ${o.why}`);
+      console.log(`${label}: a unit's azurerm backend cannot be bootstrapped by the Terragrunt it runs, so nothing in it was planned or applied`);
       return EXIT.failed;
     }
   }

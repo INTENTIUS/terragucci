@@ -27,6 +27,7 @@ import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { isTerragruntFile, readModulePin } from "@intentius/chant-lexicon-terraform/pin";
 import { ConfigError, resolveProject, resolveRepo, type ModulesSettings } from "../config";
 import { loadHclParser } from "../rollout/parser";
+import { stackUnitSource } from "../tg-stacks";
 import { configAtBase, type TrustedOptions } from "../report/policy";
 import { pinFiles, pinVersion } from "../rollout/pins";
 import { moduleTarAt } from "./archive";
@@ -69,6 +70,18 @@ export function splitGitSource(source: string): { url: string; subdir: string } 
   if (scheme < 0) return undefined;
   const at = s.indexOf("//", scheme + 3);
   return at < 0 ? { url: s, subdir: "" } : { url: s.slice(0, at), subdir: s.slice(at + 2).replace(/\/+$/, "") };
+}
+
+/**
+ * An `oci://` module source's package, without its query and without the
+ * `//<subdir>` that picks a directory inside it: the release of
+ * `oci://host/acme/net//nested/inner?tag=1.0.0` is the one at
+ * `oci://host/acme/net`.
+ */
+export function ociRepository(source: string): string {
+  const s = source.split("?")[0]!;
+  const at = s.indexOf("//", "oci://".length);
+  return at < 0 ? s : s.slice(0, at);
 }
 
 /** What `modules:` governs the check, and how its key files are read. */
@@ -138,15 +151,21 @@ export function checkedSources(repo: string, governing: GoverningModules): Check
 /** One module call a root makes. */
 export interface RootCall {
   file: string;
-  /** `module.<name>`, or `terraform` in a terragrunt.hcl. */
+  /** `module.<name>`, `terraform` in a terragrunt.hcl, or `unit.<name>` in a terragrunt.stack.hcl. */
   call: string;
   source: string;
   version?: string;
 }
 
-/** Every module call in a root's `.tf` files and its terragrunt.hcl. */
+/**
+ * Every module call in a root's `.tf` files and its terragrunt.hcl, and for
+ * a unit an explicit stack generates from a remote source, its `unit` block
+ * in the stack file.
+ */
 export async function rootCalls(repo: string, root: string, parser: Hcl2Json): Promise<RootCall[]> {
   const out: RootCall[] = [];
+  const stacked = await stackUnitSource(repo, root, parser);
+  if (stacked) out.push({ file: stacked.file, call: `unit.${stacked.name}`, source: stacked.source });
   for (const file of pinFiles(repo, root)) {
     const tree = (await parser.parse(file, readFileSync(join(repo, file), "utf-8"))) as Record<string, unknown>;
     const bodies: Array<[string, Record<string, unknown>]> = [];
@@ -206,12 +225,14 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
     let source: CheckedSource | undefined;
     let module = "";
     let git: { url: string; subdir: string } | undefined;
+    let oci: string | undefined;
     const reg = parseRegistrySource(base);
     if (reg) {
       source = sources.find((s) => s.kind === "registry" && s.match === reg.host);
       module = reg.name;
     } else if (base.startsWith("oci://")) {
-      const n = normalizeSource(base);
+      oci = ociRepository(base);
+      const n = normalizeSource(oci);
       source = sources.find((s) => s.kind === "oci" && n.startsWith(`${s.match}/`));
       module = posix.basename(n);
     } else {
@@ -278,7 +299,7 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
         if (location.startsWith("oci://")) {
           const tag = query.get("tag");
           if (!tag) throw new AttestationError(`the registry points ${pin.pin} at ${location}, which names no tag`);
-          await verifyOci(location.split("?")[0]!, tag);
+          await verifyOci(ociRepository(location), tag);
         } else if (location.startsWith("git::") || splitGitSource(location)?.url.endsWith(".git")) {
           const at = splitGitSource(location);
           const ref = query.get("ref");
@@ -288,7 +309,7 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
           verifyRelease({ module, version: pin.pin, bytes: await fetchTarball(location, options.fetch), byName: true }, ledger, source.key);
         }
       } else if (git) verifyGit(git.url, module, pin.pin);
-      else await verifyOci(base, pin.pin);
+      else await verifyOci(oci!, pin.pin);
       out.verified.push(`${c.call} ${pin.module} ${pin.pin}`);
     } catch (e) {
       if (!(e instanceof AttestationError) && !(e instanceof RegistryError) && !(e instanceof Error && e.name === "OciError")) throw e;

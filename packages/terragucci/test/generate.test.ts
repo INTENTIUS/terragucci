@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { resolveProject, resolveRepo, validateConfig, type ResolvedSettings } from "../src/config";
-import { backendBootstrap, checkGenerated, combineGenerate, GENERATED_MARKER, includesGenerated, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
+import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits, checkGenerated, combineGenerate, GENERATED_MARKER, includesGenerated, lineDiff, planGenerate, projectGenerate, renderRoot, rootSettings, type GenerateSettings } from "../src/generate";
 import { init } from "../src/init";
 import { checkScript } from "../src/render";
 import { bareFrom, git, tmp, write } from "./helpers";
@@ -294,6 +294,35 @@ terraform {
       expect(hcl).not.toContain("terragucci_unit.disable_init");
       expect(backendBootstrap(dir, settingsOf(dir))).toBe(true);
       expect(checkGenerated(dir, settingsOf(dir)).ok).toBe(true);
+    });
+
+    it("writes an azurerm backend with disable_init = false, Terragrunt's bootstrap settings passed as they are, and names the units it bootstraps", () => {
+      const dir = tgRepo(
+        'generate:\n  disable_init: false\n  backend:\n    azurerm: { resource_group_name: tfstate, storage_account_name: acmestate, container_name: tfstate, key: "{root}.tfstate", use_oidc: true, use_azuread_auth: true, location: westeurope }\n',
+      );
+      generate(dir);
+      const hcl = readFileSync(join(dir, "terragucci.hcl"), "utf-8");
+      expect(hcl).toContain("remote_state {\n  backend      = local.terragucci_unit.backend\n  disable_init = false\n");
+      expect(hcl).toContain(
+        '    "live/dev/app" = {\n      backend = "azurerm"\n      config  = { resource_group_name = "tfstate", storage_account_name = "acmestate", container_name = "tfstate", key = "live/dev/app${get_env("TERRAGUCCI_EPHEMERAL_SUFFIX", "")}.tfstate", use_oidc = true, use_azuread_auth = true, location = "westeurope" }\n',
+      );
+      expect(backendBootstrap(dir, settingsOf(dir))).toBe(true);
+      expect(bootstrapUnits(dir, settingsOf(dir))).toEqual([
+        { unit: "live/dev/app", backend: "azurerm" },
+        { unit: "live/dev/web", backend: "azurerm" },
+        { unit: "live/prod/app", backend: "azurerm" },
+      ]);
+      expect(checkGenerated(dir, settingsOf(dir)).ok).toBe(true);
+    });
+
+    it("refuses an azurerm bootstrap on a Terragrunt before 1.2, and lets 1.2 and an unknown version through", () => {
+      expect(azureBootstrapRefusal("live/dev/app", "1.1.6")).toBe(
+        "generate gives live/dev/app an azurerm backend with disable_init: false, and Terragrunt 1.1.6 creates an azurerm backend's resource group, storage account and container only behind its azure-backend experiment; run Terragrunt 1.2.0 or later (the terragrunt CI image carries it), or create them and set disable_init: true",
+      );
+      expect(azureBootstrapRefusal("live/dev/app", "0.99.1")).toBeDefined();
+      expect(azureBootstrapRefusal("live/dev/app", "1.2.0")).toBeUndefined();
+      expect(azureBootstrapRefusal("live/dev/app", "2.0.0")).toBeUndefined();
+      expect(azureBootstrapRefusal("live/dev/app", undefined)).toBeUndefined();
     });
 
     it("gives each unit its own disable_init when the levels differ, and bootstraps when any unit has false", () => {

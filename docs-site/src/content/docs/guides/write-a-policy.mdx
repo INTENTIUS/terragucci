@@ -124,6 +124,7 @@ sources:
 | each `module` block's `source` | the root's files, and each local module it calls, down the tree | before `init` |
 | each `required_providers` entry | the same files; a provider used with no entry is read as `hashicorp/<name>` | before `init` |
 | `terraform { source }` | a Terragrunt unit's `terragrunt.hcl` | before `init` |
+| a `unit` block's remote `source` | the `terragrunt.stack.hcl` that generates the unit | before the unit's `init` |
 | each module call inside a module `init` fetched | `.terraform/modules/modules.json`, matched as written in the module that makes the call | after `init`, before `plan` |
 | each provider `init` installed | `.terraform.lock.hcl`, named by the module that uses it | after `init`, before `plan` |
 | the same two files for a Terragrunt unit | the unit's working directory, where Terragrunt inited it | after Terragrunt's `init`, before its `plan` |
@@ -132,7 +133,8 @@ sources:
 |---|---|
 | `*` | within one `/`-separated part |
 | `**` | across parts |
-| a module source | as written, without its `?` query (`?ref=`, `?version=`) |
+| a module source | as written, without its `?` query (`?ref=`, `?version=`, `?tag=`) |
+| an `oci://` source | with its scheme, so `oci://ghcr.io/acme/**` matches it and `ghcr.io/acme/**` does not |
 | an address with no host (`hashicorp/aws`, `acme/vpc/aws`) | also as `registry.terraform.io/...` and `registry.opentofu.org/...` |
 | an address at `registry.terraform.io` or `registry.opentofu.org` | also without the host, so `hashicorp/*` matches what the lock file names |
 | a provider address | in lower case |
