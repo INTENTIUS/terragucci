@@ -31,6 +31,7 @@ import { excludeFilter, TERRAGRUNT_DISCOVERY_EXCLUDES } from "@intentius/chant-l
 import type { Binary, ForgeName, RolePair } from "./config";
 import type { Tool } from "./install";
 import { ROLES_ENV, rolesFor } from "./terragrunt";
+import { NO_FETCH_FROM_STATE } from "./tg-preview";
 
 export interface TerragruntPipelineInput {
   /** The Terragrunt release the jobs run. */
@@ -60,6 +61,9 @@ export function terragruntJobEnv(binary: Binary, tg: TerragruntPipelineInput): R
     TG_NON_INTERACTIVE: "true",
     TG_PARALLELISM: String(tg.parallelism),
     TG_PROVIDER_CACHE: "1",
+    // Terragrunt 1.2 reads an upstream's outputs straight from its s3, gcs or azurerm state, past TG_TF_PATH; a preview hands
+    // each unit its upstream's planned outputs through TG_TF_PATH, so every job reads them through the binary.
+    [NO_FETCH_FROM_STATE]: "true",
   };
 }
 

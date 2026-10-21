@@ -352,6 +352,23 @@ terraform {
       expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/live\/stk\/terragrunt\.stack\.hcl: stack "inner" nests a stack/);
     });
 
+    it("refuses a unit block Terragrunt expands, or one whose path is an expression, since only Terragrunt can list the units it generates", () => {
+      const expanded = 'unit "vpc" {\n  source = "../../catalog/units/db"\n  path   = "vpc"\n}\n\nunit "aurora" {\n  expansion {\n    for_each = toset(["web", "api"])\n  }\n\n  source = "../../catalog/units/db"\n  path   = "aurora/${each.key}"\n\n  values = {\n    role = each.key\n  }\n}\n';
+      const dir = tgRepo(CONFIG, { "live/stk/terragrunt.stack.hcl": expanded, "catalog/units/db/terragrunt.hcl": unitHcl() });
+      expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/^live\/stk\/terragrunt\.stack\.hcl: unit "aurora" is expanded with an expansion block, and generate reads the units a stack file names in its unit blocks; only Terragrunt can list/);
+      const counted = 'unit "shard" {\n  expansion {\n    count = 2\n  }\n  source = "../../catalog/units/db"\n  path   = "shard"\n}\n';
+      writeFileSync(join(dir, "live/stk/terragrunt.stack.hcl"), counted);
+      expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/unit "shard" is expanded with an expansion block/);
+      writeFileSync(join(dir, "live/stk/terragrunt.stack.hcl"), 'unit "app" {\n  source = "../../catalog/units/db"\n  path   = "${local.env}/app"\n}\n');
+      expect(() => planGenerate(dir, settingsOf(dir))).toThrow(/unit "app" builds its path from an expression \(path = "\$\{local\.env\}\/app"\)/);
+    });
+
+    it("reads a plain unit block as before when expansion only appears in its values or a comment", () => {
+      const plain = '# unit "old" {\n#   expansion { count = 2 }\n#   path = "old/${count.index}"\n# }\nunit "db" {\n  source = "../../catalog/units/db"\n  path   = "db"\n  values = {\n    expansion = "none"\n    path      = "${get_terragrunt_dir()}"\n  }\n}\n';
+      const dir = tgRepo(CONFIG, { "live/stk/terragrunt.stack.hcl": plain, "catalog/units/db/terragrunt.hcl": unitHcl() });
+      expect(planGenerate(dir, settingsOf(dir)).roots).toContain("live/stk/.terragrunt-stack/db");
+    });
+
     it("keeps an interpolation out of the files Terragrunt writes", () => {
       const dir = tgRepo('generate:\n  providers:\n    aws: { default_tags: { tags: { note: "${var.x}" } } }\n');
       generate(dir);

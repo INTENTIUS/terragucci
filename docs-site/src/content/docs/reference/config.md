@@ -107,7 +107,7 @@ oidc:
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 parallelism: 8
 terragrunt:                   # read in a Terragrunt repo only
-  version: 1.1.6
+  version: 1.2.0
 atmos:                        # read in an Atmos repo only
   version: 1.230.1
 policy:
@@ -524,7 +524,7 @@ With `locks: plan`, `init` adds the `pr-lock` job ([the generated pipeline](/ter
 
 ```yaml
 terragrunt:
-  version: 1.1.6
+  version: 1.2.0
   exclude: ["live/sandbox/**"]
   parallelism: 16
   dependents: follow

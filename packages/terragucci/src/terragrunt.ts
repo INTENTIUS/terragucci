@@ -186,7 +186,7 @@ export async function discoverUnits(repo: string, options: DiscoverOptions = {})
   return {
     units: walkUnits(repo, options.exclude),
     source: "terragrunt.hcl files",
-    notes: [`units and their edges come from terragrunt.hcl files: Terragrunt discovery did not run (${fallback.split("\n")[0]}), so a dependency path built with a function is not followed; the apply jobs take the waves from terragrunt find`],
+    notes: [`units and their edges come from terragrunt.hcl files: Terragrunt discovery did not run (${fallback.split("\n")[0]}), so a dependency path built with a function, or a dependency expanded with an expansion block, is not followed; the apply jobs take the waves from terragrunt find`],
   };
 }
 

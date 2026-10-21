@@ -194,9 +194,11 @@ const argOf = (args: readonly string[], flag: string): string | undefined => {
  * working directory through TG_TF_PATH, and reads a dependency's outputs with
  * `TG_TF_PATH output -json` in a directory holding the upstream's backend
  * file (or, with `fromState`, straight from the state, as
- * --dependency-fetch-output-from-state does).
+ * --dependency-fetch-output-from-state does). `fromState: "1.2"` is Terragrunt
+ * 1.2's default: straight from the state unless
+ * TG_NO_DEPENDENCY_FETCH_OUTPUT_FROM_STATE is true.
  */
-function fakeTerragrunt(units: Unit[], opts: { fromState?: boolean; selected?: string[] } = {}): TerragruntExec {
+function fakeTerragrunt(units: Unit[], opts: { fromState?: boolean | "1.2"; selected?: string[] } = {}): TerragruntExec {
   const byPath = new Map(units.map((u) => [u.path, u]));
   const applied = (u: Unit): Record<string, { value: string }> => (u.applied ? { rev: { value: `r${u.applied.rev}` }, out: { value: `${u.applied.rev}-${u.applied.up}` } } : {});
   const cache = mkdtempSync(join(tmp(), "cache-"));
@@ -230,7 +232,7 @@ function fakeTerragrunt(units: Unit[], opts: { fromState?: boolean; selected?: s
       for (const d of u.deps ?? []) {
         const upstream = byPath.get(d.upstream)!;
         let outputs: Record<string, { value?: unknown }>;
-        if (opts.fromState) outputs = applied(upstream);
+        if (opts.fromState === true || (opts.fromState === "1.2" && env.TG_NO_DEPENDENCY_FETCH_OUTPUT_FROM_STATE !== "true")) outputs = applied(upstream);
         else {
           const dir = write(mkdtempSync(join(cache, "dep-")), { "backend.tf": backendFile(upstream.path), "applied.json": JSON.stringify(applied(upstream)) });
           outputs = JSON.parse((await run(env.TG_TF_PATH!, ["output", "-json"], dir, env)).stdout || "{}");
@@ -307,6 +309,13 @@ describe("terragucci stage tf-plan previews a Terragrunt repo's later layers", (
     const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: fakeBinary(), terragrunt: true, terragruntExec: fakeTerragrunt(UNITS, { fromState: true }), env: { PATH: process.env.PATH } }, () => {});
     expect(r.report.roots.map((u) => u.path)).not.toContain("live/app");
     expect(r.report.deferred?.find((d) => d.unit === "live/app")?.why).toBe("Terragrunt did not ask the binary for the outputs of live/net, so its plan is not on their planned outputs");
+  });
+
+  it("on Terragrunt 1.2, which reads an upstream's outputs from its state by default, the stage turns that off and live/app still plans on live/net's planned outputs", async () => {
+    const repo = previewRepo();
+    const r = await runStage("tf-plan", repo, { out: join(repo, "out"), binary: fakeBinary(), terragrunt: true, terragruntExec: fakeTerragrunt(UNITS, { fromState: "1.2" }), env: { PATH: process.env.PATH } }, () => {});
+    expect(input(r.report, "live/app")).toBe("1-r2");
+    expect(r.report.roots.find((u) => u.path === "live/app")?.reads).toEqual([{ upstream: "live/net", data: "net", outputs: "planned" }]);
   });
 
   it("by default (dependents: plan), the dependents of a changed unit are previewed layer by layer, provisional, and the one that reads an unknown is named", async () => {

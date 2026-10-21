@@ -341,9 +341,9 @@ describe("init in a Terragrunt repo", () => {
   it("turns the plain root rule off: units come from discovery, modules are not roots", async () => {
     const repo = liveRepo();
     const r = await init(repo, { binary: "tofu", dryRun: true, terragrunt: "/nonexistent/terragrunt" });
-    expect(r.terragrunt).toMatchObject({ reason: "root.hcl", version: { value: "1.1.6" }, parallelism: { value: 16 }, source: "terragrunt.hcl files" });
+    expect(r.terragrunt).toMatchObject({ reason: "root.hcl", version: { value: "1.2.0" }, parallelism: { value: 16 }, source: "terragrunt.hcl files" });
     expect(r.roots).toEqual(["live/dev/app", "live/dev/vpc", "live/prod/app", "live/prod/vpc"]);
-    expect(r.image).toMatch(/terragucci-terragrunt:.*-tg1\.1\.6-tofu/);
+    expect(r.image).toMatch(/terragucci-terragrunt:.*-tg1\.2\.0-tofu/);
     expect(r.notes.join("\n")).toMatch(/Terragrunt discovery did not run/);
   });
 
@@ -352,7 +352,7 @@ describe("init in a Terragrunt repo", () => {
     const r = await init(repo, { terragrunt: "/nonexistent/terragrunt" });
     const text = r.files[0].content;
     const doc = body(text);
-    expect(doc.env).toMatchObject({ TG_TF_PATH: "tofu", TG_NON_INTERACTIVE: "true", TG_PARALLELISM: "16", TG_PROVIDER_CACHE: "1" });
+    expect(doc.env).toMatchObject({ TG_TF_PATH: "tofu", TG_NON_INTERACTIVE: "true", TG_PARALLELISM: "16", TG_PROVIDER_CACHE: "1", TG_NO_DEPENDENCY_FETCH_OUTPUT_FROM_STATE: "true" });
     const check = doc.jobs.check.steps.at(-1).run as string;
     expect(check).toContain("terragrunt hcl fmt --check --diff");
     expect(check).toContain("terragrunt hcl validate --inputs --no-color --filter '!./catalog/**'");
@@ -404,11 +404,11 @@ describe("init in a Terragrunt repo", () => {
   });
 
   it("a pinned Terragrunt and terraform as the binary are installed in the job", async () => {
-    const repo = liveRepo({ "terragucci.yml": "binary: terraform\nterragrunt:\n  version: 1.2.0\n" });
+    const repo = liveRepo({ "terragucci.yml": "binary: terraform\nterragrunt:\n  version: 1.1.6\n" });
     const r = await init(repo, { terragrunt: "/nonexistent/terragrunt" });
     const install = body(r.files[0].content).jobs.check.steps[1];
-    expect(install.name).toBe("Install terragrunt 1.2.0, terraform 1.14.9");
-    expect(install.run).toContain("terragucci install terragrunt 1.2.0");
+    expect(install.name).toBe("Install terragrunt 1.1.6, terraform 1.14.9");
+    expect(install.run).toContain("terragucci install terragrunt 1.1.6");
   });
 
   it("GitLab-managed state gets parallelism 3", async () => {
@@ -466,7 +466,7 @@ describe("init in a Terragrunt repo", () => {
     expect(JSON.stringify(doc)).not.toContain("terragucci-terragrunt:");
     expect(doc.env?.TG_TF_PATH ?? plan.env?.TG_TF_PATH).toBe("choudoufu");
     const steps = plan.steps.map((s: any) => s.name ?? "");
-    expect(steps).toContain("Install terragrunt 1.1.6");
+    expect(steps).toContain("Install terragrunt 1.2.0");
     expect(steps.some((n: string) => n.startsWith("Install") && n.includes("choudoufu"))).toBe(false);
     expect(plan.steps.map((s: any) => s.run ?? "").join("\n")).toContain("terragucci stage tf-plan");
   });

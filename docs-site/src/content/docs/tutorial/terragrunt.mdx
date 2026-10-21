@@ -34,7 +34,7 @@ modules/service          the module every service uses; it reads policy.json wit
 There is no `roots:` setting. On finding `root.hcl` `init` asks Terragrunt for the units and writes the pipeline, which the example already has. In your own repo run `npx terragucci init` at the root, and it prints:
 
 ```
-found Terragrunt (root.hcl): 15 units in 5 waves from terragrunt find, terragrunt 1.1.6 (the image) calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
+found Terragrunt (root.hcl): 15 units in 5 waves from terragrunt find, terragrunt 1.2.0 (the image) calling tofu 1.13.1 (terragucci.yml), parallelism 16 (the s3 backend), forge forgejo (.forgejo/workflows)
 ```
 
 Each wave is one dependency layer, the dev canary's first. Its job plans with one `terragrunt run --all`, and a second `run --all` applies the saved plans once the gate lets it.
