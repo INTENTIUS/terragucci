@@ -9,7 +9,9 @@
  * Before a root's `init`, every `module` block's `source` and every
  * `required_providers` entry of the root's own files is read, and so are
  * those of each local module it calls (`./` and `../` sources, followed down
- * to the modules they call), and in a Terragrunt unit its `terraform { source }`.
+ * to the modules they call), and in a Terragrunt unit its `terraform { source }`,
+ * and for a unit an explicit stack generates from a remote source, the
+ * `source` of its `unit` block in the `terragrunt.stack.hcl`.
  * A provider a module uses with no `required_providers` entry is the one
  * `init` would install for it, `hashicorp/<name>`, and is checked as that. A
  * source no glob of its list matches refuses the root: it is not initialised,
@@ -52,6 +54,7 @@ import { ConfigError, resolveProject, resolveRepo, type SourcesSettings } from "
 import { configAtBase, type TrustedOptions } from "./report/policy";
 import { loadHclParser } from "./rollout/parser";
 import { baseCommit } from "./seal";
+import { stackUnitSource } from "./tg-stacks";
 
 /** The hosts a provider or registry module address written without one is read from. */
 export const DEFAULT_REGISTRIES = ["registry.terraform.io", "registry.opentofu.org"] as const;
@@ -248,6 +251,9 @@ export async function rootSources(repo: string, root: string, parser: Hcl2Json):
     }
   };
   const start = posix.normalize(root).replace(/\/+$/, "") || ".";
+  // A unit an explicit stack generates from a remote source: the stack file's unit block names it.
+  const stacked = await stackUnitSource(repo, start, parser);
+  if (stacked) used.push({ kind: "module", file: stacked.file, block: `unit.${stacked.name}`, source: stacked.source });
   await walk(start, "", [start], true);
   return { used, unread };
 }

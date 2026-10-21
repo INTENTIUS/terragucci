@@ -128,6 +128,29 @@ resource "random_id" "r" {}
     ]);
   });
 
+  it("checks a unit's oci:// terraform source against globs that include the scheme", async () => {
+    const repo = write(tmp("tg-sources-oci-"), {
+      "live/dev/net/terragrunt.hcl": 'terraform {\n  source = "oci://ghcr.io/acme/modules/net//nested/inner?tag=0.1.0"\n}\n',
+    });
+    expect(await checkRootSources(repo, "live/dev/net", { modules: ["oci://ghcr.io/acme/**"] }, parser)).toEqual([]);
+    const refused = await checkRootSources(repo, "live/dev/net", { modules: ["ghcr.io/acme/**"] }, parser);
+    expect(sourceRefusalLines("live/dev/net", refused)).toEqual([
+      "refused: live/dev/net: terraform (live/dev/net/terragrunt.hcl) uses module source oci://ghcr.io/acme/modules/net//nested/inner?tag=0.1.0, which no entry of sources.modules matches (sources.modules: ghcr.io/acme/**)",
+    ]);
+  });
+
+  it("checks the source of the stack unit block that generates a unit, and leaves a template in the repo to the unit's own files", async () => {
+    const stack = 'unit "net" {\n  source = "oci://ghcr.io/acme/modules/net-unit?tag=0.1.0"\n  path   = "net"\n}\n\nunit "app" {\n  source = "${get_repo_root()}/units/app"\n  path   = "app"\n}\n';
+    const repo = write(tmp("tg-sources-stack-"), { "live/terragrunt.stack.hcl": stack, "units/app/terragrunt.hcl": "" });
+    const { used } = await rootSources(repo, "live/.terragrunt-stack/net", parser);
+    expect(used).toEqual([{ kind: "module", file: "live/terragrunt.stack.hcl", block: "unit.net", source: "oci://ghcr.io/acme/modules/net-unit?tag=0.1.0" }]);
+    expect((await rootSources(repo, "live/.terragrunt-stack/app", parser)).used).toEqual([]);
+    const refused = await checkRootSources(repo, "live/.terragrunt-stack/net", { modules: ["oci://registry.example.com/**"] }, parser);
+    expect(sourceRefusalLines("live/.terragrunt-stack/net", refused)).toEqual([
+      "refused: live/.terragrunt-stack/net: unit.net (live/terragrunt.stack.hcl) uses module source oci://ghcr.io/acme/modules/net-unit?tag=0.1.0, which no entry of sources.modules matches (sources.modules: oci://registry.example.com/**)",
+    ]);
+  });
+
   it("names a local module outside the repo as unread, since what it uses cannot be checked", async () => {
     const repo = write(tmp("tg-sources-out-"), { "app/main.tf": 'module "x" {\n  source = "../../elsewhere"\n}\n' });
     const refused = await checkRootSources(repo, "app", { modules: ["./**", "../**"] }, parser);

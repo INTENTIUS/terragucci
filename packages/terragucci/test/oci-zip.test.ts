@@ -286,6 +286,38 @@ describe.skipIf(!TOFU || !OPENSSL || process.platform !== "linux")("tofu init on
   });
 });
 
+/** A Terragrunt CI installs off the path, so the tests that find none on it stay as they are. */
+const TERRAGRUNT = process.env.TERRAGUCCI_TEST_TERRAGRUNT;
+
+describe.skipIf(!TOFU || !OPENSSL || !TERRAGRUNT || process.platform !== "linux")("terragrunt on a module publish pushed", () => {
+  it("installs a unit's terraform source by tag, and a subdirectory of it, with no experiment", { timeout: 120_000 }, async () => {
+    const work = tmp("terragucci-oci-tg-");
+    const reg = fakeRegistry();
+    const { server, host, ca } = await serve(reg, work);
+    try {
+      const repo = moduleRepo();
+      expect(await publish(repo, { modules: { publish: `oci://${host}/acme/modules` } }, { fetch: reg.fetch })).toEqual([expect.objectContaining({ module: "net", status: "published" })]);
+      const live = write(join(work, "live"), {
+        "net/terragrunt.hcl": `terraform {\n  source = "oci://${host}/acme/modules/net?tag=0.1.0"\n}\n\ninputs = {\n  name = "unit"\n}\n`,
+        "inner/terragrunt.hcl": `terraform {\n  source = "oci://${host}/acme/modules/net//nested/inner?tag=0.1.0"\n}\n`,
+      });
+      writeFileSync(join(work, "tofurc"), "oci_default_credentials {\n  discover_ambient_credentials = false\n}\n");
+      const env = { ...process.env, SSL_CERT_FILE: ca, TF_CLI_CONFIG_FILE: join(work, "tofurc"), TF_IN_AUTOMATION: "1", HOME: work, TG_TF_PATH: "tofu", TG_NON_INTERACTIVE: "true", TG_NO_COLOR: "true" };
+      const version = await run(TERRAGRUNT!, ["--version"], { cwd: live, env });
+      expect(version.out).toMatch(/v1\.(2|[3-9])\./);
+      for (const [unit, want] of [["net", '"hello unit"'], ["inner", "1"]] as const) {
+        const apply = await run(TERRAGRUNT!, ["run", "--", "apply", "-auto-approve", "-input=false"], { cwd: join(live, unit), env });
+        expect(apply.out).toContain("Apply complete");
+        expect(apply.status).toBe(0);
+        const out = await run(TERRAGRUNT!, ["run", "--", "output", "-json"], { cwd: join(live, unit), env });
+        expect(Object.values(JSON.parse(out.out.slice(out.out.indexOf("{"))) as Record<string, { value: unknown }>).map((o) => JSON.stringify(o.value))).toEqual([want]);
+      }
+    } finally {
+      server.close();
+    }
+  });
+});
+
 function moduleRepo(): string {
   const repo = tmp("terragucci-oci-tofu-repo-");
   write(repo, {

@@ -461,11 +461,38 @@ function backendConfig(backend: NonNullable<RootSettings["backend"]>): string {
  * role, and leaves the bucket as it is.
  */
 export function backendBootstrap(repo: string, settings: Pick<ResolvedSettings, "generate" | "terragrunt" | "version" | "binary">): boolean {
+  return bootstrapUnits(repo, settings).length > 0;
+}
+
+/** The Terragrunt units generate gives `disable_init: false`, with the backend type each gets. */
+export function bootstrapUnits(repo: string, settings: Pick<ResolvedSettings, "generate" | "terragrunt" | "version" | "binary">): { unit: string; backend?: string }[] {
   const gen = settings.generate;
-  if (!gen) return false;
+  if (!gen) return [];
   const levels = [gen, ...Object.values(gen.dirs ?? {}), ...Object.values(gen.roots ?? {})];
-  if (!levels.some((l) => l?.disable_init === false)) return false;
-  return walkUnits(repo, settings.terragrunt?.exclude).some((u) => rootSettings(gen, u.path, settings).disableInit === false);
+  if (!levels.some((l) => l?.disable_init === false)) return [];
+  return walkUnits(repo, settings.terragrunt?.exclude).flatMap((u) => {
+    const s = rootSettings(gen, u.path, settings);
+    return s.disableInit === false ? [{ unit: u.path, ...(s.backend ? { backend: s.backend.type } : {}) }] : [];
+  });
+}
+
+/** The first Terragrunt release that bootstraps an azurerm backend without an experiment. */
+export const azureBootstrapRelease = "1.2.0";
+
+/**
+ * Why a unit whose azurerm backend generate lets Terragrunt bootstrap cannot
+ * run on the Terragrunt `version` it would run, or undefined when it can (or
+ * the version is not known). Terragrunt before 1.2 creates the resource
+ * group, storage account and container only behind its `azure-backend`
+ * experiment, and without it leaves them out with a warning, so the apply
+ * would init against a container that does not exist.
+ */
+export function azureBootstrapRefusal(unit: string, version: string | undefined): string | undefined {
+  const at = version ? /^v?(\d+)\.(\d+)\.(\d+)/.exec(version) : null;
+  if (!at) return undefined;
+  const [maj, min] = [Number(at[1]), Number(at[2])];
+  if (maj > 1 || (maj === 1 && min >= 2)) return undefined;
+  return `generate gives ${unit} an azurerm backend with disable_init: false, and Terragrunt ${version} creates an azurerm backend's resource group, storage account and container only behind its azure-backend experiment; run Terragrunt ${azureBootstrapRelease} or later (the terragrunt CI image carries it), or create them and set disable_init: true`;
 }
 
 /** generate in a Terragrunt repo: terragucci.hcl, and why a unit or another file would keep it from taking effect. */

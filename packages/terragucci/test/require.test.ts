@@ -6,7 +6,7 @@ import { ConfigError, validateConfig } from "../src/config";
 import { checkRoot, checkUnitPins } from "../src/check";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { publish } from "../src/publish";
-import { checkedSources, checkRootPins, governingModules, normalizeSource, pinChecker, splitGitSource } from "../src/publish/require";
+import { checkedSources, checkRootPins, governingModules, normalizeSource, ociRepository, pinChecker, splitGitSource } from "../src/publish/require";
 import { runStage } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
 import { fakeRegistry } from "./registry";
@@ -147,6 +147,38 @@ describe("an OCI source", () => {
     const r = await pins!("envs/dev");
     expect(r.verified).toEqual(["module.a oci://registry.test/acme/modules/service 0.1.0"]);
     expect(r.refused).toEqual([expect.stringMatching(/^refused: envs\/dev: module.b .* at 0.2.0, which modules.require: attested refuses: sha256:[0-9a-f]+ is not in the release ledger/)]);
+  });
+
+  it("checks a Terragrunt unit's oci:// source with a //subdir as the package's release, and a stack unit block's source", async () => {
+    const pair = keyPair();
+    const repo = tmp("terragucci-require-oci-tg-");
+    const origin = tmp("terragucci-require-oci-tg-origin-");
+    execFileSync("git", ["init", "-q", "--bare", origin]);
+    const oci = { publish: "oci://registry.test/acme/modules", attest: true, require: "attested" as const };
+    write(repo, { "modules/service/main.tf": 'resource "terraform_data" "s" {}\n', "modules/service/nested/inner/main.tf": "", "cosign.pub": pair.pem });
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "remote", "add", "origin", `file://${origin}`);
+    commit(repo, "feat: service");
+    const reg = fakeRegistry();
+    await publish(repo, { modules: oci }, { signer: testSigner(pair.privateKey), parser: await parser(), fetch: reg.fetch });
+    const held = reg.manifests.get("acme/modules/service:0.1.0")!;
+    reg.manifests.set("acme/modules/service:0.2.0", { ...held, body: Buffer.from(held.body.toString().replace("0.1.0", "0.2.0")) });
+    const unit = (tag: string) => `terraform {\n  source = "oci://registry.test/acme/modules/service//nested/inner?tag=${tag}"\n}\n`;
+    write(repo, {
+      "live/dev/terragrunt.hcl": unit("0.1.0"),
+      "live/prod/terragrunt.hcl": unit("0.2.0"),
+      "stacks/terragrunt.stack.hcl": 'unit "svc" {\n  source = "oci://registry.test/acme/modules/service?tag=0.2.0"\n  path   = "svc"\n}\n',
+    });
+    const pins = (await pinChecker(repo, oci, undefined, {}, { parser: await parser(), fetch: reg.fetch, env: {} }))!;
+    expect(await pins("live/dev")).toEqual({ refused: [], verified: ["terraform oci://registry.test/acme/modules/service//nested/inner 0.1.0"] });
+    expect((await pins("live/prod")).refused).toEqual([
+      expect.stringMatching(/^refused: live\/prod: terraform \(live\/prod\/terragrunt.hcl\) pins oci:\/\/registry.test\/acme\/modules\/service\/\/nested\/inner at 0.2.0, which modules.require: attested refuses: sha256:[0-9a-f]+ is not in the release ledger/),
+    ]);
+    expect((await pins("stacks/.terragrunt-stack/svc")).refused).toEqual([
+      expect.stringMatching(/^refused: stacks\/.terragrunt-stack\/svc: unit.svc \(stacks\/terragrunt.stack.hcl\) pins oci:\/\/registry.test\/acme\/modules\/service at 0.2.0, which modules.require: attested refuses: sha256:[0-9a-f]+ is not in the release ledger/),
+    ]);
+    expect(ociRepository("oci://registry.test/acme/modules/service//nested/inner?tag=0.1.0")).toBe("oci://registry.test/acme/modules/service");
+    expect(ociRepository("oci://registry.test/acme/modules/service")).toBe("oci://registry.test/acme/modules/service");
   });
 });
 

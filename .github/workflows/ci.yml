@@ -74,7 +74,18 @@ jobs:
           tar -xzf /tmp/tofu.tar.gz -C /tmp tofu
           sudo mv /tmp/tofu /usr/local/bin/tofu
           tofu version
+      - name: Install Terragrunt
+        run: |
+          arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+          cd /tmp
+          curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v1.2.0/terragrunt_linux_$arch
+          curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v1.2.0/SHA256SUMS
+          grep " terragrunt_linux_$arch\$" SHA256SUMS | sha256sum -c -
+          sudo install -D -m 0755 terragrunt_linux_$arch /opt/terragrunt/terragrunt
+          /opt/terragrunt/terragrunt --version
       - name: Install
         run: npm ci
       - name: Test
         run: just test-shard ${{ matrix.shard }} 3
+        env:
+          TERRAGUCCI_TEST_TERRAGRUNT: /opt/terragrunt/terragrunt

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
@@ -185,6 +185,31 @@ describe("a Terragrunt wave behind its gate", () => {
     expect(await seen(`${backend}  disable_init: false\n`)).toEqual(["true", "true"]);
     expect(await seen(backend)).toEqual([undefined, undefined]);
     expect(await seen(undefined)).toEqual([undefined, undefined]);
+  });
+
+  it("refuses a wave that would bootstrap an azurerm backend with a Terragrunt before 1.2, and runs it on 1.2", async () => {
+    const run = async (version: string): Promise<{ code: number; said: string; runs: string[] }> => {
+      const { work } = setup();
+      write(work, { "terragucci.yml": 'generate:\n  disable_init: false\n  backend:\n    azurerm: { resource_group_name: tfstate, storage_account_name: acmestate, container_name: tfstate, key: "{root}.tfstate", location: westeurope }\n' });
+      git(work, "add", "-A");
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "config");
+      const bin = join(tmp("tg-old-"), "terragrunt");
+      writeFileSync(bin, `#!/bin/sh\necho "terragrunt version v${version}"\n`);
+      chmodSync(bin, 0o755);
+      const out = vi.spyOn(console, "log").mockImplementation(() => {});
+      const tg = fakeTerragrunt();
+      const code = await applyWave(work, { ...opts(tg, "never"), terragruntPath: bin, wave: 1, now: T(1) });
+      const said = out.mock.calls.flat().join("\n");
+      out.mockRestore();
+      return { code, said, runs: runs(tg) };
+    };
+    const old = await run("1.1.6");
+    expect(old.code).not.toBe(0);
+    expect(old.runs).toEqual([]);
+    expect(old.said).toContain("FAILED live/a: generate gives live/a an azurerm backend with disable_init: false, and Terragrunt 1.1.6 creates an azurerm backend's resource group, storage account and container only behind its azure-backend experiment");
+    const current = await run("1.2.0");
+    expect(current.code).toBe(0);
+    expect(current.runs).toEqual(["plan live/a", "apply live/a"]);
   });
 
   it("--rest needs --terragrunt", async () => {

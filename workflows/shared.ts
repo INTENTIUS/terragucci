@@ -85,6 +85,24 @@ export const installTofu = (version: string): InstanceType<typeof Step> =>
     ].join("\n"),
   });
 
+/** Where installTerragrunt puts Terragrunt: off the path, so the tests that find no Terragrunt on it stay as they are. */
+export const TEST_TERRAGRUNT = "/opt/terragrunt/terragrunt";
+
+/** Terragrunt for the tests that run it (TERRAGUCCI_TEST_TERRAGRUNT), checked against the release's SHA256SUMS. */
+export const installTerragrunt = (version: string): InstanceType<typeof Step> =>
+  new Step({
+    name: "Install Terragrunt",
+    run: [
+      `arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac`,
+      `cd /tmp`,
+      `curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v${version}/terragrunt_linux_$arch`,
+      `curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v${version}/SHA256SUMS`,
+      `grep " terragrunt_linux_$arch\\$" SHA256SUMS | sha256sum -c -`,
+      `sudo install -D -m 0755 terragrunt_linux_$arch ${TEST_TERRAGRUNT}`,
+      `${TEST_TERRAGRUNT} --version`,
+    ].join("\n"),
+  });
+
 /** Go for the provider's tests (`just provider-test`), at the version its go.mod names. */
 export const GO_VERSION = "1.25.5";
 

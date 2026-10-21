@@ -9,8 +9,9 @@
  *   edit target  generatingStack, stackFile (Shape.sourceOf): a generated unit is changed in its stack file or template
  *   report       stackOfUnit, unitStack
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { findTerragruntStackFiles, readTerragruntStackFile } from "@intentius/chant-lexicon-terraform/terragrunt/affected";
 import { checkTerragruntVersion, type TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { stackOfUnit as parentOfUnit } from "@intentius/chant-lexicon-terraform/terragrunt/units";
@@ -112,6 +113,47 @@ export function explicitStackUnits(repo: string, stacks: readonly string[]): { u
     }
   }
   return out;
+}
+
+/** A stack `unit` source that names a directory of the repo: its contents are copied into the unit, and read there. */
+const LOCAL_STACK_SOURCE = /^(\.\.?\/|\$\{get_repo_root\(\)\}|\$\{get_terragrunt_dir\(\)\})/;
+
+/**
+ * The `unit` block of an explicit stack that generates `unit`, with its
+ * `source` as written, when that source is remote (an `oci://`, git or
+ * registry address): the stack file, the block's name and the source. A
+ * unit no stack file generates, and one copied from a directory of the repo,
+ * give undefined. The stack is the one generatingStack names, else the
+ * nearest directory above the unit with a stack file (a block with
+ * `no_dot_terragrunt_stack`).
+ */
+export async function stackUnitSource(repo: string, unit: string, parser: Hcl2Json): Promise<{ file: string; name: string; source: string } | undefined> {
+  const p = posix(unit).replace(/\/+$/, "");
+  const candidates: string[] = [];
+  const g = generatingStack(p);
+  if (g !== undefined) candidates.push(g);
+  else {
+    const parts = p.split("/");
+    for (let i = parts.length - 1; i >= 0; i--) candidates.push(i === 0 ? "." : parts.slice(0, i).join("/"));
+  }
+  for (const stack of candidates) {
+    const file = stackFile(stack);
+    if (!existsSync(join(repo, file))) continue;
+    const text = readFileSync(join(repo, file), "utf-8");
+    const block = readTerragruntStackFile(repo, file, text).find((b) => b.type === "unit" && b.generated === p);
+    if (!block) continue;
+    let tree: Record<string, unknown>;
+    try {
+      tree = (await parser.parse(file, text)) as Record<string, unknown>;
+    } catch (e) {
+      throw new ConfigError(`${file} could not be read (${(e as Error).message.split("\n")[0]}), so the source of its unit "${block.name}" cannot be checked`);
+    }
+    const bodies = ((tree.unit as Record<string, unknown> | undefined)?.[block.name] ?? []) as Record<string, unknown>[];
+    const source = (Array.isArray(bodies) ? bodies : [bodies]).map((b) => b?.source).find((s): s is string => typeof s === "string");
+    if (source === undefined || LOCAL_STACK_SOURCE.test(source)) return undefined;
+    return { file, name: block.name, source };
+  }
+  return undefined;
 }
 
 /**

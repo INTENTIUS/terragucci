@@ -125,6 +125,30 @@ If something you run writes into a generated file in place, do one of these:
 - set `mutable = true` on that `generate` block, so Terragrunt writes the unit its own copy
 - set `TG_NO_CAS=true` in the job's `env` to turn the shared copies off
 
+## Modules from an OCI registry
+
+Terragrunt 1.2 installs a module that [`publish`](/terragucci/guides/publish-modules/) pushed to an OCI registry, named in a unit's `terraform { source }` and pinned by its tag. It needs no experiment.
+
+```hcl
+# live/prod/network/terragrunt.hcl
+terraform {
+  source = "oci://ghcr.io/acme/modules/network?tag=1.4.0"
+}
+```
+
+A `//` after the module picks a directory inside it: `oci://ghcr.io/acme/modules/network//subnets?tag=1.4.0`.
+
+| Check | How it reads the source |
+|---|---|
+| [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) | as written, with its scheme, so list `oci://ghcr.io/acme/**`; `ghcr.io/acme/**` does not match |
+| [`modules.require: attested`](/terragucci/guides/publish-modules/#require-attested-releases) | the tag or digest is the release of the whole package, verified against the publisher's ledger whatever directory `//` picks |
+
+Both checks also read the `source` of the `unit` block in `terragrunt.stack.hcl` that generates a unit from a remote source.
+
+## Backend bootstrap
+
+With [`generate`](/terragucci/guides/generate-root-files/#bucket-bootstrap) and `disable_init: false`, the apply job runs Terragrunt with `TG_BACKEND_BOOTSTRAP`, so the first apply creates the state's bucket. For an `azurerm` backend, Terragrunt 1.2 creates the resource group, the storage account and the container ([Azure Storage bootstrap](/terragucci/guides/generate-root-files/#azure-storage-bootstrap) lists the roles the apply identity needs). An older Terragrunt does that only behind its `azure-backend` experiment, so terragucci fails such a wave before it plans, naming the unit and the version.
+
 ## Explicit stacks
 
 The units a `terragrunt.stack.hcl` generates go through every stage as units the repo holds do. Each job runs `terragrunt stack generate` before it reads them, so keep `.terragrunt-stack/` in `.gitignore`.

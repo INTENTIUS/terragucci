@@ -13,7 +13,7 @@
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, installJust, installTofu, setupGo } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, TEST_TERRAGRUNT, installJust, installTerragrunt, installTofu, setupGo } from "../workflows/shared";
 import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 export const workflow = new Workflow({
@@ -56,7 +56,8 @@ export const staticChecks = new Job({
 /**
  * The unit tests, a third each. chant.workspace.json's ci.green names each
  * job, so a change to the shard count changes it too. A test that runs the
- * real tofu skips without it, so each job installs it.
+ * real tofu skips without it, so each job installs it, and Terragrunt off
+ * the path for the tests that run it.
  */
 export const test = new Job({
   name: "test (${{ matrix.shard }}/3)",
@@ -69,7 +70,8 @@ export const test = new Job({
   steps: [
     ...SETUP,
     installTofu(TOOL_VERSIONS.tofu),
+    installTerragrunt(TOOL_VERSIONS.terragrunt),
     new Step({ name: "Install", run: "npm ci" }),
-    new Step({ name: "Test", run: "just test-shard ${{ matrix.shard }} 3" }),
+    new Step({ name: "Test", run: "just test-shard ${{ matrix.shard }} 3", env: { TERRAGUCCI_TEST_TERRAGRUNT: TEST_TERRAGRUNT } }),
   ],
 });
