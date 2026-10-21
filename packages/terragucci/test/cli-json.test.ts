@@ -58,6 +58,20 @@ describe("--json", () => {
     expect(existsSync(join(dir, ".github"))).toBe(false);
   });
 
+  it("init --gate on-destroy --dry-run shows gate: on-destructive in terragucci.yml, and an unknown gate or one the config contradicts is exit 2", async () => {
+    const dir = repo();
+    const { code, out } = await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "on-destroy", "--json");
+    expect(code).toBe(0);
+    const files = JSON.parse(out).results.files as { path: string; status: string; content: string }[];
+    expect(files.find((f) => f.path === "terragucci.yml")).toEqual({ path: "terragucci.yml", status: "created", content: "gate: on-destructive\n" });
+    expect(files.find((f) => f.path === ".github/workflows/terragucci.yml")?.content).toContain("--gate on-destructive");
+    expect(existsSync(join(dir, "terragucci.yml"))).toBe(false);
+    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "sometimes")).code).toBe(2);
+    write(dir, { "terragucci.yml": "gate: always\n" });
+    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "never")).code).toBe(2);
+    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "never", "--force")).code).toBe(0);
+  });
+
   it("a root found by a provider block or a glob says so", async () => {
     const dir = write(repo(), { "edge/main.tf": 'provider "aws" {\n  region = "us-east-1"\n}\n' });
     const r = JSON.parse((await run(dir, "init", "--dry-run", "--binary", "tofu", "--json")).out).results.roots;

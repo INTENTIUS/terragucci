@@ -36,6 +36,7 @@ Paste this prompt into a coding agent to set terragucci up.
 Set up terragucci in this repository.
 Read https://intentius.io/terragucci/llms.txt first, then
 https://intentius.io/terragucci/getting-started/agents/ and follow it.
+Ask me whether waves should wait for an approval, and pass `--gate` to `init` to match.
 Open a pull request with the result.
 Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ```

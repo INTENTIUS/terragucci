@@ -57,19 +57,32 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 ## init
 
 ```bash
-terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--forge` | the forge, when the remote cannot tell |
 | `--binary` | the binary, when detection picks the wrong one: `tofu`, `terraform` or `choudoufu` |
+| `--gate` | when a wave waits for an approval: `never`, `on-destructive` (the default) or `always`; `on-destroy` reads as `on-destructive`. `init` writes `gate:` into `terragucci.yml` and renders the pipeline with it |
 | `--approval` | `ledger`, `pr-review` or `sealed`, when the config names no mode; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `--signer` | under `approval: sealed`, write the first line of `.chant/allowed_signers` for this principal from `git config user.signingkey`, when the file does not exist |
 | `--dry-run` | compute everything and write nothing |
-| `--force` | overwrite a pipeline file or `terragucci.components.json` terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml` |
+| `--force` | overwrite a pipeline file or `terragucci.components.json` terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml`. With `--gate`, replace a different `gate:` in the config |
 
-A flag detection would not reach goes into a new `terragucci.yml`. An existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
+A flag detection would not reach goes into a new `terragucci.yml`. For `--forge`, `--binary` and `--approval`, an existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
+
+`--gate` is written even when it names the default, and it is the one flag `init` writes into an existing config:
+
+| `terragucci.yml` | `init --gate never` |
+|---|---|
+| none | writes one with `gate: never` |
+| no `gate` key | adds `gate: never` at the end and keeps the rest of the file |
+| `gate: never` | leaves it as it is |
+| another gate, such as `gate: always` | exits 2: `--gate never differs from terragucci.yml, which sets gate: always; pass --force to write gate: never into it, or drop --gate` |
+| another gate, with `--force` | replaces the `gate:` line |
+
+With `--dry-run` the config shows as `would write terragucci.yml` or `would update terragucci.yml`, and `--json` carries its new content. A `terragucci.ts` config is code, so `init` exits 2 and names the `gate` to set in it.
 
 The approval mode decides what else `init` writes.
 
@@ -990,7 +1003,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 
 | Command | 0 | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
-| `init` | done | | an existing config file needs a line added | | |
+| `init` | done | | an existing config file needs a line added, or sets another gate than `--gate` | | |
 | `reconcile` | done | a project failed | | | |
 | `generate` | written, or with `--check` every generated file matches | with `--check`, a generated file out of line | a file it did not write is in the way, or a root's own files declare what it would write | | |
 | `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |

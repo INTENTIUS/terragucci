@@ -313,6 +313,49 @@ describe("init", () => {
     expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8")).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
   });
 
+  it.each([
+    ["never", "never"],
+    ["on-destructive", "on-destructive"],
+    ["always", "always"],
+  ] as const)("--gate %s renders the pipeline with it and writes gate: into a new terragucci.yml", async (gate, want) => {
+    const dir = withRemote("https://github.com/acme/infra.git");
+    const r = await init(dir, { binary: "tofu", gate });
+    expect(readFileSync(r.files[0].path, "utf-8")).toContain(`--gate ${want}`);
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe(`gate: ${want}\n`);
+    expect(r.configNote).toBe(`terragucci.yml records gate: ${want}`);
+    // The next run reads the key, and changes nothing.
+    const again = await init(dir, { binary: "tofu", gate });
+    expect(again.files.every((f) => f.status === "unchanged")).toBe(true);
+    expect(readFileSync(again.files[0].path, "utf-8")).toContain(`--gate ${want}`);
+  });
+
+  it("--gate adds gate: to an existing terragucci.yml and keeps the rest of it", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "# ours\nbinary: tofu\n" });
+    const dry = await init(dir, { gate: "never", dryRun: true });
+    expect(dry.files.find((f) => f.path === join(dir, "terragucci.yml"))).toMatchObject({ status: "updated", content: "# ours\nbinary: tofu\ngate: never\n" });
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("# ours\nbinary: tofu\n");
+    const r = await init(dir, { gate: "never" });
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("# ours\nbinary: tofu\ngate: never\n");
+    expect(readFileSync(r.files[0].path, "utf-8")).toContain("--gate never");
+    expect(r.configNote).toBe("terragucci.yml records gate: never");
+  });
+
+  it("--gate that differs from the config's gate is refused without --force, and with it replaces the line", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "gate: always\nbinary: tofu\n" });
+    await expect(init(dir, { gate: "never" })).rejects.toThrow("--gate never differs from terragucci.yml, which sets gate: always; pass --force to write gate: never into it, or drop --gate");
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("gate: always\nbinary: tofu\n");
+    const r = await init(dir, { gate: "never", force: true });
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("gate: never\nbinary: tofu\n");
+    expect(readFileSync(r.files[0].path, "utf-8")).toContain("--gate never");
+  });
+
+  it("--gate on-destructive agrees with a config that spells it on-destroy, and leaves the file alone", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "gate: on-destroy\n" });
+    const r = await init(dir, { binary: "tofu", gate: "on-destructive" });
+    expect(r.files.some((f) => f.path === join(dir, "terragucci.yml"))).toBe(false);
+    expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("gate: on-destroy\n");
+  });
+
   it("a control repo's project carries its approval in the pipeline, which has no config of its own to read at base", async () => {
     const dir = withRemote("https://github.com/acme/infra.git");
     const r = await init(dir, { settings: { gate: "on-destructive", drift: false, runtime: "forge", tips: true, env: {}, binary: "tofu", approval: "sealed" } });
