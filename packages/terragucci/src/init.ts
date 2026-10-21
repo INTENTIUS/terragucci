@@ -2,7 +2,8 @@
  * `terragucci init`: set one repo up. It reads terragucci.yml when there is
  * one, detects what the file leaves out, writes the pipeline, and writes
  * terragucci.yml only when a choice it was given on the command line differs
- * from what it would detect. Run twice, the second run changes nothing.
+ * from what it would detect. `--gate` is the one choice it also writes into
+ * an existing config. Run twice, the second run changes nothing.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -17,6 +18,7 @@ import {
   COST_KEY_SECRET,
   EPHEMERAL_SWEEP,
   FORGE_ENVIRONMENT_NOT_FORGEJO,
+  normalizeGate,
   gitlabPrApplyProblems,
   findConfig,
   ownJobsProblems,
@@ -28,6 +30,7 @@ import {
   type Approval,
   type Binary,
   type ForgeName,
+  type Gate,
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
@@ -58,6 +61,8 @@ export interface InitOptions {
   binary?: Binary;
   /** `--approval`: what counts as a waiting wave's approval. */
   approval?: Approval;
+  /** `--gate`: when a wave waits for an approval. Written into terragucci.yml; one that differs from the config's needs `force`. */
+  gate?: Gate;
   /** `--signer <principal>`: under approval: sealed, write the first signers line from `git config user.signingkey`. */
   signer?: string;
   /** Overwrite a pipeline file terragucci did not write. */
@@ -168,7 +173,14 @@ export function ownJobs(repo: string, v: NonNullable<ProjectSettings["own_jobs"]
 
 export async function init(repo: string, options: InitOptions = {}): Promise<InitResult> {
   const configPath = options.settings ? undefined : findConfig(repo);
-  const settings: ResolvedSettings = options.settings ?? resolveRepo(configPath ? await loadConfig(configPath) : {});
+  const loaded = configPath ? await loadConfig(configPath) : undefined;
+  const resolved: ResolvedSettings = options.settings ?? resolveRepo(loaded ?? {});
+  // --gate: the config's gate key, when it sets one, changes only with --force.
+  const configGate = normalizeGate(loaded?.gate);
+  if (options.gate && configGate && options.gate !== configGate && !options.force) {
+    throw new ConfigError(`--gate ${options.gate} differs from ${relative(repo, configPath!)}, which sets gate: ${configGate}; pass --force to write gate: ${options.gate} into it, or drop --gate`);
+  }
+  const settings: ResolvedSettings = options.gate ? { ...resolved, gate: options.gate } : resolved;
 
   const notes: string[] = [];
   // The repo's shape decides everything below, and its refusals come first, as config check gives them.
@@ -442,13 +454,21 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (options.forge && !settings.forge && options.forge !== detectedForge?.value) save.forge = options.forge;
     if (options.binary && !settings.binary && options.binary !== detectedBinary.value) save.binary = options.binary;
     if (options.approval && !configured && options.approval !== detectedApproval) save.approval = options.approval;
-    if (Object.keys(save).length) {
-      if (configPath) {
-        throw new ConfigError(`${relative(repo, configPath)} exists and init does not edit it; add ${Object.entries(save).map(([k, v]) => `${k}: ${v}`).join(", ")} to it`);
-      }
+    if (Object.keys(save).length && configPath) {
+      throw new ConfigError(`${relative(repo, configPath)} exists and init does not edit it; add ${Object.entries(save).map(([k, v]) => `${k}: ${v}`).join(", ")} to it`);
+    }
+    // --gate is written even when it names the default, so the config says what the pipeline does.
+    const gate = options.gate && options.gate !== configGate ? options.gate : undefined;
+    if (gate && configPath) {
+      files.push(plan(configPath, withGate(repo, configPath, gate)));
+      configNote = `${relative(repo, configPath)} records gate: ${gate}`;
+    } else if (Object.keys(save).length || gate) {
       const path = join(repo, "terragucci.yml");
-      files.push(plan(path, `${emitYAML(save, 0).trim()}\n`));
-      configNote = `terragucci.yml records ${Object.keys(save).join(" and ")}, which detection cannot find`;
+      const detected = Object.keys(save);
+      files.push(plan(path, `${emitYAML({ ...save, ...(gate ? { gate } : {}) }, 0).trim()}\n`));
+      configNote = detected.length
+        ? `terragucci.yml records ${detected.join(" and ")}, which detection cannot find${gate ? `, and gate: ${gate}` : ""}`
+        : `terragucci.yml records gate: ${gate}`;
     }
   }
 
@@ -504,6 +524,31 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
   return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
+}
+
+/**
+ * The config file's text with its top-level `gate` set to `gate`: the line
+ * replaced when there is one, added at the end when not, the rest kept as it
+ * is. A terragucci.ts is code, so init names the change instead.
+ */
+function withGate(repo: string, path: string, gate: Gate): string {
+  const name = relative(repo, path);
+  if (path.endsWith(".ts")) throw new ConfigError(`${name} is code and init does not edit it; set gate: "${gate}" in it`);
+  const text = readFileSync(path, "utf-8");
+  if (path.endsWith(".json")) return `${JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), gate }, null, 2)}\n`;
+  const line = /^gate[ \t]*:.*$/m;
+  const out = line.test(text) ? text.replace(line, `gate: ${gate}`) : `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}gate: ${gate}\n`;
+  // A gate in a form the line edit cannot reach, such as a flow-style map, is left to the person.
+  let doc: unknown;
+  try {
+    doc = parseYAMLDocument(out);
+  } catch {
+    doc = undefined;
+  }
+  if (doc === null || typeof doc !== "object" || normalizeGate((doc as Record<string, unknown>).gate) !== gate) {
+    throw new ConfigError(`init cannot set the gate in ${name}; set gate: ${gate} in it`);
+  }
+  return out;
 }
 
 /** The first line of the terragucci.yml a control repo writes into a project, so a later run knows it may rewrite it. */

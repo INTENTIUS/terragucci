@@ -5,6 +5,7 @@ claims: [boot/tofu, check/tofu, affected/tofu, security/fork, init/runner-label]
 prompt: |
   Read https://intentius.io/terragucci/guides/add-to-a-repo/ and https://intentius.io/terragucci/getting-started/agents/.
   Set up terragucci in this repository for its forge.
+  Ask me whether waves should wait for an approval, and pass `--gate` to `init` to match.
   Run `npx terragucci init --dry-run --json` and show me the findings before writing anything.
   Then run `npx terragucci init` and open a pull request with the files it wrote, package.json and package-lock.json only.
   List the token, OIDC roles and required status I must set in the forge settings.
@@ -136,6 +137,28 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
 
    Pass `--forge` once for a host the table does not list; `init` records it in `terragucci.yml`.
 
+   `--gate` picks when a wave waits for a person's approval before it applies, and `init` records it in `terragucci.yml` too:
+
+   | `--gate` | A wave waits when |
+   |---|---|
+   | `on-destructive` (the default) | its plans destroy or replace something |
+   | `always` | it changes anything |
+   | `never` | never; pull request review and branch protection stand before the apply |
+
+   ```bash
+   npx terragucci init --gate never
+   ```
+
+   ```text
+   found 15 roots in 2 layers, tofu 1.13.1 (tofu on the path), forge github (the origin remote (github.com))
+   wrote .github/workflows/terragucci.yml
+   wrote terragucci.yml
+   wrote terragucci.components.json
+   terragucci.yml records gate: never
+   ```
+
+   A `terragucci.yml` that already sets another gate stays as it is, and `init` exits 2 unless you pass `--force`. [Gate policy](/terragucci/reference/stages/#gate-policy) has the details.
+
    In a Terragrunt repo `init` finds the units and writes the same files. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
 
 2. Give the pipeline a token.
@@ -260,7 +283,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    </TabItem>
    </Tabs>
 
-6. Make approval possible. A wave that destroys something waits until a person runs `npx terragucci approve` from a checkout or, under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes), reviews the pull request. Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
+6. Make approval possible. Under the default gate, a wave that destroys or replaces something waits until a person runs `npx terragucci approve` from a checkout or, under [`approval: pr-review`](/terragucci/guides/approve-a-wave/#approval-modes), reviews the pull request. Signing is optional; only `approval: sealed` needs a signers file ([before your first approval](/terragucci/getting-started/#first-approval)).
 
 </Steps>
 

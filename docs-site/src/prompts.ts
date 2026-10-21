@@ -12,6 +12,7 @@ export const setupPrompt = [
 	'Set up terragucci in this repository.',
 	`Read ${SITE}/llms.txt first, then`,
 	`${SITE}/getting-started/agents/ and follow it.`,
+	'Ask me whether waves should wait for an approval, and pass `--gate` to `init` to match.',
 	'Open a pull request with the result.',
 	neverLine,
 ].join('\n');

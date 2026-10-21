@@ -1,7 +1,7 @@
 /**
  * The terragucci command.
  *
- *   terragucci init [--forge f] [--binary b] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+ *   terragucci init [--forge f] [--binary b] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
  *   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
@@ -84,7 +84,7 @@ import { secretRootProblems } from "./root-secrets";
 import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
-import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, gitlabPrApplyProblems, loadConfig, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -149,7 +149,7 @@ import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 import { nodeViewDeps, publishTarget, repoRoot, view, viewProject, viewReports, viewSource } from "./view";
 
 const USAGE = `usage:
-  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
   terragucci import hcp|otf|scalr [--hostname <host>] [--organization <org>] [--environment <env>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
@@ -230,6 +230,14 @@ async function lockShapeAt(cwd: string): Promise<{ after?: WavesAfter; synth?: t
   } catch {
     return {};
   }
+}
+
+/** init's `--gate`: a gate policy, its older name read as the policy; undefined when not given. */
+function gateFlag(v: string | undefined): Gate | undefined {
+  if (v === undefined) return undefined;
+  const gate = normalizeGate(v);
+  if (!gate) throw new ConfigError(`--gate must be one of ${GATES.join(", ")}`);
+  return gate;
 }
 
 function approvalFlag(v: string | undefined): Approval | undefined {
@@ -314,8 +322,9 @@ export async function main(argv: string[]): Promise<number> {
         if (forge && !FORGES.includes(forge as ForgeName)) throw new ConfigError(`--forge must be one of ${FORGES.join(", ")}`);
         if (binary && !BINARIES.includes(binary as Binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
         const approval = approvalFlag(str(flags, "approval"));
+        const gate = gateFlag(str(flags, "gate"));
         const signer = str(flags, "signer");
-        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(approval ? { approval } : {}), ...(signer ? { signer } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
+        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(gate ? { gate } : {}), ...(approval ? { approval } : {}), ...(signer ? { signer } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
         if (json) return emit(envelope("init", 0, initJson(cwd, result, flags["dry-run"] === true)));
         console.log(describeInit(cwd, result, flags["dry-run"] === true));
         if (flags["dry-run"] === true) console.log("dry run: nothing was written");
