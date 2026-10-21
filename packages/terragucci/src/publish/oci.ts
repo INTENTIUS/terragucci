@@ -1,13 +1,20 @@
 /**
  * A small OCI distribution client: enough to push a module as an artifact,
  * ask whether a tag exists, and read a manifest back. OpenTofu's `oci://`
- * module sources read this shape: an image manifest whose artifact type and
- * one layer are `application/vnd.opentofu.modulepkg`.
+ * module sources read this shape: an image manifest whose artifact type is
+ * `application/vnd.opentofu.modulepkg`, an empty config, and exactly one
+ * `archive/zip` layer, a zip whose root is the module's root.
+ *
+ * terragucci 0.4.40 and earlier pushed a gzipped tar as the layer, under the media
+ * type `application/vnd.opentofu.modulepkg`, which OpenTofu does not install.
+ * `legacyLayer` finds those, so publish can republish them as a zip.
  */
 import { ConfigError } from "../config";
 import { sha256 } from "./archive";
 
 export const MODULE_TYPE = "application/vnd.opentofu.modulepkg";
+/** The one layer media type OpenTofu installs a module package from. */
+export const ZIP_TYPE = "archive/zip";
 const MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json";
 const EMPTY_TYPE = "application/vnd.oci.empty.v1+json";
 export const REVISION = "org.opencontainers.image.revision";
@@ -121,11 +128,21 @@ export class Registry {
     return { digest, size: data.length };
   }
 
-  /** Push a module archive under a tag; returns the manifest digest. */
-  async pushModule(repo: string, tag: string, archive: Uint8Array, annotations: Record<string, string>): Promise<string> {
-    await this.pushBlob(repo, archive);
+  /** A blob's bytes, checked against its digest, or undefined when the registry does not hold it. */
+  async blob(repo: string, digest: string): Promise<Buffer | undefined> {
+    const res = await this.send(`${this.base}/${repo}/blobs/${digest}`);
+    if (res.status === 404) return undefined;
+    await this.expect(res, `reading ${digest}`, [200]);
+    const data = Buffer.from(await res.arrayBuffer());
+    if (sha256(data) !== digest) throw new OciError(`${this.host}: the blob ${digest} of ${repo} has other bytes than its digest`);
+    return data;
+  }
+
+  /** Push a module zip under a tag, replacing what the tag named; returns the manifest digest. */
+  async pushModule(repo: string, tag: string, zip: Uint8Array, annotations: Record<string, string>): Promise<string> {
+    await this.pushBlob(repo, zip);
     await this.pushBlob(repo, Buffer.from("{}"));
-    const body = moduleManifest(archive, annotations);
+    const body = moduleManifest(zip, annotations);
     await this.expect(
       await this.send(`${this.base}/${repo}/manifests/${tag}`, { method: "PUT", headers: { "content-type": MANIFEST_TYPE }, body: body as BodyInit }),
       `publishing ${tag}`,
@@ -143,19 +160,43 @@ export class Registry {
 }
 
 /**
- * The manifest bytes pushModule writes for an archive: the module layer and an
- * empty config. The same archive and annotations give the same bytes, so the
- * manifest digest is known before the push.
+ * The manifest bytes pushModule writes for a module zip: the one `archive/zip`
+ * layer and an empty config. The same zip and annotations give the same
+ * bytes, so the manifest digest is known before the push.
  */
-export function moduleManifest(archive: Uint8Array, annotations: Record<string, string>): Buffer {
+export function moduleManifest(zip: Uint8Array, annotations: Record<string, string>): Buffer {
   const empty = Buffer.from("{}");
   const manifest: Manifest = {
     schemaVersion: 2,
     mediaType: MANIFEST_TYPE,
     artifactType: MODULE_TYPE,
     config: { mediaType: EMPTY_TYPE, digest: sha256(empty), size: empty.length },
-    layers: [{ mediaType: MODULE_TYPE, digest: sha256(archive), size: archive.length }],
+    layers: [{ mediaType: ZIP_TYPE, digest: sha256(zip), size: zip.length }],
     annotations,
   };
   return Buffer.from(JSON.stringify(manifest));
+}
+
+/** Whether OpenTofu can install the module a manifest names: exactly one `archive/zip` layer. */
+export function installable(manifest: Pick<Manifest, "layers">): boolean {
+  return (manifest.layers ?? []).filter((l) => l.mediaType === ZIP_TYPE).length === 1;
+}
+
+/**
+ * The gzipped tar layer of a module an earlier terragucci published, which
+ * OpenTofu cannot install: a manifest with terragucci's content annotation,
+ * no `archive/zip` layer and one `application/vnd.opentofu.modulepkg` layer.
+ * Undefined for any other manifest.
+ */
+export function legacyLayer(manifest: Manifest): { digest: string; size: number } | undefined {
+  if (!manifest.annotations?.[CONTENT] || installable(manifest)) return undefined;
+  const layers = manifest.layers ?? [];
+  return layers.length === 1 && layers[0]!.mediaType === MODULE_TYPE ? layers[0] : undefined;
+}
+
+/** Why OpenTofu cannot install the module at `ref`, for a refusal. */
+export function notInstallable(ref: string, manifest: Pick<Manifest, "layers">): string {
+  const types = (manifest.layers ?? []).map((l) => l.mediaType);
+  const held = types.length === 0 ? "no layer" : `${types.length === 1 ? "a layer" : "layers"} of ${[...new Set(types)].join(", ")}`;
+  return `${ref} holds ${held} and no archive/zip layer, so OpenTofu cannot install it`;
 }

@@ -46,7 +46,9 @@ describe("publish to an OCI registry", () => {
     expect(first[0].digest).toMatch(/^sha256:[0-9a-f]{64}$/);
     const manifest = JSON.parse(reg.manifests.get("acme/modules/net:0.1.0")!.body.toString());
     expect(manifest.artifactType).toBe("application/vnd.opentofu.modulepkg");
-    expect(manifest.layers).toHaveLength(1);
+    expect(manifest.layers).toEqual([expect.objectContaining({ mediaType: "archive/zip" })]);
+    expect(reg.blobs.get(manifest.layers[0].digest)!.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    expect(first[0].digest).toBe(`sha256:${execFileSync("shasum", ["-a", "256"], { input: reg.manifests.get("acme/modules/db:0.1.0")!.body }).toString().split(" ")[0]}`);
     const puts = reg.puts();
     const again = await publish(repo, oci, { fetch: reg.fetch });
     expect(again.every((r) => r.status === "unchanged")).toBe(true);

@@ -1,9 +1,16 @@
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
-/** A registry in a function: blobs, manifests and tags kept in maps. */
+const digestOf = (body: Buffer): string => `sha256:${createHash("sha256").update(body).digest("hex")}`;
+
+/**
+ * A registry in a function: blobs, manifests and tags kept in maps. A
+ * manifest stays readable by its digest after its tag moves, as in a real
+ * registry before garbage collection.
+ */
 export function fakeRegistry() {
   const blobs = new Map<string, Buffer>();
   const manifests = new Map<string, { body: Buffer; digest: string }>();
+  const byDigest = new Map<string, Buffer>();
   const log: string[] = [];
   const fetchFn = async (url: string, init: RequestInit = {}): Promise<Response> => {
     const u = new URL(url);
@@ -18,16 +25,27 @@ export function fakeRegistry() {
       blobs.set(u.searchParams.get("digest")!, Buffer.from(init.body as Uint8Array));
       return new Response(null, { status: 201 });
     }
-    if ((m = /\/blobs\/(sha256:.+)$/.exec(path))) return new Response(null, { status: blobs.has(m[1]) ? 200 : 404 });
+    if ((m = /\/blobs\/(sha256:.+)$/.exec(path))) {
+      const blob = blobs.get(m[1]);
+      if (!blob) return new Response(null, { status: 404 });
+      const headers = { "content-type": "application/octet-stream", "content-length": String(blob.length), "docker-content-digest": m[1] };
+      return new Response(method === "HEAD" ? null : new Uint8Array(blob), { status: 200, headers });
+    }
     if ((m = /^(.+)\/manifests\/(.+)$/.exec(path))) {
-      const key = `${m[1]}:${m[2]}`;
+      const repo = m[1];
+      const ref = decodeURIComponent(m[2]);
       if (method === "PUT") {
         const body = Buffer.from(init.body as Uint8Array);
-        manifests.set(key, { body, digest: `sha256:${execFileSync("shasum", ["-a", "256"], { input: body }).toString().split(" ")[0]}` });
-        return new Response(null, { status: 201 });
+        const digest = digestOf(body);
+        manifests.set(`${repo}:${ref}`, { body, digest });
+        byDigest.set(`${repo}@${digest}`, body);
+        return new Response(null, { status: 201, headers: { "docker-content-digest": digest } });
       }
-      const found = manifests.get(key);
-      return found ? new Response(new Uint8Array(found.body), { status: 200, headers: { "docker-content-digest": found.digest } }) : new Response(null, { status: 404 });
+      const body = ref.startsWith("sha256:") ? byDigest.get(`${repo}@${ref}`) : manifests.get(`${repo}:${ref}`)?.body;
+      if (!body) return new Response(null, { status: 404 });
+      const type = (JSON.parse(body.toString()) as { mediaType?: string }).mediaType ?? "application/vnd.oci.image.manifest.v1+json";
+      const headers = { "docker-content-digest": digestOf(body), "content-type": type, "content-length": String(body.length) };
+      return new Response(method === "HEAD" ? null : new Uint8Array(body), { status: 200, headers });
     }
     if ((m = /^(.+)\/tags\/list$/.exec(path))) {
       const tags = [...manifests.keys()].filter((k) => k.startsWith(`${m![1]}:`)).map((k) => k.slice(m![1].length + 1));
@@ -37,4 +55,3 @@ export function fakeRegistry() {
   };
   return { fetch: fetchFn, blobs, manifests, log, puts: () => log.filter((l) => l.startsWith("PUT")).length };
 }
-

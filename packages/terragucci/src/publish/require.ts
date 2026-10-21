@@ -32,7 +32,9 @@ import { pinFiles, pinVersion } from "../rollout/pins";
 import { moduleTarAt } from "./archive";
 import { attestKey } from "./attest";
 import { fetchLedger, shown, type Ledger } from "./ledger";
-import { Registry, parseOci, type Fetch } from "./oci";
+import { Registry, installable, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
+
+const DIGEST = /^[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-fA-F]{32,}$/;
 import { fetchTarball, parseRegistrySource, registryHost, registryLocation, RegistryError } from "./registry";
 import { AttestationError, publicKey, verifyRelease } from "./verify";
 
@@ -254,6 +256,18 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
       });
       const bytes = await registry.manifestBytes(path, tag);
       if (!bytes) throw new AttestationError(`${host}/${path} has no ${tag}`);
+      let manifest: Manifest;
+      try {
+        manifest = JSON.parse(bytes.toString("utf-8")) as Manifest;
+      } catch {
+        throw new AttestationError(`${host}/${path} ${tag} is not an OCI manifest`);
+      }
+      if (!installable(manifest)) {
+        const fix = DIGEST.test(tag)
+          ? "an earlier terragucci pushed it as a tar; pin the tag, or the digest the publisher's next publish run prints for it as archive/zip"
+          : "an earlier terragucci pushed it as a tar; the publisher's next publish run republishes the tag as archive/zip";
+        throw new AttestationError(`${notInstallable(`${host}/${path}${DIGEST.test(tag) ? "@" : ":"}${tag}`, manifest)} (${fix})`);
+      }
       verifyRelease({ module: posix.basename(path), version: tag, bytes, byName: true }, ledger!, source!.key);
     };
     try {
