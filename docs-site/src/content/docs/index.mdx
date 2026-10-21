@@ -14,7 +14,7 @@ import Limits from '../../components/Limits.astro';
 
 <Landing />
 
-The [latest release](/terragucci/reference/whats-new/) keeps API tokens out of every GitHub step after a change's code runs, reports the versions each root runs, and folds changes that come back on every plan into their own section. 0.4.38 fixes what the fan-out demo says about approvals, 0.4.37 marks the demo steps a viewer should not miss, 0.4.36 blocks only the roots that depend on a failed one, and 0.4.35 writes each estate's roster after each wave. Watch the [launch party](/terragucci/launch-party/) from the Rome launch.
+The [latest release](/terragucci/reference/whats-new/) reads the gate at base, so a pull request cannot loosen the gate on its own merge. It also adds `init --gate` and a guide to [running without approvals](/terragucci/guides/run-without-approvals/). Watch the [launch party](/terragucci/launch-party/) from the Rome launch.
 
 ## Your forge and your bucket
 
@@ -47,7 +47,7 @@ In Grafana's Explore, a run's trace starts at its stage span. Each root, such as
 
 ## Waves and approvals
 
-A change goes out a few roots at a time, starting with the [canary](/terragucci/concepts/glossary/#canary) roots. By default a wave that destroys or replaces something waits for an approval, which covers exactly the plans it was shown. Approvals are optional: [run without them](/terragucci/guides/run-without-approvals/) and the merge is the approval.
+A change goes out a few roots at a time, starting with the [canary](/terragucci/concepts/glossary/#canary) roots. By default a wave that destroys or replaces something waits for an approval, which covers exactly the plans it was shown. With `gate: never` no wave waits and the merge is the approval ([Run without approvals](/terragucci/guides/run-without-approvals/)).
 
 <Waves />
 
