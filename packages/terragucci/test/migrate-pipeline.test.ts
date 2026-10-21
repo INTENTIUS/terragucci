@@ -16,36 +16,25 @@ const MIGRATION = "moves:\n  - from: network\n    to: app\n    addresses: [aws_s
 describe("the pipeline of a repo that carries migrations", () => {
   const input = { binary: "tofu" as const, version: "1.13.1", image: "img:1", layers: [["network"], ["app"]], env: {}, gate: "never" as const };
 
-  it("on GitHub under gate: never, gives the apply jobs contents: write only when the repo has migration files", () => {
+  it("on GitHub under gate: never, gives the apply jobs contents: write, where a migration's gate is", () => {
     const plain = applyContents(renderPipeline({ ...input, forge: "github" }).content);
-    const migrating = applyContents(renderPipeline({ ...input, forge: "github", migrations: true }).content);
     expect(Object.keys(plain).length).toBeGreaterThan(1);
-    expect(new Set(Object.values(plain))).toEqual(new Set(["read"]));
-    expect(Object.keys(migrating)).toEqual(Object.keys(plain));
-    expect(new Set(Object.values(migrating))).toEqual(new Set(["write"]));
-    // Under a gate that can hold a wave the apply jobs write already, migrations or not.
-    expect(renderPipeline({ ...input, forge: "github", gate: "always", migrations: true }).content).toBe(renderPipeline({ ...input, forge: "github", gate: "always" }).content);
+    expect(new Set(Object.values(plain))).toEqual(new Set(["write"]));
   });
 
-  it("on Forgejo, is the pipeline it was", () => {
-    expect(renderPipeline({ ...input, forge: "forgejo", migrations: true }).content).toBe(renderPipeline({ ...input, forge: "forgejo" }).content);
-  });
-
-  it("init finds the migration files as the plan job does, and writes the GitHub pipeline with write", async () => {
-    const dir = write(twoRootRepo(), { "terragucci.yml": "forge: github\ngate: never\n" });
-    const before = await init(dir, { binary: "tofu", dryRun: true });
-    expect(new Set(Object.values(applyContents(before.files.find((f) => f.path.endsWith(PIPELINE_PATHS.github))!.content)))).toEqual(new Set(["read"]));
-    write(dir, { "migrations/move-logs.yml": MIGRATION, "migrations/notes.md": "not a migration" });
+  it("init finds the migration files as the plan job does", () => {
+    const dir = write(twoRootRepo(), { "migrations/move-logs.yml": MIGRATION, "migrations/notes.md": "not a migration" });
     expect(migrationFiles(dir)).toEqual(["migrations/move-logs.yml"]);
-    const after = await init(dir, { binary: "tofu", dryRun: true });
-    expect(new Set(Object.values(applyContents(after.files.find((f) => f.path.endsWith(PIPELINE_PATHS.github))!.content)))).toEqual(new Set(["write"]));
   });
 });
 
 describe("a pipeline that cannot run its migrations", () => {
+  /** A pipeline an older init wrote under gate: never, whose apply jobs could only read contents. */
   async function repo(withMigration: boolean): Promise<string> {
     const dir = write(twoRootRepo(), { "terragucci.yml": "forge: github\ngate: never\n" });
     await init(dir, { binary: "tofu" });
+    const path = join(dir, PIPELINE_PATHS.github);
+    writeFileSync(path, readFileSync(path, "utf-8").replace(/^(\s+)contents: write\n(\s+statuses: write\n\s+pull-requests: write)/gm, "$1contents: read\n$2"));
     if (withMigration) write(dir, { "migrations/move-logs.yml": MIGRATION });
     return dir;
   }

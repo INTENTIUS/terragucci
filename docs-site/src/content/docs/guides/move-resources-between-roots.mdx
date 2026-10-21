@@ -42,7 +42,7 @@ Each backend's lock is taken as the backend takes it:
 | `s3`, `gcs` | the lock object beside the state | the binary, with `state push -lock=false` while the job holds the lock |
 | `azurerm` | a lease on the state blob | the job, under its lease, which keeps the binary out; a snapshot first when the backend sets `snapshot = true` |
 | `pg`, `kubernetes`, `consul`, `http` | the backend's own: an advisory lock, a Lease, a session, the lock address | the binary, with `state push` under that lock, which refuses a state of another lineage or an older serial |
-| A pipeline `terragucci init` wrote after the first migration file was added | on GitHub under `gate: never`, the apply jobs get `contents: write` to record the migration's gate on `chant/lifecycle` only then; `config check` and the plan job refuse a repo whose pipeline lacks it |
+| A GitHub pipeline whose apply jobs have `contents: write`, as `terragucci init` writes them | the migration's gate is recorded on `chant/lifecycle`; `config check` and the plan job refuse a repo whose pipeline lacks it, and running `init` again fixes it |
 
 ## Steps
 

@@ -277,7 +277,7 @@ The plan and drift stages group identical changes and name each destroy, replace
 
 ## Gate policy
 
-`tf-apply` takes one of three policies for each wave.
+`tf-apply` takes one of three policies for each wave: the stricter of the pipeline's `--gate` and the top-level `gate` in `terragucci.yml` at base, or with [`environments`](/terragucci/reference/config/#environments) the strictest gate of the wave's roots.
 
 | Policy | Waits for an approval when |
 |---|---|

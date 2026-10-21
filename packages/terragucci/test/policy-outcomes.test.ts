@@ -91,7 +91,8 @@ describe("tf-apply with policy.outcomes", () => {
   it("a hold rule makes a wave wait under gate: never", async () => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
-    const { work, bin, log } = setup(files("[deny, hold]"));
+    // The top-level gate at base is never too, or the wave would take the default on-destructive from there.
+    const { work, bin, log } = setup({ ...files("[deny, hold]"), "terragucci.yml": `gate: never\n${config("[deny, hold]")}` });
     expect(await applyWave(work, run(bin, "never", opa({ hold: ["needs a person"] })))).toBe(3);
     expect(existsSync(log)).toBe(false);
     expect(report(work).waves[0]).toMatchObject({ approval: "waiting", policy_gate: { outcome: "held", rules: ["main.hold"] } });

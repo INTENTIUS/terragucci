@@ -36,6 +36,7 @@ const LAYERS = [["network"], ["cluster-a", "cluster-b"], ["app-a", "app-b"]];
 
 function estate(): { work: string; log: string; bin: string; run: (wave: number, fail?: string) => Promise<number> } {
   const { work, bin, log } = setup({
+    "terragucci.yml": "gate: never\n",
     "network/main.tf": state("network.tfstate"),
     "cluster-a/main.tf": state("cluster-a.tfstate") + reads("network.tfstate"),
     "cluster-b/main.tf": state("cluster-b.tfstate") + reads("network.tfstate"),

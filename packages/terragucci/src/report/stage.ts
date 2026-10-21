@@ -34,7 +34,7 @@ import { approvalRule, declaredGates } from "../approval";
 import { ruleProgress, rulesFor, trustRolesAt } from "../approval-rules";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
 import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ApprovalRuleSettings, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
-import { anyRootGate, environmentOf, waveGate as rootsGate } from "../environments";
+import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
@@ -2113,6 +2113,24 @@ export async function markRecurring(report: Report, reports: { bucket: string; e
 }
 
 /** Where the policy key is read: the config file and the project the run reads. */
+/**
+ * The note's line for a change that loosens the top-level `gate`: each wave's
+ * job takes the stricter of the pipeline's --gate and the gate at base, so
+ * the change's own merge applies under the base's gate. Undefined when the
+ * change keeps or tightens it, with no base, or when the base cannot be read.
+ */
+async function gateLoosening(repo: string, settings: ReturnType<typeof resolveRepo>, options: StageOptions, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const base = options.base ?? baseRef(env);
+  if (!base || options.project) return undefined;
+  const configPath = options.config ?? findConfig(repo);
+  const read = await configAtBase(repo, base, configPath ? { config: configPath } : {});
+  if ("error" in read) return undefined;
+  const was = topGate(read.config);
+  const now = topGate(settings);
+  if (GATE_ORDER[now] >= GATE_ORDER[was]) return undefined;
+  return `This change loosens \`gate\` from \`${was}\` to \`${now}\`: its own merge applies under \`${was}\`, and \`${now}\` takes effect from the merge after it.`;
+}
+
 function policyTrust(repo: string, options: StageOptions): TrustedOptions {
   const configPath = options.config ?? findConfig(repo);
   return { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) };
@@ -2245,6 +2263,10 @@ async function finish(
   // A drift schedule that stopped cannot say so itself; the plan job, which runs on every pull request, does.
   const notices: string[] = [...selection];
   // agent.token_env without agent.login: nothing excludes the agent's account from approving this change (../involved.ts).
+  if (stage === "tf-plan" && !drift) {
+    const loosening = await gateLoosening(repo, settings, options, env);
+    if (loosening) notices.push(loosening);
+  }
   if (stage === "tf-plan" && agentLoginWarning(settings.agent) && report.waves.some((w) => w.waits === true)) notices.push(`The agent's account isn't excluded from approving this change: set agent.login to the login agent.token_env's token acts as.`);
   // Without a token the stage asks as a reader, which only a public repo answers; the note job asks again with its token.
   let leftSchedule: { cron: string; added?: string } | undefined;

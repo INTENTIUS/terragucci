@@ -44,7 +44,6 @@ import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
-import { migrationFiles } from "./migrate";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
@@ -52,7 +51,7 @@ import { ATMOS_VERSION } from "./atmos";
 import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
-import { environmentGates, withEnvironmentRoles } from "./environments";
+import { withEnvironmentRoles } from "./environments";
 import { applyGroups } from "./groups";
 
 export interface InitOptions {
@@ -351,8 +350,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(!tgInput && !atmos && !terramate && settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
     ...(settings.waves?.jobs && settings.waves.jobs > 1 ? { waveJobs: settings.waves.jobs } : {}),
     gate: settings.gate,
-    // An environment's gate is read at base by the wave's job; one that can hold a wave needs the jobs that record a waiting one.
-    ...(environmentGates(settings).length ? { environmentGates: environmentGates(settings) } : {}),
     // A repo's own config carries its approval key, read at base; a control repo's project has none, so the pipeline carries it.
     ...(approvalModeOf(options.settings?.approval) ? { approval: approvalModeOf(options.settings?.approval) } : {}),
     ...(approval.value === "pr-review" ? { prReview: true } : {}),
@@ -364,7 +361,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(reviewInput(settings) ? { review: reviewInput(settings) } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
-    ...(migrationFiles(repo).length > 0 ? { migrations: true } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),
     ...(settings.locks === "plan" ? { locksPlan: true } : {}),
     ...(settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? { applyBranches: settings.apply.branches } : {}),

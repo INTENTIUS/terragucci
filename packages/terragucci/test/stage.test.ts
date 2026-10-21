@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { main } from "../src/cli";
 import { readInlineReport } from "../src/report/html";
 import { affectedRoots, eachLimited, emptyStateText, providerDownloads, rootsParallelism, runStage } from "../src/report/stage";
-import { tmp, write } from "./helpers";
+import { git, tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
@@ -349,5 +349,43 @@ describe("roots of a layer plan at once", () => {
     } finally {
       console.error = err;
     }
+  });
+});
+
+describe("the plan note of a change to the top-level gate", () => {
+  const TOFU = `#!/bin/sh
+chdir="\${1#-chdir=}"; shift
+case "$1" in
+  init) exit 0 ;;
+  plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add, 0 to change, 0 to destroy."; exit 0 ;;
+  show) if [ "$2" = "-json" ]; then cat "$chdir/plan.json"; else echo "plan text for $chdir"; fi ;;
+esac
+`;
+  /** The note of a change from `was` to `now` at the top-level gate, planned against main. */
+  async function note(was: string, now: string): Promise<string> {
+    const bin = join(tmp(), "tofu");
+    write(join(bin, ".."), { tofu: TOFU });
+    chmodSync(bin, 0o755);
+    const repo = write(tmp(), { "terragucci.yml": `roots: ["app"]\ngate: ${was}\n`, "app/main.tf": "# app\n", "app/plan.json": JSON.stringify(planJson([rc("terraform_data.x", ["create"], null, { input: 1 })])) });
+    const commit = (m: string) => git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", m);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "add", "-A");
+    commit("main");
+    git(repo, "checkout", "-q", "-b", "change");
+    write(repo, { "terragucci.yml": `roots: ["app"]\ngate: ${now}\n` });
+    git(repo, "add", "-A");
+    commit("change");
+    const { dir } = await runStage("tf-plan", repo, { binary: bin, layers: [["app"]], base: "main", out: join(tmp(), "report"), env: { PATH: process.env.PATH } }, () => {});
+    return readFileSync(join(dir, "note.md"), "utf-8");
+  }
+
+  it("says in one line that a looser gate takes effect from the merge after the change", async () => {
+    expect(await note("on-destructive", "never")).toContain("> This change loosens `gate` from `on-destructive` to `never`: its own merge applies under `on-destructive`, and `never` takes effect from the merge after it.");
+    expect(await note("always", "on-destroy")).toContain("> This change loosens `gate` from `always` to `on-destructive`");
+  });
+
+  it("says nothing of a gate it keeps or tightens", async () => {
+    expect(await note("never", "on-destructive")).not.toContain("loosens `gate`");
+    expect(await note("on-destroy", "on-destructive")).not.toContain("loosens `gate`");
   });
 });

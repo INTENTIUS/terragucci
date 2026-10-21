@@ -436,6 +436,7 @@ describe.skipIf(!hasTofu)("a read of an unapplied upstream, with the real tofu",
     const work = join(dir, "work");
     mkdirSync(work);
     write(work, {
+      "terragucci.yml": "gate: never\n",
       "atmos.yaml": "base_path: .\n",
       "components/terraform/vpc/main.tf": 'variable "cidr" {\n  type = string\n}\n\nresource "terraform_data" "vpc" {\n  input = var.cidr\n}\n\noutput "cidr" {\n  value = var.cidr\n}\n',
       "components/terraform/app/main.tf": 'variable "vpc_cidr" {\n  type     = string\n  nullable = true\n}\n\nresource "terraform_data" "app" {\n  input = { vpc = var.vpc_cidr }\n}\n',

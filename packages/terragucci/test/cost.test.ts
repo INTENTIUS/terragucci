@@ -138,16 +138,11 @@ function based(main: Record<string, string>, head: Record<string, string>): stri
 }
 
 describe("cost.approve_above: a wave over the amount waits", () => {
-  it.each(["github", "gitlab"] as const)("%s: under gate: never, approve_above lets the apply jobs record a waiting wave on chant/lifecycle", (forge) => {
-    const render = (approveAbove: boolean) => renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", cost: { keySecret: "COST_KEY", install: false, ...(approveAbove ? { approveAbove } : {}) } }).content;
-    const doc = (text: string) => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-    if (forge === "gitlab") {
-      expect(doc(render(true))["apply-wave-1"].script.join("\n")).toContain("git remote set-url");
-      expect(doc(render(false))["apply-wave-1"].script.join("\n")).not.toContain("git remote set-url");
-    } else {
-      expect(doc(render(true)).jobs["apply-wave-1"].permissions.contents).toBe("write");
-      expect(doc(render(false)).jobs["apply-wave-1"].permissions.contents).toBe("read");
-    }
+  it.each(["github", "gitlab"] as const)("%s: under gate: never, the apply jobs can record a wave approve_above holds on chant/lifecycle", (forge) => {
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", cost: { keySecret: "COST_KEY", install: false, approveAbove: true } }).content;
+    const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    if (forge === "gitlab") expect(doc["apply-wave-1"].script.join("\n")).toContain("git remote set-url");
+    else expect(doc.jobs["apply-wave-1"].permissions.contents).toBe("write");
   });
 
 
