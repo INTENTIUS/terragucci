@@ -402,7 +402,7 @@ Internal; a value set in `env:` is overwritten.
 | `TERRAGUCCI_EPHEMERAL_SUFFIX` | Terragrunt repos, the `ephemeral` job, while it prepares a unit: `-pr-<n>`, which a unit's `remote_state` key reads; empty in every other job |
 | `TG_ACTION` | the `ephemeral` job on GitHub and Forgejo: the pull request event's action; `closed` destroys the pull request's [ephemeral environment](/terragucci/guides/ephemeral-environments/) |
 | `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
-| `TG_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
+| `CHANT_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
 | `TG_NO_OIDC_REQUEST`, `TERRAGUCCI_OIDC_FILE`, `TERRAGUCCI_OIDC_GCP_FILE`, `TERRAGUCCI_OIDC_AZURE_FILE` | GitHub with `oidc.audience` a map, and Forgejo with any `oidc`: a step that took the job's cloud identity, once its shell has started again without the token-request variables, and the files its tokens were fetched into before that ([Audience per stage](#audience-per-stage)) |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |
 | `TG_NON_INTERACTIVE`, `TG_PARALLELISM`, `TG_TF_PATH`, `TG_DOWNLOAD_DIR`, `TG_PROVIDER_CACHE`, `TG_PROVIDER_CACHE_DIR`, `TG_AUTH_PROVIDER_CMD`, `TERRAGUCCI_REPO`, `TERRAGUCCI_PHASE`, `TERRAGUCCI_TG_ROLES`, `TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN` | Terragrunt repos; `TG_IAM_ASSUME_ROLE` is never set |
