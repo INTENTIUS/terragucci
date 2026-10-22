@@ -108,7 +108,7 @@ Roles come from `roles` in `.chant/trust.json` at base, which maps a role to the
 { "schema": 1, "signers": ".chant/allowed_signers", "roles": { "platform": ["github:alice", "github:carol"] } }
 ```
 
-An approval counts toward `roles`, and as one by someone who is not the author, only when it proves who made it: under `sealed`, a seal that verifies against the signers file at base; under `pr-review`, the forge login of a reviewer of the merged pull request, or a sealed `terragucci approve`. A role an approver names for themselves never counts. Under `ledger` nothing proves an approval's name, so `terragucci config check` refuses `roles` and `not_author` there and asks for `sealed` or `pr-review`, and refuses `approval_rules` beside `apply.point`, whose decision point has its own deciders and quorum. The rules, the roles and the signers are read at base, so a pull request that edits them is decided by the default branch's.
+An approval counts toward `roles`, and as one by someone who is not the author, only when it proves who made it: under `sealed`, a seal that verifies against the signers file at base; under `pr-review`, a reviewer of the merged pull request, or a sealed `terragucci approve`. A role an approver names for themselves never counts. Under `ledger` nothing proves an approval's name, so `terragucci config check` refuses `roles` and `not_author` there and asks for `sealed` or `pr-review`, and refuses `approval_rules` beside `apply.point`, whose decision point has its own deciders and quorum. The rules, the roles and the signers are read at base, so a pull request that edits them is decided by the default branch's.
 
 An approval by someone behind the change never counts ([Eligible approvers](#eligible-approvers)), so `not_author` holds once one approval counted proves its approver.
 
@@ -119,6 +119,20 @@ wave 2 of 3: approval_rules: envs/prod/**: 1 of 2 approvals (alice), needs 1 mor
 ```
 
 `terragucci approve` prints where each rule stood when the wave recorded the pending fact it waits on, and the plan note says what each wave's approval will take. After the first approval the wave runs again, records a new pending fact and waits; approve it again, as a second person, and it applies. The wave's report lists each rule and the approvers it counted in `approval_rules`, and its `apply` entry in the [audit trail](/terragucci/guides/read-the-audit-trail/) lists every approval it applied under.
+
+### A reviewer's roles
+
+A reviewer holds a role when `.chant/trust.json` grants it to their forge principal, spelled as chant spells one. The principal is lower-case, and it names the host from the job's server URL, port included, unless the host is the forge's own:
+
+| Forge | Principal |
+|---|---|
+| github.com | `github:alice` |
+| GitHub Enterprise | `github@ghe.acme.com:alice` |
+| gitlab.com | `gitlab:bob` |
+| another GitLab | `gitlab@gitlab.acme.com:bob` |
+| Forgejo or Gitea | `forgejo@code.acme.com:carol` |
+
+Up to 0.4.40 a reviewer also matched a grant to their bare login, a `gitea:` grant on Forgejo, and a `github:` grant for any host. Those grants no longer give a reviewer a role. To keep one, replace it with the reviewer's principal and merge that change first, since the wave reads the roles at base.
 
 ## Approve by review (`approval: pr-review`)
 

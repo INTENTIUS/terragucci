@@ -87,7 +87,7 @@ export interface OverrideEntry {
 export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author"] as const;
 
 /**
- * One `approval_rules` entry (./approval-rules.ts): a wave with a root a glob
+ * One `approval_rules` entry, judged as chant's `approvals.quorum` rule (../approval.ts quorumOf): a wave with a root a glob
  * of `roots` matches waits for `count` distinct approvers of its set digest
  * (default 1), each holding one of `roles` in `.chant/trust.json` at base when
  * `roles` is set, and with `not_author` at least one who is not the change's

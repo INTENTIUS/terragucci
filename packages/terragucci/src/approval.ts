@@ -22,7 +22,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { APPROVALS, approvalModeOf, ConfigError, requireSignedOf, type Approval, type ApprovalRuleSettings, type OverrideEntry, type PolicyOutcome, type TerragucciConfig } from "./config";
+import { quorumRuleLine, type GateQuorumRule, type GateQuorumRuleProgress } from "@intentius/chant/gate-decision";
 import { configAtBase } from "./report/policy";
+import type { ReportApprovalRule } from "./report/schema";
 import { baseCommit, sealRule, type SealRule } from "./seal";
 
 /** The mode in force, where it was read, and a line for the log when the repo should change something. */
@@ -48,8 +50,8 @@ export interface ApprovalRule extends ApprovalMode, SealRule {
   agentTokenEnv?: string;
   /** `agent.login` at base: the account the agent's token acts as, never an approver. */
   agentLogin?: string;
-  /** `approval_rules` at base (./approval-rules.ts): more approvers, or approvers with a role, for the waves whose roots a glob names. */
-  approvalRules?: ApprovalRuleSettings[];
+  /** `approval_rules` at base, as chant's `approvals.quorum` rules (quorumOf): more approvers, or approvers with a role, for the waves whose roots a glob names. */
+  approvalRules?: GateQuorumRule[];
   /** `policy.outcomes` at base: the outcomes besides deny the policy's rules have, which only the base can turn on. */
   policyOutcomes?: PolicyOutcome[];
 }
@@ -112,9 +114,48 @@ export async function approvalRule(repo: string, options: { at?: string; config?
   const overriders = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o): o is string => typeof o === "string") : [];
   const overrideEntries = own && Array.isArray(read.config.policy?.override) ? read.config.policy.override.filter((o): o is OverrideEntry => typeof o === "object" && o !== null) : [];
   const point = own && typeof read.config.apply?.point === "string" ? read.config.apply.point : undefined;
-  const approvalRules = own && Array.isArray(read.config.approval_rules) && read.config.approval_rules.length > 0 ? read.config.approval_rules : undefined;
+  const approvalRules = own && Array.isArray(read.config.approval_rules) && read.config.approval_rules.length > 0 ? quorumOf(read.config.approval_rules) : undefined;
   const policyOutcomes = own && Array.isArray(read.config.policy?.outcomes) && read.config.policy.outcomes.some((o) => o !== "deny") ? read.config.policy.outcomes : undefined;
   return { ...effectiveApproval(key, seal.gates.size, options.flag, "at base"), ...seal, base, overriders, ...(point ? { point } : {}), ...(requireSigned ? { requireSigned } : {}), ...(agentTokenEnv ? { agentTokenEnv } : {}), ...(agentLogin ? { agentLogin } : {}), ...(approvalRules ? { approvalRules } : {}), ...(policyOutcomes ? { policyOutcomes } : {}), ...(overrideEntries.length ? { overrideEntries } : {}) };
+}
+
+/**
+ * `approval_rules` as chant's `approvals.quorum` rules
+ * (`@intentius/chant/gate-decision`): `roots` are the rule's `targets`, a
+ * wave's roots, and `not_author` is `notAuthor`.
+ */
+export function quorumOf(rules: readonly ApprovalRuleSettings[]): GateQuorumRule[] {
+  return rules.map((r) => ({
+    targets: [...r.roots],
+    count: r.count ?? 1,
+    ...(r.roles?.length ? { roles: [...r.roles] } : {}),
+    ...(r.not_author ? { notAuthor: true } : {}),
+  }));
+}
+
+/** Where a rule stands, as the report and the pending fact keep it: `roots` and `not_author`, as `approval_rules` spells them. */
+export function ruleReport(p: GateQuorumRuleProgress): ReportApprovalRule {
+  return {
+    roots: [...(p.targets ?? [])],
+    count: p.count,
+    ...(p.roles?.length ? { roles: [...p.roles] } : {}),
+    ...(p.notAuthor ? { not_author: true } : {}),
+    approvers: [...p.approvers],
+    met: p.met,
+  };
+}
+
+/** A rule the report or a pending fact keeps, in one line: `envs/prod/**: 1 of 2 approvals (alice), needs 1 more from platform`. */
+export function reportRuleLine(r: ReportApprovalRule): string {
+  return quorumRuleLine({ targets: r.roots, count: r.count, ...(r.roles?.length ? { roles: r.roles } : {}), ...(r.not_author ? { notAuthor: true } : {}), approvers: r.approvers, met: r.met });
+}
+
+/** What a rule asks for, in words: `2 approvals, from platform, one of them not the author`. */
+export function ruleAsks(rule: Pick<ReportApprovalRule, "count" | "roles" | "not_author">): string {
+  const n = `${rule.count} approval${rule.count === 1 ? "" : "s"}`;
+  const from = rule.roles?.length ? `, from ${rule.roles.join(" or ")}` : "";
+  const author = rule.not_author ? `, ${rule.count === 1 ? "not" : "one of them not"} the author` : "";
+  return `${n}${from}${author}`;
 }
 
 /** The mode a repo's checkout holds, as `config check` reports it. */

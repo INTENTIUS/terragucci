@@ -30,10 +30,10 @@ import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { version as VERSION } from "../../package.json";
 import { eachLimited } from "../each-limited";
 import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
-import { approvalRule, declaredGates } from "../approval";
-import { ruleProgress, rulesFor, trustRolesAt } from "../approval-rules";
+import { approvalRule, declaredGates, ruleReport } from "../approval";
+import { quorumRuleProgress, quorumRulesFor, trustRolesAt, type GateQuorumRule } from "@intentius/chant/gate-decision";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
-import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ApprovalRuleSettings, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
@@ -70,7 +70,7 @@ import { storeFromEnv } from "./bucket";
 import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
-import type { Report, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
+import type { Report, ReportApprovalRule, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
 import { applyGroups } from "../groups";
 import { ComposedRun, compositionFor, composeTarget, type ComposedPlan, type ComposeFallback, type Composition } from "../compose";
 import { blastRadius } from "./graph";
@@ -2044,7 +2044,7 @@ export async function planOverrides(repo: string, options: StageOptions, env: No
     const rule = await approvalRule(repo, { ...(base ? { at: base } : {}), ...(configPath ? { config: configPath } : {}) });
     if (rule.overriders.length === 0 && !rule.overrideEntries) return inputs;
     // Scoped entries (../override.ts): each denied root has its own overriders, roles read at base under sealed alone.
-    const roles = rule.overrideEntries?.some((e) => e.roles?.length) && rule.mode === "sealed" ? trustRolesAt(repo, rule.base).roles : {};
+    const roles = rule.overrideEntries?.some((e) => e.roles?.length) && rule.mode === "sealed" ? trustRolesAt(repo, rule.base) : {};
     const whoFor = (root: string, rules: readonly string[]) => overridersFor({ overriders: rule.overriders, ...(rule.overrideEntries ? { entries: rule.overrideEntries } : {}), roles }, root, rules);
     const union = [...new Set(denied.flatMap((i) => whoFor(i.path, i.policy!.rules ?? []).principals))];
     if (union.length === 0) return inputs;
@@ -2074,7 +2074,7 @@ export async function planOverrides(repo: string, options: StageOptions, env: No
 }
 
 /** `approval_rules` in the config at base, for a plan's waves; none for a control repo's project, or when the base cannot be read. */
-async function baseApprovalRules(repo: string, options: StageOptions, env: NodeJS.ProcessEnv): Promise<ApprovalRuleSettings[] | undefined> {
+async function baseApprovalRules(repo: string, options: StageOptions, env: NodeJS.ProcessEnv): Promise<GateQuorumRule[] | undefined> {
   if (options.project) return undefined;
   const base = options.base ?? baseRef(env);
   const configPath = options.config ?? findConfig(repo);
@@ -2200,9 +2200,9 @@ async function finish(
   const envNames = (roots: readonly string[]): string[] => [...new Set(roots.map((r) => environmentOf(r, settings)).filter((e): e is string => e !== undefined))].sort();
   // approval_rules at base: what each wave's approval will take, as the base's config has it.
   const approvalRules = drift ? undefined : await baseApprovalRules(repo, options, env);
-  const ruled = <W extends { roots: string[] }>(w: W): W & { approvalRules?: ReturnType<typeof ruleProgress>[] } => {
-    const rules = rulesFor(approvalRules, w.roots);
-    return rules.length ? { ...w, approvalRules: rules.map((r) => ruleProgress(r, [])) } : w;
+  const ruled = <W extends { roots: string[] }>(w: W): W & { approvalRules?: ReportApprovalRule[] } => {
+    const rules = quorumRulesFor(approvalRules ?? [], w.roots);
+    return rules.length ? { ...w, approvalRules: rules.map((r) => ruleReport(quorumRuleProgress(r, []))) } : w;
   };
   const report = buildReport({
     run: { ...runFacts(repo, env, options.forge ?? settings.forge), stage, binary, runtime: settings.runtime, started, finished: new Date().toISOString(), terragucci: VERSION },

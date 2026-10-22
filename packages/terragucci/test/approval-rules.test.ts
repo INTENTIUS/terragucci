@@ -1,15 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, quorumSince, ruleApprovers, type GateLedger, type ResolutionRecord } from "../src/apply";
-import { rolesOf, ruleAsks, ruleLine, ruleProgress, rulesFor, rulesWaiting, trustRolesAt, type RuleApprover } from "../src/approval-rules";
+import { quorumRuleProgress, quorumRulesFor } from "@intentius/chant/gate-decision";
+import { applyWave, quorumSince, reviewerPrincipal, ruleApprovers, type GateLedger, type ResolutionRecord } from "../src/apply";
+import { quorumOf, reportRuleLine, ruleAsks, ruleReport } from "../src/approval";
 import { validateConfig } from "../src/config";
 import { gateSealPayload } from "../src/seal";
 import { T, approve, pending, setup } from "./apply-helpers";
-import { git, tmp, write } from "./helpers";
 import { gateSigners, signerLine, sshsig, sshKey } from "./sshsig";
 
 const prod = { roots: ["envs/prod/**"], count: 2, roles: ["platform"], not_author: true };
 const staging = { roots: ["envs/staging/**"], roles: ["platform", "app-leads"] };
-const by = (who: string, at: number, o: Partial<RuleApprover> = {}): RuleApprover => ({ who, at: T(at), proven: true, roles: ["platform"], author: false, ...o });
 
 describe("approval_rules in the config", () => {
   it("takes rules with roots and count, roles or not_author under sealed and pr-review", () => {
@@ -20,71 +19,36 @@ describe("approval_rules in the config", () => {
   });
 });
 
-describe("the rules a wave takes", () => {
-  it("every rule a root of the wave matches, and none for a wave no glob names", () => {
-    expect(rulesFor([prod, staging], ["envs/prod/app", "envs/prod/db"])).toEqual([prod]);
-    expect(rulesFor([prod, staging], ["envs/prod/app", "envs/staging/app"])).toEqual([prod, staging]);
-    expect(rulesFor([prod, staging], ["envs/dev/app"])).toEqual([]);
-    expect(rulesFor(undefined, ["envs/prod/app"])).toEqual([]);
-  });
-});
-
-describe("a rule's progress", () => {
-  it("waits after one approval and is met by a second from a distinct approver", () => {
-    expect(ruleProgress(prod, [by("alice", 1)])).toMatchObject({ approvers: ["alice"], met: false, count: 2 });
-    expect(ruleProgress(prod, [by("alice", 1), by("bob", 2)])).toMatchObject({ approvers: ["alice", "bob"], met: true });
+describe("approval_rules as chant's quorum rules", () => {
+  it("maps roots to targets and not_author to notAuthor, with a count of 1 when unset", () => {
+    expect(quorumOf([prod, staging])).toEqual([
+      { targets: ["envs/prod/**"], count: 2, roles: ["platform"], notAuthor: true },
+      { targets: ["envs/staging/**"], count: 1, roles: ["platform", "app-leads"] },
+    ]);
   });
 
-  it("two approvals by one person count once, whatever the case of the name", () => {
-    expect(ruleProgress(prod, [by("alice", 1), by("Alice", 2)])).toMatchObject({ approvers: ["alice"], met: false });
+  it("a wave takes every rule a root of it matches", () => {
+    const rules = quorumOf([prod, staging]);
+    expect(quorumRulesFor(rules, ["envs/prod/app", "envs/staging/app"])).toEqual(rules);
+    expect(quorumRulesFor(rules, ["envs/dev/app"])).toEqual([]);
   });
 
-  it("two approvals by the author do not meet not_author", () => {
-    const p = ruleProgress({ roots: ["envs/prod/**"], not_author: true }, [by("carol", 1, { author: true }), by("carol", 2, { author: true })]);
-    expect(p.met).toBe(false);
-    expect(ruleLine(p)).toBe("envs/prod/**: 1 of 1 approval (carol), needs an approver who is not the author");
-  });
-
-  it("counts toward roles only an approver the approval proves, holding one of them", () => {
-    expect(ruleProgress(prod, [by("alice", 1), by("bob", 2, { proven: false })]).approvers).toEqual(["alice"]);
-    expect(ruleProgress(prod, [by("alice", 1), by("dave", 2, { roles: ["app-leads"] })]).approvers).toEqual(["alice"]);
-    expect(ruleProgress(staging, [by("dave", 2, { roles: ["app-leads"] })])).toMatchObject({ approvers: ["dave"], met: true });
-  });
-
-  it("says how many approvals are in and who is still needed", () => {
-    const p = ruleProgress(prod, [by("alice", 1)]);
-    expect(ruleLine(p)).toBe("envs/prod/**: 1 of 2 approvals (alice), needs 1 more from platform, one of them not the author");
-    expect(rulesWaiting([p, ruleProgress(staging, [by("alice", 1)])])).toBe(ruleLine(p));
+  it("keeps a rule's progress in the report's terms, and says what it asks for", () => {
+    const [rule] = quorumOf([prod]);
+    const p = ruleReport(quorumRuleProgress(rule!, [{ who: "alice", at: T(1), judged: { proven: true, roles: ["platform"], author: false } }]));
+    expect(p).toEqual({ roots: ["envs/prod/**"], count: 2, roles: ["platform"], not_author: true, approvers: ["alice"], met: false });
+    expect(reportRuleLine(p)).toBe("envs/prod/**: 1 of 2 approvals (alice), needs 1 more from platform, one of them not the author");
     expect(ruleAsks(p)).toBe("2 approvals, from platform, one of them not the author");
   });
 });
 
-describe("roles from .chant/trust.json", () => {
-  const roles = { platform: ["github:alice", "carol@acme.com"], "app-leads": ["dave"] };
-
-  it("a signer's principal, and a reviewer's login on the job's forge", () => {
-    expect(rolesOf("carol@acme.com", roles)).toEqual(["platform"]);
-    expect(rolesOf("github:alice", roles)).toEqual(["platform"]);
-    expect(rolesOf("alice", roles, "github")).toEqual(["platform"]);
-    expect(rolesOf("alice", roles, "gitlab")).toEqual([]);
-    expect(rolesOf("alice", roles)).toEqual([]);
-    expect(rolesOf("dave", roles, "github")).toEqual(["app-leads"]);
-  });
-
-  it("are read at base, and a trust.json chant would not read gives nobody a role", () => {
-    const repo = tmp("tg-trust-");
-    git(repo, "init", "-q", "-b", "main");
-    write(repo, { ".chant/trust.json": JSON.stringify({ schema: 1, roles }) });
-    git(repo, "add", "-A");
-    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base");
-    write(repo, { ".chant/trust.json": JSON.stringify({ schema: 1, roles: { platform: ["github:mallory"] } }) });
-    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "the change");
-    expect(trustRolesAt(repo, "HEAD~1").roles).toEqual(roles);
-    write(repo, { ".chant/trust.json": JSON.stringify({ roles }) });
-    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "no schema");
-    const read = trustRolesAt(repo, "HEAD");
-    expect(read.roles).toEqual({});
-    expect(read.problem).toMatch(/is not valid .*gives nobody a role/);
+describe("a reviewer's principal", () => {
+  it("is the forge principal chant names, from the job's forge and host", () => {
+    expect(reviewerPrincipal({})("Alice")).toBe("github:alice");
+    expect(reviewerPrincipal({ GITHUB_SERVER_URL: "https://ghe.acme.com" })("alice")).toBe("github@ghe.acme.com:alice");
+    expect(reviewerPrincipal({ GITLAB_CI: "true", CI_SERVER_HOST: "gitlab.com" })("bob")).toBe("gitlab:bob");
+    expect(reviewerPrincipal({ GITLAB_CI: "true", CI_SERVER_HOST: "gitlab.acme.com" })("bob")).toBe("gitlab@gitlab.acme.com:bob");
+    expect(reviewerPrincipal({ GITEA_ACTIONS: "true", GITHUB_SERVER_URL: "https://code.acme.com:3000" })("carol")).toBe("forgejo@code.acme.com:3000:carol");
   });
 });
 
@@ -92,7 +56,7 @@ describe("the approvers of a wave's digest", () => {
   const D = "jcs1-sha256:aaaa";
   const E = "jcs1-sha256:bbbb";
   const line = (who: string, at: number, digest = D, o: Partial<ResolutionRecord> = {}): ResolutionRecord => ({ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: who, timestamp: T(at), planDigest: digest, ...o });
-  const opts = { mode: "ledger" as const, signers: gateSigners(), roles: {}, forge: "github" };
+  const opts = { mode: "ledger" as const, signers: gateSigners(), roles: {}, reviewer: reviewerPrincipal({}) };
 
   it("an approval of another digest counts toward nothing", () => {
     const ledger: GateLedger = { pending: [pending("wave-1", D, 0)], resolutions: [line("alice", 1), line("bob", 2, E)] };
@@ -114,10 +78,11 @@ describe("the approvers of a wave's digest", () => {
     expect(ruleApprovers(ledger, "wave-1", D, opts).map((a) => a.who)).toEqual(["bob"]);
   });
 
-  it("under pr-review a review counts each reviewer with their forge login, proven; an unsigned approval proves no one", () => {
+  it("under pr-review a review counts each reviewer with their forge login, proven, with the roles of their forge principal; an unsigned approval proves no one", () => {
     const ledger: GateLedger = { pending: [pending("wave-1", D, 0)], resolutions: [line("alice,bob", 1, D, { via: "pr-review", pr: 7, head: "abc", reviewers: ["alice", "bob"] }), line("carol", 2)] };
-    const got = ruleApprovers(ledger, "wave-1", D, { ...opts, mode: "pr-review", roles: { platform: ["github:alice"] } });
-    expect(got.map((a) => [a.who, a.proven, a.roles])).toEqual([["alice", true, ["platform"]], ["bob", true, []], ["carol", false, []]]);
+    const got = ruleApprovers(ledger, "wave-1", D, { ...opts, mode: "pr-review", roles: { platform: ["github:alice", "bob"] } });
+    // A grant to the bare login bob is not bob's forge principal, github:bob.
+    expect(got.map((a) => [a.who, a.judged.proven, a.judged.roles])).toEqual([["alice", true, ["platform"]], ["bob", true, []], ["carol", false, []]]);
   });
 
   it("under sealed only an approval whose seal verifies counts, as its signer", () => {
@@ -127,7 +92,7 @@ describe("the approvers of a wave's digest", () => {
     const sealed = { ...a, seal: { signer: "alice", key: "SHA256:test", signature: sshsig(alice, gateSealPayload(a), "chant-gate") } };
     const ledger: GateLedger = { pending: [pending("wave-1", D, 0)], resolutions: [sealed, line("bob", 2)] };
     const got = ruleApprovers(ledger, "wave-1", D, { ...opts, mode: "sealed", signers, roles: { platform: ["alice"] } });
-    expect(got.map((x) => [x.who, x.proven, x.roles])).toEqual([["alice", true, ["platform"]]]);
+    expect(got.map((x) => [x.who, x.judged.proven, x.judged.roles])).toEqual([["alice", true, ["platform"]]]);
   });
 });
 
