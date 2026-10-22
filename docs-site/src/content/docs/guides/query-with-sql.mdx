@@ -65,6 +65,17 @@ No table holds an attribute's value, because no file in the bucket does.
 
 The query reads only. A statement must begin with `SELECT`, `WITH` or `VALUES`. The database lives in memory and refuses writes.
 
+## Gates and approvals
+
+The bucket holds what each wave applied. Each wave's gate and its approvals are on the repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, under op `tf-apply`, and `chant query` reads them. Fetch the branch, then query its `gates` table:
+
+```bash
+git fetch origin chant/lifecycle:chant/lifecycle
+npx chant query "SELECT gate, kind, resolved_by, timestamp FROM gates WHERE op = 'tf-apply' ORDER BY timestamp"
+```
+
+A `pending` row is a wave that waited for an approval, and a `resolution` row names who approved it. The [chant query guide](https://intentius.io/chant/guide/query-lifecycle/) lists its other tables.
+
 ## Next
 
 - [CLI reference](/terragucci/reference/cli/#query) for the flags and exit codes.
