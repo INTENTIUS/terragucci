@@ -75,7 +75,7 @@ On GitLab a Developer or above comments, and the comments schedule answers on it
 | `/terragucci unlock` on the holder | released |
 | a push stops reaching a root, with `locks: plan` | that root is released |
 
-The holds are kept in `_locks/tf-apply.json` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). A hold whose pull request merged or closed counts as released. A fork's pull request takes none.
+The holds are chant's [target locks](https://intentius.io/chant/guide/target-locks/) of the gate `tf-apply`, kept in `_locks/tf-apply.json` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). A hold whose pull request merged or closed counts as released. A fork's pull request takes none. To see who holds what from a checkout, run `npx chant lock --list --gate tf-apply`.
 
 ## Reach
 

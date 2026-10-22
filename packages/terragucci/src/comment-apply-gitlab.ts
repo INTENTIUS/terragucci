@@ -39,7 +39,7 @@ import { reached, type ApplyCommentDecision, type Git } from "./comment-apply";
 import type { WavesAfter } from "./detect";
 import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
-import { describeHeld, releaseLocks, takeLocks } from "./locks";
+import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
 import { gitlabApprovals, type ForgeCalls } from "./review";
 
@@ -293,7 +293,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
   if (parsed.kind === "unlock") {
     let released: string[];
     try {
-      released = releaseLocks(repoDir, iid);
+      released = await releaseRootLocks(repoDir, iid);
     } catch (e) {
       return broke(`could not release the locks of !${iid} (${(e as Error).message})`);
     }
@@ -324,7 +324,7 @@ export async function decideGitLabApply(o: GitLabApplyOptions): Promise<ApplyCom
     const reach = reached(repoDir, git, remote, sha, o.layers, { ...(o.terragrunt ? { terragrunt: true } : {}), ...(o.synth ? { synth: true } : {}) });
     let locked;
     try {
-      locked = await takeLocks(repoDir, reach.units, { pr: iid, by: user, at: new Date().toISOString(), head: sha, ...(how === "lock" ? { via: "lock" as const } : {}) }, async (n) => (await api("GET", `/projects/${id}/merge_requests/${n}`))?.state === "opened");
+      locked = await takeRootLocks(repoDir, reach.units, { pr: iid, by: user, at: new Date().toISOString(), head: sha, stage: how }, async (n) => (await api("GET", `/projects/${id}/merge_requests/${n}`))?.state === "opened");
     } catch (e) {
       return broke(`could not take the root locks (${(e as Error).message})`);
     }
@@ -406,6 +406,6 @@ export async function mergeGitLabMR(o: GitLabMergeOptions): Promise<string> {
   // GitLab merges only while the head is still `sha`.
   const merged = await poster("gitlab", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
   if (!merged.merged) throw new Error(`GitLab refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);
-  const released = releaseLocks(o.repo ?? process.cwd(), o.pr);
+  const released = await releaseRootLocks(o.repo ?? process.cwd(), o.pr);
   return `merged !${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
 }
