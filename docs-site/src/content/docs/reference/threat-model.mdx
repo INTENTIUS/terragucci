@@ -417,7 +417,7 @@ A re-plan runs the change's code from the default branch's workflow, so its OIDC
 
 | Step of `replan` | Holds |
 |---|---|
-| Trade, after the head's checkout and before any of its code runs | the token; `terragucci oidc-trade` trades it for each plan identity (`plan_role`, `oidc.roles`, Terragrunt's `credentials`, `reports.role`, the GCP plan service accounts) and deletes it |
+| Trade, before the head's checkout | the token; `terragucci oidc-trade` runs chant's OIDC trade once for each plan identity (`plan_role`, `oidc.roles`, Terragrunt's `credentials`, `reports.role`, the GCP plan service accounts) and deletes the token |
 | Plan, which runs the change's code | the plan identities' keys and tokens; no OIDC token, no `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, here or in its parent processes |
 | Plan's end | in the job's container, every process the step started is killed, so none reads a later step's environment |
 

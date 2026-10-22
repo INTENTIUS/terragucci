@@ -3,19 +3,21 @@
 // a trade step turns it into the plan identities' credentials first, and the plan step starts without the
 // variables that ask for another.
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { REPLAN_AZURE_WARNING, dropForgeTokens, LEFTOVER_SWEEP, OIDC_REQUEST_VARS, renderPipeline, replanTradeScript, TRADED_FILE, type PipelineInput } from "../src/render";
-import { awsRoles, stsEndpoint, trade, tradeCommand } from "../src/oidc-trade";
+import { awsRoles, stsEndpoint, trade, tradeCommand, type ChantTrade } from "../src/oidc-trade";
+import type { CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { TRADED_ENV } from "../src/traded";
 import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV } from "../src/roles";
 import { s3FromEnv } from "../src/report/s3";
 import { gcsFromEnv } from "../src/report/gcs";
 import { authProviderOutput, ROLES_ENV } from "../src/terragrunt";
-import type { StoreFetch } from "../src/report/object-store";
 
 const PLAN = "arn:aws:iam::111111111111:role/plan-ro";
 const APPLY = "arn:aws:iam::111111111111:role/apply-rw";
@@ -37,14 +39,14 @@ const lastCheckout = (s: Step[]): number => s.map((x) => (x.uses ?? "").endsWith
 const after = (run: string): string => run.split("\n").slice(1).join("\n");
 
 describe("the re-plan's rendered steps", () => {
-  it.each(["github", "forgejo"] as const)("%s: the token is traded after the head's checkout, before the plan, and the plan step holds none", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: the token is traded before the head's checkout, and the plan step holds none", (forge) => {
     const doc = render(forge, { oidc: OIDC });
     const s = steps(doc, "replan");
     const t = tradeStep(s)!;
     expect(t, "the re-plan has a trade step").toBeDefined();
-    const checkout = lastCheckout(s);
-    expect(checkout).toBeGreaterThanOrEqual(0);
-    expect(checkout).toBeLessThan(s.indexOf(t));
+    const head = s.findIndex((x) => x.name === "Check out the pull request's head");
+    expect(head).toBeGreaterThanOrEqual(0);
+    expect(s.indexOf(t)).toBeLessThan(head);
     expect(s.indexOf(t)).toBeLessThan(s.indexOf(planStep(s)));
     expect(t.if).toBe("steps.decide.outputs.go == '1'");
     // The trade step runs terragucci alone: the token request, the trade, and none of the change's code.
@@ -204,89 +206,136 @@ describe("the re-plan's plan step at run time", () => {
 });
 
 describe("terragucci oidc-trade", () => {
-  /** A fetch that answers STS, Google's STS and IAM Credentials, and records what it was asked. */
-  const recorder = (): { fetchFn: StoreFetch; asked: { url: string; body: string; auth?: string }[] } => {
-    const asked: { url: string; body: string; auth?: string }[] = [];
-    const fetchFn = (async (url: string, init?: { body?: string; headers?: Record<string, string> }) => {
-      const body = String(init?.body ?? "");
-      asked.push({ url, body, ...(init?.headers?.authorization ? { auth: init.headers.authorization } : {}) });
-      const text = (t: string, status = 200) => ({ ok: status < 300, status, text: async () => t, json: async () => JSON.parse(t), headers: new Map() });
-      if (url.includes("sts.googleapis.com")) return text(JSON.stringify({ access_token: "federated", expires_in: 3600 }));
-      const sa = /serviceAccounts\/([^:]+):generateAccessToken/.exec(url)?.[1];
-      if (sa) return text(JSON.stringify({ accessToken: `tok-${decodeURIComponent(sa)}`, expireTime: "2099-01-01T00:00:00Z" }));
-      const role = new URLSearchParams(body).get("RoleArn")!;
-      const name = role.split("/").pop();
-      return text(`<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>AK-${name}</AccessKeyId><SecretAccessKey>SK-${name}</SecretAccessKey><SessionToken>ST-${name}</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`);
-    }) as unknown as StoreFetch;
-    return { fetchFn, asked };
+  /**
+   * A local emulator of STS, Google's STS and IAM Credentials, which chant's trade script (run as its own process)
+   * asks. It records what it was asked.
+   */
+  const emulator = async (): Promise<{ url: string; asked: { path: string; body: string; auth?: string }[]; close: () => Promise<void> }> => {
+    const asked: { path: string; body: string; auth?: string }[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        const path = req.url ?? "/";
+        asked.push({ path, body, ...(req.headers.authorization ? { auth: req.headers.authorization } : {}) });
+        if (path === "/v1/token") return res.end(JSON.stringify({ access_token: "federated", expires_in: 3600 }));
+        const sa = /serviceAccounts\/([^:]+):generateAccessToken/.exec(path)?.[1];
+        if (sa) return res.end(JSON.stringify({ accessToken: `tok-${decodeURIComponent(sa)}`, expireTime: "2099-01-01T00:00:00Z" }));
+        const name = new URLSearchParams(body).get("RoleArn")!.split("/").pop();
+        res.end(`<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>AK-${name}</AccessKeyId><SecretAccessKey>SK-${name}</SecretAccessKey><SessionToken>ST-${name}</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>`);
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const { port } = server.address() as AddressInfo;
+    return { url: `http://127.0.0.1:${port}`, asked, close: () => new Promise((done) => server.close(() => done())) };
   };
 
-  const jobWithToken = (): { dir: string; env: NodeJS.ProcessEnv } => {
+  const jobWithToken = (sts: string): { dir: string; env: NodeJS.ProcessEnv } => {
     const dir = mkdtempSync(join(tmpdir(), "trade-"));
     writeFileSync(join(dir, "token"), "the-jwt\n");
-    return { dir, env: { AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token"), AWS_ROLE_ARN: PLAN, AWS_ROLE_SESSION_NAME: "terragucci-plan", AWS_ENDPOINT_URL_STS: "http://sts.local/" } };
+    return { dir, env: { AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token"), AWS_ROLE_ARN: PLAN, AWS_ROLE_SESSION_NAME: "terragucci-plan", AWS_ENDPOINT_URL_STS: `${sts}/` } };
   };
 
-  it("trades the job's token for each plan role once, writes the job's keys and the file, and deletes the token", async () => {
-    const { dir, env } = jobWithToken();
-    env[ROOT_ROLES_ENV] = JSON.stringify([["envs/dev/*", "arn:aws:iam::111111111111:role/dev-plan"], ["envs/prd/*", PLAN]]);
-    env[ROLES_ENV] = JSON.stringify([["live/*", "arn:aws:iam::111111111111:role/unit-plan"]]);
-    const { fetchFn, asked } = recorder();
-    const out = join(dir, "traded.env");
-    const lines = await tradeCommand(out, env, { reportsRole: "arn:aws:iam::111111111111:role/reports", fetchFn });
-    expect(asked.map((a) => new URLSearchParams(a.body).get("RoleArn"))).toEqual([PLAN, "arn:aws:iam::111111111111:role/dev-plan", "arn:aws:iam::111111111111:role/unit-plan", "arn:aws:iam::111111111111:role/reports"]);
-    expect(asked.every((a) => a.url === "http://sts.local/" && new URLSearchParams(a.body).get("WebIdentityToken") === "the-jwt")).toBe(true);
-    expect(lines).toHaveLength(4);
-    expect(existsSync(env.AWS_WEB_IDENTITY_TOKEN_FILE!)).toBe(false);
-    const shell = readFileSync(out, "utf-8");
-    expect(shell).toContain(`export ${TRADED_ENV}='${out}.json'`);
-    expect(shell).toContain("export AWS_ACCESS_KEY_ID='AK-plan-ro' AWS_SECRET_ACCESS_KEY='SK-plan-ro' AWS_SESSION_TOKEN='ST-plan-ro'");
-    expect(shell).not.toContain("the-jwt");
-    const json = JSON.parse(readFileSync(`${out}.json`, "utf-8"));
-    expect(Object.keys(json.aws)).toHaveLength(4);
-    expect(JSON.stringify(json)).not.toContain("the-jwt");
+  it("trades the job's token for each plan role once with chant's trade, writes the job's keys and the file, and deletes the token", async () => {
+    const em = await emulator();
+    try {
+      const { dir, env } = jobWithToken(em.url);
+      env[ROOT_ROLES_ENV] = JSON.stringify([["envs/dev/*", "arn:aws:iam::111111111111:role/dev-plan"], ["envs/prd/*", PLAN]]);
+      env[ROLES_ENV] = JSON.stringify([["live/*", "arn:aws:iam::111111111111:role/unit-plan"]]);
+      const out = join(dir, "traded.env");
+      const lines = await tradeCommand(out, env, { reportsRole: "arn:aws:iam::111111111111:role/reports" });
+      expect(em.asked.map((a) => new URLSearchParams(a.body).get("RoleArn"))).toEqual([PLAN, "arn:aws:iam::111111111111:role/dev-plan", "arn:aws:iam::111111111111:role/unit-plan", "arn:aws:iam::111111111111:role/reports"]);
+      expect(em.asked.every((a) => a.path === "/" && new URLSearchParams(a.body).get("Action") === "AssumeRoleWithWebIdentity" && new URLSearchParams(a.body).get("WebIdentityToken") === "the-jwt")).toBe(true);
+      expect(lines).toHaveLength(4);
+      expect(existsSync(env.AWS_WEB_IDENTITY_TOKEN_FILE!)).toBe(false);
+      const shell = readFileSync(out, "utf-8");
+      expect(shell).toContain(`export ${TRADED_ENV}='${out}.json'`);
+      expect(shell).toContain("export AWS_ACCESS_KEY_ID='AK-plan-ro' AWS_SECRET_ACCESS_KEY='SK-plan-ro' AWS_SESSION_TOKEN='ST-plan-ro'");
+      expect(shell).not.toContain("the-jwt");
+      const json = JSON.parse(readFileSync(`${out}.json`, "utf-8"));
+      expect(Object.keys(json.aws)).toHaveLength(4);
+      expect(json.aws["arn:aws:iam::111111111111:role/unit-plan"]).toEqual({ accessKeyId: "AK-unit-plan", secretAccessKey: "SK-unit-plan", sessionToken: "ST-unit-plan" });
+      expect(JSON.stringify(json)).not.toContain("the-jwt");
+    } finally {
+      await em.close();
+    }
+  });
+
+  it("runs chant's trade, not a trade of its own: one spec per identity, with the job's token", async () => {
+    const asked: { spec: CloudTradeSpec; token: string }[] = [];
+    const run: ChantTrade = async (spec, token) => {
+      asked.push({ spec, token });
+      return { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_SESSION_TOKEN: "ST" };
+    };
+    const { env } = jobWithToken("http://sts.local");
+    env.AWS_REGION = "eu-west-1";
+    await trade(env, { run, reportsRole: "arn:aws:iam::111111111111:role/reports" });
+    expect(asked).toEqual([
+      { spec: { aws: { role: PLAN, region: "eu-west-1", audience: "sts.amazonaws.com", endpoint: "http://sts.local" } }, token: "the-jwt" },
+      { spec: { aws: { role: "arn:aws:iam::111111111111:role/reports", region: "eu-west-1", audience: "sts.amazonaws.com", endpoint: "http://sts.local" } }, token: "the-jwt" },
+    ]);
   });
 
   it("leaves the job's static keys first when it holds them (the reports' keys), as the SDKs read them", async () => {
-    const { dir, env } = jobWithToken();
-    env.AWS_ACCESS_KEY_ID = "AKREPORTS";
-    const out = join(dir, "traded.env");
-    await tradeCommand(out, env, { fetchFn: recorder().fetchFn });
-    expect(readFileSync(out, "utf-8")).not.toContain("AWS_ACCESS_KEY_ID");
+    const em = await emulator();
+    try {
+      const { dir, env } = jobWithToken(em.url);
+      env.AWS_ACCESS_KEY_ID = "AKREPORTS";
+      const out = join(dir, "traded.env");
+      await tradeCommand(out, env);
+      expect(readFileSync(out, "utf-8")).not.toContain("AWS_ACCESS_KEY_ID");
+    } finally {
+      await em.close();
+    }
   });
 
   it("refuses a job with oidc.azure, which a re-plan never trades for, and deletes the tokens anyway", async () => {
-    const { dir, env } = jobWithToken();
+    const { dir, env } = jobWithToken("http://sts.local");
     writeFileSync(join(dir, "azure"), "az-jwt");
     env.ARM_OIDC_TOKEN_FILE_PATH = join(dir, "azure");
-    await expect(tradeCommand(join(dir, "traded.env"), env, { fetchFn: recorder().fetchFn })).rejects.toThrow(/does not trade for oidc\.azure/);
+    await expect(tradeCommand(join(dir, "traded.env"), env)).rejects.toThrow(/does not trade for oidc\.azure/);
     expect(existsSync(env.AWS_WEB_IDENTITY_TOKEN_FILE!)).toBe(false);
     expect(existsSync(join(dir, "traded.env"))).toBe(false);
   });
 
   it("refuses a role it has no token to trade for", async () => {
-    await expect(trade({ AWS_ROLE_ARN: PLAN }, { fetchFn: recorder().fetchFn })).rejects.toThrow(/AWS_WEB_IDENTITY_TOKEN_FILE is not set/);
+    await expect(trade({ AWS_ROLE_ARN: PLAN })).rejects.toThrow(/AWS_WEB_IDENTITY_TOKEN_FILE is not set/);
   });
 
-  it("gcp: trades for the job's service account and each root's, and deletes the token and the credential files", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "trade-gcp-"));
-    const token = join(dir, "gcp-token");
-    writeFileSync(token, "gcp-jwt");
-    const gac = join(dir, "gac.json");
-    writeFileSync(gac, JSON.stringify({ type: "external_account", audience: "//iam.googleapis.com/projects/1/x", subject_token_type: "urn:ietf:params:oauth:token-type:jwt", token_url: "https://sts.googleapis.com/v1/token", service_account_impersonation_url: "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/plan@p.iam.gserviceaccount.com:generateAccessToken", credential_source: { file: token } }));
-    const env: NodeJS.ProcessEnv = { GOOGLE_APPLICATION_CREDENTIALS: gac, TERRAGUCCI_GCP_TOKEN_FILE: token, [ROOT_GCP_ENV]: JSON.stringify([["envs/dev/*", "dev@p.iam.gserviceaccount.com"]]) };
-    const { fetchFn, asked } = recorder();
-    const out = join(dir, "traded.env");
-    await tradeCommand(out, env, { fetchFn });
-    expect(asked.filter((a) => a.url.includes("generateAccessToken")).map((a) => a.url)).toEqual([
-      "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/plan@p.iam.gserviceaccount.com:generateAccessToken",
-      "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/dev@p.iam.gserviceaccount.com:generateAccessToken",
-    ]);
-    expect(readFileSync(out, "utf-8")).toContain("export GOOGLE_OAUTH_ACCESS_TOKEN='tok-plan@p.iam.gserviceaccount.com'");
-    expect(existsSync(token)).toBe(false);
-    expect(existsSync(gac)).toBe(false);
-    const json = JSON.parse(readFileSync(`${out}.json`, "utf-8"));
-    expect(Object.keys(json.gcp)).toEqual(["plan@p.iam.gserviceaccount.com", "dev@p.iam.gserviceaccount.com"]);
+  it("a refused trade names chant's reason and deletes the token", async () => {
+    const em = await emulator();
+    await em.close();
+    const { dir, env } = jobWithToken(em.url);
+    await expect(tradeCommand(join(dir, "traded.env"), env)).rejects.toThrow(/the OIDC trade failed/);
+    expect(existsSync(env.AWS_WEB_IDENTITY_TOKEN_FILE!)).toBe(false);
+  });
+
+  it("gcp: trades for the job's service account and each root's, at the endpoints the job's file names, and deletes the token and the file", async () => {
+    const em = await emulator();
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "trade-gcp-"));
+      const token = join(dir, "gcp-token");
+      writeFileSync(token, "gcp-jwt");
+      const gac = join(dir, "gac.json");
+      writeFileSync(gac, JSON.stringify({ type: "external_account", audience: "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/f", subject_token_type: "urn:ietf:params:oauth:token-type:jwt", token_url: `${em.url}/v1/token`, service_account_impersonation_url: `${em.url}/v1/projects/-/serviceAccounts/plan@p.iam.gserviceaccount.com:generateAccessToken`, credential_source: { file: token } }));
+      const env: NodeJS.ProcessEnv = { GOOGLE_APPLICATION_CREDENTIALS: gac, TERRAGUCCI_GCP_TOKEN_FILE: token, [ROOT_GCP_ENV]: JSON.stringify([["envs/dev/*", "dev@p.iam.gserviceaccount.com"]]) };
+      const out = join(dir, "traded.env");
+      await tradeCommand(out, env);
+      const fed = em.asked.filter((a) => a.path === "/v1/token");
+      expect(fed).toHaveLength(2);
+      expect(JSON.parse(fed[0]!.body)).toMatchObject({ audience: "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/f", subjectToken: "gcp-jwt" });
+      expect(em.asked.filter((a) => a.path.includes("generateAccessToken")).map((a) => a.path)).toEqual([
+        "/v1/projects/-/serviceAccounts/plan%40p.iam.gserviceaccount.com:generateAccessToken",
+        "/v1/projects/-/serviceAccounts/dev%40p.iam.gserviceaccount.com:generateAccessToken",
+      ]);
+      expect(readFileSync(out, "utf-8")).toContain("export GOOGLE_OAUTH_ACCESS_TOKEN='tok-plan@p.iam.gserviceaccount.com'");
+      expect(existsSync(token)).toBe(false);
+      expect(existsSync(gac)).toBe(false);
+      const json = JSON.parse(readFileSync(`${out}.json`, "utf-8"));
+      expect(Object.keys(json.gcp)).toEqual(["plan@p.iam.gserviceaccount.com", "dev@p.iam.gserviceaccount.com"]);
+    } finally {
+      await em.close();
+    }
   });
 
   it("names STS by region, a China region in its own domain, or by the endpoint the job sets", () => {
@@ -382,10 +431,10 @@ describe("the re-plan's Terragrunt cache", () => {
     expect(caches[0]!.with).toEqual(saved.with);
     expect(caches[0]!.with).toEqual({ path: ".terragrunt-cache", key: "terragucci-tg-${{ hashFiles('**/*.hcl') }}", "restore-keys": "terragucci-tg-" });
     expect(caches[0]!.if).toBe("steps.decide.outputs.go == '1'");
-    // Restored after the head's checkout and before the trade and the plan, as the cache was.
+    // Restored after the trade and the head's checkout, and before the plan.
     expect(lastCheckout(s)).toBeGreaterThanOrEqual(0);
     expect(lastCheckout(s)).toBeLessThan(s.indexOf(caches[0]!));
-    expect(s.indexOf(caches[0]!)).toBeLessThan(s.indexOf(tradeStep(s)!));
+    expect(s.indexOf(tradeStep(s)!)).toBeLessThan(s.indexOf(caches[0]!));
     expect(s.indexOf(caches[0]!)).toBeLessThan(s.indexOf(planStep(s)));
     // Nothing else in the job writes to a cache.
     expect(JSON.stringify(s)).not.toMatch(/actions\/cache@|actions\/cache\/save/);

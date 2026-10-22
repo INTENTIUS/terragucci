@@ -385,34 +385,6 @@ jobs:
           { echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"
           [ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"
       - if: steps.decide.outputs.go == '1'
-        name: Check out the pull request's head
-        shell: bash
-        env:
-          TG_TOKEN: '${{ github.token }}'
-          TG_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
-        run: |
-          set -eu
-          git config --global --add safe.directory "$PWD" 2>/dev/null || true
-          [ -d .git ] || git init -q .
-          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          if [ -n "${TG_TOKEN:-}" ]; then
-            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
-          fi
-          ref="${TG_REF:-$GITHUB_REF}"
-          want="${TG_REF:-$GITHUB_SHA}"
-          case "$ref" in
-            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
-            refs/tags/*) target="$ref" ;;
-            refs/*) target="refs/remotes/${ref#refs/}" ;;
-            *) target="refs/remotes/origin/terragucci-head" ;;
-          esac
-          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
-          case "$ref" in
-            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
-            *) git checkout -q --force --detach "$target" ;;
-          esac
-      - if: steps.decide.outputs.go == '1'
         name: Trade the job's OIDC token for the plan identities
         shell: bash
         run: |
@@ -477,6 +449,34 @@ jobs:
           export TERRAGUCCI_ROOT_ROLES='[["envs/prod/**","arn:aws:iam::222222222222:role/prod-plan"],["envs/dev/**","arn:aws:iam::111111111111:role/dev-plan"]]'
           terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
           for f in "${TERRAGUCCI_OIDC_FILE:-}" "${TERRAGUCCI_OIDC_GCP_FILE:-}" "${TERRAGUCCI_OIDC_AZURE_FILE:-}"; do [ -z "$f" ] || rm -f "$f"; done
+      - if: steps.decide.outputs.go == '1'
+        name: Check out the pull request's head
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+          TG_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
       - if: steps.decide.outputs.go == '1'
         id: plan
         name: Re-plan the pull request on request and write the plan report
