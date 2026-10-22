@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
+import * as chantReview from "@intentius/chant/op/activities/review-agent";
 import { ConfigError, validateConfig, type ForgeName } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { MARKER, PIPELINE_PATHS, renderPipeline, RenderError, REPORT_DIR } from "../src/render";
@@ -15,6 +16,7 @@ import {
   PIPELINE_WORKFLOW,
   PLAN_REPORT_ARTIFACT,
   postReview,
+  REVIEW_CLAUDE_CODE_VERSION,
   REVIEW_COMMAND,
   REVIEW_MARK,
   REVIEW_PATHS,
@@ -23,6 +25,7 @@ import {
   reviewOfPull,
   reviewPrompt,
   reviewSubject,
+  RISKS,
   riskOf,
   untrustedRun,
   writeReviewPrompt,
@@ -547,5 +550,21 @@ describe("the review's pull request and plan report", () => {
     let t = 0;
     const said = await fetchPlanReport(f, async () => undefined, subject, undefined, tmp(), { waitMs: 60_000, pollMs: 30_000, now: () => t, sleep: async (ms) => void (t += ms) });
     expect(said).toBe("no plan report: the pipeline's run of aaaaaaaa did not finish its plan in 1 minute");
+  });
+});
+
+// chant's reviewAgent activity (chant#4299) was lifted from this file and shares its command and its risk line. The
+// bundle cannot import the activity: its module loads chant's behaviour prediction, and with it lint, codegen and the
+// CLI (scripts/bundle-check.mjs). So terragucci keeps its copy, and these tests keep the two the same.
+describe("the review agent in step with chant's reviewAgent", () => {
+  it("runs the same Claude Code release and command", () => {
+    expect(REVIEW_CLAUDE_CODE_VERSION).toBe(chantReview.REVIEW_CLAUDE_CODE_VERSION);
+    expect(REVIEW_COMMAND).toBe(chantReview.REVIEW_COMMAND);
+  });
+
+  it("reads the same risks from the same lines", () => {
+    expect([...RISKS]).toEqual([...chantReview.REVIEW_RISKS]);
+    const reviews = ["ok\nrisk: low\n", "**Risk: High**\nmore", "- risk: medium\nrisk: high", "> risk: `medium`", "_risk_: low", "risk:high", "nothing here", "the risk: is low"];
+    for (const r of reviews) expect(riskOf(r), r).toBe(chantReview.riskOf(r));
   });
 });

@@ -30,6 +30,11 @@
  *              (`terragucci review post`), with the job's token. It posts a
  *              comment and nothing else: no review, no approval, no status.
  *
+ * chant's reviewAgent activity (chant#4299) shares the default command and
+ * the `risk:` line with this file, and test/review-agent.test.ts holds them
+ * equal. The bundle does not import the activity, whose module loads chant's
+ * lint, codegen and CLI (scripts/bundle-check.mjs).
+ *
  * The review ends with a `risk:` line (low, medium or high), which the note
  * carries in its marker for people to read. A `tf-apply` wave gives the
  * policy the risk of the merged pull request's head as `input.review`, read
