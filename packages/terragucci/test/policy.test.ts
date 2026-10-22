@@ -34,7 +34,7 @@ describe("policy output", () => {
     const out = JSON.stringify([{ namespace: "aws", failures: [{ msg: "a", metadata: { query: "data.aws.deny_public_bucket" } }, { msg: "b" }], warnings: [] }]);
     expect(conftestFindings(out)?.rules).toEqual(["aws.deny_public_bucket", "aws.deny"]);
     const pkg = { deny_public: ["x"], violation: ["y"], warn: ["z"], tags: { deny: ["t"] } };
-    expect(opaFindings(JSON.stringify({ result: [{ expressions: [{ value: pkg }] }] }), true, "terraform.policies")?.rules).toEqual(["terraform.policies.deny_public", "terraform.policies.tags.deny", "terraform.policies.violation"]);
+    expect(opaFindings(JSON.stringify({ result: [{ expressions: [{ value: pkg }] }] }), "terraform.policies")?.rules).toEqual(["terraform.policies.deny_public", "terraform.policies.tags.deny", "terraform.policies.violation"]);
   });
 
   it("reads the deny set from opa eval", () => {
@@ -58,10 +58,9 @@ describe("policy output", () => {
     };
     const out = JSON.stringify({ result: [{ expressions: [{ value: pkg }] }] });
     const found = opaFindings(out)!;
-    expect(found.violations.sort()).toEqual(["d", "dp", "v", "vt"]);
+    // chant reads the package and the packages one level under it, so a child package's deny counts too.
+    expect(found.violations.sort()).toEqual(["a child package", "d", "dp", "v", "vt"]);
     expect(found.warnings.sort()).toEqual(["w", "wc"]);
-    // Nested: each child package of terraform.policies is one policy of an HCP set.
-    expect(opaFindings(out, true)!.violations).toContain("a child package");
     expect(opaFindings(JSON.stringify({ result: [{ expressions: [{ value: { deny: true } }] }] }))!.violations).toEqual(["deny"]);
   });
 });

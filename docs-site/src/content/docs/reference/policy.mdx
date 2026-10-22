@@ -21,7 +21,7 @@ policy:
 |---|---|---|
 | `engine` | `conftest` | `conftest` or `opa` |
 | `path` | `policy` | the directory of Rego files, inside the repo |
-| `namespace` | every namespace for conftest; for opa, `main`, or every package under `terraform.policies` with `input: hcp` | the Rego package whose rules count |
+| `namespace` | every namespace for conftest; for opa, `main`, or `terraform.policies` with `input: hcp` | the Rego package whose rules count; opa also counts the packages one level under it |
 | `input` | `plan` | what `input` holds: `plan`, the bare plan JSON; `hcp`, `{plan, run}` as HCP Terraform's OPA policies read it |
 | `source` | none: the repo's own `path` | a shared policy repo at a pinned ref, `git+https://<host>/<path>@<ref>`; see [below](#a-shared-policy-source) |
 | `override` | none: no override counts | the forge identities or signers who may let one denied plan through `tf-apply`, read at base; see [below](#overriding-a-denial) |
@@ -382,7 +382,7 @@ terragucci downloads a missing engine once per job and refuses one whose SHA-256
 | Engine | Packages read | Pinned version | `tf-check` runs |
 |---|---|---|---|
 | `conftest` | every package, unless `namespace` names one | 0.71.0 | `conftest verify` |
-| `opa` | `main`, or every package under `terraform.policies` with `input: hcp`, unless `namespace` names one | 1.21.1 | `opa test` |
+| `opa` | `main` and the packages one level under it, or `terraform.policies` and its packages with `input: hcp`, unless `namespace` names another | 1.21.1 | `opa test` |
 
 Offline jobs need the engine installed; drift runs and provisional Terragrunt previews skip the check.
 

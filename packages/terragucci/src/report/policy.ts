@@ -1,9 +1,14 @@
 /**
  * Policy as code: the opt-in `policy:` key runs conftest or OPA over each
  * planned root's plan JSON, and a violation fails the root in `tf-plan`.
- * Both engines count `deny`, `violation` and `deny_*` rules, as conftest
- * does, and read `warn` rules as warnings that fail nothing. `input: hcp`
- * wraps the plan as `{plan, run}`, the shape HCP Terraform's OPA policies read.
+ * The engine's argv and the reading of its answer are chant's
+ * (`@intentius/chant/gate-policy`): both engines count `deny`, `violation`
+ * and `deny_*` rules, as conftest does, and read `warn` rules as warnings
+ * that fail nothing. This module is the Terraform adapter around it: the
+ * input (`input: hcp` wraps the plan as `{plan, run}`, the shape HCP
+ * Terraform's OPA policies read), an HCP policy set's `policies.hcl`, the
+ * redaction, the pinned engine install, and `allow_unattended`, which chant
+ * does not have.
  *
  * The check reads the unredacted `show -json` of each root, writes it to a
  * temporary file, and runs the engine on that file. Nothing here reads a
@@ -33,6 +38,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { CONFIG_NAMES, loadConfig, parsePolicySource, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
+import {
+  conftestFindings as chantConftestFindings,
+  gatePolicyArgv,
+  opaFindings as chantOpaFindings,
+  type GatePolicyFindings,
+  type GatePolicySettings,
+} from "@intentius/chant/gate-policy";
 import { binaryEnv } from "../binary-env";
 import { redactPlan } from "./redact";
 import { REDACTED, type ReportPolicy, type ReportRootPolicy } from "./schema";
@@ -143,13 +155,8 @@ async function fetchBytes(url: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** A rule whose messages fail the root, as conftest counts them: `deny`, `violation`, `deny_<name>`, `violation_<name>`. */
-export const DENY_RULE = /^(deny|violation)(_[A-Za-z0-9]+)*$/;
-/** A rule whose messages are advice, as conftest counts them: `warn`, `warn_<name>`. */
-export const WARN_RULE = /^warn(_[A-Za-z0-9]+)*$/;
-/** A rule that holds the root's wave for an approval (`policy.outcomes`): `hold`, `hold_<name>`. */
-export const HOLD_RULE = /^hold(_[A-Za-z0-9]+)*$/;
-/** A rule that lets the root's plan apply without an approval (`policy.outcomes`): `allow_unattended`, `allow_unattended_<name>`. */
+export { DENY_RULE, HOLD_RULE, WARN_RULE } from "@intentius/chant/gate-policy";
+/** A rule that lets the root's plan apply without an approval (`policy.outcomes`): `allow_unattended`, `allow_unattended_<name>`. terragucci's alone: chant's policy step has no unattended outcome. */
 export const ALLOW_RULE = /^allow_unattended(_[A-Za-z0-9]+)*$/;
 
 /** What an engine's answer holds: messages that fail the root, and advice that does not. */
@@ -171,11 +178,14 @@ export interface PolicyFindings {
  */
 export const ruleId = (query: string): string => query.replace(/^data\./, "");
 
-/** A rule's message as conftest prints it: a string as it is, an object's `msg`, anything else as JSON. */
-function messageOf(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (v !== null && typeof v === "object" && typeof (v as { msg?: unknown }).msg === "string") return (v as { msg: string }).msg;
-  return JSON.stringify(v);
+/** chant's findings (`@intentius/chant/gate-policy`) in terragucci's terms: each denial's message and rule, in order. */
+function fromChant(found: GatePolicyFindings): PolicyFindings {
+  return {
+    violations: found.denials.map((d) => d.message),
+    warnings: [...found.warnings],
+    rules: found.denials.map((d) => d.rule),
+    ...(found.holds.length ? { holds: found.holds.map((h) => ({ ...h })) } : {}),
+  };
 }
 
 /** Every message a conftest JSON result denies with (failures; conftest counts `deny`, `violation` and `deny_*` there). */
@@ -183,66 +193,25 @@ export function conftestViolations(stdout: string): string[] | undefined {
   return conftestFindings(stdout)?.violations;
 }
 
-/** conftest's failures and warnings, from `conftest test --output json`. */
+/** conftest's failures and warnings, from `conftest test --output json`, as chant reads them. */
 export function conftestFindings(stdout: string): PolicyFindings | undefined {
-  let results: unknown;
-  try {
-    results = JSON.parse(stdout);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(results)) return undefined;
-  const out: PolicyFindings = { violations: [], warnings: [], rules: [] };
-  for (const r of results as { namespace?: string; failures?: { msg?: unknown; metadata?: { query?: unknown } }[]; warnings?: { msg?: unknown }[] }[]) {
-    for (const f of r.failures ?? []) {
-      out.violations.push(typeof f.msg === "string" ? f.msg : JSON.stringify(f.msg));
-      // conftest names the query that denied in the failure's metadata; an older one gives only the namespace.
-      out.rules.push(typeof f.metadata?.query === "string" ? ruleId(f.metadata.query) : `${r.namespace ?? "main"}.deny`);
-    }
-    for (const w of r.warnings ?? []) out.warnings.push(typeof w.msg === "string" ? w.msg : JSON.stringify(w.msg));
-  }
-  return out;
-}
-
-/** The rules of one package's document: each deny-like and warn-like rule's messages. `nested` reads every child package too. `pkg` is the package's name, for the rule ids. */
-function packageFindings(doc: Record<string, unknown>, out: PolicyFindings, nested: boolean, pkg: string): void {
-  for (const [name, value] of Object.entries(doc).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const deny = DENY_RULE.test(name);
-    const into = deny ? out.violations : WARN_RULE.test(name) ? out.warnings : undefined;
-    if (into) {
-      const before = into.length;
-      if (Array.isArray(value)) into.push(...value.map(messageOf));
-      else if (value === true) into.push(name);
-      else if (typeof value === "string") into.push(value);
-      if (deny) for (let i = before; i < into.length; i++) out.rules.push(`${pkg}.${name}`);
-      continue;
-    }
-    // A hold or an allow holds when its value is true, a message, or a non-empty set of messages.
-    const said = Array.isArray(value) ? value.map(messageOf) : value === true ? [name] : typeof value === "string" && value !== "" ? [value] : [];
-    if (HOLD_RULE.test(name)) {
-      for (const message of said) (out.holds ??= []).push({ rule: `${pkg}.${name}`, message });
-      continue;
-    }
-    if (ALLOW_RULE.test(name)) {
-      if (said.length > 0) (out.allows ??= []).push(`${pkg}.${name}`);
-      continue;
-    }
-    if (nested && value !== null && typeof value === "object" && !Array.isArray(value)) packageFindings(value as Record<string, unknown>, out, false, `${pkg}.${name}`);
-  }
+  const found = chantConftestFindings(stdout);
+  return found && fromChant(found);
 }
 
 /**
- * The findings in an `opa eval` JSON result. The query is a package
- * (`data.<namespace>`), so its value holds every rule: `deny`, `violation`
- * and `deny_*` fail the root, `warn` and `warn_*` are advice, as conftest
- * counts them. An array value is read as a deny set. No result means the
- * package has no rule that holds: no denial. `checkPlans` has already
- * failed the root when the namespace names no package at all.
+ * The findings in an `opa eval` JSON result of the query `data.<namespace>`,
+ * as chant reads them: `deny`, `violation` and `deny_*` fail the root, `hold`
+ * and `hold_*` hold its wave, `warn` and `warn_*` are advice, in the package
+ * and the packages one level under it. An array value is a deny set. No
+ * result means no rule holds. terragucci adds `allow_unattended` rules
+ * (unattendedRules), which chant reads as no rule.
  */
-export function opaFindings(stdout: string, nested = false, namespace = "main"): PolicyFindings | undefined {
-  const answer = opaAnswer(stdout);
-  if (answer === undefined) return undefined;
-  return answer.value === undefined ? { violations: [], warnings: [], rules: [] } : findingsOf(answer.value, nested, namespace);
+export function opaFindings(stdout: string, namespace = "main"): PolicyFindings | undefined {
+  const found = chantOpaFindings(stdout, namespace);
+  if (!found) return undefined;
+  const allows = unattendedRules(opaAnswer(stdout)?.value, namespace);
+  return { ...fromChant(found), ...(allows.length ? { allows } : {}) };
 }
 
 /** The value of an `opa eval` JSON result's query: `{}` when the query is undefined, `undefined` when the output is not a result. */
@@ -258,12 +227,17 @@ export function opaAnswer(stdout: string): { value?: unknown } | undefined {
   return value === undefined ? {} : { value };
 }
 
-/** The findings in a query's value: an array is a deny set (its rule is `query`), an object is the rules of the package `query` names. */
-function findingsOf(value: unknown, nested: boolean, query: string): PolicyFindings | undefined {
-  if (Array.isArray(value)) return { violations: value.map(messageOf), warnings: [], rules: value.map(() => ruleId(query)) };
-  if (value === null || typeof value !== "object") return undefined;
-  const out: PolicyFindings = { violations: [], warnings: [], rules: [] };
-  packageFindings(value as Record<string, unknown>, out, nested, ruleId(query));
+/** The `allow_unattended` rules that hold in a package's value, and in the packages one level under it, as chant reads the other rules. */
+function unattendedRules(value: unknown, pkg: string, nested = true): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const [name, v] of Object.entries(value as Record<string, unknown>)) {
+    if (ALLOW_RULE.test(name)) {
+      if (v === true || (typeof v === "string" && v !== "") || (Array.isArray(v) && v.length > 0)) out.push(`${pkg}.${name}`);
+    } else if (nested) {
+      out.push(...unattendedRules(v, `${pkg}.${name}`, false));
+    }
+  }
   return out;
 }
 
@@ -363,12 +337,12 @@ export function policyInput(policy: PolicySettings, planJson: string, context?: 
   return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}${review ? `,"review":${JSON.stringify(review)}` : ""}}`;
 }
 
-/** The engine's arguments for one input file. */
+/** The engine's arguments for one input file: chant's argv (`gatePolicyArgv`), less the command, which is the binary terragucci installed. */
 export function policyArgs(policy: PolicySettings, path: string, file: string): string[] {
-  if ((policy.engine ?? "conftest") === "opa") {
-    return ["eval", "--format", "json", "--data", path, "--input", file, `data.${opaNamespace(policy)}`];
-  }
-  return ["test", "--no-color", "--output", "json", "--policy", path, ...(policy.namespace ? ["--namespace", policy.namespace] : ["--all-namespaces"]), file];
+  const engine = policy.engine ?? "conftest";
+  const namespace = engine === "opa" ? opaNamespace(policy) : policy.namespace;
+  const settings: GatePolicySettings = { engine, ...(namespace ? { namespace } : {}) };
+  return gatePolicyArgv(settings, { policy: path, input: file }).slice(1);
 }
 
 /** The package the opa engine queries: the namespace, else `main`, else (with `input: hcp`) HCP's `terraform.policies`. */
@@ -426,7 +400,7 @@ async function checkHcpSet(binary: string, set: HcpPolicy[], policy: PolicySetti
     const answer = opaAnswer(r.stdout);
     if (answer === undefined) return { violations: [], error: `opa gave no verdict for policy ${p.name} (exit ${r.status}): ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}` };
     if (answer.value === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} matches no rule` };
-    const found = findingsOf(answer.value, true, p.query);
+    const found = opaFindings(r.stdout, ruleId(p.query));
     if (found === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} gives ${JSON.stringify(answer.value)}, not a set of messages` };
     // HCP reads the query's messages as the policy's result, whatever the rule is named; the level decides what they do.
     const messages = [...found.violations, ...found.warnings].map((m) => `${p.name}: ${m}`);
@@ -454,8 +428,8 @@ export async function checkPlan(binary: string, policy: PolicySettings, repo: st
       if (set) return await checkHcpSet(binary, set, policy, path, file, repo, exec);
     }
     const r = await exec(binary, policyArgs(policy, path, file), repo);
-    // With input: hcp and no namespace, every package under terraform.policies is one policy of the set.
-    const found = opa ? opaFindings(r.stdout, policy.input === "hcp" && policy.namespace === undefined, opaNamespace(policy)) : conftestFindings(r.stdout);
+    // chant reads the namespace's package and the packages one level under it: with input: hcp and no namespace, each package under terraform.policies is one policy of the set.
+    const found = opa ? opaFindings(r.stdout, opaNamespace(policy)) : conftestFindings(r.stdout);
     if (found === undefined) return { violations: [], error: `${engine} gave no verdict (exit ${r.status}): ${(r.stderr || r.stdout).trim().split("\n").slice(-3).join(" ")}` };
     // conftest exits 1 on a denial and 2 or more when it could not run; opa exits 0 or 1 on a query it ran.
     if (found.violations.length === 0 && r.status !== 0) return { violations: [], error: `${engine} exited ${r.status}: ${r.stderr.trim().split("\n").slice(-3).join(" ")}` };
