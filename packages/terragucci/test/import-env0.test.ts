@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config";
@@ -147,7 +148,7 @@ describe("env zero TTLs", () => {
 });
 
 describe("terragucci import env0, on a repo", () => {
-  it("writes the environments' roots, binary, version, steps, ephemeral, env, secrets and drift", async () => {
+  it("writes the environments' roots, binary, version, hooks, ephemeral, env, secrets and drift", async () => {
     const dir = repo();
     const r = importConfig(dir, "env0", { forge: "github" });
     expect(r.from).toBe("env0-discovery.yml, network/env0.yml, admin/main.tf");
@@ -161,11 +162,13 @@ describe("terragucci import env0, on a repo", () => {
     expect(cfg.drift).toBe("0 4 * * *");
     expect(cfg.env).toEqual({ AWS_REGION: "us-east-1" });
     expect(cfg.pass).toEqual({ secrets: ["API_TOKEN", "TF_VAR_db_password"] });
-    expect(cfg.steps).toHaveLength(2);
-    expect(r.settings.steps).toEqual([
-      { name: "network/env0.yml: deploy.steps.terraformPlan.before", run: "set -e\ntflint\n./scripts/check.sh", before: "plan", roots: ["network"] },
-      { name: "network/env0.yml: deploy.steps.terraformApply.after", run: "./scripts/smoke.sh", after: "apply", roots: ["network"] },
-    ]);
+    const hooks = {
+      before: { plan: [{ name: "network/env0.yml: deploy.steps.terraformPlan.before", command: ["sh", "-c", "set -e\ntflint\n./scripts/check.sh"], perRun: true, targets: ["network"] }] },
+      after: { apply: [{ name: "network/env0.yml: deploy.steps.terraformApply.after", command: ["sh", "-c", "./scripts/smoke.sh"], perRun: true, targets: ["network"] }] },
+    };
+    expect(r.hooks).toEqual(hooks);
+    expect(r.wroteHooks).toBe("chant.workspace.json");
+    expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toMatchObject({ minReader: "0.124.41", ci: { hooks } });
     const n = r.notes;
     expect(note(n, "environments.search.variableFiles")).toMatchObject({ kind: "mapped", row: "Root" });
     expect(note(n, "environments.search.variableFiles[0]")?.kind).toBe("default");
@@ -189,7 +192,7 @@ describe("terragucci import env0, on a repo", () => {
     const r = importConfig(dir, "env0");
     const cfg = await loadConfig(join(dir, "terragucci.yml"));
     expect(cfg.env).toEqual({ TF_LOG: "INFO" });
-    expect(cfg.steps).toEqual([{ name: "env0.yml: deploy.steps.terraformInit.before", run: `cd "$TG_REPO" && bash -c 'echo "it'\\''s"'`, before: "init" }]);
+    expect(r.hooks).toEqual({ before: { observe: [{ name: "env0.yml: deploy.steps.terraformInit.before", command: ["sh", "-c", `cd "$TG_REPO" && bash -c 'echo "it'\\''s"'`], perRun: true }] } });
     expect(r.settings.roots).toBeUndefined();
   });
 

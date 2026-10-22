@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 43;
+export const REPORT_MINOR = 44;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -443,13 +443,14 @@ export type ReportRootOutcome = "applied" | "unchanged" | "failed" | "waiting" |
 export type WaveState = "planned" | "waiting" | "applying" | "applied" | "refused" | "failed" | "blocked";
 
 /** When a step runs: before or after a root's init, plan, apply or drift (minor 17). */
-export type ReportStepWhen = `${"before" | "after"}-${"init" | "plan" | "apply" | "drift"}`;
+/** A hook's moment: one of chant's (minor 44), or the stage a `steps:` entry named in reports before it. */
+export type ReportStepWhen = "before-observe" | `${"before" | "after"}-${"init" | "plan" | "apply" | "drift"}`;
 
 /**
- * One step that ran for a root (minor 17). `passed`: it exited 0. `failed`:
- * it exited otherwise and the root failed. `approval`: it exited otherwise
- * with `on_failure: approve`, so the root's wave waits for an approval.
- * Its output stays in the job log.
+ * One `ci.hooks` hook that ran for a root (minor 17). `passed`: it exited 0.
+ * `failed`: it exited otherwise and the root failed. `approval`: it exited
+ * otherwise with `onFailure: "approve"`, so the root's wave waits for an
+ * approval. Its output stays in the job log.
  */
 export interface ReportStep {
   name: string;

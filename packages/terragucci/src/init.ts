@@ -674,7 +674,7 @@ export function signerLine(repo: string, principal: string): string {
 }
 
 /** A declaration name: lowercase letters, digits and hyphens, at most 40. */
-function workspaceName(repo: string, name?: string): string {
+export function workspaceName(repo: string, name?: string): string {
   let raw = name;
   if (!raw) {
     try {

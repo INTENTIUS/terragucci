@@ -253,14 +253,14 @@
             }
           },
           "steps": {
-            "description": "The steps that ran for the root, in the order they ran (minor 17). failed: the root failed; approval: an on_failure: approve step failed, so the root's wave waits for an approval.",
+            "description": "The ci.hooks hooks that ran for the root, in the order they ran (minor 17); when names the moment, before-observe from minor 44. failed: the root failed; approval: an onFailure: approve hook failed, so the root's wave waits for an approval.",
             "type": "array",
             "items": {
               "type": "object",
               "required": ["name", "when", "status", "exit", "seconds"],
               "properties": {
                 "name": { "type": "string" },
-                "when": { "enum": ["before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply", "before-drift", "after-drift"] },
+                "when": { "enum": ["before-observe", "before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply", "before-drift", "after-drift"] },
                 "status": { "enum": ["passed", "failed", "approval"] },
                 "exit": { "type": ["integer", "null"] },
                 "seconds": { "type": "number" }

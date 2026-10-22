@@ -34,54 +34,45 @@ describe("a Terragrunt wave behind its gate", () => {
     });
   });
 
-  describe("steps", () => {
-    it("runs each moment once around the wave's run --all, in the dirs its globs match, and a step after plan holds the gate", async () => {
-      const steps = [
-        "steps:",
-        "  - name: tfvars",
-        '    run: echo "$TG_STAGE" > step.txt',
-        "    before: plan",
-        "  - name: verify",
-        '    run: test -f "$TG_PLAN_FILE" && echo "plan of $TG_ROOT" >> step.txt && exit 1',
-        "    after: plan",
-        '    roots: ["live/a"]',
-        "    on_failure: approve",
-        "  - name: done",
-        "    run: echo applied >> step.txt",
-        "    after: apply",
-      ].join("\n");
-      const { work, origin } = setupWith({ "terragucci.yml": `gate: never\n${steps}\n` });
+  describe("ci.hooks", () => {
+    const decl = (hooks: unknown): string => `${JSON.stringify({ name: "t", schema: 1, minReader: "0.102.0", members: [], ci: { hooks } }, null, 2)}\n`;
+    const sh = (run: string): string[] => ["sh", "-c", run];
+
+    it("runs each moment once around the wave's run --all, in the dirs its targets match, and a hook after plan holds the gate", async () => {
+      const hooks = {
+        before: { plan: [{ name: "tfvars", command: sh('echo "$TG_STAGE" > step.txt'), perRun: true }] },
+        after: {
+          plan: [{ name: "verify", command: sh('test -f "$TG_PLAN_FILE" && echo "plan of $TG_ROOT" >> step.txt && exit 1'), perRun: true, targets: ["live/a"], onFailure: "approve" }],
+          apply: [{ name: "done", command: sh("echo applied >> step.txt"), perRun: true }],
+        },
+      };
+      const { work, origin } = setupWith({ "terragucci.yml": "gate: never\n", "chant.workspace.json": decl(hooks) });
       const out = vi.spyOn(console, "log").mockImplementation(() => {});
       const tg = fakeTerragrunt();
-      // Under gate: never the step after plan holds wave 1, and nothing applies.
+      // Under gate: never the hook after plan holds wave 1, and nothing applies.
       expect(await applyWave(work, { ...opts(tg, "never"), wave: 1, now: T(1) })).toBe(3);
       expect(tg.applied.size).toBe(0);
       expect(readFileSync(join(work, "live/a/step.txt"), "utf-8")).toBe("tf-apply\nplan of live/a\n");
       expect(existsSync(join(work, "live/b/step.txt"))).toBe(false);
-      expect(out.mock.calls.flat().join("\n")).toContain("wave 1 of 2: live/a: step verify asks for an approval, so the gate holds this wave");
+      expect(out.mock.calls.flat().join("\n")).toContain("wave 1 of 2: live/a: hook verify asks for an approval, so the gate holds this wave");
       const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
       expect(report.waves[0]).toMatchObject({ held_by_steps: ["live/a"] });
       expect(report.roots[0].steps.map((x: { name: string; status: string }) => `${x.name} ${x.status}`)).toEqual(["tfvars passed", "verify approval"]);
-      // Approved, the wave applies its saved plan, and the step after apply runs.
+      // Approved, the wave applies its saved plan, and the hook after apply runs.
       approve(origin, "wave-1", ledger(origin).pending[0]!.planDigest!, T(2));
       expect(await applyWave(work, { ...opts(tg, "never"), wave: 1, now: T(3) })).toBe(0);
       expect([...tg.applied]).toEqual(["live/a"]);
       expect(readFileSync(join(work, "live/a/step.txt"), "utf-8")).toBe("tf-apply\nplan of live/a\napplied\n");
     });
 
-    it("a step before the apply that fails applies nothing; after: init is refused", async () => {
-      const { work } = setupWith({ "terragucci.yml": "gate: never\nsteps:\n  - name: stop\n    run: exit 1\n    before: apply\n" });
+    it("a hook before the apply that fails applies nothing", async () => {
+      const { work } = setupWith({ "terragucci.yml": "gate: never\n", "chant.workspace.json": decl({ before: { apply: [{ name: "stop", command: sh("exit 1"), perRun: true }] } }) });
       const out = vi.spyOn(console, "log").mockImplementation(() => {});
       const tg = fakeTerragrunt();
       expect(await applyWave(work, { ...opts(tg, "never"), wave: 1, now: T(1) })).toBe(1);
       expect(tg.applied.size).toBe(0);
       expect(runs(tg)).toEqual(["plan live/a"]);
-      expect(out.mock.calls.flat().join("\n")).toContain("live/a: before-apply step stop failed (exit 1)");
-      const late = setupWith({ "terragucci.yml": "gate: never\nsteps:\n  - name: late\n    run: echo late\n    after: init\n" });
-      const tg2 = fakeTerragrunt();
-      expect(await applyWave(late.work, { ...opts(tg2, "never"), wave: 1, now: T(1) })).toBe(1);
-      expect(tg2.calls).toHaveLength(0);
-      expect(out.mock.calls.flat().join("\n")).toContain("steps late: a Terragrunt repo inits each unit inside the wave's run --all plan");
+      expect(out.mock.calls.flat().join("\n")).toContain("hook before-apply stop failed with exit 1");
     });
   });
 });

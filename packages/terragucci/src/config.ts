@@ -161,32 +161,6 @@ export type Locks = (typeof LOCKS)[number];
 export type ApplyMerge = (typeof APPLY_MERGE)[number];
 export type ApplyRequire = (typeof APPLY_REQUIRES)[number];
 
-/** The stages a step runs before or after (`steps:`). `drift` is the drift job's refresh-only plan. */
-export const STEP_STAGES = ["init", "plan", "apply", "drift"] as const;
-export type StepStage = (typeof STEP_STAGES)[number];
-/** What a step's non-zero exit does: fail the root (the default), or hold its wave for an approval. */
-export const STEP_FAILURES = ["fail", "approve"] as const;
-export type StepFailure = (typeof STEP_FAILURES)[number];
-export const STEP_KEYS = ["name", "run", "before", "after", "roots", "on_failure"] as const;
-
-/**
- * One entry of `steps:`. `run` is a shell command, run in the root's
- * directory. Exactly one of `before` and `after` names the stage. `roots`
- * are globs of the roots it runs for (every root when unset).
- * `on_failure: approve` turns a non-zero exit into a hold: the root's wave
- * waits for an approval of its set digest, whatever `gate` says. Only a step
- * that runs before the gate is decided can hold it: one before or after
- * init or plan.
- */
-export interface StepSettings {
-  run: string;
-  name?: string;
-  before?: StepStage;
-  after?: StepStage;
-  roots?: string[];
-  on_failure?: StepFailure;
-}
-
 /**
  * `apply:`: when a change applies. `when: merge` (the default) applies the
  * default branch after a merge. `when: pull-request` applies an open pull
@@ -518,16 +492,9 @@ export interface ProjectSettings {
    */
   synth?: string;
   /**
-   * Commands run before and after a root's init, plan, apply and drift, in
-   * the stage's own job, on its checkout, with its environment less the forge
-   * tokens. Read from terragucci.yml at base, never from the change under
-   * review (./steps.ts).
-   */
-  steps?: StepSettings[];
-  /**
    * The image every job runs in, in place of terragucci's: one built FROM
    * the terragucci image for the binary, so the job still has terragucci and
-   * the binary, plus what the steps need.
+   * the binary, plus what the `ci.hooks` need.
    */
   image?: string;
   /**
@@ -965,7 +932,6 @@ export const PROJECT_FILE_KEYS = [
   "waves",
   "parallelism",
   "synth",
-  "steps",
   "drift",
   "cost",
   "tips",
@@ -1013,7 +979,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "steps", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1061,7 +1027,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     return;
   }
   for (const k of Object.keys(s)) {
-    if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
+    if (k === "steps") problems.push(`${where}.steps: ${STEPS_MOVED}`);
+    else if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
   }
   stringList(s.roots, `${where}.roots`, problems);
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
@@ -1124,7 +1091,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   }
   // What the shape these keys declare refuses (./refusals.ts); config check adds the shape detection finds in the repo.
   problems.push(...shapeProblems(declaredKind(s as ProjectSettings), s as ProjectSettings, where));
-  if (s.steps !== undefined) checkSteps(s.steps, `${where}.steps`, problems);
   if (s.own_jobs !== undefined) problems.push(...ownJobsProblems(s.own_jobs, `${where}.own_jobs`));
   if (s.ephemeral !== undefined) checkEphemeral(s.ephemeral, `${where}.ephemeral`, problems, s);
   if (s.runner !== undefined) problems.push(...runnerProblems(s.runner, `${where}.runner`, s.forge));
@@ -1303,28 +1269,9 @@ export function agentLoginWarning(agent: { token_env?: unknown; login?: unknown 
   return `agent.token_env is set without agent.login, so the agent's account isn't excluded from approving a change: set agent.login to the login ${agent.token_env}'s token acts as`;
 }
 
-function checkSteps(v: unknown, where: string, problems: string[]): void {
-  if (!Array.isArray(v)) {
-    problems.push(`${where} must be a list of steps, each with run and before or after`);
-    return;
-  }
-  v.forEach((step, i) => {
-    const at = `${where}[${i}]`;
-    if (!isObject(step)) return void problems.push(`${at} must be a map with run and before or after`);
-    for (const k of Object.keys(step)) if (!(STEP_KEYS as readonly string[]).includes(k)) problems.push(`${at}.${k} is not a setting (settings: ${STEP_KEYS.join(", ")})`);
-    if (!(typeof step.run === "string" && step.run.trim() !== "")) problems.push(`${at}.run must be the command the step runs`);
-    if (step.name !== undefined && !(typeof step.name === "string" && step.name.trim() !== "")) problems.push(`${at}.name must be a string`);
-    if ((step.before === undefined) === (step.after === undefined)) problems.push(`${at} needs one of before or after, naming ${STEP_STAGES.join(", ")}`);
-    oneOf(step.before, STEP_STAGES, `${at}.before`, problems);
-    oneOf(step.after, STEP_STAGES, `${at}.after`, problems);
-    stringList(step.roots, `${at}.roots`, problems);
-    oneOf(step.on_failure, STEP_FAILURES, `${at}.on_failure`, problems);
-    const stage = step.before ?? step.after;
-    if (step.on_failure === "approve" && (stage === "apply" || stage === "drift")) {
-      problems.push(`${at}.on_failure: approve holds the wave at its gate, which is decided after the plans and before any apply; give it a step before or after init or plan`);
-    }
-  });
-}
+/** Why terragucci.yml takes no `steps:`: chant runs them, from chant.workspace.json. */
+export const STEPS_MOVED =
+  "steps are ci.hooks in chant.workspace.json now, each with a command list and perRun: true (before: init or drift is before.observe, after: init is before.plan, after: drift is after.plan, roots is targets, on_failure is onFailure); see https://intentius.io/terragucci/guides/run-steps/";
 
 export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
 export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];

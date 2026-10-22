@@ -44,7 +44,7 @@ import { rootRoleEnv } from "./roles";
 import { derivedLineage, pullState, runBinary, takeLocks, type BinaryExec, type HeldLock, type StateFile, type StateResource } from "./migrate";
 import { changesSomething } from "./report/changing";
 import type { ReportComposedMember, ReportRead } from "./report/schema";
-import type { StepWhen } from "./steps";
+import type { HookMoment } from "./hooks";
 
 /** Where the composed root is written, in the checkout. */
 export const COMPOSE_DIR = ".terragucci-compose";
@@ -1067,10 +1067,10 @@ export function writeWithDir(path: string, body: string): void {
 
 // ── the run ───────────────────────────────────────────────────────────────
 
-/** What a composed run calls out to for each member: its steps, and the sources check after its init. */
+/** What a composed run calls out to for each member: its `ci.hooks`, and the sources check after its init. */
 export interface ComposeHooks {
-  /** Run one moment's steps for a member; the error when one failed it. A step given the plan file gets the composed one. */
-  step?: (root: string, when: StepWhen, planFile?: string) => Promise<string | undefined>;
+  /** Run one moment's hooks for a member; the error when one failed it. A hook given the plan file gets the composed one. */
+  step?: (root: string, when: HookMoment, planFile?: string) => Promise<string | undefined>;
   /** After a member's init, before anything of it plans: the error when the sources check refuses what init fetched. */
   afterInit?: (root: string, env: NodeJS.ProcessEnv) => Promise<string | undefined>;
   log: (line: string) => void;
@@ -1184,7 +1184,7 @@ export class ComposedRun {
     return { error, ...(root ? { root } : {}), planFile: join(this.o.work, "composed.tfplan"), digest: "", generated: [], slices: new Map(), texts: new Map(), reads: new Map(), unknown: [], changes: 0, destroys: 0, summary: "" };
   }
 
-  private async step(root: string, when: StepWhen, planFile?: string): Promise<string | undefined> {
+  private async step(root: string, when: HookMoment, planFile?: string): Promise<string | undefined> {
     return this.o.hooks.step ? this.o.hooks.step(root, when, planFile) : undefined;
   }
 
@@ -1200,13 +1200,11 @@ export class ComposedRun {
     for (const r of this.c.order) {
       const dir = join(repo, r);
       const env = this.rootEnv(r);
-      let e = await this.step(r, "before-init");
+      let e = await this.step(r, "before-observe");
       if (e) return this.failedPlan(e, r);
       const init = await turn(() => this.exec(bin, ["init", "-input=false", "-no-color"], dir, env));
       if (init.code !== 0) return this.failedPlan(`init failed\n${firstLines(init.out, 40)}`, r);
       e = await this.o.hooks.afterInit?.(r, env);
-      if (e) return this.failedPlan(e, r);
-      e = await this.step(r, "after-init");
       if (e) return this.failedPlan(e, r);
       const object = stateObject(dir, env);
       if ("unsupported" in object && isStoredBackend(object.backend)) return this.failedPlan(`its state cannot be read where it is: ${object.unsupported}`, r);

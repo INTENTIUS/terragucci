@@ -5,7 +5,7 @@ claims: [init/pass-secrets, init/runner-label, import/hcp, import/scalr]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/.
   Run `npx terragucci import hcp --organization <org> --dry-run` (`import otf --hostname <host>`, or `import scalr --hostname <account>.scalr.io`) with the token in `TF_TOKEN_<host>`, and show me what it prints. Propose a directory per workspace for each directory it lists as run by several workspaces.
-  Once I agree, run it without `--dry-run`. Add what the concepts table maps that the import does not write: `policy` with `input: hcp` for an OPA policy set, `steps` for run tasks. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the `terraform.tfvars` files and the generated pipeline.
+  Once I agree, run it without `--dry-run`. Add what the concepts table maps that the import does not write: `policy` with `input: hcp` for an OPA policy set, `ci.hooks` in `chant.workspace.json` for run tasks. Run `npx terragucci config check --json` and `npx terragucci init`, and open a pull request with terragucci.yml, the `terraform.tfvars` files and the generated pipeline.
   List the sensitive variables the import named under `pass` that I must recreate as CI secrets, and each Sentinel policy that needs a Rego rewrite.
   Do not change a `cloud` or `backend` block, do not run `init -migrate-state`, `state pull` or `state push`, and do not create secrets: a person moves the state.
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
@@ -49,7 +49,7 @@ Staying is reasonable when your workspaces depend on Stacks' deferred changes, o
 | OPA policy set | `policy.input: hcp` with `engine: opa`; `policies.hcl` [runs as is](/terragucci/reference/policy/#hcp-terraform-policy-sets) |
 | Scalr OPA policy group | `policy` with `engine: opa` and `input: plan`, each policy's `input.tfplan` changed to `input`; a check of `input.tfrun` is rewritten |
 | Soft-mandatory override | [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a person `policy.override` lists |
-| Run tasks | [`steps`](/terragucci/guides/run-steps/) after `plan`, with `on_failure: fail` or `approve` |
+| Run tasks | [`ci.hooks`](/terragucci/guides/run-steps/) after the plan, with `onFailure` `"fail"` or `"approve"` |
 | Workspace lock | [root locks](/terragucci/reference/config/#plan-locks) and the backend's lock file |
 | Agents, remote execution | jobs on your CI's runners, your own ones by label with [`runner`](/terragucci/guides/add-to-a-repo/#self-hosted-runners) |
 | Health assessments | [`drift`](/terragucci/guides/turn-on-drift-checks/), a cron schedule |
@@ -284,20 +284,24 @@ Scalr hands a policy the plan as `input.tfplan` and the run (workspace, environm
 
 ## Run tasks
 
-A run task posts the plan to a service and waits for a pass or fail. A step runs a command in the job instead, with the plan file in `TG_PLAN_FILE`:
+A run task posts the plan to a service and waits for a pass or fail. A hook in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) runs a command in the job instead, with the plan file in `TG_PLAN_FILE`:
 
-```yaml
-steps:
-  - name: scan
-    run: ./scripts/scan.sh "$TG_PLAN_FILE"
-    after: plan
-    on_failure: approve
+```json
+{
+  "ci": {
+    "hooks": {
+      "after": {
+        "plan": [{ "name": "scan", "command": ["sh", "-c", "./scripts/scan.sh \"$TG_PLAN_FILE\""], "perRun": true, "onFailure": "approve" }]
+      }
+    }
+  }
+}
 ```
 
-| Run task enforcement | Step |
+| Run task enforcement | Hook |
 |---|---|
-| Mandatory | `on_failure: fail`, the default: the root fails |
-| Advisory | `on_failure: approve`: the wave waits at its gate for a person |
+| Mandatory | `onFailure: "fail"`, the default: the root fails |
+| Advisory | `onFailure: "approve"`: the wave waits at its gate for a person |
 
 ## Limits
 

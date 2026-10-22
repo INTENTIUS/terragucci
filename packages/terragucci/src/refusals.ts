@@ -13,7 +13,7 @@ import type { ProjectSettings } from "./config";
 export type ShapeKind = "roots" | "synth" | "atmos" | "terragrunt" | "terramate";
 
 /** What a setting asks the pipeline to do, which a shape may refuse. */
-export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "oidc-gcp-roles" | "oidc-azure-roles" | "steps" | "ephemeral" | "waves-after" | "environment-oidc" | "environment-parallelism" | "environment-jobs" | "secrets";
+export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "oidc-gcp-roles" | "oidc-azure-roles" | "ephemeral" | "waves-after" | "environment-oidc" | "environment-parallelism" | "environment-jobs" | "secrets";
 
 /** The key each feature is set by, as a problem names it. */
 export const FEATURE_KEY: Record<Feature, string> = {
@@ -25,7 +25,6 @@ export const FEATURE_KEY: Record<Feature, string> = {
   "oidc-roles": "oidc.roles",
   "oidc-gcp-roles": "oidc.gcp.roles",
   "oidc-azure-roles": "oidc.azure.roles",
-  steps: "steps",
   ephemeral: "ephemeral",
   "waves-after": "waves.after",
   "environment-oidc": "environments",
@@ -124,8 +123,6 @@ export function wants(s: ProjectSettings, feature: Feature): boolean {
       const cloud = (s.oidc as Record<string, unknown> | undefined)?.[feature === "oidc-gcp-roles" ? "gcp" : "azure"];
       return typeof cloud === "object" && cloud !== null && (cloud as { roles?: unknown }).roles !== undefined;
     }
-    case "steps":
-      return Array.isArray(s.steps) && s.steps.length > 0;
     case "secrets":
       return Array.isArray(s.secrets) && s.secrets.length > 0;
     case "ephemeral":
@@ -152,8 +149,7 @@ export function declaredKind(s: ProjectSettings): ShapeKind {
 
 /**
  * Every refusal `kind` makes of what the settings ask for, each as
- * `<where>.<key>: <why>`. A Terragrunt repo's steps are refused step by step
- * (terragruntStepsRefusal in ./steps.ts), which the Shape adds.
+ * `<where>.<key>: <why>`.
  */
 export function shapeProblems(kind: ShapeKind, s: ProjectSettings, where: string): string[] {
   const out: string[] = [];

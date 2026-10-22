@@ -104,7 +104,7 @@ export const SCALE_TABLE = [
   ["No authentication", "`authentication {}`", "no key: a unit no glob matches runs with the runner's credentials"],
   ["Other clouds", "`azure_oidc`, `gcp_oidc`, `custom`", "none by unit path: `oidc.azure` or `oidc.gcp` sets one pair for every unit"],
   ["Binary", "`repository.tf_binary`", "`binary`"],
-  ["Other settings", "`repository`, `annotation`", "not mapped: set `env`, `steps` or `terragrunt.exclude` by hand"],
+  ["Other settings", "`repository`, `annotation`", "not mapped: set `env`, `ci.hooks` or `terragrunt.exclude` by hand"],
 ] as const satisfies readonly (readonly [string, string, string])[];
 
 export type TgScaleRow = (typeof SCALE_TABLE)[number][0];

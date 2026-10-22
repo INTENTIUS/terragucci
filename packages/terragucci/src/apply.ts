@@ -153,10 +153,10 @@ import type { ProgressSinks } from "./migrate-progress";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, pendingEstateMigrations, pendingWhy, runMigrations, sha as shaOf, type MigrationHold, type MigrationRecord } from "./migrate";
 import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
-import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, waveStepsBase, type StepWhen } from "./steps";
+import { hookCount, hooksUsed, readHooks, runHooks, runUnitHooks, type HookMoment, type StageHooks } from "./hooks";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
 import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
-import type { SecretSource, StepSettings } from "./config";
+import type { SecretSource } from "./config";
 import type { ReportApprovalRule, ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
 import { readRecords, recordStoreOf } from "./cdf-records";
@@ -629,24 +629,24 @@ interface PlannedRoot {
   binary: string;
   /** That binary as the report names it. */
   bin: ReportRootBinary;
-  /** The steps that ran for it. */
+  /** The `ci.hooks` hooks that ran for it. */
   steps: ReportStep[];
-  /** Its `on_failure: approve` steps that failed: the wave waits for an approval. */
+  /** Its `onFailure: "approve"` hooks that failed: the wave waits for an approval. */
   holds: string[];
   /** A choudoufu plan of an open pull request's root with `-cone` (./cone.ts): its targets are in the member's plan digest. */
   cone?: PlanCone;
 }
 
-/** The steps a wave runs, and the context its roots run them in. */
+/** The hooks a wave runs, and the context its roots run them in. */
 interface WaveSteps {
-  steps: StepSettings[];
+  hooks: StageHooks;
   env: NodeJS.ProcessEnv;
 }
 
-/** Run one moment's steps for a planned root, keeping what they came to on it. The error when one failed the root. */
-async function rootSteps(repo: string, p: Pick<PlannedRoot, "root" | "steps" | "holds">, ws: WaveSteps | undefined, when: StepWhen, planFile?: string): Promise<string | undefined> {
-  if (!ws || ws.steps.length === 0) return undefined;
-  const o = await runSteps(ws.steps, when, { repo, root: p.root, stage: "tf-apply", env: ws.env, ...(planFile ? { planFile } : {}), log: (l) => console.log(l) });
+/** Run one moment's hooks for a planned root, keeping what they came to on it. The error when one failed the root. */
+async function rootSteps(repo: string, p: Pick<PlannedRoot, "root" | "steps" | "holds">, ws: WaveSteps | undefined, when: HookMoment, planFile?: string): Promise<string | undefined> {
+  if (!ws || hookCount(ws.hooks) === 0) return undefined;
+  const o = await runHooks(ws.hooks, when, { repo, root: p.root, stage: "tf-apply", env: ws.env, ...(planFile ? { planFile } : {}), log: (l) => console.log(l) });
   p.steps.push(...o.runs);
   p.holds.push(...o.holds);
   return o.error;
@@ -711,7 +711,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   // sources: a root using a source outside the list at base is not initialised (./sources.ts).
   const refused = sources?.refused;
   if (refused?.length) return { ...failed, error: `refused by sources, so it was not initialised\n${refused.join("\n")}` };
-  // The binary's own: the values `secrets` gives the root, read as its identity (./root-secrets.ts); it plans and applies with them, and its steps never get them.
+  // The binary's own: the values `secrets` gives the root, read as its identity (./root-secrets.ts); it plans and applies with them, and its hooks never get them.
   let env: NodeJS.ProcessEnv;
   try {
     env = await rootSecretEnv(roleEnv, root, secrets);
@@ -731,7 +731,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
   if (bin.pin) console.log(`${root}: ${binaryText(bin)}`);
   const base = { ...failed, binary, bin };
   const stepEnv = ws ? { ...ws, env: rootCacheEnv(workspaceEnv(rootRoleEnv({ ...ws.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir), dir, expected.name) } : undefined;
-  let stepError = await rootSteps(repo, base, stepEnv, "before-init");
+  let stepError = await rootSteps(repo, base, stepEnv, "before-observe");
   if (stepError) return { ...base, error: stepError };
   const wsInit = workspaceInit(env, dir);
   const init = await cache.initTurn(() => timed(observer, timing, binary, ["init", "-input=false", "-no-color"], wsInit?.init ?? env, dir));
@@ -764,7 +764,7 @@ async function planTimed(repo: string, binaries: RootBinaries, root: string, wor
     return { ...base, error: `not planned: ${filled.waiting.map((w) => `it reads ${w.read.var} from ${w.read.upstream}, which ${w.why} (${w.read.function})`).join("; ")}; apply ${[...new Set(filled.waiting.map((w) => w.read.upstream))].join(", ")} first` };
   }
   for (const v of filled.filled) console.log(`${root}: ${v} read from the state its stacks name`);
-  stepError = (await rootSteps(repo, base, stepEnv, "after-init")) ?? (await rootSteps(repo, base, stepEnv, "before-plan"));
+  stepError = await rootSteps(repo, base, stepEnv, "before-plan");
   if (stepError) return { ...base, error: stepError };
   const planArgs = ["-input=false", "-no-color", ...lockTimeoutArgs("plan", env), `-out=${planFile}`];
   // An open pull request's wave plans a choudoufu live root as the cone of its change since base, as its plan note did (./cone.ts).
@@ -815,7 +815,7 @@ async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, 
   if (r.code === 0) {
     const after = await rootSteps(repo, p, stepEnv, "after-apply");
     if (after) {
-      console.log(`FAILED ${p.root}: applied, then a step after the apply failed`);
+      console.log(`FAILED ${p.root}: applied, then a hook after the apply failed`);
       console.log(indent(after));
       p.error = after;
       return false;
@@ -1589,7 +1589,7 @@ export interface WaveRun {
   decided?: boolean;
   /** The share of a wave split across jobs this job applies. */
   share?: number;
-  /** The roots whose `on_failure: approve` step failed, which hold the wave at its gate. */
+  /** The roots whose `onFailure: "approve"` hook failed, which hold the wave at its gate. */
   heldBySteps?: string[];
   /** The estimate of the wave's plans, with `cost` set. */
   cost?: ReportCost;
@@ -1872,27 +1872,31 @@ async function waveSettings(repo: string, options: ApplyWaveOptions, configPath:
 }
 
 /**
- * The steps a wave runs: those in terragucci.yml at base (the base the wave
- * was given, else the applied commit's first parent), never the applied
- * commit's own, so a change cannot add a step that runs with the apply
- * credentials it is applied with. A base that cannot be read runs no steps
- * when the checkout names none, and fails the wave when it names some.
+ * The `ci.hooks` a wave runs: those in chant.workspace.json at base (the
+ * base the wave was given, else the applied commit's first parent), never
+ * the applied commit's own, so a change cannot add a hook that runs with the
+ * apply credentials it is applied with. A base that cannot be read runs no
+ * hooks when the checkout names none, and fails the wave when it names some.
  */
-async function waveSteps(repo: string, options: ApplyWaveOptions, configPath: string | undefined, checkout: StepSettings[] | undefined): Promise<{ ws?: WaveSteps } | { error: string }> {
+function waveSteps(repo: string, options: ApplyWaveOptions): { ws?: WaveSteps } | { error: string } {
   let base: string;
   try {
-    base = waveStepsBase(repo, options.base);
+    base = options.base ?? baseCommit(repo);
   } catch (e) {
-    if (!checkout?.length) return {};
-    return { error: `steps are read from the config at base, and base could not be found (${(e as Error).message})` };
+    try {
+      if (hookCount(readHooks(repo, undefined).hooks) === 0) return {};
+    } catch {
+      // An unreadable checkout declaration fails the wave below, as one with hooks does.
+    }
+    return { error: `ci.hooks are read from chant.workspace.json at base, and base could not be found (${(e as Error).message})` };
   }
   try {
-    const read = await readSteps(repo, base, checkout, configPath ? { config: configPath } : {});
+    const read = readHooks(repo, base);
     if (read.note) console.log(read.note);
-    const steps = stepsUsed(read.steps, "tf-apply");
-    if (steps.length === 0) return {};
-    console.log(`steps: ${steps.length} read from terragucci.yml at ${read.from.length === 40 ? read.from.slice(0, 8) : read.from}`);
-    return { ws: { steps, env: options.env ?? process.env } };
+    const hooks = hooksUsed(read.hooks, "tf-apply");
+    if (hookCount(hooks) === 0) return {};
+    console.log(`ci.hooks: ${hookCount(hooks)} read from chant.workspace.json at ${read.from.length === 40 ? read.from.slice(0, 8) : read.from}`);
+    return { ws: { hooks, env: options.env ?? process.env } };
   } catch (e) {
     return { error: (e as Error).message };
   }
@@ -1967,7 +1971,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   const settings = (w.settings = read.settings);
   w.waveReads = afterWaves(repo, settings, options, own, w.waveReads ?? [], wave);
-  const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
+  const stepsRead = waveSteps(repo, options);
   if ("error" in stepsRead) {
     console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
     return EXIT.failed;
@@ -2048,8 +2052,8 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   console.log(`${label}: set digest ${digest}, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
   if (changes === 0) facts.nothing = true;
   const heldBySteps = [...planned.filter((p) => p.holds.length > 0).map((p) => p.root), ...(composed ? [...composed.holds.keys()] : [])].sort();
-  for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: step ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
-  for (const [r, h] of composed?.holds ?? []) console.log(`${label}: ${r}: step ${h.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
+  for (const p of planned) if (p.holds.length) console.log(`${label}: ${p.root}: hook ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
+  for (const [r, h] of composed?.holds ?? []) console.log(`${label}: ${r}: hook ${h.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
   // A root that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
   // An Atmos or Terramate read was reviewed on the upstream's applied state: one the change moved holds it the same way (#1053).
@@ -2058,7 +2062,7 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads)).length > 0;
   // The policy's hold and allow_unattended rules, over the plans that change something (policy.outcomes at base).
   const ruled = deciding && changes > 0 ? waveRules(repo, ctx, j, (composed ? w.planned! : planned).filter((p) => changesSomething(p.plan)), gate, destroys > 0) : undefined;
-  // A step that asks for an approval, a change over cost.approve_above at base, or a hold rule, holds the wave whatever the gate policy says.
+  // A hook that asks for an approval, a change over cost.approve_above at base, or a hold rule, holds the wave whatever the gate policy says.
   const byGate = (ruled?.outcome === "unattended" ? false : gate === "always" || (gate === "on-destructive" && destroys > 0)) || heldBySteps.length > 0 || byReads || ruled?.outcome === "held";
   const byCost = w.waveCost?.over === true;
   if (changes > 0 && byCost) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so it waits for an approval${byGate ? "" : ` although gate is ${gate}`}`);
@@ -2197,7 +2201,7 @@ interface ComposedWave {
   /** Each root's reads of another root of the run, for the unknown-read hold. */
   reads: WaveRead[];
   reportReads: Map<string, ReportRead[]>;
-  /** The `on_failure: approve` steps that failed, by root. */
+  /** The `onFailure: "approve"` hooks that failed, by root. */
   holds: Map<string, string[]>;
   plan?: ComposedPlan;
   result?: ComposedApply;
@@ -2258,8 +2262,8 @@ async function planComposedWave(
     hooks: {
       log: (l) => console.log(`${at.label}: ${l}`),
       step: async (root, when, planFile) => {
-        if (!at.ws || at.ws.steps.length === 0) return undefined;
-        const o = await runSteps(at.ws.steps, when, { repo, root, stage: "tf-apply", env: rootRoleEnv({ ...at.ws.env, TF_PLUGIN_CACHE_DIR: at.cache.dir }, root), ...(planFile ? { planFile } : {}), log: (l) => console.log(l) });
+        if (!at.ws || hookCount(at.ws.hooks) === 0) return undefined;
+        const o = await runHooks(at.ws.hooks, when, { repo, root, stage: "tf-apply", env: rootRoleEnv({ ...at.ws.env, TF_PLUGIN_CACHE_DIR: at.cache.dir }, root), ...(planFile ? { planFile } : {}), log: (l) => console.log(l) });
         ran.set(root, [...(ran.get(root) ?? []), ...o.runs]);
         if (o.holds.length) holds.set(root, [...(holds.get(root) ?? []), ...o.holds]);
         return o.error;
@@ -3681,7 +3685,7 @@ interface PlannedUnit {
   outputs: boolean;
   error?: string;
   policy?: ReportRootPolicy;
-  /** The steps that ran in its directory. */
+  /** The hooks that ran in its directory. */
   steps?: ReportStep[];
   /** What it ran, when the unit pins a release (unit-pins.ts). */
   bin?: ReportRootBinary;
@@ -3736,12 +3740,12 @@ const waves = (n: number): string => `${n} wave${n === 1 ? "" : "s"}`;
  * read mock_outputs fails the wave: its upstream applies in an earlier wave,
  * so it has no outputs only when it lies outside the units.
  *
- * `steps:` run around the wave's `run --all`: each moment once for the wave,
- * in the directory of every unit a step's `roots` globs match (runUnitSteps).
- * Before init and before plan come before the plan, after plan after it with
- * each unit's saved plan, and before and after apply around the apply of the
- * units that change. A step that fails fails the wave, and one with
- * `on_failure: approve` holds it at its gate.
+ * `ci.hooks` run around the wave's `run --all`: each moment once for the
+ * wave, in the directory of every unit a hook's `targets` match
+ * (runUnitHooks). Before observe and before plan come before the plan, after
+ * plan after it with each unit's saved plan, and before and after apply
+ * around the apply of the units that change. A hook that fails fails the
+ * wave, and one with `onFailure: "approve"` holds it at its gate.
  *
  * With `waves.jobs` (`--shares`) a wave's units split across share jobs: the
  * wave's job plans every unit, prices, runs the policy and decides the gate,
@@ -3804,14 +3808,9 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   facts.roots = roots;
   console.log(`${label}: planning ${roots.join(", ")}`);
-  const stepsRead = await waveSteps(repo, options, configPath, settings.steps);
+  const stepsRead = waveSteps(repo, options);
   if ("error" in stepsRead) {
     console.log(`${label}: ${stepsRead.error}, so nothing in it was applied`);
-    return EXIT.failed;
-  }
-  const stepsRefused = terragruntStepsRefusal(stepsRead.ws?.steps);
-  if (stepsRefused) {
-    console.log(`${label}: ${stepsRefused}, so nothing in it was applied`);
     return EXIT.failed;
   }
   // sources: each unit's terraform source and the module and provider sources under it, against the list at base, before the wave's run --all (./sources.ts).
@@ -3886,13 +3885,13 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   const groups = groupUnits(roots, planDir, { terragrunt, binary }, pinned ? tools : undefined);
   const unitDir = (unit: string): string => dirOf(groups, unit, planDir);
   const savedPlan = (unit: string): string => join(unitDir(unit), "plans", unit, "tfplan.tfplan");
-  // What each unit's steps came to, for the report; and the steps that hold the wave at its gate.
+  // What each unit's hooks came to, for the report; and the hooks that hold the wave at its gate.
   const ran = new Map<string, ReportStep[]>();
   const holds = new Map<string, string[]>();
-  const unitSteps = async (when: StepWhen, units: readonly string[], planFile?: (unit: string) => string): Promise<Map<string, string>> => {
+  const unitSteps = async (when: HookMoment, units: readonly string[], planFile?: (unit: string) => string): Promise<Map<string, string>> => {
     const failed = new Map<string, string>();
     if (!stepsRead.ws) return failed;
-    const outcomes = await runUnitSteps(stepsRead.ws.steps, when, units, { repo, stage: "tf-apply", env: stepsRead.ws.env, log: (l) => console.log(l), ...(planFile ? { planFile } : {}) });
+    const outcomes = await runUnitHooks(stepsRead.ws.hooks, when, units, { repo, stage: "tf-apply", env: stepsRead.ws.env, log: (l) => console.log(l), ...(planFile ? { planFile } : {}) });
     for (const [unit, o] of outcomes) {
       ran.set(unit, [...(ran.get(unit) ?? []), ...o.runs]);
       if (o.holds.length) holds.set(unit, [...(holds.get(unit) ?? []), ...o.holds]);
@@ -3909,10 +3908,10 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     console.log(`${label}: ${what}`);
     return true;
   };
-  // The wave plans with one run --all, so a step before init or plan runs before it for every unit.
-  let before = await unitSteps("before-init", roots);
+  // The wave plans with one run --all, so a hook before observe or plan runs before it for every unit.
+  let before = await unitSteps("before-observe", roots);
   if (before.size === 0) before = await unitSteps("before-plan", roots);
-  if (stepsFailed(before, `a step before the plan failed, so nothing in it was planned or applied`)) {
+  if (stepsFailed(before, `a hook before the plan failed, so nothing in it was planned or applied`)) {
     w.failed = [...before.keys()];
     return EXIT.failed;
   }
@@ -3987,7 +3986,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     p.steps = ran.get(p.root) ?? [];
     if (afterPlan.has(p.root)) p.error = afterPlan.get(p.root);
   }
-  if (stepsFailed(afterPlan, `a step after the plan failed, so nothing in it was applied`)) return EXIT.failed;
+  if (stepsFailed(afterPlan, `a hook after the plan failed, so nothing in it was applied`)) return EXIT.failed;
   const heldBySteps = [...holds.keys()].filter((u) => roots.includes(u)).sort();
   // A unit applies when its plan changes a resource or an output: a later wave reads the outputs.
   const changing = units.filter((p) => p.changes > 0 || p.outputs);
@@ -4013,7 +4012,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     facts.nothing = true;
   } else {
     console.log(`${label}: set digest ${digest} over the ${changing.length} unit${changing.length === 1 ? "" : "s"} that change, ${changes} change${changes === 1 ? "" : "s"}, ${destroys} destroy${destroys === 1 ? "" : "s"}`);
-    for (const u of heldBySteps) console.log(`${label}: ${u}: step ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
+    for (const u of heldBySteps) console.log(`${label}: ${u}: hook ${holds.get(u)!.join(", ")} asks for an approval, so the gate holds this wave`);
   }
   if (heldBySteps.length) w.heldBySteps = heldBySteps;
   // A unit that read an upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
@@ -4041,7 +4040,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });
 
-  /** Apply the saved plans of the units that change, with the steps around them. */
+  /** Apply the saved plans of the units that change, with the hooks around them. */
   j.apply = async (outcome, targets) => {
     const changing = changingAll.filter((p) => targets.has(p.root));
     if (changing.length === 0) {
@@ -4053,7 +4052,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     }
     const beforeApply = await unitSteps("before-apply", changing.map((p) => p.root), savedPlan);
     for (const p of units) p.steps = ran.get(p.root) ?? [];
-    if (stepsFailed(beforeApply, "a step before the apply failed, so nothing in it was applied")) {
+    if (stepsFailed(beforeApply, "a hook before the apply failed, so nothing in it was applied")) {
       w.failed = [...beforeApply.keys()];
       return (j.code = EXIT.failed);
     }
@@ -4082,7 +4081,7 @@ async function planUnits(repo: string, options: ApplyWaveOptions, ctx: WavesCont
     for (const p of changing) console.log(`applied ${p.root}`);
     const afterApply = await unitSteps("after-apply", changing.map((p) => p.root));
     for (const p of units) p.steps = ran.get(p.root) ?? [];
-    if (stepsFailed(afterApply, "applied, then a step after the apply failed")) {
+    if (stepsFailed(afterApply, "applied, then a hook after the apply failed")) {
       w.failed = [...afterApply.keys()];
       for (const [unit, error] of afterApply) planned.get(unit)!.error = error;
       return (j.code = EXIT.failed);

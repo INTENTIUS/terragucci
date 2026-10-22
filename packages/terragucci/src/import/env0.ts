@@ -10,7 +10,7 @@
  *
  * An environment's root is its template's path, from the `env0_template`
  * resource it names, or else the root its first variable file sits in. A
- * custom flow's steps become `steps` for the root its file is in; an
+ * custom flow's steps become `ci.hooks` for the root its file is in; an
  * environment with a TTL, or in a project whose policy gives one, becomes
  * `ephemeral`; a sensitive variable's name goes under `pass.secrets`, to
  * create as a CI secret.
@@ -18,11 +18,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { parseYAML } from "@intentius/chant/yaml";
-import { ConfigError, ttlMs, type StepStage } from "../config";
+import { ConfigError, ttlMs } from "../config";
 import { literalString, refTo, resourcesOf, shown, type HclBody, type HclResource, type HclValue } from "./hcl";
 import { isMap, list, rootOf } from "./notes";
 import { notePlatformOnly, noteUnknown } from "./spacelift-env0-guide";
-import { Build, finish, type PlatformConverted, type PlatformOptions, type Unit } from "./platform";
+import { Build, finish, hookMoment, type FlowStage, type PlatformConverted, type PlatformOptions, type Unit } from "./platform";
 
 export const ENV0_DISCOVERY_FILES = ["env0-discovery.yml", "env0-discovery.yaml"];
 const FLOW_FILES = new Set(["env0.yml", "env0.yaml"]);
@@ -33,7 +33,7 @@ const ENV_KEYS = new Set([
 ]);
 
 /** The custom flow's deploy steps and the moment each hook runs at. */
-const FLOW_STEPS: Record<string, { before?: { before?: StepStage; after?: StepStage }; after?: { before?: StepStage; after?: StepStage } }> = {
+const FLOW_STEPS: Record<string, { before?: { before?: FlowStage; after?: FlowStage }; after?: { before?: FlowStage; after?: FlowStage } }> = {
   setupVariables: { after: { before: "init" } },
   terraformInit: { before: { before: "init" }, after: { after: "init" } },
   opentofuInit: { before: { before: "init" }, after: { after: "init" } },
@@ -355,7 +355,7 @@ export function convertEnv0(input: Env0Input, o: PlatformOptions = {}): Omit<Pla
   }
 
   finish(b, o, "environments");
-  return { settings: b.s, notes: notes.list };
+  return { settings: b.s, notes: notes.list, ...(b.hooks ? { hooks: b.hooks } : {}) };
 }
 
 /** A template's (or a template-less environment's) type and version, for the roots of the environments using it. */
@@ -420,7 +420,7 @@ function readFlow(b: Build, file: string, doc: Record<string, unknown>, envs: En
     else if (k !== "deploy") noteUnknown(notes, `${file}: ${k}`);
   }
   const deploy = isMap(doc.deploy) ? doc.deploy : {};
-  const push = (at: string, stage: { before?: StepStage; after?: StepStage }, cmds: unknown): void => {
+  const push = (at: string, stage: { before?: FlowStage; after?: FlowStage }, cmds: unknown): void => {
     const lines: string[] = [];
     list(cmds).forEach((c, i) => {
       const line = typeof c === "string" ? c : isMap(c) && typeof c.run === "string" ? c.run.trimEnd() : undefined;
@@ -439,7 +439,7 @@ function readFlow(b: Build, file: string, doc: Record<string, unknown>, envs: En
     if (bash) run = `bash -c '${run.replace(/'/g, `'\\''`)}'`;
     if (fromRepo) run = `cd "$TG_REPO" && ${run}`;
     b.steps.push({ name: at, run, ...stage, ...(fromRepo || every ? {} : { roots: [dir] }) });
-    b.note("mapped", at, "Hooks", `steps: ${stage.before ? "before" : "after"}: ${stage.before ?? stage.after}${fromRepo || every ? " for every root" : ` for ${dir}`}${fromRepo ? ", from the repo's root" : ""}`);
+    b.note("mapped", at, "Hooks", `ci.hooks: ${hookMoment(stage)}${fromRepo || every ? " for every root" : ` for ${dir}`}${fromRepo ? ", from the repo's root" : ""}`);
   };
   for (const [k, v] of Object.entries(deploy)) {
     const at = `${file}: deploy.${k}`;

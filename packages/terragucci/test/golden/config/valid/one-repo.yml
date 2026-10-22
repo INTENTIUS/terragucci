@@ -14,14 +14,6 @@ apply:
   resume: 10
   branches:
     release: ["envs/prod/*"]
-steps:
-  - name: lint
-    run: tflint
-    before: plan
-    on_failure: approve
-  - run: ./smoke.sh
-    after: apply
-    roots: ["envs/*/app"]
 notify:
   slack: SLACK_WEBHOOK_URL
   webhook: WEBHOOK_URL

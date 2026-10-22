@@ -27,7 +27,7 @@ export const CONCEPTS_TABLE = [
   ["OPA policy set", "`policy.input: hcp` with `engine: opa`; `policies.hcl` [runs as is](/terragucci/reference/policy/#hcp-terraform-policy-sets)"],
   ["Scalr OPA policy group", "`policy` with `engine: opa` and `input: plan`, each policy's `input.tfplan` changed to `input`; a check of `input.tfrun` is rewritten"],
   ["Soft-mandatory override", "[`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a person `policy.override` lists"],
-  ["Run tasks", "[`steps`](/terragucci/guides/run-steps/) after `plan`, with `on_failure: fail` or `approve`"],
+  ["Run tasks", "[`ci.hooks`](/terragucci/guides/run-steps/) after the plan, with `onFailure` `\"fail\"` or `\"approve\"`"],
   ["Workspace lock", "[root locks](/terragucci/reference/config/#plan-locks) and the backend's lock file"],
   ["Agents, remote execution", "jobs on your CI's runners, your own ones by label with [`runner`](/terragucci/guides/add-to-a-repo/#self-hosted-runners)"],
   ["Health assessments", "[`drift`](/terragucci/guides/turn-on-drift-checks/), a cron schedule"],
