@@ -189,7 +189,7 @@ import { EARLIER_DIR } from "./blocked";
 import { groupsArg, type ApplyGroup } from "./groups";
 import { CHECK_DIR } from "./check";
 import { checkoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./handover";
-import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
+import { COSIGN_VERSION, INFRACOST_VERSION, type Tool, type ToolInstall } from "./install";
 import {
   cacheExports,
   credentialsScript,
@@ -232,8 +232,8 @@ export interface PipelineInput {
   image: string;
   /** Set when `image` is the one terragucci.yml names, built FROM terragucci's. */
   imageFromConfig?: boolean;
-  /** Set when the repo pins a version the image does not carry: the job installs it. */
-  install?: { binary: Binary; version: string };
+  /** Set when the repo pins a version the image does not carry, or under `install.verify`: the job installs it, with `verify` checking a choudoufu release's signature and provenance. */
+  install?: { binary: Binary; version: string; verify?: boolean };
   /** Some roots pin their own version: the check job runs each root with the binary `terragucci binary` names for it. */
   rootPins?: boolean;
   /** `generate` is set: the check job runs `terragucci generate --check`, which refuses a generated file out of line with terragucci.yml. */
@@ -243,7 +243,7 @@ export interface PipelineInput {
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
-  terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
+  terragrunt?: TerragruntPipelineInput & { installs: ToolInstall[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
   synth?: string;
   /** An Atmos repo: every job installs this Atmos release, which its synth (`terragucci atmos write`) runs. */
@@ -486,9 +486,9 @@ const RESPOND_DIR = "terragucci-respond";
 
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The step that puts a pinned version the image does not carry on the path. */
-export function installScript(binary: Binary | Tool, version: string, forge: ForgeName): string {
-  const dir = `dir="$(terragucci install ${binary} ${version})"`;
+/** The step that puts a pinned version the image does not carry on the path; with `verify`, a choudoufu release that verifies against its release key (install.verify). */
+export function installScript(binary: Binary | Tool, version: string, forge: ForgeName, verify = false): string {
+  const dir = `dir="$(terragucci install ${binary} ${version}${verify ? " --verify" : ""})"`;
   return forge === "gitlab" ? `${dir}\nexport PATH="$dir:$PATH"` : `${dir}\necho "$dir" >> "$GITHUB_PATH"`;
 }
 
@@ -2190,13 +2190,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const decideEnv = responds(input.respond, "description") ? decideSecret : {};
   const driftDecideEnv = responseTo({ respond: input.respond }, "drift") === "attribute" ? decideSecret : {};
   const bumpOn = responds(input.respond, "version-bump");
-  const installs = [
-    ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool | Binary, version: install.version }] : []),
+  const installs: ToolInstall[] = [
+    ...(tg ? tg.installs : install ? [{ tool: install.binary as Tool, version: install.version, verify: install.verify }] : []),
     ...(input.atmos ? [{ tool: "atmos" as Tool, version: input.atmos.version }] : []),
     // A Terramate repo: the release its prepare runs.
     ...(input.terramate ? [{ tool: "terramate" as Tool, version: input.terramate.version }] : []),
   ];
-  const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
+  const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge, i.verify === true)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
   const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true);
   const synth = input.synth ? { synth: input.synth } : {};

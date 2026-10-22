@@ -283,6 +283,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       ? { value: options.approval, explicit: true }
       : { value: detectedApproval, explicit: false };
 
+  // install.verify: every job installs the choudoufu release and checks its signature and provenance, so the binary that runs is the verified one, not the image's.
+  const verify = settings.install?.verify === true;
+  if (verify && binary.value !== "choudoufu") throw new ConfigError(`install.verify checks choudoufu releases, and this repo's binary is ${binary.value}; leave install.verify unset`);
   let ref: ImageRef;
   let tgInput: PipelineInput["terragrunt"];
   if (terragrunt) {
@@ -298,7 +301,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       // sources: the check job checks each unit's sources before its validate fetches them.
       ...(settings.sources ? { sources: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
-      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
+      installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }, verify),
     };
   } else {
     ref = imageFor(binary.value);
@@ -319,7 +322,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // image: the repo's own, built FROM terragucci's, so the jobs still carry terragucci and the binary.
     image: settings.image ?? imageReference(ref),
     ...(settings.image ? { imageFromConfig: true } : {}),
-    install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
+    install: !tgInput && (version.value !== carried || verify) ? { binary: binary.value, version: version.value, ...(verify ? { verify: true } : {}) } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
     ...(settings.generate && !tgInput ? { generate: true } : {}),
     // sources: tf-check checks each root's sources before its init.

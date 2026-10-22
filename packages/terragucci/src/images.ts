@@ -21,6 +21,14 @@ export const TOOL_VERSIONS = {
   choudoufu: "0.28.0",
 } as const;
 
+/**
+ * choudoufu's release key, the cosign.pub its release workflow signs with,
+ * as PEM. `install.verify` checks each choudoufu release's signature,
+ * provenance and SBOM attestation against it. Empty until the key is pinned,
+ * and while it is empty config check refuses `install.verify`.
+ */
+export const CHOUDOUFU_RELEASE_KEY = "";
+
 export interface ImageRef {
   repository: string;
   tag: string;

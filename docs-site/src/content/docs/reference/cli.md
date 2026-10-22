@@ -980,10 +980,12 @@ The first line of each [environment's](/terragucci/reference/config/#environment
 ## install
 
 ```bash
-terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>
+terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version> [--verify]
 ```
 
 Prints the directory it unpacked the release to, after checking it against its SHA256SUMS. The releases are Linux builds. Under `modules.attest` the publish job installs cosign this way before it publishes; in an Atmos repo every job installs Atmos this way.
+
+`--verify`, for choudoufu, also checks the release's signature, SLSA provenance and SBOM attestation against choudoufu's release key, and installs nothing when one does not verify. Under [`install.verify`](/terragucci/guides/use-a-binary/#verify-choudoufu-releases) every job installs choudoufu this way.
 
 ## --json
 

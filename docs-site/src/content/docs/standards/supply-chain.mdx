@@ -13,7 +13,7 @@ Every binary and image a job installs is pinned and checked before it runs, your
 | What a job runs | Comes from | Pinned by | Checked before it runs | Tightened by |
 |---|---|---|---|---|
 | the terragucci image | `ghcr.io/intentius/terragucci-<binary>`, or your own image built `FROM` it (`init/image`) | its digest, which `init` writes into the pipeline | the runner pulls it by that digest | [`image`](/terragucci/reference/config/#keys), to run your own build of it |
-| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu) | the image; a release the image does not carry, from the binary's releases | the image's tag, or a root's own pin ([Versions and pins](/terragucci/reference/versions-and-pins/)) | an installed release against its SHA256SUMS (`init/pinned-install`) | a pin per root |
+| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu) | the image; a release the image does not carry, from the binary's releases | the image's tag, or a root's own pin ([Versions and pins](/terragucci/reference/versions-and-pins/)) | an installed release against its SHA256SUMS (`init/pinned-install`); with `install.verify`, a choudoufu release's signature, SLSA provenance and SBOM attestation against choudoufu's release key | a pin per root; [`install.verify`](/terragucci/guides/use-a-binary/#verify-choudoufu-releases) for choudoufu |
 | Terragrunt and Atmos | Terragrunt's image for a Terragrunt repo, and the tools' releases for any other version | `terragrunt.version` and the units' own constraints; `atmos.version` (`init/atmos-version`) | SHA256SUMS | a pin |
 | Terramate | its releases | the release terragucci pins | its release's checksums | an upgrade of terragucci |
 | the policy engine | conftest's or OPA's releases | the release terragucci pins | a SHA-256 written into terragucci, never the release's own checksum file; an engine already on the runner's path is used as it is | your image, with the engine you vet |
@@ -32,6 +32,10 @@ Every binary and image a job installs is pinned and checked before it runs, your
 | Attest | with `modules.attest`, a cosign signature with your key, SLSA v1 provenance in an in-toto statement and an SPDX 2.3 SBOM, and a line in `modules/releases.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) (`modules/attest`); nothing goes to Sigstore's public log | [Attest each release](/terragucci/guides/publish-modules/#attest-each-release) |
 | Require | `modules.require: attested`: `tf-check` and `tf-plan` refuse a root whose pin does not verify, or that the ledger does not record; `tf-plan` reads the setting at base | [Require attested releases](/terragucci/guides/publish-modules/#require-attested-releases) |
 | Verify by hand | `terragucci verify-release` runs the same check on one release | [verify-release](/terragucci/reference/cli/#verify-release) |
+
+## choudoufu releases
+
+With `binary: choudoufu` and `install.verify: true`, every job installs choudoufu with `terragucci install choudoufu <version> --verify` and runs that binary, not the image's. The install checks the release against its SHA256SUMS, then checks the cosign bundles beside its archive against the choudoufu release key that terragucci pins: the signature over the archive, SLSA v1 provenance naming choudoufu's release workflow at the release's tag and the commit it was built from, and an SPDX SBOM attestation. A release that fails any of them is not installed, and the job stops before a root runs. [Verify choudoufu releases](/terragucci/guides/use-a-binary/#verify-choudoufu-releases) shows the setting and a refusal.
 
 ## Provider lock files
 

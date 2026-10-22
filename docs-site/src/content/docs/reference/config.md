@@ -184,6 +184,7 @@ dashboards: true
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment) and [`drift`](#the-drift-agent) |
 | `atlantis_comments` | `false` (off) | `true`: `atlantis plan` and `atlantis apply` comments work as `/terragucci plan` and `/terragucci apply`, with the same checks; see [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) |
+| `install` | none (off) | `verify: true`, with `binary: choudoufu`: every job installs the choudoufu release itself, the one the image carries too, and refuses it unless its signature, SLSA provenance and SBOM attestation verify against choudoufu's release key; see [Verify choudoufu releases](/terragucci/guides/use-a-binary/#verify-choudoufu-releases) |
 | `review` | none (off) | `agent`, `command`, `key_secret`, `instructions`, `timeout`: a model reviews each pull request's description against its plan; see [The review](#the-review) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |
 | `audit_region` | the `aws` CLI's region | the AWS region whose CloudTrail drift attribution reads |
