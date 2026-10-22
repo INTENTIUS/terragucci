@@ -104,7 +104,7 @@ import {
 import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
 import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
-import { blockedRoots, blockedWords, earlierOutcomes, earlierRun, onlyWaiting, runSummary, WAVE_REPORT_DIR, writeOutcomeFile, type RootOutcome, type RootStatus } from "./blocked";
+import { blockedMembers, blockedWords, earlierWaveOutcomes, onlyWaiting, passesThrough, runSummary, writeWaveOutcomeFile, type WaveMemberOutcome, type WaveMemberStatus } from "@intentius/chant/wave-blocked";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
 import type { Span } from "./report/graph";
 import { wavesOf } from "./planned-outputs";
@@ -652,6 +652,9 @@ async function rootSteps(repo: string, p: Pick<PlannedRoot, "root" | "steps" | "
   return o.error;
 }
 
+/** The directory a wave writes its report and its outcome file in: render.ts's REPORT_DIR, which the job keeps as its artifact. */
+const WAVE_REPORT_DIR = "terragucci-report";
+
 /** How long a plan or an apply waits for a state lock unless the job set a `-lock-timeout` of its own. */
 export const DEFAULT_LOCK_TIMEOUT = "5m";
 
@@ -983,7 +986,7 @@ export interface ApplyWaveOptions {
    * Plain roots only (terragucci#1161): the directory the pipeline downloads
    * the earlier waves' report artifacts into. With it, the job writes its
    * wave's outcome beside its report, and a root whose upstream did not apply
-   * in this run is blocked while the rest of the wave applies (./blocked.ts).
+   * in this run is blocked while the rest of the wave applies (@intentius/chant/wave-blocked).
    */
   after?: string;
 }
@@ -1146,7 +1149,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
             const read = await waveSettings(repo, options, options.config ?? findConfig(repo));
             if (!("error" in read)) Object.assign(j.w, { settings: read.settings, planned: [], roots: [], started: new Date().toISOString() });
             writeOutcome(env, `wave ${options.wave}: every root is blocked: ${blockedWords(blocked)}`, j.w);
-            const run = earlierOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], options.wave);
+            const run = earlierWaveOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], options.wave).members;
             for (const [root, by] of blocked) run.set(root, { status: "blocked", by, wave: options.wave, at: "" });
             return (code = onlyWaiting(run) ? EXIT.waiting : EXIT.failed);
           }
@@ -1267,7 +1270,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       // terragucci#1161: the wave applied what it could. It ends as failed when it blocked a root, and the last wave when
       // the run did not apply every root; as waiting when every root that did not apply waits for an approval, or is
       // blocked behind one, so the commit's status stays pending and the approval's re-run applies them.
-      const run = new Map<string, RootOutcome>(earlierOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], last));
+      const run = new Map<string, WaveMemberOutcome>(earlierWaveOutcomes([options.after, join(repo, WAVE_REPORT_DIR)], last).members);
       for (const [root, o] of Object.entries(rootOutcomes(code, j.w))) run.set(root, o);
       const held = onlyWaiting(run) ? EXIT.waiting : EXIT.failed;
       const summary = last === applyWaves(options.layers, options.canary).length ? runSummary(run.values()) : undefined;
@@ -1315,7 +1318,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
           const layer = piece || jobs.get(k)!.facts.nothing ? [] : (applyWaves(options.layers, options.canary)[k - 1] ?? []);
           // A state migration runs in wave 1 before its roots: a wave 1 that did not apply holds every later root.
           const holdsAll = k === 1 && c !== EXIT.applied && existsSync(join(repo, MIGRATIONS_DIR));
-          writeOutcomeFile(dir, k, { ...(options.group !== undefined ? { group: options.group } : {}), ...(options.share !== undefined ? { share: options.share } : {}) }, rootOutcomes(c, w, layer), undefined, holdsAll);
+          writeWaveOutcomeFile(dir, k, { ...(options.group !== undefined ? { group: options.group } : {}), ...(options.share !== undefined ? { share: options.share } : {}) }, rootOutcomes(c, w, layer), undefined, holdsAll);
         } catch (e) {
           console.log(`wave ${k}: its outcome was not written, so the waves after it take its roots as not applied: ${(e as Error).message}`);
         }
@@ -1346,12 +1349,12 @@ async function waveBlocked(repo: string, options: ApplyWaveOptions, waves: reado
   // waves.canary: the canary roots go first so that a failed canary holds the rest, whether or not a root reads one.
   const canary = new Set(all.filter((r) => (options.canary ?? []).some((g) => globMatch(g, r))));
   if (canary.size > 0) for (const r of all) if (!canary.has(r)) order.set(r, new Set([...(order.get(r) ?? []), ...canary]));
-  const run = earlierRun([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
-  return blockedRoots(roots, order, earlier, run.roots, run.holdsAll);
+  const run = earlierWaveOutcomes([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
+  return blockedMembers(roots, order, earlier, run.members, run.holdsAll);
 }
 
 /** The wave report's outcomes: each root's, sorted, a failed root's with the first line of its plan's or its apply's error. */
-function reportOutcomes(roots: Record<string, RootOutcome>, w: WaveRun): NonNullable<WaveRun["outcomes"]> {
+function reportOutcomes(roots: Record<string, WaveMemberOutcome>, w: WaveRun): NonNullable<WaveRun["outcomes"]> {
   const planned = new Map((w.planned ?? []).map((p) => [p.root, p] as const));
   return Object.entries(roots)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -1368,22 +1371,22 @@ function reportOutcomes(roots: Record<string, RootOutcome>, w: WaveRun): NonNull
  * that holds every later root), or none.
  */
 function composedBlocked(repo: string, options: ApplyWaveOptions, roots: readonly string[]): Map<string, string> {
-  const run = earlierRun([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
+  const run = earlierWaveOutcomes([options.after!, join(repo, WAVE_REPORT_DIR)], options.wave);
   if (run.holdsAll !== undefined) return new Map(roots.map((r) => [r, `wave-${run.holdsAll}`]));
-  const stop = [...run.roots].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).find(([, o]) => o.status !== "applied" && o.status !== "unchanged");
+  const stop = [...run.members].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).find(([, o]) => !passesThrough(o));
   if (!stop) return new Map();
   const by = stop[1].status === "blocked" && stop[1].by ? stop[1].by : stop[0];
   return new Map(roots.map((r) => [r, by]));
 }
 
 /**
- * Each root this job handled, as the waves after it read it (./blocked.ts).
+ * Each root this job handled, as the waves after it read it (@intentius/chant/wave-blocked).
  * A wave's own job that planned nothing (it waited on a migration, or its
  * roots applied in an earlier composed run) names the wave's roots, `layer`,
  * by how it ended; a share or group job names only the roots it planned.
  */
-function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): Record<string, RootOutcome> {
-  const out: Record<string, RootOutcome> = {};
+function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): Record<string, WaveMemberOutcome> {
+  const out: Record<string, WaveMemberOutcome> = {};
   const changed = new Set(w.changedRoots ?? []);
   const failed = new Set(w.failed ?? []);
   const planned = new Map((w.planned ?? []).map((p) => [p.root, p] as const));
@@ -1394,7 +1397,7 @@ function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): 
   for (const root of w.roots) {
     const p = planned.get(root);
     const denied = p?.policy !== undefined && p.policy.result !== "passed";
-    let status: RootStatus;
+    let status: WaveMemberStatus;
     if (failed.has(root) || (p?.error && !denied)) status = "failed";
     else if (denied) status = "refused";
     else if (!changed.has(root)) status = "unchanged";
@@ -1629,7 +1632,7 @@ export interface WaveRun {
   /** terragucci#1161: the wave applied every root it planned, and its job fails for roots it or an earlier wave did not apply. */
   appliedRest?: boolean;
   /** terragucci#1161: each root's outcome once the wave ended, with a failed root's error, for its report (`waves[].outcomes`). */
-  outcomes?: { root: string; outcome: RootStatus; error?: string; blockedBy?: string }[];
+  outcomes?: { root: string; outcome: WaveMemberStatus; error?: string; blockedBy?: string }[];
 }
 
 /**

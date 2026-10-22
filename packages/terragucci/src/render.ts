@@ -185,7 +185,6 @@ import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
-import { EARLIER_DIR } from "./blocked";
 import { groupsArg, type ApplyGroup } from "./groups";
 import { CHECK_DIR } from "./check";
 import { checkoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./handover";
@@ -1637,6 +1636,9 @@ function reportKeyEnv(forge: ForgeName, reports: PlanReportInput["reports"]): Re
 
 /** The plan report's directory in the job's workspace. */
 export const REPORT_DIR = "terragucci-report";
+
+/** Where a pipeline's apply job downloads the earlier waves' report artifacts, the directory `--after` names (terragucci#1161). */
+export const EARLIER_DIR = "terragucci-earlier";
 
 /**
  * Where the note links the HTML report when the bucket's address is not
