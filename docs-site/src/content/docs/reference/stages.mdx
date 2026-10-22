@@ -133,14 +133,14 @@ A schedule can stop with no error: GitHub turns a scheduled workflow off after 6
 
 2. It counts how often the cron has come round since then (or since the pipeline file was added, if the job never ran).
 
-3. At two or more, the job log and plan note warn that the drift checks are overdue and say what to do.
+3. At two or more, the job log and plan note warn that ``Op `tf-drift` is overdue`` and say what to do. The report's `overdue` lists it with its cron and since when.
 
 </Steps>
 
 | Forge | What the plan job reads | The note adds |
 |---|---|---|
 | GitHub | the workflow's scheduled and manual runs, and its state; the plan jobs get `actions: read` | the workflow is off, or how to turn it on again |
-| GitLab | the scheduled pipelines and the active schedules, with `token_env` | the project has no schedule, and the cron to add |
+| GitLab | the scheduled pipelines and the active schedules, with `token_env` | to check the schedule under CI/CD > Schedules |
 | Forgejo | the repo's scheduled and manual runs | to check that Actions is on and a runner is up |
 
 A forge that does not answer leaves a line in the log, and the plan goes on.

@@ -33,15 +33,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { poster, type Fetch } from "./forge";
 import { FORGED, PLAN_MARK, PLAN_NOTE_FILE, PLAN_STATUS_FILE, planStatus, ROOTS_LINE } from "./plan-note-gitlab";
-import { DRIFT_SCHEDULE_FILE, driftRuns, overdue } from "./report/drift-schedule";
+import { DRIFT_SCHEDULE_FILE, driftOverdue, driftRuns } from "./report/overdue";
 
 export { DRIFT_SCHEDULE_FILE };
 import { targetFromEnv } from "./report/drift";
 import { pullInvolvement, sameLogin } from "./involved";
 import { approvalStatus, forgeCalls } from "./review";
 
-/** How the note says the drift checks are overdue (overdue() in drift-schedule.ts). */
-const OVERDUE = "Drift checks are overdue:";
+/** How the note says the drift job is overdue (chant's overdueVerdict, report/overdue.ts). */
+const OVERDUE = "Op `tf-drift` is overdue:";
 /** GitHub keeps a comment to 65536 characters. */
 const MAX_NOTE = 65_000;
 
@@ -97,7 +97,7 @@ async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: 
   const target = targetFromEnv(o.forge, env, env.TG_TOKEN);
   if (!target) return undefined;
   try {
-    const found = overdue(left.cron, o.forge, await driftRuns(doFetch, target), added, o.now ?? new Date());
+    const found = driftOverdue(left.cron, o.forge, await driftRuns(doFetch, target), added, o.now ?? new Date());
     if (found) log(found.message);
     return found?.message;
   } catch (e) {

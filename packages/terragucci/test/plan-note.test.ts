@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config";
 import { poster } from "../src/forge";
 import { planNoteBodyOf, postPlanNoteFromReport, withNotice } from "../src/plan-note";
-import { DRIFT_SCHEDULE_FILE } from "../src/report/drift-schedule";
+import { DRIFT_SCHEDULE_FILE } from "../src/report/overdue";
 
 const SHA = "a".repeat(40);
 const ENV = { TG_TOKEN: "t", TG_PR: "7", TG_SHA: SHA, GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "http://api", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "5" };
@@ -85,7 +85,7 @@ describe("plan-note", () => {
       fetch: recording,
       now: new Date("2026-03-01T00:00:00Z"),
     });
-    expect(posted[0]).toMatch(/\n\n> Drift checks are overdue: the schedule `0 6 \* \* \*` has come round at least twice/);
+    expect(posted[0]).toMatch(/\n\n> Op `tf-drift` is overdue: its schedule `0 6 \* \* \*` has fired at least twice/);
     expect(posted[0].indexOf("> Drift checks")).toBeLessThan(posted[0].indexOf("**app**"));
   });
 
