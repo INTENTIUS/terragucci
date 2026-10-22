@@ -60,7 +60,7 @@ import { liveEstate, rootSecrets } from "../tips/secrets";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf, type Drifted } from "../respond/drift";
-import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./drift-schedule";
+import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./overdue";
 import { DRIFT_ISSUE_FILE } from "../drift-agent";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
@@ -2270,7 +2270,10 @@ async function finish(
     const forge = options.forge ?? settings.forge;
     const reader = targetFromEnv(forge, env, token, true);
     const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
-    if (late) notices.push(late.message);
+    if (late) {
+      notices.push(late.message);
+      report.overdue = [late];
+    }
     if (!token && reader && reader.forge !== "gitlab") {
       const added = pipelineAdded(repo, reader.forge);
       leftSchedule = { cron: settings.drift, ...(added ? { added } : {}) };

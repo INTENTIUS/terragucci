@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 44;
+export const REPORT_MINOR = 45;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -860,6 +860,16 @@ export interface ReportIntent {
   unmentioned: string[];
 }
 
+/** A scheduled job the forge says stopped running, in chant's shape (minor 45). */
+export interface ReportOverdue {
+  op: string;
+  cron: string;
+  /** Its last run, or the pipeline file's first commit when `neverRan` (ISO 8601). */
+  since: string;
+  neverRan?: boolean;
+  message: string;
+}
+
 export interface Report {
   schema: typeof REPORT_SCHEMA;
   minor: number;
@@ -869,6 +879,12 @@ export interface Report {
   unit: PlanSummaryUnit;
   units: number;
   totals: Record<ChangeSetAction, number>;
+  /**
+   * A `tf-plan`'s drift job that stopped running (minor 45): chant's verdict
+   * on a scheduled Op (`OverdueOp`), whose cron fired at least twice since
+   * its last run. Absent when the drift checks are on time or not checked.
+   */
+  overdue?: ReportOverdue[];
   /** How many roots `totals` counts a change of: each root whose plan creates, updates, replaces, deletes or forgets a resource, less a root the policy refused (minor 35). */
   totals_roots?: number;
   groups: ReportGroup[];
