@@ -128,7 +128,7 @@ export interface WaveInput {
   excluded?: { login: string; reason: string }[];
   /** The roots whose `on_failure: approve` step failed: the gate holds the wave. */
   heldBySteps?: string[];
-  /** The `approval_rules` entries its roots take, and where each stands (../approval-rules.ts). */
+  /** The `approval_rules` entries its roots take, and where each stands. */
   approvalRules?: ReportApprovalRule[];
   /** A `tf-apply` wave: what the policy's hold and allow_unattended rules made of its gate. A plan's wave works it out from its roots' verdicts. */
   policyGate?: ReportWave["policy_gate"];

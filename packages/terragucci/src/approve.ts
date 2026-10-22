@@ -51,7 +51,8 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { checkoutApproval } from "./approval";
-import { ruleLine, type RuleProgress } from "./approval-rules";
+import { reportRuleLine } from "./approval";
+import type { ReportApprovalRule } from "./report/schema";
 import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { originOf, resumeAfterApproval } from "./resume";
@@ -77,8 +78,8 @@ export interface WaitingWave {
   resume?: GateRunLocator;
   /** The decision point question the wave waits on, when its gate asks one (./point-gate.ts): an answer passes it, not an approval. */
   question?: string;
-  /** Where each `approval_rules` entry the wave takes stood when it last ran (./approval-rules.ts). */
-  rules?: RuleProgress[];
+  /** Where each `approval_rules` entry the wave takes stood when it last ran. */
+  rules?: ReportApprovalRule[];
 }
 
 const at = (iso: string): number => new Date(iso).getTime();
@@ -193,7 +194,7 @@ export async function approve(repo: string, o: ApproveOptions = {}): Promise<{ c
   log(`${waveGate(wave.wave)} waits for an approval of ${wave.digest}${wave.description ? ` (${wave.description})` : ""}, since ${wave.since}`);
   for (const l of describeStored(storedReport(repo, wave.wave, wave.digest))) log(l);
   // approval_rules: how many approvals the wave had and who it still needs, as it said when it last ran.
-  for (const r of wave.rules ?? []) log(`  approval_rules when it last ran: ${ruleLine(r)}`);
+  for (const r of wave.rules ?? []) log(`  approval_rules when it last ran: ${reportRuleLine(r)}`);
   if (at(wave.expiresAt) < Date.now()) log(`  its pending fact expired at ${wave.expiresAt}; the approval still counts if the next run plans the same digest`);
   const sign = o.sign ?? (mode === "sealed" ? true : undefined);
   const args = ["approve", "tf-apply", waveGate(wave.wave), "--plan", wave.digest, ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];

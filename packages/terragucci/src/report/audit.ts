@@ -411,7 +411,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
           .sort((a, b) => at(b.at) - at(a.at))
       : [];
   const approval = standing[0];
-  // approval_rules (../approval-rules.ts): every approval the rules counted, newest first, each approver's newest.
+  // approval_rules: every approval the rules counted, newest first, each approver's newest.
   const ruled = new Set((wave.approval_rules ?? []).flatMap((r) => r.approvers.map((who) => who.toLowerCase())));
   const counted = ruled.size > 0 ? standing.filter((a, i) => a.who !== null && ruled.has(a.who.toLowerCase()) && standing.findIndex((b) => b.who?.toLowerCase() === a.who!.toLowerCase()) === i) : [];
   const overrides = report.roots

@@ -11,7 +11,7 @@ import { groupAnchor, planFiles, rootAnchor } from "./build";
 import { diffFence, diffLines, planTotals, unitBlocks } from "./plan-text";
 import { approveCommand, noteMarker } from "./marker";
 import { overrideCommand } from "../override";
-import { ruleAsks } from "../approval-rules";
+import { ruleAsks } from "../approval";
 import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
