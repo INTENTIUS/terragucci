@@ -18,8 +18,15 @@
  *
  * Nothing is written: the database lives in memory, takes `PRAGMA
  * query_only`, and only a statement that begins with SELECT, WITH or VALUES
- * runs.
+ * runs (chant's `firstWord`, the check `chant query` makes).
+ *
+ * This is the bucket's adapter. What terragucci records on `chant/lifecycle`
+ * (the waves' gates under op `tf-apply`, migrations, policy overrides) is
+ * chant's ledger, and `chant query` reads it (@intentius/chant/lifecycle/query,
+ * chant#4297): its `gates` table. The bucket holds no ledger of that shape, so
+ * its tables stay here.
  */
+import { firstWord, formatQueryResult, type QueryResult as ChantQueryResult } from "@intentius/chant/lifecycle/query";
 import { ConfigError, type TerragucciConfig } from "./config";
 import { auditEntries, clients, readChangesOf, readEdgesOf, readInventoryOf, readVersionsOf, sources } from "./estate";
 import type { AuditEntry } from "./report/audit";
@@ -141,12 +148,6 @@ async function sqlite(): Promise<typeof import("node:sqlite")> {
   }
 }
 
-/** The first word of a statement, past whitespace and comments. */
-function firstWord(sql: string): string {
-  const s = sql.replace(/^(\s+|--[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)*/, "");
-  return (/^[A-Za-z]+/.exec(s)?.[0] ?? "").toLowerCase();
-}
-
 /** Run one read-only statement over the tables. */
 export async function runQuery(sql: string, data: QueryData): Promise<QueryResult> {
   if (!["select", "with", "values"].includes(firstWord(sql))) throw new ConfigError("terragucci query runs one SELECT (or WITH, or VALUES) statement; it changes nothing");
@@ -188,13 +189,7 @@ export async function query(config: TerragucciConfig, sql: string, options: Quer
   return runQuery(sql, data);
 }
 
-const cell = (v: Value | undefined): string => (v === null || v === undefined ? "" : String(v));
-
-/** The rows as an aligned table, a header and a count. */
+/** The rows as an aligned table, a header and a count: chant query's own layout, which reads only the columns and rows. */
 export function describeQuery(r: QueryResult): string {
-  const widths = r.columns.map((c) => Math.max(c.length, ...r.rows.map((row) => cell(row[c]).length)));
-  const line = (vals: string[]): string => vals.map((v, i) => v.padEnd(widths[i])).join("  ").trimEnd();
-  const out = [line(r.columns), line(widths.map((w) => "-".repeat(w))), ...r.rows.map((row) => line(r.columns.map((c) => cell(row[c]))))];
-  out.push(`(${r.rows.length} ${r.rows.length === 1 ? "row" : "rows"})`);
-  return out.join("\n");
+  return formatQueryResult({ columns: r.columns, rows: r.rows } as ChantQueryResult);
 }

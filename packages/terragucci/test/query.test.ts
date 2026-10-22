@@ -1,4 +1,10 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { gitLedgerReadPort } from "@intentius/chant/lifecycle/git";
+import { loadQueryData, runQuery as chantQuery } from "@intentius/chant/lifecycle/query";
 import { ConfigError } from "../src/config";
 import { describeQuery, query, QUERY_TABLES, runQuery, type QueryOptions } from "../src/query";
 import type { ObjectStore } from "../src/report/object-store";
@@ -167,5 +173,26 @@ describe("terragucci query", () => {
     expect(describeQuery({ columns: ["address", "approver"], rows: [{ address: "aws_sqs_queue.jobs", approver: "bo" }, { address: "aws_sqs_queue.x", approver: null }], tables: { inventory: 0, versions: 0, changes: 0, history: 0, audit: 0, edges: 0 } })).toBe(
       ["address             approver", "------------------  --------", "aws_sqs_queue.jobs  bo", "aws_sqs_queue.x", "(2 rows)"].join("\n"),
     );
+  });
+});
+
+// The waves' gates are chant's ledger on chant/lifecycle, so chant query reads them, with no table of terragucci's.
+describe("the waves' gates through chant query", () => {
+  it("reads a wave's pending fact and its approval from _gates/tf-apply.jsonl", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "tg-query-gates-"));
+    const git = (...a: string[]): string => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { encoding: "utf-8" });
+    git("init", "-q", "-b", "chant/lifecycle");
+    mkdirSync(join(repo, "_gates"));
+    const pending = { version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: "2026-10-09T05:00:00.000Z", expiresAt: "2026-10-10T05:00:00.000Z", planDigest: "sha256:aa" };
+    const approval = { version: 1, op: "tf-apply", gate: "wave-1", timestamp: "2026-10-09T05:10:00.000Z", resolvedBy: "approver-one", planDigest: "sha256:aa" };
+    writeFileSync(join(repo, "_gates", "tf-apply.jsonl"), `${JSON.stringify(pending)}\n${JSON.stringify(approval)}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "gates");
+    const load = await loadQueryData([{ member: null, port: gitLedgerReadPort({ cwd: repo }) }]);
+    const r = await chantQuery("SELECT op, gate, kind, resolved_by, plan_digest FROM gates ORDER BY timestamp", load);
+    expect(r.rows).toEqual([
+      { op: "tf-apply", gate: "wave-1", kind: "pending", resolved_by: null, plan_digest: "sha256:aa" },
+      { op: "tf-apply", gate: "wave-1", kind: "resolution", resolved_by: "approver-one", plan_digest: "sha256:aa" },
+    ]);
   });
 });
