@@ -50,7 +50,7 @@ A glob's `*` matches within one path segment, `**` across segments (and `a/**` m
 | `steps[].roots` | every step that matches runs, in the file's order; a step without `roots` runs in every root | the step does not run there |
 | `secrets[].roots` | every matching entry; `config check` refuses two entries that give one root the same variable | no values from a store |
 | `ephemeral.roots` | any match gets a copy | no copy |
-| `apply.branches` | the first branch in the file's order; `config check` refuses the same glob under two branches | applies from the default branch |
+| `apply.branches` | refused: `config check` names a root two branches' globs match | applies from the default branch |
 | `approval_rules[].roots` | every rule a root of the wave matches, and each must be met | what the approval mode needs |
 | `policy.override` entries | every matching entry adds the people it names, when its `rules` cover the rules that denied the root | the names listed without an entry |
 | `waves.canary` | any match puts the root in wave 1 | its place in the dependency order |
