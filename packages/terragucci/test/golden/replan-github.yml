@@ -84,6 +84,41 @@
           { echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"
           [ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"
       - if: steps.decide.outputs.go == '1'
+        name: Trade the job's OIDC token for the plan identities
+        shell: bash
+        run: |
+          export TG_FORGE=github
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else if (cmd === "alive") {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@" ;; esac; }
+          export AWS_ROLE_ARN='arn:aws:iam::111111111111:role/plan-ro' AWS_ROLE_SESSION_NAME='terragucci-plan'
+          export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo 'terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); the job needs permissions: id-token: write' >&2
+            exit 1
+          fi
+          tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" 'sts.amazonaws.com' || exit 1
+          terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
+      - if: steps.decide.outputs.go == '1'
         name: Check out the pull request's head
         shell: bash
         env:
@@ -123,41 +158,6 @@
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
           restore-keys: terragucci-tg-
-      - if: steps.decide.outputs.go == '1'
-        name: Trade the job's OIDC token for the plan identities
-        shell: bash
-        run: |
-          export TG_FORGE=github
-          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
-          const [cmd, ...a] = process.argv.slice(1);
-          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          try {
-            if (cmd === "oidc") {
-              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
-              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
-              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
-            } else if (!tok) {
-              console.log("terragucci: no forge token, so no " + cmd);
-            } else if (cmd === "alive") {
-              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-              const run = await r.json();
-              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-            }
-          } catch (err) {
-            console.log("terragucci: " + cmd + " failed: " + err.message);
-            if (cmd === "oidc") process.exit(1);
-          }' -- "$@" ;; esac; }
-          export AWS_ROLE_ARN='arn:aws:iam::111111111111:role/plan-ro' AWS_ROLE_SESSION_NAME='terragucci-plan'
-          export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo 'terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); the job needs permissions: id-token: write' >&2
-            exit 1
-          fi
-          tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" 'sts.amazonaws.com' || exit 1
-          terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
       - if: steps.decide.outputs.go == '1'
         id: plan
         name: Re-plan the pull request on request and write the plan report

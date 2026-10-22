@@ -1830,10 +1830,10 @@ function restartWithout(shell: "bash" | "sh", vars: readonly string[], marker: s
 }
 
 /**
- * A re-plan's trade step, after the head's checkout and before any of its
- * code runs: the job's OIDC tokens for the plan identities, traded by
- * `terragucci oidc-trade` for those identities' own credentials, which it
- * leaves in TRADED_FILE, and deleted. The plan step starts without the
+ * A re-plan's trade step, before the head's checkout: the job's OIDC tokens
+ * for the plan identities, traded by `terragucci oidc-trade` (chant's trade,
+ * once per identity) for those identities' own credentials, which it leaves
+ * in TRADED_FILE, and deleted. The plan step starts without the
  * token-request variables and reads that file instead (planFilesScript with
  * `traded`), so the pull request's code never holds a token with the default
  * branch's subject. A failed trade writes the plan status, which the
@@ -2842,14 +2842,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     steps: [
       bareCheckout(false, undefined, undefined, "Check out the workflow's commit"),
       new Step({ id: "decide", name: "Read the comment and decide whether it re-plans", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: replanDecideScript(layers, forge, input.agentComment !== undefined) }),
+      // The job's OIDC token carries the default branch's subject, which the apply identities trust. It is traded here,
+      // before the head is checked out, with chant's trade (./oidc-trade.ts), for the plan identities' credentials, and
+      // deleted; the plan step starts without the variables that ask for one. With oidc.azure, whose provider and
+      // backend take only the token, the plan step holds the token as before and its log says so (REPLAN_AZURE_WARNING).
+      ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       // The head comes from the pull request, by number; the base branch comes with the history, for the range.
       bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go, "Check out the pull request's head"),
       ...toolSteps(true, true, go, true),
-      // The job's OIDC token carries the default branch's subject, which the apply identities trust. terragucci trades it
-      // here, before any of the head's code runs, for the plan identities' credentials, and deletes it; the plan step
-      // starts without the variables that ask for one. With oidc.azure, whose provider and backend take only the token,
-      // the plan step holds the token as before and its log says so (REPLAN_AZURE_WARNING).
-      ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       new Step({
         if: go,
         id: "plan",
