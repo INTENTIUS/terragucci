@@ -85,8 +85,7 @@ import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
 import { outsideWatch, settingsChanged, type OutsideRoots } from "../affected";
-import { readSteps, runSteps, runUnitSteps, stepsUsed, terragruntStepsRefusal, type StepWhen } from "../steps";
-import type { StepSettings } from "../config";
+import { hookCount, hooksUsed, readHooks, runHooks, runUnitHooks, type HookMoment, type StageHooks } from "../hooks";
 import { binaryText, type ReportStep } from "./schema";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
@@ -460,7 +459,7 @@ interface RootOutcome {
   attributed?: Attributed;
   redacted?: number;
   deferred?: ReportDeferred;
-  /** The names of its `on_failure: approve` steps that failed: its wave waits for an approval. */
+  /** The names of its `onFailure: "approve"` hooks that failed: its wave waits for an approval. */
   holds?: string[];
   /** The upstreams it planned on whose outputs it reads are known only once they apply. */
   unknownFrom?: string[];
@@ -560,7 +559,7 @@ async function planUnits(
   layers: UnitLayer[],
   binary: string,
   work: string,
-  options: StageOptions & { selection: (unit: string) => string; drift?: boolean; observer?: StageObserver; graph: TerragruntUnit[]; waveOf: ReadonlyMap<string, number>; steps?: StepSettings[]; tools?: UnitBinaries; sources?: SourceChecker },
+  options: StageOptions & { selection: (unit: string) => string; drift?: boolean; observer?: StageObserver; graph: TerragruntUnit[]; waveOf: ReadonlyMap<string, number>; hooks?: StageHooks; tools?: UnitBinaries; sources?: SourceChecker },
   log: (line: string) => void,
 ): Promise<{
   inputs: RootInput[];
@@ -574,7 +573,7 @@ async function planUnits(
   waveReads: Map<number, number[]>;
   /** tf-drift: what each unit's refresh found, unredacted, for attribution. */
   found: Map<string, Drifted[]>;
-  /** Units a step after plan with `on_failure: approve` holds at the gate. */
+  /** Units a hook after plan with `onFailure: "approve"` holds at the gate. */
   heldBySteps: Set<string>;
 }> {
   const drift = options.drift === true;
@@ -744,15 +743,14 @@ async function planUnits(
     }
   };
 
-  // steps: each moment once for a layer's run --all, in the directory of every unit a step's globs match. A provisional preview runs none.
-  const steps = options.steps ?? [];
-  const planStep = drift ? "drift" : "plan";
+  // ci.hooks: each moment once for a layer's run --all, in the directory of every unit a hook's targets match. A provisional preview runs none.
+  const hooks = options.hooks ?? {};
   const heldBySteps = new Set<string>();
   const ran = new Map<string, ReportStep[]>();
-  const unitSteps = async (when: StepWhen, units: readonly string[], groups?: UnitGroup[]): Promise<Map<string, string>> => {
+  const unitSteps = async (when: HookMoment, units: readonly string[], groups?: UnitGroup[]): Promise<Map<string, string>> => {
     const failed = new Map<string, string>();
-    if (steps.length === 0) return failed;
-    const outcomes = await runUnitSteps(steps, when, units, {
+    if (hookCount(hooks) === 0) return failed;
+    const outcomes = await runUnitHooks(hooks, when, units, {
       repo, stage: drift ? "tf-drift" : "tf-plan", env, log,
       ...(groups ? { planFile: (u: string) => join(dirOf(groups, u, groups[0]!.workDir), "plans", u, "tfplan.tfplan") } : {}),
     });
@@ -763,7 +761,7 @@ async function planUnits(
     }
     return failed;
   };
-  /** A unit that did not plan for a reason of its own (a step, a pin): no plan, the error. */
+  /** A unit that did not plan for a reason of its own (a hook, a pin): no plan, the error. */
   const unitFailed = (path: string, error: string, number: number, preview: boolean): void => {
     run.set(path, { wave: number });
     inputs.push({ path, planner, error, preventDestroy: new Set(), ...(ran.has(path) ? { steps: ran.get(path) } : {}), terragrunt: { ...unitStack(path), selection: options.selection(path), provisional: preview, run_result: "not run" } });
@@ -803,11 +801,11 @@ async function planUnits(
       log(`${u}: ${pinFailed.get(u)!.split("\n")[0]}`);
     }
     units = units.filter((x) => !pinFailed.has(x));
-    // Before init and before the plan, for the layer's real units: a unit whose step fails does not plan, and the rest of the layer does.
-    for (const when of ["before-init", `before-${planStep}`] as StepWhen[]) {
+    // Before observe and before the plan, for the layer's real units: a unit whose hook fails does not plan, and the rest of the layer does.
+    for (const when of ["before-observe", "before-plan"] as HookMoment[]) {
       for (const [path, error] of await unitSteps(when, units.filter((u) => !provisional.has(u)))) {
         unitFailed(path, error, layer.number, false);
-        log(`${path}: a step ${when.replace("-", " ")} failed`);
+        log(`${path}: a hook ${when.replace("-", " ")} failed`);
         units = units.filter((u) => u !== path);
       }
     }
@@ -818,13 +816,13 @@ async function planUnits(
         const from = inputs.length;
         const planned = await planGroups(units, workDir);
         read(planned, layer.number, provisional, reads);
-        // After the plan, with each unit's saved plan: a unit whose step fails keeps its plan in the report and fails.
-        const after = await unitSteps(`after-${planStep}`, units.filter((u) => !provisional.has(u) && inputs.slice(from).some((r) => r.path === u && r.plan !== undefined)), planned.groups);
+        // After the plan, with each unit's saved plan: a unit whose hook fails keeps its plan in the report and fails.
+        const after = await unitSteps("after-plan", units.filter((u) => !provisional.has(u) && inputs.slice(from).some((r) => r.path === u && r.plan !== undefined)), planned.groups);
         for (let k = from; k < inputs.length; k++) {
           const r = inputs[k];
           const error = after.get(r.path);
           inputs[k] = { ...r, ...(ran.has(r.path) ? { steps: ran.get(r.path) } : {}), ...(error ? { error } : {}) };
-          if (error) log(`${r.path}: a step after ${planStep} failed`);
+          if (error) log(`${r.path}: a hook after the plan failed`);
         }
         units = [];
       } catch (e) {
@@ -1048,11 +1046,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const outside = await outsideRoots(repo, base, configPath, options.project, settings, layers.flat(), env, log, true);
     selected = affectedRoots(repo, base, all, layers.flat(), log, after, outside.outside);
   }
-  // steps: read at base, so the change under review cannot add, edit or remove one. Drift has no base: the default branch's own.
-  const stepsRead = await readSteps(repo, base, settings.steps, { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) });
-  if (stepsRead.note) log(stepsRead.note);
-  const steps = stepsUsed(stepsRead.steps, stage);
-  if (steps.length > 0) log(`steps: ${steps.length} read from terragucci.yml at ${stepsRead.from}`);
+  // ci.hooks: read at base, so the change under review cannot add, edit or remove one. Drift has no base: the default branch's own.
+  const hooksRead = readHooks(repo, base);
+  if (hooksRead.note) log(hooksRead.note);
+  const hooks = hooksUsed(hooksRead.hooks, stage);
+  if (hookCount(hooks) > 0) log(`ci.hooks: ${hookCount(hooks)} read from chant.workspace.json at ${hooksRead.from}`);
   const planLayers = selected ? layers.map((l) => l.filter((r) => selected.has(r))).filter((l) => l.length > 0) : layers;
   const roots = planLayers.flat();
   if (roots.length === 0) log("this change reaches no root, so nothing is planned");
@@ -1216,17 +1214,17 @@ export async function runStage(stage: string, repo: string, options: StageOption
     // The root's own role, when `oidc.roles` names one (../roles.ts).
     // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
     const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);
-    // The binary's own: rootEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its steps keep rootEnv.
+    // The binary's own: rootEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its hooks keep rootEnv.
     let binaryEnv = rootEnv;
     const runIn = (env: NodeJS.ProcessEnv, ...args: string[]) =>
       observer.commandAsync(timing, path, args, env, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
     const run = (...args: string[]) => runIn(binaryEnv, ...args);
     const ran: ReportStep[] = [];
     const holds: string[] = [];
-    /** Run one moment's steps; the error when one failed the root. */
-    const step = async (when: StepWhen, file?: string): Promise<string | undefined> => {
-      if (steps.length === 0) return undefined;
-      const o = await runSteps(steps, when, { repo: checkoutOf(root), root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+    /** Run one moment's hooks; the error when one failed the root. */
+    const step = async (when: HookMoment, file?: string): Promise<string | undefined> => {
+      if (hookCount(hooks) === 0) return undefined;
+      const o = await runHooks(hooks, when, { repo: checkoutOf(root), root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
       ran.push(...o.runs);
       holds.push(...o.holds);
       return o.error;
@@ -1250,7 +1248,6 @@ export async function runStage(stage: string, repo: string, options: StageOption
       observer.endRoot(timing);
       return failed(unchecked, `${root}: not checked, its branch could not be checked out`);
     }
-    const planStep = drift ? "drift" : "plan";
     try {
       try {
         binaryEnv = await rootSecretEnv(rootEnv, root, settings.secrets);
@@ -1265,8 +1262,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
         return failed((e as Error).message, `${root}: ${(e as Error).message}`);
       }
       if (bin.pin) lines.push(`${root}: ${describeBinary(bin)}`);
-      let stepError = await step("before-init");
-      if (stepError) return failed(stepError, `${root}: a step before init failed`);
+      let stepError = await step("before-observe");
+      if (stepError) return failed(stepError, `${root}: a hook before observe failed`);
       const wsInit = workspaceInit(binaryEnv, dir);
       const init = await initTurn(() => (wsInit ? runIn(wsInit.init, "init", "-input=false", "-no-color") : run("init", "-input=false", "-no-color")));
       if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
@@ -1292,8 +1289,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
         return { root, lines, deferred: { unit: root, after, why: `reads ${filled.waiting.map((w) => `${w.read.var} from ${w.read.upstream}, which ${w.why}`).join(", and ")}, so it cannot plan until then`, previewed: false } };
       }
       for (const v of filled.filled) lines.push(`${root}: ${v} read from the state its stacks name`);
-      stepError = (await step("after-init")) ?? (await step(`before-${planStep}`));
-      if (stepError) return failed(stepError, `${root}: a step before ${planStep} failed`);
+      stepError = await step("before-plan");
+      if (stepError) return failed(stepError, `${root}: a hook before the plan failed`);
       // A plan never writes state, so it takes no lock and never blocks an apply.
       // A refresh-only plan compares the state with the real objects and ignores the code.
       // choudoufu: -estate-outputs-from for each estate it reads whose root planned in this run (../estate-planned.ts).
@@ -1354,8 +1351,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
       const planCone = cone.length && coneBase ? readPlanCone(`${p.stdout}\n${p.stderr}`, planFile, coneBase) : undefined;
       if (planCone) lines.push(coneLogLine(root, planCone));
-      stepError = await step(`after-${planStep}`, planFile);
-      if (stepError) return failed(stepError, `${root}: a step after ${planStep} failed`);
+      stepError = await step("after-plan", planFile);
+      if (stepError) return failed(stepError, `${root}: a hook after the plan failed`);
       const json = await run("show", "-json", planFile);
       const text = await run("show", "-no-color", planFile);
       let plan: unknown;
@@ -1427,7 +1424,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const refusedMember = c.fallback ? undefined : c.roots.find((r) => pinRefusals.has(r) || sourceRefusals.has(r));
     if (refusedMember) composition = { ...c, wave: undefined, fallback: { kind: "plan-failed", root: refusedMember, reason: `\`${refusedMember}\` is refused before its init, so the roots plan one by one and the refusal shows against it` } };
     else if (c.wave !== undefined) {
-      const planned = await planComposedStage(repo, c, { binaries, binEnv, work, initTurn, steps, sourcesOf, log, planner });
+      const planned = await planComposedStage(repo, c, { binaries, binEnv, work, initTurn, hooks, sourcesOf, log, planner });
       if ("fallback" in planned) composition = { ...c, wave: undefined, fallback: planned.fallback };
       else {
         composedPlan = planned.plan;
@@ -1506,13 +1503,13 @@ export async function runStage(stage: string, repo: string, options: StageOption
   return finish(repo, settings, options, env, log, { binary, started, inputs, waves, plans, redacted, all, roots, observer, stage, names, ...(attributing ? { attributions } : {}), ...(deferred.length ? { deferred } : {}), ...(notices.length ? { notices } : {}), ...(blast ? { blast: blast as ReportBlast } : {}), ...(dependencies ? { dependencies } : {}), ...(compose ? { compose } : {}) });
 }
 
-/** What the composed plan of a tf-plan needs from the stage: the binaries, the provider cache and its turns, the steps, the sources check. */
+/** What the composed plan of a tf-plan needs from the stage: the binaries, the provider cache and its turns, the hooks, the sources check. */
 interface ComposeStageContext {
   binaries: RootBinaries;
   binEnv: NodeJS.ProcessEnv;
   work: string;
   initTurn: Turn;
-  steps: StepSettings[];
+  hooks: StageHooks;
   sourcesOf: SourceChecker | undefined;
   log: (line: string) => void;
   planner: ReturnType<typeof plannerForBinary>;
@@ -1525,7 +1522,7 @@ interface ComposeStageContext {
  * by one, so the error shows against the root it is in.
  */
 async function planComposedStage(repo: string, c: Composition, ctx: ComposeStageContext): Promise<{ plan: ComposedPlan; outcomes: RootOutcome[] } | { fallback: ComposeFallback }> {
-  const { binaries, binEnv, work, initTurn, steps, sourcesOf, log, planner } = ctx;
+  const { binaries, binEnv, work, initTurn, hooks, sourcesOf, log, planner } = ctx;
   const first = c.order[0]!;
   let resolved;
   try {
@@ -1547,8 +1544,8 @@ async function planComposedStage(repo: string, c: Composition, ctx: ComposeStage
     hooks: {
       log,
       step: async (root, when, file) => {
-        if (steps.length === 0) return undefined;
-        const o = await runSteps(steps, when, { repo, root, stage: "tf-plan", env: rootRoleEnv(binEnv, root), ...(file ? { planFile: file } : {}), log });
+        if (hookCount(hooks) === 0) return undefined;
+        const o = await runHooks(hooks, when, { repo, root, stage: "tf-plan", env: rootRoleEnv(binEnv, root), ...(file ? { planFile: file } : {}), log });
         ran.set(root, [...(ran.get(root) ?? []), ...o.runs]);
         if (o.holds.length) holds.set(root, [...(holds.get(root) ?? []), ...o.holds]);
         return o.error;
@@ -1699,13 +1696,11 @@ async function runTerragruntStage(
       log(everyUnit);
     }
   }
-  // steps: read at base, as for plain roots, so the change under review cannot add, edit or remove one.
-  const stepsRead = await readSteps(repo, base, settings.steps, { ...(configPath ? { config: configPath } : {}), ...(options.project ? { project: options.project } : {}) });
-  if (stepsRead.note) log(stepsRead.note);
-  const steps = stepsUsed(stepsRead.steps, drift ? "tf-drift" : "tf-plan");
-  const stepsRefused = terragruntStepsRefusal(steps);
-  if (stepsRefused) throw new ConfigError(stepsRefused);
-  if (steps.length > 0) log(`steps: ${steps.length} read from terragucci.yml at ${stepsRead.from}`);
+  // ci.hooks: read at base, as for plain roots, so the change under review cannot add, edit or remove one.
+  const hooksRead = readHooks(repo, base);
+  if (hooksRead.note) log(hooksRead.note);
+  const hooks = hooksUsed(hooksRead.hooks, drift ? "tf-drift" : "tf-plan");
+  if (hookCount(hooks) > 0) log(`ci.hooks: ${hookCount(hooks)} read from chant.workspace.json at ${hooksRead.from}`);
   // modules.require: attested, checked for every unit before any wave plans, as for plain roots: a refused unit fails and does not plan.
   const refusedUnits: RootInput[] = [];
   if (!drift) {
@@ -1760,7 +1755,7 @@ async function runTerragruntStage(
       if (dir !== repo) await generateStacks(dir, { binary, ...tool });
       const tools = new UnitBinaries(dir, binary, settings.version, terragrunt, env, options.installer);
       return planUnits(dir, own, binary, sub, {
-        ...options, env, drift, observer, waveOf, steps, tools,
+        ...options, env, drift, observer, waveOf, hooks, tools,
         ...(unitSources ? { sources: unitSources } : {}),
         // The edges a preview follows: discovery's, else the plain paths the units' files name.
         graph,

@@ -226,7 +226,7 @@ oidc:
 The job fetches its token as before and carries the stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets `AWS_ROLE_ARN` to the role of the first glob a root matches, for:
 
 - the root's init, plan and apply
-- its [steps](/terragucci/guides/run-steps/)
+- its [hooks](/terragucci/guides/run-steps/)
 - the state version an apply records
 - a [migration](/terragucci/reference/migration-files/)'s reads and writes of its state
 

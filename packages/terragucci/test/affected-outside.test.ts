@@ -94,8 +94,8 @@ describe("terragucci.yml settings that change a plan", () => {
     expect(Object.fromEntries(settingsChanged(settingsOf("{}"), settingsOf("env:\n  TF_LOG: info\n"), ROOTS))).toEqual(Object.fromEntries(ROOTS.map((r) => [r, ["env"]])));
   });
 
-  it("selects nothing for policy, approval, gate or steps, which are read at the base", () => {
-    const head = settingsOf('binary: tofu\nversion:\n  "envs/prod/**": 1.8.0\n  "**": 1.7.0\napproval: pr-review\ngate: always\npolicy:\n  path: policy\nsteps:\n  - run: "true"\n    before: plan\n');
+  it("selects nothing for policy, approval or gate, which are read at the base", () => {
+    const head = settingsOf('binary: tofu\nversion:\n  "envs/prod/**": 1.8.0\n  "**": 1.7.0\napproval: pr-review\ngate: always\npolicy:\n  path: policy\n');
     expect(settingsChanged(base, head, ROOTS).size).toBe(0);
   });
 

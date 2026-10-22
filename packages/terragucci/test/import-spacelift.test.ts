@@ -225,15 +225,11 @@ describe("terragucci import spacelift, on a repo", () => {
     expect(cfg.drift).toBe("0 4 * * *");
     expect(cfg.gate).toBeUndefined();
     expect(note(r.notes, "spacelift_stack.network.autodeploy")).toMatchObject({ kind: "unmapped", row: "Approval" });
-    expect(cfg.steps).toEqual(
-      expect.arrayContaining([
-        { name: "before_init", run: "tflint", before: "init", roots: ["network"] },
-        { name: "before_plan", run: "terraform fmt -check", before: "plan", roots: ["database", "network"] },
-        { name: "after_plan", run: "infracost breakdown --path .", after: "plan" },
-        { name: "after_apply", run: "./scripts/notify.sh", after: "apply", roots: ["database", "network"] },
-        { name: "after_apply", run: "./scripts/smoke.sh", after: "apply", roots: ["app"] },
-      ]),
-    );
+    const hook = (name: string, run: string, targets?: string[]) => ({ name, command: ["sh", "-c", run], perRun: true, ...(targets ? { targets } : {}) });
+    expect(r.hooks?.before?.observe).toEqual([hook("before_init", "tflint", ["network"])]);
+    expect(r.hooks?.before?.plan).toEqual([hook("before_plan", "terraform fmt -check", ["database", "network"])]);
+    expect(r.hooks?.after?.plan).toEqual([hook("after_plan", "infracost breakdown --path .")]);
+    expect(r.hooks?.after?.apply).toEqual(expect.arrayContaining([hook("after_apply", "./scripts/notify.sh", ["database", "network"]), hook("after_apply", "./scripts/smoke.sh", ["app"])]));
     const n = r.notes;
     expect(note(n, "spacelift_stack_dependency.db_on_network")?.kind).toBe("default");
     expect(note(n, "spacelift_stack_dependency.app_on_db")).toMatchObject({ kind: "mapped", detail: "waves.after: app after database" });

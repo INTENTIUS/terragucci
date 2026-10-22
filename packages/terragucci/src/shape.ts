@@ -24,7 +24,6 @@ import { rootWorkspace, workspaceEnv, workspaceInit } from "./backend";
 import { ConfigError, type Binary, type ResolvedSettings } from "./config";
 import { applyLayers, detectBinary, explicitOrder, findRootsWithReasons, rootDependencies, rootOrder, rootStates, type Detected, type WavesAfter, type RootReason, type StateAddress } from "./detect";
 import { refusal, shapeProblems, type Feature, type ShapeKind } from "./refusals";
-import { terragruntStepsRefusal } from "./steps";
 import { detectTerragrunt, discoverUnits, unitWaves, type TerragruntDetection } from "./terragrunt";
 import { detectTerramate, TERRAMATE_GENERATE, terramateDiscover } from "./terramate";
 import { generateStacks, generatingStack, stackFile } from "./tg-stacks";
@@ -263,11 +262,8 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
     rootEnv: (root, env) => workspaceEnv(env, join(repo, root)),
     rootInit: (root, env) => workspaceInit(env, join(repo, root)),
     stateAddress,
-    refuses: (feature) => (feature === "steps" && kind === "terragrunt" ? terragruntStepsRefusal(settings.steps) : refusal(kind, feature)),
-    problems: (where = "config") => {
-      const steps = kind === "terragrunt" ? terragruntStepsRefusal(settings.steps) : undefined;
-      return [...conflicts, ...shapeProblems(kind, settings, where), ...(steps ? [`${where}.${steps}`] : [])];
-    },
+    refuses: (feature) => refusal(kind, feature),
+    problems: (where = "config") => [...conflicts, ...shapeProblems(kind, settings, where)],
     sourceOf,
     prepareRoots: async (options = {}) => {
       if (kind !== "terragrunt" || !tg?.stacks.length) return [];

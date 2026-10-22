@@ -30,7 +30,7 @@ Each command writes `terragucci.yml` from what the repo holds: the runtime confi
 |---|---|---|
 | A root per | `spacelift_stack` resource or `stacks` entry, at its `project_root` | environment, at its `env0_template`'s `path`, else the root its first variable file is in |
 | `binary` and `version` | `terraform_workflow_tool`, `terraform_version`, `opentofu_version`; a version per root glob when the stacks differ | the template's `type`, `terraform_version`, `opentofu_version` |
-| `steps` | each hook list, for the roots of the stacks that run it, with attached contexts' hooks around the stack's own | `env0.yml`'s `deploy` steps, for the root the file is in |
+| `ci.hooks` in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) | each hook list, for the roots of the stacks that run it, with attached contexts' hooks around the stack's own | `env0.yml`'s `deploy` steps, for the root the file is in |
 | `waves.after` | `spacelift_stack_dependency`, unless the roots' `terraform_remote_state` reads already give the order | |
 | `env` | `stack_defaults.environment`, and a variable that is not `write_only` on a context every stack gets | a variable that is not sensitive on no environment or template; an `echo NAME=value >> $ENV0_ENV` line |
 | `pass.secrets` | each `write_only` variable's name, the provider's default | each sensitive variable's name, `TF_VAR_` first for a Terraform variable |
@@ -54,7 +54,7 @@ Neither import moves state; a [state move](#state-move) does, one root at a time
 | Files | context and stack mounted files | | files committed in the root, such as `terraform.tfvars` |
 | Cloud credentials | cloud integration | credentials | [`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc): a plan role and an apply role per cloud |
 | Version | `terraform_version`, `opentofu_version`, `terraform_workflow_tool` | a template's `type`, `terraform_version`, `opentofu_version` | `binary`, and [`version`](/terragucci/reference/config/#a-version-per-root) for every root or per root glob, or the root's `.terraform-version` |
-| Hooks | hooks: `before_init`, `after_plan`, `before_apply` and the rest | custom flows (`env0.yml`) | [`steps`](/terragucci/guides/run-steps/) before or after `init`, `plan`, `apply` and `drift`, for the roots the hook ran in; nothing runs at a destroy or a task |
+| Hooks | hooks: `before_init`, `after_plan`, `before_apply` and the rest | custom flows (`env0.yml`) | [`ci.hooks`](/terragucci/guides/run-steps/) before the observe, before and after the plan, and before and after the apply, for the roots the hook ran in; nothing runs at a destroy or a task |
 | Runner image | `runner_image` | | `image`: one image for every job, built FROM the terragucci image for the binary |
 | Plan policy | plan policy | approval policy (OPA) | [`policy`](/terragucci/reference/policy/) over each plan, with [cost](/terragucci/guides/estimate-cost/#cost-in-the-policy) in `input.cost` |
 | Approval | approval policy, `autodeploy` off | approval policy, `requiresApproval` | [`gate`](/terragucci/reference/stages/#gate-policy) and [approval modes](/terragucci/guides/approve-a-wave/#approval-modes); [`cost.approve_above`](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount); an import writes `gate: always` when every stack or environment waits for an approval |
@@ -248,5 +248,5 @@ pass:
 ## Next
 
 - [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) for the forge settings.
-- [Run steps around a stage](/terragucci/guides/run-steps/) for hooks.
+- [Run hooks around a stage](/terragucci/guides/run-steps/) for hooks.
 - [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/) for the workspace platforms.

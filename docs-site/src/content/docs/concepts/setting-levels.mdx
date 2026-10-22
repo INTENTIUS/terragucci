@@ -4,7 +4,7 @@ description: How terragucci's settings combine, from the built-in defaults throu
 claims: [reconcile/tofu, reconcile/mixed, reconcile/parallelism, estate/control, init/root-pins, init/terragrunt-root-pins, oidc/state-roles, oidc/cloud-roles, oidc/atmos-roles, oidc/terragrunt, generate/tofu, generate/terragrunt, approval/at-base, waves/terragrunt-layers, waves/atmos, waves/terramate]
 prompt: |
   Read https://intentius.io/terragucci/concepts/setting-levels/.
-  List each root in this repo and the settings it ends up with: its binary version, its plan and apply identities, its environment and gate, the generated files' backend and providers, the steps that run in it, and its secrets, by applying each glob-keyed key's matching rule from the page to terragucci.yml (and, in a control repo, `defaults` and the project's block).
+  List each root in this repo and the settings it ends up with: its binary version, its plan and apply identities, its environment and gate, the generated files' backend and providers, and its secrets, by applying each glob-keyed key's matching rule from the page to terragucci.yml (and, in a control repo, `defaults` and the project's block).
   Read only. Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
 
@@ -22,7 +22,7 @@ Each level takes the one above it as its default and sets only what differs.
 | a control repo's `defaults` (`reconcile/tofu`, `estate/control`) | what every project shares; any key but `url` and `rollouts` | the control repo's reviewers | the built-in defaults |
 | a project's block in the control repo (`reconcile/mixed`) | what differs for one project | the control repo's reviewers | `defaults` |
 | the project's `terragucci.yml` | in a single repo, its settings; in a control repo, `reconcile` writes the keys the jobs read into it, and an own file whose value for such a key differs fails that project's reconcile, naming the key | the project's team | the levels above it, in a single repo |
-| globs per root | a version, identities, an environment, generated files, steps, secrets, a policy override and approval rules for the roots each glob matches ([below](#keys-by-root-glob)) | whoever edits the level the key is set at | the key's value for the rest of the roots |
+| globs per root | a version, identities, an environment, generated files, secrets, a policy override and approval rules for the roots each glob matches ([below](#keys-by-root-glob)) | whoever edits the level the key is set at | the key's value for the rest of the roots |
 | the tool's own inheritance | Terragrunt includes, Atmos imports and Terramate globals, which decide what the binary sees for each unit, instance or stack | the repo's team, as before | terragucci reads it and does not change it |
 
 Between the first three levels, a key is replaced whole by the later level, except these maps:
@@ -34,7 +34,7 @@ Between the first three levels, a key is replaced whole by the later level, exce
 | `environments` | by environment name, then each environment's keys replaced one by one; an environment's `roots` and `oidc` are replaced whole |
 | `generate` | as an overlay: a `backend` of the same type merges its arguments and of another type replaces it, `providers` merge by provider, `dirs` and `roots` merge by key, and `null` removes a value |
 
-Every other key, a list or a map, is replaced whole: `roots`, `steps`, `approval_rules`, `secrets`, `ephemeral`, a `version` map, `sources`, `cost`, `notify`, `pass`, `reports`, `runner` and the rest.
+Every other key, a list or a map, is replaced whole: `roots`, `approval_rules`, `secrets`, `ephemeral`, a `version` map, `sources`, `cost`, `notify`, `pass`, `reports`, `runner` and the rest.
 
 ## Keys by root glob
 
@@ -47,7 +47,6 @@ A glob's `*` matches within one path segment, `**` across segments (and `a/**` m
 | `terragrunt.credentials` (`oidc/terragrunt`) | the first in the file's order; a unit that sets its own `iam_role` keeps it | the unit's own configuration and the job's credentials |
 | `environments.<name>.roots` | refused: `config check` names a root two environments match, and a root given identities by both its environment and `oidc.roles` | the top-level `gate`, `oidc`, `runner` and `parallelism` |
 | `generate.dirs` (`generate/tofu`) | every match, in the file's order, each over the last; then `generate.roots` for the root's exact path | the repo-level `generate` keys |
-| `steps[].roots` | every step that matches runs, in the file's order; a step without `roots` runs in every root | the step does not run there |
 | `secrets[].roots` | every matching entry; `config check` refuses two entries that give one root the same variable | no values from a store |
 | `ephemeral.roots` | any match gets a copy | no copy |
 | `apply.branches` | the first branch in the file's order; `config check` refuses the same glob under two branches | applies from the default branch |
@@ -128,7 +127,6 @@ These keys are read from the config at base, the applied commit's first parent f
 | `apply.point` | the decision point a wave gate asks |
 | `policy`, its directory or `source`, `policy.override` and `policy.outcomes` | what the policy denies, holds or lets through, and who may override; a base with no `policy` keeps the checkout's, so a pull request can add a policy and cannot loosen one |
 | `sources` | the allowed module and provider sources, the same way as `policy` |
-| `steps` | the commands run around each stage |
 | `gate` | each wave's gate, with the pipeline's `--gate`: a wave takes the stricter of the two |
 | `cost.approve_above` | the amount over which a wave waits |
 | `environments` | each wave's gate |

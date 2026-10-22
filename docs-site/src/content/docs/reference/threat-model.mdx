@@ -221,7 +221,7 @@ A runner whose host holds credentials of its own (an instance profile, a metadat
 
 Whatever root a job runs, its role reaches every state the role's IAM policy grants. One `plan_role` and one `apply_role` means every root runs as the same pair: a dev root's plan can read prod's state and a dev apply can write it.
 
-With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt.credentials` for units), each root runs with the pair of the first glob it matches. Grant each pair only its own environment's state keys. Then nothing a root runs (init, plan, apply or a step) holds an identity that reaches another environment's state. A mistake in one environment's code, or a backend pointed at the wrong key, is refused by the cloud.
+With [`oidc.roles`](/terragucci/reference/pipeline/#credentials) (or `terragrunt.credentials` for units), each root runs with the pair of the first glob it matches. Grant each pair only its own environment's state keys. Then nothing a root runs (init, plan, apply or a hook) holds an identity that reaches another environment's state. A mistake in one environment's code, or a backend pointed at the wrong key, is refused by the cloud.
 
 | Guard | Covers | Does not cover |
 |---|---|---|
@@ -316,7 +316,7 @@ With `apply.when: pull-request`, the open change's head runs with the apply role
 | On GitLab, the head the pipeline's variable names is the merge request's head now | a pipeline started by hand for code nobody approved |
 | The head did not move while the comment was read, and contains the default branch as it is now | applying code nobody reviewed, or undoing merged changes |
 | The change does not edit the pipeline file | a change rewriting the job that applies it |
-| Waves, gate, signers, policy, config and `steps` come from the default branch | a change loosening its own gate, or adding a step that runs with the apply role |
+| Waves, gate, signers, policy, config and `ci.hooks` come from the default branch | a change loosening its own gate, or adding a hook that runs with the apply role |
 | No other open pull request holds a lock on its roots | two changes applying the same root |
 
 After the checks the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token; review them before approving the head ([what they can reach](/terragucci/reference/pipeline/#pull-request-code-access)).
@@ -343,24 +343,24 @@ After the checks the change's providers, modules and external data sources run w
 
 The relay's token pushes `chant/lifecycle` like any approver's, so it is one more writer the [approval modes](#approval-modes) account for.
 
-## Steps
+## Hooks
 
-[`steps`](/terragucci/guides/run-steps/) are commands the stage runs in the plan, apply and drift jobs, with the job's cloud identity (the apply role on an apply wave) and without its forge tokens. The stage reads them from `terragucci.yml` at base only.
+[`ci.hooks`](/terragucci/guides/run-steps/) are commands the stage runs in the plan, apply and drift jobs, with the job's cloud identity (the apply role on an apply wave) and without its forge tokens. The stage reads them from `chant.workspace.json` at base only.
 
-| Run | Steps read at | So a change cannot |
+| Run | Hooks read at | So a change cannot |
 |---|---|---|
-| a pull request's plan | the target branch | run a step it adds with the plan role, or skip one it removes |
-| an apply after a merge | the applied commit's first parent, as the approval mode | run a step it adds with the apply role on its own merge, or drop an `on_failure: approve` step to pass its own gate |
-| `apply.when: pull-request` | the base the head applies onto | run a step it adds with the apply role before it merges |
+| a pull request's plan | the target branch | run a hook it adds with the plan role, or skip one it removes |
+| an apply after a merge | the applied commit's first parent, as the approval mode | run a hook it adds with the apply role on its own merge, or drop an `onFailure: "approve"` hook to pass its own gate |
+| `apply.when: pull-request` | the base the head applies onto | run a hook it adds with the apply role before it merges |
 | drift | the default branch's checkout | (drift runs no change) |
 
-If the base's file cannot be read, the stage fails when the checkout names steps and runs none otherwise; it never runs the change's. An edit to `steps` takes effect for the changes after it merges.
+If the base's declaration cannot be read, the stage fails when the checkout names hooks and runs none otherwise; it never runs the change's. An edit to `ci.hooks` takes effect for the changes after it merges.
 
-This does not stop a step from running whatever its command runs at the time: a step that calls a script in the repo runs the change's copy. Keep what a step runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without steps. An `on_failure: approve` step holds a wave at the same gate as the gate policy, so the [approval mode](#approval-modes) decides who can release it.
+This does not stop a hook from running whatever its command runs at the time: a hook that calls a script in the repo runs the change's copy. Keep what a hook runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without hooks. An `onFailure: "approve"` hook holds a wave at the same gate as the gate policy, so the [approval mode](#approval-modes) decides who can release it.
 
 ## Module and provider sources
 
-Policy reads the plan, so a change's modules and providers have run by the time a rule can deny it. With [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) set, `tf-check`, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a source it uses matches no entry. The stages that plan check again after `init`, before `plan`. The list is read at base, as `steps` are.
+Policy reads the plan, so a change's modules and providers have run by the time a rule can deny it. With [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) set, `tf-check`, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a source it uses matches no entry. The stages that plan check again after `init`, before `plan`. The list is read at base, as `ci.hooks` are.
 
 | Checked | When |
 |---|---|
@@ -382,9 +382,9 @@ In a Terragrunt repo, a wave inits and plans its units in one `run --all`. With 
 
 | Code | Runs |
 |---|---|
-| `steps` with `before: init` | before the check before `init` |
+| `ci.hooks` at `before.observe` | before the check before `init` |
 | the binary's `init`: downloads only, no module or provider code | after the check before `init`, for a root that passes |
-| `steps` with `after: init` | after the check after `init` |
+| `ci.hooks` at `before.plan` | after the check after `init` |
 | providers, modules and external data sources | in `plan`, after both checks |
 
 With no `sources` key, nothing is checked and nothing is read for it.

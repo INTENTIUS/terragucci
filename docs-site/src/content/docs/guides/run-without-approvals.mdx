@@ -53,7 +53,7 @@ These still hold a wave under `gate: never`, each once you set it:
 | Hold | Set by |
 |---|---|
 | A wave over a cost | `cost.approve_above` |
-| A wave whose step failed | a step with `on_failure: approve` |
+| A wave whose hook failed | a `ci.hooks` hook with `onFailure: "approve"` |
 | A wave a policy rule holds | `hold` in `policy.outcomes`; the job's log adds "although gate is never" |
 | The roots of a stricter environment | an `environments` entry with its own `gate`; a wave takes the stricter gate of its roots |
 | Wave 1 of a state migration | a file in `migrations/` |

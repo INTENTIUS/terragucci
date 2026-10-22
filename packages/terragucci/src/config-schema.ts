@@ -69,9 +69,6 @@ import {
   SECRET_NAME,
   SOURCE_GLOB,
   SOURCES_KEYS,
-  STEP_FAILURES,
-  STEP_KEYS,
-  STEP_STAGES,
   TELEMETRY_KEYS,
   TERRAGRUNT_KEYS,
   TRUST_ROLE,
@@ -84,7 +81,6 @@ import {
   type ProjectSettings,
   type RegistrySettings,
   type SourcesSettings,
-  type StepSettings,
   type TerragruntSettings,
 } from "./config";
 import { IDENT, LEVEL_KEYS, PROVIDER_KEY, TOP_KEYS } from "./generate-config";
@@ -195,21 +191,6 @@ const apply = map(APPLY_KEYS as (keyof ApplySettings)[], {
   branches: { type: "object", minProperties: 1, propertyNames: pat(APPLY_BRANCH), additionalProperties: { type: "array", minItems: 1, items: glob } },
   point: pat(POINT_NAME),
 } satisfies Record<keyof ApplySettings, JsonSchema>);
-
-const step = map(STEP_KEYS as readonly (keyof StepSettings)[], {
-  name: nonBlank,
-  run: nonBlank,
-  before: enumOf(STEP_STAGES),
-  after: enumOf(STEP_STAGES),
-  roots: strings,
-  on_failure: enumOf(STEP_FAILURES),
-} satisfies Record<keyof StepSettings, JsonSchema>, {
-  required: ["run"],
-  oneOf: [{ required: ["before"] }, { required: ["after"] }],
-  // A hold is decided at the gate, before any apply.
-  if: { properties: { on_failure: { const: "approve" } }, required: ["on_failure"] },
-  then: { properties: { before: enumOf(["init", "plan"]), after: enumOf(["init", "plan"]) } },
-});
 
 const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   bucket: str,
@@ -403,7 +384,6 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     drift: { ...cron, description: "A cron schedule for tf-drift, or false." },
     synth: { ...nonBlank, description: "The command that writes the roots before any job reads them." },
-    steps: { type: "array", items: step, description: "Commands run before or after a root's init, plan, apply and drift." },
     image: { type: "string", pattern: "^[^\\s]+$", description: "The image every job runs in, built FROM terragucci's." },
     notify: {
       ...map(NOTIFY_KEYS, {

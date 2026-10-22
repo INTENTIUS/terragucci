@@ -363,7 +363,7 @@ export function buildReport(input: BuildInput): Report {
     if (m.status === "failed") why.push(policyRefused(src) ? "refused by policy" : "refused to plan");
     if (src.policy?.override) why.push(`policy overridden by ${src.policy.override.by}`);
     const holding = (src.steps ?? []).filter((x) => x.status === "approval").map((x) => x.name);
-    if (holding.length) why.push(`step ${holding.join(", ")} asks for an approval`);
+    if (holding.length) why.push(`hook ${holding.join(", ")} asks for an approval`);
     if (src.policy?.warnings.length) why.push(`${src.policy.warnings.length} policy warning${src.policy.warnings.length === 1 ? "" : "s"}`);
     if (inputRun.stage === "tf-drift" && changes.length > 0) why.push("drifted");
     if (outliers.has(m.member)) why.push("outlier: its change matches no other root's");

@@ -213,7 +213,7 @@ oidc:
 
 Plan runs the pull request's code, so it gets the read-only role. The config rejects one role for both. Forks get no plan job, so nothing reaches their pull requests.
 
-Under `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets each root's `AWS_ROLE_ARN` from it; the binary and steps assume that role with the job's token, as does the state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
+Under `roles`, the jobs carry each stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets each root's `AWS_ROLE_ARN` from it; the binary and hooks assume that role with the job's token, as does the state version read. A role per environment keeps each environment's roots out of another's state ([Keep each environment's roles to its own state](/terragucci/guides/scope-state-access/)); `config check` warns when a role reaches another environment's state.
 
 `gcp.roles` and `azure.roles` work the same way, through `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` and `TERRAGUCCI_ROOT_AZURE_CLIENTS`. A root's binary gets a copy of the job's credentials file that impersonates its service account, as `GOOGLE_APPLICATION_CREDENTIALS`, and its client as `ARM_CLIENT_ID`. Each client needs a federated credential for the same subjects as the job's.
 
@@ -369,7 +369,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
 | `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
-| `TG_STAGE`, `TG_STEP`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [step](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the moment (such as `before-plan`), the root, the checkout's path and, after a plan and before an apply, the plan file |
+| `TG_STAGE`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [hook](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the root, the checkout's path and, after a plan and before an apply, the plan file; chant's `CHANT_HOOK` names the moment |
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `terragucci approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
 | `GITHUB_TRIGGERING_ACTOR`, else `GITHUB_ACTOR` |  | in `drift-agent-push`, when `GITHUB_EVENT_NAME` is `workflow_dispatch`: the person who started the drift run, named in the agent commit's `Requested-by:` trailer, whose review of the pull request then doesn't count |
 | `env:` in the config |  | variables every job gets; values only, never secrets |

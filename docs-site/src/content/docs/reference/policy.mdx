@@ -325,7 +325,7 @@ Each wave combines its roots that change something:
 | an `allow_unattended` for every root that changes something, and no `hold` | applies without an approval, whatever `gate` says |
 | otherwise | `gate` decides |
 
-`cost.approve_above`, a step with `on_failure: approve` and a root that read an output unknown at review still hold a wave the rules allow.
+`cost.approve_above`, a hook with `onFailure: "approve"` and a root that read an output unknown at review still hold a wave the rules allow.
 
 `outcomes` is read from the config at base, and with `hold` or `allow_unattended` in it `tf-apply` reads the policy itself at base too, so a pull request that adds an `allow_unattended` rule is decided by the base branch's rules. The pull request's plan note says what each wave will do and which rules decide it: "applies without an approval: allowed unattended by `main.allow_unattended_routine`", or "waits for an approval (held by `main.hold_iam`)". The job's log names each rule that held or released the wave, and the wave's report carries them in `waves[].policy_gate` with the commit the policy was read at, as does its `apply` entry in the [audit trail](/terragucci/reference/audit-trail/). Each root's report lists the rules it matched in `roots[].policy.held_by` and `roots[].policy.allowed_by`.
 

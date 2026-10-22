@@ -102,17 +102,17 @@ export function costTable(cost: ReportCost, name: (root: string) => string = (r)
   return t;
 }
 
-/** What a step came to, in words. */
+/** What a `ci.hooks` hook came to, in words. */
 export function stepResult(s: ReportStep): string {
   const exit = s.exit === null ? "no exit code" : `exit ${s.exit}`;
   return s.status === "passed" ? "passed" : s.status === "failed" ? `failed, ${exit}` : `asks for an approval, ${exit}`;
 }
 
-/** Every step that ran, by root, in the order each root ran them. */
+/** Every `ci.hooks` hook that ran, by root, in the order each root ran them. */
 export function stepsTable(report: Report, name: (root: string) => string = (r) => `\`${r}\``): string | undefined {
   const rows = report.roots.flatMap((r) => (r.steps ?? []).map((s) => ({ root: r.path, s })));
   if (rows.length === 0) return undefined;
-  let t = `**Steps (${rows.length}):**\n\n| Root | When | Step | Result |\n|---|---|---|---|\n`;
+  let t = `**Hooks (${rows.length}):**\n\n| Root | When | Hook | Result |\n|---|---|---|---|\n`;
   for (const { root, s } of rows) t += `| ${name(root)} | ${s.when} | ${s.name.split(/\s+/).join(" ").replace(/\|/g, "\\|")} | ${stepResult(s)} |\n`;
   return t;
 }
@@ -386,7 +386,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
       const policyRules = (w.policy_gate?.rules ?? []).map(code).join(", ");
       const by = w.waits && unknownBy.length
         ? ` (since ${joinAnd(unknownBy.map(code))} ${unknownBy.length === 1 ? "reads" : "read"} a value unknown at plan time)`
-        : w.waits && w.held_by_steps?.length ? ` (a step of ${w.held_by_steps.map(code).join(", ")} asks for one)`
+        : w.waits && w.held_by_steps?.length ? ` (a hook of ${w.held_by_steps.map(code).join(", ")} asks for one)`
         : w.waits && w.policy_gate?.outcome === "held" ? ` (held by ${policyRules})`
         : w.policy_gate?.outcome === "unattended" ? (w.waits ? ` (the policy allows it unattended, ${policyRules}, and something else holds it)` : ` without an approval: allowed unattended by ${policyRules}`) : "";
       // approval_rules at base: what the approval takes, rule by rule.

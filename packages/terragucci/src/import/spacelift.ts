@@ -7,7 +7,7 @@
  * A stack comes from a `spacelift_stack` resource, a `stacks` entry of
  * `.spacelift/config.yml`, or both, matched by the stack's ID (its `slug`, or
  * its name as Spacelift makes an ID of it). Its project root becomes a root;
- * its version and workflow tool `binary` and `version`; its hooks `steps`;
+ * its version and workflow tool `binary` and `version`; its hooks `ci.hooks`;
  * `spacelift_stack_dependency` resources `waves.after`; a context's or a
  * stack's environment variables `env` when every stack gets the value and
  * `pass.secrets` when it is secret, the default; drift detection `drift`; and
@@ -18,16 +18,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseYAML } from "@intentius/chant/yaml";
-import { ConfigError, type StepStage } from "../config";
+import { ConfigError } from "../config";
 import { literalString, refTo, resourcesOf, shown, stringList, type HclResource, type HclValue } from "./hcl";
 import { isMap, rootOf } from "./notes";
 import { notePlatformOnly, noteUnknown } from "./spacelift-env0-guide";
-import { Build, finish, type PlatformConverted, type PlatformOptions, type Unit } from "./platform";
+import { Build, finish, hookMoment, type FlowStage, type PlatformConverted, type PlatformOptions, type Unit } from "./platform";
 
 export const SPACELIFT_FILES = [".spacelift/config.yml", ".spacelift/config.yaml"];
 
 /** Each hook and the moment it runs at; undefined for the hooks with no counterpart. */
-const HOOKS: Record<string, { before?: StepStage; after?: StepStage } | undefined> = {
+const HOOKS: Record<string, { before?: FlowStage; after?: FlowStage } | undefined> = {
   before_init: { before: "init" },
   after_init: { after: "init" },
   before_plan: { before: "plan" },
@@ -208,7 +208,7 @@ export function convertSpacelift(doc: Record<string, unknown>, resources: HclRes
   const everyStack = (set: Set<Stack>): boolean => stacks.every((s) => set.has(s));
 
   // Hooks: each stack's own list (runtime config, defaults, resource), with its contexts' around it.
-  const groups = new Map<string, { stage: { before?: StepStage; after?: StepStage }; hook: string; script: string; roots: Set<string>; keys: Set<string>; stacks: Set<Stack> }>();
+  const groups = new Map<string, { stage: { before?: FlowStage; after?: FlowStage }; hook: string; script: string; roots: Set<string>; keys: Set<string>; stacks: Set<Stack> }>();
   for (const [hook, stage] of Object.entries(HOOKS)) {
     for (const st of stacks) {
       const own = setting(st, hook);
@@ -242,8 +242,7 @@ export function convertSpacelift(doc: Record<string, unknown>, resources: HclRes
     const all = everyStack(g.stacks);
     const roots = [...g.roots].sort();
     b.steps.push({ name: g.hook, run: g.script, ...g.stage, ...(all ? {} : { roots }) });
-    const when = `${g.stage.before ? "before" : "after"}: ${g.stage.before ?? g.stage.after}`;
-    for (const k of g.keys) b.note("mapped", k, "Hooks", `steps: ${when}${all ? " for every root" : ` for ${roots.join(", ")}`}`);
+    for (const k of g.keys) b.note("mapped", k, "Hooks", `ci.hooks: ${hookMoment(g.stage)}${all ? " for every root" : ` for ${roots.join(", ")}`}`);
   }
 
   // Environment: the runtime config's values, and environment variables on contexts and stacks.
@@ -370,6 +369,6 @@ export function convertSpacelift(doc: Record<string, unknown>, resources: HclRes
   }
 
   finish(b, o, "stacks");
-  return { settings: b.s, notes: notes.list };
+  return { settings: b.s, notes: notes.list, ...(b.hooks ? { hooks: b.hooks } : {}) };
 }
 

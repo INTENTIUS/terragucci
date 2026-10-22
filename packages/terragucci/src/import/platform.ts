@@ -5,7 +5,8 @@
  * (./spacelift-env0-guide.ts). The readers (./spacelift.ts, ./env0.ts) say what
  * each unit has; `finish` decides what one repo-wide key can hold.
  */
-import { PASS_RESERVED, PASS_RESERVED_PREFIXES, PR_APPLY_NEEDS_ON_GITLAB, RELEASE_VERSION, type ApplyWhen, type Binary, type ForgeName, type ProjectSettings, type StepSettings } from "../config";
+import type { OpWaveHook, OpWaveHooks } from "@intentius/chant/op";
+import { PASS_RESERVED, PASS_RESERVED_PREFIXES, PR_APPLY_NEEDS_ON_GITLAB, RELEASE_VERSION, type ApplyWhen, type Binary, type ForgeName, type ProjectSettings } from "../config";
 import { Notes, wavesAfterOf, type ImportNote, type RepoShape } from "./notes";
 import { noteConcept, type SpaceliftEnv0Row } from "./spacelift-env0-guide";
 
@@ -18,6 +19,8 @@ export interface PlatformOptions {
 export interface PlatformConverted {
   settings: ProjectSettings;
   notes: ImportNote[];
+  /** The platform's hooks, as `ci.hooks` for chant.workspace.json. */
+  hooks?: OpWaveHooks;
   /** Roots written that match no directory with Terraform files; undefined lets the caller look. */
   missing?: string[];
   /** The files read, relative to the repo. */
@@ -36,11 +39,43 @@ export interface Unit {
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** A stage a platform's hook runs around. */
+export type FlowStage = "init" | "plan" | "apply";
+
+/** A platform's hook as read, before it becomes a `ci.hooks` entry. */
+export interface ImportedStep {
+  name: string;
+  /** A shell command, run in the root's directory. */
+  run: string;
+  before?: FlowStage;
+  after?: FlowStage;
+  /** The roots it runs for; every root when unset. */
+  roots?: string[];
+}
+
+/** The `ci.hooks` moment an imported hook runs at: `before.observe` before init, `before.plan` after it. */
+export function hookMoment(s: Pick<ImportedStep, "before" | "after">): string {
+  if (s.before === "init") return "before.observe";
+  if (s.after === "init") return "before.plan";
+  return s.before ? `before.${s.before}` : `after.${s.after!}`;
+}
+
+/** Imported hooks as `ci.hooks`: each runs `sh -c` in each root it names. */
+export function importedHooks(steps: readonly ImportedStep[]): OpWaveHooks {
+  const out: Record<string, Record<string, OpWaveHook[]>> = {};
+  for (const s of steps) {
+    const [side, stage] = hookMoment(s).split(".") as [string, string];
+    ((out[side] ??= {})[stage] ??= []).push({ name: s.name, command: ["sh", "-c", s.run], perRun: true, ...(s.roots ? { targets: s.roots } : {}) });
+  }
+  return out as OpWaveHooks;
+}
+
 export class Build {
   readonly notes = new Notes();
   readonly s: ProjectSettings = {};
   readonly units: Unit[] = [];
-  readonly steps: StepSettings[] = [];
+  readonly steps: ImportedStep[] = [];
+  hooks?: OpWaveHooks;
   /** A version per root, with the key that set it. */
   readonly versions = new Map<string, { version: string; key: string }>();
   readonly binaries = new Map<Binary, string[]>();
@@ -101,7 +136,7 @@ export class Build {
   }
 }
 
-/** The roots, binary, version, order, approval, drift, ephemeral, env, secrets and steps, once every file is read. */
+/** The roots, binary, version, order, approval, drift, ephemeral, env, secrets and hooks, once every file is read. */
 export function finish(b: Build, o: PlatformOptions, units: string): void {
   const { notes, s } = b;
 
@@ -204,5 +239,5 @@ export function finish(b: Build, o: PlatformOptions, units: string): void {
       b.note("mapped", keys.join(", "), "Variables", `pass.secrets: ${name}; create the CI secret ${name}, whose value ${b.platform} does not give back${many}`);
     }
   }
-  if (b.steps.length) s.steps = b.steps;
+  if (b.steps.length) b.hooks = importedHooks(b.steps);
 }

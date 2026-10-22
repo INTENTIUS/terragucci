@@ -190,7 +190,7 @@ export default defineConfig({
 								{ label: 'Use Terramate', slug: 'guides/use-terramate' },
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Generate backend and provider files', slug: 'guides/generate-root-files' },
-								{ label: 'Run steps around a stage', slug: 'guides/run-steps' },
+								{ label: 'Run hooks around a stage', slug: 'guides/run-steps' },
 							],
 						},
 						{

@@ -26,6 +26,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import type { OpWaveHooks } from "@intentius/chant/op";
 import { emitYAML, parseYAML } from "@intentius/chant/yaml";
 import {
   APPLY_REQUIRES,
@@ -40,6 +41,7 @@ import {
   type ProjectSettings,
 } from "../config";
 import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
+import { workspaceName } from "../init";
 import { APPLY_TIMING_TABLE, GUIDE_URL, plain, SCALE_URL, type SettingRow } from "./guide";
 import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind, type RepoShape } from "./notes";
 import { readEnv0, convertEnv0, ENV0_DISCOVERY_FILES } from "./env0";
@@ -69,6 +71,8 @@ const SOURCE_URLS: Record<ImportSource, string> = { atlantis: GUIDE_URL, digger:
 export interface Converted {
   settings: ProjectSettings;
   notes: ImportNote[];
+  /** The source's hooks, as `ci.hooks` for chant.workspace.json. */
+  hooks?: OpWaveHooks;
 }
 
 export interface ImportOptions {
@@ -467,6 +471,8 @@ export interface ImportResult extends Converted {
   wrote?: string;
   /** The YAML written, or that would be. */
   yaml: string;
+  /** The declaration the hooks were written into, relative to the repo; undefined on a dry run or with no hooks. */
+  wroteHooks?: string;
   /** Roots that match no directory with Terraform files. */
   missing: string[];
 }
@@ -496,7 +502,7 @@ export function importConfig(repo: string, source: ImportSource, o: ImportOption
     const file = o.file ? relative(repo, resolve(repo, o.file)) : undefined;
     const r = (source === "spacelift" ? readSpacelift : readEnv0)(repo, { ...opts, ...(file !== undefined ? { file } : {}) });
     const missing = r.missing ?? (r.settings.roots ?? []).filter((x) => findRoots(repo, [x]).length === 0);
-    return write(repo, source, r.read.join(", "), r.settings, r.notes, missing, o);
+    return write(repo, source, r.read.join(", "), r.settings, r.notes, missing, o, r.hooks);
   }
   const file = o.file ? resolve(repo, o.file) : SOURCE_FILES[source].map((f) => join(repo, f)).find((f) => existsSync(f));
   if (!file || !existsSync(file)) throw new ConfigError(`import ${source} reads ${o.file ?? SOURCE_FILES[source].join(" or ")}, and there is none in ${repo}`);
@@ -512,19 +518,48 @@ export function importConfig(repo: string, source: ImportSource, o: ImportOption
   return write(repo, source, from, settings, notes, missing, o);
 }
 
-/** Write terragucci.yml from converted settings, unless `dryRun`. */
-function write(repo: string, source: ImportSource, from: string, settings: ProjectSettings, notes: ImportNote[], missing: string[], o: { dryRun?: boolean; force?: boolean }): ImportResult {
+/** The chant release that reads `ci.hooks` in a declaration. */
+export const HOOKS_READER = "0.124.41";
+
+/** chant.workspace.json with `hooks` under `ci.hooks`: the repo's own, else a new one. */
+function declarationWithHooks(repo: string, hooks: OpWaveHooks, force: boolean | undefined): { path: string; text: string } {
+  const path = join(repo, "chant.workspace.json");
+  let decl: Record<string, unknown> = { name: workspaceName(repo), schema: 1, minReader: HOOKS_READER, members: [] };
+  if (existsSync(path)) {
+    try {
+      decl = JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      throw new ConfigError("chant.workspace.json is not valid JSON, so import cannot add ci.hooks to it");
+    }
+  }
+  const ci = (decl.ci ?? {}) as Record<string, unknown>;
+  if (ci.hooks !== undefined && !force) throw new ConfigError("chant.workspace.json already has ci.hooks; --force replaces them, or --dry-run prints what would be written");
+  const [major = 0, minor = 0, patch = 0] = String(decl.minReader ?? "0").split(".").map(Number);
+  const [wantMinor, wantPatch] = [124, 41];
+  if (major === 0 && (minor < wantMinor || (minor === wantMinor && patch < wantPatch))) decl.minReader = HOOKS_READER;
+  decl.ci = { ...ci, hooks };
+  return { path, text: `${JSON.stringify(decl, null, 2)}\n` };
+}
+
+/** Write terragucci.yml from converted settings, and the hooks into chant.workspace.json, unless `dryRun`. */
+function write(repo: string, source: ImportSource, from: string, settings: ProjectSettings, notes: ImportNote[], missing: string[], o: { dryRun?: boolean; force?: boolean }, hooks?: OpWaveHooks): ImportResult {
   const yaml = `# Written by terragucci import ${source} from ${from}. What became of each setting: ${SOURCE_URLS[source]}\n${Object.keys(settings).length ? emitYAML(settings, 0).trim() : "{}"}\n`;
   const existing = findConfig(repo);
   let wrote: string | undefined;
+  let wroteHooks: string | undefined;
   if (!o.dryRun) {
     if (existing && !o.force) throw new ConfigError(`${relative(repo, existing)} is already here; --force replaces it, or --dry-run prints what would be written`);
     const out = existing ?? join(repo, "terragucci.yml");
     if (existing && !/\.ya?ml$/.test(existing)) throw new ConfigError(`${relative(repo, existing)} is not YAML; move it aside first`);
+    const decl = hooks ? declarationWithHooks(repo, hooks, o.force) : undefined;
     writeFileSync(out, yaml);
     wrote = relative(repo, out);
+    if (decl) {
+      writeFileSync(decl.path, decl.text);
+      wroteHooks = relative(repo, decl.path);
+    }
   }
-  return { source, from, settings, notes, yaml, missing, ...(wrote ? { wrote } : {}) };
+  return { source, from, settings, notes, yaml, missing, ...(hooks ? { hooks } : {}), ...(wrote ? { wrote } : {}), ...(wroteHooks ? { wroteHooks } : {}) };
 }
 
 const HEADINGS: Record<NoteKind, string> = {
@@ -539,6 +574,10 @@ export function describeImport(r: ImportResult): string {
   const out: string[] = [];
   out.push(r.wrote ? `read ${r.from}, wrote ${r.wrote}:` : `read ${r.from}; dry run, nothing written. terragucci.yml would be:`);
   out.push("", ...r.yaml.trimEnd().split("\n").map((l) => `  ${l}`));
+  if (r.hooks) {
+    out.push("", r.wroteHooks ? `and wrote ci.hooks into ${r.wroteHooks}:` : "ci.hooks in chant.workspace.json would be:");
+    out.push("", ...JSON.stringify(r.hooks, null, 2).split("\n").map((l) => `  ${l}`));
+  }
   for (const kind of ["mapped", "default", "unmapped", "left-out"] as const) {
     const notes = r.notes.filter((n) => n.kind === kind);
     if (!notes.length) continue;

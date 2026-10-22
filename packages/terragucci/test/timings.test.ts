@@ -8,6 +8,7 @@ import { gzipSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
 import { runStage } from "../src/report/stage";
+import { REPORT_MINOR } from "../src/report/schema";
 import { decodeTracesJson, decodeTracesProto, duration, rootTimings, SpanReceiver, type CollectedSpan } from "../src/report/spans";
 import { git, tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
@@ -300,7 +301,7 @@ describe("terragucci stage tf-plan names where the time went", () => {
     const logs: string[] = [];
     const { report } = await runStage("tf-plan", repo, { binary: spanningBinary(tmp()), layers: [["envs/a", "envs/b", "envs/c"]], out, env }, (l) => logs.push(l));
     expect(logs.filter((l) => l.startsWith("timings:"))).toEqual([]);
-    expect(report.minor).toBe(43);
+    expect(report.minor).toBe(REPORT_MINOR);
 
     const root = (p: string) => report.roots.find((r) => r.path === p)!.timings!;
     expect(root("envs/a").detail).toBe("resources");

@@ -135,7 +135,7 @@ A pull request also plans the roots a change outside their directories reaches. 
 | `version`, `generate`, `pass`, `env`, `oidc` or `secrets` in `terragucci.yml`, resolved per root, its globs included | the roots whose settings differ from the base's | `affected/outside-roots` |
 | `synth` in `terragucci.yml` | every synthesized root, and the note says the command changed | `affected/outside-roots` |
 | a file the `synth` command reads | the roots whose synthesized files differ from the base's | `affected/cdktn` |
-| `policy`, `approval` or `steps` in `terragucci.yml`, or the policy directory | no root: the run reads these from the base, so the change takes effect once it merges | `affected/outside-roots` |
+| `policy` or `approval` in `terragucci.yml`, `ci.hooks` in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson), or the policy directory | no root: the run reads these from the base, so the change takes effect once it merges | `affected/outside-roots` |
 
 ## Reviewer view
 
