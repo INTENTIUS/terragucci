@@ -10,7 +10,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
-import { blockedRoots, earlierRun, onlyWaiting, outcomeFileName, runSummary, writeOutcomeFile } from "../src/blocked";
+import { earlierWaveOutcomes, waveOutcomeFileName as outcomeFileName } from "@intentius/chant/wave-blocked";
 import { renderPipeline } from "../src/render";
 import { tmp } from "./helpers";
 import { setup } from "./apply-helpers";
@@ -76,7 +76,7 @@ describe("a failed root blocks only its dependents (#1161)", () => {
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await run(1)).toBe(0);
     expect(await run(2, "cluster-a")).toBe(1);
-    expect(outcome(work, 2).roots).toEqual({ "cluster-a": { status: "failed" }, "cluster-b": { status: "applied" } });
+    expect(outcome(work, 2).members).toEqual({ "cluster-a": { status: "failed" }, "cluster-b": { status: "applied" } });
     // The report the bucket gets says the same, with the failed root's error.
     expect(waveReport(work).outcomes).toEqual([
       { root: "cluster-a", outcome: "failed", error: "Error: The name of a FIFO queue can only end with '.fifo'" },
@@ -84,7 +84,7 @@ describe("a failed root blocks only its dependents (#1161)", () => {
     ]);
     expect(await run(3)).toBe(1);
     expect(applied(log)).toEqual(["app-b", "cluster-b", "network"]);
-    expect(outcome(work, 3).roots).toEqual({ "app-a": { status: "blocked", by: "cluster-a" }, "app-b": { status: "applied" } });
+    expect(outcome(work, 3).members).toEqual({ "app-a": { status: "blocked", by: "cluster-a" }, "app-b": { status: "applied" } });
     const w = waveReport(work);
     expect(w.blocked).toEqual([{ root: "app-a", blocked_by: "cluster-a" }]);
     expect(w.outcomes).toEqual([{ root: "app-a", outcome: "blocked", blocked_by: "cluster-a" }, { root: "app-b", outcome: "applied" }]);
@@ -99,10 +99,10 @@ describe("a failed root blocks only its dependents (#1161)", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await run(1, "network")).toBe(1);
     expect(await run(2)).toBe(1);
-    expect(outcome(work, 2).roots).toEqual({ "cluster-a": { status: "blocked", by: "network" }, "cluster-b": { status: "blocked", by: "network" } });
+    expect(outcome(work, 2).members).toEqual({ "cluster-a": { status: "blocked", by: "network" }, "cluster-b": { status: "blocked", by: "network" } });
     expect(waveReport(work).state).toBe("blocked");
     expect(await run(3)).toBe(1);
-    expect(outcome(work, 3).roots).toEqual({ "app-a": { status: "blocked", by: "network" }, "app-b": { status: "blocked", by: "network" } });
+    expect(outcome(work, 3).members).toEqual({ "app-a": { status: "blocked", by: "network" }, "app-b": { status: "blocked", by: "network" } });
     expect(applied(log)).toEqual([]);
   });
 
@@ -116,47 +116,11 @@ describe("a failed root blocks only its dependents (#1161)", () => {
   });
 });
 
-describe("blockedRoots, earlierRun and the run's summary", () => {
-  const ups = new Map([
-    ["cluster-a", new Set(["network"])],
-    ["cluster-b", new Set(["network"])],
-    ["app-a", new Set(["cluster-a"])],
-    ["app-b", new Set(["cluster-b"])],
-  ]);
-  const earlier = new Set(["network", "cluster-a", "cluster-b"]);
-
-  it("lets through a root whose upstreams applied or planned no change, and blocks one behind a failure, a wait or no outcome", () => {
-    const o = new Map([
-      ["network", { status: "unchanged" as const }],
-      ["cluster-a", { status: "waiting" as const }],
-    ]);
-    expect([...blockedRoots(["app-a", "app-b"], ups, earlier, o)]).toEqual([["app-a", "cluster-a"], ["app-b", "cluster-b"]]);
-    expect([...blockedRoots(["cluster-a", "cluster-b"], ups, new Set(["network"]), o)]).toEqual([]);
-  });
-
-  it("blocks every root of the wave by the gate of a wave that holds all the rest", () => {
-    expect([...blockedRoots(["app-a"], ups, earlier, new Map(), 1)]).toEqual([["app-a", "wave-1"]]);
-  });
-
-  it("reads the newest outcome of a root, a re-run's over the first attempt's", () => {
+describe("outcome files from before chant's wave-blocked", () => {
+  it("reads a file an earlier terragucci wrote with roots in place of members", () => {
     const dir = tmp("tg-outcomes-");
-    writeOutcomeFile(dir, 2, {}, { "cluster-a": { status: "failed" } }, "2026-10-18T10:00:00.000Z");
-    const again = tmp("tg-outcomes-");
-    writeOutcomeFile(again, 2, {}, { "cluster-a": { status: "applied" } }, "2026-10-18T11:00:00.000Z");
-    expect(earlierRun([dir, again], 3).roots.get("cluster-a")?.status).toBe("applied");
-    expect(earlierRun([dir, again], 2).roots.size).toBe(0);
-  });
-
-  it("counts the run, and ends as waiting only when every held root waits behind an approval", () => {
-    const run = new Map([
-      ["network", { status: "applied" as const }],
-      ["cluster-a", { status: "failed" as const }],
-      ["app-a", { status: "blocked" as const, by: "cluster-a" }],
-    ]);
-    expect(runSummary(run.values())).toBe("1 applied, 1 failed, 1 blocked");
-    expect(runSummary([{ status: "applied" }, { status: "unchanged" }])).toBeUndefined();
-    expect(onlyWaiting(run)).toBe(false);
-    expect(onlyWaiting(new Map([["cluster-a", { status: "waiting" as const }], ["app-a", { status: "blocked" as const, by: "cluster-a" }]]))).toBe(true);
+    writeFileSync(join(dir, outcomeFileName(2)), JSON.stringify({ version: 1, wave: 2, at: "2026-10-18T10:00:00.000Z", roots: { "cluster-a": { status: "failed" } } }));
+    expect(earlierWaveOutcomes([dir], 3).members.get("cluster-a")?.status).toBe("failed");
   });
 });
 
