@@ -171,9 +171,9 @@ Claims are a person's runs, apart from making a change: nothing waits on one, an
 
 | Changed | Claims picked |
 |---|---|
-| a claim's row, group line or function in `stack/smoke.sh` | that claim |
-| a helper function in `stack/smoke.sh` | the claims that call it |
-| any other line of `stack/smoke.sh` | every claim |
+| a claim's row, group line or function in `stack/smoke.sh` or one of the `stack/smoke-claims-<n>.sh` parts it sources | that claim |
+| a helper function in `stack/smoke.sh` or a part | the claims that call it |
+| any other line of `stack/smoke.sh` or a part | every claim |
 | a docs page | the claims its `claims:` line newly lists |
 | anything else | the claims `stack/claim-paths.txt` names for its path, none when no line names it |
 

@@ -1,5 +1,6 @@
 // Checks every BREAK cut the smoke claims make without running a claim: each
-// `break_bundle <out> <file> <find> <replace>...` call in stack/smoke.sh,
+// `break_bundle <out> <file> <find> <replace>...` call in stack/smoke.sh and
+// the stack/smoke-claims-<n>.sh parts it sources,
 // stack/smoke-gitlab.sh and stack/sandbox-github.sh names a file under packages/terragucci/src that holds
 // its <find> exactly once, as stack/break-bundle.mjs requires when the claim
 // runs. A refactor that moves the text fails here, instead of a BREAK run that
@@ -17,6 +18,8 @@ import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+// The parts stack/smoke.sh sources its claims from, in order.
+const SMOKE_PARTS = [1, 2, 3, 4].map((n) => `stack/smoke-claims-${n}.sh`);
 const src = resolve(root, "packages/terragucci/src");
 
 const ANSI = { a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
@@ -151,7 +154,7 @@ function checkScript(path) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const scripts = process.argv.slice(2);
-  const paths = scripts.length ? scripts.map((s) => resolve(s)) : ["stack/smoke.sh", "stack/smoke-gitlab.sh", "stack/sandbox-github.sh"].map((s) => resolve(root, s));
+  const paths = scripts.length ? scripts.map((s) => resolve(s)) : ["stack/smoke.sh", ...SMOKE_PARTS, "stack/smoke-gitlab.sh", "stack/sandbox-github.sh"].map((s) => resolve(root, s));
   let errors = [], calls = 0, cuts = 0;
   for (const p of paths) {
     const r = checkScript(p);

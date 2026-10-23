@@ -9,9 +9,10 @@
 # tree. A file picks claims this way:
 #
 #   stack/smoke.sh          the claims whose CLAIMS row, CLAIM_GROUPS line or
-#                           claim_<name> function a changed line falls in; a
-#                           changed line anywhere else (a shared helper) picks
-#                           every claim
+#   and its parts           claim_<name> function a changed line falls in; a
+#   (smoke-claims-<n>.sh)   changed line anywhere else (a shared helper) picks
+#                           every claim. The parts are read in place of the
+#                           lines of smoke.sh that source them
 #   a docs page             the claims its `claims:` front matter newly lists
 #   anything else           the claim globs stack/claim-paths.txt gives its
 #                           path; ALL picks every claim, and a path the file
@@ -54,7 +55,21 @@ pick_glob() { # reason, glob...
 files="$( { git diff --name-only "$mb"; git ls-files --others --exclude-standard; } | sort -u)"
 [ -n "$files" ] || { echo "claims-affected: nothing changed since $(git rev-parse --short "$mb")" >&2; exit 0; }
 
-# The claim each line of smoke.sh belongs to: a CLAIMS row, a CLAIM_GROUPS
+# smoke.sh with each part it sources in place of the line that sources it
+# (SMOKE_ALL), and the file and line each of its lines comes from (SMOKE_FROM).
+SMOKE_ALL="$(mktemp)"
+SMOKE_FROM="$(mktemp)"
+trap 'rm -f "$SMOKE_ALL" "$SMOKE_FROM"' EXIT
+awk -v all="$SMOKE_ALL" -v from="$SMOKE_FROM" -v dir="$HERE" '
+  /^\. "\$HERE\/smoke-claims-[0-9]+\.sh"$/ {
+    match($0, /smoke-claims-[0-9]+\.sh/); f = substr($0, RSTART, RLENGTH); n = 0
+    while ((getline l < (dir "/" f)) > 0) { print l > all; print "stack/" f ":" (++n) > from }
+    close(dir "/" f); next
+  }
+  { print > all; print "stack/smoke.sh:" FNR > from }
+' "$HERE/smoke.sh"
+
+# The claim each line of SMOKE_ALL belongs to: a CLAIMS row, a CLAIM_GROUPS
 # line, or a claim_<name> function; "-" for any other line.
 smoke_owner() {
   awk '
@@ -71,26 +86,34 @@ smoke_owner() {
     /^[A-Za-z_][A-Za-z0-9_]*=/ { fn = ""; print "-"; next }
     fn != "" { print fn; next }
     { print "-" }
-  ' "$HERE/smoke.sh"
+  ' "$SMOKE_ALL"
 }
 
 while read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-    stack/smoke.sh)
-      owners="$(smoke_owner)"
+    stack/smoke.sh|stack/smoke-claims-*.sh)
+      [ -n "${owners:-}" ] || owners="$(smoke_owner)"
       # New-file line numbers of every changed hunk (deleted lines count
       # against the line after them).
-      lines="$(git diff -U0 "$mb" -- stack/smoke.sh | awk '/^@@/ {
+      lines="$(git diff -U0 "$mb" -- "$f" | awk '/^@@/ {
         split($3, a, ","); s = substr(a[1], 2) + 0; n = (a[2] == "" ? 1 : a[2] + 0)
         if (n == 0) { print s + 1 } else { for (i = s; i < s + n; i++) print i } }')"
+      # A file new since the merge base: every line.
+      git cat-file -e "$mb:$f" 2>/dev/null || lines="$(seq 1 "$(wc -l <"$f")")"
       helper=""; claims=""; helpers=""
-      for l in $lines; do
+      for fl in $lines; do
+        # The line's place in SMOKE_ALL; a line that sources a part has none.
+        l="$(grep -nxF "$f:$fl" "$SMOKE_FROM" | cut -d: -f1)" || true
+        if [ -z "$l" ]; then
+          sed -n "${fl}p" "$f" | grep -qE '^[[:space:]]*(#.*)?$' || helper="$fl"
+          continue
+        fi
         o="$(sed -n "${l}p" <<<"$owners")"
         case "$o" in h:*) helpers="$helpers ${o#h:}"; continue ;; esac
         if [ -z "$o" ] || [ "$o" = - ]; then
           # A blank or comment line between claims changes no claim.
-          sed -n "${l}p" "$HERE/smoke.sh" | grep -qE '^[[:space:]]*(#.*)?$' || helper="$l"
+          sed -n "${l}p" "$SMOKE_ALL" | grep -qE '^[[:space:]]*(#.*)?$' || helper="$fl"
         else
           claims="$claims $o"
         fi
@@ -98,11 +121,11 @@ while read -r f; do
       # A changed helper function picks the claims that call it, and the
       # claims that call a helper that calls it.
       for h in $(tr ' ' '\n' <<<"$helpers" | sort -u); do
-        callers="$(paste -d' ' <(echo "$owners") "$HERE/smoke.sh" | awk -v h="$h" '
+        callers="$(paste -d' ' <(echo "$owners") "$SMOKE_ALL" | awk -v h="$h" '
           { o = $1; $1 = ""; if (o == "-" || o == "h:" h) next
             if (match($0, "(^|[^A-Za-z0-9_-])" h "([^A-Za-z0-9_-]|$)")) print o }' | sort -u)"
         for c in $callers; do
-          case "$c" in h:*) for x in $(paste -d' ' <(echo "$owners") "$HERE/smoke.sh" | awk -v h="${c#h:}" '
+          case "$c" in h:*) for x in $(paste -d' ' <(echo "$owners") "$SMOKE_ALL" | awk -v h="${c#h:}" '
             { o = $1; $1 = ""; if (o ~ /^h:/ || o == "-") next
               if (match($0, "(^|[^A-Za-z0-9_-])" h "([^A-Za-z0-9_-]|$)")) print o }' | sort -u); do claims="$claims $x"; done ;;
             *) claims="$claims $c" ;;
@@ -112,11 +135,11 @@ while read -r f; do
       done
       if [ -n "$helper" ]; then
         # shellcheck disable=SC2086
-        pick "stack/smoke.sh: ${helper/#[0-9]*/line $helper} is outside any claim" $all
+        pick "$f: ${helper/#[0-9]*/line $helper} is outside any claim" $all
       else
         # shellcheck disable=SC2086
         # shellcheck disable=SC2046
-        pick "stack/smoke.sh changes these claims" $(tr ' ' '\n' <<<"$claims" | sort -u)
+        pick "$f changes these claims" $(tr ' ' '\n' <<<"$claims" | sort -u)
       fi
       ;;
     docs-site/src/content/docs/*.md|docs-site/src/content/docs/*.mdx)
