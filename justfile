@@ -27,7 +27,7 @@ lint:
       cat "$logs/$d.log"
       if [ "$(cat "$logs/$d.rc")" != 0 ]; then echo "  chant lint $d failed"; rc=1; fi
     done
-    bash -n stack/smoke.sh || rc=1
+    for f in stack/smoke.sh stack/smoke-claims-*.sh; do bash -n "$f" || rc=1; done
     node scripts/check-breaks.mjs || rc=1
     exit $rc
 

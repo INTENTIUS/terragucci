@@ -61,7 +61,7 @@ describe("stack instances", () => {
   });
 
   it("leaves no script on the shared network or project by a literal name", () => {
-    const scripts = ["smoke.sh", "example.sh", "example-terragrunt.sh", "demo.sh", "see-runs.sh", "forge-github.sh", "smoke-aws.sh", "lib.sh", "bootstrap.sh", "down.sh", "decide.sh", "tutorial-capture.sh"];
+    const scripts = ["smoke.sh", "smoke-claims-1.sh", "smoke-claims-2.sh", "smoke-claims-3.sh", "smoke-claims-4.sh", "example.sh", "example-terragrunt.sh", "demo.sh", "see-runs.sh", "forge-github.sh", "smoke-aws.sh", "lib.sh", "bootstrap.sh", "down.sh", "decide.sh", "tutorial-capture.sh"];
     for (const s of scripts) {
       const text = readFileSync(join(stack, s), "utf8");
       expect(text, s).not.toMatch(/--network terragucci\b/);
