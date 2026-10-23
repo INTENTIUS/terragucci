@@ -30,10 +30,8 @@
  *              (`terragucci review post`), with the job's token. It posts a
  *              comment and nothing else: no review, no approval, no status.
  *
- * chant's reviewAgent activity (chant#4299) shares the default command and
- * the `risk:` line with this file, and test/review-agent.test.ts holds them
- * equal. The bundle does not import the activity, whose module loads chant's
- * lint, codegen and CLI (scripts/bundle-check.mjs).
+ * The default command, the risks and the reading of the `risk:` line are
+ * chant's reviewAgent activity's (chant#4299), imported from its module.
  *
  * The review ends with a `risk:` line (low, medium or high), which the note
  * carries in its marker for people to read. A `tf-apply` wave gives the
@@ -53,24 +51,7 @@ import { poster, type Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
 import { planNoteBodyOf } from "./plan-note";
 import type { ForgeCalls, ReviewedPull } from "./review";
-
-/** The Claude Code release the default review command runs. */
-export const REVIEW_CLAUDE_CODE_VERSION = "2.1.290";
-
-/**
- * The default review command: Claude Code in print mode with no tools at all,
- * the prompt on stdin and the review on stdout. No MCP servers, no project
- * settings, nothing kept.
- */
-export const REVIEW_COMMAND = [
-  `npx -y @anthropic-ai/claude-code@${REVIEW_CLAUDE_CODE_VERSION} -p`,
-  "--max-turns 1",
-  "--permission-prompts none",
-  "--setting-sources user",
-  "--strict-mcp-config",
-  "--no-session-persistence",
-  '--tools ""',
-].join(" ");
+import { REVIEW_COMMAND, REVIEW_RISKS as RISKS, riskOf, type ReviewRisk as Risk } from "@intentius/chant/op/activities/review-agent";
 
 /** Where the review instructions live on the default branch unless `review.instructions` names another file. */
 export const REVIEW_INSTRUCTIONS = ".terragucci/review.md";
@@ -105,9 +86,6 @@ export const REVIEW_FILE = "review.md";
 
 /** The note's first line, and the marker a wave reads the risk from. */
 export const REVIEW_MARK = "<!-- terragucci:review ";
-
-export const RISKS = ["low", "medium", "high"] as const;
-export type Risk = (typeof RISKS)[number];
 
 /** What `input.review` holds in a `tf-apply` wave. */
 export interface PolicyReview {
@@ -322,16 +300,6 @@ export function writeReviewPrompt(o: WritePromptOptions): WrittenPrompt {
   // What was reviewed, for the wave that reads the verdict: the pull request, its head, and the base the diff was taken against.
   writeFileSync(join(dir, "out", REVIEWED_FILE), `${JSON.stringify({ pr, head, base })}\n`);
   return written;
-}
-
-/** The risk the review's last `risk:` line names, or unknown. */
-export function riskOf(review: string): Risk | "unknown" {
-  let found: Risk | "unknown" = "unknown";
-  for (const line of review.split(/\r?\n/)) {
-    const m = /^[\s>*_`-]*risk\s*:\s*[*_`]*\s*(low|medium|high)\b/i.exec(line);
-    if (m) found = m[1]!.toLowerCase() as Risk;
-  }
-  return found;
 }
 
 /** The note's marker: the head reviewed and the risk, and on GitLab the review job a wave checks the verdict in. */
