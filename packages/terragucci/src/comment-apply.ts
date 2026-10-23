@@ -54,7 +54,7 @@ import { unmetApplyRequires } from "./apply-requires";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
-import { agentSettingsAt, countable, notCounted, pullInvolvement, type Involved } from "./involved";
+import { agentSettingsAt, pullInvolvement, type Involved } from "./involved";
 import { poster, type Fetch } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
@@ -407,15 +407,6 @@ export function reachedUnits(git: Git, from: string, to: string, layers: string[
   return { units: [...selected].sort() };
 }
 
-/** One review as GitHub and Forgejo list them. */
-export interface Review {
-  user?: { login?: string };
-  state?: string;
-  commit_id?: string;
-  dismissed?: boolean;
-  official?: boolean;
-}
-
 /**
  * The users the run's own token acts as on GitHub and Forgejo. A review by one
  * of them is the pipeline's, never a reviewer's, so it never counts.
@@ -432,31 +423,6 @@ export const approverFilter = (involved: Involved): PrApproverFilter => ({
   forgeRule: true,
   exclude: [...[...TOKEN_USERS].map((login) => ({ login, reason: `${login} is the pipeline's own token` })), ...involved.people.map((p) => ({ login: p.who, reason: p.why }))],
 });
-
-/**
- * Whether the head has an approval, by the forge's reviews: each reviewer's
- * latest review counts, the author's never does, and an approval counts only
- * on the commit it was given on, so a push after the review needs a fresh
- * one. A reviewer whose latest review asks for changes holds the apply back.
- * On GitHub an approver needs write access; on Forgejo the review is
- * official, which says the same. A review by the run's own token (TOKEN_USERS)
- * never counts.
- */
-export async function approvalOf(reviews: Review[], author: string | undefined, head: string, mayWrite: (login: string) => Promise<boolean>): Promise<{ by: string[]; changes: string[] }> {
-  const latest = new Map<string, Review>();
-  for (const r of reviews) {
-    const login = r?.user?.login;
-    if (typeof login !== "string" || login === author || TOKEN_USERS.has(login) || r.dismissed === true) continue;
-    if (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.state === "REQUEST_CHANGES") latest.set(login, r);
-  }
-  const by: string[] = [];
-  const changes: string[] = [];
-  for (const [login, r] of latest) {
-    if (r.state !== "APPROVED") changes.push(login);
-    else if (r.commit_id === head && r.official !== false && (await mayWrite(login))) by.push(login);
-  }
-  return { by: by.sort(), changes: changes.sort() };
-}
 
 interface OpenInput extends ApplyCommentOptions {
   git: Git;
@@ -827,8 +793,8 @@ export interface MergeOptions {
  * (`apply.merge: auto`), then release its locks. The `pr-merge` job runs it
  * with a sha a job that ran the pull request's code handed on, so before the
  * merge it checks, with the job's own token, that the pull request is open,
- * its head is still `sha`, and a reviewer other than its author approved
- * that head, as the apply's decision did; the forge then merges only while
+ * its head is still `sha`, and chant's `approved` passes for that head under
+ * the apply's approverFilter; the forge then merges only while
  * the head is `sha`. It merges with TG_MERGE_TOKEN (apply.merge_token_env's
  * secret) when the job has it, else with TG_TOKEN. Returns what to reply;
  * throws with the reason when it does not merge.
@@ -849,20 +815,13 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
   if (pr?.state !== "open" || pr?.merged === true) throw new Error(`pull request ${o.pr} is not open`);
   if (pr?.head?.sha !== o.sha) throw new Error(`pull request ${o.pr} moved after it applied (its head is now ${short(String(pr?.head?.sha))})`);
   if (pr?.head?.repo?.full_name !== repo) throw new Error(`pull request ${o.pr} comes from a fork`);
-  const reviews = await get(`pulls/${o.pr}/reviews?per_page=100&limit=50`);
-  const mayWrite = async (login: string): Promise<boolean> => {
-    if (o.forge === "forgejo") return true;
-    try {
-      const p = (await get(`collaborators/${encodeURIComponent(login)}/permission`))?.permission;
-      return typeof p === "string" && MAY_APPLY.has(p);
-    } catch {
-      return false;
-    }
-  };
-  const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, o.sha, mayWrite);
+  // approved counts as the apply's decision did: chant's prApproved under approverFilter, read with the job's own token.
   const involved = await pullInvolvement({ forge: o.forge ?? "github", calls: { repo, get: (p) => get(p.replace(`repos/${repo}/`, "")), post: async () => null }, pr: { number: o.pr, head: o.sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
-  const { by, excluded } = countable(approval.by, involved);
-  if (approval.changes.length > 0 || by.length === 0) throw new Error(`no reviewer other than its author approved its head ${short(o.sha)}${excluded.map((e) => `; ${notCounted(e, "review")}`).join("")}`);
+  for (const line of involved.notes) console.log(`terragucci: ${line}`);
+  const forge = poster(o.forge ?? "github", env, doFetch, "TG_TOKEN");
+  if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether pull request ${o.pr} is approved`);
+  const approval = await forge.prApproved(o.pr, o.sha, approverFilter(involved));
+  if (!approval.passed) throw new Error(`pull request ${o.pr} is not approved: ${approval.reason}`);
   // The forge merges only while the head is still `sha`, with apply.merge_token_env's secret when set: Forgejo refuses a merge made with the job's own token.
   const merged = await poster(o.forge ?? "github", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
   if (!merged.merged) throw new Error(`the forge refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);

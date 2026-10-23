@@ -83,11 +83,13 @@ describe("a wave behind its gate", () => {
         const path = url.replace("https://api.test/", "").split("?")[0];
         const body: Record<string, unknown> = {
           [`repos/acme/infra/commits/${merge}/pulls`]: [{ number: 7, head: { sha: head }, user: { login: "author" }, merge_commit_sha: merge, merged_at: "x" }],
+          "repos/acme/infra/pulls/7": { number: 7, head: { sha: head }, user: { login: "author" } },
+          "repos/acme/infra/pulls/7/commits": [],
           "repos/acme/infra/pulls/7/reviews": reviews,
           "repos/acme/infra/collaborators/alice/permission": { permission: "write" },
           "repos/acme/infra/issues/7/comments": [{ body: noteMarker({ head, waves: [{ number: 1, digest, waits: true }] }) }],
         };
-        return (path! in body ? { ok: true, status: 200, json: async () => body[path!] } : { ok: false, status: 404, json: async () => ({}) }) as never;
+        return (path! in body ? { ok: true, status: 200, json: async () => body[path!], text: async () => JSON.stringify(body[path!]) } : { ok: false, status: 404, json: async () => ({}), text: async () => "{}" }) as never;
       };
       const review = { user: { login: "alice" }, state: "APPROVED", commit_id: head };
       // The first merge waits, then applies once its review covers these plans: the ledger records the review and its use.
