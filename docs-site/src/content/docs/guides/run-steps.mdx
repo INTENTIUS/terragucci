@@ -84,7 +84,7 @@ On every forge, your commands run inside the job that already runs each root's `
 | drift | `before.observe`, `before.plan` and `after.plan` around the refresh-only plan |
 | check | none |
 
-Roots plan side by side, but a job runs one hook at a time: while a hook runs, the other roots wait for it.
+Roots that plan side by side run their hooks side by side.
 
 Each hook gets the job's environment minus its forge tokens (as the binary does), chant's `CHANT_HOOK` (the moment), `CHANT_TARGET` and `CHANT_RUNS`, plus these:
 
