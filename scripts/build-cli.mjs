@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 // One set of options for the shipped bundle, the origin/main baseline and a
 // smoke claim's BREAK bundle (stack/break-bundle.mjs).
-import { bundleOptions as options } from "./cli-bundle.mjs";
+import { bundleOptions as options, innerInputs } from "./cli-bundle.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = join(root, "packages/terragucci");
@@ -39,6 +39,9 @@ const result = await build({
   // bundle-check reads this to refuse a denied input (terragucci#87).
   metafile: true,
 });
+// The MCP SDK's inner build (scripts/cli-bundle.mjs) is in the bundle too, so
+// its inputs are held to the same denied list.
+Object.assign(result.metafile.inputs, innerInputs);
 // Kept out of dist so it does not ship in the tarball.
 const metaDir = join(root, "node_modules/.cache/terragucci");
 mkdirSync(metaDir, { recursive: true });

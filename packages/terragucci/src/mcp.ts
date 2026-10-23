@@ -30,9 +30,8 @@
  *   arguments it lists, and refuses any other.
  */
 import { execFileSync } from "node:child_process";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { BRANCH, parseComment } from "./comment";
 import { ConfigError, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "./config";
@@ -49,6 +48,7 @@ import { readStateVersions } from "./report/state-versions";
 import { statesKey, type IndexEntry } from "./report/store";
 import { readLedger } from "./apply";
 import { waitingWaves } from "./approve";
+import { loadMcpSdk } from "./mcp-sdk";
 import { version as VERSION } from "../package.json";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
@@ -683,6 +683,7 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
   const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
   assertReadOnly(tools);
   const ctx = context(o);
+  const { Server, CallToolRequestSchema, ListToolsRequestSchema } = await loadMcpSdk();
   const server = new Server(
     { name: "terragucci", version: VERSION },
     {
@@ -702,6 +703,7 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
 
 /** `terragucci mcp`: serve on stdin and stdout until the client closes them. */
 export async function mcp(o: McpOptions): Promise<void> {
+  const { StdioServerTransport } = await loadMcpSdk();
   const server = await serve(o, new StdioServerTransport());
   await new Promise<void>((resolve) => {
     server.onclose = () => resolve();
