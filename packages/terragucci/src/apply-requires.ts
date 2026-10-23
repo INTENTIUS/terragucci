@@ -5,20 +5,23 @@
  * is asked again a few times before it counts as unmet.
  *
  * chant asks only the checks `apply.requires` lists (`only`). `approved`
- * also has to pass terragucci's own count of who approved (`counted`): on
- * GitHub an approver with write access, on Forgejo an official review, on
- * GitLab Developer or more, and never someone with a hand in the change
- * (./involved.ts).
+ * counts whom `approvers` lets through (chant's PrApproverFilter): the
+ * forge's rule, on GitHub write access, on Forgejo an official review, on
+ * GitLab Developer or more, and never the run's own token or someone with a
+ * hand in the change (./involved.ts).
  */
-import type { PrForge, PrRequireResult } from "@intentius/chant/pr-forge";
+import type { PrApproverFilter, PrForge, PrRequireResult } from "@intentius/chant/pr-forge";
 import { checkPrRequires, unmetRequires, type PrRequireOutcome } from "@intentius/chant/pr-requires";
 import { APPLY_REQUIRES, type ApplyRequire } from "./config";
 
 export interface ApplyRequiresOptions {
   /** `apply.requires`. Default: every requirement. */
   requires?: readonly ApplyRequire[];
-  /** terragucci's count of the approvals, asked once chant's `approved` passed. */
-  counted?: () => Promise<PrRequireResult>;
+  /**
+   * Who counts for `approved`, built when chant asks it. A PrRequireResult
+   * instead answers `approved` without asking the forge.
+   */
+  approvers?: () => Promise<PrApproverFilter | PrRequireResult>;
   /** Status names `checks` leaves out: the apply's own. */
   ignore?: readonly string[];
   wait?: (ms: number) => Promise<void>;
@@ -27,12 +30,12 @@ export interface ApplyRequiresOptions {
 /** Each requirement's outcome, in chant's order. One `apply.requires` leaves out passes without a call. */
 export async function checkApplyRequires(forge: PrForge, pr: number, head: string, o: ApplyRequiresOptions = {}): Promise<PrRequireOutcome[]> {
   const approved = forge.prApproved?.bind(forge);
-  const counted = o.counted;
-  const view: PrForge = !counted || !approved ? forge : {
+  const who = o.approvers;
+  const view: PrForge = !who || !approved ? forge : {
     ...forge,
-    prApproved: async (n, h, f) => {
-      const r = await approved(n, h, f);
-      return r.passed ? counted() : r;
+    prApproved: async (n, h) => {
+      const f = await who();
+      return "passed" in f ? f : approved(n, h, f);
     },
     prMergeable: forge.prMergeable?.bind(forge),
     prUndiverged: forge.prUndiverged?.bind(forge),

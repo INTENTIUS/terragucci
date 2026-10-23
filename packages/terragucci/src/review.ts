@@ -179,6 +179,12 @@ export async function gitlabMergeRequestOf(f: ForgeCalls, sha: string, env: Node
   return mr && Number.isInteger(mr.iid) ? mr : undefined;
 }
 
+/** A merge request's newest version: the latest push GitLab has recorded, or undefined before the first. */
+export async function gitlabLatestVersion(f: ForgeCalls, iid: number): Promise<{ head_commit_sha?: string; created_at: string } | undefined> {
+  const versions = await f.get(`${f.repo}/merge_requests/${iid}/versions`);
+  return (Array.isArray(versions) ? versions : []).reduce((a: any, v: any) => (!a || Date.parse(v?.created_at) > Date.parse(a.created_at) ? v : a), undefined);
+}
+
 /**
  * A merge request's approvals that count: its latest version (the head
  * reviewed), and each user's latest approval note, counted when it is newer
@@ -194,8 +200,7 @@ export async function gitlabApprovals(f: ForgeCalls, mr: any): Promise<{ pr: Rev
     throw new Error(`could not read which user the job's token acts as, so no approval counts (${(e as Error).message})`);
   }
   if (!Number.isInteger(me?.id)) throw new Error("GitLab did not say which user the job's token acts as, so no approval counts");
-  const versions = await f.get(`${f.repo}/merge_requests/${mr.iid}/versions`);
-  const latest = (Array.isArray(versions) ? versions : []).reduce((a: any, v: any) => (!a || Date.parse(v?.created_at) > Date.parse(a.created_at) ? v : a), undefined);
+  const latest = await gitlabLatestVersion(f, mr.iid);
   const head = latest?.head_commit_sha ?? mr.sha;
   const pr: ReviewedPull = { number: mr.iid, head, ...(typeof mr.author?.username === "string" ? { author: mr.author.username } : {}) };
   const since = latest ? Date.parse(latest.created_at) : Number.POSITIVE_INFINITY;

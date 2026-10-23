@@ -49,12 +49,12 @@ import { posix } from "node:path";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
-import type { PrRequireResult } from "@intentius/chant/pr-forge";
+import type { PrApproverFilter } from "@intentius/chant/pr-forge";
 import { unmetApplyRequires } from "./apply-requires";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
-import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
+import { agentSettingsAt, countable, notCounted, pullInvolvement, type Involved } from "./involved";
 import { poster, type Fetch } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
@@ -423,6 +423,17 @@ export interface Review {
 export const TOKEN_USERS: ReadonlySet<string> = new Set(["github-actions[bot]", "gitea-actions", "forgejo-actions"]);
 
 /**
+ * Who counts for chant's `approved`: the forge's rule (on GitHub write
+ * access, on Forgejo an official review, on GitLab Developer or more), and
+ * never the run's own token (TOKEN_USERS) or someone with a hand in the
+ * change (./involved.ts).
+ */
+export const approverFilter = (involved: Involved): PrApproverFilter => ({
+  forgeRule: true,
+  exclude: [...[...TOKEN_USERS].map((login) => ({ login, reason: `${login} is the pipeline's own token` })), ...involved.people.map((p) => ({ login: p.who, reason: p.why }))],
+});
+
+/**
  * Whether the head has an approval, by the forge's reviews: each reviewer's
  * latest review counts, the author's never does, and an approval counts only
  * on the commit it was given on, so a push after the review needs a fresh
@@ -753,27 +764,14 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
   if (isDecision(h)) return h;
   const { sha, base, remote, repoName } = h;
 
-  // approved also counts only a reviewer with write access, and never someone who had a hand in the change (./involved.ts).
-  const counted = async (): Promise<PrRequireResult> => {
-    const reviews: Review[] = await call("GET", `repos/${repoName}/pulls/${number}/reviews?per_page=100&limit=50`);
-    const mayWrite = async (login: string): Promise<boolean> => {
-      if (i.forge === "forgejo") return true;
-      try {
-        const p = (await call("GET", `repos/${repoName}/collaborators/${encodeURIComponent(login)}/permission`))?.permission;
-        return typeof p === "string" && MAY_APPLY.has(p);
-      } catch {
-        return false;
-      }
-    };
-    const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, sha, mayWrite);
+  // approved counts the forge's rule, and never the run's own token or someone who had a hand in the change (./involved.ts).
+  const approvers = async (): Promise<PrApproverFilter> => {
     const involved = await pullInvolvement({ forge: i.forge ?? "github", calls: { repo: repoName, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) }, pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}), ...(await agentSettingsAt(i.repo ?? process.cwd())) });
-    const { by, excluded } = countable(approval.by, involved);
     for (const line of involved.notes) console.log(`terragucci: ${line}`);
-    if (by.length === 0) return { passed: false, reason: `no reviewer other than its author, with write access, approved its head ${short(sha)}${excluded.map((e) => `; ${notCounted(e, "review")}`).join("")}` };
-    return { passed: true, reason: `approved at ${short(sha)} by ${by.join(", ")}` };
+    return approverFilter(involved);
   };
   const forge = poster(i.forge ?? "github", i.env ?? process.env, i.fetch);
-  const unmet = await unmetApplyRequires(forge, number, sha, { counted, ignore: [APPLY_CONTEXT], ...(i.requires ? { requires: i.requires } : {}), ...(i.wait ? { wait: i.wait } : {}) });
+  const unmet = await unmetApplyRequires(forge, number, sha, { approvers, ignore: [APPLY_CONTEXT], ...(i.requires ? { requires: i.requires } : {}), ...(i.wait ? { wait: i.wait } : {}) });
   if (unmet) return refuse(`pull request ${number} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes`);
 
   // The plan passed on the head, whatever apply.requires says.

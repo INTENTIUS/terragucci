@@ -71,7 +71,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
    | Check (`apply.requires`) | Fails when | Fix |
    |---|---|---|
-   | `approved` | no reviewer other than its authors approved the head, or a reviewer's last review asks for changes. The authors are whoever opened it and whoever wrote or committed one of its commits | get the head approved; a push needs a fresh approval |
+   | `approved` | no reviewer other than its authors approved the head, or a reviewer's last review asks for changes. The authors are whoever opened it and whoever wrote or committed one of its commits. An approval counts only from someone with write access (on Forgejo an official review, on GitLab Developer or more), and never from the pipeline's own token or someone who asked for one of its commits. The reply names each approver left out and why, such as `carol asked for abc1234` | get the head approved by another writer; a push needs a fresh approval |
    | `undiverged` | the head is behind the default branch | merge or rebase the default branch in, then get a new plan and approval |
    | `mergeable` | the forge says it does not merge: conflicts with the default branch, or on GitHub a branch protection rule blocks it | resolve the conflicts, or meet the rule |
    | `checks` | a status or check on the head failed, one still runs, or none has reported | fix and push, or wait for it |
