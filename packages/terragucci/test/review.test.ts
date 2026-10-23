@@ -74,6 +74,8 @@ describe("reviewWave", () => {
   const note = (digest: string | null, head = HEAD) => ({ body: `### terragucci tf-plan\n${noteMarker({ head, waves: [{ number: 1, digest, waits: true }] })}` });
   const base = (reviews: unknown[], comments: unknown[]) => ({
     [`GET repos/acme/infra/commits/${MERGE}/pulls`]: [pull],
+    "GET repos/acme/infra/pulls/7": pull,
+    "GET repos/acme/infra/pulls/7/commits": [],
     "GET repos/acme/infra/pulls/7/reviews": reviews,
     "GET repos/acme/infra/collaborators/alice/permission": { permission: "write" },
     "GET repos/acme/infra/collaborators/reader/permission": { permission: "read" },
@@ -108,9 +110,20 @@ describe("reviewWave", () => {
     }
   });
 
+  it("counts through chant's approver filter: someone with a hand in the change is left out and named", async () => {
+    const involved = { people: [{ who: "carol", why: "carol asked for abc1234" }], notes: [] };
+    let f = forge(base([approve("alice"), approve("carol")], [note("jcs1-sha256:aa")]));
+    expect(await reviewWave({ env, fetch: f.fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa", involved })).toEqual({ kind: "approved", pr: 7, head: HEAD, by: ["alice"], excluded: [{ login: "carol", reason: "carol asked for abc1234" }] });
+    f = forge({ ...base([approve("carol")], [note("jcs1-sha256:aa")]), "GET repos/acme/infra/collaborators/carol/permission": { permission: "write" } });
+    const r = await reviewWave({ env, fetch: f.fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa", involved });
+    expect(r).toMatchObject({ kind: "none", why: "pull request 7 is not approved: no reviewer other than its authors approved its head aaaaaaaa: carol asked for abc1234", excluded: [{ login: "carol" }] });
+  });
+
   it("on Forgejo finds the pull request a merge commit made by its own endpoint", async () => {
     const { fetch } = forge({
       [`GET repos/acme/infra/commits/${MERGE}/pull`]: pull,
+      "GET repos/acme/infra/pulls/7": pull,
+      "GET repos/acme/infra/pulls/7/commits": [],
       "GET repos/acme/infra/pulls/7/reviews": [{ ...approve("alice"), official: true }],
       "GET repos/acme/infra/issues/7/comments": [note("jcs1-sha256:aa")],
     });
@@ -124,7 +137,7 @@ describe("reviewWave", () => {
     f = forge(base([{ user: { login: "bob" }, state: "CHANGES_REQUESTED", commit_id: HEAD }], [note("jcs1-sha256:aa")]));
     expect(await reviewWave({ env: site, fetch: f.fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ review: { pr: 7 } });
     // Forgejo's pull request pages are under pulls/.
-    f = forge({ [`GET repos/acme/infra/commits/${MERGE}/pull`]: pull, "GET repos/acme/infra/pulls/7/reviews": [], "GET repos/acme/infra/issues/7/comments": [note("jcs1-sha256:aa")] });
+    f = forge({ [`GET repos/acme/infra/commits/${MERGE}/pull`]: pull, "GET repos/acme/infra/pulls/7": pull, "GET repos/acme/infra/pulls/7/commits": [], "GET repos/acme/infra/pulls/7/reviews": [], "GET repos/acme/infra/issues/7/comments": [note("jcs1-sha256:aa")] });
     expect(await reviewWave({ env: { ...site, GITHUB_SERVER_URL: "https://code.test" }, fetch: f.fetch, forge: "forgejo", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ review: { url: "https://code.test/acme/infra/pulls/7/files" } });
     // The note has no digest for the wave: its review never saw these plans, so no review approves it.
     f = forge(base([], [note("jcs1-sha256:aa", "c".repeat(40))]));
@@ -143,10 +156,10 @@ describe("approvalStatus", () => {
   const posted = (calls: { method: string; path: string; body?: string }[]) => calls.filter((c) => c.method === "POST").map((c) => [c.path, JSON.parse(c.body!)]);
 
   it("is pending while a wave the gate will hold has no approving review, and success once it has", async () => {
-    let f = forge({ "GET repos/acme/infra/pulls/7": pull, "GET repos/acme/infra/pulls/7/reviews": [], [`POST repos/acme/infra/statuses/${HEAD}`]: {} });
+    let f = forge({ "GET repos/acme/infra/pulls/7": pull, "GET repos/acme/infra/pulls/7/commits": [], "GET repos/acme/infra/pulls/7/reviews": [], [`POST repos/acme/infra/statuses/${HEAD}`]: {} });
     expect(await approvalStatus({ env: prEnv, fetch: f.fetch, forge: "github", report: report(true) })).toMatchObject({ state: "pending" });
     expect(posted(f.calls)).toEqual([[`repos/acme/infra/statuses/${HEAD}`, { state: "pending", context: "terragucci/approval", description: `wave 1 waits: approve this pull request on ${HEAD.slice(0, 8)}` }]]);
-    f = forge({ "GET repos/acme/infra/pulls/7": pull, "GET repos/acme/infra/pulls/7/reviews": [approve("alice")], "GET repos/acme/infra/collaborators/alice/permission": { permission: "admin" }, [`POST repos/acme/infra/statuses/${HEAD}`]: {} });
+    f = forge({ "GET repos/acme/infra/pulls/7": pull, "GET repos/acme/infra/pulls/7/commits": [], "GET repos/acme/infra/pulls/7/reviews": [approve("alice")], "GET repos/acme/infra/collaborators/alice/permission": { permission: "admin" }, [`POST repos/acme/infra/statuses/${HEAD}`]: {} });
     expect(await approvalStatus({ env: prEnv, fetch: f.fetch, forge: "github", report: report(true) })).toMatchObject({ state: "success", description: expect.stringContaining("by alice") });
   });
 

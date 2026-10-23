@@ -46,12 +46,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { changeSetDigest } from "@intentius/chant/change-set";
 import { apiOf } from "./comment";
-import { approvalOf, MAY_APPLY, type Review } from "./comment-apply";
+import type { PrForge } from "@intentius/chant/pr-forge";
+import { approverFilter } from "./comment-apply";
 import { ConfigError } from "./config";
 import { changesSomething } from "./report/changing";
 import { parseMarker, type NoteWaves } from "./report/marker";
 import { poster, type Fetch } from "./forge";
-import { countable, notCounted, pullInvolvement, type Excluded, type Involved } from "./involved";
+import { countable, notCounted, pullInvolvement, sameLogin, type Excluded, type Involved } from "./involved";
 
 /** The status a pull request's head carries under pr-review. */
 export const APPROVAL_CONTEXT = "terragucci/approval";
@@ -113,20 +114,21 @@ export async function pullOf(f: ForgeCalls, env: NodeJS.ProcessEnv, sha: string)
   return { number: pr.number, head: pr.head.sha, ...(typeof pr.user?.login === "string" ? { author: pr.user.login } : {}) };
 }
 
-/** The reviewers who approved the pull request's head, and those whose latest review asks for changes. */
-export async function reviewsOf(f: ForgeCalls, pr: ReviewedPull, forge: "github" | "forgejo"): Promise<{ by: string[]; changes: string[] }> {
-  const reviews: Review[] = await f.get(`repos/${f.repo}/pulls/${pr.number}/reviews?per_page=100&limit=50`);
-  const mayWrite = async (login: string): Promise<boolean> => {
-    // Forgejo marks a review by someone with write access as official, which approvalOf reads.
-    if (forge === "forgejo") return true;
-    try {
-      const p = (await f.get(`repos/${f.repo}/collaborators/${encodeURIComponent(login)}/permission`))?.permission;
-      return typeof p === "string" && MAY_APPLY.has(p);
-    } catch {
-      return false;
-    }
-  };
-  return approvalOf(Array.isArray(reviews) ? reviews : [], pr.author, pr.head, mayWrite);
+/**
+ * Whether the pull request's head is approved, by chant's prApproved under
+ * approverFilter(involved), as the apply before merge counts it. `by` is the
+ * reviewers chant counted, read from its reason; `excluded` the people
+ * `involved` names whose standing approval was left out.
+ */
+export async function approvedBy(forge: PrForge, pr: ReviewedPull, involved: Involved | undefined): Promise<{ by: string[]; reason: string; excluded: Excluded[] }> {
+  if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether a pull request is approved`);
+  const r = await forge.prApproved(pr.number, pr.head, approverFilter(involved ?? { people: [], notes: [] }));
+  // chant's pass reads `approved at <head> by alice, bob`.
+  const by = r.passed ? (/ by (.+)$/.exec(r.reason)?.[1] ?? "").split(", ").filter((l) => l !== "").sort() : [];
+  const people = involved?.people ?? [];
+  const standing = people.length > 0 && forge.approvers ? await forge.approvers(pr.number) : [];
+  const excluded = people.filter((p) => standing.some((l) => sameLogin(l, p.who))).map((p) => ({ login: p.who, reason: p.why }));
+  return { by, reason: r.reason, excluded };
 }
 
 /** The newest plan note marker of the pull request's head, read from its comments. */
@@ -286,9 +288,11 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
       const f = forgeCalls(o.env, o.fetch);
       pr = await pullOf(f, o.env, o.sha);
       if (!pr) return { kind: "none", why: `no merged pull request made ${o.sha.slice(0, 8)}` };
-      ({ by, changes } = await reviewsOf(f, pr, o.forge));
-      ({ by, excluded } = countable(by, o.involved));
+      const got = await approvedBy(poster(o.forge, o.env, o.fetch), pr, o.involved);
+      ({ by, excluded } = got);
+      changes = [];
       note = await noteWavesOf(f, pr);
+      if (by.length === 0) return out({ kind: "none", why: `pull request ${pr.number} is not approved: ${got.reason}`, ...reviewOf(o, pr.number, note, reviewable) });
     }
     if (changes.length > 0) return out({ kind: "none", why: `${changes.join(", ")} asked for changes on pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) });
     if (by.length === 0) return out({ kind: "none", why: `no reviewer other than its author approved head ${pr.head.slice(0, 8)} of pull request ${pr.number}${leftOut(excluded)}`, ...reviewOf(o, pr.number, note, reviewable) });
@@ -340,17 +344,17 @@ export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch
     state = "success";
     description = "no wave waits for an approval";
   } else {
-    const reviewed = await reviewsOf(f, pr, o.forge);
     const involved = await pullInvolvement({ forge: o.forge, calls: f, pr, env, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.agentTokenEnv ? { agentTokenEnv: o.agentTokenEnv } : {}), ...(o.agentLogin ? { agentLogin: o.agentLogin } : {}) });
-    const { by, excluded } = countable(reviewed.by, involved);
+    const { by, reason, excluded } = await approvedBy(poster(o.forge, env, o.fetch ?? fetch), pr, involved);
     for (const e of excluded) o.log?.(notCounted(e, "review"));
     const which = `wave ${waits.join(", ")}`;
-    if (reviewed.changes.length === 0 && by.length > 0) {
+    if (by.length > 0) {
       state = "success";
       description = `${which} approved on ${pr.head.slice(0, 8)} by ${by.join(", ")}`;
     } else {
+      o.log?.(`not approved: ${reason}`);
       state = "pending";
-      description = excluded.length && reviewed.changes.length === 0 ? `${which} waits: ${excluded.map((e) => `${e.login} had a hand in it`).join(", ")}; another writer approves` : `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
+      description = excluded.length && !/asked for changes/.test(reason) ? `${which} waits: ${excluded.map((e) => `${e.login} had a hand in it`).join(", ")}; another writer approves` : `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
     }
   }
   await poster(o.forge, env, o.fetch ?? fetch).setStatus(pr.head, { state, context: APPROVAL_CONTEXT, description: description.slice(0, 135) });

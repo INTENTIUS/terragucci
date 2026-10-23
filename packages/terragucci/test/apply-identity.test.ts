@@ -173,16 +173,18 @@ describe("a wave behind its gate", () => {
         const path = url.replace("https://api.test/", "").split("?")[0];
         const body: Record<string, unknown> = {
           [`repos/acme/infra/commits/${merge}/pulls`]: [{ number: 7, head: { sha: head }, user: { login: "author" }, merge_commit_sha: merge, merged_at: "x" }],
+          "repos/acme/infra/pulls/7": { number: 7, head: { sha: head }, user: { login: "author" } },
+          "repos/acme/infra/pulls/7/commits": [],
           "repos/acme/infra/pulls/7/reviews": reviews,
           "repos/acme/infra/collaborators/alice/permission": { permission: "write" },
           "repos/acme/infra/issues/7/comments": [{ body: noteMarker({ head, waves: [{ number: 1, digest, waits: true }] }) }],
         };
-        return (path! in body ? { ok: true, status: 200, json: async () => body[path!] } : { ok: false, status: 404, json: async () => ({}) }) as never;
+        return (path! in body ? { ok: true, status: 200, json: async () => body[path!], text: async () => JSON.stringify(body[path!]) } : { ok: false, status: 404, json: async () => ({}), text: async () => "{}" }) as never;
       };
       const review = { user: { login: "alice" }, state: "APPROVED", commit_id: head };
       expect(await applyWave(work, { ...opts(bin), env, fetch: forge([], null), now: T(1) })).toBe(3);
       const digest = digestOf(origin);
-      expect(lines.join("\n")).toMatch(/no review approves this wave: no reviewer other than its author approved head aaaaaaaa of pull request 7/);
+      expect(lines.join("\n")).toMatch(/no review approves this wave: pull request 7 is not approved: no reviewer other than its authors approved its head aaaaaaaa/);
       // The review saw other plans: nothing applies.
       expect(await applyWave(work, { ...opts(bin), env, fetch: forge([review], "jcs1-sha256:other"), now: T(2) })).toBe(4);
       expect(existsSync(log)).toBe(false);

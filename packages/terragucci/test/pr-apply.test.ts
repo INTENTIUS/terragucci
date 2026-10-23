@@ -712,6 +712,7 @@ describe("pr-merge", () => {
       if (u.endsWith("/merge")) return (o.merge ? answer(o.merge.status, {}, o.merge.body) : answer(200, {})) as never;
       if (u.includes("/reviews")) return answer(200, o.reviews ?? approved(head)) as never;
       if (u.includes("/permission")) return answer(200, { permission: "write" }) as never;
+      if (u.includes("/pulls/7/commits")) return answer(200, []) as never;
       if (u.endsWith("/pulls/7")) return answer(200, OPEN(head, o.pr)) as never;
       return answer(404, {}) as never;
     };
@@ -741,7 +742,7 @@ describe("pr-merge", () => {
       await mergePullRequest({ pr: 7, sha: r.head, forge, env: { ...ENV, TG_TOKEN: "job", TG_MERGE_TOKEN: "person" }, fetch: f.fetch, repo: r.work });
       expect(f.merges().map((x) => x.auth)).toEqual([forge === "github" ? "Bearer person" : "token person"]);
       // Every check before the merge reads with the job's own token.
-      expect(f.sent.slice(0, f.sent.findIndex((x) => x.url.endsWith("/merge"))).every((x) => x.auth === "token job")).toBe(true);
+      expect(f.sent.slice(0, f.sent.findIndex((x) => x.url.endsWith("/merge"))).every((x) => x.auth === "token job" || x.auth === "Bearer job")).toBe(true);
     }
   });
 
@@ -750,8 +751,10 @@ describe("pr-merge", () => {
     const other = "a".repeat(40);
     for (const [o, why] of [
       [{ pr: { head: { sha: other, ref: "feature", repo: { full_name: "acme/infra" } } } }, "moved after it applied"],
-      [{ reviews: approved(other) }, "no reviewer other than its author approved"],
-      [{ reviews: approved(r.head, "author") }, "no reviewer other than its author approved"],
+      [{ reviews: approved(other) }, "pull request 7 is not approved: no reviewer other than its authors approved"],
+      [{ reviews: approved(r.head, "author") }, "no reviewer other than its authors approved"],
+      // Merge counts approvers as the apply does: never the pipeline's own token.
+      [{ reviews: approved(r.head, "github-actions[bot]") }, "github-actions[bot] is the pipeline's own token"],
       [{ pr: { state: "closed" } }, "is not open"],
     ] as const) {
       const f = forgeFor(r.head, o);
