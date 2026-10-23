@@ -84,6 +84,16 @@ describe("runHooks", () => {
     expect(held.runs.map((r) => r.status)).toEqual(["approval", "passed"]);
     expect(existsSync(join(repo, "app", "after"))).toBe(true);
   });
+
+  it("a hook that cannot start fails the root with no exit code, and the job's own CHANT_HOOK does not reach a hook", async () => {
+    const repo = write(tmp(), { "app/main.tf": "" });
+    const ctx = { repo, root: "app", stage: "tf-plan" as const, env: { PATH: process.env.PATH, CHANT_HOOK: "stale" }, log: () => {} };
+    const missing = await runHooks({ "before-plan": [{ name: "gone", command: ["./no-such-hook"], perRun: true }] }, "before-plan", ctx);
+    expect(missing.runs).toEqual([expect.objectContaining({ name: "gone", status: "failed", exit: null })]);
+    expect(missing.error).toMatch(/^hook before-plan gone failed with exit none/);
+    await runHooks({ "after-plan": [{ command: sh("echo $CHANT_HOOK > moment"), perRun: true }] }, "after-plan", ctx);
+    expect(readFileSync(join(repo, "app", "moment"), "utf-8").trim()).toBe("after-plan");
+  });
 });
 
 /** A repo whose main holds `base` and whose branch `change` holds `head` on top of it. */
