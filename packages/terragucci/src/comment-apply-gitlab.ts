@@ -38,13 +38,13 @@ import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { approverFilter, reached, type ApplyCommentDecision, type Git } from "./comment-apply";
 import type { WavesAfter } from "./detect";
-import type { PrApproverFilter, PrForge, PrRequireResult } from "@intentius/chant/pr-forge";
+import type { PrApproverFilter, PrForge } from "@intentius/chant/pr-forge";
 import { unmetApplyRequires } from "./apply-requires";
 import { ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { agentSettingsAt, pullInvolvement } from "./involved";
-import { gitlabApprovals, gitlabLatestVersion, type ForgeCalls } from "./review";
+import type { ForgeCalls } from "./review";
 
 /** GitLab's Developer access level: the least that may ask for an apply. */
 const DEVELOPER = 30;
@@ -122,10 +122,8 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   if (typeof sha !== "string" || !SHA.test(sha)) return { fail: `!${iid}'s head is not a commit` };
 
   // approved counts Developer or more, and never the run's own token or someone who had a hand in the change (./involved.ts).
-  const approvers = async (): Promise<PrApproverFilter | PrRequireResult> => {
-    // GitLab records a push as a new version a moment after it; until then an approval cannot be placed after it.
-    const latest = await gitlabLatestVersion(reviewCalls(api, id), iid);
-    if ((latest?.head_commit_sha ?? sha) !== sha) return { passed: false, reason: `GitLab has not recorded the latest push, ${short(sha)}, as a version yet, so its approvals cannot be read; comment again in a minute` };
+  // chant's check waits (pending) until GitLab records the latest push as a diff version.
+  const approvers = async (): Promise<PrApproverFilter> => {
     const pr = { number: iid, head: sha, ...(typeof c.mr.author?.username === "string" ? { author: c.mr.author.username } : {}) };
     return approverFilter(await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) }));
   };
@@ -331,8 +329,9 @@ export const appliedMarker = (head: string, pipeline: string): string => `<!-- t
  * with the pipeline's variables, so it reads GitLab first: a reply from the
  * job's own token user carries appliedMarker for `sha` and this pipeline
  * (else there is nothing to merge, and it says so), the merge request is
- * open, its head is still `sha`, and a member other than its author approved
- * it after its latest push. GitLab then merges only while the head is `sha`.
+ * open, its head is still `sha`, and chant's `approved` passes for that head
+ * under the apply's approverFilter (a member with Developer or more, who had
+ * no hand in the change, approved it after its latest push). GitLab then merges only while the head is `sha`.
  * It merges with TG_MERGE_TOKEN (apply.merge_token_env's variable). Returns
  * what to say: `merged ...`, or `nothing to merge: ...`; throws with the
  * reason when it does not merge.
@@ -355,8 +354,13 @@ export async function mergeGitLabMR(o: GitLabMergeOptions): Promise<string> {
   if (mr?.sha !== o.sha) throw new Error(`!${o.pr} moved after it applied (its head is now ${short(String(mr?.sha))})`);
   if (mr?.source_project_id !== mr?.target_project_id) throw new Error(`!${o.pr} comes from a fork`);
   if (env.CI_DEFAULT_BRANCH && mr?.target_branch !== env.CI_DEFAULT_BRANCH) throw new Error(`!${o.pr} targets ${String(mr?.target_branch)}, not ${env.CI_DEFAULT_BRANCH}`);
-  const a = await gitlabApprovals(reviewCalls(read, id), mr);
-  if (a.changes.length > 0 || a.by.length === 0 || a.pr.head !== o.sha) throw new Error(`no member other than its author approved it after its latest push, ${short(o.sha)}`);
+  // approved counts as the apply's decision did: chant's prApproved under approverFilter, read with the job's own token.
+  const involved = await pullInvolvement({ forge: "gitlab", calls: reviewCalls(read, id), pr: { number: o.pr, head: o.sha, ...(typeof mr?.author?.username === "string" ? { author: mr.author.username } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
+  for (const line of involved.notes) console.log(`terragucci: ${line}`);
+  const forge = poster("gitlab", env, doFetch, "TG_TOKEN");
+  if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether !${o.pr} is approved`);
+  const approval = await forge.prApproved(o.pr, o.sha, approverFilter(involved));
+  if (!approval.passed) throw new Error(`!${o.pr} is not approved: ${approval.reason}`);
   // GitLab merges only while the head is still `sha`.
   const merged = await poster("gitlab", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
   if (!merged.merged) throw new Error(`GitLab refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);

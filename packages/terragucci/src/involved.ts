@@ -320,8 +320,3 @@ export async function pullInvolvement(o: {
   if (o.agentTokenEnv && !o.agentLogin) notes.push(AGENT_NOT_EXCLUDED);
   return involvedIn({ ...(o.pr?.author ? { author: o.pr.author } : {}), ...(o.pr ? { pr: o.pr.number } : {}), what: o.forge === "gitlab" ? "merge request" : "pull request", commits, tokens, notes, ...(o.agentLogin ? { agentLogin: o.agentLogin } : {}) });
 }
-
-/** Approvers with those the rule leaves out taken away, and the people left out. With no involvement, every approver counts. */
-export function countable(by: readonly string[], involved: Involved | undefined): { by: string[]; excluded: Excluded[] } {
-  return involved ? judge(by, involved) : { by: [...by], excluded: [] };
-}
