@@ -81,7 +81,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
-import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "./groups";
+import { applyGroups } from "./cloud-identity";
+import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
 import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
@@ -102,7 +103,7 @@ import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewP
 import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { terramateWrite } from "./terramate";
-import { credentialWarnings, stateAccess, type StateAccess } from "./roles";
+import { credentialWarnings, stateAccess, type StateAccess } from "./state-access";
 import { envelope, ENVELOPE_COMMANDS, type Envelope } from "./envelope";
 import { describeInit, init, initJson } from "./init";
 import { describeImport, importConfig, IMPORT_SOURCES, type ImportSource } from "./import";

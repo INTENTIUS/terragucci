@@ -10,39 +10,36 @@
  * checked out, trades the token for the plan identities' own credentials and
  * deletes it.
  *
- * The trade itself is chant's (`TRADE_JS` in @intentius/chant/ci-identity,
- * the script chant's generated plan job runs with `node -e` from `/`). It
- * trades for one identity per cloud. terragucci's part is the Terraform
- * adapter around it: a re-plan takes several plan identities, so chant's
- * trade runs once per identity, with the token the job already fetched for
- * that cloud, and the results are kept by identity in the file TRADED_ENV
- * names, which rootRoleEnv, the report's stores and the Terragrunt auth
- * provider read:
+ * The trade is chant's (`TRADE_JS` in @intentius/chant/ci-identity, the
+ * script chant's generated plan job runs with `node -e` from `/`), run once
+ * with the token the job already fetched for each cloud. Its spec is chant's
+ * plan trade (resolveCloudIdentity) of the job's identities: the job's own,
+ * and each root glob's as a rule with `targets`. The identities that are no
+ * root's (Terragrunt's `credentials` and `reports.role`) go in as targets
+ * with no glob, so they are traded but no root takes them. chant leaves
+ * every identity's credentials in the file CHANT_CLOUD_TARGETS names, which
+ * rootRoleEnv (chant's targetCloudEnv), the report's stores and the
+ * Terragrunt auth provider read:
  *
- *   AWS    each plan role (`plan_role`, `oidc.roles`, Terragrunt's
- *          `credentials`, and `reports.role`), as session keys
- *   GCP    each plan service account (`oidc.gcp` and its `roles`), as an
- *          access token
+ *   AWS    each plan role, as session keys
+ *   GCP    each plan service account, as an access token
  *   Azure  not traded: the azurerm provider and backend take no access
  *          token, only the OIDC token itself, so a re-plan with oidc.azure
  *          has no trade step and plans with the token, and says so in its
  *          log (render.ts, the re-plan's Azure warning)
  *
- * The plan step then starts without the token-request variables and reads
+ * The plan step then starts without the token-request variables and sources
  * what `writeTraded` wrote: the job's own identity as the variables the
- * providers read, and every identity in the TRADED_ENV file.
+ * providers read, and CHANT_CLOUD_TARGETS.
  */
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TRADE_JS, TRADE_SPEC_ENV, idTokenVar, type CloudTradeSpec } from "@intentius/chant/ci-identity";
-import { TRADED_ENV, type Traded } from "./traded";
+import { CLOUD_TARGETS_ENV, TRADE_JS, TRADE_SPEC_ENV, idTokenVar, resolveCloudIdentity, tradeIdentities, type Cloud, type CloudIdentityDeclaration, type CloudIdentityRule, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { StoreError } from "./report/object-store";
-import { rolesFromEnv, ROOT_GCP_ENV } from "./roles";
+import { rolesFromEnv, ROOT_GCP_ENV } from "./cloud-identity";
 import { ROLES_ENV } from "./terragrunt";
-
-export { TRADED_ENV, tradedFromEnv, tradedRole, type Traded, type TradedAws } from "./traded";
 
 const sh = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
 
@@ -90,20 +87,20 @@ function externalAccount(file: string): ExternalAccount {
   }
 }
 
-/** What the trade's process keeps of the job's environment: the PATH, the run's id for the session name, and a CA bundle. */
+/** What the trade's process keeps of the job's environment: the PATH, the run's id for the session name, a CA bundle, and where its targets file goes. */
 const passed = (env: NodeJS.ProcessEnv): Record<string, string> =>
-  Object.fromEntries(["PATH", "GITHUB_RUN_ID", "NODE_EXTRA_CA_CERTS"].flatMap((k) => (env[k] ? [[k, env[k]!]] : [])));
+  Object.fromEntries(["PATH", "GITHUB_RUN_ID", "NODE_EXTRA_CA_CERTS", "RUNNER_TEMP", "TMPDIR"].flatMap((k) => (env[k] ? [[k, env[k]!]] : [])));
 
-/** Runs chant's trade for one identity: `node -e TRADE_JS` from `/`, with the token the job fetched, and reads back the variables it wrote. */
-export type ChantTrade = (spec: CloudTradeSpec, token: string) => Promise<Record<string, string>>;
+/** Runs chant's trade: `node -e TRADE_JS` from `/`, with the token the job fetched for each cloud, and reads back the variables it wrote. */
+export type ChantTrade = (spec: CloudTradeSpec, tokens: Partial<Record<Cloud, string>>) => Promise<Record<string, string>>;
 
 /** chant's trade script, run as chant's plan job runs it, writing the `sh` format to a private file this reads and deletes. */
-export const chantTrade: ChantTrade = async (spec, token) => {
-  const cloud = spec.aws ? "aws" : spec.gcp ? "gcp" : "azure";
+export const chantTrade: ChantTrade = async (spec, tokens) => {
   const dir = mkdtempSync(join(tmpdir(), "terragucci-trade-"));
   const out = join(dir, "traded.sh");
+  const ids = Object.fromEntries(Object.entries(tokens).map(([c, t]) => [idTokenVar(c as Cloud), t!]));
   const failed = await new Promise<string | undefined>((done) => {
-    execFile(process.execPath, ["-e", TRADE_JS, out, "sh"], { cwd: "/", env: { ...passed(process.env), [TRADE_SPEC_ENV]: JSON.stringify(spec), [idTokenVar(cloud)]: token }, encoding: "utf-8" }, (err, _stdout, stderr) =>
+    execFile(process.execPath, ["-e", TRADE_JS, out, "sh"], { cwd: "/", env: { ...passed(process.env), [TRADE_SPEC_ENV]: JSON.stringify(spec), ...ids }, encoding: "utf-8" }, (err, _stdout, stderr) =>
       done(err ? String(stderr ?? "").trim().split("\n").pop() || err.message : undefined),
     );
   });
@@ -131,50 +128,74 @@ const readToken = (file: string, what: string): string => {
   }
 };
 
+/** A cloud's rules from the job: a rule with `targets` per root glob, then the job's own identity. */
+const jobRules = (pairs: [string, string][], own: string | undefined): CloudIdentityRule[] => [
+  ...pairs.map(([g, id]): CloudIdentityRule => ({ targets: [g], plan: id, apply: id })),
+  ...(own ? [{ plan: own, apply: own }] : []),
+];
+
+/** `spec` with each of `ids` its targets do not name yet as a target with no glob, so the trade trades it and its targets file holds it. */
+function withEvery<T extends { targets?: Array<Record<string, unknown>> }>(spec: T, key: string, ids: readonly string[]): T {
+  const targets = [...(spec.targets ?? [])];
+  for (const id of ids) if (!targets.some((t) => t[key] === id)) targets.push({ targets: [], [key]: id });
+  return { ...spec, targets };
+}
+
 /**
- * Trade the job's tokens for every plan identity the environment names, with
- * chant's trade once per identity. Throws for Azure, which a re-plan does not
- * trade for, and when a role or service account is named with no token to
- * trade.
+ * The re-plan's trade: chant's plan trade of the job's identities, with every
+ * identity it names also a target, so the trade always writes the file
+ * CHANT_CLOUD_TARGETS names. Throws when a role or service account is named
+ * with no token to trade, and for Azure, which a re-plan does not trade for.
  */
-export async function trade(env: NodeJS.ProcessEnv, options: { reportsRole?: string; run?: ChantTrade } = {}): Promise<Traded> {
-  const run = options.run ?? chantTrade;
+export function replanTrade(env: NodeJS.ProcessEnv, reportsRole?: string): { spec: CloudTradeSpec; tokens: Partial<Record<Cloud, string>> } {
   if (env.ARM_OIDC_TOKEN_FILE_PATH) {
     throw new StoreError(
       "oidc-trade does not trade for oidc.azure: the azurerm provider and backend take only the OIDC token itself. A re-plan with oidc.azure plans with the job's token and has no trade step",
     );
   }
-  const out: Traded = { aws: {}, gcp: {} };
-  const roles = awsRoles(env, options.reportsRole);
+  const decl: CloudIdentityDeclaration = {};
+  const tokens: Partial<Record<Cloud, string>> = {};
+  const roles = awsRoles(env, reportsRole);
   if (roles.length > 0) {
     const tokenFile = env.AWS_WEB_IDENTITY_TOKEN_FILE;
     if (!tokenFile) throw new StoreError(`the re-plan takes ${roles.join(", ")}, and AWS_WEB_IDENTITY_TOKEN_FILE is not set: the job has no OIDC token to trade`);
-    const token = readToken(tokenFile, roles.join(", "));
-    const region = env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1";
-    for (const role of roles) {
-      const v = await run({ aws: { role, region, audience: "sts.amazonaws.com", endpoint: stsEndpoint(env) } }, token);
-      if (!v.AWS_ACCESS_KEY_ID || !v.AWS_SECRET_ACCESS_KEY) throw new StoreError(`the trade gave no credentials for ${role}`);
-      out.aws[role] = { accessKeyId: v.AWS_ACCESS_KEY_ID, secretAccessKey: v.AWS_SECRET_ACCESS_KEY, ...(v.AWS_SESSION_TOKEN ? { sessionToken: v.AWS_SESSION_TOKEN } : {}) };
-    }
+    tokens.aws = readToken(tokenFile, roles.join(", "));
+    decl.aws = { region: env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1", endpoint: stsEndpoint(env), rules: jobRules(rolesFromEnv(env), env.AWS_ROLE_ARN) };
   }
   const gac = env.GOOGLE_APPLICATION_CREDENTIALS;
   const own = gac ? externalAccount(gac) : {};
-  const sas = [...new Set([own.serviceAccount, ...rolesFromEnv(env, ROOT_GCP_ENV).map(([, sa]) => sa)].filter((s): s is string => Boolean(s)))];
+  const byGlob = rolesFromEnv(env, ROOT_GCP_ENV);
+  const sas = [...new Set([own.serviceAccount, ...byGlob.map(([, sa]) => sa)].filter((s): s is string => Boolean(s)))];
   if (sas.length > 0) {
     if (!gac || !own.provider) throw new StoreError(`${ROOT_GCP_ENV} gives roots ${sas.join(", ")}, and GOOGLE_APPLICATION_CREDENTIALS names no external_account file: the job needs oidc.gcp`);
     const tokenFile = own.tokenFile ?? env.TERRAGUCCI_GCP_TOKEN_FILE;
     if (!tokenFile) throw new StoreError(`the re-plan takes ${sas.join(", ")}, and the job has no OIDC token to trade`);
-    const token = readToken(tokenFile, sas.join(", "));
-    for (const serviceAccount of sas) {
-      const v = await run(
-        { gcp: { serviceAccount, provider: own.provider, audience: `//iam.googleapis.com/${own.provider}`, ...(own.stsEndpoint ? { stsEndpoint: own.stsEndpoint } : {}), ...(own.iamEndpoint ? { iamEndpoint: own.iamEndpoint } : {}) } },
-        token,
-      );
-      if (!v.GOOGLE_OAUTH_ACCESS_TOKEN) throw new StoreError(`the trade gave no token for ${serviceAccount}`);
-      out.gcp[serviceAccount] = { token: v.GOOGLE_OAUTH_ACCESS_TOKEN, expires: Date.now() + 3600_000 };
-    }
+    tokens.gcp = readToken(tokenFile, sas.join(", "));
+    decl.gcp = { provider: own.provider, ...(own.stsEndpoint ? { stsEndpoint: own.stsEndpoint } : {}), ...(own.iamEndpoint ? { iamEndpoint: own.iamEndpoint } : {}), rules: jobRules(byGlob, own.serviceAccount) };
   }
-  return out;
+  const plan = resolveCloudIdentity(decl, "terragucci")?.plan ?? {};
+  const spec: CloudTradeSpec = {
+    ...(plan.aws ? { aws: withEvery(plan.aws, "role", roles) } : {}),
+    ...(plan.gcp ? { gcp: withEvery(plan.gcp, "serviceAccount", sas) } : {}),
+  };
+  return { spec, tokens };
+}
+
+/** What the re-plan's trade left: the job's own identity's variables, and CHANT_CLOUD_TARGETS. */
+export interface Traded {
+  vars: Record<string, string>;
+  /** Every identity traded. */
+  identities: string[];
+}
+
+/** Trade the job's tokens for every plan identity the environment names, with one run of chant's trade. Nothing to trade: nothing run. */
+export async function trade(env: NodeJS.ProcessEnv, options: { reportsRole?: string; run?: ChantTrade } = {}): Promise<Traded> {
+  const { spec, tokens } = replanTrade(env, options.reportsRole);
+  const identities = tradeIdentities(spec);
+  if (identities.length === 0) return { vars: {}, identities };
+  const vars = await (options.run ?? chantTrade)(spec, tokens);
+  if (!vars[CLOUD_TARGETS_ENV]) throw new StoreError("the trade wrote no targets file");
+  return { vars, identities };
 }
 
 /** The token files and credential files the trade read: deleted once it is done, so no later process finds them. */
@@ -184,22 +205,18 @@ export function tradedFiles(env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
- * Write the shell the plan step sources (`out`) and the credentials' file
- * beside it (`out.json`), both mode 0600. The shell exports the job's own
- * identity as the AWS SDKs and the google provider read it, unless the job
- * already holds static AWS keys (reports' keys), which the SDKs read first
- * and which stay first, and names the file in TRADED_ENV.
+ * Write the shell the plan step sources (`out`), mode 0600: CHANT_CLOUD_TARGETS,
+ * and the job's own identity as the AWS SDKs and the google provider read it,
+ * unless the job already holds static AWS keys (reports' keys), which the
+ * SDKs read first and which stay first.
  */
 export function writeTraded(out: string, traded: Traded, env: NodeJS.ProcessEnv): void {
-  const json = `${out}.json`;
-  writeFileSync(json, JSON.stringify(traded) + "\n", { mode: 0o600 });
-  const lines = [`export ${TRADED_ENV}=${sh(json)}`];
-  const role = env.AWS_ROLE_ARN ? traded.aws[env.AWS_ROLE_ARN] : undefined;
-  if (role && !env.AWS_ACCESS_KEY_ID) {
-    lines.push(`export AWS_ACCESS_KEY_ID=${sh(role.accessKeyId)} AWS_SECRET_ACCESS_KEY=${sh(role.secretAccessKey)}${role.sessionToken ? ` AWS_SESSION_TOKEN=${sh(role.sessionToken)}` : ""}`);
+  const v = traded.vars;
+  const lines = v[CLOUD_TARGETS_ENV] ? [`export ${CLOUD_TARGETS_ENV}=${sh(v[CLOUD_TARGETS_ENV])}`] : [];
+  if (v.AWS_ACCESS_KEY_ID && v.AWS_SECRET_ACCESS_KEY && !env.AWS_ACCESS_KEY_ID) {
+    lines.push(`export AWS_ACCESS_KEY_ID=${sh(v.AWS_ACCESS_KEY_ID)} AWS_SECRET_ACCESS_KEY=${sh(v.AWS_SECRET_ACCESS_KEY)}${v.AWS_SESSION_TOKEN ? ` AWS_SESSION_TOKEN=${sh(v.AWS_SESSION_TOKEN)}` : ""}`);
   }
-  const sa = env.GOOGLE_APPLICATION_CREDENTIALS ? externalAccount(env.GOOGLE_APPLICATION_CREDENTIALS).serviceAccount : undefined;
-  if (sa && traded.gcp[sa]) lines.push(`export GOOGLE_OAUTH_ACCESS_TOKEN=${sh(traded.gcp[sa].token)}`);
+  if (v.GOOGLE_OAUTH_ACCESS_TOKEN) lines.push(`export GOOGLE_OAUTH_ACCESS_TOKEN=${sh(v.GOOGLE_OAUTH_ACCESS_TOKEN)}`);
   writeFileSync(out, lines.join("\n") + "\n", { mode: 0o600 });
 }
 
@@ -209,10 +226,7 @@ export async function tradeCommand(out: string, env: NodeJS.ProcessEnv, options:
   try {
     const traded = await trade(env, options);
     writeTraded(out, traded, env);
-    return [
-      ...Object.keys(traded.aws).map((r) => `traded the job's OIDC token for ${r}`),
-      ...Object.keys(traded.gcp).map((s) => `traded the job's OIDC token for ${s}`),
-    ];
+    return traded.identities.map((id) => `traded the job's OIDC token for ${id}`);
   } finally {
     for (const f of files) {
       try {

@@ -12,7 +12,7 @@
  *
  *   plan    the pull request's plan job: the plan identities
  *   decide  each wave's deciding job on the default branch, when the waves
- *           apply in a job per group (./groups.ts): the plan identities, on
+ *           apply in a job per group (./cloud-identity.ts): the plan identities, on
  *           the plan audience. Null when a wave applies in one job.
  *   confirm with `apply.when: pull-request`, the job the push after a merge
  *           runs on the default branch: the plan identities, on the apply
@@ -57,7 +57,8 @@ import { globMatch, findRoots, hostOfRemote } from "./detect";
 import { settingsForRoot, withEnvironmentRoles, type RootSettings } from "./environments";
 import { ConfigError, FORGES, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type EnvironmentSettings, type ForgeName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSettings, type RunnerSpec } from "./config";
 import { AZURE_AUDIENCE, gcpAudience, runnerOf, stageAudience } from "./render";
-import { applyGroups, environmentApplyRunner } from "./groups";
+import { applyGroups, cloudDeclaration, environmentApplyRunner, rootIdentity } from "./cloud-identity";
+import type { CloudIdentityDeclaration } from "@intentius/chant/ci-identity";
 import { detectShape } from "./shape";
 import { detectTerragrunt, walkUnits } from "./terragrunt";
 
@@ -335,13 +336,12 @@ function runnerFor(stage: IdentityStage, top: RunnerSettings | undefined, e: Env
   return runnerOf(top, stage === "decide" || stage === "confirm" ? "apply" : stage);
 }
 
-/** The roots that take an identity other than `own` for `stage`, by the first glob of `roles` each matches. */
-function rootIdentities(roots: readonly string[] | null, roles: Record<string, RolePair> | undefined, stage: "plan" | "apply", own: string | null): Record<string, string> {
+/** The roots that take an identity of `cloud` other than `own` for `stage`, by the first rule of chant's declaration that covers each (resolveTargetCloudIdentity). */
+function rootIdentities(roots: readonly string[] | null, decl: CloudIdentityDeclaration | undefined, cloud: "aws" | "gcp" | "azure", stage: "plan" | "apply", own: string | null): Record<string, string> {
   const out: Record<string, string> = {};
-  if (!roots || !roles) return out;
+  if (!roots || !decl?.[cloud]) return out;
   for (const r of roots) {
-    const glob = Object.keys(roles).find((g) => globMatch(g, r));
-    const id = glob === undefined ? undefined : roles[glob]![stage];
+    const id = rootIdentity(decl, r, stage)[cloud];
     if (id !== undefined && id !== own) out[r] = id;
   }
   return out;
@@ -389,7 +389,7 @@ const identityStage = (stage: IdentityStage): "plan" | "apply" => (stage === "ap
  * One stage of one entry. The trust fields hold this job alone; trustAcross
  * widens them to every job of the entry that takes the same identity.
  * `grouped`: the waves apply in a job per environment or identity group
- * (./groups.ts), so each wave has a deciding job.
+ * (./cloud-identity.ts), so each wave has a deciding job.
  */
 function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository, settings: ProjectSettings & { drift?: string | false }, name: string | undefined, roots: string[] | null, grouped: boolean): StageIdentities | null {
   if (stage === "drift" && !settings.drift) return null;
@@ -400,7 +400,8 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
   const own = environmentSettings(name, settings);
   const oidc: OidcSettings | undefined = own.oidc;
   const folded = withEnvironmentRoles(settings.oidc, settings.environments);
-  // An environment's apply jobs run in its forge environment (groups.ts), when the waves apply by group; Forgejo has none.
+  const decl = cloudDeclaration(settings);
+  // An environment's apply jobs run in its forge environment (./cloud-identity.ts), when the waves apply by group; Forgejo has none.
   const forgeEnvironment = stage === "apply" && grouped && forge !== "forgejo" ? (own.forge_environment ?? null) : null;
   const token = tokenOf(forge, repository, stage, forgeEnvironment);
   const idStage = identityStage(stage);
@@ -409,9 +410,9 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
   const roles = folded?.roles;
   if ((oidc?.plan_role && oidc.apply_role) || (roles && Object.keys(roles).length > 0)) {
     const role = (idStage === "plan" ? oidc?.plan_role : oidc?.apply_role) ?? null;
-    // An environment's own audience is its apply jobs' (groups.ts); the deciding job plans on the plan audience.
+    // An environment's own audience is its apply jobs' (./cloud-identity.ts); the deciding job plans on the plan audience.
     const audience = stage === "apply" && grouped && e?.oidc?.audience ? e.oidc.audience : stageAudience(settings.oidc, stage === "decide" ? "plan" : stage === "confirm" ? "apply" : stage);
-    const root_roles = rootIdentities(roots, roles, idStage, role);
+    const root_roles = rootIdentities(roots, decl, "aws", idStage, role);
     aws = { role, root_roles, audience, trusts: [stage], assume_role_policy: awsTrustPolicy([{ token, audience }], role ?? Object.values(root_roles)[0] ?? null) };
   }
 
@@ -420,7 +421,7 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
     const sa = idStage === "plan" ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account;
     gcp = {
       service_account: sa,
-      root_service_accounts: rootIdentities(roots, folded?.gcp?.roles, idStage, sa),
+      root_service_accounts: rootIdentities(roots, decl, "gcp", idStage, sa),
       workload_identity_provider: oidc.gcp.workload_identity_provider,
       audience: gcpAudience(oidc.gcp.workload_identity_provider),
       trusts: [stage],
@@ -434,7 +435,7 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
     const audience = oidc.azure.audience ?? AZURE_AUDIENCE;
     azure = {
       client_id: id,
-      root_client_ids: rootIdentities(roots, folded?.azure?.roles, idStage, id),
+      root_client_ids: rootIdentities(roots, decl, "azure", idStage, id),
       tenant_id: oidc.azure.tenant_id,
       issuer: token.issuer,
       subject: token.subject_pattern ? null : token.subject,
@@ -476,7 +477,7 @@ function trustAcross(stages: Record<IdentityStage, StageIdentities | null>): voi
 export function identities(settings: ProjectSettings & { drift?: string | false }, roots: string[] | null, opts: IdentitiesOptions): Identities {
   const { forge, repository } = repositoryOf(settings, opts);
   const names = Object.keys(settings.environments ?? {});
-  // The waves apply in a job per group, each wave decided by a job of its own, as init renders them (groups.ts). Not in a Terragrunt
+  // The waves apply in a job per group, each wave decided by a job of its own, as init renders them (./cloud-identity.ts). Not in a Terragrunt
   // repo, whose waves of units apply in one job. With the roots unread, environments are taken to hold roots.
   const grouped = !opts.terragrunt && (roots === null ? names.length > 0 : applyGroups(settings, roots) !== undefined);
   const inEnv = (r: string, name: string): boolean => (settings.environments![name]!.roots ?? []).some((g) => globMatch(g, r));

@@ -20,7 +20,7 @@
  *                fewest any of its roots' environments allows (../report/stage.ts)
  *   runner, forge_environment, oidc.audience
  *                each environment's roots apply in jobs of their own
- *                (./groups.ts), which init renders on the environment's apply
+ *                (./cloud-identity.ts), which init renders on the environment's apply
  *                runner, in its forge environment and with its audience
  *
  * With no `environments`, every function here gives back what it was given,

@@ -1,6 +1,6 @@
 /**
  * config check's tips for the apply jobs of environments and identity groups
- * (./groups.ts): runners, apply identities and token audiences that two of
+ * (./cloud-identity.ts): runners, apply identities and token audiences that two of
  * them share, so neither the forge nor the cloud can keep one's apply apart
  * from the other's. Tips only: none is a problem or a warning, and none fails
  * the check.
@@ -24,12 +24,14 @@
  *                            separation
  *
  * Forgejo's case (environments that apply from one ref) is the shared-subject
- * tip's (./groups.ts sharedSubjectTip).
+ * tip's (sharedSubjectTip).
  */
-import { DEFAULT_GROUP, type ApplyGroup } from "./groups";
+import { DEFAULT_GROUP, type ApplyGroup } from "./cloud-identity";
 import { runnerOf, stageAudience } from "./render";
 import type { ForgeName, OidcSettings, ProjectSettings, RunnerSpec } from "./config";
-import { SHARED_AUDIENCE_TIP, PERSISTENT_RUNNER_TIP, ENVIRONMENT_ROLE_TIP } from "./tips";
+import { SHARED_AUDIENCE_TIP, SHARED_SUBJECT_TIP, PERSISTENT_RUNNER_TIP, ENVIRONMENT_ROLE_TIP } from "./tips";
+
+export { SHARED_SUBJECT_TIP };
 
 export interface EnvironmentTip {
   rule: string;
@@ -38,6 +40,32 @@ export interface EnvironmentTip {
 
 /** `a`, `a and b`, `a, b and c`. */
 const listed = (names: readonly string[]): string => (names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+
+/**
+ * config check's tip when the groups' apply jobs carry the same OIDC token
+ * subject, so a role's trust cannot tell one group's jobs from another's:
+ * identity groups from roles by glob, which run in no forge environment;
+ * environments on Forgejo, which has none, so every apply job of one ref
+ * carries one subject; and on GitHub and GitLab, environments that name the
+ * same forge_environment. Undefined otherwise, and with fewer than two groups.
+ */
+export function sharedSubjectTip(groups: readonly ApplyGroup[] | undefined, forge: ForgeName | undefined): string | undefined {
+  if (!groups || groups.length < 2) return undefined;
+  const environments = groups.some((g) => g.environment !== undefined);
+  if (environments && forge !== "forgejo") {
+    // Environments that name one forge environment: one subject on GitHub, one environment claim on GitLab.
+    const byForgeEnvironment = new Map<string, string[]>();
+    for (const g of groups) if (g.environment !== undefined && g.forgeEnvironment !== undefined) byForgeEnvironment.set(g.forgeEnvironment, [...(byForgeEnvironment.get(g.forgeEnvironment) ?? []), g.name]);
+    const shared = [...byForgeEnvironment].filter(([, names]) => names.length > 1);
+    if (shared.length === 0) return undefined;
+    return shared
+      .map(([fe, names]) => `the apply jobs of the environments ${listed(names)} run in the same forge environment ${fe}, so their tokens carry the same environment and a role's trust cannot tell one environment's jobs from another's; give each environment a forge_environment of its own`)
+      .join("; ");
+  }
+  const which = `the apply jobs of the groups ${listed(groups.map((g) => g.name))} carry the same OIDC token subject, so a role's trust cannot tell one group's jobs from another's`;
+  if (forge === "forgejo") return `${which}; they apply from the same ref, and Forgejo has no deployment environments, so its token names the ref alone: keep the groups' roles apart with a repo or a protected branch each`;
+  return `${which}; on GitHub or GitLab, name each group's roots in environments, each with a forge_environment, and have each apply role trust its environment alone`;
+}
 
 interface Placed {
   group?: string;

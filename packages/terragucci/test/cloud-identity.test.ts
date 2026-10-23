@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
 import { validateConfig } from "../src/config";
 import { cloudScripts, renderPipeline } from "../src/render";
-import { credentialWarnings, gcpCredentials, ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rolesFromEnv, rootRoleEnv, rootRoles, stateAccess } from "../src/roles";
+import { gcpCredentials, ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rolesFromEnv, rootRoleEnv, rootRoles } from "../src/cloud-identity";
+import { credentialWarnings, stateAccess } from "../src/state-access";
 import { backend, remoteState, tmp, write } from "./helpers";
 
 const DEV = { plan: "arn:aws:iam::111111111111:role/dev-plan", apply: "arn:aws:iam::111111111111:role/dev-apply" };

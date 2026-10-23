@@ -50,7 +50,7 @@ export interface WavesSpecInput {
   approval: "ledger" | "pr-review" | "sealed";
   /** `waves.jobs` on wave `wave`. */
   shares?: { wave: number; shares: number };
-  /** One apply job per identity (./groups.ts): wave `wave`'s job groups, each with the wave's roots it holds and, with `waves.jobs`, its shares. */
+  /** One apply job per identity (./cloud-identity.ts): wave `wave`'s job groups, each with the wave's roots it holds and, with `waves.jobs`, its shares. */
   jobs?: { wave: number; groups: { name: string; runs: string[]; shares?: number }[] };
   /** The argv that calls back into the wave's process with one call. */
   call: (what: WaveCall, ...args: string[]) => string[];

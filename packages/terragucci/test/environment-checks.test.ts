@@ -4,7 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import type { ForgeName, ProjectSettings } from "../src/config";
-import { applyGroups, SHARED_SUBJECT_TIP, sharedSubjectTip } from "../src/groups";
+import { applyGroups } from "../src/cloud-identity";
+import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "../src/environment-tips";
 import { environmentAudienceTips, environmentTips, planApplyRunnerTip, sharedApplyRoleTips, sharedRunnerTips } from "../src/environment-tips";
 import { SHARED_AUDIENCE_TIP, PERSISTENT_RUNNER_TIP, ENVIRONMENT_ROLE_TIP } from "../src/tips";
 import { renderPipeline, type PipelineInput } from "../src/render";

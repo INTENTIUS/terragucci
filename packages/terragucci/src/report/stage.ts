@@ -14,7 +14,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
-import { rootRoleEnv } from "../roles";
+import { rootRoleEnv } from "../cloud-identity";
 import { rootSecretEnv } from "../root-secrets";
 import { workspaceEnv, workspaceInit } from "../backend";
 import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
@@ -71,7 +71,7 @@ import type { S3Fetch } from "./s3";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportApprovalRule, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
-import { applyGroups } from "../groups";
+import { applyGroups } from "../cloud-identity";
 import { ComposedRun, compositionFor, composeTarget, type ComposedPlan, type ComposeFallback, type Composition } from "../compose";
 import { blastRadius } from "./graph";
 import { blastRootsOf, resourceBlast } from "./resource-blast";
@@ -1211,7 +1211,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const timing = observer.root(root);
     let bin = binariesOf(root).expected(root);
     let path = binary;
-    // The root's own role, when `oidc.roles` names one (../roles.ts).
+    // The root's own role, when `oidc.roles` names one (../cloud-identity.ts).
     // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
     const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);
     // The binary's own: rootEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its hooks keep rootEnv.
@@ -1417,7 +1417,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   let composition: Composition | undefined;
   let composedPlan: ComposedPlan | undefined;
   if (!drift && !options.root && settings.waves?.compose === true && roots.length > 0) {
-    // One apply job per identity: the composed run's roots must be in one group, as the apply checks (../groups.ts).
+    // One apply job per identity: the composed run's roots must be in one group, as the apply checks (../cloud-identity.ts).
     const groups = applyGroups(settings, all);
     const c = compositionFor(repo, { all, ...(selected ? { selected } : {}), waves: applyOrder, max: settings.waves.compose_max, env: binEnv, binary: (r) => binaries.expected(r), deps: rootDependencies(repo, all), after, ...(groups ? { groupOf: (r: string) => groups.find((g) => g.roots.includes(r))?.name ?? "" } : {}) });
     composition = c;

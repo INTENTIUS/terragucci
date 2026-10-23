@@ -1966,7 +1966,7 @@ function checkRoles(r: unknown, where: string, problems: string[], what = "role"
   }
 }
 
-/** The apply group of the roots in no environment, or that no glob gives an identity (./groups.ts). */
+/** The apply group of the roots in no environment, or that no glob gives an identity (./cloud-identity.ts). */
 export const DEFAULT_GROUP = "default";
 /** Names an apply group cannot take: the rest group's, and chant's own job names (decide, share-<i>). */
 export const reservedGroupName = (name: string): boolean => name === DEFAULT_GROUP || name === "decide" || /^share-\d+$/.test(name);
@@ -2095,7 +2095,7 @@ function checkEnvironmentOidc(o: unknown, where: string, problems: string[]): vo
  */
 export function environmentNeeds(s: ProjectSettings, where: string): string[] {
   const out: string[] = [];
-  // Each environment's roots apply in jobs of their own (./groups.ts): what applies every wave in one job is refused beside them.
+  // Each environment's roots apply in jobs of their own (./cloud-identity.ts): what applies every wave in one job is refused beside them.
   if (s.environments && isObject(s.environments) && Object.keys(s.environments).length > 0) {
     if (s.apply?.when === "pull-request") out.push(`${where}.apply.when: ${ENVIRONMENTS_PR_APPLY}`);
     if (s.apply?.resume !== undefined && s.forge !== undefined && s.forge !== "gitlab") out.push(`${where}.apply.resume: ${ENVIRONMENTS_RESUME}`);

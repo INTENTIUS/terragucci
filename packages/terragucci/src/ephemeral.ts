@@ -108,7 +108,7 @@ import { targetFromEnv } from "./report/drift";
 import { configAtBase } from "./report/policy";
 import { runFacts } from "./report/stage";
 import { updateJson } from "./report/store";
-import { rootRoleEnv } from "./roles";
+import { rootRoleEnv } from "./cloud-identity";
 import { sealRefusal } from "./seal";
 import { discoverUnits, generateStacks, unitWaves } from "./terragrunt";
 

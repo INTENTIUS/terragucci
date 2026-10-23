@@ -148,7 +148,7 @@ import { binaryEnv, terragruntExec } from "./binary-env";
 import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits } from "./generate";
 import { stateVersion, workspaceEnv, workspaceInit } from "./backend";
 import { atmosEdges, fillReads, upstreamOutputs, type UpstreamOutputs } from "./atmos";
-import { rootRoleEnv } from "./roles";
+import { rootRoleEnv } from "./cloud-identity";
 import { rootSecretEnv } from "./root-secrets";
 import type { ProgressSinks } from "./migrate-progress";
 import { beforeMembers, MIGRATE_LEDGER, MIGRATIONS_DIR, movedSinceApproval, pendingEstateMigrations, pendingWhy, runMigrations, sha as shaOf, type MigrationHold, type MigrationRecord } from "./migrate";
@@ -167,10 +167,10 @@ import { planAppliedChanges, readChanges } from "./report/history";
 import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
-import { rootsByGroup } from "./groups";
+import { rootsByGroup } from "./cloud-identity";
 import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
-import { groupOf } from "./groups";
+import { groupOf } from "./cloud-identity";
 import type { WaveComposedInput } from "./report/build";
 
 /** The op every wave gate is recorded under. */
@@ -215,7 +215,7 @@ export function parseBranches(spec: string): Record<string, string[]> {
 }
 
 /** `apply.branches` for `--branches`. */
-/** `--groups`: `<group>=<glob or root>[,...][;...]`, each apply group's selector but `default`'s (./groups.ts). */
+/** `--groups`: `<group>=<glob or root>[,...][;...]`, each apply group's selector but `default`'s (./cloud-identity.ts). */
 export function parseGroups(spec: string): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const part of spec.split(";").filter(Boolean)) {
@@ -708,7 +708,7 @@ async function planRoot(repo: string, binaries: RootBinaries, root: string, work
 
 async function planTimed(repo: string, binaries: RootBinaries, root: string, work: string, i: number, observer: StageObserver, timing: RootTiming, cache: WaveCache, ws?: WaveSteps, sources?: RootSources, coneBase?: string, secrets?: readonly SecretSource[]): Promise<PlannedRoot> {
   const dir = join(repo, root);
-  // The root's own role, when `oidc.roles` names one (./roles.ts); it applies and reads its state version with it too.
+  // The root's own role, when `oidc.roles` names one (./cloud-identity.ts); it applies and reads its state version with it too.
   // An Atmos instance names its workspace (./atmos.ts): it plans and applies there, not in default.
   const expected = binaries.expected(root);
   const roleEnv = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), dir), dir, expected.name);
@@ -960,7 +960,7 @@ export interface ApplyWaveOptions {
   /** The decision file the wave's job writes and its shares read. Default: terragucci-wave/wave-<k>.json in the checkout. */
   decided?: string;
   /**
-   * Plain roots only: one apply job per identity (./groups.ts). Each group's
+   * Plain roots only: one apply job per identity (./cloud-identity.ts). Each group's
    * selector, by name: root globs or roots; a root no selector matches is in
    * `default`. Without `group`, this job plans every root of the wave with the
    * plan identities and decides it, and the groups' jobs apply.

@@ -120,7 +120,7 @@ export function runnerOf(runner: RunnerSettings | undefined, stage: RunnerStage 
 export function placeJobs(jobs: Map<string, unknown>, runner: RunnerSettings | undefined, forge: ForgeName, own?: ReadonlyMap<string, RunnerSpec>): void {
   if (runner === undefined && !own?.size) return;
   for (const [name, job] of jobs) {
-    // A group's apply jobs run on its environment's runner (./groups.ts), over the pipeline's.
+    // A group's apply jobs run on its environment's runner (./cloud-identity.ts), over the pipeline's.
     const spec = name === "workflow" ? undefined : (own?.get(name) ?? runnerOf(runner, jobStage(name)));
     const props = (job as { props?: Record<string, unknown> }).props;
     if (spec === undefined || !props) continue;
@@ -174,7 +174,7 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./roles";
+import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
@@ -185,7 +185,7 @@ import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
-import { groupsArg, type ApplyGroup } from "./groups";
+import { groupsArg, type ApplyGroup } from "./cloud-identity";
 import { CHECK_DIR } from "./check";
 import { dropForgeTokens as chantDropForgeTokens, FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
 import { checkoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./handover";
@@ -336,7 +336,7 @@ export interface PipelineInput {
   /** `pass`: secret and variable names the jobs that plan, apply and check drift get as environment variables (GitHub and Forgejo). */
   pass?: PassSettings;
   /**
-   * One apply job per identity (./groups.ts): each wave of plain roots gets a
+   * One apply job per identity (./cloud-identity.ts): each wave of plain roots gets a
    * job that plans every root with the plan identities and decides the gate,
    * and a job per group with roots in the wave, with the group's identities,
    * runner, forge environment and audience. Unset, a wave applies in one job.
@@ -757,7 +757,7 @@ const hasRootRoles = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.
  * The AWS step of a stage: the job's role (`plan_role` or `apply_role`) when
  * one is set, the token file, and with `oidc.roles` the stage's roles by root
  * glob in ROOT_ROLES_ENV, which the stage hands each root's binary
- * (rootRoleEnv in ./roles.ts).
+ * (rootRoleEnv in ./cloud-identity.ts).
  */
 function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply", session: string, check: boolean, audience: string, fetched: boolean): string {
   const role = stage === "plan" ? oidc.plan_role : oidc.apply_role;
@@ -766,7 +766,7 @@ function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply"
   return [`export AWS_ROLE_SESSION_NAME=${sh(session)}`, 'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', tokenScript(forge, audience, undefined, undefined, check, fetched), ...roles].join("\n");
 }
 
-/** A stage's GCP service accounts or Azure clients by root glob, exported for the stage to hand each root's binary (rootRoleEnv in ./roles.ts). */
+/** A stage's GCP service accounts or Azure clients by root glob, exported for the stage to hand each root's binary (rootRoleEnv in ./cloud-identity.ts). */
 const cloudRoles = (name: string, roles: Record<string, { plan: string; apply: string }> | undefined, stage: "plan" | "apply"): string[] =>
   roles && Object.keys(roles).length > 0 ? [`export ${name}=${sh(JSON.stringify(rootRoles(roles, stage)))}`] : [];
 
@@ -994,7 +994,7 @@ interface ApplyJob {
   share?: number;
   /** The job after the last wave's shares. */
   done?: boolean;
-  /** One apply job per identity: the group whose roots it applies (./groups.ts). */
+  /** One apply job per identity: the group whose roots it applies (./cloud-identity.ts). */
   group?: string;
   /** Its own identities, in place of the pipeline's: a group's, or the deciding job's with the audience map it fetches by. */
   oidc?: OidcSettings;
@@ -1491,7 +1491,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
 }
 
 /**
- * The apply-comment job's script with `environments` (./groups.ts): each
+ * The apply-comment job's script with `environments` (./cloud-identity.ts): each
  * environment's roots apply in jobs of their own, with their own identities,
  * which one comment job cannot be. It decides who asked, as the apply would,
  * and answers how to apply again, holding no credential.
@@ -1513,7 +1513,7 @@ export function groupedCommentScript(layers: string[][], forge: Exclude<ForgeNam
 }
 
 /**
- * The first line of an environment's apply job (./groups.ts): `terragucci
+ * The first line of an environment's apply job (./cloud-identity.ts): `terragucci
  * check-job` with what the job is expected to see, which stops the job before
  * any token is fetched or traded unless it runs in the environment's forge
  * environment, on a branch it applies from, and on its runner
@@ -1832,9 +1832,9 @@ function restartWithout(shell: "bash" | "sh", vars: readonly string[], marker: s
 
 /**
  * A re-plan's trade step, before the head's checkout: the job's OIDC tokens
- * for the plan identities, traded by `terragucci oidc-trade` (chant's trade,
- * once per identity) for those identities' own credentials, which it leaves
- * in TRADED_FILE, and deleted. The plan step starts without the
+ * for the plan identities, traded by `terragucci oidc-trade` (one run of
+ * chant's trade) for those identities' own credentials, which it leaves in
+ * TRADED_FILE and the file CHANT_CLOUD_TARGETS names, and deleted. The plan step starts without the
  * token-request variables and reads that file instead (planFilesScript with
  * `traded`), so the pull request's code never holds a token with the default
  * branch's subject. A failed trade writes the plan status, which the
@@ -2361,7 +2361,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     };
     // One id_token per audience: AWS's (which the Terragrunt auth provider uses too), GCP's provider, Entra ID.
     // AWS's is the job's stage's (jobStage), which with oidc.audience a map differs by stage.
-    // A group's job (./groups.ts) declares its own identities' tokens, with its environment's audience.
+    // A group's job (./cloud-identity.ts) declares its own identities' tokens, with its environment's audience.
     const idTokens = (stage: AudienceStage, o: OidcSettings | undefined = oidc): Record<string, unknown> => needsToken
       ? {
           id_tokens: {

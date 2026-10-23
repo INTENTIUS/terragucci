@@ -72,7 +72,7 @@ import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
-import { rootRoleEnv } from "./roles";
+import { rootRoleEnv } from "./cloud-identity";
 import { liveRoots } from "./detect";
 import { eachLimited } from "./each-limited";
 import { applyEstateMigration, ESTATE_PARALLELISM, planEstateMigration, type EstatePlan, type Retag, type Stamp } from "./migrate-estate";
@@ -333,7 +333,7 @@ export function migrationPipelineProblems(repo: string): string[] {
 
 /**
  * The generated pipeline that applies each wave in a job per identity
- * (./groups.ts), or undefined: its apply jobs pass `--groups`. Wave 1's
+ * (./cloud-identity.ts), or undefined: its apply jobs pass `--groups`. Wave 1's
  * deciding job runs the state migrations, and in such a pipeline it holds
  * the plan identities alone, which cannot write a state.
  */
@@ -731,7 +731,7 @@ export async function unitPlace(repo: string, unit: string, binary: string, env:
 export async function placesOf(repo: string, roots: readonly string[], options: MigrateOptions, env: NodeJS.ProcessEnv, shape: Shape): Promise<Map<string, Place>> {
   const out = new Map<string, Place>();
   for (const root of roots) {
-    // Each root with its own role, when `oidc.roles` names one (./roles.ts); a unit is prepared under it too.
+    // Each root with its own role, when `oidc.roles` names one (./cloud-identity.ts); a unit is prepared under it too.
     const renv = rootRoleEnv(env, root);
     if (existsSync(join(repo, root, "terragrunt.hcl"))) {
       out.set(root, await unitPlace(repo, root, options.binary, renv, options.work, options.terragrunt));

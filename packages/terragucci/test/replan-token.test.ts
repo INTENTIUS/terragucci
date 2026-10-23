@@ -12,9 +12,8 @@ import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { REPLAN_AZURE_WARNING, dropForgeTokens, LEFTOVER_SWEEP, OIDC_REQUEST_VARS, renderPipeline, replanTradeScript, TRADED_FILE, type PipelineInput } from "../src/render";
 import { awsRoles, stsEndpoint, trade, tradeCommand, type ChantTrade } from "../src/oidc-trade";
-import type { CloudTradeSpec } from "@intentius/chant/ci-identity";
-import { TRADED_ENV } from "../src/traded";
-import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV } from "../src/roles";
+import { CLOUD_TARGETS_ENV, type Cloud, type CloudTargetsFile, type CloudTradeSpec } from "@intentius/chant/ci-identity";
+import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV, tradedVars } from "../src/cloud-identity";
 import { s3FromEnv } from "../src/report/s3";
 import { gcsFromEnv } from "../src/report/gcs";
 import { authProviderOutput, ROLES_ENV } from "../src/terragrunt";
@@ -194,7 +193,7 @@ describe("the re-plan's plan step at run time", () => {
   it("the change's code finds no token-request variable, here or in a parent, and holds the traded plan keys", () => {
     const r = runPlanStep(
       { ACTIONS_ID_TOKEN_REQUEST_URL: "https://forge/token?x=req-url", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req-secret", ACTIONS_RUNTIME_TOKEN: "rt-secret", GITHUB_TOKEN: "gh-secret" },
-      `export ${TRADED_ENV}='/nowhere.json'\nexport AWS_ACCESS_KEY_ID='ASIAPLAN' AWS_SECRET_ACCESS_KEY='plan-secret' AWS_SESSION_TOKEN='plan-session'\n`,
+      `export ${CLOUD_TARGETS_ENV}='/nowhere.json'\nexport AWS_ACCESS_KEY_ID='ASIAPLAN' AWS_SECRET_ACCESS_KEY='plan-secret' AWS_SESSION_TOKEN='plan-session'\n`,
     );
     expect(r.status, r.stderr).toBe(0);
     expect(r.seen).toContain("AWS_ACCESS_KEY_ID=ASIAPLAN");
@@ -236,7 +235,7 @@ describe("terragucci oidc-trade", () => {
     return { dir, env: { AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token"), AWS_ROLE_ARN: PLAN, AWS_ROLE_SESSION_NAME: "terragucci-plan", AWS_ENDPOINT_URL_STS: `${sts}/` } };
   };
 
-  it("trades the job's token for each plan role once with chant's trade, writes the job's keys and the file, and deletes the token", async () => {
+  it("trades the job's token for every plan role in one run of chant's trade, writes the job's keys and chant's targets file, and deletes the token", async () => {
     const em = await emulator();
     try {
       const { dir, env } = jobWithToken(em.url);
@@ -249,30 +248,36 @@ describe("terragucci oidc-trade", () => {
       expect(lines).toHaveLength(4);
       expect(existsSync(env.AWS_WEB_IDENTITY_TOKEN_FILE!)).toBe(false);
       const shell = readFileSync(out, "utf-8");
-      expect(shell).toContain(`export ${TRADED_ENV}='${out}.json'`);
+      const file = /export CHANT_CLOUD_TARGETS='([^']+)'/.exec(shell)?.[1];
+      expect(file).toBeDefined();
       expect(shell).toContain("export AWS_ACCESS_KEY_ID='AK-plan-ro' AWS_SECRET_ACCESS_KEY='SK-plan-ro' AWS_SESSION_TOKEN='ST-plan-ro'");
       expect(shell).not.toContain("the-jwt");
-      const json = JSON.parse(readFileSync(`${out}.json`, "utf-8"));
-      expect(Object.keys(json.aws)).toHaveLength(4);
-      expect(json.aws["arn:aws:iam::111111111111:role/unit-plan"]).toEqual({ accessKeyId: "AK-unit-plan", secretAccessKey: "SK-unit-plan", sessionToken: "ST-unit-plan" });
+      const json = JSON.parse(readFileSync(file!, "utf-8")) as CloudTargetsFile;
+      expect(Object.keys(json.clouds.aws!.vars)).toHaveLength(4);
+      expect(json.clouds.aws!.vars["arn:aws:iam::111111111111:role/unit-plan"]).toMatchObject({ AWS_ACCESS_KEY_ID: "AK-unit-plan", AWS_SECRET_ACCESS_KEY: "SK-unit-plan", AWS_SESSION_TOKEN: "ST-unit-plan" });
+      // A root glob's role is the root's; the unit's and the reports' roles are traded, and no root takes them.
+      expect(json.clouds.aws!.targets[0]).toEqual({ targets: ["envs/dev/*"], identity: "arn:aws:iam::111111111111:role/dev-plan" });
+      expect(json.clouds.aws!.targets.filter((t) => t.targets.length === 0).map((t) => t.identity)).toContain("arn:aws:iam::111111111111:role/unit-plan");
       expect(JSON.stringify(json)).not.toContain("the-jwt");
     } finally {
       await em.close();
     }
   });
 
-  it("runs chant's trade, not a trade of its own: one spec per identity, with the job's token", async () => {
-    const asked: { spec: CloudTradeSpec; token: string }[] = [];
-    const run: ChantTrade = async (spec, token) => {
-      asked.push({ spec, token });
-      return { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_SESSION_TOKEN: "ST" };
+  it("runs chant's trade, not a trade of its own: one spec with every identity a target, with the job's token", async () => {
+    const asked: { spec: CloudTradeSpec; tokens: Partial<Record<Cloud, string>> }[] = [];
+    const run: ChantTrade = async (spec, tokens) => {
+      asked.push({ spec, tokens });
+      return { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_SESSION_TOKEN: "ST", [CLOUD_TARGETS_ENV]: "/tmp/targets.json" };
     };
     const { env } = jobWithToken("http://sts.local");
     env.AWS_REGION = "eu-west-1";
     await trade(env, { run, reportsRole: "arn:aws:iam::111111111111:role/reports" });
     expect(asked).toEqual([
-      { spec: { aws: { role: PLAN, region: "eu-west-1", audience: "sts.amazonaws.com", endpoint: "http://sts.local" } }, token: "the-jwt" },
-      { spec: { aws: { role: "arn:aws:iam::111111111111:role/reports", region: "eu-west-1", audience: "sts.amazonaws.com", endpoint: "http://sts.local" } }, token: "the-jwt" },
+      {
+        spec: { aws: { role: PLAN, targets: [{ targets: [], role: PLAN }, { targets: [], role: "arn:aws:iam::111111111111:role/reports" }], region: "eu-west-1", audience: "sts.amazonaws.com", endpoint: "http://sts.local" } },
+        tokens: { aws: "the-jwt" },
+      },
     ]);
   });
 
@@ -322,7 +327,7 @@ describe("terragucci oidc-trade", () => {
       const out = join(dir, "traded.env");
       await tradeCommand(out, env);
       const fed = em.asked.filter((a) => a.path === "/v1/token");
-      expect(fed).toHaveLength(2);
+      expect(fed).toHaveLength(1);
       expect(JSON.parse(fed[0]!.body)).toMatchObject({ audience: "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/f", subjectToken: "gcp-jwt" });
       expect(em.asked.filter((a) => a.path.includes("generateAccessToken")).map((a) => a.path)).toEqual([
         "/v1/projects/-/serviceAccounts/plan%40p.iam.gserviceaccount.com:generateAccessToken",
@@ -331,8 +336,9 @@ describe("terragucci oidc-trade", () => {
       expect(readFileSync(out, "utf-8")).toContain("export GOOGLE_OAUTH_ACCESS_TOKEN='tok-plan@p.iam.gserviceaccount.com'");
       expect(existsSync(token)).toBe(false);
       expect(existsSync(gac)).toBe(false);
-      const json = JSON.parse(readFileSync(`${out}.json`, "utf-8"));
-      expect(Object.keys(json.gcp)).toEqual(["plan@p.iam.gserviceaccount.com", "dev@p.iam.gserviceaccount.com"]);
+      const file = /export CHANT_CLOUD_TARGETS='([^']+)'/.exec(readFileSync(out, "utf-8"))![1]!;
+      const json = JSON.parse(readFileSync(file, "utf-8")) as CloudTargetsFile;
+      expect(Object.keys(json.clouds.gcp!.vars)).toEqual(["plan@p.iam.gserviceaccount.com", "dev@p.iam.gserviceaccount.com"]);
     } finally {
       await em.close();
     }
@@ -353,15 +359,32 @@ describe("what reads the traded credentials", () => {
     writeFileSync(
       file,
       JSON.stringify({
-        aws: {
-          "arn:aws:iam::111111111111:role/dev-plan": { accessKeyId: "AK-dev", secretAccessKey: "SK-dev", sessionToken: "ST-dev" },
-          "arn:aws:iam::111111111111:role/reports": { accessKeyId: "AK-rep", secretAccessKey: "SK-rep", sessionToken: "ST-rep" },
-          "arn:aws:iam::111111111111:role/unit-plan": { accessKeyId: "AK-unit", secretAccessKey: "SK-unit", sessionToken: "ST-unit" },
+        version: 1,
+        clouds: {
+          aws: {
+            targets: [
+              { targets: ["envs/dev/*"], identity: "arn:aws:iam::111111111111:role/dev-plan" },
+              { targets: [], identity: "arn:aws:iam::111111111111:role/reports" },
+              { targets: [], identity: "arn:aws:iam::111111111111:role/unit-plan" },
+            ],
+            vars: {
+              "arn:aws:iam::111111111111:role/dev-plan": { AWS_ACCESS_KEY_ID: "AK-dev", AWS_SECRET_ACCESS_KEY: "SK-dev", AWS_SESSION_TOKEN: "ST-dev" },
+              "arn:aws:iam::111111111111:role/reports": { AWS_ACCESS_KEY_ID: "AK-rep", AWS_SECRET_ACCESS_KEY: "SK-rep", AWS_SESSION_TOKEN: "ST-rep" },
+              "arn:aws:iam::111111111111:role/unit-plan": { AWS_ACCESS_KEY_ID: "AK-unit", AWS_SECRET_ACCESS_KEY: "SK-unit", AWS_SESSION_TOKEN: "ST-unit" },
+            },
+          },
+          gcp: {
+            default: "plan@p.iam.gserviceaccount.com",
+            targets: [{ targets: ["envs/dev/*"], identity: "dev@p.iam.gserviceaccount.com" }],
+            vars: {
+              "dev@p.iam.gserviceaccount.com": { GOOGLE_OAUTH_ACCESS_TOKEN: "tok-dev", CLOUDSDK_AUTH_ACCESS_TOKEN: "tok-dev" },
+              "plan@p.iam.gserviceaccount.com": { GOOGLE_OAUTH_ACCESS_TOKEN: "tok-plan", CLOUDSDK_AUTH_ACCESS_TOKEN: "tok-plan" },
+            },
+          },
         },
-        gcp: { "dev@p.iam.gserviceaccount.com": { token: "tok-dev", expires: 0 }, "plan@p.iam.gserviceaccount.com": { token: "tok-plan", expires: 0 } },
-      }),
+      } satisfies CloudTargetsFile),
     );
-    return { [TRADED_ENV]: file, AWS_ACCESS_KEY_ID: "AK-job", AWS_SECRET_ACCESS_KEY: "SK-job" };
+    return { [CLOUD_TARGETS_ENV]: file, AWS_ACCESS_KEY_ID: "AK-job", AWS_SECRET_ACCESS_KEY: "SK-job" };
   };
 
   it("a root with its own role and service account gets their traded keys and token, and no role to assume", () => {
@@ -373,7 +396,7 @@ describe("what reads the traded credentials", () => {
     // A root no glob matches keeps the job's own identity.
     expect(rootRoleEnv(env, "envs/prd/app").AWS_ACCESS_KEY_ID).toBe("AK-job");
     // A role the trade step did not trade is refused, never assumed.
-    expect(() => rootRoleEnv({ ...env, [ROOT_ROLES_ENV]: JSON.stringify([["envs/dev/*", "arn:aws:iam::111111111111:role/apply-rw"]]) }, "envs/dev/app")).toThrow(/traded no credentials/);
+    expect(() => tradedVars(env, "aws", "arn:aws:iam::111111111111:role/apply-rw")).toThrow(/traded no credentials/);
   });
 
   it("reports.role writes with its traded keys", () => {

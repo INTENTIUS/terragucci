@@ -40,7 +40,7 @@ import { backendBlock, blockBody, explicitOrder, stateOf, type WavesAfter } from
 import { configFiles, hclValue, outputsRead, refRe } from "./linked";
 import { plannedOutputs, plannedRead } from "./planned-outputs";
 import { isStored, rootWorkspace, stateObject, type StateObject } from "./backend";
-import { rootRoleEnv } from "./roles";
+import { rootRoleEnv } from "./cloud-identity";
 import { derivedLineage, pullState, runBinary, takeLocks, type BinaryExec, type HeldLock, type StateFile, type StateResource } from "./migrate";
 import { changesSomething } from "./report/changing";
 import type { ReportComposedMember, ReportRead } from "./report/schema";

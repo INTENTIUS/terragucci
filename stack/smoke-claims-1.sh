@@ -4256,7 +4256,7 @@ claim_apply/groups() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      groups.ts '    const out = Object.fromEntries(Object.entries(roles).filter(([g]) => used.has(g)));' '    const out = { ...roles };' \
+      cloud-identity.ts '    const picked = Object.fromEntries(Object.entries(roles ?? {}).filter(([g]) => used.has(g)));' '    const picked = { ...(roles ?? {}) };' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   fresh_repo apply-groups || { drop_work "$work"; return 1; }

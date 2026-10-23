@@ -3428,7 +3428,7 @@ for (const { where, jwt } of found) {
 }
 // The identities the trade step left this step, by name.
 let traded = [];
-try { traded = Object.keys(JSON.parse(readFileSync(e.TERRAGUCCI_TRADED, "utf8")).aws ?? {}); } catch {}
+try { traded = Object.keys(JSON.parse(readFileSync(e.CHANT_CLOUD_TARGETS, "utf8")).clouds?.aws?.vars ?? {}); } catch {}
 const mark = { event: e.GITHUB_EVENT_NAME, tokens: out, traded, asks: asks.map(([w]) => w) };
 try { await fetch(e.AWS_ENDPOINT_URL + "/$marks/" + e.GITHUB_EVENT_NAME + ".json", { method: "PUT", body: JSON.stringify(mark) }); } catch {}
 console.error("apply-role probe: " + JSON.stringify({ ...mark, tokens: out.map(({ where, sub, accepted }) => ({ where, sub, accepted })) }));
