@@ -46,7 +46,7 @@ export const CHANT_RULES_URL = "https://intentius.io/chant/lexicons/terraform/li
 /** Where terragucci documents its own tips; each rule is a heading. */
 export const TIPS_URL = "https://intentius.io/terragucci/reference/tips/";
 
-/** config check's tip when apply groups' jobs carry the same token subject (../groups.ts sharedSubjectTip). */
+/** config check's tip when apply groups' jobs carry the same token subject (../environment-tips.ts sharedSubjectTip). */
 export const SHARED_SUBJECT_TIP = "terragucci-shared-subject";
 /** config check's tip when an environment's apply runner can take the plan jobs' or another environment's apply jobs (../environment-tips.ts). */
 export const PERSISTENT_RUNNER_TIP = "terragucci-persistent-runner";

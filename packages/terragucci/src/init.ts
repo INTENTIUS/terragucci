@@ -52,7 +52,7 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { applyGroups } from "./groups";
+import { applyGroups } from "./cloud-identity";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -303,7 +303,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   } else {
     ref = imageFor(binary.value);
   }
-  // One apply job per identity (./groups.ts), for plain roots: environments, or roles by glob that tell roots apart.
+  // One apply job per identity (./cloud-identity.ts), for plain roots: environments, or roles by glob that tell roots apart.
   const groups = tgInput ? undefined : applyGroups(settings, layers.flat());
   if (groups && forgeChoice.value === "forgejo") {
     const named = Object.entries(settings.environments ?? {}).filter(([, e]) => e.forge_environment !== undefined).map(([n]) => n);

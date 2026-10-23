@@ -2,7 +2,7 @@
  * `secrets:` in terragucci.yml: values a root's binary gets from a cloud's
  * secret store, fetched by the stage that runs the root (plan, apply,
  * drift) with the identity the root runs with there, after rootRoleEnv
- * (./roles.ts) has given it that identity:
+ * (./cloud-identity.ts) has given it that identity:
  *
  *   aws    Secrets Manager GetSecretValue, signed with the root's role,
  *          assumed with the job's OIDC token (`AWS_ROLE_ARN`), or with the
@@ -28,7 +28,7 @@ import { GcsClient } from "./report/gcs";
 import { AZURE_AUTHORITY } from "./report/azure-blob";
 import type { StoreFetch } from "./report/object-store";
 import { stsEndpoint } from "./oidc-trade";
-import { roleOf, rolesFromEnv, ROOT_GCP_ENV } from "./roles";
+import { rootIdentities } from "./cloud-identity";
 import { holdSecretValue } from "./secret-values";
 
 /** Secret Manager's address. */
@@ -127,7 +127,7 @@ const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex
 /** The AWS identity a root runs with, and how to sign as it. */
 function awsIdentity(root: string, env: NodeJS.ProcessEnv): { name: string; credentials: (fetchFn: StoreFetch) => Promise<S3Credentials> } {
   const keys = env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY ? { accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY, ...(env.AWS_SESSION_TOKEN ? { sessionToken: env.AWS_SESSION_TOKEN } : {}) } : undefined;
-  const role = roleOf(root, rolesFromEnv(env));
+  const role = rootIdentities(env, root).aws;
   if (keys) return { name: role ?? env.AWS_ROLE_ARN ?? "the job's AWS keys", credentials: async () => keys };
   const arn = env.AWS_ROLE_ARN;
   const tokenFile = env.AWS_WEB_IDENTITY_TOKEN_FILE;
@@ -171,7 +171,7 @@ function impersonatedBy(file: string | undefined): string | undefined {
 
 /** The GCP identity a root runs with, and its access token: a re-plan's traded one first, as the google provider reads it, else its credentials file's. */
 function gcpIdentity(root: string, env: NodeJS.ProcessEnv): { name: string; token: (fetchFn: StoreFetch) => Promise<string> } {
-  const name = roleOf(root, rolesFromEnv(env, ROOT_GCP_ENV)) ?? impersonatedBy(env.GOOGLE_APPLICATION_CREDENTIALS) ?? "the job's GCP credentials";
+  const name = rootIdentities(env, root).gcp ?? impersonatedBy(env.GOOGLE_APPLICATION_CREDENTIALS) ?? "the job's GCP credentials";
   const traded = env.GOOGLE_OAUTH_ACCESS_TOKEN;
   if (traded) return { name, token: async () => traded };
   const file = env.GOOGLE_APPLICATION_CREDENTIALS;

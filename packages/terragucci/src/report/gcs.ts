@@ -26,7 +26,8 @@
 import { createHash, createSign } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { encodePath, encodeStrict, PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type ObjectVersion, type StoreCondition, type StoreFetch } from "./object-store";
-import { tradedFromEnv } from "../traded";
+import { CLOUD_TARGETS_ENV } from "@intentius/chant/ci-identity";
+import { tradedIdentities } from "../cloud-identity";
 
 export const GCS_ENDPOINT = "https://storage.googleapis.com";
 /** IAM Credentials, where a token for an impersonated service account comes from. */
@@ -56,9 +57,8 @@ export interface GcsTarget {
 export function gcsFromEnv(where: { bucket: string; endpoint?: string }, env: NodeJS.ProcessEnv = process.env): GcsTarget {
   const file = env.GOOGLE_APPLICATION_CREDENTIALS;
   // A re-plan holds no OIDC token: the trade step left the job's service account's token, and the file of every traded one.
-  const traded = !file && env.GOOGLE_OAUTH_ACCESS_TOKEN ? tradedFromEnv(env) : undefined;
-  if (traded && env.GOOGLE_OAUTH_ACCESS_TOKEN) {
-    const signAs = Object.entries(traded.gcp).find(([, t]) => t.token === env.GOOGLE_OAUTH_ACCESS_TOKEN)?.[0];
+  if (!file && env.GOOGLE_OAUTH_ACCESS_TOKEN && env[CLOUD_TARGETS_ENV]) {
+    const signAs = Object.entries(tradedIdentities(env, "gcp")).find(([, v]) => v.GOOGLE_OAUTH_ACCESS_TOKEN === env.GOOGLE_OAUTH_ACCESS_TOKEN)?.[0];
     return { bucket: where.bucket, endpoint: (where.endpoint ?? GCS_ENDPOINT).replace(/\/+$/, ""), accessToken: env.GOOGLE_OAUTH_ACCESS_TOKEN, ...(signAs ? { signAs } : {}) };
   }
   if (!file) throw new StoreError(`reports.bucket is gs://${where.bucket}, but the job has no credentials for it: give the job oidc.gcp (it sets GOOGLE_APPLICATION_CREDENTIALS), or set GOOGLE_APPLICATION_CREDENTIALS to a credentials file`);

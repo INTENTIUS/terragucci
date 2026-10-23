@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigError, validateConfig, type SecretSource } from "../src/config";
 import { configSchemaProblems } from "../src/config-schema";
 import { shapeProblems } from "../src/refusals";
-import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV } from "../src/roles";
+import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV } from "../src/cloud-identity";
 import { rootSecretEnv, SecretError, secretRootProblems, secretsOf, vaultOf } from "../src/root-secrets";
 import { holdSecretValue, scrubText, secretValues } from "../src/secret-values";
 import { redactPlan, sensitiveStrings } from "../src/report/redact";

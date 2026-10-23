@@ -1,6 +1,6 @@
 /**
  * `terragucci check-job`: the first lines of an environment's apply job
- * (./groups.ts) check that the job runs where the environment's apply is set
+ * (./cloud-identity.ts) check that the job runs where the environment's apply is set
  * to run, before any token is traded with a cloud, and stop it otherwise.
  *
  * What the job is expected to see comes from the flags init renders into the

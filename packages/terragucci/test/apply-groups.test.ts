@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, validateConfig, type ForgeName, type ProjectSettings } from "../src/config";
 import { configSchemaProblems } from "../src/config-schema";
-import { applyGroups, groupOidc, groupsArg, rootsByGroup, SHARED_SUBJECT_TIP, sharedSubjectTip } from "../src/groups";
+import { applyGroups, cloudDeclaration, groupOidc, groupsArg, rootsByGroup } from "../src/cloud-identity";
+import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "../src/environment-tips";
 import { main } from "../src/cli";
 import { parseGroups } from "../src/apply";
 import { wavesSpec, waveCallArgv } from "../src/chant-waves";
@@ -102,9 +103,9 @@ describe("apply groups", () => {
 
   it("GCP and Azure: a group whose every root has its own identity takes the first as the job's", () => {
     const gcp = { workload_identity_provider: "projects/1/locations/global/workloadIdentityPools/p/providers/q", plan_service_account: "plan@p.iam.gserviceaccount.com", apply_service_account: "apply@p.iam.gserviceaccount.com", roles: { "envs/prod/*": { plan: "prod-plan@p.iam.gserviceaccount.com", apply: "prod-apply@p.iam.gserviceaccount.com" } } };
-    const o = groupOidc({ gcp }, ["envs/prod/app"])!;
+    const o = groupOidc({ gcp }, cloudDeclaration({ oidc: { gcp } }), ["envs/prod/app"])!;
     expect(o.gcp).toMatchObject({ plan_service_account: "prod-plan@p.iam.gserviceaccount.com", apply_service_account: "prod-apply@p.iam.gserviceaccount.com", roles: gcp.roles });
-    expect(groupOidc({ gcp }, ["shared/dns"])!.gcp).toEqual({ workload_identity_provider: gcp.workload_identity_provider, plan_service_account: gcp.plan_service_account, apply_service_account: gcp.apply_service_account });
+    expect(groupOidc({ gcp }, cloudDeclaration({ oidc: { gcp } }), ["shared/dns"])!.gcp).toEqual({ workload_identity_provider: gcp.workload_identity_provider, plan_service_account: gcp.plan_service_account, apply_service_account: gcp.apply_service_account });
   });
 
   it("the stage finds each root's group by the selectors --groups carries", () => {
@@ -119,6 +120,40 @@ describe("apply groups", () => {
     expect(spec.waves[0]!.jobs).toBeUndefined();
     expect(spec.waves[1]!.jobs).toEqual([{ name: "prod", runs: ["envs/prod/app"] }, { name: "dev", runs: ["envs/dev/app"], shares: 2 }]);
     expect(spec.waves[1]!.shares).toBeUndefined();
+  });
+});
+
+describe("apply groups: chant's ci.identity.cloud rules", () => {
+  it("the config's keys become rules: each glob, then each environment's pair over its globs, then the job's pair", () => {
+    const decl = cloudDeclaration({ ...ENVS, oidc: { ...TOP, roles: { "shared/**": { plan: "arn:aws:iam::444444444444:role/shared-plan", apply: "arn:aws:iam::444444444444:role/shared-apply" } } } })!;
+    expect(decl.aws!.rules).toEqual([
+      { targets: ["shared/**"], name: "shared", plan: "arn:aws:iam::444444444444:role/shared-plan", apply: "arn:aws:iam::444444444444:role/shared-apply" },
+      { targets: ["envs/prod/**"], name: "prod", plan: PROD.plan_role, apply: PROD.apply_role },
+      { targets: ["envs/dev/**"], name: "dev", plan: DEV.plan_role, apply: DEV.apply_role },
+      { plan: TOP.plan_role, apply: TOP.apply_role },
+    ]);
+    expect(decl.gcp).toBeUndefined();
+    expect(cloudDeclaration({})).toBeUndefined();
+  });
+
+  it("two globs with the same identities apply in one job", () => {
+    const g = applyGroups({ oidc: { ...TOP, roles: { "envs/dev/*": { plan: DEV.plan_role, apply: DEV.apply_role }, "envs/prod/*": { plan: DEV.plan_role, apply: DEV.apply_role } } } }, layers.flat())!;
+    expect(g.map((x) => [x.name, x.roots])).toEqual([
+      ["envs-dev", ["envs/dev/app", "envs/dev/network", "envs/prod/app", "envs/prod/network"]],
+      ["default", ["shared/dns"]],
+    ]);
+  });
+
+  it("an environment whose roots take two identities applies in a job per identity, each in the environment", () => {
+    const shared = { plan: "arn:aws:iam::444444444444:role/net-plan", apply: "arn:aws:iam::444444444444:role/net-apply" };
+    const g = applyGroups({ oidc: { ...TOP, roles: { "envs/prod/network": shared } }, environments: { prod: { roots: ["envs/prod/**"] } } }, layers.flat())!;
+    expect(g.map((x) => [x.name, x.selectors, x.environment, x.forgeEnvironment])).toEqual([
+      ["prod-envs-prod-network", ["envs/prod/network"], "prod", "prod"],
+      ["prod", ["envs/prod/app"], "prod", "prod"],
+      ["default", [], undefined, undefined],
+    ]);
+    expect(g[0]!.oidc).toEqual({ roles: { "envs/prod/network": shared } });
+    expect(g[1]!.oidc).toEqual(TOP);
   });
 });
 

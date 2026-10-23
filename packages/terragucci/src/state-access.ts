@@ -1,127 +1,15 @@
 /**
- * Cloud identities by root: `oidc.roles` (AWS roles), `oidc.gcp.roles`
- * (service accounts) and `oidc.azure.roles` (Entra clients) map root globs to
- * a plan identity and an apply identity, so each environment's roots plan
- * and apply with identities that reach that environment's state alone. The
- * pipeline carries one stage's identities in ROOT_ROLES_ENV, ROOT_GCP_ENV and
- * ROOT_AZURE_ENV; the stage gives each root's binary (and the steps, and the
- * state version read after an apply) the identity of the first glob the root
- * matches:
- *
- *   AWS    `AWS_ROLE_ARN`, assumed with the job's OIDC token
- *   GCP    GOOGLE_APPLICATION_CREDENTIALS, a copy of the job's
- *          external_account file that impersonates the root's service account
- *   Azure  `ARM_CLIENT_ID`, the client the job's token is traded for
- *
- * A root no glob matches keeps the job's own identity.
- *
- * stateAccess is what `config check` reads from the repo: which roots and
- * which state keys each identity reaches, from the backend and
+ * What `config check` reads from the repo about each cloud identity: which
+ * roots and which state keys it reaches, from the backend and
  * `terraform_remote_state` blocks in the roots' code, and a warning for each
- * identity that reaches another environment's state.
+ * identity that reaches another environment's state. A root's identity is
+ * its first glob's, as chant's `ci.identity.cloud` rules give it
+ * (./cloud-identity.ts).
  */
-import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { globMatch, rootDependencies, stateOf, type StateRef } from "./detect";
 import type { OidcSettings, RolePair } from "./config";
-import { tradedFromEnv, tradedRole } from "./traded";
-
-/** The job's variable that holds one stage's roles by root glob, as JSON `[[glob, role], ...]`. */
-export const ROOT_ROLES_ENV = "TERRAGUCCI_ROOT_ROLES";
-/** One stage's GCP service accounts by root glob, as ROOT_ROLES_ENV holds roles. */
-export const ROOT_GCP_ENV = "TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS";
-/** One stage's Azure client ids by root glob, as ROOT_ROLES_ENV holds roles. */
-export const ROOT_AZURE_ENV = "TERRAGUCCI_ROOT_AZURE_CLIENTS";
-
-/** One stage's roles by root glob, in the order the config lists them. */
-export function rootRoles(roles: Record<string, RolePair>, stage: "plan" | "apply"): [string, string][] {
-  return Object.entries(roles).map(([glob, pair]) => [glob, pair[stage]]);
-}
-
-/** The identities a variable (ROOT_ROLES_ENV by default) carries; none when it is unset. */
-export function rolesFromEnv(env: NodeJS.ProcessEnv, name = ROOT_ROLES_ENV): [string, string][] {
-  const text = env[name];
-  if (!text) return [];
-  try {
-    const v = JSON.parse(text) as unknown;
-    if (Array.isArray(v) && v.every((x) => Array.isArray(x) && x.length === 2 && typeof x[0] === "string" && typeof x[1] === "string")) return v as [string, string][];
-  } catch {
-    // Not JSON: refused below.
-  }
-  throw new Error(`${name} is not a list of [root glob, ${name === ROOT_ROLES_ENV ? "role" : "identity"}] pairs`);
-}
-
-/** The role a root takes: the first glob it matches, or undefined for the job's own. */
-export function roleOf(root: string, roles: [string, string][]): string | undefined {
-  return roles.find(([glob]) => globMatch(glob, root))?.[1];
-}
-
-/**
- * `env` for one root's binary: for each cloud whose variable names a glob
- * the root matches, that identity. AWS: `AWS_ROLE_ARN` is the role, assumed
- * with the job's token file; static keys in the job's environment would win
- * over the role in the AWS SDKs, so they are dropped for that root. GCP:
- * GOOGLE_APPLICATION_CREDENTIALS is gcpCredentials' copy of the job's file.
- * Azure: ARM_CLIENT_ID is the client. In a re-plan, which holds no token,
- * the AWS role is its traded session keys and the service account its
- * traded access token (GOOGLE_OAUTH_ACCESS_TOKEN).
- */
-export function rootRoleEnv(env: NodeJS.ProcessEnv, root: string): NodeJS.ProcessEnv {
-  let out = env;
-  // A re-plan holds no OIDC token: each identity is the keys or the token its trade step left (./oidc-trade.ts).
-  const traded = tradedFromEnv(env);
-  const role = roleOf(root, rolesFromEnv(env));
-  if (role) {
-    const { AWS_ACCESS_KEY_ID: _a, AWS_SECRET_ACCESS_KEY: _s, AWS_SESSION_TOKEN: _t, ...rest } = out;
-    if (traded) {
-      const c = tradedRole(traded, role);
-      out = { ...rest, AWS_ACCESS_KEY_ID: c.accessKeyId, AWS_SECRET_ACCESS_KEY: c.secretAccessKey, ...(c.sessionToken ? { AWS_SESSION_TOKEN: c.sessionToken } : {}) };
-    } else {
-      out = { ...rest, AWS_ROLE_ARN: role };
-    }
-  }
-  const sa = roleOf(root, rolesFromEnv(env, ROOT_GCP_ENV));
-  if (sa && traded) {
-    const t = traded.gcp[sa];
-    if (!t) throw new Error(`the re-plan traded no token for ${sa}`);
-    const { GOOGLE_APPLICATION_CREDENTIALS: _g, ...rest } = out;
-    out = { ...rest, GOOGLE_OAUTH_ACCESS_TOKEN: t.token };
-  } else if (sa) out = { ...out, GOOGLE_APPLICATION_CREDENTIALS: gcpCredentials(env, sa) };
-  const client = roleOf(root, rolesFromEnv(env, ROOT_AZURE_ENV));
-  if (client) out = { ...out, ARM_CLIENT_ID: client, ...(env.AZURE_CLIENT_ID ? { AZURE_CLIENT_ID: client } : {}) };
-  return out;
-}
-
-/** The service account in an impersonation URL: `.../serviceAccounts/<email>:generateAccessToken`. */
-const IMPERSONATED = /\/serviceAccounts\/([^/:]+):generateAccessToken$/;
-
-/**
- * The credentials file that impersonates `sa`: the job's external_account
- * file (what `oidc.gcp` writes) with its impersonation URL naming `sa`,
- * written once beside it, mode 0600. The job's file when it names `sa`
- * already.
- */
-export function gcpCredentials(env: NodeJS.ProcessEnv, sa: string): string {
-  const file = env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!file) throw new Error(`${ROOT_GCP_ENV} gives this root ${sa}, and GOOGLE_APPLICATION_CREDENTIALS is not set: the job needs oidc.gcp`);
-  let c: Record<string, unknown>;
-  try {
-    c = JSON.parse(readFileSync(file, "utf-8")) as Record<string, unknown>;
-  } catch (e) {
-    throw new Error(`${ROOT_GCP_ENV} gives this root ${sa}, and ${file} cannot be read: ${(e as Error).message}`);
-  }
-  const url = c.service_account_impersonation_url;
-  if (c.type !== "external_account" || typeof url !== "string" || !IMPERSONATED.test(url)) {
-    throw new Error(`${ROOT_GCP_ENV} gives this root ${sa}, and ${file} is not an external_account file that impersonates a service account, as oidc.gcp writes`);
-  }
-  if (decodeURIComponent(IMPERSONATED.exec(url)![1]) === sa) return file;
-  const out = `${file}.${createHash("sha256").update(sa).digest("hex").slice(0, 12)}.json`;
-  if (!existsSync(out)) writeFileSync(out, JSON.stringify({ ...c, service_account_impersonation_url: url.replace(IMPERSONATED, `/serviceAccounts/${sa}:generateAccessToken`) }) + "\n", { mode: 0o600 });
-  return out;
-}
-
-// ── config check ─────────────────────────────────────────────────────────
 
 /** One identity and what it reaches: the roots that take it, their states, and the other roots' states they read. */
 export interface RoleReach {

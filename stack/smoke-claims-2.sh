@@ -3502,7 +3502,7 @@ claim_oidc/atmos_roles() {
   export TERRAGUCCI_ATMOS
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
-    break_bundle "$bundle" roles.ts '  const role = roleOf(root, rolesFromEnv(env));' '  const role = roleOf("", rolesFromEnv(env));' \
+    break_bundle "$bundle" cloud-identity.ts '  const ids = rootIdentities(env, root);' '  const ids = rootIdentities(env, "");' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   atmos_bucket "$bucket"

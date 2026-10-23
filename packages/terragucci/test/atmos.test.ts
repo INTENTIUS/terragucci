@@ -29,7 +29,7 @@ import {
 } from "../src/atmos";
 import { rootDependencies } from "../src/detect";
 import { checkScript } from "../src/render";
-import { stateAccess } from "../src/roles";
+import { stateAccess } from "../src/state-access";
 import { runStage } from "../src/report/stage";
 import { synthAffected } from "../src/synth";
 import { resolveRepo, validateConfig } from "../src/config";

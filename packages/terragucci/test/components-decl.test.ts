@@ -9,7 +9,7 @@ import { terraformApplyCapability } from "@intentius/chant-lexicon-terraform/com
 import { applyWaves } from "../src/apply";
 import { COMPONENTS_PATH, NO_ROLLBACK, componentsDecl, componentsWrittenByTerragucci, type ComponentsDecl } from "../src/components-decl";
 import type { ForgeName, ProjectSettings } from "../src/config";
-import { applyGroups } from "../src/groups";
+import { applyGroups } from "../src/cloud-identity";
 import { withEnvironmentRoles } from "../src/environments";
 import { init } from "../src/init";
 import { renderPipeline, shareRoots, type PipelineInput } from "../src/render";
