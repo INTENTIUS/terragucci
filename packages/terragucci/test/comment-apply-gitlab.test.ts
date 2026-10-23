@@ -59,11 +59,14 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     }
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/versions$/.exec(path))) return ok(w.versions?.[Number(m[1])] ?? []);
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/merge$/.exec(path)) && method === "PUT") return ok({ state: "merged" });
+    if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/commits/.exec(path))) return ok([]);
+    if (path.startsWith("/users?search=")) return ok([]);
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)(\?.*)?$/.exec(path))) {
       const iid = Number(m[1]);
       const mr = w.mrs.find((x) => x.iid === iid);
       if (!mr) return ok({ message: "404 Not found" }, 404);
-      return ok(m[2] ? { ...mr, ...(w.later?.[iid] ?? {}) } : mr);
+      const reads = calls.filter((c) => c.method === "GET" && new RegExp(`^/projects/7/merge_requests/${iid}(\\?|$)`).test(c.path)).length;
+      return ok(reads > 1 ? { ...mr, ...(w.later?.[iid] ?? {}) } : mr);
     }
     if ((m = /^\/projects\/7\/members\/all\/(\d+)$/.exec(path))) {
       const level = w.members?.[Number(m[1])];
@@ -130,12 +133,12 @@ describe("the comments job, with apply.when: pull-request", () => {
   });
 
   it.each([
-    ["no approval", { notes: { 3: [note(101, "/terragucci apply")] } }, /!3 is not approved: no member other than its author/],
-    ["an approval before the latest push", { versions: { 3: version(HEAD, "2026-10-07T11:55:00Z") } }, /!3 is not approved/],
-    ["the author's own approval", { notes: { 3: [note(101, "/terragucci apply"), approval(50, author)] } }, /!3 is not approved/],
+    ["no approval", { notes: { 3: [note(101, "/terragucci apply")] } }, /!3 does not meet apply.requires at cccccccc, so nothing is applied: approved: no member other than its authors approved it after its latest push/],
+    ["an approval before the latest push", { versions: { 3: version(HEAD, "2026-10-07T11:55:00Z") } }, /approved: no member other than its authors approved it after its latest push/],
+    ["the author's own approval", { notes: { 3: [note(101, "/terragucci apply"), approval(50, author)] } }, /approved: no member other than its authors approved/],
     ["a failed check", { statuses: { [HEAD]: [{ id: 1, name: "terragucci/plan", status: "success" }, { id: 2, name: "check", status: "failed" }] } }, /check failed on cccccccc/],
     ["no plan", { statuses: { [HEAD]: [{ id: 2, name: "check", status: "success" }] } }, /the plan of !3 has not passed/],
-    ["a head behind main", { later: { 3: { diverged_commits_count: 2 } } }, /!3 is not up to date with main: its head cccccccc is 2 commits behind it/],
+    ["a head behind main", { later: { 3: { diverged_commits_count: 2 } } }, /undiverged: cccccccc is 2 commits behind main/],
     ["conflicts", { later: { 3: { detailed_merge_status: "conflict" } } }, /GitLab reports conflicts with main/],
     ["a change to the pipeline file", { diffs: [{ old_path: ".gitlab/terragucci.yml", new_path: ".gitlab/terragucci.yml" }] }, /changes \.gitlab\/terragucci\.yml, and the apply runs the pipeline of main/],
   ] as [string, Partial<World>, RegExp][])("refuses %s by name, and starts nothing", async (_, over, says) => {
@@ -246,7 +249,7 @@ describe("the mr-apply job's decision", () => {
     const r = repos();
     const { api, run } = decide(r, { ...ready(r.head, [note(101, "/terragucci apply")]), later: { 3: { diverged_commits_count: 1 } } }, job(r.head));
     expect((await run()).go).toBe(false);
-    expect(replies(api.calls)[0]).toMatch(/is not up to date with main/);
+    expect(replies(api.calls)[0]).toMatch(/undiverged: [0-9a-f]{8} is 1 commit behind main/);
   });
 
   it("refuses a root another open merge request holds, naming it, and an unlock note releases the holder's locks", async () => {

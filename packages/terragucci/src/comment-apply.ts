@@ -12,8 +12,9 @@
  * With `apply.when: pull-request` the comment also applies an open pull
  * request, from its head, in the same waves and under the same gates. Before
  * anything runs, each requirement `apply.requires` lists (all four by
- * default) is checked and refused by name: `approved`, the head has an
- * approval from a reviewer other than its author, given on that head;
+ * default) is asked through chant's requires checks (./apply-requires.ts)
+ * and refused by name: `approved`, the head has an approval from a reviewer
+ * other than its authors, given on that head, by someone with write access;
  * `checks`, its statuses and checks passed; `mergeable`, the forge says it
  * can merge (no conflicts, and on GitHub no branch protection blocking it);
  * `undiverged`, it contains the default branch. Whatever `apply.requires`
@@ -48,7 +49,9 @@ import { posix } from "node:path";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
 import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
-import { APPLY_REQUIRES, ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
+import type { PrRequireResult } from "@intentius/chant/pr-forge";
+import { unmetApplyRequires } from "./apply-requires";
+import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
 import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
@@ -257,8 +260,6 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
 }
 
 
-/** The statuses that never hold back an apply: the apply's own. */
-const OWN_CONTEXTS = new Set([APPLY_CONTEXT]);
 /** The status the plan job posts on the head it planned. */
 const PLAN_CONTEXT = "terragucci/plan";
 
@@ -741,52 +742,20 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
 const HEAD_READS = 4;
 const HEAD_WAIT_MS = 3000;
 
-/** How many times a pull request the forge has not finished checking is read again, and how long between reads. */
-const MERGEABLE_READS = 5;
-const MERGEABLE_WAIT_MS = 3000;
-
 /**
- * Whether the forge says the pull request can merge. GitHub answers
- * `mergeable: null` while it works it out, and Forgejo `false` while it
- * checks for conflicts, so a pull request that is not mergeable is read again
- * a few times before it is refused. On GitHub `mergeable_state: blocked` is
- * branch protection holding the merge; `behind` and `unstable` are left to
- * `undiverged` and `checks`.
+ * An open pull request under `apply.when: pull-request`: every requirement
+ * `apply.requires` lists, asked through chant's requires checks
+ * (./apply-requires.ts), then its plan, the pipeline file and its locks.
  */
-async function mergeableOf(i: OpenInput, h: OpenHead): Promise<ApplyCommentDecision | undefined> {
-  const wait = i.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  let pr = i.pr;
-  for (let read = 1; pr?.mergeable !== true && read < MERGEABLE_READS; read++) {
-    await wait(MERGEABLE_WAIT_MS);
-    try {
-      pr = await i.call("GET", `repos/${h.repoName}/pulls/${i.number}`);
-    } catch (e) {
-      return i.broke(`could not read pull request ${i.number} (${(e as Error).message})`);
-    }
-    if (pr?.head?.sha !== h.sha) return i.refuse(`pull request ${i.number} moved while this comment was read (its head is now ${short(String(pr?.head?.sha))}); comment again once its checks pass`);
-  }
-  if (pr?.mergeable === false || pr?.mergeable_state === "dirty") return i.refuse(`pull request ${i.number} is not mergeable: the forge reports conflicts with ${h.base}, so nothing is applied. Resolve them, and comment again once its plan passes`);
-  if (pr?.mergeable !== true) return i.refuse(`the forge has not worked out whether pull request ${i.number} can merge, so nothing is applied; comment again in a minute`);
-  if (i.forge !== "forgejo" && pr?.mergeable_state === "blocked") return i.refuse(`pull request ${i.number} is not mergeable: branch protection on ${h.base} blocks its merge, so nothing is applied`);
-  return undefined;
-}
-
-/** An open pull request under `apply.when: pull-request`: every requirement, then its locks. */
 async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
   const { git, number, user, pr, call, refuse, broke } = i;
-  const requires = new Set<ApplyRequire>(i.requires ?? APPLY_REQUIRES);
   const h = await openHead(i);
   if (isDecision(h)) return h;
   const { sha, base, remote, repoName } = h;
 
-  // approved: an approval of this head, and nobody asking for changes.
-  if (requires.has("approved")) {
-    let reviews: Review[];
-    try {
-      reviews = await call("GET", `repos/${repoName}/pulls/${number}/reviews?per_page=100&limit=50`);
-    } catch (e) {
-      return broke(`could not read the reviews of pull request ${number} (${(e as Error).message})`);
-    }
+  // approved also counts only a reviewer with write access, and never someone who had a hand in the change (./involved.ts).
+  const counted = async (): Promise<PrRequireResult> => {
+    const reviews: Review[] = await call("GET", `repos/${repoName}/pulls/${number}/reviews?per_page=100&limit=50`);
     const mayWrite = async (login: string): Promise<boolean> => {
       if (i.forge === "forgejo") return true;
       try {
@@ -797,66 +766,28 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
       }
     };
     const approval = await approvalOf(Array.isArray(reviews) ? reviews : [], pr?.user?.login, sha, mayWrite);
-    if (approval.changes.length > 0) return refuse(`pull request ${number} is not approved: ${approval.changes.join(", ")} asked for changes, so nothing is applied`);
-    // A review counts only from someone who had no hand in the change (./involved.ts).
     const involved = await pullInvolvement({ forge: i.forge ?? "github", calls: { repo: repoName, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) }, pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}), ...(await agentSettingsAt(i.repo ?? process.cwd())) });
     const { by, excluded } = countable(approval.by, involved);
     for (const line of involved.notes) console.log(`terragucci: ${line}`);
-    if (by.length === 0) return refuse(`pull request ${number} is not approved: no reviewer other than its author approved its head ${short(sha)}${excluded.map((e) => `; ${notCounted(e, "review")}`).join("")}, so nothing is applied`);
-  }
+    if (by.length === 0) return { passed: false, reason: `no reviewer other than its author, with write access, approved its head ${short(sha)}${excluded.map((e) => `; ${notCounted(e, "review")}`).join("")}` };
+    return { passed: true, reason: `approved at ${short(sha)} by ${by.join(", ")}` };
+  };
+  const forge = poster(i.forge ?? "github", i.env ?? process.env, i.fetch);
+  const unmet = await unmetApplyRequires(forge, number, sha, { counted, ignore: [APPLY_CONTEXT], ...(i.requires ? { requires: i.requires } : {}), ...(i.wait ? { wait: i.wait } : {}) });
+  if (unmet) return refuse(`pull request ${number} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes`);
 
-  // checks: every status and check on the head passed. The plan's own status counts whatever requires says.
+  // The plan passed on the head, whatever apply.requires says.
   let combined: any;
   try {
     combined = await call("GET", `repos/${repoName}/commits/${sha}/status`);
   } catch (e) {
     return broke(`could not read the statuses of ${short(sha)} (${(e as Error).message})`);
   }
-  const byContext = new Map<string, any>();
+  let plan: any;
   for (const st of Array.isArray(combined?.statuses) ? combined.statuses : []) {
-    if (typeof st?.context !== "string" || OWN_CONTEXTS.has(st.context)) continue;
-    const had = byContext.get(st.context);
-    if (!had || Number(st.id) > Number(had.id)) byContext.set(st.context, st);
+    if (st?.context === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
   }
-  const state = (st: any): string => String(st?.state ?? st?.status ?? "");
-  if (requires.has("checks")) {
-    const failing: string[] = [];
-    const waiting: string[] = [];
-    for (const [context, st] of byContext) {
-      if (state(st) === "failure" || state(st) === "error") failing.push(context);
-      else if (state(st) === "pending") waiting.push(context);
-    }
-    if (i.forge !== "forgejo") {
-      let runs: any;
-      try {
-        runs = await call("GET", `repos/${repoName}/commits/${sha}/check-runs?per_page=100`);
-      } catch (e) {
-        return broke(`could not read the checks of ${short(sha)} (${(e as Error).message})`);
-      }
-      for (const run of Array.isArray(runs?.check_runs) ? runs.check_runs : []) {
-        const name = String(run?.name ?? "a check");
-        if (run?.status !== "completed") waiting.push(name);
-        else if (!["success", "neutral", "skipped"].includes(run?.conclusion)) failing.push(name);
-      }
-    }
-    if (failing.length > 0) return refuse(`the checks of pull request ${number} are not green: ${[...new Set(failing)].sort().join(", ")} failed on ${short(sha)}, so nothing is applied`);
-    if (waiting.length > 0) return refuse(`the checks of pull request ${number} are not green yet: ${[...new Set(waiting)].sort().join(", ")} still running on ${short(sha)}; comment again once they pass`);
-  }
-  if (state(byContext.get(PLAN_CONTEXT)) !== "success") return refuse(`the plan of pull request ${number} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again`);
-
-  // mergeable: the forge says it merges as it stands.
-  if (requires.has("mergeable")) {
-    const no = await mergeableOf(i, h);
-    if (no) return no;
-  }
-
-  // undiverged: the head contains the default branch as origin has it now.
-  if (requires.has("undiverged")) {
-    const tip = git(["rev-parse", remote]).stdout.trim();
-    const upToDate = git(["merge-base", "--is-ancestor", remote, sha]);
-    if (upToDate.status === 1) return refuse(`pull request ${number} is not up to date with ${base}: its head ${short(sha)} does not contain ${short(tip)}. Merge ${base} into it or rebase it, and comment again once its plan passes`);
-    if (upToDate.status !== 0) return broke(`could not tell whether ${short(sha)} contains ${base} (${upToDate.stderr.trim()})`);
-  }
+  if (String(plan?.state ?? plan?.status ?? "") !== "success") return refuse(`the plan of pull request ${number} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again`);
 
   // The comment's job runs the default branch's pipeline, so a change to it applies after it merges.
   const pipeline = PIPELINE_FILES[i.forge ?? "github"];

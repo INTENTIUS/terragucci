@@ -67,16 +67,16 @@ An open change that applies from its head in the same waves and gates as a merge
 
 3. Open the change as usual and get its head approved on the forge by a reviewer other than its author. A push after the review needs a fresh approval.
 
-4. Comment `/terragucci apply`. The reply names any failed check from the [open-PR column](/terragucci/reference/pipeline/#ignored-comments).
+4. Comment `/terragucci apply`. The reply names every failed check from the [open-PR column](/terragucci/reference/pipeline/#ignored-comments), each with its reason.
 
    | Check (`apply.requires`) | Fails when | Fix |
    |---|---|---|
-   | `approved` | no reviewer other than the author approved the head, or a reviewer's last review asks for changes | get the head approved; a push needs a fresh approval |
+   | `approved` | no reviewer other than its authors approved the head, or a reviewer's last review asks for changes. The authors are whoever opened it and whoever wrote or committed one of its commits | get the head approved; a push needs a fresh approval |
    | `undiverged` | the head is behind the default branch | merge or rebase the default branch in, then get a new plan and approval |
    | `mergeable` | the forge says it does not merge: conflicts with the default branch, or on GitHub a branch protection rule blocks it | resolve the conflicts, or meet the rule |
-   | `checks` | a status or check on the head failed or has not passed yet | fix and push, or wait for it |
+   | `checks` | a status or check on the head failed, one still runs, or none has reported | fix and push, or wait for it |
 
-   [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, the comment also needs:
+   A check the forge has not settled, such as one still running, is read again up to five times, three seconds apart, before it fails. [`apply.requires`](/terragucci/reference/config/#apply-before-merge) picks which of the four the comment needs; all four by default. Whatever it lists, the comment also needs:
 
    - `terragucci/plan` passing on the head
    - the pipeline file left unchanged

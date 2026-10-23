@@ -269,12 +269,12 @@ apply:
 
 | `requires` entry | The open pull request needs |
 |---|---|
-| `approved` | an approval of its head by a reviewer who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)), and no reviewer whose last review asks for changes; on GitLab, an approval by a Developer or above after its latest push |
+| `approved` | an approval of its head by a reviewer who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)) and who neither opened it nor wrote or committed one of its commits, and no reviewer whose last review asks for changes; on GitLab, an approval by a Developer or above after its latest push |
 | `mergeable` | the forge to say it merges: no conflicts with the default branch, on GitHub no branch protection blocking it, on GitLab a `detailed_merge_status` of `mergeable` |
 | `undiverged` | its head to contain the default branch as it is now |
-| `checks` | every status and check on its head to have passed |
+| `checks` | every status and check on its head to have passed, and at least one to have reported |
 
-Leaving an entry out drops that check, and `requires: []` drops all four. These stay whatever `requires` lists:
+A check the forge has not settled, such as a status still running or the forge still working out whether it merges, is read again up to five times, three seconds apart, before it fails. Leaving an entry out drops that check, and `requires: []` drops all four. These stay whatever `requires` lists:
 
 | Always checked | The open pull request needs |
 |---|---|
