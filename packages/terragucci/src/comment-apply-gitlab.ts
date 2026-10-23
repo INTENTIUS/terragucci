@@ -8,7 +8,8 @@
  * 1. The comments job (comment-gitlab.ts), on the schedule, reads a
  *    Developer's `/terragucci apply [wave-<n>]`, `/terragucci lock` or
  *    `/terragucci unlock` note on an open merge request. For an apply it
- *    checks `apply.requires` first (openChecks) and refuses by name. Then it
+ *    checks `apply.requires` first (openChecks, through chant's requires
+ *    checks) and refuses by name. Then it
  *    starts a pipeline on the default branch (`POST /projects/:id/pipeline`)
  *    with the token in `apply.merge_token_env`, which may run pipelines
  *    there, and the variables TERRAGUCCI_MR, TERRAGUCCI_NOTE and
@@ -37,7 +38,9 @@ import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { reached, type ApplyCommentDecision, type Git } from "./comment-apply";
 import type { WavesAfter } from "./detect";
-import { APPLY_REQUIRES, ConfigError, type ApplyRequire } from "./config";
+import type { PrForge, PrRequireResult } from "@intentius/chant/pr-forge";
+import { unmetApplyRequires } from "./apply-requires";
+import { ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
@@ -48,8 +51,8 @@ const DEVELOPER = 30;
 
 /** The status the plan job posts on the head it planned. */
 const PLAN_CONTEXT = "terragucci/plan";
-/** The statuses that never hold back an apply: the apply's own. */
-const OWN_CONTEXTS = new Set(["terragucci/apply"]);
+/** The apply's own status, which never holds it back. */
+const APPLY_CONTEXT = "terragucci/apply";
 
 /** The files GitLab builds the default branch's pipeline from: a merge request that changes one applies after it merges. */
 export const PIPELINE_FILES_ON_GITLAB = [".gitlab-ci.yml", ".gitlab/terragucci.yml"];
@@ -58,14 +61,6 @@ export const PIPELINE_FILES_ON_GITLAB = [".gitlab-ci.yml", ".gitlab/terragucci.y
 export const MR_VAR = "TERRAGUCCI_MR";
 export const NOTE_VAR = "TERRAGUCCI_NOTE";
 export const HEAD_VAR = "TERRAGUCCI_HEAD";
-
-/** How many times a merge request GitLab has not finished checking is read again, and how long between reads. */
-const MERGEABLE_READS = 5;
-const MERGEABLE_WAIT_MS = 3000;
-/** detailed_merge_status (and merge_status) while GitLab works out whether a merge request can merge. */
-const CHECKING = new Set(["checking", "unchecked", "preparing", "approvals_syncing", "cannot_be_merged_recheck"]);
-/** Commit statuses still running. */
-const RUNNING = new Set(["created", "waiting_for_resource", "preparing", "pending", "running", "scheduled"]);
 
 const short = (sha: string): string => sha.slice(0, 8);
 
@@ -98,6 +93,8 @@ export interface OpenCheck {
   /** `apply.requires`. Default: every requirement. */
   requires?: readonly ApplyRequire[];
   wait?: (ms: number) => Promise<void>;
+  /** chant's client the requires checks ask. Default: poster's, with the job's TG_TOKEN. */
+  forge?: PrForge;
   /** The job's environment and fetch, for the users its tokens act as. */
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
@@ -109,37 +106,34 @@ export interface OpenCheck {
 /**
  * What an open merge request needs before it applies, read from GitLab's
  * API alone: the comments job runs it before it starts the apply pipeline,
- * and the pipeline's job runs it again. Each requirement `requires` lists:
- * `approved`, an approval by a member other than the author with Developer
- * or more, given after the merge request's latest push, and nobody's latest
- * word a request for changes; `checks`, every commit status on the head
- * passed; `mergeable`, GitLab says it can merge; `undiverged`, the head
+ * and the pipeline's job runs it again. Each requirement `requires` lists is
+ * asked through chant's requires checks (./apply-requires.ts): `approved`,
+ * an approval by a member other than its authors, given after the merge
+ * request's latest push, and nobody's latest word a request for changes,
+ * from someone with Developer or more; `checks`, every commit status on the
+ * head passed; `mergeable`, GitLab says it can merge; `undiverged`, the head
  * contains the default branch. Always: `terragucci/plan` passed on the head,
  * and the merge request changes neither pipeline file.
  */
 export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   const { api, id, base } = c;
-  const requires = new Set<ApplyRequire>(c.requires ?? APPLY_REQUIRES);
-  const wait = c.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const iid: number = c.mr.iid;
   const sha: string = c.mr.sha;
   if (typeof sha !== "string" || !SHA.test(sha)) return { fail: `!${iid}'s head is not a commit` };
 
-  if (requires.has("approved")) {
-    let a: Awaited<ReturnType<typeof gitlabApprovals>>;
-    try {
-      a = await gitlabApprovals(reviewCalls(api, id), c.mr);
-    } catch (e) {
-      return { fail: `could not read the approvals of !${iid} (${(e as Error).message})` };
-    }
-    if (a.changes.length > 0) return { refuse: `!${iid} is not approved: ${a.changes.join(", ")} requested changes, so nothing is applied` };
+  // approved also counts only Developer or more, and never someone who had a hand in the change (./involved.ts).
+  const counted = async (): Promise<PrRequireResult> => {
+    const a = await gitlabApprovals(reviewCalls(api, id), c.mr);
     // GitLab records a push as a new version a moment after it; until then an approval cannot be placed after it.
-    if (a.pr.head !== sha) return { refuse: `GitLab has not recorded the latest push to !${iid}, ${short(sha)}, as a version yet, so its approvals cannot be read; comment again in a minute` };
-    // An approval counts only from someone who had no hand in the change (./involved.ts).
+    if (a.pr.head !== sha) return { passed: false, reason: `GitLab has not recorded the latest push, ${short(sha)}, as a version yet, so its approvals cannot be read; comment again in a minute` };
     const involved = await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr: a.pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) });
     const { by, excluded } = countable(a.by, involved);
-    if (by.length === 0) return { refuse: `!${iid} is not approved: no member other than its author, with Developer or more, approved it after its latest push, ${short(sha)}${excluded.map((e) => `; ${notCounted(e)}`).join("")}, so nothing is applied` };
-  }
+    if (by.length === 0) return { passed: false, reason: `no member other than its author, with Developer or more, approved it after its latest push, ${short(sha)}${excluded.map((e) => `; ${notCounted(e)}`).join("")}` };
+    return { passed: true, reason: `approved after ${short(sha)} by ${by.join(", ")}` };
+  };
+  const forge = c.forge ?? poster("gitlab", c.env ?? process.env, c.fetch);
+  const unmet = await unmetApplyRequires(forge, iid, sha, { counted, ignore: [APPLY_CONTEXT], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
+  if (unmet) return { refuse: `!${iid} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes` };
 
   let statuses: any;
   try {
@@ -147,50 +141,12 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   } catch (e) {
     return { fail: `could not read the statuses of ${short(sha)} (${(e as Error).message})` };
   }
-  const byName = new Map<string, any>();
+  let plan: any;
   for (const st of Array.isArray(statuses) ? statuses : []) {
-    if (typeof st?.name !== "string" || OWN_CONTEXTS.has(st.name)) continue;
-    const had = byName.get(st.name);
-    if (!had || Number(st.id) > Number(had.id)) byName.set(st.name, st);
+    if (st?.name === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
   }
-  if (requires.has("checks")) {
-    const failing: string[] = [];
-    const waiting: string[] = [];
-    for (const [name, st] of byName) {
-      if ((st.status === "failed" || st.status === "canceled") && st.allow_failure !== true) failing.push(name);
-      else if (RUNNING.has(st.status)) waiting.push(name);
-    }
-    if (failing.length > 0) return { refuse: `the checks of !${iid} are not green: ${failing.sort().join(", ")} failed on ${short(sha)}, so nothing is applied` };
-    if (waiting.length > 0) return { refuse: `the checks of !${iid} are not green yet: ${waiting.sort().join(", ")} still running on ${short(sha)}; comment again once they pass` };
-  }
-  if (byName.get(PLAN_CONTEXT)?.status !== "success") {
+  if (plan?.status !== "success") {
     return { refuse: `the plan of !${iid} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again` };
-  }
-
-  if (requires.has("mergeable") || requires.has("undiverged")) {
-    let mr: any = c.mr;
-    const status = (m: any): string => String(m?.detailed_merge_status ?? (m?.merge_status === "can_be_merged" ? "mergeable" : m?.merge_status ?? ""));
-    for (let read = 1; ; read++) {
-      try {
-        mr = await api("GET", `/projects/${id}/merge_requests/${iid}?include_diverged_commits_count=true`);
-      } catch (e) {
-        return { fail: `could not read !${iid} (${(e as Error).message})` };
-      }
-      if (mr?.sha !== sha) return { refuse: `!${iid} moved while this note was read (its head is now ${short(String(mr?.sha))}); comment again once its plan passes` };
-      if (!CHECKING.has(status(mr)) || read >= MERGEABLE_READS) break;
-      await wait(MERGEABLE_WAIT_MS);
-    }
-    if (requires.has("mergeable")) {
-      const st = status(mr);
-      if (st === "conflict" || mr?.has_conflicts === true) return { refuse: `!${iid} is not mergeable: GitLab reports conflicts with ${base}, so nothing is applied. Resolve them, and comment again once its plan passes` };
-      if (CHECKING.has(st)) return { refuse: `GitLab has not worked out whether !${iid} can merge, so nothing is applied; comment again in a minute` };
-      if (st !== "mergeable") return { refuse: `!${iid} is not mergeable: GitLab says ${st || "nothing"} about it, so nothing is applied` };
-    }
-    if (requires.has("undiverged")) {
-      const behind = mr?.diverged_commits_count;
-      if (typeof behind !== "number") return { fail: `GitLab did not say how far !${iid} is behind ${base}` };
-      if (behind > 0) return { refuse: `!${iid} is not up to date with ${base}: its head ${short(sha)} is ${behind} commit${behind === 1 ? "" : "s"} behind it. Merge ${base} into it or rebase it, and comment again once its plan passes` };
-    }
   }
 
   let compare: any;

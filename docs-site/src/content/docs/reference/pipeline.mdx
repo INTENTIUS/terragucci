@@ -78,8 +78,8 @@ Every comment command is checked before any credential is used. A failed check s
 | The merge commit is still on the default branch | | yes | | | | |
 | At most 50 commits reached the default branch after the merge commit | | yes | | | | |
 | No later commit on the default branch has an apply of its own (the reply links it) | | yes | | | | `apply` |
-| `approved`: a reviewer other than the author approved the head, and no reviewer's last review asks for changes | | | `apply.requires` | | | open `apply`: after the latest push |
-| `checks`: no status or check on the head failed or is running | | | `apply.requires` | | | open `apply` |
+| `approved`: a reviewer other than its authors approved the head, and no reviewer's last review asks for changes | | | `apply.requires` | | | open `apply`: after the latest push |
+| `checks`: every status and check on the head passed, and at least one reported | | | `apply.requires` | | | open `apply` |
 | `terragucci/plan` passed on the head | | | yes | | | open `apply` |
 | `mergeable`: the forge reports no conflicts, and on GitHub no branch protection blocks the merge | | | `apply.requires` | | | open `apply`: `detailed_merge_status` is `mergeable` |
 | The head did not move while the comment was read | | | yes | yes | | open `apply`, `lock`: `mr-apply` refuses a `TERRAGUCCI_HEAD` that is not the head |
