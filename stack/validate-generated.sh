@@ -949,9 +949,9 @@ run_check_token() {
   printf '%s\n' 'forge: gitlab' 'synth: '"'"'[ "$CI_JOB_NAME" != check ] || [ -z "${GITLAB_TOKEN:-}${TG_TOKEN:-}${CI_JOB_TOKEN:-}" ] || { echo "token-probe: the check job runs this with a forge token"; exit 1; }'"'" > "$dir/terragucci.yml"
   (cd "$dir" && git init -q -b main && "$TERRAGUCCI" init --forge gitlab --binary tofu >/dev/null) || fail "init failed with the synth probe"
   f="$dir/$PIPELINE_FILE"
-  grep -q 'unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN CI_JOB_TOKEN' "$f" || fail "the check job does not drop the forge token variables"
+  grep -q 'unset TG_TOKEN TG_MERGE_TOKEN CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN' "$f" || fail "the check job does not drop the forge token variables"
   if [ -n "$BREAK" ]; then
-    grep -v 'unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN CI_JOB_TOKEN' "$f" > "$f.new" && mv "$f.new" "$f"
+    grep -v 'unset TG_TOKEN TG_MERGE_TOKEN CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN' "$f" > "$f.new" && mv "$f.new" "$f"
   fi
   sha="$(forge_push "$dir" "$repo" validate/check-token "$(msg)")"
   forge_run "$repo" validate/check-token "$sha"

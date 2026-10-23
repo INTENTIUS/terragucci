@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { createServer, type IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
@@ -1435,7 +1436,7 @@ describe("the plan stage", () => {
     expect(doc.plan.script.join("\n")).toContain('tg note "$note"');
     // The check holds no token of its own and drops the ones GitLab hands it; the fmt job pushes the formatting.
     expect(doc.check.variables.TG_TOKEN).toBeUndefined();
-    expect(doc.check.script.join("\n")).toMatch(/^unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN CI_JOB_TOKEN\n/);
+    expect(doc.check.script.join("\n").split("\n")[0]).toBe(`unset ${["TG_TOKEN", "TG_MERGE_TOKEN", ...FORGE_TOKEN_VARS].join(" ")}`);
     expect(doc.check.after_script).toBeUndefined();
     expect(doc.fmt).toMatchObject({ stage: "check", needs: ["check"], variables: { TG_TOKEN: "$GITLAB_TOKEN" } });
     expect(doc.fmt.rules[0].when).toBe("on_failure");
@@ -2855,7 +2856,7 @@ describe("the check step's restart line, for every binary", () => {
   it.each(cases)("%s (terragrunt: %s): run as the runner runs it, sh -e <file>, the shell starts again without the tokens", (binary, tg) => {
     const dir = mkdtempSync(join(tmpdir(), "restart-"));
     const script = join(dir, "step.sh");
-    writeFileSync(script, `${checkRun("forgejo", binary, tg).split("\n")[0]}\n${after} "\${TG_NO_FORGE_TOKEN:-}"\n`);
+    writeFileSync(script, `${checkRun("forgejo", binary, tg).split("\n")[0]}\n${after} "\${CHANT_NO_FORGE_TOKEN:-}"\n`);
     const r = spawnSync("sh", ["-e", script], { env: { PATH: process.env.PATH, ...tokens }, encoding: "utf-8" });
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout.trim()).toBe("reached none none none none 1");

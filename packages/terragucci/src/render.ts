@@ -187,6 +187,7 @@ import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
 import { groupsArg, type ApplyGroup } from "./groups";
 import { CHECK_DIR } from "./check";
+import { dropForgeTokens as chantDropForgeTokens, FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
 import { checkoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./handover";
 import { COSIGN_VERSION, INFRACOST_VERSION, type Tool } from "./install";
 import {
@@ -1785,9 +1786,6 @@ export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oi
   return planFilesScript(binary, layers, "gitlab", oidc, report, { tokenCheck: gitlabTokenCheck(tokenEnv) });
 }
 
-/** The variables a runner or a job may hold a forge token in. A step that runs the change's code starts again without them. */
-export const STEP_TOKEN_VARS = ["TG_TOKEN", "TG_MERGE_TOKEN", "GITHUB_TOKEN", "GH_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "ACTIONS_RUNTIME_TOKEN"] as const;
-
 /**
  * The variables a GitHub or Forgejo step asks for an OIDC token with. A
  * re-plan's plan step starts again without them too: any token they serve
@@ -1800,22 +1798,23 @@ export const OIDC_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TO
 export const TRADED_FILE = '"${RUNNER_TEMP:-/tmp}/terragucci-traded.env"';
 
 /**
- * The first line of a GitHub or Forgejo step that runs the change's code. The
+ * The first line of a GitHub or Forgejo step that runs the change's code:
+ * chant's dropForgeTokens, with TG_TOKEN and TG_MERGE_TOKEN dropped too. The
  * step's shell starts again, with `exec`, without any forge token variable:
  * Forgejo's runner gives every step the run's token (as GITHUB_TOKEN,
  * GITEA_TOKEN and ACTIONS_RUNTIME_TOKEN) whatever `permissions:` says, and
  * `unset` alone would leave it in the shell's own process environment, which
- * the shell's children can read. The OIDC request variables stay: the step
- * asks for its cloud role with them.
+ * the shell's children can read. The OIDC request variables stay unless
+ * `oidcRequest`: the step asks for its cloud role with them.
  *
  * The restart needs the step's script file (a runner runs `<shell> <file>`,
  * so `$0` is its path, never the shell's own) and `env` and the shell on the
  * PATH. When any of them is missing (the script given to `sh -c`, or no PATH), the shell does not
  * restart and drops the variables with `unset`, so its children still start
- * without them, and the script runs on.
+ * without them, and the script runs on. A restarted step has CHANT_NO_FORGE_TOKEN set.
  */
 export function dropForgeTokens(shell: "bash" | "sh" = "bash", oidcRequest = false): string {
-  return restartWithout(shell, oidcRequest ? [...STEP_TOKEN_VARS, ...OIDC_REQUEST_VARS] : STEP_TOKEN_VARS, "TG_NO_FORGE_TOKEN");
+  return chantDropForgeTokens(shell, ["TG_TOKEN", "TG_MERGE_TOKEN", ...(oidcRequest ? OIDC_REQUEST_VARS : [])]);
 }
 
 /** The marker of a step stageTokens restarted: its tokens are fetched, and the token-request variables gone. */
@@ -2392,7 +2391,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const glFmt = fmtOn && !protectedToken;
     // The check runs the branch's code (synth, validate's providers, the policy engine). Its shell drops every forge
     // token variable GitLab hands the job before it runs anything, so none of that code inherits one.
-    const glCheckBody = [`unset ${[...new Set(["TG_TOKEN", "TG_MERGE_TOKEN", "GITLAB_TOKEN", "CI_JOB_TOKEN", ...(tokenEnv ? [tokenEnv] : [])])].join(" ")}`, checkBody].join("\n");
+    const glCheckBody = [`unset ${[...new Set(["TG_TOKEN", "TG_MERGE_TOKEN", ...FORGE_TOKEN_VARS, ...(tokenEnv ? [tokenEnv] : [])])].join(" ")}`, checkBody].join("\n");
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,

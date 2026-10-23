@@ -23,26 +23,17 @@
  *
  * The checkout is a script (checkoutScript), with the job's token for its
  * fetches alone.
+ *
+ * chant's generated plan job keeps the same order (@intentius/chant/ci-handover),
+ * and this file takes from it what terragucci's jobs share with it: the output
+ * limits and names, the job outputs, and the note job's take-over. What stays
+ * here is terragucci's own: the files a cut report keeps, the re-plan's sweep
+ * before the handover, and a checkout of a ref the step names (`TG_REF`).
  */
+import { HANDOVER_LIMITS, handoverKeys, handoverOutputs, takeOverScript as chantTakeOverScript, UNPACK_JS, type HandoverForge } from "@intentius/chant/ci-handover";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 
-/** The forges whose jobs hand their report on. */
-export type HandoverForge = "github" | "forgejo";
-
-/**
- * How many outputs a job hands its report on in, and the most characters
- * each holds. Forgejo keeps each output's value to 1 MiB. GitHub keeps a
- * job's outputs to 1 MB together, sized as UTF-16 (two bytes a base64
- * character), so its one output of 450,000 leaves room for the re-plan's
- * other outputs.
- */
-export const HANDOVER_LIMITS: Record<HandoverForge, { chunk: number; parts: number }> = {
-  forgejo: { chunk: 1_000_000, parts: 4 },
-  github: { chunk: 450_000, parts: 1 },
-};
-
-/** The outputs' names on a forge: report_0, report_1, ... */
-export const handoverKeys = (forge: HandoverForge): string[] => Array.from({ length: HANDOVER_LIMITS[forge].parts }, (_, i) => `report_${i}`);
+export { HANDOVER_LIMITS, handoverKeys, handoverOutputs, UNPACK_JS, type HandoverForge };
 
 /** The files a note job reads, which a report too large to hand on whole is cut to. */
 function noteFiles(): string[] {
@@ -75,27 +66,6 @@ export function packJs(forge: HandoverForge): string {
 }
 
 /**
- * Writes back, under the directory argv 1 names, the files a job handed on:
- * stdin holds its outputs, one JSON string a line. A path is kept only when
- * it is plain segments (no empty one, no `.` or `..`, no backslash or control
- * character), so nothing lands outside the directory.
- */
-export const UNPACK_JS = [
-  'const fs=require("fs"),p=require("path"),z=require("zlib");',
-  "const dir=process.argv[1];",
-  'let b="";',
-  'for(const l of fs.readFileSync(0,"utf8").split("\\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}',
-  'if(!b){console.log("terragucci: the job handed on no report");process.exit(0)}',
-  'let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("terragucci: the report the job handed on does not read: "+e.message);process.exit(0)}',
-  'if(!files||typeof files!=="object"||Array.isArray(files)){console.log("terragucci: the report the job handed on is not a set of files");process.exit(0)}',
-  "let n=0;",
-  'for(const [k,v] of Object.entries(files)){const parts=k.split("/");',
-  'if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\\\\x00-\\x1f]/.test(x))){console.log("terragucci: left out "+JSON.stringify(k));continue}',
-  'try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("terragucci: could not write "+JSON.stringify(k)+": "+e.message)}}',
-  'console.log("terragucci: took "+n+" report files from the job")',
-].join("");
-
-/**
  * The lines of a step that runs the change's code, after its restarts: when
  * the step ends, however it ends, its report directory goes into the step's
  * outputs. With `sweep` (a re-plan's LEFTOVER_SWEEP) the processes the step
@@ -108,23 +78,13 @@ export function handoverTrap(dir: string, forge: HandoverForge, sweep = false): 
   ];
 }
 
-/** A job's outputs that carry the report its step `step` handed on. */
-export function handoverOutputs(step: string, forge: HandoverForge): Record<string, string> {
-  return Object.fromEntries(handoverKeys(forge).map((k) => [k, `\${{ steps.${step}.outputs.${k} }}`]));
-}
-
 /**
  * The script of the step that takes the report job `job` handed on into
- * `dir`. Each output comes in as toJSON's string, one line of a quoted heredoc
- * whose end no JSON string can be, so the change's outputs stay data.
+ * `dir`: chant's takeOverScript, whose log lines name the job it read.
  */
 export function takeOverScript(job: string, dir: string, forge: HandoverForge): string {
-  return [
-    "set -u",
-    `node -e '${UNPACK_JS}' ${dir} <<'END_OF_REPORT'`,
-    ...handoverKeys(forge).map((k) => `\${{ toJSON(needs.${job}.outputs.${k}) }}`),
-    "END_OF_REPORT",
-  ].join("\n");
+  const script = chantTakeOverScript(job, dir, forge);
+  return job === "plan" ? script : script.replaceAll("the plan job", `the ${job} job`);
 }
 
 /**
