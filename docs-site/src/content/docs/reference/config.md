@@ -350,11 +350,11 @@ Each open pull request gets its own copy of the roots `roots` matches and applie
 
 | Event | What happens |
 |---|---|
-| a pull request opens, reopens or gets a push | its copy plans and waits at gate `tf-ephemeral pr-<n>` as `gate` says, then applies; the copy expires `ttl` after the last apply that changed it |
+| a pull request opens, reopens or gets a push | its copy plans; a plan that changes something waits at gate `pr-env` of op `pr-<n>` for an approval, whatever `gate` says, then applies; the copy expires `ttl` after its last apply |
 | the pull request closes or merges | its copy is destroyed: a `plan -destroy` of each root, applied in reverse order, from the commit the copy applied; on GitLab, which starts no pipeline when a merge request closes, at the next sweep |
 | `ttl` passes | the sweep destroys the copy the same way, whether the pull request is open or not |
 
-Every apply and destroy is a line in `_gates/tf-ephemeral/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which the [audit trail](/terragucci/reference/audit-trail/) lists as `ephemeral-apply` and `ephemeral-destroy`. The [estate page](/terragucci/guides/see-every-project/) lists each live copy and its expiry when `reports` is set.
+Every apply and destroy is a line in `_pr-envs/records.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which the [audit trail](/terragucci/reference/audit-trail/) lists as `ephemeral-apply` and `ephemeral-destroy`. The [estate page](/terragucci/guides/see-every-project/) lists each live copy and its expiry when `reports` is set.
 
 terragucci runs no CLI workspaces, so a copy uses a state key suffix instead. A suffixed key is a separate state, and its lock file and the bucket listing show it by name. A copy works with an `s3`, `azurerm` or `gcs` backend, and a `local` one; a root on another backend or in HCP Terraform (a `cloud` block) fails its job with a config error naming it.
 

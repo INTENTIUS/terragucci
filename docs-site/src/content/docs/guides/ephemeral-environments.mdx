@@ -17,7 +17,7 @@ With `ephemeral` set, each open pull request gets an environment of its own to t
 
 | When | What terragucci does |
 |---|---|
-| the pull request opens, or gets a push | plans the environment, waits at the gate as `gate` says, and applies it |
+| the pull request opens, or gets a push | plans the environment, waits for an approval of a plan that changes something, and applies it |
 | the pull request closes or merges | plans the environment's destroy and applies it |
 | its TTL passes first | the sweep destroys it the same way |
 
@@ -40,27 +40,29 @@ The state key is the root's own with `-pr-<n>` added: `envs/preview/app/terrafor
 
 3. Run `npx terragucci init` and commit what it writes: the `ephemeral` job, and on GitHub and Forgejo the sweep workflow `terragucci-ephemeral.yml`.
 
-4. Open a pull request. The `ephemeral` job runs from the default branch's workflow. It checks out the pull request's head apart and applies the environment there:
+4. Open a pull request. The `ephemeral` job runs from the default branch's workflow. It checks out the pull request's head apart, plans the environment there, and waits for an approval (see [The gate](#the-gate)):
 
    ```text
    terragucci ephemeral: pull request 12: its copy of envs/preview/app under the state keys suffixed -pr-12, from 3f9c21aa
    terragucci ephemeral: envs/preview/app: 4 to change at s3://acme-state/envs/preview/app/terraform-pr-12.tfstate
+   terragucci ephemeral: pull request 12: its copy waits for an approval of digest jcs1-sha256:6d2b.... Read its plans above, then approve them with:
+   terragucci ephemeral:   terragucci approve ephemeral 12 --plan jcs1-sha256:6d2b...
+   ```
+
+   Once the plans are approved, the job's next run applies them:
+
+   ```text
    terragucci ephemeral: applied envs/preview/app at s3://acme-state/envs/preview/app/terraform-pr-12.tfstate
    terragucci ephemeral: pull request 12: its copy applied; it expires 2026-10-10T16:02:11.000Z, and closing the pull request destroys it before then
    ```
 
-5. Close or merge it. The destroy plans and applies, and `_gates/tf-ephemeral/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) records it with the reason `closed`.
+5. Close or merge it. The destroy plans and applies, and `_pr-envs/records.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) records it with the reason `closed`.
 
 </Steps>
 
 ## The gate
 
-The environment waits at gate `pr-<n>` of op `tf-ephemeral` under the `gate` your waves use:
-
-| `gate` | Waits on |
-|---|---|
-| `always` | any change |
-| `on-destructive` | a change that destroys or replaces something |
+[chant](/terragucci/concepts/glossary/#chant) runs the environment as a pull request environment. A plan that changes something waits at gate `pr-env` of op `pr-<n>` until a person approves its digest. The `gate` your waves use does not apply here, so `gate: on-destructive` or `gate: never` still holds a copy that only creates resources. A plan with nothing to change applies without an approval and restarts the TTL.
 
 The job prints the command that approves it:
 
@@ -68,13 +70,17 @@ The job prints the command that approves it:
 terragucci approve ephemeral 12 --plan jcs1-sha256:6d2b...
 ```
 
-The next push or a re-run of the job then applies it. Under `approval: sealed` only a sealed approval counts.
+It records the approval at chant's gate `pr-env` of op `pr-12`, in `_gates/pr-12.jsonl` on `chant/lifecycle`. The next push or a re-run of the job then applies it. An approval binds that digest only: a push that plans differently waits for a new one. Under `approval: sealed` only a sealed approval counts, and `terragucci approve` signs it.
 
-No gate holds a destroy. Closing the pull request is the decision, and so is the TTL the default branch set. The destroy still plans first, and its record carries that plan's digest.
+No gate holds a destroy. Closing the pull request is the decision, and so is the TTL the default branch set. Before anything is destroyed, the teardown checks that each root's recorded state key carries `-pr-<n>`, so a root's own state is never destroyed.
 
 ## The TTL
 
-An environment expires `ttl` after the last apply that changed it, so a pull request that keeps getting pushes keeps it. Every `sweep` minutes, a run on the default branch destroys each environment whose TTL passed, and each one whose pull request the forge reports closed. A failed destroy leaves the environment live and flagged on the estate page; the next sweep tries again.
+An environment expires `ttl` after its last apply, so a pull request that keeps getting pushes keeps it. Every `sweep` minutes, a run on the default branch destroys each environment whose TTL passed, and each one whose pull request the forge reports closed. A failed destroy is tried once more in the same run. If it still fails, the environment stays live and flagged on the estate page, and the next sweep tries again.
+
+## The records
+
+Every apply and destroy is a line in `_pr-envs/records.jsonl` on `chant/lifecycle`, and the [audit trail](/terragucci/reference/audit-trail/) lists them as `ephemeral-apply` and `ephemeral-destroy`. Environments applied by terragucci 0.4.42 or earlier are recorded in `_gates/tf-ephemeral/done.jsonl`. terragucci still reads that file, so those environments are destroyed on close or at expiry like the rest. Nothing has to be moved.
 
 ## Per forge
 
