@@ -1,14 +1,29 @@
 ---
-title: Changes in 0.4.40
-description: "terragucci 0.4.40, released 2026-10-20."
+title: Changes in 0.4.41
+description: "terragucci 0.4.41, released 2026-10-22."
 ---
 
-Release `0.4.40` is on npm as `@intentius/terragucci@0.4.40`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.40) lists every change.
+Release `0.4.41` is on npm as `@intentius/terragucci@0.4.41`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.41) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.40 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.41 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.41
+
+terragucci now runs on chant 0.124.42 and uses chant's own versions of the CI features it used to carry (INTENTIUS/chant#4287). Most config keys read as before. These are the changes you can see:
+
+- `steps:` is gone. Move each one to `ci.hooks` in [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson); `config check` refuses `steps:` and says where each one went (#1220). chant's stage-hook runner runs them, so when roots plan side by side their hooks now take turns (#1225). Each hook's environment gains the `CHANT_WAVE*` variables and `CHANT_HOLD`.
+- `approval_rules` keeps its keys and is judged by chant's `approvals.quorum` rule (#1217). A reviewer is matched by their full forge principal now. A grant to a bare login no longer gives that reviewer a role, and neither does a `gitea:` grant or a `github:` grant on another host. The approvals guide covers the migration under "A reviewer's roles".
+- `apply.requires` runs chant's four requires checks (#1226). A refusal lists every check that failed. `approved` also leaves out anyone who wrote a commit in the change. `checks` needs at least one status to have reported. `undiverged` is read from the forge. A forge API error gets a refusal reply instead of failing the job.
+- `apply.branches` uses chant's branch routing (#1212). A root that matches two branches is refused by `config check` and by the apply job. Its globs follow picomatch, so `envs/prod/**` also matches `envs/prod` and `*` skips a name that starts with a dot.
+- Root locks now come from chant's target locks (#1216). The overdue drift check uses chant's scheduled-Op verdict (#1221), and a failed root blocks its dependents through chant's wave-blocked rule (#1222). Their config is unchanged.
+- Under `opa`, the policy engine counts packages one level under the namespace, so a deny in `main.<child>` now fails the root (#1218).
+- The re-plan trades its OIDC token with chant's trade before it checks out the head (#1213). `terragucci query` uses chant query's statement check (#1214). The review command and risk line come from chant's review agent (#1224).
+- A step that runs the change's code also drops `CHANT_*_TOKEN`, `GITLAB_TOKEN` and `CI_JOB_TOKEN`. A restarted step carries `CHANT_NO_FORGE_TOKEN` in place of `TG_NO_FORGE_TOKEN` (#1219). Run `init` to pick up the new pipeline.
+- Terragrunt 1.2.0 is in the image. Dependency outputs are read through the binary, and expanded stack `unit` blocks are refused (#1209). `oci://` unit sources are pinned and checked, and the azurerm backend bootstrap works (#1211).
+- `publish` pushes an OCI module as one `archive/zip` layer and republishes versions that were pushed as a tar (#1210).
 
 ## In 0.4.40
 
