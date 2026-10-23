@@ -165,16 +165,21 @@ describe("a pull request's copy", () => {
     if (!line) throw new Error(`no approve command in:\n${s.out.join("\n")}`);
     return line.trim().split(" --plan ")[1]!.split(" ")[0]!;
   };
+  /** A checkout of origin's chant/lifecycle, or of a new one when origin has none yet. */
+  const lifecycleClone = (origin: string): string => {
+    const clone = tmp("tg-eph-lifecycle-");
+    git(clone, "init", "-q");
+    git(clone, "remote", "add", "origin", origin);
+    if (git(origin, "branch", "--list", "chant/lifecycle").trim()) {
+      git(clone, "fetch", "-q", "origin", "chant/lifecycle");
+      git(clone, "checkout", "-q", "-b", "chant/lifecycle", "FETCH_HEAD");
+    } else git(clone, "checkout", "-q", "--orphan", "chant/lifecycle");
+    return clone;
+  };
   /** An approval of `digest` at the copy's gate, as chant approve writes it. */
   const approve = (s: ReturnType<typeof setup>, pr: number, digest: string, by = "alice"): void => {
-    const clone = join(tmp("tg-eph-approve-"), "l");
-    git(tmp(), "clone", "-q", s.origin, clone);
     // The first wait writes nothing to chant/lifecycle, so the approval may be its first commit.
-    if (git(s.origin, "branch", "--list", "chant/lifecycle").trim()) git(clone, "checkout", "-q", "chant/lifecycle");
-    else {
-      git(clone, "checkout", "-q", "--orphan", "chant/lifecycle");
-      git(clone, "rm", "-rfq", ".");
-    }
+    const clone = lifecycleClone(s.origin);
     const file = join(clone, ephemeralLedger(pr));
     const was = existsSync(file) ? readFileSync(file, "utf-8") : "";
     write(clone, { [ephemeralLedger(pr)]: `${was}${JSON.stringify({ version: 1, kind: "resolution", op: `pr-${pr}`, gate: "pr-env", resolvedBy: by, timestamp: new Date().toISOString(), planDigest: digest })}\n` });
@@ -249,10 +254,7 @@ describe("a pull request's copy", () => {
   it("destroys a copy terragucci applied before chant ran the copies, from the records it kept then", async () => {
     const s = setup('gate: never\nephemeral:\n  roots: ["preview/app"]\n');
     const legacy = { version: 1, kind: "ephemeral-apply", op: "tf-ephemeral", gate: "pr-7", pr: 7, suffix: "pr-7", roots: [{ root: "preview/app", location: "s3://state/x/preview/app-pr-7.tfstate", result: "applied" }], planDigest: "d", by: "dev", timestamp: T(0), result: "applied", commit: s.head, expiresAt: T(60) };
-    const clone = join(tmp("tg-eph-legacy-"), "l");
-    git(tmp(), "clone", "-q", s.origin, clone);
-    git(clone, "checkout", "-q", "--orphan", "chant/lifecycle");
-    git(clone, "rm", "-rfq", ".");
+    const clone = lifecycleClone(s.origin);
     write(clone, { [LEGACY_EPHEMERAL_DONE]: `${JSON.stringify(legacy)}\n` });
     git(clone, "add", "-A");
     git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "legacy");
