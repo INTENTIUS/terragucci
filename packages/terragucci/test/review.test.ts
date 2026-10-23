@@ -84,7 +84,8 @@ describe("reviewWave", () => {
 
   it("an approval of the head by a writer other than the author, with the reviewed digest planned now, approves the wave", async () => {
     const { fetch } = forge(base([approve("alice"), approve("author")], [note("jcs1-sha256:aa")]));
-    expect(await reviewWave({ env, fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toEqual({ kind: "approved", pr: 7, head: HEAD, by: ["alice"] });
+    // chant names the author's approval among those left out.
+    expect(await reviewWave({ env, fetch, forge: "github", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toEqual({ kind: "approved", pr: 7, head: HEAD, by: ["alice"], excluded: [{ login: "author", reason: "author is one of its authors" }] });
   });
 
   it("plans that moved since the review are the changed-wave refusal", async () => {
@@ -181,6 +182,8 @@ describe("pr-review on GitLab", () => {
   const routes = (notes: unknown[]) => ({
     "GET user": { id: 900, username: "project_9_bot" },
     [`GET projects/9/repository/commits/${MERGE}/merge_requests`]: [mr],
+    "GET projects/9/merge_requests/3": mr,
+    "GET projects/9/merge_requests/3/commits": [],
     "GET projects/9/merge_requests/3/versions": [{ id: 2, head_commit_sha: HEAD, created_at: "2026-10-01T10:00:00Z" }, { id: 1, head_commit_sha: "c".repeat(40), created_at: "2026-10-01T09:00:00Z" }],
     "GET projects/9/merge_requests/3/notes": [{ system: false, body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: true }] }) }, ...notes],
     "GET projects/9/members/all/1": { access_level: 30 },
@@ -191,7 +194,18 @@ describe("pr-review on GitLab", () => {
 
   it("an approval after the latest push by a developer other than the author approves the wave", async () => {
     const { fetch } = forge(routes([system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z"), system("author", 3, "approved this merge request", "2026-10-01T11:00:00Z")]));
-    expect(await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toEqual({ kind: "approved", pr: 3, head: HEAD, by: ["alice"] });
+    expect(await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toEqual({ kind: "approved", pr: 3, head: HEAD, by: ["alice"], excluded: [{ login: "author", reason: "author is one of its authors" }] });
+  });
+
+  it("waits while GitLab's newest diff version is of another commit than the head", async () => {
+    const { fetch } = forge({ ...routes([system("alice", 1, "approved this merge request", "2026-10-01T11:00:00Z")]), "GET projects/9/merge_requests/3/versions": [{ id: 1, head_commit_sha: "c".repeat(40), created_at: "2026-10-01T09:00:00Z" }] });
+    expect(await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa" })).toMatchObject({ kind: "none", why: expect.stringMatching(/newest diff version is of cccccccc, not aaaaaaaa/) });
+  });
+
+  it("names a developer with a hand in the change among those left out", async () => {
+    const involved = { people: [{ who: "carol", why: "carol asked for abc1234" }], notes: [] };
+    const { fetch } = forge({ ...routes([system("carol", 3, "approved this merge request", "2026-10-01T11:00:00Z")]) });
+    expect(await reviewWave({ env: glEnv, fetch, forge: "gitlab", sha: MERGE, wave: 1, digest: "jcs1-sha256:aa", involved })).toMatchObject({ kind: "none", why: expect.stringMatching(/carol asked for abc1234/), excluded: [{ login: "carol", reason: "carol asked for abc1234" }] });
   });
 
   it("an approval before the latest push, one withdrawn, or one by a reporter counts for nothing", async () => {

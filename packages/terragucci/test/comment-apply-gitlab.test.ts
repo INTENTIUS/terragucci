@@ -306,6 +306,6 @@ describe("the merge after the last wave (GitLab)", () => {
   it("refuses a head that moved, and a merge request with no approval after its latest push", async () => {
     const marked = { id: 300, body: appliedMarker(HEAD, "88"), author: { id: BOT } };
     await expect(merging({ ...ready("d".repeat(40), [marked]) }, HEAD).run()).rejects.toThrow(/moved after it applied/);
-    await expect(merging({ ...ready(HEAD, [marked]), notes: { 3: [marked] } }, HEAD).run()).rejects.toThrow(/no member other than its author approved it/);
+    await expect(merging({ ...ready(HEAD, [marked]), notes: { 3: [marked] } }, HEAD).run()).rejects.toThrow(/!3 is not approved: no member other than its authors approved it after its latest push/);
   });
 });

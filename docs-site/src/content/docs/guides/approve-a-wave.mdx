@@ -136,7 +136,7 @@ Up to 0.4.40 a reviewer also matched a grant to their bare login, a `gitea:` gra
 
 ## Approve by review (`approval: pr-review`)
 
-Works on every forge. GitLab's merge request approvals name no commit, so there an approval counts only after the merge request's latest push.
+Works on every forge. GitLab's merge request approvals name no commit, so there an approval counts only after the merge request's latest push. Until GitLab has recorded that push as a diff version, the wave waits.
 
 <Steps>
 
@@ -174,7 +174,7 @@ Works on every forge. GitLab's merge request approvals name no commit, so there 
    | another digest (the plans moved after the review) | applies nothing, exits 4 and prints the `terragucci approve` command for the new digest |
    | no row for the wave in the note, no approving review, or a direct push | waits for a `terragucci approve`, as under `ledger` |
 
-   On GitHub and Forgejo, reviews count as `approved` counts them under [apply before merge](/terragucci/guides/apply-before-merge/). When none counts, the wave's log says why and names each approver left out, such as `pull request 7 is not approved: no reviewer other than its authors approved its head abc12345: carol asked for abc1234`.
+   On every forge, reviews count as `approved` counts them under [apply before merge](/terragucci/guides/apply-before-merge/). When none counts, the wave's log says why and names each approver left out, such as `pull request 7 is not approved: no reviewer other than its authors approved its head abc12345: carol asked for abc1234`. On GitLab it reads `merge request 3 is not approved:` and the reason. The report's `excluded_approvers` lists everyone who approved the head and did not count, the author and readers included, each with the reason.
 
 5. A wave waiting for a review can still get one. On GitHub or Forgejo, approve the merged pull request on its head. GitLab takes no approval after the merge, so there the merge request needs it while still open. Then run the wave again ([step 4 below](#approve-from-a-checkout)): it finds the review and applies. With [`notify`](/terragucci/guides/notify-a-chat-channel/#approve-from-the-message-by-review) set, the waiting wave's chat message links the review page.
 

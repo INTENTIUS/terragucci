@@ -18,13 +18,12 @@
  * approve`, as under ledger. Under pr-review any `chant approve` of the
  * wave's digest counts too: a writer can still write one in anyone's name.
  *
- * On GitLab a merge request's approvals name no commit, so an approval counts
- * only when it came after the merge request's latest version (its newest
- * push): the approval's system note is newer than the newest entry of
- * `merge_requests/:iid/versions`, whose head is the head reviewed. The
- * approver is not the author and holds Developer access or more; an
- * approval withdrawn later, or a later request for changes, counts for
- * nothing.
+ * Every forge counts through chant's prApproved under approverFilter. On
+ * GitLab a merge request's approvals name no commit, so chant counts an
+ * approval only when it came after the newest diff version, and waits
+ * (pending) until that version is of the head. The approver holds Developer
+ * access or more; an approval withdrawn later, or a later request for
+ * changes, counts for nothing.
  *
  * A review counts only from someone who had no hand in the change
  * (./involved.ts): not the pull request's author, nor anyone who wrote or
@@ -52,7 +51,7 @@ import { ConfigError } from "./config";
 import { changesSomething } from "./report/changing";
 import { parseMarker, type NoteWaves } from "./report/marker";
 import { poster, type Fetch } from "./forge";
-import { countable, notCounted, pullInvolvement, sameLogin, type Excluded, type Involved } from "./involved";
+import { notCounted, pullInvolvement, type Excluded, type Involved } from "./involved";
 
 /** The status a pull request's head carries under pr-review. */
 export const APPROVAL_CONTEXT = "terragucci/approval";
@@ -117,18 +116,13 @@ export async function pullOf(f: ForgeCalls, env: NodeJS.ProcessEnv, sha: string)
 /**
  * Whether the pull request's head is approved, by chant's prApproved under
  * approverFilter(involved), as the apply before merge counts it. `by` is the
- * reviewers chant counted, read from its reason; `excluded` the people
- * `involved` names whose standing approval was left out.
+ * approvers chant counted; `excluded` the ones who approved the head and did
+ * not count, with chant's reason.
  */
 export async function approvedBy(forge: PrForge, pr: ReviewedPull, involved: Involved | undefined): Promise<{ by: string[]; reason: string; excluded: Excluded[] }> {
   if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether a pull request is approved`);
   const r = await forge.prApproved(pr.number, pr.head, approverFilter(involved ?? { people: [], notes: [] }));
-  // chant's pass reads `approved at <head> by alice, bob`.
-  const by = r.passed ? (/ by (.+)$/.exec(r.reason)?.[1] ?? "").split(", ").filter((l) => l !== "").sort() : [];
-  const people = involved?.people ?? [];
-  const standing = people.length > 0 && forge.approvers ? await forge.approvers(pr.number) : [];
-  const excluded = people.filter((p) => standing.some((l) => sameLogin(l, p.who))).map((p) => ({ login: p.who, reason: p.why }));
-  return { by, reason: r.reason, excluded };
+  return { by: r.passed ? r.approvers : [], reason: r.reason, excluded: r.excluded };
 }
 
 /** The newest plan note marker of the pull request's head, read from its comments. */
@@ -156,17 +150,14 @@ export function gitlabCalls(env: NodeJS.ProcessEnv, doFetch: Fetch = fetch): For
   return { repo: `projects/${id}`, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) };
 }
 
-/** GitLab's access level for Developer, the least that may push. */
-const DEVELOPER = 30;
-
 /**
- * A merged merge request's approvals that count, read from GitLab: the merge
- * request whose merge (or squash) commit is `sha`, or the one `TG_PR` names
- * when the job applies an open merge request before it merges.
+ * A merged merge request's plan note, read from GitLab: the merge request
+ * whose merge (or squash) commit is `sha`, or the one `TG_PR` names when the
+ * job applies an open merge request before it merges.
  */
-export async function gitlabReviews(f: ForgeCalls, sha: string, env: NodeJS.ProcessEnv = {}): Promise<{ pr: ReviewedPull; by: string[]; changes: string[]; note?: NoteWaves; own?: string } | undefined> {
+export async function gitlabReviews(f: ForgeCalls, sha: string, env: NodeJS.ProcessEnv = {}): Promise<{ pr: ReviewedPull; note?: NoteWaves; own?: string } | undefined> {
   const mr = await gitlabMergeRequestOf(f, sha, env);
-  return mr ? gitlabApprovals(f, mr) : undefined;
+  return mr ? gitlabNotes(f, mr) : undefined;
 }
 
 /** The merge request a wave answers to on GitLab: `TG_PR`'s when the job names one, else the merged one whose merge (or squash) commit is `sha`. */
@@ -181,20 +172,12 @@ export async function gitlabMergeRequestOf(f: ForgeCalls, sha: string, env: Node
   return mr && Number.isInteger(mr.iid) ? mr : undefined;
 }
 
-/** A merge request's newest version: the latest push GitLab has recorded, or undefined before the first. */
-export async function gitlabLatestVersion(f: ForgeCalls, iid: number): Promise<{ head_commit_sha?: string; created_at: string } | undefined> {
-  const versions = await f.get(`${f.repo}/merge_requests/${iid}/versions`);
-  return (Array.isArray(versions) ? versions : []).reduce((a: any, v: any) => (!a || Date.parse(v?.created_at) > Date.parse(a.created_at) ? v : a), undefined);
-}
-
 /**
- * A merge request's approvals that count: its latest version (the head
- * reviewed), and each user's latest approval note, counted when it is newer
- * than that version and its author is not the merge request's and holds
- * Developer or more. A later request for changes is named in `changes`.
+ * What a merge request's notes say beside its approvals, which chant's
+ * prApproved counts: the plan note marker of its head, and `own`, the token's
+ * user when it approved (chant skips that approval without naming it).
  */
-export async function gitlabApprovals(f: ForgeCalls, mr: any): Promise<{ pr: ReviewedPull; by: string[]; changes: string[]; note?: NoteWaves; own?: string }> {
-  // The token's own user: its approval is the pipeline's, never a reviewer's. Unknown, no approval counts.
+export async function gitlabNotes(f: ForgeCalls, mr: any): Promise<{ pr: ReviewedPull; note?: NoteWaves; own?: string }> {
   let me: any;
   try {
     me = await f.get("user");
@@ -202,46 +185,17 @@ export async function gitlabApprovals(f: ForgeCalls, mr: any): Promise<{ pr: Rev
     throw new Error(`could not read which user the job's token acts as, so no approval counts (${(e as Error).message})`);
   }
   if (!Number.isInteger(me?.id)) throw new Error("GitLab did not say which user the job's token acts as, so no approval counts");
-  const latest = await gitlabLatestVersion(f, mr.iid);
-  const head = latest?.head_commit_sha ?? mr.sha;
-  const pr: ReviewedPull = { number: mr.iid, head, ...(typeof mr.author?.username === "string" ? { author: mr.author.username } : {}) };
-  const since = latest ? Date.parse(latest.created_at) : Number.POSITIVE_INFINITY;
+  const pr: ReviewedPull = { number: mr.iid, head: mr.sha, ...(typeof mr.author?.username === "string" ? { author: mr.author.username } : {}) };
   const notes = await f.get(`${f.repo}/merge_requests/${mr.iid}/notes?per_page=100&sort=asc&order_by=created_at`);
-  const said = new Map<string, { what: "approved" | "unapproved" | "changes"; at: number; id: number }>();
   let note: NoteWaves | undefined;
   let own: string | undefined;
   for (const n of Array.isArray(notes) ? notes : []) {
     if (!n?.system) {
       const w = parseMarker(n?.body);
-      if (w && w.head === head) note = w;
-      continue;
-    }
-    const who = n.author?.username;
-    if (typeof who !== "string" || who === pr.author) continue;
-    const body = String(n.body ?? "").trim();
-    const what = /^approved this merge request/.test(body) ? "approved" : /^unapproved this merge request/.test(body) ? "unapproved" : /^requested changes/.test(body) ? "changes" : undefined;
-    if (n.author?.id === me.id || who === me.username) {
-      if (what === "approved") own = who;
-      continue;
-    }
-    const at = Date.parse(n.created_at);
-    if (!what || !Number.isFinite(at)) continue;
-    const before = said.get(who);
-    if (!before || at >= before.at) said.set(who, { what, at, id: n.author?.id });
+      if (w && w.head === pr.head) note = w;
+    } else if ((n.author?.id === me.id || n.author?.username === me.username) && /^approved this merge request/.test(String(n.body ?? "").trim())) own = n.author.username;
   }
-  const by: string[] = [];
-  const changes: string[] = [];
-  for (const [who, last] of said) {
-    if (last.what === "changes") changes.push(who);
-    if (last.what !== "approved" || !(last.at > since)) continue;
-    try {
-      const member = await f.get(`${f.repo}/members/all/${last.id}`);
-      if ((member?.access_level ?? 0) >= DEVELOPER) by.push(who);
-    } catch {
-      // Not a member: the approval does not count.
-    }
-  }
-  return { pr, by: by.sort(), changes: changes.sort(), ...(note ? { note } : {}), ...(own ? { own } : {}) };
+  return { pr, ...(note ? { note } : {}), ...(own ? { own } : {}) };
 }
 
 /** What a wave the gate holds gets from the review path. */
@@ -271,31 +225,26 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
   const out = (r: ReviewOutcome): ReviewOutcome => (excluded.length ? { ...r, excluded } : r);
   try {
     let pr: ReviewedPull | undefined;
-    let by: string[];
-    let changes: string[];
     let note: NoteWaves | undefined;
     // A merge request named by TG_PR is open (applied before it merges); GitLab takes no approval of a merged one.
     let reviewable = true;
+    let own = "";
     if (o.forge === "gitlab") {
       const got = await gitlabReviews(gitlabCalls(o.env, o.fetch), o.sha, o.env);
       if (!got) return { kind: "none", why: `no merged merge request made ${o.sha.slice(0, 8)}` };
-      ({ pr, by, changes, note } = got);
+      ({ pr, note } = got);
       reviewable = /^\d+$/.test((o.env.TG_PR ?? "").trim());
-      ({ by, excluded } = countable(by, o.involved));
-      const own = got.own ? `; the approval by ${got.own}, the user the job's token acts as, never counts` : "";
-      if (by.length === 0 && changes.length === 0) return out({ kind: "none", why: `no member other than its author approved merge request ${pr.number} after its latest push, ${pr.head.slice(0, 8)}${own}${leftOut(excluded)}`, ...reviewOf(o, pr.number, note, reviewable) });
+      if (got.own) own = `; the approval by ${got.own}, the user the job's token acts as, never counts`;
     } else {
       const f = forgeCalls(o.env, o.fetch);
       pr = await pullOf(f, o.env, o.sha);
       if (!pr) return { kind: "none", why: `no merged pull request made ${o.sha.slice(0, 8)}` };
-      const got = await approvedBy(poster(o.forge, o.env, o.fetch), pr, o.involved);
-      ({ by, excluded } = got);
-      changes = [];
       note = await noteWavesOf(f, pr);
-      if (by.length === 0) return out({ kind: "none", why: `pull request ${pr.number} is not approved: ${got.reason}`, ...reviewOf(o, pr.number, note, reviewable) });
     }
-    if (changes.length > 0) return out({ kind: "none", why: `${changes.join(", ")} asked for changes on pull request ${pr.number}`, ...reviewOf(o, pr.number, note, reviewable) });
-    if (by.length === 0) return out({ kind: "none", why: `no reviewer other than its author approved head ${pr.head.slice(0, 8)} of pull request ${pr.number}${leftOut(excluded)}`, ...reviewOf(o, pr.number, note, reviewable) });
+    const got = await approvedBy(poster(o.forge, o.env, o.fetch), pr, o.involved);
+    const by = got.by;
+    excluded = got.excluded;
+    if (by.length === 0) return out({ kind: "none", why: `${o.forge === "gitlab" ? "merge request" : "pull request"} ${pr.number} is not approved: ${got.reason}${own}`, ...reviewOf(o, pr.number, note, reviewable) });
     const row = note?.waves.find((w) => w.number === o.wave);
     if (!row || !row.digest) return out({ kind: "none", why: `the plan note of head ${pr.head.slice(0, 8)} has no digest for wave ${o.wave}, so its review did not cover these plans` });
     if (o.digest !== null && row.digest === o.digest) return out({ kind: "approved", pr: pr.number, head: pr.head, by });
@@ -303,11 +252,6 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
   } catch (e) {
     return out({ kind: "none", why: `the reviews could not be read (${(e as Error).message})` });
   }
-}
-
-/** The clause a wait adds for the approvals the rule left out: `; bob asked for abc1234, so bob's review doesn't count`. */
-export function leftOut(excluded: readonly Excluded[]): string {
-  return excluded.map((e) => `; ${notCounted(e, "review")}`).join("");
 }
 
 /** The review that would still approve the wave: its pull request's note has a digest for it, and the forge takes a review. */
@@ -354,7 +298,7 @@ export async function approvalStatus(o: { env?: NodeJS.ProcessEnv; fetch?: Fetch
     } else {
       o.log?.(`not approved: ${reason}`);
       state = "pending";
-      description = excluded.length && !/asked for changes/.test(reason) ? `${which} waits: ${excluded.map((e) => `${e.login} had a hand in it`).join(", ")}; another writer approves` : `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
+      description = excluded.length ? `${which} waits: ${excluded.map((e) => e.reason).join("; ")}; another writer approves` : `${which} waits: approve this pull request on ${pr.head.slice(0, 8)}`;
     }
   }
   await poster(o.forge, env, o.fetch ?? fetch).setStatus(pr.head, { state, context: APPROVAL_CONTEXT, description: description.slice(0, 135) });

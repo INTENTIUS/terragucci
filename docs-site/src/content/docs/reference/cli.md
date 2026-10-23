@@ -469,7 +469,7 @@ The generated `plan-note` and `replan-note` jobs run it, and it always exits 0.
 terragucci approval-status [--forge github|forgejo] [--report <dir>]
 ```
 
-Sets `terragucci/approval` on the head `TG_SHA` and `TG_PR` name. The status stays pending while a wave the gate will hold has no approving review of that head. With `--report` it reads the waves from that plan report; without it, from the head's plan note. Under `approval: pr-review` the generated `approval` job runs it on each review; it always exits 0.
+Sets `terragucci/approval` on the head `TG_SHA` and `TG_PR` name. The status stays pending while a wave the gate will hold has no approving review of that head. When an approval of the head did not count, the description gives each reason, such as `wave 1 waits: carol asked for abc1234; another writer approves`. With `--report` it reads the waves from that plan report; without it, from the head's plan note. Under `approval: pr-review` the generated `approval` job runs it on each review; it always exits 0.
 
 ## notify
 

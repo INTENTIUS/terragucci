@@ -86,7 +86,7 @@ An open change that applies from its head in the same waves and gates as a merge
 
 6. Merge. `merge: auto` merges after the last wave and releases the locks; under `manual` they hold until you merge. A run that stopped at a wave never merges.
 
-   Before it merges, `pr-merge` asks `approved` again for the head that applied, counting approvers the same way. If it fails, nothing merges and the job fails with `pull request 7 is not approved:` and the reason, such as `no reviewer other than its authors approved its head abc12345: carol asked for abc1234`.
+   Before it merges, `pr-merge` asks `approved` again for the head that applied, counting approvers the same way. If it fails, nothing merges and the job fails with `pull request 7 is not approved:` and the reason, such as `no reviewer other than its authors approved its head abc12345: carol asked for abc1234`. On GitLab the job fails with `!3 is not approved:` and the reason.
 
    After the merge, `confirm` plans every root (every unit in a Terragrunt repo). Its `terragucci/apply` status passes when nothing plans a change.
 
@@ -104,7 +104,7 @@ GitLab builds a merge request's pipeline from its own `.gitlab-ci.yml`, so nothi
 | 4 | `mr-apply` | applies the head wave by wave with the apply role, behind the same gates, and replies |
 | 5 | `pr-merge`, with `merge: auto` | merges once the reply says every wave applied |
 
-`approved` needs an approval given after the latest push by a Developer or above who is not the author. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
+`approved` needs an approval given after the latest push by a Developer or above who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). It is pending until GitLab has recorded the latest push as a diff version. `pr-merge` counts approvers the same way. `mr-apply` posts no status on the head; its replies say what happened. A note is answered on the schedule's next run.
 
 ## Config source
 

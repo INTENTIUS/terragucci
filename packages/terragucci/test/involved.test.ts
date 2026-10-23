@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolutionRefusal, type ResolutionRecord } from "../src/apply";
 import { agentLoginWarning, approvalModeOf, requireSignedOf, validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { AGENT_NOT_EXCLUDED, countable, forgeCommits, pullInvolvement, gitChange, involvedIn, judge, noreplyLogin, notCounted, requestedBy, tokenUsers, whyInvolved, type ChangeCommit } from "../src/involved";
+import { AGENT_NOT_EXCLUDED, forgeCommits, pullInvolvement, gitChange, involvedIn, judge, noreplyLogin, notCounted, requestedBy, tokenUsers, whyInvolved, type ChangeCommit } from "../src/involved";
 import { gateSealPayload } from "../src/seal";
 import { git, tmp, write } from "./helpers";
 import { gateSigners, signerLine, sshsig, sshKey } from "./sshsig";
@@ -39,7 +39,6 @@ describe("the people behind a change", () => {
   it("an approval by an uninvolved writer counts", () => {
     const inv = involvedIn({ author: "alice", pr: 7, commits: agentAsked, tokens: [{ which: "the pipeline's token", login: "pipeline-bot" }] });
     expect(judge(["dave"], inv)).toEqual({ by: ["dave"], excluded: [] });
-    expect(countable(["dave"], undefined)).toEqual({ by: ["dave"], excluded: [] });
   });
 
   it("the agent's token's user: its review doesn't count, from GET /user with the token or the Pushed-by trailer", async () => {
