@@ -4,7 +4,7 @@
  * of the forge through its PrForge method. A check the forge has not settled
  * is asked again a few times before it counts as unmet.
  *
- * A requirement `apply.requires` leaves out passes without a call. `approved`
+ * chant asks only the checks `apply.requires` lists (`only`). `approved`
  * also has to pass terragucci's own count of who approved (`counted`): on
  * GitHub an approver with write access, on Forgejo an official review, on
  * GitLab Developer or more, and never someone with a hand in the change
@@ -24,23 +24,21 @@ export interface ApplyRequiresOptions {
   wait?: (ms: number) => Promise<void>;
 }
 
-const unasked = async (): Promise<PrRequireResult> => ({ passed: true, reason: "not in apply.requires" });
-
-/** Each requirement's outcome, in chant's order. */
+/** Each requirement's outcome, in chant's order. One `apply.requires` leaves out passes without a call. */
 export async function checkApplyRequires(forge: PrForge, pr: number, head: string, o: ApplyRequiresOptions = {}): Promise<PrRequireOutcome[]> {
-  const on = new Set<ApplyRequire>(o.requires ?? APPLY_REQUIRES);
   const approved = forge.prApproved?.bind(forge);
-  const view: PrForge = {
+  const counted = o.counted;
+  const view: PrForge = !counted || !approved ? forge : {
     ...forge,
-    prApproved: !on.has("approved") ? unasked : approved && (async (n, h) => {
-      const r = await approved(n, h);
-      return r.passed && o.counted ? o.counted() : r;
-    }),
-    prMergeable: on.has("mergeable") ? forge.prMergeable?.bind(forge) : unasked,
-    prUndiverged: on.has("undiverged") ? forge.prUndiverged?.bind(forge) : unasked,
-    prChecksPassed: on.has("checks") ? forge.prChecksPassed?.bind(forge) : unasked,
+    prApproved: async (n, h, f) => {
+      const r = await approved(n, h, f);
+      return r.passed ? counted() : r;
+    },
+    prMergeable: forge.prMergeable?.bind(forge),
+    prUndiverged: forge.prUndiverged?.bind(forge),
+    prChecksPassed: forge.prChecksPassed?.bind(forge),
   };
-  return checkPrRequires(view, pr, head, { ...(o.ignore ? { ignore: o.ignore } : {}), ...(o.wait ? { wait: o.wait } : {}) });
+  return checkPrRequires(view, pr, head, { only: o.requires ?? APPLY_REQUIRES, ...(o.ignore ? { ignore: o.ignore } : {}), ...(o.wait ? { wait: o.wait } : {}) });
 }
 
 /** The unmet requirements as one line for a reply, or undefined when every one passed. */
