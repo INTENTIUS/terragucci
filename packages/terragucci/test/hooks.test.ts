@@ -96,6 +96,23 @@ describe("runHooks", () => {
   });
 });
 
+describe("runHooks side by side", () => {
+  it("two roots' hooks overlap, and each root's output lines stay together", async () => {
+    const repo = write(tmp(), { "a/main.tf": "", "b/main.tf": "" });
+    const lines: string[] = [];
+    // Each hook marks its start, then waits for the other root's start mark: they pass only when both run at once.
+    const hooks = { "before-plan": [{ name: "meet", command: sh("touch ../started-{target}; for i in $(seq 1 100); do ls ../started-* | grep -qv started-{target} && { echo met; echo done; exit 0; }; sleep 0.05; done; exit 9"), perRun: true }] };
+    const ctx = (root: string) => ({ repo, root, stage: "tf-plan" as const, env: { PATH: process.env.PATH }, log: (l: string) => lines.push(l) });
+    const [a, b] = await Promise.all([runHooks(hooks, "before-plan", ctx("a")), runHooks(hooks, "before-plan", ctx("b"))]);
+    expect(a.runs.map((r) => r.status)).toEqual(["passed"]);
+    expect(b.runs.map((r) => r.status)).toEqual(["passed"]);
+    for (const root of ["a", "b"]) {
+      const i = lines.indexOf(`${root}: before-plan meet: met`);
+      expect(lines.slice(i, i + 3)).toEqual([`${root}: before-plan meet: met`, `${root}: before-plan meet: done`, `${root}: before-plan hook meet passed`]);
+    }
+  });
+});
+
 /** A repo whose main holds `base` and whose branch `change` holds `head` on top of it. */
 function branched(base: Record<string, string>, head: Record<string, string>): { repo: string; baseSha: string } {
   const repo = tmp("tg-steps-");

@@ -2,7 +2,7 @@
  * `ci.hooks` in chant.workspace.json: commands run before and after each
  * root's plan and apply, inside the stage's own job. chant reads and checks
  * the block (`readDeclaration`), and chant's stage hook runner
- * (`runStageHooks`, from `@intentius/chant/op/stage-hooks`) runs a moment's
+ * (`runStageHooksAsync`, from `@intentius/chant/op/stage-hooks`) runs a moment's
  * hooks: which roots a hook is for, how its argv is filled and what a
  * failure does. The stage code calls the hooks, so they need no pipeline
  * job of their own and work the same on every forge.
@@ -29,11 +29,11 @@
  * (`prLoopHooksAt`), so a change cannot add, edit or remove a hook that runs
  * with its own apply credentials.
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { runStageHooks } from "@intentius/chant/op/stage-hooks";
+import { runStageHooksAsync } from "@intentius/chant/op/stage-hooks";
 import { opWaveHookRuns, PR_LOOP_HOOK_MOMENTS, type OpWaveHook, type OpWaveHookMoment, type OpWaveHooks } from "@intentius/chant/op/op-waves";
 import { readDeclaration, WorkspaceReadError } from "@intentius/chant/workspace/declaration";
 import { locateWorkspace } from "@intentius/chant/workspace/which-chant";
@@ -174,10 +174,12 @@ interface HookCall {
 
 /**
  * Run the hooks of one moment for one root, in order, through chant's
- * `runStageHooks`. A failed hook stops the rest and fails the root, unless it
- * has `onFailure: "approve"`: then it holds the wave, and the hooks after it
- * run. Each call runs to its end before the next starts, and the job waits
- * on it.
+ * `runStageHooksAsync`. A failed hook stops the rest and fails the root,
+ * unless it has `onFailure: "approve"`: then it holds the wave, and the hooks
+ * after it run. A call's output goes to its own file and is logged once the
+ * root's hooks end, so its lines stay together, and other roots' hooks run
+ * while it does. Each root's run has its own temp dir, so its hold and runs
+ * files are its own.
  */
 export async function runHooks(hooks: StageHooks, moment: HookMoment, ctx: HookContext): Promise<HooksOutcome> {
   const out: HooksOutcome = { runs: [], holds: [] };
@@ -192,21 +194,33 @@ export async function runHooks(hooks: StageHooks, moment: HookMoment, ctx: HookC
     const jobEnv = Object.fromEntries(Object.entries(binaryEnv(ctx.env)).filter((e): e is [string, string] => e[1] !== undefined && !CHANT_HOOK_VARS.includes(e[0])));
     const env = { ...jobEnv, TG_STAGE: ctx.stage, TG_ROOT: ctx.root, TG_REPO: ctx.repo, ...(ctx.planFile ? { TG_PLAN_FILE: ctx.planFile } : {}) };
     const calls: HookCall[] = [];
-    const exec = (argv: string[], at: string, callEnv: Record<string, string> = {}): number => {
+    const exec = (argv: string[], at: string, callEnv: Record<string, string> = {}): Promise<number> => {
       const file = join(dir, `out-${calls.length}`);
+      const call: HookCall = { code: null, out: "", seconds: 0 };
+      calls.push(call);
       const fd = openSync(file, "w");
       const started = Date.now();
-      let r: ReturnType<typeof spawnSync>;
-      try {
-        r = spawnSync(argv[0]!, argv.slice(1), { cwd: at, env: callEnv, stdio: ["ignore", fd, fd] });
-      } finally {
-        closeSync(fd);
-      }
-      const code = r.error ? null : r.status;
-      calls.push({ code, out: r.error ? r.error.message : readFileSync(file, "utf-8"), seconds: Math.round((Date.now() - started) / 100) / 10 });
-      return code ?? 127;
+      return new Promise<number>((resolve) => {
+        let settled = false;
+        const settle = (code: number | null, error?: Error): void => {
+          if (settled) return;
+          settled = true;
+          closeSync(fd);
+          call.code = code;
+          call.out = error ? error.message : readFileSync(file, "utf-8");
+          call.seconds = Math.round((Date.now() - started) / 100) / 10;
+          resolve(code ?? 127);
+        };
+        try {
+          const child = spawn(argv[0]!, argv.slice(1), { cwd: at, env: callEnv, stdio: ["ignore", fd, fd] });
+          child.once("error", (err) => settle(null, err));
+          child.once("close", (code) => settle(code));
+        } catch (err) {
+          settle(null, err as Error);
+        }
+      });
     };
-    const result = runStageHooks(moment, list, { name: ctx.stage, op: ctx.stage, wave: ctx.stage, runs: [run], runsFile: runs, holdFile: relative(cwd, join(dir, "hold.json")), env, cwd, exec, log: () => {} });
+    const result = await runStageHooksAsync(moment, list, { name: ctx.stage, op: ctx.stage, wave: ctx.stage, runs: [run], runsFile: runs, holdFile: relative(cwd, join(dir, "hold.json")), env, cwd, exec, log: () => {} });
     result.outcomes.forEach((o, i) => {
       const call = calls[i]!;
       for (const line of call.out.split("\n").filter((l) => l.trim())) ctx.log(`${ctx.root}: ${moment} ${o.name}: ${line}`);
