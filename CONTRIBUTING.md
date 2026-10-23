@@ -69,7 +69,7 @@ A release puts the CI images on GHCR and then `@intentius/terragucci` on npm. Th
 
 The tag starts the publish workflow too. At that point the digests are not recorded yet, so that run refuses and the step 4 dispatch publishes. A tag pushed after its digests are already on main publishes directly.
 
-The publish workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) builds the bundle, runs `just bundle-check`, and then:
+The publish workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) runs the unit tests (`test` job) and, once they pass, builds the bundle and then:
 
 - skips with a notice when npm already has this version;
 - on a tag, fails unless the tag is `v` plus the package version;
@@ -116,12 +116,12 @@ The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/rend
 
 ## CI
 
-`ci.yml` runs `just check` on every pull request and on each push to main, cut into four jobs that run side by side: `static` runs `just check-static` (everything but the unit tests), and `test (1/3)` to `test (3/3)` each run a third of the unit tests (`just test-shard <n>`, vitest's `--shard`). A pull request also runs `diff-guard`, which takes seconds. A branch with no pull request runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
+`ci.yml` runs unit tests only, on every pull request and on each push to main, in four jobs that run side by side: `static` runs `just check-unit` (the typecheck and the provider's gofmt, vet and tests), and `test (1/3)` to `test (3/3)` each run a third of the unit tests (`just test-shard <n>`, vitest's `--shard`). Lint, the docs, the tutorial, the rendered workflows and the LFS check are in `just check`, which you run before pushing; CI does not. `diff-guard` runs by hand only. A branch with no pull request runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
 
 | Workflow | Runs | What it does |
 |---|---|---|
-| `diff-guard.yml` | every pull request to main | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has; `scripts/lfs-check.sh origin/main <head>`: fails when the pull request adds a binary outside Git LFS |
-| `ci.yml` | every pull request, each push to main, and by hand | `just check-static` in `static`, `just test-shard <n>` in `test (<n>/3)` |
+| `diff-guard.yml` | by hand (`gh workflow run diff-guard.yml --ref <branch>`; the `allow_revert` input replaces the `revert` label) | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has; `scripts/lfs-check.sh origin/main <head>`: fails when the pull request adds a binary outside Git LFS |
+| `ci.yml` | every pull request, each push to main, and by hand | `just check-unit` in `static`, `just test-shard <n>` in `test (<n>/3)` |
 | `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
 | `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
 

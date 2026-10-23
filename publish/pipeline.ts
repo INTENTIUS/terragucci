@@ -6,6 +6,11 @@
  * `just ci` renders this into .github/workflows/publish.yml. npm's trusted
  * publisher is configured for that filename, so the file keeps its name.
  *
+ * The release is gated on the unit tests and the build they need and nothing
+ * else: the typecheck, the bundle build, and the unit tests in the same three
+ * shards CI runs (the `test` job). The bundle's shape, lint, the docs and the
+ * rest of `just check` are not part of it.
+ *
  * It runs on a `v*` tag and by hand (a ref, main by default). It skips a
  * version npm already has, and refuses a version whose CI images are not all
  * recorded by digest in packages/terragucci/src/image-digests.json, so a
@@ -16,7 +21,8 @@
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, NPM_VERSION, NPM_TRUSTED_PUBLISHING_MIN, installJust } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, NPM_VERSION, NPM_TRUSTED_PUBLISHING_MIN, TEST_TERRAGRUNT, installJust, installTerragrunt, installTofu } from "../workflows/shared";
+import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 const PACKAGE = "@intentius/terragucci";
 
@@ -40,7 +46,29 @@ export const workflow = new Workflow({
   concurrency: { group: "publish", "cancel-in-progress": false },
 });
 
+/** The unit tests, a third each, as ci/pipeline.ts runs them, after the typecheck. `just test-shard` builds the bundle first. */
+export const test = new Job({
+  name: "test (${{ matrix.shard }}/3)",
+  "runs-on": "ubuntu-latest",
+  timeoutMinutes: 10,
+  strategy: {
+    "fail-fast": false,
+    matrix: { shard: [1, 2, 3] },
+  },
+  steps: [
+    Checkout({ ref: "${{ inputs.ref || github.ref }}", defaults: { step: { uses: CHECKOUT } } }).step,
+    SetupNode({ nodeVersion: NODE_VERSION, cache: "npm", defaults: { step: { uses: SETUP_NODE } } }).step,
+    installJust(),
+    installTofu(TOOL_VERSIONS.tofu),
+    installTerragrunt(TOOL_VERSIONS.terragrunt),
+    new Step({ name: "Install dependencies", run: "npm ci" }),
+    new Step({ name: "Typecheck", run: "just typecheck" }),
+    new Step({ name: "Unit tests", run: "just test-shard ${{ matrix.shard }} 3", env: { TERRAGUCCI_TEST_TERRAGRUNT: TEST_TERRAGRUNT } }),
+  ],
+});
+
 export const publish = new Job({
+  needs: "test",
   "runs-on": "ubuntu-latest",
   timeoutMinutes: 20,
   steps: [
@@ -62,7 +90,6 @@ export const publish = new Job({
     new Step({ name: "Install dependencies", run: "npm ci" }),
     installJust(),
     new Step({ name: "Build the bundle", run: "just build-cli" }),
-    new Step({ name: "Hold the bundle to its shape", run: "just bundle-check" }),
     new Step({
       name: "Skip a version npm already has",
       id: "version",

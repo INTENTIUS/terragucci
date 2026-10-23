@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   publish:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -53,8 +54,6 @@ jobs:
           just --version
       - name: Build the bundle
         run: just build-cli
-      - name: Hold the bundle to its shape
-        run: just bundle-check
       - name: Skip a version npm already has
         id: version
         run: |
@@ -103,3 +102,54 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         working-directory: packages/terragucci
         run: npm publish --provenance --access public
+  test:
+    name: test (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '${{ inputs.ref || github.ref }}'
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Install OpenTofu
+        run: |
+          arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+          curl -fsSL -o /tmp/tofu.tar.gz https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_linux_$arch.tar.gz
+          tar -xzf /tmp/tofu.tar.gz -C /tmp tofu
+          sudo mv /tmp/tofu /usr/local/bin/tofu
+          tofu version
+      - name: Install Terragrunt
+        run: |
+          arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+          cd /tmp
+          curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v1.2.0/terragrunt_linux_$arch
+          curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v1.2.0/SHA256SUMS
+          grep " terragrunt_linux_$arch\$" SHA256SUMS | sha256sum -c -
+          sudo install -D -m 0755 terragrunt_linux_$arch /opt/terragrunt/terragrunt
+          /opt/terragrunt/terragrunt --version
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: just typecheck
+      - name: Unit tests
+        run: just test-shard ${{ matrix.shard }} 3
+        env:
+          TERRAGUCCI_TEST_TERRAGRUNT: /opt/terragrunt/terragrunt

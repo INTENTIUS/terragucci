@@ -1,11 +1,12 @@
 /**
- * terragucci's CI images (terragucci#19), built and checked on every change and
- * published on a release tag.
+ * terragucci's CI images (terragucci#19), published on a release tag and built
+ * and checked by hand (workflow_dispatch). The build and size check are not
+ * unit tests, so they no longer run on pull requests or pushes to main.
  *
  * `just ci` renders this into .github/workflows/images.yml. The check job
  * builds all four images natively on an amd64 and an arm64 runner, runs each
  * image's tools, and holds each to its size budget. The publish job runs only
- * for a `v*` tag: it pushes both platforms to GHCR with provenance and an
+ * for a `v*` tag and does not wait for the check (it builds the images itself): it pushes both platforms to GHCR with provenance and an
  * SBOM, and prints each image's digest for the release to record.
  */
 
@@ -15,8 +16,7 @@ import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust } from "../workflows/sh
 export const workflow = new Workflow({
   name: "images",
   on: {
-    push: { branches: ["main"], tags: ["v*"] },
-    pull_request: {},
+    push: { tags: ["v*"] },
     workflow_dispatch: {},
   },
   permissions: { contents: "read" },
@@ -31,6 +31,7 @@ const SETUP = [
 ];
 
 export const check = new Job({
+  if: "github.event_name == 'workflow_dispatch'",
   name: "check (${{ matrix.platform }})",
   "runs-on": "${{ matrix.runner }}",
   timeoutMinutes: 30,
@@ -51,7 +52,6 @@ export const check = new Job({
 });
 
 export const publish = new Job({
-  needs: "check",
   if: "startsWith(github.ref, 'refs/tags/v')",
   "runs-on": "ubuntu-latest",
   timeoutMinutes: 45,

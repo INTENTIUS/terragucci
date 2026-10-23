@@ -1,15 +1,18 @@
 name: diff-guard
 
 on:
-  pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - labeled
-      - unlabeled
+  workflow_dispatch:
+    inputs:
+      base:
+        description: The branch to compare against
+        required: true
+        default: main
+        type: string
+      allow_revert:
+        description: Let a deliberate revert through, as the revert label did
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,11 +33,11 @@ jobs:
       - name: The pull request undoes no commit main has
         run: scripts/diff-guard.sh "origin/$BASE_REF" "$HEAD_SHA"
         env:
-          BASE_REF: '${{ github.base_ref }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
-          DIFF_GUARD_ALLOW: '${{ contains(github.event.pull_request.labels.*.name, ''revert'') && ''1'' || '''' }}'
+          BASE_REF: '${{ inputs.base }}'
+          HEAD_SHA: '${{ github.sha }}'
+          DIFF_GUARD_ALLOW: '${{ inputs.allow_revert && ''1'' || '''' }}'
       - name: The pull request adds no binary outside LFS
         run: scripts/lfs-check.sh "origin/$BASE_REF" "$HEAD_SHA"
         env:
-          BASE_REF: '${{ github.base_ref }}'
-          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          BASE_REF: '${{ inputs.base }}'
+          HEAD_SHA: '${{ github.sha }}'

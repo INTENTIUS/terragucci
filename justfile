@@ -68,6 +68,9 @@ lfs-check *args:
 [doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial, the rendered workflows, the chant examples' pipelines and the LFS check. CI's static job.")]
 check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines lfs-check
 
+[doc("What CI runs on a pull request and a push: the typecheck and the provider's gofmt, vet and tests. The unit tests run in CI's test jobs (just test-shard).")]
+check-unit: typecheck provider-test
+
 [doc("Typecheck, lint, test, lint the docs, check the tutorial, the bundle, the provider and the rendered workflows. What CI runs: its static job and its test jobs.")]
 check: check-static test
 

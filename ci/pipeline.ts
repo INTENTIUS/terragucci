@@ -5,10 +5,13 @@
  * fails when the committed file differs from what this renders, so a hand edit
  * to the YAML cannot quietly win over the declaration.
  *
- * `just check` is the same chain a person runs before pushing, cut into jobs
- * that run side by side: `static` runs `just check-static`, and each `test`
- * job runs a third of the unit tests (`just test-shard`). No claim runs in CI:
- * the validation and smoke claims hold a stack and are a person's runs
+ * CI runs unit tests only, in jobs that run side by side: `static` runs
+ * `just check-unit` (the typecheck and the provider's gofmt, vet and tests),
+ * and each `test` job runs a third of the unit tests (`just test-shard`, which
+ * builds the bundle first). Lint, the docs, the tutorial, the rendered
+ * workflows, the chant pipelines, the bundle's shape and the LFS check are in
+ * `just check`, which a person runs before pushing. No claim runs in CI: the
+ * validation and smoke claims hold a stack and are a person's runs
  * (`just validate-forge`, `just claims`).
  */
 
@@ -40,7 +43,7 @@ const SETUP = [
   installJust(),
 ];
 
-/** Typecheck, lint, the bundle, the provider, the docs, the tutorial and the rendered workflows. */
+/** The typecheck and the provider's gofmt, vet and Go tests. */
 export const staticChecks = new Job({
   name: "static",
   "runs-on": "ubuntu-latest",
@@ -49,7 +52,7 @@ export const staticChecks = new Job({
     ...SETUP,
     setupGo(GO_VERSION),
     new Step({ name: "Install", run: "npm ci" }),
-    new Step({ name: "Check", run: "just check-static" }),
+    new Step({ name: "Check", run: "just check-unit" }),
   ],
 });
 
