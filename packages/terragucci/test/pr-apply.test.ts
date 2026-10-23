@@ -64,6 +64,8 @@ interface Forge {
   later?: any[];
   /** How many commits the head is behind main, as GitHub's compare says. */
   behind?: number;
+  /** The pull request's commits, as GitHub lists them. */
+  commits?: unknown[];
 }
 
 /** main's tip on the forge, which an undiverged Forgejo pull request has as its merge base. */
@@ -87,6 +89,7 @@ function setup(comment: string, f: Forge, forgejo = false): { env: NodeJS.Proces
     const perm = /collaborators\/([^/]+)\/permission/.exec(path);
     if (perm) return answer(200, { permission: f.permission?.[decodeURIComponent(perm[1]!)] ?? "write" }) as never;
     if (path.includes("/reviews")) return answer(200, f.reviews ?? []) as never;
+    if (path.includes("pulls/7/commits")) return answer(200, f.commits ?? []) as never;
     if (path.endsWith("/status")) return answer(200, { statuses: f.statuses ?? [] }) as never;
     if (path.includes("/check-runs")) return answer(200, { check_runs: f.checkRuns ?? [] }) as never;
     if (/pulls\?state=open/.test(path)) return answer(200, [f.pr]) as never;
@@ -146,7 +149,17 @@ describe("apply.when: pull-request, an open pull request", () => {
     expect(replies(changes)[0]).toContain("sam asked for changes");
     const reader = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head, "visitor"), statuses: GREEN, permission: { visitor: "read" } });
     expect((await decide(r, reader)).go).toBe(false);
-    expect(replies(reader)[0]).toContain("approved: no reviewer other than its author, with write access, approved its head");
+    expect(replies(reader)[0]).toMatch(/approved: no reviewer other than its authors approved its head [0-9a-f]{8}: visitor has no write access/);
+  });
+
+  it("counts no approval by the pipeline's own token, or by someone who asked for a commit in the change", async () => {
+    const r = repos();
+    const bot = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head, "github-actions[bot]"), statuses: GREEN });
+    expect((await decide(r, bot)).go).toBe(false);
+    expect(replies(bot)[0]).toContain("github-actions[bot] is the pipeline's own token");
+    const asked = setup("/terragucci apply", { pr: OPEN(r.head), reviews: approved(r.head, "carol"), statuses: GREEN, commits: [{ sha: "abc1234".padEnd(40, "0"), commit: { message: "fix\n\nRequested-by: carol" } }] });
+    expect((await decide(r, asked)).go).toBe(false);
+    expect(replies(asked)[0]).toContain("its head " + r.head.slice(0, 8) + ": carol asked for abc1234.");
   });
 
   it("refuses failing or running checks by name, and a head whose plan has not passed", async () => {

@@ -36,15 +36,15 @@
 import { spawnSync } from "node:child_process";
 import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
-import { reached, type ApplyCommentDecision, type Git } from "./comment-apply";
+import { approverFilter, reached, type ApplyCommentDecision, type Git } from "./comment-apply";
 import type { WavesAfter } from "./detect";
-import type { PrForge, PrRequireResult } from "@intentius/chant/pr-forge";
+import type { PrApproverFilter, PrForge, PrRequireResult } from "@intentius/chant/pr-forge";
 import { unmetApplyRequires } from "./apply-requires";
 import { ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
-import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
-import { gitlabApprovals, type ForgeCalls } from "./review";
+import { agentSettingsAt, pullInvolvement } from "./involved";
+import { gitlabApprovals, gitlabLatestVersion, type ForgeCalls } from "./review";
 
 /** GitLab's Developer access level: the least that may ask for an apply. */
 const DEVELOPER = 30;
@@ -121,18 +121,16 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   const sha: string = c.mr.sha;
   if (typeof sha !== "string" || !SHA.test(sha)) return { fail: `!${iid}'s head is not a commit` };
 
-  // approved also counts only Developer or more, and never someone who had a hand in the change (./involved.ts).
-  const counted = async (): Promise<PrRequireResult> => {
-    const a = await gitlabApprovals(reviewCalls(api, id), c.mr);
+  // approved counts Developer or more, and never the run's own token or someone who had a hand in the change (./involved.ts).
+  const approvers = async (): Promise<PrApproverFilter | PrRequireResult> => {
     // GitLab records a push as a new version a moment after it; until then an approval cannot be placed after it.
-    if (a.pr.head !== sha) return { passed: false, reason: `GitLab has not recorded the latest push, ${short(sha)}, as a version yet, so its approvals cannot be read; comment again in a minute` };
-    const involved = await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr: a.pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) });
-    const { by, excluded } = countable(a.by, involved);
-    if (by.length === 0) return { passed: false, reason: `no member other than its author, with Developer or more, approved it after its latest push, ${short(sha)}${excluded.map((e) => `; ${notCounted(e)}`).join("")}` };
-    return { passed: true, reason: `approved after ${short(sha)} by ${by.join(", ")}` };
+    const latest = await gitlabLatestVersion(reviewCalls(api, id), iid);
+    if ((latest?.head_commit_sha ?? sha) !== sha) return { passed: false, reason: `GitLab has not recorded the latest push, ${short(sha)}, as a version yet, so its approvals cannot be read; comment again in a minute` };
+    const pr = { number: iid, head: sha, ...(typeof c.mr.author?.username === "string" ? { author: c.mr.author.username } : {}) };
+    return approverFilter(await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) }));
   };
   const forge = c.forge ?? poster("gitlab", c.env ?? process.env, c.fetch);
-  const unmet = await unmetApplyRequires(forge, iid, sha, { counted, ignore: [APPLY_CONTEXT], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
+  const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
   if (unmet) return { refuse: `!${iid} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes` };
 
   let statuses: any;
