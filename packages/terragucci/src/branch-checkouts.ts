@@ -11,11 +11,11 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { globMatch } from "./detect";
+import { routedBranch } from "@intentius/chant/workspace/ci-branches";
 
-/** The branch whose globs match `root`, if any. */
+/** The branch whose globs match `root`, if any: chant's `ci.branches` routing, with the root as the member. */
 export function branchOf(branches: Record<string, string[]> | undefined, root: string): string | undefined {
-  return Object.keys(branches ?? {}).find((b) => branches![b].some((g) => globMatch(g, root)));
+  return routedBranch(branches, root) ?? undefined;
 }
 
 export interface BranchCheckouts {

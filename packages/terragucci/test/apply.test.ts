@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, applyWaves, branchesArg, branchLayers, parseBranches, approvedPath, decideGate, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, spendStanding, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { applyWave, applyWaves, branchesArg, branchLayers, branchRootProblems, parseBranches, approvedPath, decideGate, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, spendStanding, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { PolicyExec } from "../src/report/policy";
 import { refusedDiff } from "../src/respond/refused";
 import { decideOverride, OVERRIDE_OP, overrideDigest, type OverrideRule } from "../src/override";
@@ -31,6 +31,12 @@ describe("apply.branches", () => {
     expect(applyWaves(branchLayers(layers, branches, "env/staging").layers)).toEqual([["staging/app"]]);
     expect(branchLayers(layers, branches, "main").note).toBe("apply.branches: prod/net, prod/app, staging/app apply from release, env/staging, not here");
     expect(branchLayers(layers, branches, "release").note).toBe("apply.branches: release applies prod/net, prod/app");
+  });
+
+  it("refuses a root two branches match, as chant's ci.branches refuses a member two branches route", () => {
+    expect(() => branchLayers(layers, { release: ["prod/*"], hotfix: ["prod/app"] }, "release")).toThrow(/prod\/app matches release and hotfix; a root applies from one branch/);
+    expect(branchRootProblems(layers.flat(), branches)).toEqual([]);
+    expect(branchRootProblems(["prod/app", "dev/app"], { release: ["prod/**"], hotfix: ["*/app"] })).toEqual(["apply.branches: prod/app matches release and hotfix; a root applies from one branch"]);
   });
 
   it("goes to the stage as one argument and back", () => {

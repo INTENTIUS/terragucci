@@ -320,7 +320,7 @@ apply:
     staging: ["envs/staging/*"]
 ```
 
-Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. Waves and their approvals work as on the default branch, and `terragucci approve wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
+Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. The map routes roots as chant's [`ci.branches`](https://intentius.io/chant/guide/branch-routing/) routes workspace members, with each root's path as the member name, so the globs are chant's: `envs/prod/**` also matches `envs/prod`, and a `*` matches no name that starts with a dot. Waves and their approvals work as on the default branch, and `terragucci approve wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
 
 | On a push to | Applies |
 |---|---|
@@ -336,7 +336,7 @@ Drift checks run each root from the branch that applies it, so the difference be
 
 The [resume job](/terragucci/reference/pipeline/#resume-after-an-approval) applies the default branch's waiting waves only. A wave waiting on a branch named here applies when its run runs again: `terragucci approve` re-runs it on GitHub and GitLab, and on Forgejo the branch's next push runs it.
 
-`config check` refuses a glob listed under two branches, and `apply.branches` with `apply.when: pull-request`, where a push applies nothing. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
+Each root applies from one branch. `config check` refuses a glob listed under two branches, a root or unit that two branches' globs match, and `apply.branches` with `apply.when: pull-request`, where a push applies nothing. The apply job refuses such a root too. Run `npx terragucci init` after a change to the map: the apply jobs carry it. The fmt job never commits to a branch named here.
 
 ## Ephemeral environments
 

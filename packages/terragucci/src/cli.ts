@@ -118,7 +118,7 @@ import { describeReconcile, reconcile } from "./reconcile";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
-import { applyWave, parseBranches, parseGroups, readLedger } from "./apply";
+import { applyWave, branchRootProblems, parseBranches, parseGroups, readLedger } from "./apply";
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
@@ -1093,6 +1093,11 @@ export async function main(argv: string[]): Promise<number> {
           if (shape && problems.length === 0 && config.secrets && shape.kind !== "terragrunt") {
             const found = shape.kind === "atmos" ? atmosInstances(await describeStacks(repoDir)).map((i) => i.path) : findRoots(repoDir, config.roots);
             problems.push(...secretRootProblems(found, config.secrets));
+          }
+          // A root two apply.branches branches match, read from the roots or units found.
+          if (shape && problems.length === 0 && config.apply?.branches) {
+            const found = shape.kind === "terragrunt" ? walkUnits(repoDir, config.terragrunt?.exclude).map((u) => u.path) : shape.kind === "atmos" ? [] : findRoots(repoDir, config.roots);
+            problems.push(...branchRootProblems(found, config.apply.branches));
           }
           // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients, and each environment's.
           const oidc = withEnvironmentRoles(config.oidc, config.environments);

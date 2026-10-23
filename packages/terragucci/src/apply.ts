@@ -94,6 +94,7 @@ import type { OpWaveDecision } from "@intentius/chant/op";
 import { resolveGateRunLocator, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { appliesFrom, routeConflicts, routedBranch } from "@intentius/chant/workspace/ci-branches";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import {
   applyTerragruntWave,
@@ -229,24 +230,29 @@ export function parseGroups(spec: string): Record<string, string[]> {
 export const branchesArg = (branches: Record<string, string[]>): string =>
   Object.entries(branches).map(([b, globs]) => `${b}=${globs.join(",")}`).join(";");
 
+/** Each root of `roots` that two branches of `apply.branches` match, as a problem: a root applies from one branch (chant's `routeConflicts`). */
+export function branchRootProblems(roots: readonly string[], branches: Record<string, string[]>): string[] {
+  return routeConflicts(branches, roots).map((c) => `apply.branches: ${c.member} matches ${c.branches.join(" and ")}; a root applies from one branch`);
+}
+
 /**
- * The layers a push to `branch` applies under `apply.branches`: on a branch
- * the map names, only the roots its globs match; anywhere else (the default
- * branch, and a comment's apply of a merge into it), every root but those
- * any branch's globs match. Empty layers drop out of the waves.
+ * The layers a push to `branch` applies under `apply.branches`, routed by
+ * chant's `ci.branches` rule (`appliesFrom`) with each root as a member: on
+ * a branch the map names, only the roots its globs match; anywhere else (the
+ * default branch, and a comment's apply of a merge into it), every root but
+ * those any branch's globs match. A root two branches match is refused, as
+ * chant refuses a member two branches route. Empty layers drop out of the
+ * waves.
  */
 export function branchLayers(layers: string[][], branches: Record<string, string[]>, branch?: string): { layers: string[][]; note: string } {
-  const own = branch !== undefined ? branches[branch] : undefined;
-  const mapped = Object.values(branches).flat();
-  const keep = own
-    ? (r: string): boolean => own.some((g) => globMatch(g, r))
-    : (r: string): boolean => !mapped.some((g) => globMatch(g, r));
-  const out = layers.map((l) => l.filter(keep));
+  const conflicts = branchRootProblems(layers.flat(), branches);
+  if (conflicts.length > 0) throw new ConfigError(conflicts.join("; "));
+  const out = layers.map((l) => l.filter((r) => appliesFrom(branches, r, branch ?? "").applies));
   const kept = out.flat();
   const left = layers.flat().filter((r) => !kept.includes(r));
-  const note = own
+  const note = branch !== undefined && Object.hasOwn(branches, branch)
     ? `apply.branches: ${branch} applies ${kept.length ? kept.join(", ") : "none of this repo's roots"}`
-    : `apply.branches: ${left.length ? `${left.join(", ")} ${left.length === 1 ? "applies" : "apply"} from ${[...new Set(left.map((r) => Object.keys(branches).find((b) => branches[b].some((g) => globMatch(g, r)))))].join(", ")}, not here` : "no root here is another branch's"}`;
+    : `apply.branches: ${left.length ? `${left.join(", ")} ${left.length === 1 ? "applies" : "apply"} from ${[...new Set(left.map((r) => routedBranch(branches, r)))].join(", ")}, not here` : "no root here is another branch's"}`;
   return { layers: out, note };
 }
 
