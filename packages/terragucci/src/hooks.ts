@@ -1,20 +1,19 @@
 /**
  * `ci.hooks` in chant.workspace.json: commands run before and after each
  * root's plan and apply, inside the stage's own job. chant reads and checks
- * the block (`readDeclaration`), and its hook rules decide which roots a
- * hook is for (`opWaveHookRuns`) and how its argv is filled, as chant's
- * stage hook runner (`runStageHooks`) does; that runner is not bundled, since
- * its module carries chant's gate and CLI code. The stage code calls the
- * hooks, so they need no pipeline job of their own and work the same on
- * every forge.
+ * the block (`readDeclaration`), and chant's stage hook runner
+ * (`runStageHooks`, from `@intentius/chant/op/stage-hooks`) runs a moment's
+ * hooks: which roots a hook is for, how its argv is filled and what a
+ * failure does. The stage code calls the hooks, so they need no pipeline
+ * job of their own and work the same on every forge.
  *
  * terragucci runs each hook for each root its `targets` match (every root
  * when unset), in that root's directory, so a hook must set `perRun: true`.
  * `{target}`, `CHANT_TARGET` and `TG_ROOT` name the root. A hook gets the
  * job's environment less its forge tokens (binaryEnv, as the binary gets it),
- * `CHANT_HOOK`, `CHANT_TARGET`, `CHANT_RUNS`, and `TG_STAGE`, `TG_ROOT`,
- * `TG_REPO` and, after a plan, `TG_PLAN_FILE` (also `{plan}` and
- * `CHANT_PLAN`).
+ * chant's hook variables (`CHANT_HOOK`, `CHANT_TARGET`, `CHANT_RUNS` among
+ * them), and `TG_STAGE`, `TG_ROOT`, `TG_REPO` and, after a plan,
+ * `TG_PLAN_FILE` (also `{plan}` and `CHANT_PLAN`).
  *
  * The moments: `before.observe` before the root's init, `before.plan` after
  * it, `after.plan` once the root planned, and `before.apply` and
@@ -30,10 +29,11 @@
  * (`prLoopHooksAt`), so a change cannot add, edit or remove a hook that runs
  * with its own apply credentials.
  */
-import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { runStageHooks } from "@intentius/chant/op/stage-hooks";
 import { opWaveHookRuns, PR_LOOP_HOOK_MOMENTS, type OpWaveHook, type OpWaveHookMoment, type OpWaveHooks } from "@intentius/chant/op/op-waves";
 import { readDeclaration, WorkspaceReadError } from "@intentius/chant/workspace/declaration";
 import { locateWorkspace } from "@intentius/chant/workspace/which-chant";
@@ -162,16 +162,22 @@ export interface HookContext {
 
 const tail = (s: string, n = 20): string => s.trim().split("\n").slice(-n).join("\n");
 
-/** Fill a hook's argv as chant does (`opWaveArgv`): a placeholder with no value stays as it is. */
-export function hookArgv(command: readonly string[], values: { op: string; wave: string; target: string; runs: string; plan?: string }): string[] {
-  const pairs: Array<[string, string | undefined]> = [["{op}", values.op], ["{target}", values.target], ["{wave}", values.wave], ["{plan}", values.plan], ["{runs}", values.runs]];
-  return command.map((part) => pairs.reduce((out, [key, value]) => (value === undefined ? out : out.replaceAll(key, value)), part));
+/** The variables chant's runner sets itself, dropped from the job's environment so an inherited one cannot override them. */
+const CHANT_HOOK_VARS = ["CHANT_OP_WAVES", "CHANT_WAVE", "CHANT_WAVE_NUMBER", "CHANT_HOOK", "CHANT_RUNS", "CHANT_HOLD", "CHANT_TARGET", "CHANT_PLAN"];
+
+/** One hook call's output, exit and time, as the exec below saw it. */
+interface HookCall {
+  code: number | null;
+  out: string;
+  seconds: number;
 }
 
 /**
- * Run the hooks of one moment for one root, in order. A failed hook stops
- * the rest and fails the root, unless it has `onFailure: "approve"`: then it
- * holds the wave, and the hooks after it run.
+ * Run the hooks of one moment for one root, in order, through chant's
+ * `runStageHooks`. A failed hook stops the rest and fails the root, unless it
+ * has `onFailure: "approve"`: then it holds the wave, and the hooks after it
+ * run. Each call runs to its end before the next starts, and the job waits
+ * on it.
  */
 export async function runHooks(hooks: StageHooks, moment: HookMoment, ctx: HookContext): Promise<HooksOutcome> {
   const out: HooksOutcome = { runs: [], holds: [] };
@@ -183,55 +189,44 @@ export async function runHooks(hooks: StageHooks, moment: HookMoment, ctx: HookC
     const run = { target: ctx.root, op: ctx.stage, ...(ctx.planFile ? { plan: ctx.planFile } : {}) };
     const runs = join(dir, "runs.json");
     writeFileSync(runs, `${JSON.stringify({ version: 1, op: ctx.stage, stage: ctx.stage, hook: moment, runs: [run] }, null, 2)}\n`);
-    const env = {
-      ...binaryEnv(ctx.env),
-      CHANT_HOOK: moment,
-      CHANT_RUNS: runs,
-      CHANT_TARGET: ctx.root,
-      TG_STAGE: ctx.stage,
-      TG_ROOT: ctx.root,
-      TG_REPO: ctx.repo,
-      ...(ctx.planFile ? { CHANT_PLAN: ctx.planFile, TG_PLAN_FILE: ctx.planFile } : {}),
+    const jobEnv = Object.fromEntries(Object.entries(binaryEnv(ctx.env)).filter((e): e is [string, string] => e[1] !== undefined && !CHANT_HOOK_VARS.includes(e[0])));
+    const env = { ...jobEnv, TG_STAGE: ctx.stage, TG_ROOT: ctx.root, TG_REPO: ctx.repo, ...(ctx.planFile ? { TG_PLAN_FILE: ctx.planFile } : {}) };
+    const calls: HookCall[] = [];
+    const exec = (argv: string[], at: string, callEnv: Record<string, string> = {}): number => {
+      const file = join(dir, `out-${calls.length}`);
+      const fd = openSync(file, "w");
+      const started = Date.now();
+      let r: ReturnType<typeof spawnSync>;
+      try {
+        r = spawnSync(argv[0]!, argv.slice(1), { cwd: at, env: callEnv, stdio: ["ignore", fd, fd] });
+      } finally {
+        closeSync(fd);
+      }
+      const code = r.error ? null : r.status;
+      calls.push({ code, out: r.error ? r.error.message : readFileSync(file, "utf-8"), seconds: Math.round((Date.now() - started) / 100) / 10 });
+      return code ?? 127;
     };
-    for (const hook of list) {
-      const name = hookName(hook);
-      const argv = hookArgv(hook.command, { op: ctx.stage, wave: ctx.stage, target: ctx.root, runs, ...(ctx.planFile ? { plan: ctx.planFile } : {}) });
-      const r = await spawnArgv(argv, cwd, env);
-      for (const line of r.out.split("\n").filter((l) => l.trim())) ctx.log(`${ctx.root}: ${moment} ${name}: ${line}`);
-      if (r.code === 0) {
-        out.runs.push({ name, when: moment, status: "passed", exit: 0, seconds: r.seconds });
-        ctx.log(`${ctx.root}: ${moment} hook ${name} passed`);
-        continue;
+    const result = runStageHooks(moment, list, { name: ctx.stage, op: ctx.stage, wave: ctx.stage, runs: [run], runsFile: runs, holdFile: relative(cwd, join(dir, "hold.json")), env, cwd, exec, log: () => {} });
+    result.outcomes.forEach((o, i) => {
+      const call = calls[i]!;
+      for (const line of call.out.split("\n").filter((l) => l.trim())) ctx.log(`${ctx.root}: ${moment} ${o.name}: ${line}`);
+      if (o.outcome === "passed") {
+        out.runs.push({ name: o.name, when: moment, status: "passed", exit: 0, seconds: call.seconds });
+        ctx.log(`${ctx.root}: ${moment} hook ${o.name} passed`);
+      } else if (o.outcome === "held") {
+        out.runs.push({ name: o.name, when: moment, status: "approval", exit: call.code, seconds: call.seconds });
+        out.holds.push(o.name);
+        ctx.log(`${ctx.root}: ${moment} hook ${o.name} exited ${call.code ?? "without a code"}, so its wave waits for an approval`);
+      } else {
+        out.runs.push({ name: o.name, when: moment, status: "failed", exit: call.code, seconds: call.seconds });
+        ctx.log(`${ctx.root}: ${moment} hook ${o.name} failed (exit ${call.code ?? "none"})`);
+        out.error = `hook ${moment} ${o.name} failed with exit ${call.code ?? "none"}${call.out.trim() ? `:\n${tail(call.out)}` : ""}`;
       }
-      if (hook.onFailure === "approve") {
-        out.runs.push({ name, when: moment, status: "approval", exit: r.code, seconds: r.seconds });
-        out.holds.push(name);
-        ctx.log(`${ctx.root}: ${moment} hook ${name} exited ${r.code ?? "without a code"}, so its wave waits for an approval`);
-        continue;
-      }
-      out.runs.push({ name, when: moment, status: "failed", exit: r.code, seconds: r.seconds });
-      ctx.log(`${ctx.root}: ${moment} hook ${name} failed (exit ${r.code ?? "none"})`);
-      out.error = `hook ${moment} ${name} failed with exit ${r.code ?? "none"}${r.out.trim() ? `:\n${tail(r.out)}` : ""}`;
-      return out;
-    }
+    });
     return out;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-}
-
-/** Run one argv, keeping its output and how long it took; null when it was killed or could not start. */
-function spawnArgv(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<{ code: number | null; out: string; seconds: number }> {
-  const started = Date.now();
-  return new Promise((done) => {
-    const finish = (code: number | null, out: string) => done({ code, out, seconds: Math.round((Date.now() - started) / 100) / 10 });
-    const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
-    const out: Buffer[] = [];
-    child.stdout.on("data", (d: Buffer) => out.push(d));
-    child.stderr.on("data", (d: Buffer) => out.push(d));
-    child.on("error", (e) => finish(null, e.message));
-    child.on("close", (code) => finish(code, Buffer.concat(out).toString("utf-8")));
-  });
 }
 
 /**
