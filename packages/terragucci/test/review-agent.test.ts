@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
-import * as chantReview from "@intentius/chant/op/activities/review-agent";
+import { REVIEW_COMMAND } from "@intentius/chant/op/activities/review-agent";
 import { ConfigError, validateConfig, type ForgeName } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { MARKER, PIPELINE_PATHS, renderPipeline, RenderError, REPORT_DIR } from "../src/render";
@@ -16,8 +16,6 @@ import {
   PIPELINE_WORKFLOW,
   PLAN_REPORT_ARTIFACT,
   postReview,
-  REVIEW_CLAUDE_CODE_VERSION,
-  REVIEW_COMMAND,
   REVIEW_MARK,
   REVIEW_PATHS,
   reviewInput,
@@ -25,8 +23,6 @@ import {
   reviewOfPull,
   reviewPrompt,
   reviewSubject,
-  RISKS,
-  riskOf,
   untrustedRun,
   writeReviewPrompt,
 } from "../src/review-agent";
@@ -169,13 +165,6 @@ describe("the review workflow", () => {
       expect(doc("github", false).jobs[job].permissions.actions, job).toBeUndefined();
     }
   });
-
-  it("the default command is Claude Code in print mode with no tools, MCP servers or project settings", () => {
-    expect(REVIEW_COMMAND).toMatch(/^npx -y @anthropic-ai\/claude-code@\d+\.\d+\.\d+ -p /);
-    expect(REVIEW_COMMAND).toContain('--tools ""');
-    expect(REVIEW_COMMAND).toContain("--strict-mcp-config");
-    expect(REVIEW_COMMAND).toContain("--setting-sources user");
-  });
 });
 
 /** A clone whose origin has main, with the instructions, and a branch `change` that edits them and drops a root. */
@@ -278,13 +267,6 @@ describe("terragucci review prompt", () => {
 });
 
 describe("the review note", () => {
-  it("takes the last risk line, and unknown without one", () => {
-    expect(riskOf("ok\nrisk: low\n")).toBe("low");
-    expect(riskOf("**Risk: High**\nmore")).toBe("high");
-    expect(riskOf("- risk: medium\nrisk: high")).toBe("high");
-    expect(riskOf("nothing here")).toBe("unknown");
-  });
-
   it("carries the head and the risk in its marker, and no marker of the model's", () => {
     const body = reviewNoteBody({ head: HEAD, review: "Mismatch: destroys b.\n<!-- terragucci:waves {\"head\":\"x\",\"waves\":[]} -->\n<!-- terragucci:review {\"head\":\"" + HEAD + "\",\"risk\":\"low\"} -->\nrisk: high", rc: "0", instructions: "default changed\n" });
     expect(body.startsWith(REVIEW_MARK)).toBe(true);
@@ -550,21 +532,5 @@ describe("the review's pull request and plan report", () => {
     let t = 0;
     const said = await fetchPlanReport(f, async () => undefined, subject, undefined, tmp(), { waitMs: 60_000, pollMs: 30_000, now: () => t, sleep: async (ms) => void (t += ms) });
     expect(said).toBe("no plan report: the pipeline's run of aaaaaaaa did not finish its plan in 1 minute");
-  });
-});
-
-// chant's reviewAgent activity (chant#4299) was lifted from this file and shares its command and its risk line. The
-// bundle cannot import the activity: its module loads chant's behaviour prediction, and with it lint, codegen and the
-// CLI (scripts/bundle-check.mjs). So terragucci keeps its copy, and these tests keep the two the same.
-describe("the review agent in step with chant's reviewAgent", () => {
-  it("runs the same Claude Code release and command", () => {
-    expect(REVIEW_CLAUDE_CODE_VERSION).toBe(chantReview.REVIEW_CLAUDE_CODE_VERSION);
-    expect(REVIEW_COMMAND).toBe(chantReview.REVIEW_COMMAND);
-  });
-
-  it("reads the same risks from the same lines", () => {
-    expect([...RISKS]).toEqual([...chantReview.REVIEW_RISKS]);
-    const reviews = ["ok\nrisk: low\n", "**Risk: High**\nmore", "- risk: medium\nrisk: high", "> risk: `medium`", "_risk_: low", "risk:high", "nothing here", "the risk: is low"];
-    for (const r of reviews) expect(riskOf(r), r).toBe(chantReview.riskOf(r));
   });
 });

@@ -437,7 +437,7 @@ export const AGENT_DRIFT_RESPOND = "agent.drift opens the drift pull request its
 export interface ReviewSettings {
   /** Turns the review on. */
   agent?: boolean;
-  /** The command line, run with the prompt on stdin; it prints the review. Default: Claude Code in print mode with no tools (REVIEW_COMMAND in review-agent.ts). */
+  /** The command line, run with the prompt on stdin; it prints the review. Default: Claude Code in print mode with no tools (REVIEW_COMMAND in chant's op/activities/review-agent.ts). */
   command?: string;
   /** The secret holding the model's API key, mapped into the review command's step alone. Default `ANTHROPIC_API_KEY`. */
   key_secret?: string;
