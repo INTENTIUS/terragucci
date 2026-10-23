@@ -31,8 +31,9 @@
  * `terragucci approve ephemeral <pr> --plan <digest>` approve the other gates
  * a person answers: a state export request (./export.ts), the release of a
  * state lock (./unlock.ts) and a pull request's ephemeral copy
- * (./ephemeral.ts). Each checks that the gate's newest request waits for
- * that digest, then runs `chant approve <op> <gate> --plan <digest>`. The
+ * (./ephemeral.ts). Each but the copy checks that the gate's newest request
+ * waits for that digest, then runs `chant approve <op> <gate> --plan
+ * <digest>`. The copy runs `chant approve pr-<n> pr-env --plan <digest>`. The
  * keyword form needs the root or pull request after it, so a migration named
  * export, unlock or ephemeral is still approved by `terragucci approve
  * <migration>` alone.
@@ -59,7 +60,8 @@ import { originOf, resumeAfterApproval } from "./resume";
 import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
 import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
-import { EPHEMERAL_LEDGER, EPHEMERAL_OP, ephemeralGate } from "./ephemeral";
+import { ephemeralOp } from "./ephemeral";
+import { PR_ENV_GATE } from "@intentius/chant/components/pr-environment";
 import { chantCommand, installedChant } from "./chant-bin";
 import type { GateRunLocator } from "@intentius/chant/gate-resume-run";
 
@@ -345,11 +347,33 @@ export async function overrideDenial(repo: string, o: OverrideOptions): Promise<
   return { code, command };
 }
 
+/**
+ * Approve a pull request's ephemeral copy: chant's gate `pr-env` of op
+ * `pr-<n>`, for the digest the ephemeral job printed. chant's pr-env keeps no
+ * pending fact, so the digest is approved as given; the job applies only
+ * the plans it binds.
+ */
+async function approveCopy(repo: string, op: string, plan: string, o: GateApproveOptions, log: (l: string) => void): Promise<{ code: number; command: string }> {
+  const configPath = findConfig(repo);
+  const mode: Approval = checkoutApproval(repo, configPath ? await loadConfig(configPath) : {})?.mode ?? "ledger";
+  const sign = o.sign ?? (mode === "sealed" ? true : undefined);
+  const args = ["approve", op, PR_ENV_GATE, "--plan", plan, ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
+  const command = `chant ${args.map(quote).join(" ")}`;
+  if (o.dryRun) {
+    log(`would run: ${command}`);
+    return { code: 0, command };
+  }
+  const code = runChant(repo, args, command, o, log);
+  if (code === 0) log(`approved the ephemeral copy of ${op}; ${GATE_KEYWORDS.ephemeral.next()}`);
+  return { code, command };
+}
+
 /** The gates `terragucci approve <keyword> <target>` answers besides waves, migrations and overrides. */
 export const GATE_KEYWORDS = {
   export: { op: EXPORT_OP, ledger: EXPORT_LEDGER, what: "the state export of", next: (t: string) => `the person who asked runs terragucci state export ${t} again to download it` },
   unlock: { op: UNLOCK_OP, ledger: UNLOCK_LEDGER, what: "releasing the state lock of", next: (t: string) => `run terragucci unlock-state ${t} again to release it` },
-  ephemeral: { op: EPHEMERAL_OP, ledger: EPHEMERAL_LEDGER, what: "the ephemeral copy of", next: () => "run the pull request's ephemeral job again, or push to it" },
+  // The op and ledger are per pull request: pr-<n>, and _gates/pr-<n>.jsonl (approveCopy).
+  ephemeral: { op: "pr-<n>", ledger: "_gates/pr-<n>.jsonl", what: "the ephemeral copy of", next: () => "run the pull request's ephemeral job again, or push to it" },
 } as const;
 export type GateKeyword = keyof typeof GATE_KEYWORDS;
 
@@ -376,10 +400,11 @@ export async function approveGate(repo: string, o: GateApproveOptions): Promise<
   if (o.kind === "ephemeral") {
     const pr = Number(/^(?:pr-)?(\d+)$/.exec(o.target)?.[1]);
     if (!Number.isInteger(pr) || pr < 1) throw new ConfigError(`approve ephemeral takes the pull request's number, not ${JSON.stringify(o.target)}: ${usage}`);
-    gate = ephemeralGate(pr);
+    gate = ephemeralOp(pr);
   }
   const plan = o.plan?.trim();
   if (!plan || !/^\S+$/.test(plan)) throw new ConfigError(`approve ${o.kind} needs --plan <digest>, the digest its request printed: ${usage}`);
+  if (o.kind === "ephemeral") return approveCopy(repo, gate, plan, o, log);
   const ledger = readLedger(repo, g.ledger);
   // Each person's export request stands on its own, so any request for the root may be the one; a lock or a copy waits only for its newest digest.
   const requests = ledger.pending.filter((p) => p.gate === gate && p.planDigest).sort((a, b) => at(b.timestamp) - at(a.timestamp));
@@ -404,6 +429,6 @@ export async function approveGate(repo: string, o: GateApproveOptions): Promise<
     return { code: 0, command };
   }
   const code = runChant(repo, args, command, o, log);
-  if (code === 0) log(`approved ${g.what} ${gate}; ${g.next(o.kind === "ephemeral" ? gate : o.target)}`);
+  if (code === 0) log(`approved ${g.what} ${gate}; ${g.next(o.target)}`);
   return { code, command };
 }

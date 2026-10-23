@@ -813,6 +813,7 @@ terragucci approve ephemeral <pr> --plan <digest> [--sign]
 | `--sign` | seal the approval with this key, or with git's `user.signingkey` when no key is given; the default under `approval: sealed` |
 | `export <root>` | a [state export](#state-export) request for `<root>`; it counts only from someone other than the person who asked |
 | `unlock <root>` | the release of the lock [`unlock-state`](#unlock-state) found on `<root>` |
+| `ephemeral <pr>` | the plans of pull request `<pr>`'s [ephemeral environment](#ephemeral): it approves gate `pr-env` of op `pr-<pr>` for the digest the job printed |
 | `ephemeral <pr>` | pull request `<pr>`'s [ephemeral environment](#ephemeral) |
 | `--dry-run` | print what it would approve and record nothing |
 | `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
@@ -910,18 +911,18 @@ The generated pipeline runs it for [`ephemeral`](/terragucci/reference/config/#e
 
 | Subcommand | What it does |
 |---|---|
-| `up` | inits each root the globs match at `--head` with `-backend-config` naming its key with `-pr-<n>` added, plans it, and decides gate `pr-<n>` of op `tf-ephemeral` on the set digest as `gate` says, printing `terragucci approve ephemeral <n> --plan <digest>` and exiting 3 while it waits; then applies, and appends the copy, its expiry and who approved it to `_gates/tf-ephemeral/done.jsonl` |
-| `down` | plans the destroy of each root of the live copy and applies it, in reverse order, from the commit the copy applied, and appends the destroy with `--reason` and its digest; with no live copy it does nothing |
+| `up` | inits each root the globs match at `--head` with `-backend-config` naming its key with `-pr-<n>` added, and plans it. A plan that changes something waits at gate `pr-env` of op `pr-<n>` for an approval of the set digest, printing `terragucci approve ephemeral <n> --plan <digest>` and exiting 3. Once approved, or with nothing to change, it applies and appends the copy, each root's state key, its expiry and who approved it to `_pr-envs/records.jsonl` |
+| `down` | plans the destroy of each root of the live copy and applies it, in reverse order, from the commit the copy applied, and appends the destroy with `--reason` and how many roots it destroyed; with no live copy it does nothing |
 | `sweep` | destroys each live copy whose TTL passed (`expired`), and each whose pull request the forge says is closed or merged (`closed`), reading it with `TG_TOKEN` |
 
 These are config errors (exit 2):
 
 - a root on a backend other than `s3`, `azurerm`, `gcs` or `local`;
 - a backend block that names no key;
-- a Terragrunt repo;
-- `synth`.
+- an `http` backend that is not GitLab-managed state;
+- a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX`.
 
-A destroy that fails leaves the copy live, and the next sweep tries again.
+A destroy that fails is tried once more. If it still fails, the copy stays live, and the next sweep tries again. `up`, `down` and `sweep` also read the copies recorded in `_gates/tf-ephemeral/done.jsonl` by terragucci 0.4.42 and earlier.
 
 ## resume
 

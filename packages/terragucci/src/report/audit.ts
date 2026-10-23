@@ -92,6 +92,9 @@ export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
 /** Ephemeral environments: the gate of each pull request's copy, and the record of each apply and destroy of it (../ephemeral.ts). */
 export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
 export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
+/** Ephemeral environments since chant runs them: chant's pr-env records, and each pull request's gate `_gates/pr-<n>.jsonl` (../ephemeral.ts). */
+export const PR_ENV_RECORDS_FILE = "_pr-envs/records.jsonl";
+export const PR_ENV_LEDGER_PATTERN = /^_gates\/pr-[1-9][0-9]*\.jsonl$/;
 
 /** An entry's id: `sha256:` over the parts that say where it came from. */
 export const sha = (...parts: string[]): string => `sha256:${createHash("sha256").update(parts.join("\n")).digest("hex")}`;
@@ -127,6 +130,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
   if (path === UNLOCK_DONE_FILE) return unlockEntries(project, lines, commitUrl);
   if (path === EXPORT_DONE_FILE) return exportEntries(project, lines, commitUrl);
   if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, lines, commitUrl);
+  if (path === PR_ENV_RECORDS_FILE) return prEnvEntries(project, lines, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   const { entries } = deriveGateAudit({
     ledgers: [{ op: opOf(path), path, lines }],
@@ -314,6 +318,50 @@ function exportEntries(project: string, lines: readonly GateLedgerLine[], commit
       result: "exported",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: EXPORT_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ location: str(r.location), version_id: str(r.version_id), approved_by: str(r.approvedBy), approved_at: str(r.approvedAt), content_digest: str(r.content_digest) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of `_pr-envs/records.jsonl`, chant's records of the ephemeral
+ * copies: an `up` is an `ephemeral-apply` with each root's state key, and a
+ * `down` an `ephemeral-destroy` with why and the teardown's counts.
+ */
+function prEnvEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
+    if (!r || r.version !== 1 || (r.kind !== "up" && r.kind !== "down") || typeof r.env !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    const up = r.kind === "up";
+    const locations = r.locations && typeof r.locations === "object" && !Array.isArray(r.locations) ? (r.locations as Line) : {};
+    const roots = up && Array.isArray(r.components) ? r.components.filter((x): x is string => typeof x === "string").map((root) => drop({ root, location: str(locations[root]) })) : undefined;
+    const outcomes = r.outcomes && typeof r.outcomes === "object" ? (r.outcomes as Line) : undefined;
+    const approvers = Array.isArray(r.approvedBy) ? r.approvedBy.filter((x): x is string => typeof x === "string") : [];
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, PR_ENV_RECORDS_FILE, c.text),
+      kind: up ? "ephemeral-apply" : "ephemeral-destroy",
+      project,
+      at: r.timestamp,
+      who: str(r.by) ?? null,
+      what: r.env,
+      digest: str(r.planDigest) ?? null,
+      result: str(r.result) ?? (up ? "applied" : "destroyed"),
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: PR_ENV_RECORDS_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({
+        pull_request: typeof r.pr === "number" ? r.pr : undefined,
+        suffix: r.env,
+        roots,
+        reason: str(r.reason),
+        expires: str(r.expiresAt),
+        approved_by: approvers.length ? approvers.join(", ") : undefined,
+        commit: str(r.commit),
+        run_url: str(r.runUrl),
+        destroyed: typeof outcomes?.deleted === "number" ? outcomes.deleted : undefined,
+        failed: typeof outcomes?.failed === "number" ? outcomes.failed : undefined,
+      }),
     });
   }
   return out;

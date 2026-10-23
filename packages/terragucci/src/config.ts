@@ -683,7 +683,7 @@ export interface EnvironmentOidc {
 export interface EphemeralSettings {
   /** Root globs. */
   roots: string[];
-  /** How long a copy lives after the last apply that changed it: `<n>m`, `<n>h` or `<n>d`. Default 24h. */
+  /** How long a copy lives after its last apply: `<n>m`, `<n>h` or `<n>d`. Default 24h. */
   ttl?: string;
   /** Minutes between the sweep's runs, which destroy the copies whose TTL passed or whose pull request closed. 5 to 60; default 30. */
   sweep?: number;

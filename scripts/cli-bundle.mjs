@@ -37,6 +37,19 @@ const noAjv = (pkgDir) => ({
   },
 });
 
+// chant's pr-env-run.ts holds lifecyclePrEnvPorts, whose gate port imports
+// ./pr-run and ../op/gate on its first call. terragucci passes its own ports
+// (src/ephemeral.ts), so from that file those two resolve to
+// src/pr-env-gate-stub.ts, which throws, and Ajv, js-yaml and chant's component
+// driver stay out of the bundle.
+const noPrEnvGatePorts = (pkgDir) => ({
+  name: "no-pr-env-gate-ports",
+  setup(b) {
+    b.onResolve({ filter: /^(\.\/pr-run|\.\.\/op\/gate)$/ }, (args) =>
+      /[\\/]@intentius[\\/]chant[\\/]src[\\/]components[\\/]pr-env-run\.ts$/.test(args.importer) ? { path: join(pkgDir, "src/pr-env-gate-stub.ts") } : undefined);
+  },
+});
+
 // The MCP SDK and zod are 140 KB of the bundle, and only `terragucci mcp`
 // runs them (terragucci#1232). src/mcp-sdk.ts is their one way in: here it is
 // replaced by a module holding them built on their own, minified and gzipped,
@@ -108,5 +121,5 @@ export const bundleOptions = (pkgDir, plugins = []) => ({
   minifyIdentifiers: true,
   keepNames: false,
   logLevel: "warning",
-  plugins: [...plugins, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir)],
+  plugins: [...plugins, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir), noPrEnvGatePorts(pkgDir)],
 });

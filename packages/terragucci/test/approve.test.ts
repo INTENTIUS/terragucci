@@ -11,7 +11,7 @@ import { decideOverride, OVERRIDE_LEDGER, overrideDigest, recordedDenials } from
 import { git, tmp, twoRootRepo, write } from "./helpers";
 import { EXPORT_LEDGER, exportApproveCommand } from "../src/export";
 import { UNLOCK_LEDGER, unlockApproveCommand } from "../src/unlock";
-import { EPHEMERAL_LEDGER, ephemeralApproveCommand } from "../src/ephemeral";
+import { ephemeralApproveCommand } from "../src/ephemeral";
 import { migrateApproveCommand } from "../src/migrate";
 import { approveCommand } from "../src/report/marker";
 
@@ -321,19 +321,18 @@ describe("terragucci approve export|unlock|ephemeral", () => {
     expect(said.at(-1)).toMatch(/terragucci state export envs\/prod again/);
   });
 
-  it("approves a lock's newest digest and a pull request's copy by its number, and nothing else", async () => {
+  it("approves a lock's newest digest and nothing else, and a pull request's copy by its number at chant's pr-env gate", async () => {
     const old = "jcs1-sha256:" + "0".repeat(64);
     const work = checkout({
       [UNLOCK_LEDGER]: jsonl(request("tf-unlock", "app", old, 1), request("tf-unlock", "app", D, 2)),
-      [EPHEMERAL_LEDGER]: jsonl(request("tf-ephemeral", "pr-7", D, 1)),
     });
     expect((await approveGate(work, { kind: "unlock", target: "app", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve tf-unlock app --plan ${D}`);
     const stale: string[] = [];
     expect(await approveGate(work, { kind: "unlock", target: "app", plan: old, dryRun: true, log: (l) => void stale.push(l) })).toEqual({ code: 1, command: "" });
     expect(stale[0]).toContain(`waits for ${D}, not ${old}`);
-    expect((await approveGate(work, { kind: "ephemeral", target: "7", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve tf-ephemeral pr-7 --plan ${D}`);
-    expect((await approveGate(work, { kind: "ephemeral", target: "pr-7", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve tf-ephemeral pr-7 --plan ${D}`);
-    expect((await approveGate(work, { kind: "ephemeral", target: "8", plan: D, dryRun: true, log: () => {} })).code).toBe(1);
+    // A copy's gate is chant's pr-env gate of op pr-<n>, which keeps no pending fact: the digest the job printed is approved as given.
+    expect((await approveGate(work, { kind: "ephemeral", target: "7", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve pr-7 pr-env --plan ${D}`);
+    expect((await approveGate(work, { kind: "ephemeral", target: "pr-7", plan: D, dryRun: true, log: () => {} })).command).toBe(`chant approve pr-7 pr-env --plan ${D}`);
     await expect(approveGate(work, { kind: "ephemeral", target: "seven", plan: D, dryRun: true, log: () => {} })).rejects.toThrow(/pull request's number/);
     await expect(approveGate(work, { kind: "unlock", target: "app", dryRun: true, log: () => {} })).rejects.toThrow(/needs --plan <digest>/);
   });

@@ -2,24 +2,23 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
+import { livePrEnvironments, parsePrEnvRecords, type PrEnvRecord } from "@intentius/chant/components/pr-environment";
 import {
   copyBackend,
-  EPHEMERAL_DONE,
-  EPHEMERAL_LEDGER,
+  EPHEMERAL_RECORDS,
   ephemeralDown,
+  ephemeralLedger,
   ephemeralSweep,
   ephemeralUp,
-  liveEnvironments,
-  parseEphemeral,
+  LEGACY_EPHEMERAL_DONE,
+  legacyRecords,
   readLive,
   suffixedKey,
   updateList,
-  type EphemeralRecord,
 } from "../src/ephemeral";
-import { parseLedger } from "../src/apply";
 import { validateConfig, type ForgeName } from "../src/config";
 import { renderPipeline } from "../src/render";
-import { ledgerEntries, EPHEMERAL_DONE_FILE } from "../src/report/audit";
+import { ledgerEntries, PR_ENV_RECORDS_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { buildEstate, renderEstateHtml } from "../src/report/estate";
 import type { Fetch } from "../src/forge";
@@ -49,20 +48,24 @@ describe("a copy's state key", () => {
 });
 
 describe("the live copies", () => {
-  const rec = (r: Partial<EphemeralRecord>): EphemeralRecord => ({ version: 1, kind: "ephemeral-apply", op: "tf-ephemeral", gate: "pr-1", pr: 1, suffix: "pr-1", roots: [{ root: "a", location: "s3://b/a-pr-1.tfstate", result: "applied" }], planDigest: "d", by: "x", timestamp: T(0), result: "applied", commit: "c1", expiresAt: T(60), ...r });
+  const legacy = (r: Record<string, unknown>): string => JSON.stringify({ version: 1, kind: "ephemeral-apply", op: "tf-ephemeral", gate: "pr-1", pr: 1, suffix: "pr-1", roots: [{ root: "a", location: "s3://b/a-pr-1.tfstate", result: "applied" }], planDigest: "d", by: "x", timestamp: T(0), result: "applied", commit: "c1", expiresAt: T(60), ...r });
 
-  it("an apply makes one, a destroy that destroyed every root ends it, and one that failed leaves it live", () => {
-    const records = [
-      rec({}),
-      rec({ pr: 2, gate: "pr-2", suffix: "pr-2" }),
-      rec({ timestamp: T(10), commit: "c2", expiresAt: T(70) }),
-      rec({ pr: 2, kind: "ephemeral-destroy", result: "failed", reason: "closed", roots: [{ root: "a", location: "x", result: "failed" }] }),
-    ];
-    const live = liveEnvironments(records);
-    expect(live.get(1)).toMatchObject({ commit: "c2", expiresAt: T(70), roots: ["a"] });
-    expect(live.get(2)).toMatchObject({ destroyFailed: true });
-    expect(liveEnvironments([...records, rec({ pr: 2, kind: "ephemeral-destroy", result: "destroyed", reason: "expired" })]).has(2)).toBe(false);
-    expect(parseEphemeral(`${records.map((r) => JSON.stringify(r)).join("\n")}\nnot json\n{"version":2}\n`)).toHaveLength(4);
+  it("the records terragucci kept before chant ran the copies read as chant's: an apply is live, a destroy of every root ends it, and one that failed leaves it live", () => {
+    const text = [
+      legacy({}),
+      legacy({ pr: 2, gate: "pr-2", suffix: "pr-2", approvedBy: "alice" }),
+      legacy({ timestamp: T(10), commit: "c2", expiresAt: T(70) }),
+      legacy({ pr: 2, kind: "ephemeral-destroy", result: "failed", reason: "closed", roots: [{ root: "a", location: "x", result: "failed" }] }),
+      "not json",
+      '{"version":2}',
+    ].join("\n");
+    const records = legacyRecords(text);
+    expect(records).toHaveLength(4);
+    expect(records[1]).toMatchObject({ kind: "up", env: "pr-2", marker: { stack: "terragucci", env: "pr-2" }, components: ["a"], locations: { a: "s3://b/a-pr-1.tfstate" }, approvedBy: ["alice"], releaseTarget: false });
+    const live = livePrEnvironments(records);
+    expect(live.get("pr-1")).toMatchObject({ commit: "c2", expiresAt: T(70), components: ["a"] });
+    expect(live.get("pr-2")).toMatchObject({ teardownIncomplete: true });
+    expect(livePrEnvironments(legacyRecords(`${text}\n${legacy({ pr: 2, kind: "ephemeral-destroy", result: "destroyed", reason: "expired" })}`)).has("pr-2")).toBe(false);
   });
 
   it("the bucket's list replaces one pull request's row and drops it once destroyed", () => {
@@ -155,29 +158,67 @@ describe("a pull request's copy", () => {
     chmodSync(f, 0o755);
     return f;
   };
-  const done = (origin: string): EphemeralRecord[] => parseEphemeral(git(origin, "show", `chant/lifecycle:${EPHEMERAL_DONE}`));
+  const done = (origin: string): PrEnvRecord[] => parsePrEnvRecords(git(origin, "show", `chant/lifecycle:${EPHEMERAL_RECORDS}`));
+  /** The digest the up printed the approve command for, newest first. */
+  const digestOf = (s: ReturnType<typeof setup>): string => {
+    const line = [...s.out].reverse().find((l) => l.includes("terragucci approve ephemeral"));
+    if (!line) throw new Error(`no approve command in:\n${s.out.join("\n")}`);
+    return line.trim().split(" --plan ")[1]!.split(" ")[0]!;
+  };
+  /** A checkout of origin's chant/lifecycle, or of a new one when origin has none yet. */
+  const lifecycleClone = (origin: string): string => {
+    const clone = tmp("tg-eph-lifecycle-");
+    git(clone, "init", "-q");
+    git(clone, "remote", "add", "origin", origin);
+    if (git(origin, "branch", "--list", "chant/lifecycle").trim()) {
+      git(clone, "fetch", "-q", "origin", "chant/lifecycle");
+      git(clone, "checkout", "-q", "-b", "chant/lifecycle", "FETCH_HEAD");
+    } else git(clone, "checkout", "-q", "--orphan", "chant/lifecycle");
+    return clone;
+  };
+  /** An approval of `digest` at the copy's gate, as chant approve writes it. */
+  const approve = (s: ReturnType<typeof setup>, pr: number, digest: string, by = "alice"): void => {
+    // The first wait writes nothing to chant/lifecycle, so the approval may be its first commit.
+    const clone = lifecycleClone(s.origin);
+    const file = join(clone, ephemeralLedger(pr));
+    const was = existsSync(file) ? readFileSync(file, "utf-8") : "";
+    write(clone, { [ephemeralLedger(pr)]: `${was}${JSON.stringify({ version: 1, kind: "resolution", op: `pr-${pr}`, gate: "pr-env", resolvedBy: by, timestamp: new Date().toISOString(), planDigest: digest })}\n` });
+    git(clone, "add", "-A");
+    git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "approve");
+    git(clone, "push", "-q", "origin", "chant/lifecycle");
+  };
+  /** Up, which waits at the gate; the approval of what it planned; up again, which applies. */
+  const upApproved = async (s: ReturnType<typeof setup>, o: Parameters<typeof ephemeralUp>[1]): Promise<number> => {
+    const first = await ephemeralUp(s.work, o);
+    if (first !== 3) return first;
+    approve(s, o.pr, digestOf(s));
+    return ephemeralUp(s.work, o);
+  };
   const opts = (s: ReturnType<typeof setup>, extra: Record<string, unknown> = {}) => ({ binary: s.bin, env: { ...process.env, GITHUB_ACTOR: "dev" }, log: (l: string) => s.out.push(l), ...extra });
 
-  it("applies the head's copy of the ephemeral roots under suffixed keys, records it with its expiry, and a close destroys it through a planned destroy", async () => {
+  it("applies the head's copy of the ephemeral roots under suffixed keys once approved, records it with its expiry, and a close destroys it through a planned destroy", async () => {
     const s = setup('gate: never\nephemeral:\n  roots: ["preview/*"]\n  ttl: 2h\n');
+    // chant's gate holds every copy that changes something, whatever gate says for the waves.
+    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(3);
+    expect(lines(s.log)).toEqual([]);
+    approve(s, 7, digestOf(s));
     expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
     // preview/* only, each initialised under its own key with -pr-7, never prod/app and never the root's own key.
     const inits = lines(s.args).filter((l) => l.includes(" init "));
-    expect(inits.map((l) => l.split(" ")[0]).sort()).toEqual(["app", "net"]);
+    expect(inits.map((l) => l.split(" ")[0]).sort()).toEqual(["app", "app", "net", "net"]);
     expect(inits.find((l) => l.startsWith("app"))).toContain("-backend-config=key=x/preview/app-pr-7.tfstate");
     expect(lines(s.args).some((l) => l.includes("prod"))).toBe(false);
-    expect(lines(s.log).sort()).toEqual(["app-create", "net-create"]);
+    expect(lines(s.log)).toEqual(["app-create", "net-create"]);
     const [applied] = done(s.origin);
-    expect(applied).toMatchObject({ kind: "ephemeral-apply", pr: 7, suffix: "pr-7", result: "applied", commit: s.head, by: "dev", expiresAt: T(120) });
-    expect(applied.roots.map((r) => r.location).sort()).toEqual(["s3://state/x/preview/app-pr-7.tfstate", "s3://state/x/preview/net-pr-7.tfstate"]);
+    expect(applied).toMatchObject({ kind: "up", pr: 7, env: "pr-7", marker: { stack: "terragucci", env: "pr-7" }, result: "applied", commit: s.head, by: "dev", expiresAt: T(120), approvedBy: ["alice"], releaseTarget: false });
+    expect(Object.values(applied.locations ?? {}).sort()).toEqual(["s3://state/x/preview/app-pr-7.tfstate", "s3://state/x/preview/net-pr-7.tfstate"]);
     expect([...readLive(s.work).keys()]).toEqual([7]);
 
     expect(await ephemeralDown(s.work, { ...opts(s), pr: 7, reason: "closed", now: T(5) })).toBe(0);
     expect(lines(s.log).slice(2)).toEqual(["net-destroy", "app-destroy"]);
-    expect(lines(s.args).filter((l) => l.includes(" plan ")).slice(2).every((l) => l.includes("-destroy"))).toBe(true);
+    expect(lines(s.args).filter((l) => l.includes(" plan ")).slice(4).every((l) => l.includes("-destroy"))).toBe(true);
     const destroyed = done(s.origin)[1];
-    expect(destroyed).toMatchObject({ kind: "ephemeral-destroy", pr: 7, reason: "closed", result: "destroyed", commit: s.head });
-    expect(destroyed.planDigest).toMatch(/sha256/);
+    expect(destroyed).toMatchObject({ kind: "down", pr: 7, reason: "closed", result: "destroyed", commit: s.head, outcomes: { deleted: 2, failed: 0 } });
     expect(readLive(s.work).size).toBe(0);
     // A second close finds nothing to destroy and records nothing.
     expect(await ephemeralDown(s.work, { ...opts(s), pr: 7, reason: "closed", now: T(6) })).toBe(0);
@@ -185,59 +226,73 @@ describe("a pull request's copy", () => {
     expect(s.out.join("\n")).toContain("pull request 7 has no live ephemeral copy");
 
     // The audit trail lists the apply and the destroy from the record.
-    const log = git(s.origin, "log", "-p", "--unified=0", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "chant/lifecycle", "--", EPHEMERAL_DONE_FILE);
-    const entries = ledgerEntries("host/o/r", EPHEMERAL_DONE_FILE, gateLedgerLinesFromLog(log));
+    const log = git(s.origin, "log", "-p", "--unified=0", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "chant/lifecycle", "--", PR_ENV_RECORDS_FILE);
+    const entries = ledgerEntries("host/o/r", PR_ENV_RECORDS_FILE, gateLedgerLinesFromLog(log));
     expect(entries.map((e) => [e.kind, e.what, e.result, e.detail?.reason])).toEqual([["ephemeral-apply", "pr-7", "applied", undefined], ["ephemeral-destroy", "pr-7", "destroyed", "closed"]]);
-    expect(entries[1].digest).toBe(destroyed.planDigest);
+    expect(entries[0]).toMatchObject({ digest: applied.planDigest, detail: { approved_by: "alice", roots: [{ root: "preview/app", location: "s3://state/x/preview/app-pr-7.tfstate" }, { root: "preview/net", location: "s3://state/x/preview/net-pr-7.tfstate" }] } });
   });
 
-  it("waits at its gate under gate: always, and applies once its digest is approved", async () => {
+  it("waits at chant's pr-env gate without a pending fact, takes no approval of another digest, and applies once its digest is approved", async () => {
     const s = setup('gate: always\nephemeral:\n  roots: ["preview/app"]\n');
     expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(3);
     expect(lines(s.log)).toEqual([]);
-    const pending = parseLedger(git(s.origin, "show", `chant/lifecycle:${EPHEMERAL_LEDGER}`)).pending;
-    expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({ op: "tf-ephemeral", gate: "pr-7", members: [{ member: "preview/app" }] });
-    expect(s.out.join("\n")).toContain(`terragucci approve ephemeral 7 --plan ${pending[0].planDigest}`);
-    // The approval, as chant writes it.
-    const clone = join(tmp("tg-eph-approve-"), "l");
-    git(tmp(), "clone", "-q", "-b", "chant/lifecycle", s.origin, clone);
-    const file = join(clone, EPHEMERAL_LEDGER);
-    writeFileSync(file, `${readFileSync(file, "utf-8")}${JSON.stringify({ version: 1, kind: "resolution", op: "tf-ephemeral", gate: "pr-7", resolvedBy: "alice", timestamp: T(1), planDigest: pending[0].planDigest })}\n`);
-    git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "approve");
-    git(clone, "push", "-q", "origin", "chant/lifecycle");
+    const digest = digestOf(s);
+    expect(digest).toMatch(/sha256/);
+    expect(s.out.join("\n")).toContain(`terragucci approve ephemeral 7 --plan ${digest}`);
+    // Nothing was written: chant's pr-env keeps no pending fact, and nothing applied, so no record.
+    expect(git(s.origin, "branch", "--list", "chant/lifecycle").trim()).toBe("");
+    approve(s, 7, "jcs1-sha256:" + "0".repeat(64), "mallory");
+    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(1) })).toBe(3);
+    expect(s.out.join("\n")).toContain("an approval stands for another digest");
+    expect(lines(s.log)).toEqual([]);
+    approve(s, 7, digest);
     expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(2) })).toBe(0);
     expect(lines(s.log)).toEqual(["app-create"]);
-    expect(done(s.origin)[0]).toMatchObject({ approvedBy: "alice", expiresAt: T(2 + 24 * 60) });
+    expect(done(s.origin)[0]).toMatchObject({ approvedBy: ["alice"], expiresAt: T(2 + 24 * 60) });
+  });
+
+  it("destroys a copy terragucci applied before chant ran the copies, from the records it kept then", async () => {
+    const s = setup('gate: never\nephemeral:\n  roots: ["preview/app"]\n');
+    const legacy = { version: 1, kind: "ephemeral-apply", op: "tf-ephemeral", gate: "pr-7", pr: 7, suffix: "pr-7", roots: [{ root: "preview/app", location: "s3://state/x/preview/app-pr-7.tfstate", result: "applied" }], planDigest: "d", by: "dev", timestamp: T(0), result: "applied", commit: s.head, expiresAt: T(60) };
+    const clone = lifecycleClone(s.origin);
+    write(clone, { [LEGACY_EPHEMERAL_DONE]: `${JSON.stringify(legacy)}\n` });
+    git(clone, "add", "-A");
+    git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "legacy");
+    git(clone, "push", "-q", "origin", "chant/lifecycle");
+    expect(readLive(s.work).get(7)).toMatchObject({ commit: s.head, components: ["preview/app"] });
+    expect(await ephemeralDown(s.work, { ...opts(s), pr: 7, reason: "closed", now: T(5) })).toBe(0);
+    expect(lines(s.log)).toEqual(["app-destroy"]);
+    expect(done(s.origin)).toEqual([expect.objectContaining({ kind: "down", pr: 7, result: "destroyed", reason: "closed" })]);
+    expect(readLive(s.work).size).toBe(0);
   });
 
   it("the sweep destroys a copy whose TTL passed, and one whose pull request closed, and leaves the rest", async () => {
     const s = setup('gate: never\nephemeral:\n  roots: ["preview/app"]\n  ttl: 30m\n');
-    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
+    expect(await upApproved(s, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
     vi.stubEnv("TG_TOKEN", "t");
     const states: Record<number, string> = { 7: "open" };
     const fetchFn: Fetch = async (url) => ({ ok: true, status: 200, json: async () => ({ state: states[Number(url.split("/").pop())] }), text: async () => "" });
     const env = { ...process.env, GITHUB_REPOSITORY: "o/r", GITHUB_SERVER_URL: "https://github.example", TG_TOKEN: "t" };
     expect(await ephemeralSweep(s.work, { ...opts(s), env, fetch: fetchFn, now: T(10) })).toBe(0);
     expect(readLive(s.work).has(7)).toBe(true);
-    expect(s.out.join("\n")).toContain(`pull request 7: its copy stays; it expires ${T(30)}`);
+    expect(s.out.join("\n")).toContain(`pr-env sweep: pr-7 stays; it expires ${T(30)}`);
     expect(await ephemeralSweep(s.work, { ...opts(s), env, fetch: fetchFn, now: T(31) })).toBe(0);
     expect(readLive(s.work).has(7)).toBe(false);
-    expect(done(s.origin)[1]).toMatchObject({ kind: "ephemeral-destroy", reason: "expired", by: "terragucci" });
-    // Up again, then the forge says the pull request closed.
-    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(40) })).toBe(0);
+    expect(done(s.origin)[1]).toMatchObject({ kind: "down", reason: "expired", by: "terragucci" });
+    // Up again (the approval of the same plans still stands), then the forge says the pull request closed.
+    expect(await upApproved(s, { ...opts(s), pr: 7, head: s.head, now: T(40) })).toBe(0);
     states[7] = "closed";
     expect(await ephemeralSweep(s.work, { ...opts(s), env, fetch: fetchFn, now: T(41) })).toBe(0);
-    expect(done(s.origin)[3]).toMatchObject({ kind: "ephemeral-destroy", reason: "closed" });
+    expect(done(s.origin)[3]).toMatchObject({ kind: "down", reason: "closed" });
   });
 
   it("a destroy that fails leaves the copy live for the next sweep", async () => {
     const s = setup('gate: never\nephemeral:\n  roots: ["preview/app"]\n');
-    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
+    expect(await upApproved(s, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
     vi.stubEnv("FAIL_APPLY", "1");
     expect(await ephemeralDown(s.work, { ...opts(s, { env: { ...process.env } }), pr: 7, reason: "closed", now: T(1) })).toBe(1);
-    expect(done(s.origin)[1]).toMatchObject({ result: "failed" });
-    expect(readLive(s.work).get(7)).toMatchObject({ destroyFailed: true });
+    expect(done(s.origin)[1]).toMatchObject({ kind: "down", result: "incomplete", outcomes: { failed: 1 } });
+    expect(readLive(s.work).get(7)).toMatchObject({ teardownIncomplete: true });
   });
 
   it("is a config error where no copy can be made: no ephemeral roots", async () => {
@@ -251,12 +306,12 @@ describe("a pull request's copy", () => {
     const s = setup(`gate: never\nsynth: ${JSON.stringify(synth)}\nephemeral:\n  roots: ["out/stacks/*"]\n`);
     const synthLog = join(s.log, "..", "synth.log");
     vi.stubEnv("SYNTH_LOG", synthLog);
-    expect(await ephemeralUp(s.work, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
-    expect(lines(synthLog)).toEqual(["synth"]);
-    expect(lines(s.args).find((l) => l.includes(" init "))).toContain("-backend-config=key=x/app-pr-7.tfstate");
-    expect(done(s.origin)[0].roots).toEqual([{ root: "out/stacks/app", location: "s3://state/x/app-pr-7.tfstate", result: "applied" }]);
-    expect(await ephemeralDown(s.work, { ...opts(s), pr: 7, reason: "closed", now: T(1) })).toBe(0);
+    expect(await upApproved(s, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
     expect(lines(synthLog)).toEqual(["synth", "synth"]);
+    expect(lines(s.args).find((l) => l.includes(" init "))).toContain("-backend-config=key=x/app-pr-7.tfstate");
+    expect(done(s.origin)[0]).toMatchObject({ components: ["out/stacks/app"], locations: { "out/stacks/app": "s3://state/x/app-pr-7.tfstate" } });
+    expect(await ephemeralDown(s.work, { ...opts(s), pr: 7, reason: "closed", now: T(1) })).toBe(0);
+    expect(lines(synthLog)).toEqual(["synth", "synth", "synth"]);
     expect(done(s.origin)[1]).toMatchObject({ result: "destroyed" });
     // A synth that fails copies nothing, and says so.
     const broken = setup('gate: never\nsynth: "exit 3"\nephemeral:\n  roots: ["out/stacks/*"]\n');
@@ -281,13 +336,13 @@ describe("a pull request's copy", () => {
     git(s.work, "push", "-q", "-f", "origin", "HEAD:refs/pull/7/head");
     git(s.work, "push", "-q", "-f", "origin", "HEAD:main");
     const env = { ...process.env, GITHUB_ACTOR: "dev", TERRAGUCCI_TERRAGRUNT: tgBin };
-    expect(await ephemeralUp(s.work, { ...opts(s), env, pr: 7, head, now: T(0) })).toBe(0);
+    expect(await upApproved(s, { ...opts(s), env, pr: 7, head, now: T(0) })).toBe(0);
     // net before app, which reads it; never live/prod/app; each prepared with the suffix, and never given a -backend-config.
     const prepared = lines(join(s.log, "..", "tg.log"));
-    expect(prepared).toEqual(["live/preview/net -pr-7", "live/preview/app -pr-7"]);
+    expect(prepared).toEqual(["live/preview/net -pr-7", "live/preview/app -pr-7", "live/preview/net -pr-7", "live/preview/app -pr-7"]);
     expect(lines(s.args).some((l) => l.includes("-backend-config"))).toBe(false);
     expect(lines(s.log)).toEqual(["net-create", "app-create"]);
-    expect(done(s.origin)[0].roots.map((r) => r.location)).toEqual(["s3://state/x/live/preview/net/terraform-pr-7.tfstate", "s3://state/x/live/preview/app/terraform-pr-7.tfstate"]);
+    expect(Object.values(done(s.origin)[0].locations ?? {})).toEqual(["s3://state/x/live/preview/net/terraform-pr-7.tfstate", "s3://state/x/live/preview/app/terraform-pr-7.tfstate"]);
     expect(await ephemeralDown(s.work, { ...opts(s), env, pr: 7, reason: "closed", now: T(1) })).toBe(0);
     expect(lines(s.log).slice(2)).toEqual(["app-destroy", "net-destroy"]);
 
@@ -314,7 +369,7 @@ describe("a pull request's copy", () => {
     // The pull request widens ephemeral.roots in its own copy of the file; the base's still names preview/app alone.
     git(s.work, "checkout", "-q", "-b", "wider");
     write(s.work, { "terragucci.yml": 'gate: never\nephemeral:\n  roots: ["**"]\n' });
-    expect(await ephemeralUp(s.work, { ...opts(s), base: "main", pr: 7, head: s.head, now: T(0) })).toBe(0);
+    expect(await upApproved(s, { ...opts(s), base: "main", pr: 7, head: s.head, now: T(0) })).toBe(0);
     expect(lines(s.log)).toEqual(["app-create"]);
   });
 });
