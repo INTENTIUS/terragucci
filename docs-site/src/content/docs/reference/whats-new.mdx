@@ -1,14 +1,24 @@
 ---
-title: Changes in 0.4.41
-description: "terragucci 0.4.41, released 2026-10-22."
+title: Changes in 0.4.42
+description: "terragucci 0.4.42, released 2026-10-23."
 ---
 
-Release `0.4.41` is on npm as `@intentius/terragucci@0.4.41`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.41) lists every change.
+Release `0.4.42` is on npm as `@intentius/terragucci@0.4.42`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.42) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.41 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.42 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.42
+
+terragucci runs on chant 0.124.43.
+
+- Roots that plan side by side run their hooks side by side again, through chant's async stage-hook runner (#1235). Each root's hook output stays together.
+- On Forgejo, a pull request still being checked for conflicts is asked again before `apply.requires` refuses it. A refusal that never settles reads "Forgejo reports conflicts with main, or is still checking for them" (#1236).
+- `apply.requires` hands its list straight to chant, so a check you leave out makes no forge call (#1238).
+- The `approved` refusal names each approver who did not count and why, for example `visitor has no write access`. A review by the pipeline's own token is named as such instead of being skipped. On GitLab, the check that the latest push is recorded now runs before approvals are read (#1239).
+- The CLI bundle is about 1.9 MB. The MCP SDK loads only when `terragucci mcp` starts (#1234).
 
 ## In 0.4.41
 
