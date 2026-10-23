@@ -35,7 +35,8 @@ export async function checkApplyRequires(forge: PrForge, pr: number, head: strin
     ...forge,
     prApproved: async (n, h) => {
       const f = await who();
-      return "passed" in f ? f : approved(n, h, f);
+      // An answer given without asking the forge counted nobody and left nobody out.
+      return "passed" in f ? { ...f, approvers: [], excluded: [] } : approved(n, h, f);
     },
     prMergeable: forge.prMergeable?.bind(forge),
     prUndiverged: forge.prUndiverged?.bind(forge),
