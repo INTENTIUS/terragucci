@@ -21,7 +21,8 @@
  * nothing waives a denial), the head did not move while the comment was
  * read, it does not change the pipeline file, which the comment's job runs
  * from the default branch, and no other open pull request holds a lock on a
- * root it reaches (locks.ts). The decision then takes those locks. In a
+ * root it reaches (root-locks.ts, chant's target locks). The decision then
+ * takes those locks. In a
  * Terragrunt repo the locks are on units (reachedUnits). `/terragucci lock`
  * takes them without applying, and `/terragucci unlock` releases them. GitLab
  * applies before merge from a pipeline of the default branch instead
@@ -52,7 +53,7 @@ import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
 import { agentSettingsAt, countable, notCounted, pullInvolvement } from "./involved";
 import { poster, type Fetch } from "./forge";
-import { describeHeld, releaseLocks, takeLocks } from "./locks";
+import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
 
 /** What the apply job does next: apply from the merge commit (`go`), or stop with a reason. */
@@ -177,7 +178,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
     if (!prMode) return refuse("this repository applies after merge, so no pull request holds a lock and there is nothing to unlock");
     let released: string[];
     try {
-      released = releaseLocks(o.repo ?? process.cwd(), number);
+      released = await releaseRootLocks(o.repo ?? process.cwd(), number);
     } catch (e) {
       return broke(`could not release the locks of pull request ${number} (${(e as Error).message})`);
     }
@@ -504,7 +505,7 @@ async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Prom
   const roots = reach.units;
   let locked;
   try {
-    locked = await takeLocks(repo, roots, { pr: i.number, by: i.user, at: new Date().toISOString(), head: h.sha, ...(how === "lock" ? { via: "lock" as const } : {}) }, async (n) => {
+    locked = await takeRootLocks(repo, roots, { pr: i.number, by: i.user, at: new Date().toISOString(), head: h.sha, stage: how }, async (n) => {
       const other = await i.call("GET", `repos/${h.repoName}/pulls/${n}`);
       return other?.state === "open";
     });
@@ -641,19 +642,19 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
     const author = typeof pr?.user?.login === "string" && LOGIN.test(pr.user.login) ? pr.user.login : "its author";
     let locked;
     try {
-      locked = await takeLocks(repoDir, reach.units, { pr: number, by: author, at: new Date().toISOString(), head: sha, stage: "plan" }, async (n) => (await call("GET", `repos/${repo}/pulls/${n}`))?.state === "open", { release: true });
+      locked = await takeRootLocks(repoDir, reach.units, { pr: number, by: author, at: new Date().toISOString(), head: sha, stage: "plan" as const }, async (n) => (await call("GET", `repos/${repo}/pulls/${n}`))?.state === "open", { release: true });
     } catch (e) {
       return broke(`could not take the ${what} locks (${(e as Error).message})`);
     }
     if (!locked.ok) {
       const text = `${describeHeld(locked.held)}, so pull request ${number} is not locked. Comment \`/terragucci plan\` on it once that pull request merges or closes, or someone with write access comments \`/terragucci unlock\` on it`;
-      await status(sha, "failure", `locked by pull request ${[...new Set(locked.held.map((h) => h.pr))].join(", ")}: ${locked.held.map((h) => h.root).join(", ")}`);
+      await status(sha, "failure", `locked by pull request ${[...new Set(locked.held.map((h) => h.pr))].join(", ")}: ${locked.held.map((h) => h.target).join(", ")}`);
       await reply(text);
       return stop(text);
     }
     const holds = locked.taken.length ? `holds ${locked.taken.join(", ")}` : `reaches no ${what}`;
     await status(sha, "success", reach.every ? `${holds}: every ${reach.kind}` : holds);
-    const freed = locked.released?.length ? `; released ${locked.released.join(", ")}, which its head no longer reaches` : "";
+    const freed = locked.released.length ? `; released ${locked.released.join(", ")}, which its head no longer reaches` : "";
     return stop(`pull request ${number} at ${short(sha)} ${holds}${freed}${reach.every ? ` (${everyUnit(number, reach.every, reach.kind)})` : ""}`);
   };
 
@@ -680,7 +681,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
     if (event.action === "closed") {
       let released: string[];
       try {
-        released = releaseLocks(repoDir, number);
+        released = await releaseRootLocks(repoDir, number);
       } catch (e) {
         return broke(`could not release the locks of pull request ${number} (${(e as Error).message})`);
       }
@@ -719,7 +720,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   if (parsed.kind === "unlock") {
     let released: string[];
     try {
-      released = releaseLocks(repoDir, number);
+      released = await releaseRootLocks(repoDir, number);
     } catch (e) {
       return broke(`could not release the locks of pull request ${number} (${(e as Error).message})`);
     }
@@ -936,6 +937,6 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
   // The forge merges only while the head is still `sha`, with apply.merge_token_env's secret when set: Forgejo refuses a merge made with the job's own token.
   const merged = await poster(o.forge ?? "github", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
   if (!merged.merged) throw new Error(`the forge refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);
-  const released = releaseLocks(o.repo ?? process.cwd(), o.pr);
+  const released = await releaseRootLocks(o.repo ?? process.cwd(), o.pr);
   return `merged pull request ${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
 }

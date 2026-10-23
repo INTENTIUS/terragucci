@@ -9,7 +9,10 @@ import { appliedMarker, decideGitLabApply, mergeGitLabMR } from "../src/comment-
 import type { Git } from "../src/comment-apply";
 import { DEVELOPER, pollGitLabComments } from "../src/comment-gitlab";
 import type { Fetch } from "../src/forge";
-import { readLocks, takeLocks } from "../src/locks";
+import { readTargetLocks } from "@intentius/chant/lifecycle/target-lock";
+import { LOCK_GATE, takeRootLocks } from "../src/root-locks";
+
+const readLocks = (work: string) => readTargetLocks(LOCK_GATE, { cwd: work });
 import { backend, git, tmp, write } from "./helpers";
 
 const layers = [["network"], ["app"]];
@@ -208,7 +211,7 @@ describe("the mr-apply job's decision", () => {
     const d = await run();
     expect(d).toMatchObject({ go: true, open: true, pr: 3, sha: r.head, base: "main" });
     expect(replies(api.calls)).toEqual([]);
-    expect(readLocks(r.work).locks).toEqual({ network: expect.objectContaining({ pr: 3, by: "dev", head: r.head }) });
+    expect((await readLocks(r.work)).locks).toEqual({ network: expect.objectContaining({ pr: 3, by: "dev", head: r.head }) });
     // The job's own token reads; the merge token never leaves the comments and pr-merge jobs.
     expect(api.calls.every((c) => c.token === "job-token")).toBe(true);
   });
@@ -220,7 +223,7 @@ describe("the mr-apply job's decision", () => {
     const d = await run();
     expect(d.go).toBe(false);
     expect(replies(api.calls)[0]).toMatch(/this pipeline was started for the head eeeeeeee, and !3's head is .{8}, so nothing is applied/);
-    expect(readLocks(r.work).locks).toEqual({});
+    expect((await readLocks(r.work)).locks).toEqual({});
   });
 
   it("runs nothing for a note that is not on the merge request, asks for no apply, or comes from below Developer", async () => {
@@ -236,7 +239,7 @@ describe("the mr-apply job's decision", () => {
       expect(d.reason).toMatch(says);
       expect(replies(api.calls)).toEqual([]);
     }
-    expect(readLocks(r.work).locks).toEqual({});
+    expect((await readLocks(r.work)).locks).toEqual({});
   });
 
   it("checks the requirements again: a merge request that fell behind since the note is refused", async () => {
@@ -248,7 +251,7 @@ describe("the mr-apply job's decision", () => {
 
   it("refuses a root another open merge request holds, naming it, and an unlock note releases the holder's locks", async () => {
     const r = repos();
-    await takeLocks(r.work, ["network"], { pr: 5, by: "dev", at: NOW.toISOString(), head: "f".repeat(40) }, async () => true);
+    await takeRootLocks(r.work, ["network"], { pr: 5, by: "dev", at: NOW.toISOString(), head: "f".repeat(40), stage: "apply" }, async () => true);
     const w = ready(r.head, [note(101, "/terragucci apply")]);
     w.mrs.push(openMr(5, "f".repeat(40)));
     const { api, run } = decide(r, w, job(r.head));
@@ -258,7 +261,7 @@ describe("the mr-apply job's decision", () => {
     const unlock = gitlab({ mrs: w.mrs, notes: { 5: [note(201, "/terragucci unlock")] }, members });
     const d = await decideGitLabApply({ layers, env: { ...env, TERRAGUCCI_MR: "5", TERRAGUCCI_NOTE: "201", TERRAGUCCI_HEAD: "f".repeat(40) }, fetch: unlock.fetch, git: r.git, repo: r.work });
     expect(d.reason).toMatch(/released the locks !5 held on `network`, for dev/);
-    expect(readLocks(r.work).locks).toEqual({});
+    expect((await readLocks(r.work)).locks).toEqual({});
   });
 
   it("a lock note locks the roots and applies nothing", async () => {
@@ -267,7 +270,7 @@ describe("the mr-apply job's decision", () => {
     const d = await run();
     expect(d.go).toBe(false);
     expect(replies(api.calls)[0]).toMatch(/locked `network` for !3 at .{8}, for dev; nothing was applied/);
-    expect(readLocks(r.work).locks.network).toMatchObject({ pr: 3, via: "lock" });
+    expect((await readLocks(r.work)).locks.network).toMatchObject({ pr: 3, stage: "lock" });
   });
 });
 
