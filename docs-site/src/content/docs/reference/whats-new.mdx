@@ -13,6 +13,8 @@ Release `0.4.42` is on npm as `@intentius/terragucci@0.4.42`, and its [GitHub re
 ## In 0.4.43
 
 - Ephemeral environments run on chant's pull request environments (#1228). A copy's plan that changes something now waits for an approval whatever `gate` says, so `gate: on-destructive` and `gate: never` no longer let a copy that only creates resources apply on its own. A plan with nothing to change applies without one. `terragucci approve ephemeral <n> --plan <digest>` is still the command; it now runs `chant approve pr-<n> pr-env --plan <digest>`, and the approval is kept in `_gates/pr-<n>.jsonl`. The copies are recorded in `_pr-envs/records.jsonl` on `chant/lifecycle` instead of `_gates/tf-ephemeral/done.jsonl`. terragucci still reads the old file, so a copy applied before you upgrade is destroyed on close or at expiry as before. A destroy that fails is tried once more in the same run, and its audit entry counts the roots destroyed instead of carrying the destroy plans' digest.
+- A waiting wave's log names each approval that does not count, with its reason, for example `approvals that do not count: alice (alice opened pull request 7)`.
+- `terragucci view` runs behold 0.30.0 (was 0.26.0), which reads `terragucci.components.json` and draws the roots grouped by wave.
 
 ## In 0.4.42
 

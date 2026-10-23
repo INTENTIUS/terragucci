@@ -15,7 +15,7 @@ The [estate page](/terragucci/guides/see-every-project/) counts per project. [be
 ## Result
 
 ```bash
-npx --yes -p @intentius/behold@0.26.0 -p @intentius/chant-lexicon-terraform@^0.124.0 -p @cdktn/hcl2json@^0.24.0 \
+npx --yes -p @intentius/behold@0.30.0 -p @intentius/chant-lexicon-terraform@^0.124.0 -p @cdktn/hcl2json@^0.24.0 \
   behold serve . --terragucci s3://acme-terragucci/reports
 ```
 
@@ -76,7 +76,7 @@ behold has no approve button. Run the line in your shell, which records the appr
 
    ```bash
    aws s3 sync s3://acme-terragucci/reports ./reports
-   npx --yes -p @intentius/behold@0.26.0 -p @intentius/chant-lexicon-terraform@^0.124.0 -p @cdktn/hcl2json@^0.24.0 \
+   npx --yes -p @intentius/behold@0.30.0 -p @intentius/chant-lexicon-terraform@^0.124.0 -p @cdktn/hcl2json@^0.24.0 \
      behold serve . --terragucci ./reports
    ```
 
@@ -98,11 +98,11 @@ behold has no approve button. Run the line in your shell, which records the appr
 ]
 ```
 
-Commit it with the pipeline. behold 0.26.0 draws the roots from the Terraform files and does not read it.
+Commit it with the pipeline. behold 0.30.0 reads it and draws the roots grouped by wave, each wave titled with the job that applies it.
 
 ## Limits
 
-- behold 0.26.0 reads repos whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) asks for `minReader` 0.124.17 or older; `terragucci init` writes 0.102.0. It refuses a repo that asks for a newer reader.
+- behold 0.30.0 reads repos whose [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) asks for `minReader` 0.124.46 or older; `terragucci init` writes 0.102.0. It refuses a repo that asks for a newer reader.
 - A malformed `index.json`, `report.json` or `estate.json` is refused with what to fix, rather than drawn.
 - A [control repo](/terragucci/concepts/control-repo/) has no roots of its own, so behold draws nothing there. Serve each project's repo.
 

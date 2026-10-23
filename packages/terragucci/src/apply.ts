@@ -3609,7 +3609,7 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   const rules = j.quorum && !rulesMet(j.quorum) ? quorumWaiting(j.quorum) : undefined;
   console.log(`${label} waits for ${rules ? "more approvals" : "an approval"} of digest ${digest}. Read its plans above, then approve it with:`);
   if (rules) console.log(`${label}: approval_rules at base: ${rules}`);
-  if (w.excluded?.length) console.log(`${label}: an approval counts only from someone who had no hand in the change, so not from ${w.excluded.map((e) => e.login).join(", ")}`);
+  if (w.excluded?.length) console.log(`${label}: approvals that do not count: ${w.excluded.map((e) => `${e.login} (${e.reason})`).join("; ")}`);
   console.log(`  ${approveLine(wave, digest, mode)}`);
   // chant records the approver as --actor, else GITHUB_ACTOR, GITLAB_USER_LOGIN or USER; a seal counts only when that name is a principal in .chant/allowed_signers.
   console.log(mode === "sealed"
