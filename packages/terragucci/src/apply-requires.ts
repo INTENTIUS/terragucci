@@ -26,16 +26,6 @@ export interface ApplyRequiresOptions {
 
 const unasked = async (): Promise<PrRequireResult> => ({ passed: true, reason: "not in apply.requires" });
 
-/**
- * Forgejo answers `mergeable: false` while it still checks a pull request for
- * conflicts, so a refusal there is asked again, as a pending check is, before
- * it counts.
- */
-const forgejoMergeable = (ask: NonNullable<PrForge["prMergeable"]>): NonNullable<PrForge["prMergeable"]> => async (pr, head) => {
-  const r = await ask(pr, head);
-  return r.passed ? r : { ...r, pending: true };
-};
-
 /** Each requirement's outcome, in chant's order. */
 export async function checkApplyRequires(forge: PrForge, pr: number, head: string, o: ApplyRequiresOptions = {}): Promise<PrRequireOutcome[]> {
   const on = new Set<ApplyRequire>(o.requires ?? APPLY_REQUIRES);
@@ -46,7 +36,7 @@ export async function checkApplyRequires(forge: PrForge, pr: number, head: strin
       const r = await approved(n, h);
       return r.passed && o.counted ? o.counted() : r;
     }),
-    prMergeable: !on.has("mergeable") ? unasked : forge.kind === "forgejo" && forge.prMergeable ? forgejoMergeable(forge.prMergeable.bind(forge)) : forge.prMergeable?.bind(forge),
+    prMergeable: on.has("mergeable") ? forge.prMergeable?.bind(forge) : unasked,
     prUndiverged: on.has("undiverged") ? forge.prUndiverged?.bind(forge) : unasked,
     prChecksPassed: on.has("checks") ? forge.prChecksPassed?.bind(forge) : unasked,
   };
