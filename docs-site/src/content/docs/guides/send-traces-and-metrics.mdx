@@ -141,18 +141,22 @@ An unreachable collector never fails a stage, so you can turn this on before the
 
 ## Agent runs
 
-Each `agent.comment` and `agent.drift` run leaves a record when its push job finishes, whether it pushed, opened a pull request, was refused or failed:
+Each `agent.comment`, `agent.drift`, `review.agent` and refused-wave summary run leaves a record, whether it pushed, opened a pull request, posted, was refused, was stopped by its money limit or failed. For `agent.comment` and `agent.drift` the push job writes it; for `review.agent` the `review post` step does; for the refused-wave summary you add a `terragucci agent record` step ([the guide](/terragucci/guides/agent-refused-wave/)):
 
 | Field | Value |
 |---|---|
-| actor | the forge user the push token acts as, always an `agent`; the commenter is `requested_by` when a person asked |
+| actor | the forge user the push token acts as, always an `agent`; the person who asked is `requested_by`: the commenter for `agent.comment`, whoever started the run by hand for `agent.drift`. `review.agent` and the refused-wave summary hold no push token, so their actor is the user `TG_AGENT_ACTOR` names, else the one `TG_TOKEN` acts as, else `unknown` |
 | model, tokens, cost | what the agent job reported: a `usage.json` with `model`, `cost_usd`, `input_tokens` and `output_tokens`, written to the path in `$TG_AGENT_USAGE`, else the JSON result of Claude Code's `--output-format json`, which the default command uses. The agent job runs the model, so these figures are its own word. A command that reports neither leaves them out |
 | prompt digest | `sha256:` over the prompt the agent read |
 | commit | the commit it pushed, or the pull request it opened |
 
-The record is one `agent-run` line in `_gates/agent-runs.jsonl` on `chant/lifecycle`, which the [audit trail](/terragucci/reference/audit-trail/) shows as an `agent-run` entry. The push job writes it with the agent's token, so that token must be allowed to push to `chant/lifecycle`; a record that cannot be written is logged and the push stands.
+The record is one `agent-run` line in `_gates/agent-runs.jsonl` on `chant/lifecycle`, which the [audit trail](/terragucci/reference/audit-trail/) shows as an `agent-run` entry. The push job writes it with the agent's token, so that token must be allowed to push to `chant/lifecycle`; a record that cannot be written is logged and the push stands. The review note job checks nothing out and holds no write access, so a `review.agent` record from it goes to the collector only; the GitLab review job and any job with a checkout also write the line.
 
-With `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) set in the push job, the same record also goes to your collector as one span named `terragucci.agent.comment` or `terragucci.agent.drift`, with `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `terragucci.agent.cost_usd`, `terragucci.agent.actor`, `terragucci.agent.prompt_digest` and `terragucci.agent.commit`. With no endpoint set, nothing is sent.
+With `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) set in the push job, the same record also goes to your collector as one span named `terragucci.agent.comment`, `terragucci.agent.drift`, `terragucci.review.agent` or `terragucci.agent.refused-wave`, with `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `terragucci.agent.cost_usd`, `terragucci.agent.actor`, `terragucci.agent.prompt_digest` and `terragucci.agent.commit`. With no endpoint set, nothing is sent.
+
+### A money limit
+
+`agent.comment.max_cost_usd` (and the same key under `agent.drift`) sets the most an agent run may spend, in US dollars. It reaches the agent's step as `TG_AGENT_MAX_COST_USD`. The default command passes it to Claude Code as `--max-budget-usd`, so Claude Code ends the run itself. After any command, the job reads the cost the run reported, and when that is above the limit it leaves the exit code `over-budget`. The push job then pushes nothing, says so in its reply, and writes the record with the result `stopped`. A command that reports no cost is not stopped by the second check, so a custom command should write `usage.json` or pass the limit on itself. With no `max_cost_usd` there is no money limit.
 
 Langfuse is one collector that takes it, among others. Point the traces at its OTLP endpoint and give it the key as a header:
 

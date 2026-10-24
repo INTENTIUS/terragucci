@@ -34,8 +34,11 @@ export function reviewRunScript(command: string): string {
     `mkdir -p ${REVIEW_OUT}`,
     `cd ${REVIEW_WORK} || exit 1`,
     `export TG_REVIEW_PROMPT=${REVIEW_DIR}/prompt.md`,
+    // A command may leave its model and cost here; the review note's record reads them (agent-record.ts).
+    `export TG_AGENT_USAGE=${REVIEW_OUT}/usage.json`,
     `( ${command} ) <"$TG_REVIEW_PROMPT" >${REVIEW_OUT}/${REVIEW_FILE}`,
     `echo "$?" >${REVIEW_OUT}/rc`,
+    `sha256sum "$TG_REVIEW_PROMPT" | cut -d' ' -f1 >${REVIEW_OUT}/prompt.sha256`,
     `echo "terragucci review: the review command exited $(cat ${REVIEW_OUT}/rc) and printed $(wc -c <${REVIEW_OUT}/${REVIEW_FILE}) bytes"`,
   ].join("\n");
 }
@@ -55,8 +58,10 @@ export function gitlabReviewScript(review: ReviewInput, artifact: string): strin
     `mkdir -p ${REVIEW_OUT}`,
     `cd ${REVIEW_WORK} || exit 1`,
     `export TG_REVIEW_PROMPT=${REVIEW_DIR}/prompt.md`,
+    `export TG_AGENT_USAGE=${REVIEW_OUT}/usage.json`,
     `${gitlabCleanEnv(review.keySecret)} bash -c ${sh(review.command)} <"$TG_REVIEW_PROMPT" >${REVIEW_OUT}/${REVIEW_FILE}`,
     `echo "$?" >${REVIEW_OUT}/rc`,
+    `sha256sum "$TG_REVIEW_PROMPT" | cut -d' ' -f1 >${REVIEW_OUT}/prompt.sha256`,
     `echo "terragucci review: the review command exited $(cat ${REVIEW_OUT}/rc) and printed $(wc -c <${REVIEW_OUT}/${REVIEW_FILE}) bytes"`,
     `cd "$CI_PROJECT_DIR" && mkdir -p ${artifact} && cp ${REVIEW_OUT}/* ${artifact}/`,
   ].join("\n");

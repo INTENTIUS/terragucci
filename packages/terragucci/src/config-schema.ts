@@ -158,7 +158,7 @@ const runnerSpec: JsonSchema = {
 const agentRun: JsonSchema = {
   anyOf: [
     bool,
-    map(AGENT_COMMENT_KEYS, { command: oneLine, key_secret: secret, max_turns: whole(1), timeout: whole(1) }),
+    map(AGENT_COMMENT_KEYS, { command: oneLine, key_secret: secret, max_turns: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 }, timeout: whole(1) }),
   ],
 };
 

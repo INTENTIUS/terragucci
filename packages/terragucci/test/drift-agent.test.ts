@@ -46,7 +46,7 @@ describe("agent.drift in terragucci.yml", () => {
       "config.respond.drift: agent.drift opens the drift pull request itself, so the codified one would be a second; set respond.drift to attribute or off",
     ]);
     expect(problemsOf({ drift: "0 6 * * *", respond: { drift: "off" }, agent: { ...base, drift: { model: "x" } } })).toEqual([
-      "config.agent.drift.model is not a setting (settings: command, key_secret, max_turns, timeout)",
+      "config.agent.drift.model is not a setting (settings: command, key_secret, max_turns, max_cost_usd, timeout)",
     ]);
     expect(problemsOf({ agent: { ...base, fix: true } })).toEqual(["config.agent.fix is not a setting (settings: via, token_env, login, comment, drift)"]);
   });
@@ -202,6 +202,13 @@ describe("pushDriftChange", () => {
     expect(s.sent.some((x) => x.path === "/repos/acme/infra/pulls")).toBe(false);
     expect(s.comments()[0]).toContain("`.forgejo/workflows/terragucci.yml`, `policy/allow.rego`, which an agent may not change");
     expect(git(s.checkout, "status", "--porcelain")).toBe("");
+  });
+
+  it("opens nothing when the agent was stopped for its money limit", async () => {
+    const stopped = setupPush({ patch: { "app/main.tf": "# x\n" }, rc: "over-budget" });
+    const r = await stopped.run();
+    expect(r).toMatchObject({ opened: false, stopped: true });
+    expect(stopped.comments()[0]).toContain("stopped for passing its money limit");
   });
 
   it("opens nothing when the agent failed, changed nothing, or the checkout is not the planned commit", async () => {

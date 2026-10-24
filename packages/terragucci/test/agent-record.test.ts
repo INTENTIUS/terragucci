@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { describe, expect, it } from "vitest";
-import { agentRunRecord, AGENT_RUNS_FILE, digestOf, readAgentUsage, readPromptDigest, recordAgentRun, sendAgentRun } from "../src/agent-record";
+import { agentRunRecord, AGENT_RUNS_FILE, checkCostLimit, digestOf, overBudgetNote, readAgentUsage, readPromptDigest, recordAgentRun, recordOutcome, recordPushOutcome, sendAgentRun } from "../src/agent-record";
+import { reviewRunScript } from "../src/render-review";
 import { agentRunScript, gitlabAgentRunScript } from "../src/render-agent";
 import { ledgerEntries } from "../src/report/audit";
 import { tmp } from "./helpers";
@@ -114,5 +115,54 @@ describe("the agent job's script", () => {
       expect(script).toContain("${PIPESTATUS[0]}");
       expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
     }
+  });
+});
+
+describe("the money limit", () => {
+  it("stops a run whose reported cost is above it, and records why", () => {
+    const dir = change({ "agent-output.json": CLAUDE, rc: "0\n" });
+    expect(checkCostLimit(dir, 1)).toEqual({ over: false, usd: 0.42 });
+    expect(readFileSync(join(dir, "rc"), "utf-8").trim()).toBe("0");
+    expect(checkCostLimit(dir, 0.1)).toEqual({ over: true, usd: 0.42 });
+    expect(readFileSync(join(dir, "rc"), "utf-8").trim()).toBe("over-budget");
+    expect(overBudgetNote(dir)).toContain("reported $0.4200, limit $0.1");
+  });
+
+  it("does not stop a run that reported no cost", () => {
+    const dir = change({ "agent-output.json": "text", rc: "0\n" });
+    expect(checkCostLimit(dir, 0.01)).toEqual({ over: false });
+    expect(readFileSync(join(dir, "rc"), "utf-8").trim()).toBe("0");
+  });
+
+  it("is checked after the agent, by both scripts, and the stop is recorded as stopped", async () => {
+    for (const script of [agentRunScript("my-agent"), gitlabAgentRunScript({ command: "my-agent", keySecret: "KEY", policyDir: "policy", tokenSecret: "T", maxTurns: 3, timeout: 5 }, "art")]) {
+      expect(script).toContain("terragucci agent check-cost");
+      expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    }
+    const lines: string[] = [];
+    const r = await recordPushOutcome({ feature: "agent.comment", cwd: "/x", change: change({}), forge: "github", env: {}, ok: false, stopped: true, requestedBy: "alice", reason: "over" }, { append: (l) => void lines.push(l), log: () => {}, fetchForge: async () => ({ ok: false, status: 401, json: async () => ({}) }) as never });
+    expect(r).toMatchObject({ result: "stopped", requestedBy: "alice" });
+    expect(JSON.parse(lines[0])).toMatchObject({ result: "stopped", requestedBy: "alice" });
+  });
+});
+
+describe("review.agent and the refused-wave summary", () => {
+  it("the review job leaves the prompt digest and a usage file's place for the review note to read", () => {
+    const script = reviewRunScript("my-review");
+    expect(script).toContain("prompt.sha256");
+    expect(script).toContain("TG_AGENT_USAGE");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+  });
+
+  it("write a record with the actor TG_AGENT_ACTOR names, and only a span when the job has no checkout", async () => {
+    const lines: string[] = [];
+    const logged: string[] = [];
+    const dir = change({ "usage.json": '{"model":"m","cost_usd":0.2}', "prompt.sha256": "c".repeat(64) });
+    const r = await recordOutcome({ feature: "review.agent", cwd: "/x", change: dir, forge: "github", env: { TG_AGENT_ACTOR: "review-bot" }, result: "posted", reason: "posted" }, { append: (l) => void lines.push(l), log: () => {} });
+    expect(r).toMatchObject({ feature: "review.agent", actor: { kind: "agent", principal: "review-bot" }, model: "m", cost: { usd: 0.2 }, promptDigest: `sha256:${"c".repeat(64)}`, result: "posted" });
+    expect(lines).toHaveLength(1);
+    await recordOutcome({ feature: "agent.refused-wave", cwd: "/x", change: dir, forge: "github", env: { TG_AGENT_ACTOR: "x" }, result: "summarized", reason: "ok" }, { append: (l) => void lines.push(l), log: (l) => void logged.push(l), ledger: false });
+    expect(lines).toHaveLength(1);
+    expect(logged.join("\n")).toContain("no checkout in this job");
   });
 });

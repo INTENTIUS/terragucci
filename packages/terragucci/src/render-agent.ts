@@ -36,6 +36,12 @@ export function agentAskScript(forge: ForgeName, policyDir: string): string {
   ].join("\n");
 }
 
+/** The money limit as the agent's step gets it, when `max_cost_usd` is set. */
+export const costEnv = (agent: { maxCostUsd?: number }): Record<string, string> => (agent.maxCostUsd === undefined ? {} : { TG_AGENT_MAX_COST_USD: String(agent.maxCostUsd) });
+
+/** After the agent: stop the job, and push nothing, when the cost it reported is above the limit. Records `over-budget` as the exit code. */
+const COST_CHECK = (indent = ""): string => `${indent}[ -z "\${TG_AGENT_MAX_COST_USD:-}" ] || terragucci agent check-cost --dir ${AGENT_CHANGE_DIR} || true`;
+
 /**
  * The agent's step: the command runs in the checkout with the prompt on
  * stdin, and what it changed against the pull request's head becomes a patch.
@@ -61,6 +67,7 @@ export function agentRunScript(command: string): string {
     `( ${command} ) <"$TG_AGENT_PROMPT" | tee ${AGENT_CHANGE_DIR}/agent-output.json`,
     `echo "\${PIPESTATUS[0]}" >${AGENT_CHANGE_DIR}/rc`,
     `sha256sum "$TG_AGENT_PROMPT" | cut -d' ' -f1 >${AGENT_CHANGE_DIR}/prompt.sha256`,
+    COST_CHECK(),
     "git -c core.hooksPath=/dev/null add -A || exit 1",
     `git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
     `git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"`,
@@ -68,7 +75,7 @@ export function agentRunScript(command: string): string {
 }
 
 /** The variables the agent's command keeps on GitLab, where every job holds the project's variables: the environment is cleared but for these and the model's key. */
-export const GL_AGENT_ENV = ["PATH", "HOME", "LANG", "TG_AGENT_PROMPT", "TG_AGENT_MAX_TURNS", "TG_REVIEW_PROMPT", "TG_AGENT_USAGE"];
+export const GL_AGENT_ENV = ["PATH", "HOME", "LANG", "TG_AGENT_PROMPT", "TG_AGENT_MAX_TURNS", "TG_AGENT_MAX_COST_USD", "TG_REVIEW_PROMPT", "TG_AGENT_USAGE"];
 
 /** `env -i` with the variables GitLab's agent and review commands keep, and the model's key. */
 export function gitlabCleanEnv(keySecret: string): string {
@@ -103,6 +110,7 @@ export function gitlabAgentRunScript(agent: AgentCommentInput, artifact: string)
     `  ${gitlabCleanEnv(agent.keySecret)} bash -c ${sh(agent.command)} <"$TG_AGENT_PROMPT" | tee ${AGENT_CHANGE_DIR}/agent-output.json`,
     `  echo "\${PIPESTATUS[0]}" >${AGENT_CHANGE_DIR}/rc`,
     `  sha256sum "$TG_AGENT_PROMPT" | cut -d' ' -f1 >${AGENT_CHANGE_DIR}/prompt.sha256`,
+    COST_CHECK("  "),
     "  git -c core.hooksPath=/dev/null add -A || exit 1",
     `  git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
     '  git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"',
@@ -150,7 +158,7 @@ export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: str
         name: "Run the agent on the ask",
         if: "steps.ask.outputs.go == '1'",
         shell: "bash",
-        env: { TG_SHA: "${{ steps.ask.outputs.sha }}", TG_AGENT_MAX_TURNS: String(agent.maxTurns), [agent.keySecret]: secret(agent.keySecret) },
+        env: { TG_SHA: "${{ steps.ask.outputs.sha }}", TG_AGENT_MAX_TURNS: String(agent.maxTurns), ...costEnv(agent), [agent.keySecret]: secret(agent.keySecret) },
         run: agentRunScript(agent.command),
       }),
       new Step({ name: "Keep the agent's change", if: "steps.ask.outputs.go == '1'", uses: upload, with: { name: "terragucci-agent", path: `${AGENT_CHANGE_DIR}/`, "if-no-files-found": "error" } }),
@@ -206,7 +214,7 @@ export function driftAgentJobs(forge: Exclude<ForgeName, "gitlab">, image: strin
       new Step({
         name: "Run the agent on the drift",
         shell: "bash",
-        env: { TG_SHA: "${{ github.sha }}", TG_AGENT_MAX_TURNS: String(agent.maxTurns), [agent.keySecret]: secret(agent.keySecret) },
+        env: { TG_SHA: "${{ github.sha }}", TG_AGENT_MAX_TURNS: String(agent.maxTurns), ...costEnv(agent), [agent.keySecret]: secret(agent.keySecret) },
         run: agentRunScript(agent.command),
       }),
       new Step({ name: "Keep the agent's change", uses: upload, with: { name: "terragucci-drift-agent", path: `${AGENT_CHANGE_DIR}/`, "if-no-files-found": "error" } }),

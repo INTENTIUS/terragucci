@@ -572,6 +572,7 @@ No approval by `agent.login` counts, on any pull request, whether the agent touc
 | `command` | Claude Code in print mode | run in the checkout, prompt on stdin |
 | `key_secret` | `ANTHROPIC_API_KEY` | the secret holding the model's API key, given to the agent's step alone |
 | `max_turns` | 30 | the turn limit, passed to the command as `TG_AGENT_MAX_TURNS` |
+| `max_cost_usd` | none | the most the agent may spend, in US dollars, passed to the command as `TG_AGENT_MAX_COST_USD`; [what it stops](/terragucci/guides/send-traces-and-metrics/#a-money-limit) |
 | `timeout` | 30 | minutes before the agent's job is stopped |
 
 The agent's jobs get no cloud credentials. On GitLab it needs `comments`, whose job starts the agent's pipeline on the default branch. [The jobs](/terragucci/reference/pipeline/#the-agent-comment).

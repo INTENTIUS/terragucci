@@ -1264,6 +1264,10 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
                 "timeout": {
                   "type": "integer",
                   "minimum": 1
@@ -1292,6 +1296,10 @@
                 "max_turns": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "timeout": {
                   "type": "integer",
@@ -3077,6 +3085,10 @@
                       "type": "integer",
                       "minimum": 1
                     },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
                     "timeout": {
                       "type": "integer",
                       "minimum": 1
@@ -3105,6 +3117,10 @@
                     "max_turns": {
                       "type": "integer",
                       "minimum": 1
+                    },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
                     },
                     "timeout": {
                       "type": "integer",
