@@ -418,6 +418,8 @@ export interface AgentCommentSettings {
   key_secret?: string;
   /** The most turns the agent takes, as `$TG_AGENT_MAX_TURNS`. Default 30. */
   max_turns?: number;
+  /** The most the agent may spend, in US dollars, as `$TG_AGENT_MAX_COST_USD`. The agent job is stopped and nothing is pushed when the cost it reports is above it. No default: without it there is no money limit. */
+  max_cost_usd?: number;
   /** Minutes before the agent's job is stopped. Default 30. */
   timeout?: number;
 }
@@ -525,7 +527,7 @@ export function imageProblems(v: unknown, where: string): string[] {
   return out;
 }
 
-export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
+export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "max_cost_usd", "timeout"] as const;
 
 /**
  * `agent.drift`: when the drift job opens the drift issue, a job runs a coding
@@ -1852,6 +1854,7 @@ function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problem
     for (const k of ["max_turns", "timeout"] as const) {
       if (c[k] !== undefined && !(Number.isInteger(c[k]) && (c[k] as number) >= 1)) problems.push(`${where}.${k} must be a whole number of 1 or more`);
     }
+    if (c.max_cost_usd !== undefined && !(typeof c.max_cost_usd === "number" && Number.isFinite(c.max_cost_usd) && c.max_cost_usd > 0)) problems.push(`${where}.max_cost_usd must be a number of US dollars above 0`);
   }
   if (typeof tokenEnv === "string" && tokenEnv !== "" && !SECRET_NAME.test(tokenEnv)) {
     problems.push(`${where} reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN`);

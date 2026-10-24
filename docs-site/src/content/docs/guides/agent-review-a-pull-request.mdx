@@ -103,6 +103,10 @@ The prompt marks everything but the instructions as written by the pull request'
 | `review-note` turns every HTML comment in the review into text before it posts | a review that forges terragucci's markers, such as the plan note's |
 | `review-note` posts an issue comment, never a pull request review | a review that approves |
 
+## The record
+
+Each review leaves an `agent-run` record when the note is posted: the model, the prompt's digest and, when the command writes a `usage.json` to the path in `$TG_AGENT_USAGE`, its cost. It goes to your collector as a span when the `review-note` job sets `OTEL_EXPORTER_OTLP_ENDPOINT`, and to the audit trail from a job with a checkout (the GitLab review job). [Agent runs](/terragucci/guides/send-traces-and-metrics/#agent-runs) has the fields.
+
 ## Other models
 
 `command` takes any command line that reads the prompt on stdin and prints the review on stdout. The default is one pinned release of Claude Code in print mode with no tools:

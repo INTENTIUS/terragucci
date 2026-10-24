@@ -17,7 +17,7 @@
  * asks the forge for.
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { version as VERSION } from "../package.json";
 import { send, telemetryFromEnv, Trace, tracesBody, type OtlpFetch } from "./telemetry";
@@ -27,7 +27,7 @@ import type { Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
 
 export { AGENT_RUNS_FILE };
-export const AGENT_FEATURES = ["agent.comment", "agent.drift"] as const;
+export const AGENT_FEATURES = ["agent.comment", "agent.drift", "review.agent", "agent.refused-wave"] as const;
 export type AgentFeature = (typeof AGENT_FEATURES)[number];
 
 /** The files the agent job leaves beside `rc` and `change.patch`. */
@@ -59,8 +59,8 @@ export interface AgentRunRecord {
   commit?: string;
   /** The pull request or merge request, or the pull request the drift agent opened. */
   pullRequest?: string;
-  /** `pushed`, `opened`, or why not: `refused` (a guard stopped the change) or `failed`. */
-  result: "pushed" | "opened" | "refused" | "failed";
+  /** `pushed`, `opened`, `posted` (a review) or `summarized` (a refused wave), or why not: `refused` (a guard stopped the change), `stopped` (the money limit) or `failed`. */
+  result: "pushed" | "opened" | "posted" | "summarized" | "refused" | "stopped" | "failed";
   reason: string;
   runUrl?: string;
   timestamp: string;
@@ -105,6 +105,30 @@ export function readPromptDigest(dir: string): string | undefined {
 }
 
 export const digestOf = (text: string): string => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+
+/** The exit code the agent job leaves when the cost it reported is above `max_cost_usd`. */
+export const OVER_BUDGET = "over-budget";
+export const OVER_BUDGET_FILE = "over-budget.txt";
+
+/** What the stop says: the cost the agent job reported and the limit. */
+export function overBudgetNote(dir: string): string {
+  return `the agent was stopped for passing its money limit (${readSmall(join(dir, OVER_BUDGET_FILE))?.trim() || "the cost it reported is above max_cost_usd"})`;
+}
+
+/**
+ * The money limit, checked on the agent job's own report. Writes
+ * `over-budget` as the exit code and says why in `over-budget.txt` when the
+ * reported cost is above `limit`. A job that reports no cost is not stopped
+ * here: the limit is only as good as the report, and the default command
+ * also passes it to Claude Code, which stops itself.
+ */
+export function checkCostLimit(dir: string, limit: number): { over: boolean; usd?: number } {
+  const usd = readAgentUsage(dir).cost?.usd;
+  if (usd === undefined || !(usd > limit)) return { over: false, ...(usd !== undefined ? { usd } : {}) };
+  writeFileSync(join(dir, "rc"), `${OVER_BUDGET}\n`);
+  writeFileSync(join(dir, OVER_BUDGET_FILE), `reported $${usd.toFixed(4)}, limit $${limit}\n`);
+  return { over: true, usd };
+}
 
 export interface RecordAgentRunInput {
   feature: AgentFeature;
@@ -177,13 +201,16 @@ export interface RecordDeps {
   append?: (line: string, message: string) => void;
   fetch?: OtlpFetch;
   log?: (line: string) => void;
+  /** False in a job with no checkout (the review note's): only the span is sent. Default true. */
+  ledger?: boolean;
 }
 
 /** Write a run's record to the ledger and, when configured, send its span. Never throws. */
 export async function recordAgentRun(repo: string, o: RecordAgentRunInput, deps: RecordDeps = {}): Promise<AgentRunRecord> {
   const record = agentRunRecord(o);
   const log = deps.log ?? ((l: string) => console.log(l));
-  try {
+  if (deps.ledger === false) log(`terragucci: no checkout in this job, so the ${record.feature} run is not written to ${AGENT_RUNS_FILE}`);
+  else try {
     const append = deps.append ?? (async (line: string, message: string): Promise<void> => (await import("./apply")).appendLifecycle(repo, AGENT_RUNS_FILE, [line], {}, message));
     await append(JSON.stringify(record), `Agent run ${record.feature}: ${record.result}`);
     log(`terragucci: recorded the ${record.feature} run in ${AGENT_RUNS_FILE} on chant/lifecycle`);
@@ -200,15 +227,26 @@ export async function recordAgentRun(repo: string, o: RecordAgentRunInput, deps:
  * `pushGitLabAgentChange`, `pushDriftChange`): the forge user the push token
  * acts as is the actor.
  */
-export async function recordPushOutcome(o: { feature: AgentFeature; cwd: string; change: string; forge: "github" | "forgejo" | "gitlab"; env: NodeJS.ProcessEnv; ok: boolean; fail?: boolean; reason: string; commit?: string; pullRequest?: string }, deps: RecordDeps & { fetchForge?: Fetch } = {}): Promise<AgentRunRecord> {
-  const user = await tokenUser({ which: "the agent's token", forge: o.forge, api: apiBase(o.forge, o.env), token: o.env.TG_TOKEN, ...(deps.fetchForge ? { fetch: deps.fetchForge } : {}) });
+export async function recordPushOutcome(o: { feature: AgentFeature; cwd: string; change: string; forge: "github" | "forgejo" | "gitlab"; env: NodeJS.ProcessEnv; ok: boolean; fail?: boolean; stopped?: boolean; requestedBy?: string; reason: string; commit?: string; pullRequest?: string }, deps: RecordDeps & { fetchForge?: Fetch } = {}): Promise<AgentRunRecord> {
+  return recordOutcome({ ...o, result: o.ok ? (o.feature === "agent.drift" ? "opened" : "pushed") : o.stopped ? "stopped" : o.fail ? "failed" : "refused" }, deps);
+}
+
+/**
+ * Record the outcome of a run that pushes nothing: the review note (`posted`)
+ * and the refused-wave summary (`summarized`). The actor is the forge user
+ * `TG_AGENT_ACTOR` names, else the one the job's token acts as, else unknown.
+ */
+export async function recordOutcome(o: { feature: AgentFeature; cwd: string; change: string; forge: "github" | "forgejo" | "gitlab"; env: NodeJS.ProcessEnv; result: AgentRunRecord["result"]; requestedBy?: string; reason: string; commit?: string; pullRequest?: string }, deps: RecordDeps & { fetchForge?: Fetch } = {}): Promise<AgentRunRecord> {
+  const named = o.env.TG_AGENT_ACTOR?.trim();
+  const login = named || (await tokenUser({ which: "the agent's token", forge: o.forge, api: apiBase(o.forge, o.env), token: o.env.TG_TOKEN, ...(deps.fetchForge ? { fetch: deps.fetchForge } : {}) })).login;
   return recordAgentRun(
     o.cwd,
     {
       feature: o.feature,
       change: o.change,
-      ...(user.login ? { principal: user.login } : {}),
-      result: o.ok ? (o.feature === "agent.drift" ? "opened" : "pushed") : o.fail ? "failed" : "refused",
+      ...(login ? { principal: login } : {}),
+      result: o.result,
+      ...(o.requestedBy ? { requestedBy: o.requestedBy } : {}),
       reason: o.reason,
       ...(o.commit ? { commit: o.commit } : {}),
       ...(o.pullRequest ? { pullRequest: o.pullRequest } : {}),

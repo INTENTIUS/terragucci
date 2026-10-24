@@ -21,6 +21,7 @@
  *                   without force, opens the pull request and says so on the
  *                   drift issue (`terragucci drift-agent push`).
  */
+import { OVER_BUDGET, overBudgetNote } from "./agent-record";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -114,6 +115,10 @@ export interface DriftPushResult {
   pullRequest?: string;
   commit?: string;
   paths?: string[];
+  /** True when the agent job was stopped for passing the money limit. */
+  stopped?: boolean;
+  /** Who started the drift run, when a person did. */
+  requestedBy?: string;
 }
 
 export interface DriftPushOptions {
@@ -175,6 +180,7 @@ export async function pushDriftChange(o: DriftPushOptions): Promise<DriftPushRes
   const rcFile = join(o.change, "rc");
   const rc = existsSync(rcFile) ? readFileSync(rcFile, "utf-8").trim() : "";
   if (rc === "moved") return refuse("the checkout was not the commit the drift job planned, so the drift agent opened no pull request.");
+  if (rc === OVER_BUDGET) return { ...(await refuse(`${overBudgetNote(o.change)}, so it opened no pull request. The drift-agent job's log has its output.`)), stopped: true };
   if (rc !== "0") return refuse(`the drift agent stopped with ${rc ? `exit code ${rc}` : "no exit code"}, so it opened no pull request. The drift-agent job's log has its output.`);
 
   let current: string;

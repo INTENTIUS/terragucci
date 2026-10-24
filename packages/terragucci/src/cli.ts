@@ -102,7 +102,7 @@ import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
-import { recordPushOutcome } from "./agent-record";
+import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
 import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
@@ -151,7 +151,7 @@ import { startRelay } from "./relay";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
 import { describeQuery, describeTable, isSql, query, readTable, SQL_DEPRECATED } from "./query";
-import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
+import { driftStarter, pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
 import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
@@ -300,6 +300,11 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
 function onHeldFlag(v: string): "wait" | "refuse" {
   if (v !== "wait" && v !== "refuse") throw new ConfigError("--on-held must be wait or refuse");
   return v;
+}
+
+/** The review.agent run's record: the review note was posted (or not), by the review command's model. Never fails the post. */
+async function recordReview(cwd: string, dir: string, forge: "github" | "forgejo" | "gitlab", posted: { posted: boolean; reason: string }): Promise<void> {
+  await recordOutcome({ feature: "review.agent", cwd, change: dir, forge, env: process.env, result: posted.posted ? "posted" : "failed", reason: posted.reason }, { ledger: existsSync(join(cwd, ".git")) });
 }
 
 function str(flags: Record<string, string | true>, k: string): string | undefined {
@@ -738,7 +743,7 @@ export async function main(argv: string[]): Promise<number> {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
           const pushed = await pushGitLabAgentChange({ change: resolve(cwd, change), policyDir });
-          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: "gitlab", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
+          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: "gitlab", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), ...(pushed.stopped ? { stopped: true } : {}), ...(pushed.requestedBy ? { requestedBy: pushed.requestedBy } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
           console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
           return pushed.fail ? 1 : 0;
         }
@@ -762,7 +767,7 @@ export async function main(argv: string[]): Promise<number> {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
           const pushed = await pushAgentChange({ change: resolve(cwd, change), policyDir });
-          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: detectPrForge(process.env) === "forgejo" ? "forgejo" : "github", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
+          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: detectPrForge(process.env) === "forgejo" ? "forgejo" : "github", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), ...(pushed.stopped ? { stopped: true } : {}), ...(pushed.requestedBy ? { requestedBy: pushed.requestedBy } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
           console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
           return pushed.fail ? 1 : 0;
         }
@@ -959,7 +964,7 @@ export async function main(argv: string[]): Promise<number> {
           const forge = str(flags, "forge") ?? "github";
           if (forge !== "github" && forge !== "forgejo") throw new ConfigError("drift-agent push's --forge is github or forgejo");
           const r = await pushDriftChange({ change: resolve(cwd, change), policyDir, forge });
-          await recordPushOutcome({ feature: "agent.drift", cwd, change: resolve(cwd, change), forge, env: process.env, ok: r.opened, ...(r.fail ? { fail: true } : {}), reason: r.reason, ...(r.commit ? { commit: r.commit } : {}), ...(r.pullRequest ? { pullRequest: r.pullRequest } : {}) });
+          await recordPushOutcome({ feature: "agent.drift", cwd, change: resolve(cwd, change), forge, env: process.env, ok: r.opened, ...(r.fail ? { fail: true } : {}), ...(r.stopped ? { stopped: true } : {}), ...(driftStarter(process.env) ? { requestedBy: driftStarter(process.env)! } : {}), reason: r.reason, ...(r.commit ? { commit: r.commit } : {}), ...(r.pullRequest ? { pullRequest: r.pullRequest } : {}) });
           console.log(`terragucci drift-agent: ${r.reason}`);
           return r.fail ? 1 : 0;
         }
@@ -1055,6 +1060,34 @@ export async function main(argv: string[]): Promise<number> {
         for (const line of said) console.log(line);
         return 0;
       }
+      case "agent": {
+        const sub = args[0];
+        const dir = str(flags, "dir");
+        if (sub === "check-cost") {
+          if (!dir) throw new ConfigError("agent check-cost needs --dir <dir>");
+          const limit = Number(process.env.TG_AGENT_MAX_COST_USD);
+          if (!(limit > 0)) {
+            console.log("terragucci agent: TG_AGENT_MAX_COST_USD is not set, so there is no money limit");
+            return 0;
+          }
+          const r = checkCostLimit(resolve(cwd, dir), limit);
+          console.log(r.over ? `terragucci agent: the agent reported $${r.usd!.toFixed(4)}, above the limit of $${limit}; nothing will be pushed` : r.usd === undefined ? `terragucci agent: the agent reported no cost, so the limit of $${limit} was not checked` : `terragucci agent: the agent reported $${r.usd.toFixed(4)}, within the limit of $${limit}`);
+          return 0;
+        }
+        if (sub === "record") {
+          // The refused-wave summary job and any other model step a project adds: one record of the run, from the job's usage.json and prompt.sha256.
+          const feature = str(flags, "feature") as AgentFeature | undefined;
+          if (!dir || !feature || !(AGENT_FEATURES as readonly string[]).includes(feature)) throw new ConfigError(`agent record needs --dir <dir> and --feature ${AGENT_FEATURES.join("|")}`);
+          const forge = str(flags, "forge") ?? "github";
+          if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("agent record's --forge is github, forgejo or gitlab");
+          const result = (str(flags, "result") ?? "summarized") as AgentRunRecord["result"];
+          if (!["posted", "summarized", "failed"].includes(result)) throw new ConfigError("agent record's --result is posted, summarized or failed");
+          const at = resolve(cwd, dir);
+          await recordOutcome({ feature, cwd, change: at, forge, env: process.env, result, reason: str(flags, "reason") ?? `${feature} ${result}` }, { ledger: existsSync(join(cwd, ".git")) });
+          return 0;
+        }
+        throw new ConfigError("agent is agent check-cost --dir <dir> or agent record --feature <feature> --dir <dir>");
+      }
       case "review": {
         const sub = args[0];
         const reviewForge = str(flags, "forge");
@@ -1073,6 +1106,7 @@ export async function main(argv: string[]): Promise<number> {
           const at = resolve(cwd, dir);
           const posted = await postGitLabReview({ dir: at, read: (name) => (existsSync(join(at, name)) ? readFileSync(join(at, name), "utf-8") : "") });
           console.log(`terragucci review: ${posted.reason}`);
+          await recordReview(cwd, at, "gitlab", posted);
           return posted.posted ? 0 : 1;
         }
         if (sub === "prompt") {
@@ -1096,6 +1130,7 @@ export async function main(argv: string[]): Promise<number> {
           if (!dir) throw new ConfigError("review post needs --dir <dir>");
           const posted = await postReview({ dir: resolve(cwd, dir) });
           console.log(`terragucci review: ${posted.reason}`);
+          await recordReview(cwd, resolve(cwd, dir), detectPrForge(process.env) === "forgejo" ? "forgejo" : "github", posted);
           return 0;
         }
         throw new ConfigError("review is review prompt --report <dir> [--instructions <path>] or review post --dir <dir>");

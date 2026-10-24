@@ -23,19 +23,26 @@ describe("agent.comment in terragucci.yml", () => {
     });
   });
 
+  it("takes a money limit next to max_turns, and none by default", () => {
+    expect(agentCommentInput(validateConfig({ agent: { ...base, comment: { max_cost_usd: 2.5 } } }, "t"))).toMatchObject({ maxTurns: 30, maxCostUsd: 2.5 });
+    expect(agentCommentInput(validateConfig({ agent: { ...base, comment: true } }, "t"))).not.toHaveProperty("maxCostUsd");
+    expect(AGENT_COMMAND).toContain('${TG_AGENT_MAX_COST_USD:+--max-budget-usd "$TG_AGENT_MAX_COST_USD"}');
+  });
+
   it("names every problem with a bad setting", () => {
     let problems: string[] = [];
     try {
-      validateConfig({ agent: { ...base, token_env: "AGENT-TOKEN", comment: { command: "a\nb", key_secret: "my key", max_turns: 0, timeout: 1.5, model: "x" } } }, "t");
+      validateConfig({ agent: { ...base, token_env: "AGENT-TOKEN", comment: { command: "a\nb", key_secret: "my key", max_turns: 0, max_cost_usd: 0, timeout: 1.5, model: "x" } } }, "t");
     } catch (e) {
       problems = (e as ConfigError).problems ?? [];
     }
     expect(problems).toEqual([
-      "config.agent.comment.model is not a setting (settings: command, key_secret, max_turns, timeout)",
+      "config.agent.comment.model is not a setting (settings: command, key_secret, max_turns, max_cost_usd, timeout)",
       "config.agent.comment.command must be one command line, such as claude -p --max-turns \"$TG_AGENT_MAX_TURNS\"",
       "config.agent.comment.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY",
       "config.agent.comment.max_turns must be a whole number of 1 or more",
       "config.agent.comment.timeout must be a whole number of 1 or more",
+      "config.agent.comment.max_cost_usd must be a number of US dollars above 0",
       "config.agent.comment reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN",
     ]);
     expect(() => validateConfig({ agent: { ...base, comment: "yes" } }, "t")).toThrow(/agent.comment must be true, false or a map/);
@@ -166,6 +173,15 @@ describe("pushAgentChange", () => {
     expect(s.sent[0].path).toBe("repos/acme/infra/issues/7/comments");
     expect(s.sent[0].body.body).toContain(`pushed [\`${r.commit!.slice(0, 8)}\`](https://forge.test/acme/infra/commit/${r.commit})`);
     expect(s.sent[0].body.body).toContain("nothing was applied, approved or merged");
+    expect(r.requestedBy).toBe("dev");
+  });
+
+  it("pushes nothing when the agent was stopped for its money limit, and says so", async () => {
+    const s = setupPush({ patch: { "app/main.tf": "# x\n" }, rc: "over-budget" });
+    const r = await s.run();
+    expect(r).toMatchObject({ pushed: false, stopped: true, requestedBy: "dev" });
+    expect(r.reason).toContain("stopped for passing its money limit");
+    expect(s.branch()).toBe(s.sha);
   });
 
   it("refuses a change to CI, terragucci.yml or the policy, names the paths and pushes nothing", async () => {
