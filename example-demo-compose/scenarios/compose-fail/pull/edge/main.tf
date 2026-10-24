@@ -4,7 +4,7 @@ terraform {
   required_version = ">= 1.13"
 
   backend "s3" {
-    bucket         = "demo-terraform-state"
+    bucket         = "demo-compose-state"
     key            = "edge.tfstate"
     region         = "us-east-1"
     use_lockfile   = true
@@ -15,7 +15,7 @@ terraform {
 data "terraform_remote_state" "app" {
   backend = "s3"
   config = {
-    bucket         = "demo-terraform-state"
+    bucket         = "demo-compose-state"
     key            = "app.tfstate"
     region         = "us-east-1"
     use_path_style = true

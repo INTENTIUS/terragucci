@@ -1,7 +1,7 @@
 # The compose demo's estate
 
 The tree for the prompt-driven demo: three plain roots of `terraform_data`,
-each with its own state in floci (`demo-terraform-state`, an s3 backend with
+each with its own state in floci (`demo-compose-state`, an s3 backend with
 `use_lockfile`), and `waves.compose: true` in `terragucci.yml`.
 
 ```
