@@ -73,7 +73,7 @@ import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportApprovalRule, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
 import { applyGroups } from "../cloud-identity";
-import { ComposedRun, compositionFor, composeTarget, type ComposedPlan, type ComposeFallback, type Composition } from "../compose";
+import { ComposedRun, compositionFor, composeTarget, reportCompose, type ComposedPlan, type ComposeFallback, type Composition } from "../compose";
 import { blastRadius } from "./graph";
 import { blastRootsOf, resourceBlast } from "./resource-blast";
 import { branchCheckouts } from "../branch-checkouts";
@@ -1603,10 +1603,7 @@ async function planComposedStage(repo: string, c: Composition, ctx: ComposeStage
   return { plan, outcomes };
 }
 
-/** `Report.compose` from a composition. */
-export function reportCompose(c: Composition): ReportCompose {
-  return { roots: c.roots, max: c.max, ...(c.wave !== undefined && !c.fallback ? { wave: c.wave } : {}), ...(c.fallback ? { fallback: c.fallback } : {}) };
-}
+export { reportCompose };
 
 interface Planned {
   binary: string;

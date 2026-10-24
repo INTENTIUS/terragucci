@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 47;
+export const REPORT_MINOR = 48;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -770,6 +770,8 @@ export interface ReportCompose {
   max: number;
   /** The wave whose run composes them. Absent when the change applies in waves. */
   wave?: number;
+  /** Minor 48: every root is a choudoufu estate, composed as one run with no state pulled, split or written back; each estate's records are written as its resources apply. */
+  estate?: true;
   /** Why the change applies in waves: a kind, the root it is about when there is one, and a sentence. */
   fallback?: { kind: string; root?: string; reason: string };
 }

@@ -595,6 +595,7 @@
         "roots": { "type": "array", "items": { "type": "string" }, "description": "The roots the change reaches plus the roots they read, followed upstream, sorted." },
         "max": { "type": "integer", "description": "waves.compose_max." },
         "wave": { "type": "integer", "description": "The wave whose run composes them. Absent when the change applies in waves." },
+        "estate": { "const": true, "description": "Every root is a choudoufu estate, composed as one run (minor 48): no state is pulled, split or written back, and each estate's records are written as its resources apply." },
         "fallback": {
           "type": "object",
           "required": ["kind", "reason"],
