@@ -384,8 +384,8 @@ CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 # not replaced when another estate in the run changes) and joint runs (choudoufu#2222,
 # so a Terragrunt run --all or an Atmos --all plans its units as one) are on main
 # and in no release yet. DEMO_CHOUDOUFU_REF names another commit; set empty, the
-# image carries the release above again.
-CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-0908511dc23b87ef9bd1080a8846b15eb005c210}"
+# image carries the release above again. 662d85ec adds the joint run's parent lookup without ps.
+CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-662d85ec07225e83f58b586574efe25d9904b12b}"
 # chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
 # release, and the commit of INTENTIUS/chant the terraform lexicon is packed from.
 CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
