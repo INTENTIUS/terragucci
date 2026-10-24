@@ -8,12 +8,15 @@
 #                     which the terragrunt binary is taken from
 #
 # Nothing else is added but jq and curl, which the workflow's comment and review
-# steps call.
+# steps call, and terragrunt-plan-json (stack/demo-yodel/), which joins the units'
+# `show -json` documents into the one document chant's `terraform report` reads.
+# Terragrunt, choudoufu and the unit directories are used as they are.
 ARG CHOUDOUFU_IMAGE
 ARG TERRAGRUNT_IMAGE
 FROM ${TERRAGRUNT_IMAGE} AS terragrunt
 FROM ${CHOUDOUFU_IMAGE}
 COPY --from=terragrunt /usr/local/bin/terragrunt /usr/local/bin/terragrunt
+COPY --chmod=0755 terragrunt-plan-json /usr/local/bin/terragrunt-plan-json
 USER root
 RUN set -e; for t in jq curl; do command -v $t >/dev/null || { \
     if command -v apk >/dev/null; then apk add --no-cache $t; else apt-get update && apt-get install -y --no-install-recommends $t && rm -rf /var/lib/apt/lists/*; fi; }; done; \

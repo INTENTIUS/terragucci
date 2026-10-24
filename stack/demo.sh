@@ -67,10 +67,12 @@
 #
 # The Terragrunt-on-choudoufu repo, <admin>/demo-terragrunt-choudoufu from
 # example-demo-terragrunt-choudoufu/, has no terragucci in it: a Forgejo workflow
-# runs Terragrunt's own CLI with choudoufu as its binary, on one unit
-# (live/all) whose source composes the network, app and edge estates. Its
-# scenarios are terragrunt-choudoufu-edit and terragrunt-choudoufu-create; the
-# approval is a person's approving review, then the merge.
+# runs Terragrunt's own CLI with choudoufu as its binary, on three units
+# (network, app, edge), each a directory with its own terragrunt.hcl, inputs and
+# dependency blocks. `terragrunt run --all plan` on the pull request is one joint
+# plan, and `terragrunt run --all apply -- tfplan` on the merge is one joint
+# apply. Its scenarios are terragrunt-choudoufu-edit and terragrunt-choudoufu-create;
+# the approval is a person's approving review, then the merge.
 # The choudoufu compose repo, <admin>/demo-choudoufu-compose from
 # example-demo-choudoufu-compose/, is example-demo-compose's network, app and
 # edge as choudoufu estates on one record store (demo-choudoufu-compose-records,
@@ -369,6 +371,9 @@ DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
 # The Terragrunt-on-choudoufu repo's job image (stack/demo-terragrunt-choudoufu.Dockerfile), named by
 # example-demo-terragrunt-choudoufu/.forgejo/workflows/terragrunt-choudoufu.yml.
 TGC_JOB_IMAGE=terragucci-demo-terragrunt-choudoufu:local
+# The bucket the Terragrunt units' generated backend names (example-demo-terragrunt-choudoufu/root.hcl).
+# choudoufu keeps no state file there; it publishes each unit's outputs to it after an apply.
+TGC_STATE_BUCKET=demo-terragrunt-choudoufu-state
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
@@ -376,10 +381,11 @@ CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 # The image builds choudoufu from this commit of INTENTIUS/choudoufu instead of
 # the release: composed estates (choudoufu#2059) and in-run reads that keep each
 # output's planned value (choudoufu#2211, so an estate's existing resources are
-# not replaced when another estate in the run changes) are on main (eb8fbd9835)
+# not replaced when another estate in the run changes) and joint runs (choudoufu#2222,
+# so a Terragrunt run --all or an Atmos --all plans its units as one) are on main
 # and in no release yet. DEMO_CHOUDOUFU_REF names another commit; set empty, the
 # image carries the release above again.
-CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-eb8fbd98357e3fa77f5320d0554ef3c3dfb30bdb}"
+CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-0908511dc23b87ef9bd1080a8846b15eb005c210}"
 # chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
 # release, and the commit of INTENTIUS/chant the terraform lexicon is packed from.
 CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
@@ -580,7 +586,7 @@ use_repo() { # tool
   # directories with a main.tf, and each reset's push back applies the base.
   ESTATES_DIR=""
   if tool_tgc "$1"; then
-    # Three estates under estates/, one record store, one unit (live/all) that composes them. The base commit says [skip ci].
+    # Three units (network, app, edge), each its own estate in one record store. The base commit says [skip ci].
     STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS="" INIT_PULL="" BASE_RUN=""
     ROOTS=(network app edge)
     return 0
@@ -1715,11 +1721,11 @@ say() { # step
     choudoufu-compose-create:planned) echo "One composed plan covers $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
     choudoufu-compose-edit:applied|choudoufu-compose-create:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     terragrunt-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
-    terragrunt-choudoufu-edit:planned) echo "Terragrunt runs one unit, and choudoufu plans the three estates inside it. Every value is known at plan, so each card shows before and after." ;;
+    terragrunt-choudoufu-edit:planned) echo "terragrunt run --all plan runs the three units, and choudoufu plans them together. Every value is known at plan, so each card shows before and after." ;;
     terragrunt-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
-    terragrunt-choudoufu-create:planned) echo "Terragrunt runs one unit, and choudoufu plans the three estates inside it. The subnet's id exists only after it is created, so app's values show as known after apply, not as mock_outputs." ;;
-    terragrunt-choudoufu-*:applied) echo "Applied. One terragrunt apply ran network, app and edge, and each resource's record went to the one record store." ;;
-    terragrunt-choudoufu-*:applying) echo "terragrunt apply in live/all runs network, app and edge together. Each resource's record is written as it applies." ;;
+    terragrunt-choudoufu-create:planned) echo "terragrunt run --all plan runs the three units, and choudoufu plans them together. The subnet's id exists only after it is created, so app's dependency block hands the worker a value that shows as known after apply, not the mock." ;;
+    terragrunt-choudoufu-*:applied) echo "Applied. One terragrunt run --all apply applied the saved plan to network, app and edge, and each resource's record went to the one record store." ;;
+    terragrunt-choudoufu-*:applying) echo "terragrunt run --all apply -- tfplan applies network, app and edge together. Each resource's record is written as it applies." ;;
     terragrunt-choudoufu-*:approved) echo "The reviewer approves pull request $PULL. The apply job checks for that approving review before it applies." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     compose-*:applying)     echo "One apply runs network, app and edge together. Each state is written when the apply ends." ;;
@@ -2427,9 +2433,9 @@ review_approve() {
 # terragrunt-choudoufu-edit and terragrunt-choudoufu-create: the same two acts
 # as the choudoufu compose demo, on a repo with no terragucci in it. Its
 # workflow runs Terragrunt's own CLI with choudoufu as the binary
-# (root.hcl: terraform_binary): live/all is one unit whose source is a
-# composed root, so one `terragrunt plan` on the pull request is one plan across
-# network, app and edge, and one `terragrunt apply` on the merge is one apply.
+# (root.hcl: terraform_binary) on a stock three-unit layout: `terragrunt run --all
+# plan -- -out=tfplan` on the pull request is one joint plan across network, app
+# and edge, and `terragrunt run --all apply -- tfplan` on the merge is the joint apply.
 # The approval is a person's approving review of the pull request, which the
 # apply job checks before it applies. No wave waits, so the cycle is: open,
 # plan, review, merge, follow. What each step says comes from ask.json.
@@ -3011,13 +3017,20 @@ estates_back() { # [missing-ok]
 # Then network, app and edge apply in order, app and edge reading the values
 # network was just put back to.
 estates_apply() { # the base tree
-  local out
+  local out image="$DEMO_IMAGE_CHOUDOUFU" script
   log "applying the base of $REPO with choudoufu in $DEMO_IMAGE_CHOUDOUFU…"
+  # The Terragrunt repo's units are applied with its own CLI in the job image: downstream units first (edge, then
+  # app) to delete what the last cycle added, then every unit in dependency order, as `terragrunt run --all apply`.
+  script='set -e; mkdir /w; cd /w; tar xf -; a() { (cd "${ESTATES_DIR:+$ESTATES_DIR/}$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done'
+  if tool_tgc "$TOOL"; then
+    image="$TGC_JOB_IMAGE"
+    script='set -e; mkdir /w; cd /w; tar xf -; export TG_NON_INTERACTIVE=true TG_NO_COLOR=true TG_LOG_FORMAT=bare; curl -sS -o /dev/null -X PUT "$AWS_ENDPOINT_URL/$TGC_STATE_BUCKET" || true; for u in edge app; do (cd "$u" && terragrunt run -- apply -auto-approve -input=false >/dev/null) || echo "cleanup pass: $u did not apply; the pass below applies it again"; done; terragrunt run --all apply'
+  fi
   if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" --entrypoint sh \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
       -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e ESTATES_DIR="$(tool_tgc "$TOOL" && echo estates || echo "${ESTATES_DIR:-}")" \
-      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; a() { (cd "${ESTATES_DIR:+$ESTATES_DIR/}$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done' 2>&1)"; then
+      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e ESTATES_DIR="${ESTATES_DIR:-}" -e TGC_STATE_BUCKET="$TGC_STATE_BUCKET" \
+      "$image" -c "$script" 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail "choudoufu apply did not apply the base of $REPO"
   fi
@@ -3237,7 +3250,7 @@ repo_description() {
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
     compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
     choudoufu-compose) echo "The terragucci demo's composed run on choudoufu: network, app and edge estates in one record store, planned and applied across estates" ;;
-    terragrunt-choudoufu) echo "Terragrunt with choudoufu as its binary: one unit composes network, app and edge, so one terragrunt plan and one terragrunt apply cover all three" ;;
+    terragrunt-choudoufu) echo "Terragrunt with choudoufu as its binary: network, app and edge are three ordinary units, and run --all plans them as one plan and applies them as one apply" ;;
     atmos-choudoufu) echo "An Atmos repo with choudoufu as its binary: network, app and edge planned as one plan and applied as one apply by a plain workflow" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac

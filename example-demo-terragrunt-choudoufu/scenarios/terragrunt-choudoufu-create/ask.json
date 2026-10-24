@@ -21,14 +21,14 @@
       "light": null,
       "paths": false,
       "ghost": false,
-      "status": "The workflow runs terragrunt plan in live/all"
+      "status": "The workflow runs terragrunt run --all plan"
     }
   ],
   "planned": [
     {
       "prompt": null,
       "action": null,
-      "reply": "One plan across 3 estates. Only one value is unknown: subnet b's id, which app's worker needs.",
+      "reply": "One joint plan across 3 units. Only one value is unknown: subnet b's id, which app's worker needs.",
       "light": [
         "network/aws_subnet.subnet_b"
       ],
@@ -38,13 +38,13 @@
     {
       "prompt": "Why not run each unit?",
       "action": null,
-      "reply": "With a unit per estate, the plan you review for app uses a mock for subnet b's id, because network hasn't applied it. Here that plan shows it as known after apply.",
+      "reply": "Stock Terragrunt plans each unit on its own, so app's dependency block has no subnet b id to read and falls back to mock_outputs. With choudoufu one joint plan covers every unit, and the worker shows the id as known after apply.",
       "light": [
         "app/aws_network_interface.worker"
       ],
       "paths": false,
       "ghost": false,
-      "status": "Checking how a unit per estate would plan"
+      "status": "Checking how stock Terragrunt would plan app"
     },
     {
       "prompt": "What depends on the new subnet?",
@@ -74,20 +74,30 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Merging; the workflow runs terragrunt apply in live/all"
+    "status": "Merging; the workflow plans again and applies the saved plan"
   },
   "applying": {
-    "status": "terragrunt apply is applying all three estates together",
+    "status": "The saved plan is being applied to all three units",
     "tips": [
-      "With a unit per estate, the plan you review for app uses a mock until network applies. Here the plan shows it as known after apply.",
-      "Keep your root.hcl and includes. Set the binary to choudoufu and add a live block per unit."
+      {
+        "title": "Mocks stay in the repo",
+        "body": "Your dependency blocks keep their mock_outputs. With choudoufu the joint plan hands app the unknown id, so the mock is not used."
+      },
+      {
+        "title": "Switch the binary",
+        "body": "Set terraform_binary to choudoufu in root.hcl and give each unit a live block. Your inputs and dependency blocks stay as they are.",
+        "link": {
+          "label": "choudoufu on GitHub",
+          "url": "https://github.com/INTENTIUS/choudoufu"
+        }
+      }
     ]
   },
   "applied": [
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
+      "reply": "Done. Subnet b was created and app's worker got its real id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false
@@ -95,12 +105,12 @@
     {
       "prompt": "Did anything stay locked?",
       "action": null,
-      "reply": "Never. choudoufu holds no lock to leave behind, so there is nothing to force-unlock. Each record is written only if it is unchanged since it was read: resource-level locking at the cloud level.",
+      "reply": "No state lock was taken. choudoufu has no state file, so there is nothing to force-unlock. Each record is written only if it is unchanged since it was read.",
       "light": null,
       "paths": false,
       "ghost": false,
       "status": "Checking the record store"
     }
   ],
-  "closing": "3 estates, 1 plan, 1 review, 1 apply."
+  "closing": "3 units, 1 joint plan, 1 review, 1 apply from saved plan files."
 }

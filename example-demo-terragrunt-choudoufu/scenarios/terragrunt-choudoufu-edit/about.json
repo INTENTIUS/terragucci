@@ -1,5 +1,5 @@
 {
   "changes": "Network's proxy port moves to 8090 and gains an admin port. App and edge follow both.",
-  "watch": "A workflow runs terragrunt plan in live/all: one plan across the three estates. A person approves the pull request, and the merge runs terragrunt apply.",
+  "watch": "A workflow runs terragrunt run --all plan, which is one joint plan across the three units. A person approves the pull request, and the merge runs terragrunt run --all apply.",
   "shows": "Your Terragrunt repo with choudoufu as its binary: one plan and one apply across the units a change reaches."
 }

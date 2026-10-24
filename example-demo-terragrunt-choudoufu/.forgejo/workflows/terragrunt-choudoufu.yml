@@ -1,8 +1,10 @@
 name: terragrunt-choudoufu-demo
 
 # Terragrunt's own CLI, with choudoufu as its binary (root.hcl). No other tool
-# is involved: a pull request runs a plan and posts it as a comment, and a
-# merge runs the apply once a person has approved the pull request.
+# runs the infrastructure: a pull request runs `terragrunt run --all plan` and
+# posts it as a comment, and a merge runs `terragrunt run --all apply` once a
+# person has approved the pull request. The report steps only read the saved
+# plans for behold.
 on:
   pull_request:
     branches:
@@ -14,6 +16,7 @@ on:
 env:
   TG_NON_INTERACTIVE: "true"
   TG_NO_COLOR: "true"
+  TG_LOG_FORMAT: bare
   TF_IN_AUTOMATION: "1"
   TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc
   AWS_ENDPOINT_URL: http://floci:4566
@@ -35,19 +38,20 @@ jobs:
     container: terragucci-demo-terragrunt-choudoufu:local
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
-      - name: One plan across network, app and edge
-        working-directory: live/all
+      - name: Plan network, app and edge
         run: |
-          terragrunt run -- init -input=false
-          terragrunt run -- plan -input=false -no-color -out="$RUNNER_TEMP/plan.bin" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+          set -o pipefail
+          terragrunt run --all plan -- -out=tfplan 2>&1 | tee "$RUNNER_TEMP/plan.txt"
       - name: Write the plan's report for behold
-        working-directory: live/all
         env:
           PR: '${{ github.event.pull_request.number }}'
         run: |
-          terragrunt run -- show -json "$RUNNER_TEMP/plan.bin" > "$RUNNER_TEMP/plan.json"
+          for u in network app edge; do
+            (cd "$u" && terragrunt run --log-level error -- show -json tfplan > "$RUNNER_TEMP/$u.json")
+          done
+          terragrunt-plan-json --repo "$PWD" network="$RUNNER_TEMP/network.json" app="$RUNNER_TEMP/app.json" edge="$RUNNER_TEMP/edge.json" > "$RUNNER_TEMP/plan.json"
           chant-report --stage tf-plan --plan "$RUNNER_TEMP/plan.json" --pull-request "$PR" \
-            --binary choudoufu --root-dir estates --to "$CHANT_REPORTS"
+            --binary choudoufu --repo "$PWD" --to "$CHANT_REPORTS"
       - name: Post the plan on the pull request
         if: always()
         env:
@@ -55,7 +59,7 @@ jobs:
           PR: '${{ github.event.pull_request.number }}'
           TOKEN: '${{ github.token }}'
         run: |
-          jq -Rs '{body: ("<!-- terragrunt-choudoufu-plan -->\nterragrunt plan, live/all (choudoufu):\n\n```\n" + . + "\n```")}' "$RUNNER_TEMP/plan.txt" \
+          jq -Rs '{body: ("<!-- terragrunt-choudoufu-plan -->\nterragrunt run --all plan (choudoufu):\n\n```\n" + . + "\n```")}' "$RUNNER_TEMP/plan.txt" \
             | curl -fsS -o /dev/null -H "Authorization: token $TOKEN" -H 'content-type: application/json' -X POST -d @- "$API/issues/$PR/comments"
   apply:
     if: github.event_name == 'push'
@@ -76,19 +80,23 @@ jobs:
           [ -n "$pr" ] || { echo "no pull request merged $SHA; nothing here applies it" >&2; exit 1; }
           curl -fsS -H "Authorization: token $TOKEN" "$API/pulls/$pr/reviews" | jq -e 'any(.[]; .state == "APPROVED")' >/dev/null \
             || { echo "pull request $pr has no approving review" >&2; exit 1; }
-      - name: One apply across network, app and edge
-        working-directory: live/all
+      # The plan file Terragrunt applies is made in this job: a plan file from the
+      # pull request's job would not be here, and the merged commit is planned again.
+      - name: Plan, then apply network, app and edge
         run: |
-          terragrunt run -- init -input=false
-          # The plan this apply makes, kept for the report.
-          terragrunt run -- plan -input=false -no-color -out="$RUNNER_TEMP/plan.bin" >/dev/null
-          terragrunt run -- show -json "$RUNNER_TEMP/plan.bin" > "$RUNNER_TEMP/plan.json"
-          terragrunt run -- apply -input=false -no-color -auto-approve
+          terragrunt run --all plan -- -out=tfplan
+          for u in network app edge; do
+            (cd "$u" && terragrunt run --log-level error -- show -json tfplan > "$RUNNER_TEMP/$u.json")
+          done
+          terragrunt-plan-json --repo "$PWD" network="$RUNNER_TEMP/network.json" app="$RUNNER_TEMP/app.json" edge="$RUNNER_TEMP/edge.json" > "$RUNNER_TEMP/plan.json"
+          terragrunt run --all apply -- tfplan
       - name: Write the apply's report for behold
-        working-directory: live/all
         run: |
           # A plan made after the apply: its prior_state holds the values the first plan left unknown.
-          terragrunt run -- plan -input=false -no-color -out="$RUNNER_TEMP/after.bin" >/dev/null
-          terragrunt run -- show -json "$RUNNER_TEMP/after.bin" > "$RUNNER_TEMP/after.json"
+          terragrunt run --all plan -- -out=tfplan >/dev/null
+          for u in network app edge; do
+            (cd "$u" && terragrunt run --log-level error -- show -json tfplan > "$RUNNER_TEMP/$u.json")
+          done
+          terragrunt-plan-json --repo "$PWD" network="$RUNNER_TEMP/network.json" app="$RUNNER_TEMP/app.json" edge="$RUNNER_TEMP/edge.json" > "$RUNNER_TEMP/after.json"
           chant-report --stage tf-apply --plan "$RUNNER_TEMP/plan.json" --applied "$RUNNER_TEMP/after.json" \
-            --binary choudoufu --root-dir estates --to "$CHANT_REPORTS"
+            --binary choudoufu --repo "$PWD" --to "$CHANT_REPORTS"

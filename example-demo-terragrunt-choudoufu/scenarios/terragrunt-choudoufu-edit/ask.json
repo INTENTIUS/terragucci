@@ -1,5 +1,5 @@
 {
-  "opening": "Your Terragrunt repo, with choudoufu as the binary. This first act edits all three estates, with every value known at plan. A new subnet comes in the second.",
+  "opening": "Your Terragrunt repo, with choudoufu as the binary. This first act edits all three units, with every value known at plan. A new subnet comes in the second.",
   "pull-request": {
     "prompt": "Port 8080 to 8090; add admin port 9000.",
     "action": null,
@@ -7,12 +7,12 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Opening a pull request; the workflow runs terragrunt plan in live/all"
+    "status": "Opening a pull request; the workflow runs terragrunt run --all plan"
   },
   "planned": {
     "prompt": null,
     "action": null,
-    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change.",
+    "reply": "One joint plan across 3 units. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change.",
     "light": [
       "network/terraform_data.http_proxy_port",
       "network/terraform_data.admin_port",
@@ -40,22 +40,32 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Merging; the workflow runs terragrunt apply in live/all"
+    "status": "Merging; the workflow plans again and applies the saved plan"
   },
   "applying": {
-    "status": "terragrunt apply is applying network, app and edge together",
+    "status": "The saved plan is being applied to all three units",
     "tips": [
-      "With a unit per estate, the plan you review for app uses a mock until network applies. Here the plan shows it as known after apply.",
-      "Keep your root.hcl and includes. Set the binary to choudoufu and add a live block per unit."
+      {
+        "title": "Mocks stay in the repo",
+        "body": "Your dependency blocks keep their mock_outputs. With choudoufu the joint plan hands app the unknown id, so the mock is not used."
+      },
+      {
+        "title": "Switch the binary",
+        "body": "Set terraform_binary to choudoufu in root.hcl and give each unit a live block. Your inputs and dependency blocks stay as they are.",
+        "link": {
+          "label": "choudoufu on GitHub",
+          "url": "https://github.com/INTENTIUS/choudoufu"
+        }
+      }
     ]
   },
   "applied": {
     "prompt": null,
     "action": null,
-    "reply": "Done. Both ports changed in network, app and edge in the same apply.",
+    "reply": "Done. Both ports changed in all three units in the same apply.",
     "light": null,
     "paths": false,
     "ghost": false
   },
-  "closing": "3 estates, 1 plan, 1 review, 1 apply."
+  "closing": "3 units, 1 joint plan, 1 review, 1 apply from saved plan files."
 }

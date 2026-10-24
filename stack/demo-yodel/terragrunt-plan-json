@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+// Joins the per-unit `show -json` documents of one `terragrunt run --all plan`
+// into the one document chant's `terraform report` reads: each unit's resources
+// under `module.<unit>.`, its outputs as `<unit>__<name>`, and a read of an
+// upstream unit's estate for each `dependency` block the unit's terragrunt.hcl
+// has. chant knows a read between estates as a terraform_estate_outputs data
+// source; a dependency block is the same fact, so that is what is written.
+//
+//   terragrunt-plan-json --repo <dir> <unit>=<show.json> ...
+//
+// <dir>/<unit>/terragrunt.hcl names the dependencies (config_path and the
+// outputs read as dependency.<name>.outputs.<output>); <dir>/<unit>/*.tf names
+// the unit's estate (the live block). The document goes to stdout.
+import { readFileSync, readdirSync } from "node:fs";
+import { join, basename } from "node:path";
+
+const args = process.argv.slice(2);
+let repo = process.cwd();
+const slices = [];
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--repo") repo = args[++i];
+  else if (args[i].includes("=")) {
+    const [unit, file] = [args[i].slice(0, args[i].indexOf("=")), args[i].slice(args[i].indexOf("=") + 1)];
+    slices.push({ unit, doc: JSON.parse(readFileSync(file, "utf8")) });
+  } else {
+    console.error("usage: terragrunt-plan-json --repo <dir> <unit>=<show.json> ...");
+    process.exit(2);
+  }
+}
+if (slices.length === 0) {
+  console.error("usage: terragrunt-plan-json --repo <dir> <unit>=<show.json> ...");
+  process.exit(2);
+}
+
+const strip = (t) => t.replace(/^\s*(#|\/\/).*$/gm, "");
+
+function estateOf(unit) {
+  for (const f of readdirSync(join(repo, unit)).filter((n) => n.endsWith(".tf")).sort()) {
+    const text = strip(readFileSync(join(repo, unit, f), "utf8"));
+    const live = /\blive\s*\{/.exec(text);
+    const m = live && /\bestate\s*=\s*"([^"]+)"/.exec(text.slice(live.index + live[0].length));
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
+// The dependency blocks of a unit: name, the unit its config_path names, and
+// the outputs it reads.
+function dependencies(unit) {
+  const text = strip(readFileSync(join(repo, unit, "terragrunt.hcl"), "utf8"));
+  const out = [];
+  const re = /\bdependency\s+"([^"]+)"\s*\{/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const rest = text.slice(m.index);
+    const path = /\bconfig_path\s*=\s*"([^"]+)"/.exec(rest);
+    if (!path) continue;
+    const reads = [...new Set([...text.matchAll(new RegExp(`\\bdependency\\.${m[1]}\\.outputs\\.([A-Za-z_][\\w-]*)`, "g"))].map((x) => x[1]))];
+    out.push({ name: m[1], upstream: basename(path[1]), reads });
+  }
+  return out;
+}
+
+const composed = {
+  format_version: "1.0",
+  resource_changes: [],
+  output_changes: {},
+  prior_state: { format_version: "1.0", values: { root_module: { resources: [] } } },
+  configuration: { root_module: { module_calls: {} } },
+};
+for (const { unit, doc } of slices) {
+  const p = `module.${unit}.`;
+  for (const r of doc.resource_changes ?? []) {
+    const rc = { ...r, address: p + r.address };
+    if (r.previous_address) rc.previous_address = p + r.previous_address;
+    if (r.module_address) rc.module_address = `module.${unit}.${r.module_address}`;
+    composed.resource_changes.push(rc);
+  }
+  if (doc.errored) composed.errored = true;
+  for (const [k, v] of Object.entries(doc.output_changes ?? {})) composed.output_changes[`${unit}__${k}`] = v;
+  const walk = (mod) => {
+    for (const r of mod?.resources ?? []) composed.prior_state.values.root_module.resources.push({ ...r, address: p + r.address });
+    for (const c of mod?.child_modules ?? []) walk(c);
+  };
+  walk(doc.prior_state?.values?.root_module);
+  const cfg = doc.configuration?.root_module ?? {};
+  const resources = [...(cfg.resources ?? [])];
+  const refs = [];
+  for (const d of dependencies(unit)) {
+    const estate = estateOf(d.upstream);
+    if (!estate) continue;
+    resources.push({ mode: "data", type: "terraform_estate_outputs", name: d.name, expressions: { estate: { constant_value: estate } } });
+    for (const o of d.reads) refs.push(`data.terraform_estate_outputs.${d.name}.values.${o}`);
+  }
+  composed.configuration.root_module.module_calls[unit] = {
+    module: { resources, outputs: { ...(cfg.outputs ?? {}), ...(refs.length ? { _reads: { expression: { references: refs } } } : {}) } },
+  };
+}
+process.stdout.write(JSON.stringify(composed));
