@@ -65,7 +65,7 @@
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
- *   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (SQL over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, in process)
+ *   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (one table, filtered: chant's ledgers on chant/lifecycle (resources, snapshots, runs, gates, deploys, releases, cuts) or the reports bucket's (inventory, versions, changes, history, audit, edges); the "<sql>" form is deprecated)
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
  *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   (an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, read-only; with --propose it also pushes a branch, opens a pull request and reads its plan; credentials from the environment)
  *   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   (write wrappers for the binaries and a Claude Code hook that refuse an apply in a pipeline root; see guard.ts)
@@ -145,7 +145,7 @@ import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, read
 import { startRelay } from "./relay";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
-import { describeQuery, query } from "./query";
+import { describeQuery, describeTable, isSql, query, readTable, SQL_DEPRECATED } from "./query";
 import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
@@ -199,7 +199,7 @@ const USAGE = `usage:
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
-  terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, run in this process
+  terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   one table's rows, filtered: resources, snapshots, runs, gates, deploys, releases or cuts from chant/lifecycle, or inventory, versions, changes, history, audit or edges from the reports bucket ("<sql>" is deprecated)
   terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   an MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures, read-only; with --propose, push a branch and open a pull request too; credentials from the environment
   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   refuse apply, destroy and -auto-approve in this repo's pipeline roots, for a coding agent's shell
@@ -271,20 +271,25 @@ function wholeFlag(name: string, v: string): number {
   return n;
 }
 
-function parse(argv: string[]): { cmd: string; flags: Record<string, string | true>; args: string[] } {
+function parse(argv: string[]): { cmd: string; flags: Record<string, string | true>; args: string[]; repeated: Record<string, string[]> } {
   const [cmd = "", ...rest] = argv;
   const flags: Record<string, string | true> = {};
   const args: string[] = [];
+  // Every value of a flag given more than once (--where), in order; flags keeps the last.
+  const repeated: Record<string, string[]> = {};
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a.startsWith("--")) {
-      const [k, v] = a.slice(2).split("=", 2);
+      const eq = a.indexOf("=");
+      const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
+      const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
       else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
+      if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
   }
-  return { cmd, flags, args };
+  return { cmd, flags, args, repeated };
 }
 
 function onHeldFlag(v: string): "wait" | "refuse" {
@@ -312,7 +317,7 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  const { cmd, flags, args } = parse(argv);
+  const { cmd, flags, args, repeated } = parse(argv);
   const cwd = process.cwd();
   const json = flags.json === true;
   const emit = (e: Envelope): number => {
@@ -942,15 +947,25 @@ export async function main(argv: string[]): Promise<number> {
         throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
       }
       case "query": {
-        const [sql, extra] = args;
-        if (sql === undefined || extra !== undefined) throw new ConfigError('query takes one statement, quoted: terragucci query "SELECT * FROM inventory"');
+        const [what, extra] = args;
+        if (what === undefined || what.trim() === "" || extra !== undefined) throw new ConfigError("query reads one table: terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>], such as terragucci query gates --where op=tf-apply");
         const path = str(flags, "config") ?? findConfig(cwd);
         const bucket = str(flags, "bucket");
-        const result = await query(path ? await loadConfig(resolve(path)) : {}, sql, {
-          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
-        });
+        const reports = bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {};
+        const config = path ? await loadConfig(resolve(path)) : {};
+        if (isSql(what)) {
+          console.error(`terragucci: ${SQL_DEPRECATED}`);
+          const result = await query(config, what, reports);
+          if (json) return emit(envelope("query", 0, result));
+          console.log(describeQuery(result));
+          return 0;
+        }
+        if (flags.where === true) throw new ConfigError("--where needs <field><op><value>, such as --where op=tf-apply");
+        const since = str(flags, "since");
+        const at = str(flags, "at");
+        const result = await readTable(config, what, { ...reports, cwd, ...(repeated.where ? { where: repeated.where } : {}), ...(since !== undefined ? { since } : {}), ...(at !== undefined ? { at } : {}) });
         if (json) return emit(envelope("query", 0, result));
-        console.log(describeQuery(result));
+        console.log(describeTable(result));
         return 0;
       }
       case "mcp": {

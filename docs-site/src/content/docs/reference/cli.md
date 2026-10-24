@@ -524,17 +524,22 @@ The relay runs until stopped, whatever error a request hits.
 ## query
 
 ```bash
-terragucci query "<statement>" [--config <file>] [--json]
-    [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>]
+    [--config <file>] [--json] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
 ```
 
-Loads the bucket's files into an in-memory SQLite database, runs the statement and prints the rows. It needs Node.js 22.13 or later. [Query the estate with SQL](/terragucci/guides/query-with-sql/) lists the tables.
+Reads one table and prints the rows its filters keep. `resources`, `snapshots`, `runs`, `gates`, `deploys`, `releases` and `cuts` are read from the local `chant/lifecycle` branch, as `chant ledger` reads them. `inventory`, `versions`, `changes`, `history`, `audit` and `edges` are read from the reports bucket. [Query the estate](/terragucci/guides/query-with-sql/) lists the tables and the filters.
+
+`terragucci query "<statement>"`, an SQL statement over the bucket's tables, is deprecated. It still runs, on Node.js 22.13 or later, and prints a notice naming the table read to use.
 
 | Flag | Meaning |
 |---|---|
+| `--where` | a clause `<field><op><value>`, with `=`, `!=`, `<`, `<=`, `>`, `>=` or `~`; give it more than once and every clause must hold |
+| `--since` | the rows from an ISO date or time on, or from a span back from now such as `7d` |
+| `--at` | a commit of `chant/lifecycle` to read the ledger tables at; the bucket's tables refuse it |
 | `--config` | the config file; default the one in the working directory |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read, in place of `reports` in a repo's config |
-| `--json` | the envelope, with `results.columns`, `results.rows` and `results.tables`, the row count of each table |
+| `--json` | the envelope, with the table read in `results` ([JSON output](/terragucci/reference/cli-json/#query)) |
 
 | | `query` |
 |---|---|

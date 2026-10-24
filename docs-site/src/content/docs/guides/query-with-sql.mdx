@@ -1,6 +1,6 @@
 ---
-title: Query the estate with SQL
-description: Answer questions such as which queues changed this week and who approved them, with SQL over the reports bucket, run on your machine with no server.
+title: Query the estate
+description: Answer questions such as which queues changed this week and who approved them, by reading one table of the reports bucket or of chant/lifecycle with typed filters, on your machine with no server.
 claims: [estate/query]
 prompt: |
   Read https://intentius.io/terragucci/guides/query-with-sql/.
@@ -10,27 +10,35 @@ prompt: |
 
 import { Steps } from '@astrojs/starlight/components';
 
-Which queues changed this week, and who approved each change? The estate page shows one resource at a time. `terragucci query` answers across every project with one SQL statement. It reads the files your runs already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/) and runs the statement on the SQLite built into Node.js. There is no server and no database to run.
+Which queues changed this week, and who approved each change? The estate page shows one resource at a time. `terragucci query` reads one table across every project and keeps the rows that match its filters. The bucket's tables come from the files your runs already wrote to the [reports bucket](/terragucci/guides/keep-reports-in-a-bucket/). The gates and approvals come from the repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch. There is no server and no database to run.
 
 ## Result
 
 ```bash
-npx terragucci query "SELECT address, actions, approver, finished FROM history
-  WHERE type = 'aws_sqs_queue' AND julianday(finished) >= julianday('now', '-7 days')
-  ORDER BY finished"
+npx terragucci query history --where type=aws_sqs_queue --since 7d --json \
+  | jq -r '.results.rows[] | [.address, .actions, .approver, .finished] | @tsv'
 ```
 
 ```text
-address             actions  approver      finished
-------------------  -------  ------------  ------------------------
-aws_sqs_queue.jobs  create   approver-one  2026-10-09T05:15:39.686Z
-aws_sqs_queue.jobs  update   approver-two  2026-10-09T05:15:54.614Z
-(2 rows)
+aws_sqs_queue.jobs	create	approver-one	2026-10-09T05:15:39.686Z
+aws_sqs_queue.jobs	update	approver-two	2026-10-09T05:15:54.614Z
 ```
+
+Without `--json`, the rows print as an aligned table of every column, with a count of the rows the filters kept out of the table's rows.
 
 Each approver is the one the [audit trail](/terragucci/reference/audit-trail/) records for the wave that applied the change.
 
-## Tables
+## Filters
+
+| Flag | Keeps |
+|---|---|
+| `--where <field><op><value>` | the rows where the field compares true. Give it more than once and every clause must hold. |
+| `--since <time>` | the rows from that time on, an ISO date or time or a span back from now such as `7d` or `24h`. It compares `finished` in the bucket's tables (`at` in `audit`), and each ledger table's own time column. |
+| `--at <rev>` | the ledger tables as a commit of `chant/lifecycle` held them, such as `chant/lifecycle~3`. |
+
+The operators are `=`, `!=`, `<`, `<=`, `>`, `>=` and `~` (contains, on text). `null` matches an empty value with `=` and `!=`. A field that holds JSON takes a key under it, such as `detail.approval=sha256:...`. Quote a clause with `<` or `>` in your shell: `--where 'wave>=2'`. A field the table does not have, or a value that does not read as the field's type, is refused before anything is read.
+
+## Tables in the reports bucket
 
 | Table | One row per | Read from |
 |---|---|---|
@@ -43,13 +51,24 @@ Each approver is the one the [audit trail](/terragucci/reference/audit-trail/) r
 
 Columns keep the field names of the [JSON the bucket holds](/terragucci/reference/report-schema/#the-index-and-the-estate-page), with `project` added.
 
-- `actions` joins a change's actions with `+`, such as `create` or `move+update`.
-- `attributes` and `audit.detail` hold JSON. Read them with `json_each` and `json_extract`.
+- `actions` joins a change's actions with `+`, such as `create` or `move+update`. Match one with `~`: `--where actions~update`.
+- `attributes` lists the attribute names a change touched. Match one with `~`.
+- `audit.detail` holds JSON, filtered by a key under it.
 - `approver` is null when no gate held the wave, or when the audit trail has no entry for it.
-- `commit` is an SQL keyword, so quote it: `"commit"`.
-- Times are ISO 8601 text. Compare them with `julianday()`.
+- `wave` is a number. `finished`, `at` and `reads_seen` are times.
 
 No table holds an attribute's value, because no file in the bucket does.
+
+## Gates and approvals
+
+Each wave's gate and its approvals are on `chant/lifecycle`, under op `tf-apply`. Fetch the branch, then read its `gates` table:
+
+```bash
+git fetch origin chant/lifecycle:chant/lifecycle
+npx terragucci query gates --where op=tf-apply
+```
+
+A `pending` row is a wave that waited for an approval, and a `resolution` row names who approved it in `resolved_by`. The other ledger tables are `resources`, `snapshots`, `runs`, `deploys`, `releases` and `cuts`. They are chant's own, and `chant ledger <table>` prints the same rows; the [chant query guide](https://intentius.io/chant/guide/query-lifecycle/) describes their columns.
 
 ## Steps
 
@@ -57,24 +76,17 @@ No table holds an attribute's value, because no file in the bucket does.
 
 1. Keep [reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/), and run `terragucci audit` on a schedule for the `history` approvers and the `audit` table.
 
-2. Use Node.js 22.13 or later, and give your shell read access to the bucket in the variables [Reports](/terragucci/reference/environment/#reports) lists.
+2. Give your shell read access to the bucket in the variables [Reports](/terragucci/reference/environment/#reports) lists.
 
-3. From the repo's root, run `npx terragucci query "<statement>"`. Outside the repo, add `--bucket` and `--bucket-prefix`. Add `--json` for the rows as JSON.
+3. From the repo's root, run `npx terragucci query <table>` with the filters you need. Outside the repo, add `--bucket` and `--bucket-prefix`. Add `--json` for the rows as JSON.
 
 </Steps>
 
-The query reads only. A statement must begin with `SELECT`, `WITH` or `VALUES`. The database lives in memory and refuses writes.
+The query reads only. Nothing is written to the bucket or to the branch.
 
-## Gates and approvals
+## The SQL form
 
-The bucket holds what each wave applied. Each wave's gate and its approvals are on the repo's [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch, under op `tf-apply`, and `chant query` reads them. Fetch the branch, then query its `gates` table:
-
-```bash
-git fetch origin chant/lifecycle:chant/lifecycle
-npx chant query "SELECT gate, kind, resolved_by, timestamp FROM gates WHERE op = 'tf-apply' ORDER BY timestamp"
-```
-
-A `pending` row is a wave that waited for an approval, and a `resolution` row names who approved it. The [chant query guide](https://intentius.io/chant/guide/query-lifecycle/) lists its other tables.
+`terragucci query "<statement>"`, with an SQL statement in place of a table, still runs over the bucket's tables on the SQLite built into Node.js 22.13 or later. It is deprecated: it prints a notice naming the table read to use instead, and it will be removed.
 
 ## Next
 

@@ -1,32 +1,35 @@
 /**
- * `terragucci query "<sql>"`: SQL over what runs already wrote to the reports
- * bucket, in this process, with no server and no database to run.
+ * `terragucci query <table> [--where <field><op><value>]... [--since <time>]
+ * [--at <rev>]`: the rows of one table, filtered with chant's typed filters
+ * (@intentius/chant/read-filter), with no SQL engine (the ruling on
+ * chant#4363, terragucci#1229).
  *
- * It reads each project's `inventory.json`, `versions.json`, `changes.json` and `edges.json`
- * and the audit trail (`audit.jsonl`) the way `terragucci estate` does
- * (./estate.ts), loads them into tables of an in-memory SQLite database, runs
- * the one statement it is given, and prints the rows. The history table is
- * the changes joined to the audit trail's apply entries, as `history.json`
- * holds them (report/history.ts): each apply of each resource with its
- * approver.
+ * Two sources:
  *
- * The engine is `node:sqlite`, the SQLite that Node.js builds in (22.13 and
- * later need no flag), so the bundle carries no engine of its own: a WASM
- * build of SQLite or DuckDB would add from 0.6 MB to several MB to a bundle
- * held under 1.5 MB (scripts/bundle-check.mjs). It is loaded only by this
- * command, so no other command prints its experimental warning.
+ * - chant's ledger tables (resources, snapshots, runs, gates, deploys,
+ *   releases, cuts) on the local `chant/lifecycle` branch. The read is chant's
+ *   own (`readLedgerTable`, @intentius/chant/lifecycle/ledger-read) and prints
+ *   its document, `workspace/ledger.schema.json`: what `chant ledger <table>
+ *   --json` prints. The waves' gates and approvals are its `gates` rows under
+ *   op `tf-apply`.
+ * - the reports bucket's tables (inventory, versions, changes, history, audit,
+ *   edges), which chant's ledgers do not hold. Each project's
+ *   `inventory.json`, `versions.json`, `changes.json` and `edges.json` and the
+ *   audit trail (`audit.jsonl`) are read the way `terragucci estate` reads
+ *   them (./estate.ts). The history table is the changes joined to the audit
+ *   trail's apply entries, as `history.json` holds them (report/history.ts).
+ *   The same filters apply, and the document has the ledger read's fields.
  *
- * Nothing is written: the database lives in memory, takes `PRAGMA
- * query_only`, and only a statement that begins with SELECT, WITH or VALUES
- * runs (chant's `firstWord`, the check `chant query` makes).
+ * `terragucci query "<sql>"`, the SQL form over the bucket's tables, is
+ * deprecated: it still runs on `node:sqlite`, loaded only by it, and says
+ * which table read to use instead.
  *
- * This is the bucket's adapter. What terragucci records on `chant/lifecycle`
- * (the waves' gates under op `tf-apply`, migrations, policy overrides) is
- * chant's ledger, and `chant query` reads it (@intentius/chant/lifecycle/query,
- * chant#4297): its `gates` table. The bucket holds no ledger of that shape, so
- * its tables stay here.
+ * Nothing is written by either form.
  */
-import { firstWord, formatQueryResult, type QueryResult as ChantQueryResult } from "@intentius/chant/lifecycle/query";
+import { gitLedgerReadPort } from "@intentius/chant/lifecycle/git";
+import { LEDGER_TABLES, LedgerRevisionError, readLedgerTable, resolveLedgerRevision, revisionLedgerReadPort, type LedgerRow } from "@intentius/chant/lifecycle/ledger-read";
+import { firstWord, formatQueryResult, QueryError, type QueryResult as ChantQueryResult } from "@intentius/chant/lifecycle/query";
+import { FilterError, matchesWhere, parseSince, parseWhere, type FilterFields, type FilterFieldType } from "@intentius/chant/read-filter";
 import { ConfigError, type TerragucciConfig } from "./config";
 import { auditEntries, clients, readChangesOf, readEdgesOf, readInventoryOf, readVersionsOf, sources } from "./estate";
 import type { AuditEntry } from "./report/audit";
@@ -182,7 +185,7 @@ export async function runQuery(sql: string, data: QueryData): Promise<QueryResul
   }
 }
 
-/** `terragucci query`: read the bucket, run the statement. */
+/** `terragucci query "<sql>"` (deprecated): read the bucket, run the statement. */
 export async function query(config: TerragucciConfig, sql: string, options: QueryOptions = {}): Promise<QueryResult> {
   if (sql.trim() === "") throw new ConfigError('terragucci query needs a statement: terragucci query "SELECT * FROM inventory"');
   const data = await readQueryData(config, options);
@@ -192,4 +195,124 @@ export async function query(config: TerragucciConfig, sql: string, options: Quer
 /** The rows as an aligned table, a header and a count: chant query's own layout, which reads only the columns and rows. */
 export function describeQuery(r: QueryResult): string {
   return formatQueryResult({ columns: r.columns, rows: r.rows } as ChantQueryResult);
+}
+
+/** The SQL form's notice: what to run instead. */
+export const SQL_DEPRECATED = "terragucci query \"<sql>\" is deprecated and will be removed; read one table with terragucci query <table> --where <field><op><value> [--since <time>] (tables: " + [...LEDGER_TABLES, ...Object.keys(QUERY_TABLES)].join(", ") + ")";
+
+/** Whether `text` is an SQL statement rather than a table name: the SQL form, deprecated. */
+export function isSql(text: string): boolean {
+  return /\s/.test(text.trim()) || ["select", "with", "values"].includes(firstWord(text));
+}
+
+/** The column `--since` compares on each bucket table, or null for one with no time. */
+export const BUCKET_TIME_COLUMN: Record<QueryTable, string | null> = { inventory: "finished", versions: "finished", changes: "finished", history: "finished", audit: "at", edges: null };
+
+/** The bucket columns that hold JSON text: filtered as JSON (a key under them), printed parsed. */
+const BUCKET_JSON = new Set(["detail"]);
+
+/** The fields `--where` takes on a bucket table, typed. `attributes` holds a JSON array of names, so it is text, for `~`. */
+export function bucketFields(table: QueryTable): FilterFields {
+  const out: Record<string, FilterFieldType> = {};
+  for (const c of QUERY_TABLES[table]) out[c] = c === "wave" ? "number" : c === "finished" || c === "at" || c === "reads_seen" ? "time" : BUCKET_JSON.has(c) ? "json" : "text";
+  return out;
+}
+
+export interface TableReadOptions extends QueryOptions {
+  where?: readonly string[];
+  /** An ISO date or time, or a span back from now such as `7d`. */
+  since?: string;
+  /** A commit of `chant/lifecycle` (ledger tables only). */
+  at?: string;
+  /** The repository whose `chant/lifecycle` branch is read; the working directory by default. */
+  cwd?: string;
+}
+
+/** One table's rows: chant's ledger document for a ledger table, the same fields for a bucket table. */
+export interface TableRead {
+  /** chant's ledger read contract, for a ledger table. */
+  $schema?: string;
+  contract?: number;
+  /** Where the rows came from. */
+  source: "ledger" | "bucket";
+  table: string;
+  columns: string[];
+  at: string | null;
+  filter: { where: string[]; since: string | null };
+  /** Rows in the table before the filter. */
+  total: number;
+  rows: LedgerRow[];
+  /** What could not be read as its kind, left out (ledger tables). */
+  malformed: number;
+}
+
+const ALL_TABLES = (): string => [...LEDGER_TABLES, ...Object.keys(QUERY_TABLES)].join(", ");
+
+/** `terragucci query <table>`: one table, filtered. A bad table, filter or revision is a ConfigError, before anything is read. */
+export async function readTable(config: TerragucciConfig, table: string, options: TableReadOptions = {}): Promise<TableRead> {
+  if ((LEDGER_TABLES as string[]).includes(table)) return readLedger(table, options);
+  if (!(table in QUERY_TABLES)) throw new ConfigError(`table-unknown: terragucci query reads one table: no table ${JSON.stringify(table)}; the tables are ${ALL_TABLES()}`);
+  const t = table as QueryTable;
+  if (options.at !== undefined) throw new ConfigError(`filter-invalid: --at reads a commit of chant/lifecycle; ${t} is read from the reports bucket, which has no revisions`);
+  const now = options.now ?? new Date();
+  let clauses;
+  let since: string | null = null;
+  try {
+    clauses = parseWhere(options.where ?? [], bucketFields(t), now);
+    if (options.since !== undefined) {
+      if (BUCKET_TIME_COLUMN[t] === null) throw new FilterError(`--since: ${t} has no time column; filter it with --where`);
+      since = parseSince(options.since, now);
+    }
+  } catch (e) {
+    if (e instanceof FilterError) throw new ConfigError(`filter-invalid: ${e.message}`);
+    throw e;
+  }
+  const all = (await readQueryData(config, options))[t];
+  const timeCol = BUCKET_TIME_COLUMN[t];
+  const sinceMs = since === null ? null : Date.parse(since);
+  const rows = all
+    .filter((r) => {
+      if (sinceMs !== null && timeCol !== null) {
+        const v = r[timeCol];
+        if (typeof v !== "string" || !(Date.parse(v) >= sinceMs)) return false;
+      }
+      return matchesWhere(r, clauses);
+    })
+    .map((r) => {
+      const out: LedgerRow = {};
+      for (const c of QUERY_TABLES[t]) {
+        const v = r[c] ?? null;
+        out[c] = typeof v === "string" && (BUCKET_JSON.has(c) || c === "attributes") ? (JSON.parse(v) as LedgerRow[string]) : v;
+      }
+      return out;
+    });
+  return { source: "bucket", table: t, columns: [...QUERY_TABLES[t]], at: null, filter: { where: [...(options.where ?? [])], since }, total: all.length, rows, malformed: 0 };
+}
+
+/** A ledger table, through chant's read: the branch tip, or the commit `--at` names. */
+async function readLedger(table: string, options: TableReadOptions): Promise<TableRead> {
+  const cwd = options.cwd ?? process.cwd();
+  const ledgers = async () => {
+    if (options.at === undefined) return [{ member: null, port: gitLedgerReadPort({ cwd }) }];
+    return [{ member: null, port: revisionLedgerReadPort(cwd, resolveLedgerRevision(cwd, options.at), "") }];
+  };
+  let doc;
+  try {
+    doc = await readLedgerTable(table, ledgers, { ...(options.where ? { where: options.where } : {}), ...(options.since !== undefined ? { since: options.since } : {}), at: options.at ?? null, ...(options.now ? { now: options.now } : {}) });
+  } catch (e) {
+    if (e instanceof LedgerRevisionError) throw new ConfigError(`revision-unknown: ${e.message}`);
+    if (e instanceof QueryError) throw new ConfigError(`ledger-unreadable: ${e.message}`);
+    throw e;
+  }
+  if ("error" in doc) throw new ConfigError(`${doc.error.code}: ${doc.error.message}`);
+  return { ...doc, source: "ledger" };
+}
+
+const cell = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
+
+/** The rows as an aligned table and a count of those kept: `chant ledger`'s layout. */
+export function describeTable(r: TableRead): string {
+  const widths = r.columns.map((c) => Math.max(c.length, ...r.rows.map((row) => cell(row[c]).length)));
+  const line = (vals: string[]): string => vals.map((v, i) => v.padEnd(widths[i])).join("  ").trimEnd();
+  return [line(r.columns), line(widths.map((w) => "-".repeat(w))), ...r.rows.map((row) => line(r.columns.map((c) => cell(row[c])))), `(${r.rows.length} of ${r.total} ${r.total === 1 ? "row" : "rows"})`].join("\n");
 }
