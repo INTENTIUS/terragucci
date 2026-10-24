@@ -41,11 +41,10 @@ data "terraform_estate_outputs" "network" {
   names  = ["http_proxy_port", "vpc_id"]
 }
 
-resource "aws_sqs_queue" "listener" {
-  name = "choudoufu-compose-listener"
-  tags = { port = tostring(data.terraform_estate_outputs.network.values.http_proxy_port - 10) }
+resource "terraform_data" "listener_port" {
+  input = data.terraform_estate_outputs.network.values.http_proxy_port - 10
 }
 
 output "listener_port" {
-  value = tonumber(aws_sqs_queue.listener.tags.port)
+  value = terraform_data.listener_port.input
 }

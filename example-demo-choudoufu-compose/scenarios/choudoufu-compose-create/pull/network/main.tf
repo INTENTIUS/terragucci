@@ -35,13 +35,15 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
+# A terraform_data holds a value in a record and creates nothing in the cloud, so
+# a plan and an apply of it take no time. Outputs read `input`, which is known at
+# plan, so a changed port reaches the estates that read it in the same plan.
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 }
 
-resource "aws_sqs_queue" "http_proxy_port" {
-  name = "choudoufu-compose-http-proxy-port"
-  tags = { port = "8080" }
+resource "terraform_data" "http_proxy_port" {
+  input = 8080
 }
 
 # A new subnet. Its id is chosen when it is created, so a plan shows it as
@@ -51,17 +53,12 @@ resource "aws_subnet" "subnet" {
   cidr_block = "10.0.1.0/24"
 }
 
-# A new name replaces this queue, which gate: on-destructive holds for an approval.
-resource "aws_sqs_queue" "release" {
-  name = "choudoufu-compose-release-r0"
-}
-
 output "vpc_id" {
   value = aws_vpc.main.id
 }
 
 output "http_proxy_port" {
-  value = tonumber(aws_sqs_queue.http_proxy_port.tags.port)
+  value = terraform_data.http_proxy_port.input
 }
 
 output "subnet_id" {

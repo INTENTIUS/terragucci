@@ -12,50 +12,43 @@
   "planned": {
     "prompt": null,
     "action": null,
-    "reply": "Every value is known at plan, so the cards show before and after: {creates} to create, {updates} to change. Next: merge and apply.",
+    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change. Next: merge and apply.",
     "light": [
-      "network/aws_sqs_queue.http_proxy_port",
-      "network/aws_sqs_queue.admin_port",
-      "network/aws_sqs_queue.release",
-      "app/aws_sqs_queue.listener",
-      "app/aws_sqs_queue.admin_listener",
-      "edge/aws_sqs_queue.upstream",
-      "edge/aws_sqs_queue.admin_upstream"
+      "network/terraform_data.http_proxy_port",
+      "network/terraform_data.admin_port",
+      "app/terraform_data.listener_port",
+      "app/terraform_data.admin_listener_port",
+      "edge/terraform_data.upstream",
+      "edge/terraform_data.admin_upstream"
     ],
     "paths": false,
     "ghost": false
   },
-  "merged": {
-    "prompt": "Merge it and apply.",
-    "action": null,
-    "reply": null,
-    "light": null,
-    "paths": false,
-    "ghost": false,
-    "status": "Merging and starting one apply across 3 estates"
-  },
-  "applying": {
-    "status": "Applying network, app and edge together"
-  },
-  "waiting": {
+  "approved": {
     "prompt": "Approve the plan.",
     "action": null,
     "reply": null,
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Approving"
+    "status": "Recording your approval on the pull request"
   },
-  "approved": {
-    "status": "Approved. Applying"
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging and applying network, app and edge in one pass"
   },
-  "resumed": {
+  "applying": {
     "status": "Applying network, app and edge together"
   },
   "applied": {
     "prompt": null,
     "action": null,
-    "reply": "Done. Both ports changed in network, app and edge in the same apply.",
+    "reply": "Done. Both ports changed in network, app and edge in the same apply. Next: put the estates back.",
     "light": null,
     "paths": false,
     "ghost": false

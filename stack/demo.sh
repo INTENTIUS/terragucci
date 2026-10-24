@@ -1312,6 +1312,17 @@ only_tips_left() { # jobs JSON (Forgejo's /actions/runs/<id>/jobs)
       and ($jobs | any(.name == "tips" and (ended | not)))' <<<"$1" >/dev/null 2>&1
 }
 
+# Whether the job that runs the composed apply has succeeded: apply-wave-1,
+# which carries "apply as one composed run in wave 1 (compose:wave-1)" in a
+# compose repo. Waves 2 and 3 and tips after it have nothing to apply, and
+# nothing the viewer sees waits on them, so for the choudoufu compose repo the
+# driver writes applied at this point instead of waiting about 8 s more. Only
+# run_ended asks, so quiet still waits for the whole run before a reset pushes.
+composed_apply_done() { # jobs JSON
+  [ "$TOOL" = choudoufu-compose ] || return 1
+  jq -e '(if type == "array" then . else [] end) | any(.name == "apply-wave-1" and .status == "success")' <<<"$1" >/dev/null 2>&1
+}
+
 # Whether every job of a run has ended (Forgejo's /actions/runs/<id>/jobs): a
 # run Forgejo marks failed as soon as one wave fails can still have later waves
 # running or waiting, which start after a failure and block only the roots it
@@ -1326,7 +1337,8 @@ jobs_ended() { # jobs JSON
 
 # Wait for run RUN_ID to end, every job of it (jobs_ended), or for its waves to
 # have ended with only its tips job left (only_tips_left), which counts as
-# success. Sets RUN_STATUS and RUN_URL.
+# success. The choudoufu compose repo's run counts as success once its composed
+# apply has (composed_apply_done). Sets RUN_STATUS and RUN_URL.
 run_ended() { # limit
   local deadline=$(( $(now) + $1 )) run status=""
   while :; do
@@ -1343,6 +1355,11 @@ run_ended() { # limit
     esac
     if [ -n "$status" ] && only_tips_left "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)"; then
       log "run $RUN_ID: its waves ended; the driver goes on while its tips job runs"
+      status=success
+      break
+    fi
+    if [ -n "$status" ] && composed_apply_done "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)"; then
+      log "run $RUN_ID: the composed apply succeeded; the driver goes on while its later waves and tips job end"
       status=success
       break
     fi
@@ -1600,7 +1617,7 @@ say() { # step
     compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
     compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     choudoufu-compose-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
-    choudoufu-compose-*:approved) echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
+    choudoufu-compose-*:approved) echo "The reviewer approves pull request $PULL. The review approves the one plan it saw, the only approval this change needs." ;;
     choudoufu-compose-*:resumed)  echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -2202,8 +2219,22 @@ scenario_compose() {
   open_pull
   b_composed_planned
   demo_hold planned "$(say planned)" "merge pull request $PULL"
+  [ "$TOOL" != choudoufu-compose ] || review_approve
   merge_pull
   follow
+}
+
+# The choudoufu compose demo approves by review (approval: pr-review): the
+# reviewer approves the pull request on its head before the merge, so the
+# merge's one run applies the composed plan the review saw without stopping at
+# its gate and without a second run. The approved step carries the person's
+# "Approve the plan." line.
+review_approve() {
+  as_reviewer -o /dev/null -H 'content-type: application/json' -X POST \
+    -d '{"event":"APPROVED","body":"The plan note shows what this change does."}' \
+    "$URL/api/v1/repos/$REPO/pulls/$PULL/reviews" || fail "$REVIEWER could not approve pull request $PULL"
+  demo_write approved "$(say approved)" "merge pull request $PULL"
+  ask_hold approved
 }
 
 # A scenario that starts from more than the snapshot has scenarios/<id>/base/:

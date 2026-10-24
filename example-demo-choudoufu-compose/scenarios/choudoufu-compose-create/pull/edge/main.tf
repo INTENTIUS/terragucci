@@ -41,21 +41,19 @@ data "terraform_estate_outputs" "app" {
   names  = ["listener_port", "dns_name"]
 }
 
-resource "aws_sqs_queue" "upstream" {
-  name = "choudoufu-compose-upstream"
-  tags = { upstream = "http://app:${data.terraform_estate_outputs.app.values.listener_port}" }
+resource "terraform_data" "upstream" {
+  input = "http://app:${data.terraform_estate_outputs.app.values.listener_port}"
 }
 
 output "upstream" {
-  value = aws_sqs_queue.upstream.tags.upstream
+  value = terraform_data.upstream.input
 }
 
 # An address of app's that is built from the subnet's id.
-resource "aws_sqs_queue" "dns_upstream" {
-  name = "choudoufu-compose-dns-upstream"
-  tags = { upstream = "http://${data.terraform_estate_outputs.app.values.dns_name}:${data.terraform_estate_outputs.app.values.listener_port}" }
+resource "terraform_data" "dns_upstream" {
+  input = "http://${data.terraform_estate_outputs.app.values.dns_name}:${data.terraform_estate_outputs.app.values.listener_port}"
 }
 
 output "dns_upstream" {
-  value = aws_sqs_queue.dns_upstream.tags.upstream
+  value = terraform_data.dns_upstream.input
 }
