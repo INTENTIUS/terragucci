@@ -17,15 +17,7 @@ reports:
 # app-01's apply and the demo's operator start together (fan-out-choudoufu):
 # each marks when it starts and ends, so the driver can tell the two applies
 # overlapped (ci/operator-gate.mjs). With no operator expected, nothing waits.
-steps:
-  - name: wait for the operator
-    run: node ../ci/operator-gate.mjs pipeline-before
-    before: apply
-    roots: ["app-01"]
-  - name: mark the apply done
-    run: node ../ci/operator-gate.mjs pipeline-after
-    after: apply
-    roots: ["app-01"]
+# The hooks are ci.hooks in chant.workspace.json.
 env:
   # Where app-01's apply and the operator mark their starts and ends.
   TG_DEMO_OPERATOR_MARKERS: http://floci:4566/demo-reports/demo/operator/demo-choudoufu-fanout
