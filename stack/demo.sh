@@ -358,7 +358,7 @@ CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-eb8fbd98357e3fa77f5320d0554ef3c3dfb30bdb}"
 # chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
 # release, and the commit of INTENTIUS/chant the terraform lexicon is packed from.
 CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
-CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-101bd18aec262484e2a7cb89a26e7e729a09a337}"
+CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-1db9b16b5e05797f857e9b4870cb2b3153ac123a}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold unless DEMO_HOLD_<SCENARIO> names one
