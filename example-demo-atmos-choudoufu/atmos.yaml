@@ -9,6 +9,11 @@ components:
     command: choudoufu
     apply_auto_approve: false
     deploy_run_init: true
+    # Atmos passes -reconfigure to init by default. choudoufu refuses it: a live
+    # block has no backend and no state file for -reconfigure to move.
+    init_run_reconfigure: false
+    # The record store is the state; no backend file is generated.
+    auto_generate_backend_file: false
 
 stacks:
   base_path: "stacks"
