@@ -645,7 +645,7 @@ iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-
 
 # ── demo.json ────────────────────────────────────────────────────────────────
 
-CYCLE=0 SCENARIO="" TITLE="" STARTED="" PULL="" COMMIT="" INDEX="" COUNT=0
+CYCLE=0 SCENARIO="" TITLE="" STARTED="" PULL="" COMMIT="" INDEX="" COUNT=0 ACT="" ACTS=""
 RUN_ID="" RUN_STATUS="" RUN_URL="" OUTCOME="" WAVE="" CYCLE_DONE="" ATTEMPT=0
 
 demo_put() { # the local demo.json to <reports bucket>/<prefix>/demo.json, and onto the cycle's timeline
@@ -945,13 +945,15 @@ migration_follow() {
 }
 
 # The fields of demo.json that say where the viewer is: the demo's intro, the
-# scenario's short name, its place in this loop's list, and the beat of a
+# scenario's short name, its place in this loop's list, its act within its own
+# demo (act of acts: its place among the list's scenarios of the same tool), and the beat of a
 # scenario told in several (none now: beat is null).
 demo_where() {
   jq -cn --arg intro "$INTRO" --arg delivery "$DELIVERY" --arg name "$(scenario_name "$SCENARIO")" --arg index "$INDEX" --argjson count "$COUNT" \
-    --arg tool "$TOOL" --arg repo "$REPO" --arg beat "${BEAT:-}" \
+    --arg tool "$TOOL" --arg repo "$REPO" --arg beat "${BEAT:-}" --arg act "${ACT:-}" --arg acts "${ACTS:-}" \
     '{intro: (if $intro == "" then null else $intro end), name: $name, tool: $tool, repo: $repo,
       index: (if $index == "" then null else ($index | tonumber) end), scenarios: $count,
+      act: (if $act == "" then null else ($act | tonumber) end), acts: (if $acts == "" then null else ($acts | tonumber) end),
       delivery: (if $delivery == "" then null else $delivery end),
       beat: (if $beat == "" then null else $beat end)}'
 }
@@ -3225,7 +3227,7 @@ OUT
     # An earlier driver's background copy is not this one's to wait on.
     mkdir -p "$RUNS_STATE" && : > "$RUNS_PID"
     CYCLE="$(cat "$DEMO_STATE/cycle" 2>/dev/null || echo 0)"
-    SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)" INDEX=""
+    SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)" INDEX="" ACT="" ACTS=""
     # A driver the watchdog restarted may have left a cycle half done, in any of the loop's repos.
     for t in "${LOOP_TOOLS[@]}"; do
       use_repo "$t"
@@ -3237,6 +3239,13 @@ OUT
       INDEX=0
       for s in "${list[@]}"; do
         INDEX=$((INDEX + 1))
+        # The act within its own demo: this scenario's place among the list's scenarios of the same tool, of how many.
+        ACT=0 ACTS=0
+        for x in "${list[@]}"; do
+          [ "$(scenario_tool "$x")" = "$(scenario_tool "$s")" ] || continue
+          ACTS=$((ACTS + 1))
+          [ "$ACT" -gt 0 ] || { [ "$x" = "$s" ] && ACT="$ACTS"; }
+        done
         CYCLE=$((CYCLE + 1))
         echo "$CYCLE" > "$DEMO_STATE/cycle"
         : > "$DEMO_STATE/reason"
