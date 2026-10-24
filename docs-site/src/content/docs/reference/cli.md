@@ -43,7 +43,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `config identities` | per environment and stage, prints the roots, the runner, the forge environment, the cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs to accept that job |
 | `forge check` | compares what `config identities` expects with the live forge environments, runners, protections and variables and each cloud's trust, reading only, and exits 1 on a mismatch; a person or a scheduled job of the team's own runs it |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
-| `check-root`, `check-pins`, `check-policy`, `check-sources` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-root`, `check-pins`, `check-policy`, `check-sources`, `check-mirror` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `image recipe` | writes a Dockerfile, CLI config and build script for an image `FROM` terragucci's that carries every provider the lock files pin; you build and push it |
 | `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
@@ -969,6 +970,20 @@ terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
 | `check-sources` | checks a root's module sources and providers against [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), read at `--base`, before its `init`; `--units` checks every Terragrunt unit instead; prints nothing without the key |
 
 Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs them, `check-sources` only when `sources` is set. See [Stages](/terragucci/reference/stages/#check).
+
+## image recipe and check-mirror
+
+```bash
+terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
+terragucci check-mirror [--config <file>] [--platform <os_arch>]
+```
+
+| Command | Does |
+|---|---|
+| `image recipe` | reads every `.terraform.lock.hcl` in the repo and writes, under `--out` (default `image`), a `Dockerfile` `FROM` the terragucci image for the binary (or `--from`), a `terragucci.tfrc` whose only installation method is a `filesystem_mirror`, one module per distinct lock file that requires each provider at its locked version, and `build.sh`, which builds for `--platform` (default `linux/amd64`) and pushes to `$IMAGE`. It builds and pushes nothing itself |
+| `check-mirror` | with `image.mirror` set, checks the image's mirror holds every provider each lock file pins, for the job's platform (or `--platform`, such as `linux_arm64`). A gap new at this commit warns; a gap the lock file already had at the commit's first parent fails, naming the provider and the rebuild. Prints nothing without the key |
+
+The generated `tf-check` job runs `check-mirror` before any root's `init` when `image.mirror` is set.
 
 ## check-job
 

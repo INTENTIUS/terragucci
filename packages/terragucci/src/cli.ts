@@ -17,6 +17,8 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci check-mirror [--config <file>] [--platform <os_arch>]
+ *   terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
@@ -76,7 +78,7 @@
  * its approval, so it applied nothing.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
@@ -85,7 +87,7 @@ import { applyGroups } from "./cloud-identity";
 import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
-import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -123,6 +125,7 @@ import { applyWave, branchRootProblems, parseBranches, parseGroups, readLedger }
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
+import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
@@ -166,6 +169,8 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
+  terragucci check-mirror [--config <file>] [--platform <os_arch>]   (image.mirror: the prepared image's provider mirror covers every lock file; a gap warns once, then fails)
+  terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]   (write a Dockerfile, CLI config and build script for an image FROM terragucci's with a provider mirror; you build and push it)
   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]   (a root's module and provider sources under sources, before its init; --units: each Terragrunt unit's)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
@@ -556,6 +561,46 @@ export async function main(argv: string[]): Promise<number> {
         const result = await checkUnitPins(walkUnits(cwd, settings.terragrunt?.exclude).map((u) => u.path), pins);
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
+      }
+      case "check-mirror": {
+        // tf-check's first step when image.mirror is set: the prepared image's provider mirror against every lock file.
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const mirror = imageMirror(settings.image);
+        if (!mirror) return 0;
+        const result = checkMirror(cwd, mirror, { ...(str(flags, "platform") ? { platform: str(flags, "platform") } : {}) });
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
+      }
+      case "image": {
+        // The files for a prepared image the customer builds FROM terragucci's, in their own CI and registry.
+        if (args[0] !== "recipe") throw new ConfigError("usage: terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const binary = str(flags, "binary") ?? settings.binary ?? "tofu";
+        if (!BINARIES.includes(binary as Binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
+        const out = str(flags, "out") ?? "image";
+        let recipe;
+        try {
+          recipe = planRecipe(cwd, {
+            binary: binary as Binary,
+            terragrunt: settings.terragrunt !== undefined || existsSync(resolve(cwd, "root.hcl")) || existsSync(resolve(cwd, "terragrunt.hcl")),
+            ...(str(flags, "from") ? { from: str(flags, "from") } : {}),
+            ...(str(flags, "platform") ? { platforms: str(flags, "platform")!.split(",").map((p) => p.trim()).filter(Boolean) } : {}),
+            ...(imageMirror(settings.image) ? { mirror: imageMirror(settings.image) } : {}),
+          });
+        } catch (e) {
+          throw new ConfigError((e as Error).message);
+        }
+        const dir = resolve(cwd, out);
+        for (const f of recipe.files) {
+          const file = resolve(dir, f.path);
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, f.content);
+          if (f.mode) chmodSync(file, f.mode);
+        }
+        console.log(describeRecipe(recipe, relative(cwd, dir) || "."));
+        return 0;
       }
       case "check-policy": {
         // tf-check's policy step: the policy's own tests, when `policy:` is set.

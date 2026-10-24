@@ -1,0 +1,103 @@
+---
+title: Run the jobs in a prepared image
+description: Build an image FROM terragucci's that carries every provider your lock files pin, so init never reaches a registry, and let tf-check tell you when it needs a rebuild.
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/run-in-a-prepared-image/.
+  Run `npx terragucci image recipe --out image`, commit the files it writes, and add a CI job of ours that runs image/build.sh with IMAGE set to a reference in our registry.
+  Set image.name to that reference and image.mirror to true in terragucci.yml, run `npx terragucci init`, and open a pull request.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+By default each job downloads the providers its roots need, into the job's provider cache. That needs no setup. A prepared image is the opt-in alternative: you build an image `FROM` terragucci's that holds a provider mirror, push it to your own registry, and name it in `terragucci.yml`. Every `init` then installs providers from the image, and no job reaches registry.opentofu.org or registry.terraform.io for them. Use it when downloads cost you time or rate limits, or when CI cannot reach a public registry at all.
+
+terragucci writes the files for the image. You build and push it in your own CI, to your own registry; terragucci builds and hosts nothing.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| A committed `.terraform.lock.hcl` in each root | the mirror holds exactly the providers and versions the lock files pin |
+| Docker with Buildx where you build | `build.sh` runs `docker buildx build` |
+| A registry your runners can pull from | the jobs run in the image you push |
+
+## Steps
+
+<Steps>
+
+1. Write the recipe from the repo's root:
+
+   ```bash
+   npx terragucci image recipe --out image
+   ```
+
+   It reads every `.terraform.lock.hcl` in the repo (skipping `.terraform/`, `.terragrunt-cache/` and `node_modules/`) and writes:
+
+   | File | Holds |
+   |---|---|
+   | `image/Dockerfile` | `FROM` the terragucci image the pipeline names for your binary, then `providers mirror` into `/usr/share/terragucci/providers`, and `TF_CLI_CONFIG_FILE` pointing at the CLI config |
+   | `image/terragucci.tfrc` | a CLI config whose only installation method is a `filesystem_mirror` at that directory |
+   | `image/mirror/NN/` | one small module per distinct lock file: a `versions.tf` that requires each provider at exactly its locked version, and the lock file itself, so each download is checked against its hashes |
+   | `image/build.sh` | the `docker buildx build --push` line, for the platforms you asked for |
+
+   The image is built for `linux/amd64` unless you pass `--platform`, such as `--platform linux/amd64,linux/arm64` for runners of both kinds. Each platform's build mirrors the providers for that platform alone. `--from` builds from another image, and `--binary` picks the binary that runs the mirror when `terragucci.yml` names none.
+
+2. Commit the `image/` directory, and build and push it in your CI:
+
+   ```bash
+   IMAGE=registry.example.com/infra/terragucci-mirror:1 image/build.sh
+   ```
+
+3. Name the image in `terragucci.yml`, with `mirror` set:
+
+   ```yaml
+   image:
+     name: registry.example.com/infra/terragucci-mirror:1
+     mirror: true
+   ```
+
+   `mirror: true` is the recipe's directory. If you built the mirror somewhere else, give its absolute path instead.
+
+4. Run `npx terragucci init` and commit the pipeline it writes. Every job runs in your image, and `tf-check` runs `terragucci check-mirror` before any root's `init`.
+
+</Steps>
+
+## A stale mirror
+
+A lock file change can pin a provider, or a version of one, that the image does not hold. `tf-check` compares every lock file at the commit with the mirror for the job's platform:
+
+| The gap | `tf-check` |
+|---|---|
+| none | passes, and logs how many lock files the mirror covers |
+| new at this commit | warns, naming the provider, its version and the lock file, and says the next run fails if the image still lacks it |
+| already there at the commit before | fails, naming the same, and tells you to rebuild |
+
+The commit before is the checked commit's first parent, so the check job fetches the history when `image.mirror` is set. The CLI config has no `direct` method, so nothing falls back to a download: an `init` that needs a provider the mirror lacks fails, and the warning says why.
+
+To clear it, run `npx terragucci image recipe` again, rebuild and push the image, and update `image.name` if its tag changed. Rebuild on each terragucci upgrade too, since the image must start from the tag the new pipeline names.
+
+## Your organization's layers
+
+Add these to the generated Dockerfile after the `FROM` line. The images are Debian.
+
+| For | Add |
+|---|---|
+| a private CA | `COPY corp-ca.crt /usr/local/share/ca-certificates/` and `RUN update-ca-certificates` |
+| a proxy at build time | pass `--build-arg HTTPS_PROXY=...` to `docker buildx build`; Docker reads it without a Dockerfile change |
+| a private provider registry | a `credentials "<host>"` block in `terragucci.tfrc`, from a build secret, never a committed token |
+
+## Repo shapes
+
+| Shape | |
+|---|---|
+| Terragrunt | the recipe builds `FROM` the Terragrunt image, from the lock files committed beside the units |
+| CDK Terrain | the roots are written by `synth` in the job, so lock files the repo does not commit are not mirrored |
+| Modules | module sources are still fetched in the job |
+
+## Next
+
+- [`image` in terragucci.yml](/terragucci/reference/config/)
+- [image recipe and check-mirror](/terragucci/reference/cli/#image-recipe-and-check-mirror)
+- [Run the jobs in your own image](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image)

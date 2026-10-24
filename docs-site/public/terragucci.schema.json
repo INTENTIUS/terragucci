@@ -252,9 +252,37 @@
       "description": "The command that writes the roots before any job reads them."
     },
     "image": {
-      "type": "string",
-      "pattern": "^[^\\s]+$",
-      "description": "The image every job runs in, built FROM terragucci's."
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[^\\s]+$"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[^\\s]+$"
+            },
+            "mirror": {
+              "anyOf": [
+                {
+                  "const": true
+                },
+                {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ]
+        }
+      ],
+      "description": "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries."
     },
     "notify": {
       "type": "object",
@@ -1998,9 +2026,37 @@
           "description": "The command that writes the roots before any job reads them."
         },
         "image": {
-          "type": "string",
-          "pattern": "^[^\\s]+$",
-          "description": "The image every job runs in, built FROM terragucci's."
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[^\\s]+$"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[^\\s]+$"
+                },
+                "mirror": {
+                  "anyOf": [
+                    {
+                      "const": true
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^/"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ]
+            }
+          ],
+          "description": "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries."
         },
         "notify": {
           "type": "object",

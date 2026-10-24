@@ -240,6 +240,8 @@ export interface PipelineInput {
   generate?: boolean;
   /** `sources` is set: the check job runs `terragucci check-sources` on each root before its init. */
   sources?: boolean;
+  /** `image.mirror` is set: the check job runs `terragucci check-mirror` before any init, with the history it compares against. */
+  mirror?: boolean;
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
@@ -549,7 +551,7 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false, sources = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false, sources = false, mirror = false): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
   const loop = [
     // With `sources` set, a root using a module or provider outside the list at base is refused before its init downloads anything.
@@ -580,6 +582,8 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
     "failed=0",
     // With `generate` set, every generated backend, provider and version file must be what terragucci generate writes.
     ...(generate ? ["terragucci generate --check || failed=1"] : []),
+    // With image.mirror set, the image's provider mirror must cover every lock file: a gap warns once, then fails.
+    ...(mirror ? ["terragucci check-mirror || failed=1"] : []),
     `for dir in ${roots.map(sh).join(" ")}; do`,
     ...loop,
     "done",
@@ -2199,7 +2203,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
@@ -2395,8 +2399,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const check = new GitLabJob({
       stage: "check",
       image: jobImage,
-      // The policy tests read the policy from the default branch, so with `policy:` the job has its history.
-      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy ? { GIT_DEPTH: "0" } : {}) },
+      // The policy tests read the policy from the default branch, and check-mirror the commit before, so either takes the history.
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy || input.mirror || input.terragrunt?.mirror ? { GIT_DEPTH: "0" } : {}) },
       ...notScheduled,
       script: script(glCheckBody),
       // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
@@ -2744,8 +2748,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     env: { TG_BRANCH: "${{ github.event.repository.default_branch }}" },
     outputs: handoverOutputs("check", forge),
     steps: [
-      // The policy tests read the policy from the default branch, so with `policy:` the checkout has the history.
-      bareCheckout(Boolean(input.policy)),
+      // The policy tests read the policy from the default branch, and check-mirror the commit before, so either takes the history.
+      bareCheckout(Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true),
       ...toolSteps(false, false),
       new Step({ id: "check", name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${handoverTrap(CHECK_DIR, forge).join("\n")}\n${checkBody}` }),
     ],
