@@ -1035,8 +1035,8 @@ describe("ask.json to demo.json", () => {
     mkdirSync(scen, { recursive: true });
     mkdirSync(join(dir, "stack"));
     if (file !== null) writeFileSync(join(scen, "ask.json"), file);
-    const fns = ["scenario_tool", "tool_tree", "ask_file", "ask_step", "ask_ends", "ask_key", "ask_fields", "ask_extra_hold"].map(fn).join("\n");
-    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} ASK_BEAT_HOLD=12 SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
+    const fns = ["scenario_tool", "tool_tree", "ask_file", "ask_step", "ask_ends", "ask_key", "ask_fields", "ask_extra_hold", "ask_hold"].map(fn).join("\n");
+    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} ASK_BEAT_HOLD=12 ASK_ACTION_HOLD=1 SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
     return spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8" });
   }
   const json = (r: ReturnType<typeof ask>) => {
@@ -1086,6 +1086,20 @@ describe("ask.json to demo.json", () => {
   it("writes nothing for the driver's own setup push", () => {
     expect(json(ask(JSON.stringify(fixture), "SETUP=1; ask_fields approved"))).toEqual({});
     expect(ask(JSON.stringify(fixture), "SETUP=1; ask_extra_hold planned").stdout.trim()).toBe("0");
+  });
+
+  it("holds a step that carries an ask ASK_ACTION_HOLD seconds, and one without or in setup not at all", () => {
+    const f = JSON.stringify(fixture);
+    const held = (r: ReturnType<typeof ask>) => (expect(r.status, r.stderr).toBe(0), r.stdout.trim());
+    const t = (body: string, file: string | null = f) => {
+      const t0 = Date.now();
+      held(ask(file, `${body}; echo`));
+      return Date.now() - t0;
+    };
+    expect(t("ask_hold approved")).toBeGreaterThanOrEqual(900);
+    expect(t("ask_hold applied")).toBeLessThan(900);
+    expect(t("SETUP=1; ask_hold approved")).toBeLessThan(900);
+    expect(t("ask_hold approved", null)).toBeLessThan(900);
   });
 
   it("holds a step ASK_BEAT_HOLD seconds for each beat past the first", () => {

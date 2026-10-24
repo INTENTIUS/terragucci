@@ -744,6 +744,7 @@ view_follow() {
 # again; the fix's applied step reads applied. A scenario without the file, or a step without an entry, writes
 # nothing, so every other scenario's demo.json is as it was.
 ASK_BEAT_HOLD=12 # seconds a step holds for each beat past its first
+ASK_ACTION_HOLD=8 # seconds the approved step holds when it carries an ask: the person's action line shows on the kiosk's next poll
 
 ask_file() { # scenario -> its ask.json's path; fails when it has no tree
   local tool
@@ -790,6 +791,16 @@ ask_extra_hold() { # step
   f="$(ask_file "$SCENARIO")" || { echo 0; return 0; }
   n="$(ask_step "$f" "$(ask_key "$f" "$1")" | jq -r '(.asks // []) | length')"
   if [ "${n:-0}" -gt 1 ]; then echo $(( (n - 1) * ASK_BEAT_HOLD )); else echo 0; fi
+}
+
+# Hold a step that carries an ask. The approved step is written and resumed in
+# the same second, so without this the kiosk (which polls every 3 s) never shows
+# the person's "You approve the plan" line.
+ask_hold() { # step
+  local f
+  [ -z "${SETUP:-}" ] || return 0
+  f="$(ask_file "$SCENARIO")" || return 0
+  if ask_step "$f" "$(ask_key "$f" "$1")" | jq -e '(.ask // .asks) != null' >/dev/null 2>&1; then sleep "$ASK_ACTION_HOLD"; fi
 }
 
 # The action and deadline the driver last wrote as next, and when it started
@@ -1693,6 +1704,7 @@ default_waiting() {
   demo_hold waiting "$(waiting_label)" "approve wave-$WAVE"
   approve_wave "$WAVE"
   demo_write approved "$(say approved)" "post /terragucci apply on pull request $PULL"
+  ask_hold approved
   resume_pull
   demo_write resumed "$(say resumed)" "follow the waves"
 }
