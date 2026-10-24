@@ -2633,6 +2633,13 @@ estates_back() { # [missing-ok]
 # the stack's network against floci and the record store, as the pipeline's jobs
 # reach them. An estate is applied alone here, reading the recorded outputs of
 # the one before it.
+#
+# Downstreams go first in a cleanup pass: edge, then app, each deleting what the
+# last cycle added to it, so network's subnet is not deleted while app's
+# instance and network interface still sit in it. On a fresh floci there is
+# nothing to read yet, so a cleanup pass that fails is logged and passed over.
+# Then network, app and edge apply in order, app and edge reading the values
+# network was just put back to.
 estates_apply() { # the base tree
   local out
   log "applying the base of $REPO with choudoufu in $DEMO_IMAGE_CHOUDOUFU…"
@@ -2640,7 +2647,7 @@ estates_apply() { # the base tree
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
       -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
       -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 \
-      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; for r in network app edge; do (cd "$r"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); done' 2>&1)"; then
+      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; a() { (cd "$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done' 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail "choudoufu apply did not apply the base of $REPO"
   fi

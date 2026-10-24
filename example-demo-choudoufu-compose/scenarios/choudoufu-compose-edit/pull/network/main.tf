@@ -24,7 +24,12 @@ terraform {
 # Endpoint, region and credentials come from the environment. The provider
 # asks STS for the account id: choudoufu refuses an identity it cannot resolve.
 provider "aws" {
-  region                      = "us-east-1"
+  region = "us-east-1"
+  # The emulator's keys, named so choudoufu signs its removal sweep: floci, with
+  # IAM enforcement on, refuses an unsigned tagging call, and a sweep that cannot
+  # list would never find what a reset has to delete.
+  access_key                  = "test"
+  secret_key                  = "test"
   skip_credentials_validation = true
   skip_metadata_api_check     = true
   s3_use_path_style           = true
