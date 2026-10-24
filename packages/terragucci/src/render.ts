@@ -185,7 +185,7 @@ import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
-import { AGENT_COMMENT_IF, agentCommentJobs, costEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
+import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
@@ -2638,7 +2638,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("agent", new GitLabJob({
         stage: "comments",
         image: jobImage,
-        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_AGENT_MAX_TURNS: String(agent.maxTurns), ...costEnv(agent) },
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_AGENT_MAX_TURNS: String(agent.maxTurns), ...agentCostEnv(agent) },
         rules: [new Rule({ if: onAgent })],
         timeout: `${agent.timeout} minutes`,
         script: [bash("AGENT", gitlabAgentRunScript(agent, GL_AGENT_ARTIFACT))],
