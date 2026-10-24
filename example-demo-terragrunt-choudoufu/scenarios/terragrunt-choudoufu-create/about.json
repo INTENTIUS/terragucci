@@ -1,0 +1,5 @@
+{
+  "changes": "Network creates a subnet. App puts four resources in it, and edge reads an address built from its id.",
+  "watch": "The id does not exist until the subnet is created. A dependency block would plan app on mock_outputs; here the one plan shows it as known after apply.",
+  "shows": "A downstream unit never plans on mock_outputs: its value is filled in during the same apply."
+}
