@@ -60,6 +60,15 @@ RUN set -e; \
   case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH="$a" go build -trimpath -ldflags "-s -w" -o /out/choudoufu ./cmd/choudoufu
 FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu
+# The Atmos CLI the Atmos demo's workflow runs, checked against the release's SHA256SUMS.
+FROM fetch AS atmos
+ARG TARGETARCH
+ARG ATMOS_VERSION=1.230.1
+RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
+  f="atmos_${ATMOS_VERSION}_linux_${a}"; base="https://github.com/cloudposse/atmos/releases/download/v${ATMOS_VERSION}"; \
+  curl -fsSLo "/tmp/$f" "$base/$f"; curl -fsSLo /tmp/SHA256SUMS "$base/atmos_${ATMOS_VERSION}_SHA256SUMS"; \
+  (cd /tmp && grep "  $f\$" SHA256SUMS | sha256sum -c -); \
+  mkdir -p /out && install -m 0755 "/tmp/$f" /out/atmos
 FROM fetch AS awsprovider
 ARG TARGETARCH
 ARG AWS_PROVIDER_VERSION=6.67.0
@@ -77,6 +86,7 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
 FROM ${BASE}
 COPY --from=yodel /opt/yodel /opt/yodel
 COPY --from=choudoufu /out/choudoufu /usr/local/bin/choudoufu
+COPY --from=atmos /out/atmos /usr/local/bin/atmos
 COPY --from=awsprovider /providers /opt/terragucci-demo/providers
 COPY tofu-mirror.tfrc /etc/terragucci-demo/tofu-mirror.tfrc
 ARG CHOUDOUFU_VERSION

@@ -1,0 +1,13 @@
+# One stack, one component. `estates` is choudoufu's composed root: it calls
+# network, app and edge as modules, so one plan and one apply cover all three.
+vars:
+  stage: dev
+
+components:
+  terraform:
+    estates:
+      metadata:
+        # A composed run refuses any workspace but default. Atmos names the
+        # workspace for the stack unless this says otherwise.
+        terraform_workspace: default
+      vars: {}

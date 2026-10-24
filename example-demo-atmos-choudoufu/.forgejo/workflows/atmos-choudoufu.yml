@@ -1,0 +1,84 @@
+# Plain Atmos in a plain workflow. A pull request runs `atmos terraform plan`,
+# a merge runs `atmos terraform apply`. The component command is choudoufu
+# (atmos.yaml), and the `estates` component calls network, app and edge as
+# modules, so each of those is one plan and one apply across the three estates.
+name: atmos-choudoufu-demo
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  ATMOS_TELEMETRY_ENABLED: 'false'
+  NO_COLOR: '1'
+  TF_IN_AUTOMATION: '1'
+  # Installs hashicorp/aws from the image's mirror, so no job downloads it.
+  TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc
+  AWS_ENDPOINT_URL: http://floci:4566
+  # choudoufu's record store addresses its bucket virtual-hosted; demo-records
+  # forwards those requests to floci path-style (stack/docker-compose.yml).
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: us-east-1
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: docker
+    container: terragucci-demo-choudoufu:local
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+      - name: Plan network, app and edge as one plan
+        run: |
+          set -o pipefail
+          atmos terraform plan estates -s dev 2>&1 | tee plan.txt
+      - name: Post the plan on the pull request
+        if: always()
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          API: '${{ github.server_url }}/api/v1/repos/${{ github.repository }}'
+        run: |
+          node -e '
+            const fs = require("fs");
+            const plan = fs.existsSync("plan.txt") ? fs.readFileSync("plan.txt", "utf8").slice(-60000) : "no plan output";
+            const body = "<!-- atmos-choudoufu-plan -->\n`atmos terraform plan estates -s dev`, with choudoufu as the component command:\n\n```\n" + plan + "\n```\n";
+            fetch(process.env.API + "/issues/" + process.env.PR_NUMBER + "/comments", {
+              method: "POST",
+              headers: { authorization: "token " + process.env.GITHUB_TOKEN, "content-type": "application/json" },
+              body: JSON.stringify({ body }),
+            }).then((r) => { if (!r.ok) { console.error("comment failed", r.status); process.exit(1); } });
+          '
+  apply:
+    if: github.event_name == 'push'
+    runs-on: docker
+    container: terragucci-demo-choudoufu:local
+    concurrency:
+      group: atmos-choudoufu-apply
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+      - name: Require a reviewer's approval of the merged pull request
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+          SHA: '${{ github.sha }}'
+          API: '${{ github.server_url }}/api/v1/repos/${{ github.repository }}'
+        run: |
+          node -e '
+            const h = { authorization: "token " + process.env.GITHUB_TOKEN };
+            const get = async (p) => { const r = await fetch(process.env.API + p, { headers: h }); if (!r.ok) throw new Error(p + " " + r.status); return r.json(); };
+            (async () => {
+              const pr = await get("/commits/" + process.env.SHA + "/pull");
+              const reviews = await get("/pulls/" + pr.number + "/reviews");
+              const ok = reviews.some((r) => r.state === "APPROVED" && !r.dismissed && r.user.login !== pr.user.login);
+              if (!ok) { console.error("pull request " + pr.number + " has no approving review from someone other than its author"); process.exit(1); }
+              console.log("pull request " + pr.number + " was approved by a reviewer");
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          '
+      - name: Apply network, app and edge as one apply
+        run: atmos terraform apply estates -s dev -auto-approve

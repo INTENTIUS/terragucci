@@ -1,0 +1,69 @@
+{
+  "opening": "Three estates: network, app and edge, one plan.",
+  "pull-request": {
+    "prompt": "Port 8080 to 8090; add admin port 9000.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Opening a pull request; its workflow runs atmos terraform plan on the estates component"
+  },
+  "planned": {
+    "prompt": null,
+    "action": null,
+    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change. Next: merge and apply.",
+    "light": [
+      "network/terraform_data.http_proxy_port",
+      "network/terraform_data.admin_port",
+      "app/terraform_data.listener_port",
+      "app/terraform_data.admin_listener_port",
+      "edge/terraform_data.upstream",
+      "edge/terraform_data.admin_upstream"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approval as a review on the pull request"
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging; the workflow runs atmos terraform apply"
+  },
+  "applying": {
+    "status": "Applying network, app and edge together",
+    "tips": [
+      "Ordered deployments apply parents first. The child's plan still can't see an id that doesn't exist yet.",
+      "Set the component command to choudoufu and give each component a live block."
+    ]
+  },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Done. Both ports changed in network, app and edge in the same apply. Next: put the estates back.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "closing": "3 estates. 1 plan. 1 approval. 1 apply.",
+  "reset": {
+    "prompt": "Put the estates back to the base.",
+    "action": null,
+    "reply": "Done. network, app and edge are back to the base. Next: add a subnet the other estates need.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
+}

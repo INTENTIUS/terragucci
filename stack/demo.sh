@@ -234,7 +234,7 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create atmos-choudoufu-edit atmos-choudoufu-create)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
@@ -249,7 +249,7 @@ SCENARIOS=(b-waves failure tg-planned-outputs)
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose choudoufu-compose)
+TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose choudoufu-compose atmos-choudoufu)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
@@ -260,6 +260,7 @@ scenario_tool() { # scenario -> its tool
     fan-out-choudoufu) echo choudoufu-fanout ;;
     compose-edit|compose-create|compose-fail) echo compose ;;
     choudoufu-compose-edit|choudoufu-compose-create) echo choudoufu-compose ;;
+    atmos-choudoufu-edit|atmos-choudoufu-create) echo atmos-choudoufu ;;
     *) return 1 ;;
   esac
 }
@@ -273,6 +274,7 @@ tool_repo() { # tool -> the repo's name under the admin
     choudoufu-fanout) echo demo-choudoufu-fanout ;;
     compose) echo demo-compose ;;
     choudoufu-compose) echo demo-choudoufu-compose ;;
+    atmos-choudoufu) echo demo-atmos-choudoufu ;;
     *) return 1 ;;
   esac
 }
@@ -286,6 +288,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     choudoufu-fanout) echo example-demo-choudoufu-fanout ;;
     compose) echo example-demo-compose ;;
     choudoufu-compose) echo example-demo-choudoufu-compose ;;
+    atmos-choudoufu) echo example-demo-atmos-choudoufu ;;
     *) return 1 ;;
   esac
 }
@@ -519,10 +522,17 @@ use_repo() { # tool
   INIT_PULL="" BASE_RUN=""
   # choudoufu's estates have no state bucket or keys: its roots are the tree's
   # directories with a main.tf, and each reset's push back applies the base.
-  if [ "$1" = choudoufu-fanout ] || [ "$1" = choudoufu-compose ]; then
+  ESTATES_DIR=""
+  if [ "$1" = choudoufu-fanout ] || [ "$1" = choudoufu-compose ] || [ "$1" = atmos-choudoufu ]; then
     STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS="" INIT_PULL="" BASE_RUN=1
-    # The compose repo's base commit says [skip ci] (its base is applied outside the pipeline), so its push back starts no run.
-    [ "$1" != choudoufu-compose ] || BASE_RUN=
+    # The compose repos' base commit says [skip ci] (its base is applied outside the pipeline), so its push back starts no run.
+    [ "$1" != choudoufu-compose ] && [ "$1" != atmos-choudoufu ] || BASE_RUN=
+    if [ "$1" = atmos-choudoufu ]; then
+      # The estates are plain Terraform directories beside the one Atmos component (estates) that calls them.
+      ESTATES_DIR=components/terraform
+      ROOTS=("$ESTATES_DIR/network" "$ESTATES_DIR/app" "$ESTATES_DIR/edge")
+      return 0
+    fi
     read -r -a ROOTS <<<"$(tree_roots "$TREE" | tr '\n' ' ')"
     [ "${#ROOTS[@]}" -gt 0 ] || fail "no root with a main.tf is in $TREE"
     return 0
@@ -1454,6 +1464,8 @@ scenario_title() {
     compose-fail)   echo "A create that fails part way" ;;
     choudoufu-compose-edit)   echo "An edit and an addition across three estates" ;;
     choudoufu-compose-create) echo "A new subnet the other estates need, in one change" ;;
+    atmos-choudoufu-edit)   echo "An edit across three estates, planned by Atmos" ;;
+    atmos-choudoufu-create) echo "A new subnet the other estates need, planned by Atmos" ;;
     *) return 1 ;;
   esac
 }
@@ -1478,6 +1490,8 @@ scenario_name() {
     compose-fail)   echo "a failed create" ;;
     choudoufu-compose-edit)   echo "one plan, three estates" ;;
     choudoufu-compose-create) echo "a subnet across estates" ;;
+    atmos-choudoufu-edit)   echo "Atmos, one plan" ;;
+    atmos-choudoufu-create) echo "Atmos, a subnet across estates" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1616,6 +1630,14 @@ say() { # step
     compose-*:applying)     echo "One apply runs network, app and edge together. Each state is written when the apply ends." ;;
     compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
     compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
+    atmos-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow. The workflow runs atmos terraform plan." ;;
+    atmos-choudoufu-edit:planned) echo "One plan from atmos terraform plan covers network, app and edge. Each estate's changes show as the one apply will make them." ;;
+    atmos-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id. The workflow runs atmos terraform plan." ;;
+    atmos-choudoufu-create:planned) echo "One plan covers network, app and edge. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
+    atmos-choudoufu-*:approved) echo "The reviewer approves pull request $PULL as a review. The merge's workflow checks that review before it applies." ;;
+    atmos-choudoufu-*:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}, and the workflow runs atmos terraform apply." ;;
+    atmos-choudoufu-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
+    atmos-choudoufu-*:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     choudoufu-compose-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
     choudoufu-compose-*:approved) echo "The reviewer approves pull request $PULL. The review approves the one plan it saw, the only approval this change needs." ;;
     choudoufu-compose-*:resumed)  echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
@@ -1654,6 +1676,15 @@ open_pull() {
   [ "$RUN_STATUS" = success ] || fail "the plan run of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
   # chant's plan job posts a note of its own.
   case "$TOOL" in chant|chant-fanout) chant_note; return 0 ;; esac
+  # The Atmos repo's workflow posts the plan it made as a comment of its own.
+  if [ "$TOOL" = atmos-choudoufu ]; then
+    local limit=$(( $(now) + 60 ))
+    until api "$URL/api/v1/repos/$REPO/issues/$PULL/comments?limit=50" | jq -e '[.[] | select(.body | startswith("<!-- atmos-choudoufu-plan -->"))] | length > 0' >/dev/null; do
+      [ "$(now)" -lt "$limit" ] || fail "the plan run passed but no plan is posted on pull request $PULL"
+      sleep "$POLL"
+    done
+    return 0
+  fi
   # The plan job's note is a comment on the pull request.
   local deadline=$(( $(now) + 60 ))
   until api "$URL/api/v1/repos/$REPO/issues/$PULL/comments?limit=50" | jq -e '[.[] | select(.body | contains("terragucci tf-plan"))] | length > 0' >/dev/null; do
@@ -2224,6 +2255,22 @@ scenario_compose() {
   follow
 }
 
+# The Atmos repo's pull request, start to end, with no pipeline tool: the
+# workflow's plan job ran atmos terraform plan and posted it; a reviewer
+# approves the pull request as a review; the author merges; the push's
+# workflow checks that review and runs atmos terraform apply. The applied step
+# is the apply job succeeding.
+scenario_atmos() {
+  open_pull
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  review_approve
+  merge_pull
+  demo_write applying "$(say applying)" "follow the apply"
+  run_ended "$LIMIT_RUN"
+  [ "$RUN_STATUS" = success ] || fail "the apply of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
+  OUTCOME=applied
+}
+
 # The choudoufu compose demo approves by review (approval: pr-review): the
 # reviewer approves the pull request on its head before the merge, so the
 # merge's one run applies the composed plan the review saw without stopping at
@@ -2457,6 +2504,7 @@ RECORDS_BUCKET=demo-live-records
 tool_records_bucket() { # tool
   case "$1" in
     choudoufu-compose) echo demo-choudoufu-compose-records ;;
+    atmos-choudoufu) echo demo-atmos-choudoufu-records ;;
     *) echo "$RECORDS_BUCKET" ;;
   esac
 }
@@ -2475,7 +2523,7 @@ records_up() { # [bucket]
 }
 
 # Whether a tool's tree runs its roots on choudoufu, so its jobs need the record store.
-tool_choudoufu() { grep -qx 'binary: choudoufu' "$HERE/../$(tool_tree "$1")/terragucci.yml" 2>/dev/null; }
+tool_choudoufu() { [ "$1" = atmos-choudoufu ] || grep -qx 'binary: choudoufu' "$HERE/../$(tool_tree "$1")/terragucci.yml" 2>/dev/null; }
 
 run_cycle() {
   SCENARIO="$1"
@@ -2502,6 +2550,7 @@ run_cycle() {
     fan-out-tofu) scenario_fan_out_tofu ;;
     fan-out-choudoufu) scenario_fan_out_choudoufu ;;
     compose-edit|compose-create|choudoufu-compose-edit|choudoufu-compose-create) scenario_compose ;;
+    atmos-choudoufu-edit|atmos-choudoufu-create) scenario_atmos ;;
     compose-fail) scenario_compose_fail ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
@@ -2630,7 +2679,7 @@ states_back() { # [missing-ok]
   # applies the base tree, which deletes what the cycle added, once the
   # operator's queue, which app-01's estate keeps, is destroyed (operator_back).
   if [ "$TOOL" = choudoufu-fanout ]; then operator_back; return 0; fi
-  if [ "$TOOL" = choudoufu-compose ]; then estates_back "${1:-}"; return 0; fi
+  if [ "$TOOL" = choudoufu-compose ] || [ "$TOOL" = atmos-choudoufu ]; then estates_back "${1:-}"; return 0; fi
   if [ "$TOOL" = chant-fanout ]; then stacks_back "${1:-}"; return 0; fi
   for root in "${ROOTS[@]}"; do
     key="$(root_key "$root")"
@@ -2682,8 +2731,8 @@ estates_apply() { # the base tree
   if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" --entrypoint sh \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
       -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 \
-      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; a() { (cd "$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done' 2>&1)"; then
+      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e ESTATES_DIR="${ESTATES_DIR:-.}" \
+      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; a() { (cd "$ESTATES_DIR/$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done' 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail "choudoufu apply did not apply the base of $REPO"
   fi
@@ -2800,7 +2849,7 @@ up_repo() {
   mkdir -p "$bt"
   (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./node_modules .) | (cd "$bt" && tar xf -)
   # The chant trees carry chant's pipeline; the others get terragucci's from init.
-  if ! tool_chant "$TOOL"; then
+  if ! tool_chant "$TOOL" && [ "$TOOL" != atmos-choudoufu ]; then
     (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $(tool_tree "$TOOL")"
   fi
   mkdir -p "$bt/.chant"
@@ -2837,7 +2886,7 @@ up_repo() {
     sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
     log "pushed the base to $REPO's main at ${sha:0:8}, applied outside its pipeline"
     RUN_URL="(applied outside the pipeline)"
-  elif [ "$TOOL" = choudoufu-compose ]; then
+  elif [ "$TOOL" = choudoufu-compose ] || [ "$TOOL" = atmos-choudoufu ]; then
     # The composed estates' first apply would wait for an approval (the values network's subnet gives are read
     # before they exist), which an up cannot give: the driver applies the base itself, as for the chant repos.
     estates_apply "$bt"
@@ -2854,7 +2903,7 @@ up_repo() {
     fi
   fi
   # The fan-out stacks and estates keep no Terraform state to snapshot: each reset applies the base again.
-  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ]; then
+  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ] && [ "$TOOL" != atmos-choudoufu ]; then
     mkdir -p "$RSTATE/snapshots"
     for root in "${ROOTS[@]}"; do
       curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
@@ -2901,6 +2950,7 @@ repo_description() {
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
     compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
     choudoufu-compose) echo "The terragucci demo's composed run on choudoufu: network, app and edge estates in one record store, planned and applied across estates" ;;
+    atmos-choudoufu) echo "An Atmos repo with choudoufu as its binary: network, app and edge planned as one plan and applied as one apply by a plain workflow" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -2919,7 +2969,7 @@ base_label() {
     chant-fanout) echo "The base is applied: fifteen CloudFormation stacks. Network, then cluster-a and cluster-b on it, and six apps on each cluster." ;;
     tofu-fanout) echo "The base is applied. Fifteen roots each have their own state. Cluster-a and cluster-b sit on network, and six apps sit on each cluster." ;;
     choudoufu-fanout) echo "The base is applied. Fifteen estates keep a record per resource and no state file. Cluster-a and cluster-b sit on network." ;;
-    choudoufu-compose) echo "The base is applied. Network, app and edge are estates in one record store, and each keeps a record per resource." ;;
+    choudoufu-compose|atmos-choudoufu) echo "The base is applied. Network, app and edge are estates in one record store, and each keeps a record per resource." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
@@ -2958,8 +3008,13 @@ case "$CMD" in
       elif [ "$t" = terraform ] || [ "$t" = tofu-fanout ]; then image="$DEMO_IMAGE"
       fi
       if [ -n "$image" ]; then
-        grep -qx "image: $image" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
-          || fail "$(tool_tree "$t")/terragucci.yml does not name $image as its image"
+        if [ "$t" = atmos-choudoufu ]; then
+          grep -q "container: $image" "$HERE/../$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml" \
+            || fail "$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml does not name $image as its container"
+        else
+          grep -qx "image: $image" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
+            || fail "$(tool_tree "$t")/terragucci.yml does not name $image as its image"
+        fi
         image_tools+=("$t")
       fi
     done

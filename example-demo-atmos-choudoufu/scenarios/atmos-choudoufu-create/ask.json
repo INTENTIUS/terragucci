@@ -1,0 +1,95 @@
+{
+  "pull-request": {
+    "prompt": "Add a subnet in network; put app's servers in it.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Opening a pull request; its workflow runs atmos terraform plan on the estates component"
+  },
+  "planned": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "One plan across 3 estates. app needs the subnet's id, which doesn't exist until it's created. Next: why is app's plan a guess?",
+      "light": [
+        "network/aws_subnet.subnet"
+      ],
+      "paths": false,
+      "ghost": true
+    },
+    {
+      "prompt": "Why is app's plan a guess?",
+      "action": null,
+      "reply": "With one Atmos component per estate, app reads the subnet with !terraform.output, which reads applied state, and the subnet isn't there yet. Here one plan holds both, so app's value is known after apply. Next: what depends on the subnet?",
+      "light": [
+        "app/aws_network_interface.network_interface"
+      ],
+      "paths": false,
+      "ghost": false
+    },
+    {
+      "prompt": "What depends on the new subnet?",
+      "action": null,
+      "reply": "{dependents} resources in app and edge. Next: merge and apply.",
+      "light": [
+        "network/aws_subnet.subnet"
+      ],
+      "paths": true,
+      "ghost": false
+    }
+  ],
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approval as a review on the pull request"
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging; the workflow runs atmos terraform apply"
+  },
+  "applying": {
+    "status": "Applying network, app and edge together",
+    "tips": [
+      "Ordered deployments apply parents first. The child's plan still can't see an id that doesn't exist yet.",
+      "Set the component command to choudoufu and give each component a live block."
+    ]
+  },
+  "applied": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "Done. The subnet was created and app and edge got its id in the same apply. Next: did anything stay locked?",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    },
+    {
+      "prompt": "Did anything stay locked?",
+      "action": null,
+      "reply": "No. Resource-level locking at the cloud level: each record is written only if unchanged since it was read. Next: put the estates back.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    }
+  ],
+  "closing": "3 estates. 1 plan. 1 approval. 1 apply.",
+  "reset": {
+    "prompt": "Put the estates back to the base.",
+    "action": null,
+    "reply": "Done. network, app and edge are back to the base. Next: change a port across the estates.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
+}

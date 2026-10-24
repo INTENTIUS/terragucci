@@ -1,0 +1,21 @@
+# Plain Atmos, with choudoufu as the Terraform binary. Nothing here knows
+# about a pipeline tool: the workflow in .forgejo/workflows runs the Atmos CLI.
+base_path: "./"
+
+components:
+  terraform:
+    base_path: "components/terraform"
+    # Atmos runs this executable wherever it would run terraform or tofu.
+    command: choudoufu
+    apply_auto_approve: false
+    deploy_run_init: true
+
+stacks:
+  base_path: "stacks"
+  included_paths:
+    - "deploy/**/*"
+  name_template: "{{ .vars.stage }}"
+
+logs:
+  file: "/dev/stderr"
+  level: Info
