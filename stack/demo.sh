@@ -345,7 +345,7 @@ sync_product_trees() { # clone or refresh each product checkout that has no over
     if [ ! -d "$dir/.git" ]; then
       mkdir -p "$(dirname "$dir")"
       log "cloning INTENTIUS/$repo into $dir for its demo trees…"
-      git clone -q "https://github.com/INTENTIUS/$repo.git" "$dir" || fail "could not clone INTENTIUS/$repo into $dir"
+      git clone -q --filter=blob:none "https://github.com/INTENTIUS/$repo.git" "$dir" || fail "could not clone INTENTIUS/$repo into $dir"
     fi
     if git -C "$dir" fetch -q origin "$ref" && git -C "$dir" checkout -q --detach FETCH_HEAD; then
       :
@@ -371,7 +371,6 @@ tool_tree() { # tool -> its example tree, as an absolute path
   esac
 }
 tool_present() { [ -d "$(tool_tree "$1")" ]; }
-sync_product_trees
 
 # The image the chant repo's jobs run in, built by up (stack/demo-chant.Dockerfile)
 # and named by example-demo-chant/.forgejo/workflows/chant-pr.yml.
@@ -3297,7 +3296,7 @@ repo_description() {
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
     chant-fanout) echo "The terragucci demo on chant: fifteen CloudFormation stacks in three waves, where a failure holds only what depends on it" ;;
-    chant-compose) echo "The terragucci demo's composed run on chant: network, app and edge as three CloudFormation stacks, planned together and applied under one approval" ;;
+    chant-compose) echo "chant's composed run: network, app and edge as three CloudFormation stacks, planned together and applied under one approval" ;;
     tofu-fanout) echo "The terragucci demo's fan-out: fifteen roots of SQS queues and DynamoDB tables in three waves, where a failure blocks only what depends on it" ;;
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
     compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
@@ -3348,6 +3347,7 @@ loop_ready() {
 
 case "$CMD" in
   up)
+    sync_product_trees
     started=$(now)
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
@@ -3466,6 +3466,7 @@ OUT
     ;;
 
   loop)
+    sync_product_trees
     ONCE="" list=()
     for a in "$@"; do
       case "$a" in
