@@ -457,7 +457,7 @@ describe("stack/demo.sh under pipefail", () => {
         .split("\n")
         .map((l, i) => [i + 1, l] as const)
         .filter(([, l]) => !l.trimStart().startsWith("#"))
-        .filter(([, l]) => /\|\s*(head\b|grep\s+-[A-Za-z]*[qm]|sed\s+(-n\s+)?'?\d*q)|\byes\s*\|/.test(l));
+        .filter(([, l]) => /(?<!\|)\|(?!\|)\s*(head\b|grep\s+-[A-Za-z]*[qm]|sed\s+(-n\s+)?'?\d*q)|\byes\s*\|/.test(l));
       expect(bad, `stack/${f}`).toEqual([]);
     }
   });

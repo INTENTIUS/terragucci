@@ -2358,10 +2358,10 @@ scenario_fan_out() {
 chant_compose_planned() {
   case "$SCENARIO" in
     chant-compose-edit)
-      ! grep -q 'Known only after apply' <<<"$CHANT_NOTE" || fail "the edit act's plan note has a value known only after apply: $(grep -o 'Known only after apply:[^.]*' <<<"$CHANT_NOTE" | head -1)" ;;
+      ! grep -q 'Known only after apply' <<<"$CHANT_NOTE" || fail "the edit act's plan note has a value known only after apply: $(grep -o -m1 'Known only after apply:[^.]*' <<<"$CHANT_NOTE")" ;;
     chant-compose-create)
       grep -q 'Known only after apply: `app` reads `network.SubnetBId`\.' <<<"$CHANT_NOTE" \
-        || fail "the create act's plan note does not say that only app reads network.SubnetBId after apply: $(grep -o 'Known only after apply:[^.]*' <<<"$CHANT_NOTE" | head -1)" ;;
+        || fail "the create act's plan note does not say that only app reads network.SubnetBId after apply: $(grep -o -m1 'Known only after apply:[^.]*' <<<"$CHANT_NOTE")" ;;
   esac
 }
 
