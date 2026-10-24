@@ -3378,6 +3378,7 @@ case "$CMD" in
       fi
       if [ -n "$image" ]; then
         if [ "$t" = atmos-choudoufu ]; then
+          image="$DEMO_IMAGE_PLAIN_CHOUDOUFU"
           grep -q "container: $image" "$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml" \
             || fail "$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml does not name $image as its container"
         else
