@@ -75,5 +75,13 @@
       "ghost": false
     }
   ],
-  "closing": "3 estates. 1 plan. 1 approval. 1 apply."
+  "closing": "3 estates. 1 plan. 1 approval. 1 apply.",
+  "reset": {
+    "prompt": "Put the estates back to the base.",
+    "action": null,
+    "reply": "Done. network, app and edge are back to the base. Next: change a port across the estates.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
 }
