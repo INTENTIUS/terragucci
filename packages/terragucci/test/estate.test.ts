@@ -294,12 +294,12 @@ describe("terragucci estate", () => {
       "GET acme-reports:reports/audit.jsonl",
     ]);
     for (const g of gets) expect(g).not.toMatch(/plan\.(txt|json)$|report\.json$/);
-    expect(requests.filter((q) => q.startsWith("PUT "))).toEqual(["PUT acme-reports:reports/estate.json", "PUT acme-reports:reports/estate.html", "PUT acme-reports:reports/dora.json"]);
+    expect(requests.filter((q) => q.startsWith("PUT "))).toEqual(["PUT acme-reports:reports/estate.json", "PUT acme-reports:reports/estate.html", "PUT acme-reports:reports/dora.json", "PUT acme-reports:reports/policy-metrics.json"]);
     expect(JSON.parse(objects.get("acme-reports:reports/dora.json")!)).toEqual(r.dora);
     expect(r.estate.totals).toMatchObject({ projects: 3, waiting: 1, drifted_projects: 1 });
     expect(JSON.parse(objects.get("acme-reports:reports/estate.json")!)).toEqual(r.estate);
     expect(readInlineEstate(objects.get("acme-reports:reports/estate.html")!)).toEqual(r.estate);
-    for (const f of ["estate.html", "estate.json", "dora.json"]) expect(existsSync(join(cwd, "terragucci-estate", f))).toBe(true);
+    for (const f of ["estate.html", "estate.json", "dora.json", "policy-metrics.json"]) expect(existsSync(join(cwd, "terragucci-estate", f))).toBe(true);
     expect(readFileSync(join(cwd, "terragucci-estate", "estate.html"), "utf-8")).toBe(objects.get("acme-reports:reports/estate.html"));
     expect(r.link?.url).toMatch(/^http:\/\/minio:9000\/acme-reports\/reports\/estate\.html\?X-Amz-Algorithm=.*X-Amz-Expires=3600&.*X-Amz-Signature=[0-9a-f]{64}$/);
     expect(r.link?.expires).toBe("2026-10-07T13:00:00.000Z");
@@ -307,7 +307,7 @@ describe("terragucci estate", () => {
     const text = describeEstate(r, cwd);
     expect(text).toContain("estate: 3 projects, 1 wave waiting, 1 project drifted, 0 roots failed");
     expect(text).toContain("gitlab.example.com/platform/network: wave 2 waits, for 3h 0m");
-    expect(text).toContain("wrote terragucci-estate/estate.json, terragucci-estate/estate.html and terragucci-estate/dora.json");
+    expect(text).toContain("wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/dora.json and terragucci-estate/policy-metrics.json");
   });
 
   it("from a control repo, reads each project from its own bucket, keeps going past one it cannot read, and writes under defaults", async () => {

@@ -18,6 +18,7 @@
  * Neither job has a cloud role. Nothing here applies, approves, unlocks or
  * merges.
  */
+import { OVER_BUDGET, overBudgetNote } from "./agent-record";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,7 +41,9 @@ export const CLAUDE_CODE_VERSION = "2.1.290";
  */
 export const AGENT_COMMAND = [
   `npx -y @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} -p`,
+  "--output-format json",
   '--max-turns "$TG_AGENT_MAX_TURNS"',
+  '${TG_AGENT_MAX_COST_USD:+--max-budget-usd "$TG_AGENT_MAX_COST_USD"}',
   "--permission-prompts none",
   "--setting-sources user",
   "--strict-mcp-config",
@@ -57,6 +60,8 @@ export interface AgentCommentInput {
   keySecret: string;
   command: string;
   maxTurns: number;
+  /** US dollars; undefined means no money limit. */
+  maxCostUsd?: number;
   /** Minutes. */
   timeout: number;
   /** The policy directory, which the agent may not change. */
@@ -73,6 +78,7 @@ export function agentCommentInput(settings: ProjectSettings): AgentCommentInput 
     keySecret: o.key_secret ?? "ANTHROPIC_API_KEY",
     command: o.command ?? AGENT_COMMAND,
     maxTurns: o.max_turns ?? 30,
+    ...(o.max_cost_usd !== undefined ? { maxCostUsd: o.max_cost_usd } : {}),
     timeout: o.timeout ?? 30,
     policyDir: settings.policy?.path ?? "policy",
   };
@@ -141,6 +147,10 @@ export interface PushResult {
   fail?: boolean;
   commit?: string;
   paths?: string[];
+  /** True when the agent job was stopped for passing the money limit. */
+  stopped?: boolean;
+  /** Who asked: the commenter. */
+  requestedBy?: string;
 }
 
 export interface PushOptions {
@@ -252,11 +262,12 @@ export async function landAgentChange(c: LandOptions): Promise<PushResult> {
   const { git, sha, head, user, ask } = c;
   const refuse = async (reason: string, fail = false): Promise<PushResult> => {
     await c.reply(reason);
-    return { pushed: false, reason, ...(fail ? { fail: true } : {}) };
+    return { pushed: false, reason, ...(fail ? { fail: true } : {}), ...(user ? { requestedBy: user } : {}) };
   };
   const rcFile = join(c.change, "rc");
   const rc = existsSync(rcFile) ? readFileSync(rcFile, "utf-8").trim() : "";
   if (rc === "moved") return refuse(`the ${c.what} moved while the agent was starting, so nothing was pushed. Ask again.`);
+  if (rc === OVER_BUDGET) return { ...(await refuse(`${overBudgetNote(c.change)}, so nothing was pushed. The agent job's log has its output.`)), stopped: true };
   if (rc !== "0") return refuse(`the agent stopped with ${rc ? `exit code ${rc}` : "no exit code"}, so nothing was pushed. The agent job's log has its output.`);
 
   let current: string;
@@ -303,7 +314,7 @@ export async function landAgentChange(c: LandOptions): Promise<PushResult> {
     return { pushed: false, fail: true, reason: `could not push to ${head} (${why})` };
   }
   await c.reply(`pushed ${c.link(commit)} to \`${head}\`${user ? ` for ${user}` : ""}, changing ${paths.map((p) => `\`${p}\``).join(", ")}. The push plans the ${c.what} again; nothing was applied, approved or merged.`);
-  return { pushed: true, reason: `pushed ${commit} to ${head}`, commit, paths };
+  return { pushed: true, reason: `pushed ${commit} to ${head}`, commit, paths, ...(user ? { requestedBy: user } : {}) };
 }
 
 /** The signers file `.chant/trust.json` names at HEAD, when it names one. */

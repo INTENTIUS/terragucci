@@ -32,6 +32,7 @@ import type { Binary, ForgeName, RolePair } from "./config";
 import type { Tool } from "./install";
 import { ROLES_ENV, rolesFor } from "./terragrunt";
 import { NO_FETCH_FROM_STATE } from "./tg-preview";
+import { CACHE_RESTORE, CACHE } from "./action-pins";
 
 export interface TerragruntPipelineInput {
   /** The Terragrunt release the jobs run. */
@@ -47,6 +48,8 @@ export interface TerragruntPipelineInput {
   generate?: boolean;
   /** `sources` is set: the check job runs `terragucci check-sources --units` before its validate fetches any unit's source. */
   sources?: boolean;
+  /** `image.mirror` is set: the check job runs `terragucci check-mirror` first, as a plain repo's does. */
+  mirror?: boolean;
 }
 
 /** Where sources and providers are kept: under the repo, in a directory Terragrunt's discovery skips. */
@@ -101,6 +104,8 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     "terragrunt hcl fmt --check --diff --no-color",
     // With `generate` set, terragucci.hcl must be what terragucci generate writes, and every unit must include it.
     ...(tg.generate ? ["terragucci generate --check"] : []),
+    // With image.mirror set, the image's provider mirror must cover every lock file: a gap warns once, then fails.
+    ...(tg.mirror ? ["terragucci check-mirror"] : []),
     // An explicit stack's units are generated, not committed: generate them, then validate them with the rest.
     ...(tg.stacks ? ["terragrunt stack generate --non-interactive --no-color"] : []),
     // With `sources` set, a unit using a module or provider outside the list at base is refused before the validate fetches its source.
@@ -139,7 +144,7 @@ export const GITHUB_CACHE_KEY = "terragucci-tg-${{ hashFiles('**/*.hcl') }}";
 export function forgeCache(forge: ForgeName): Record<string, unknown> {
   return forge === "gitlab"
     ? { cache: [{ key: "terragucci-terragrunt", paths: [`${TG_CACHE_DIR}/`] }] }
-    : { uses: "actions/cache@v4", with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
+    : { uses: CACHE, with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
 }
 
 /**
@@ -148,5 +153,5 @@ export function forgeCache(forge: ForgeName): Record<string, unknown> {
  * Forgejo resolves actions/cache/restore as GitHub does.
  */
 export function forgeCacheRestore(): Record<string, unknown> {
-  return { uses: "actions/cache/restore@v4", with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
+  return { uses: CACHE_RESTORE, with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
 }

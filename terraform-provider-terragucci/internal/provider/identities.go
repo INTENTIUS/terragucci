@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -21,10 +20,8 @@ import (
 // identitiesSchema is the contract version the data sources read.
 const identitiesSchema = "terragucci.identities/v1"
 
-// sources is what the provider hands its data sources: the control repo, to
-// read terragucci.yml from the forge, and the terragucci command to run.
+// sources is what the provider hands its data sources: the terragucci command to run.
 type sources struct {
-	control *control
 	command []string
 }
 
@@ -122,7 +119,7 @@ type contractAzure struct {
 
 // identityInputs are the attributes both data sources take to say which config and repository to read.
 type identityInputs struct {
-	// path is a local terragucci.yml; empty reads the provider's control repo file from the forge.
+	// path is a local terragucci.yml.
 	path          string
 	project       string
 	forge         string
@@ -150,8 +147,7 @@ func (in identityInputs) args() []string {
 }
 
 // identities reads the contract: from a local file, beside which terragucci
-// reads the repo's roots, or from the control repo's file on the forge,
-// whose roots it does not read.
+// reads the repo's roots.
 func (s *sources) identities(ctx context.Context, in identityInputs) (*identitiesContract, []byte, error) {
 	stdout, stderr, runErr, command, err := s.run(ctx, in, []string{"config", "identities"}, nil)
 	if err != nil {
@@ -161,8 +157,7 @@ func (s *sources) identities(ctx context.Context, in identityInputs) (*identitie
 }
 
 // run runs `terragucci <sub> --json --config <file> <flags> <extra>` over in's
-// config: a local file, or the control repo's file on the forge, written to a
-// temporary directory and read with --no-roots. It returns the command's
+// config, a local file. It returns the command's
 // stdout and stderr, the error it exited with, and the command as text; err
 // is set when the config could not be had.
 func (s *sources) run(ctx context.Context, in identityInputs, sub []string, extra []string) (stdout []byte, stderr string, runErr error, command string, err error) {
@@ -173,26 +168,7 @@ func (s *sources) run(ctx context.Context, in identityInputs, sub []string, extr
 	file := in.path
 	flags := append(in.args(), extra...)
 	if file == "" {
-		if s == nil || s.control == nil {
-			return nil, "", nil, "", errors.New("set path, or configure the provider's forge and repository to read terragucci.yml from the control repo")
-		}
-		_, f, lerr := s.control.load(ctx)
-		if lerr != nil {
-			return nil, "", nil, "", lerr
-		}
-		if !f.exists {
-			return nil, "", nil, "", fmt.Errorf("%s is not on %s of %s", s.control.path, s.control.branch, s.control.forge.repo)
-		}
-		dir, terr := os.MkdirTemp("", "terragucci-identities-")
-		if terr != nil {
-			return nil, "", nil, "", terr
-		}
-		defer os.RemoveAll(dir)
-		file = filepath.Join(dir, filepath.Base(s.control.path))
-		if werr := os.WriteFile(file, f.content, 0o600); werr != nil {
-			return nil, "", nil, "", werr
-		}
-		flags = append(flags, "--no-roots")
+		return nil, "", nil, "", errors.New("set path to a local terragucci.yml")
 	}
 	abs, aerr := filepath.Abs(file)
 	if aerr != nil {

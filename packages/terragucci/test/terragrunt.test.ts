@@ -1,6 +1,7 @@
 // Terragrunt mode: detection, discovery, waves, the auth provider, init's
 // pipeline and the tf-plan stage. Terragrunt itself is stubbed; the last block
 // runs the real binary when TERRAGUCCI_TERRAGRUNT names one and tofu is on the path.
+import { CACHE, CACHE_RESTORE } from "../src/action-pins";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -373,9 +374,9 @@ describe("init in a Terragrunt repo", () => {
     // approval: ledger is the default, so no gate is declared for a seal.
     expect(r.files.find((f) => f.path.endsWith("chant.workspace.json"))).toBeUndefined();
     // The plan job, which runs the change's code, restores the cache and saves none; the jobs that run merged code save it.
-    expect(doc.jobs.plan.steps.find((s: { uses?: string }) => s.uses === "actions/cache/restore@v4")?.with.path).toBe(".terragrunt-cache");
+    expect(doc.jobs.plan.steps.find((s: { uses?: string }) => s.uses === CACHE_RESTORE)?.with.path).toBe(".terragrunt-cache");
     for (const job of ["apply-wave-1", "apply-wave-4", "apply-comment"]) {
-      expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === "actions/cache@v4")?.with.path).toBe(".terragrunt-cache");
+      expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === CACHE)?.with.path).toBe(".terragrunt-cache");
     }
     expect(text).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
     expect(r.notes.join("\n")).toMatch(/canary units' layers apply first/);
@@ -823,7 +824,7 @@ describe("the pipeline's drift job in a Terragrunt repo", () => {
     expect(script).toContain("terragucci stage tf-drift");
     expect(script).toContain("--terragrunt");
     expect(script).toContain("TG_DOWNLOAD_DIR");
-    expect(forge === "github" ? job.steps.some((s: any) => s.uses === "actions/cache@v4") : job.cache[0].paths).toBeTruthy();
+    expect(forge === "github" ? job.steps.some((s: any) => s.uses === CACHE) : job.cache[0].paths).toBeTruthy();
   });
 
   it("without drift there is no drift job", async () => {

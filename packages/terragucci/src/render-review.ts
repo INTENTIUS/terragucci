@@ -8,6 +8,7 @@ import type { ForgeName } from "./config";
 import { READS_EXIT } from "./render";
 import { gitlabCleanEnv, RUNNER_TOKEN_VARS } from "./render-agent";
 import { REVIEW_ARTIFACT, REVIEW_DIR, REVIEW_FILE, REVIEW_OUT, REVIEW_WORK, type ReviewInput } from "./review-agent";
+import { CHECKOUT, uploadArtifact, downloadArtifact } from "./action-pins";
 
 /** Where the prompt's step puts the plan report it fetches: outside the checkout. */
 export const REVIEW_REPORT = `${REVIEW_DIR}/report`;
@@ -33,8 +34,11 @@ export function reviewRunScript(command: string): string {
     `mkdir -p ${REVIEW_OUT}`,
     `cd ${REVIEW_WORK} || exit 1`,
     `export TG_REVIEW_PROMPT=${REVIEW_DIR}/prompt.md`,
+    // A command may leave its model and cost here; the review note's record reads them (agent-record.ts).
+    `export TG_AGENT_USAGE=${REVIEW_OUT}/usage.json`,
     `( ${command} ) <"$TG_REVIEW_PROMPT" >${REVIEW_OUT}/${REVIEW_FILE}`,
     `echo "$?" >${REVIEW_OUT}/rc`,
+    `sha256sum "$TG_REVIEW_PROMPT" | cut -d' ' -f1 >${REVIEW_OUT}/prompt.sha256`,
     `echo "terragucci review: the review command exited $(cat ${REVIEW_OUT}/rc) and printed $(wc -c <${REVIEW_OUT}/${REVIEW_FILE}) bytes"`,
   ].join("\n");
 }
@@ -54,8 +58,10 @@ export function gitlabReviewScript(review: ReviewInput, artifact: string): strin
     `mkdir -p ${REVIEW_OUT}`,
     `cd ${REVIEW_WORK} || exit 1`,
     `export TG_REVIEW_PROMPT=${REVIEW_DIR}/prompt.md`,
+    `export TG_AGENT_USAGE=${REVIEW_OUT}/usage.json`,
     `${gitlabCleanEnv(review.keySecret)} bash -c ${sh(review.command)} <"$TG_REVIEW_PROMPT" >${REVIEW_OUT}/${REVIEW_FILE}`,
     `echo "$?" >${REVIEW_OUT}/rc`,
+    `sha256sum "$TG_REVIEW_PROMPT" | cut -d' ' -f1 >${REVIEW_OUT}/prompt.sha256`,
     `echo "terragucci review: the review command exited $(cat ${REVIEW_OUT}/rc) and printed $(wc -c <${REVIEW_OUT}/${REVIEW_FILE}) bytes"`,
     `cd "$CI_PROJECT_DIR" && mkdir -p ${artifact} && cp ${REVIEW_OUT}/* ${artifact}/`,
   ].join("\n");
@@ -73,8 +79,8 @@ export const PLAN_WAIT_MINUTES = 30;
  * file does nothing until it merges.
  */
 export function reviewWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, review: ReviewInput, o: { pipelineName: string; env: Record<string, string> }): Map<string, never> {
-  const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
-  const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
+  const upload = uploadArtifact(forge);
+  const download = downloadArtifact(forge);
   const github = forge === "github";
   // What the event says was planned: GitHub's workflow_run names the pipeline's run, Forgejo's pull_request_target the pull request.
   const head = github ? "${{ github.event.workflow_run.head_sha }}" : "${{ github.event.pull_request.head.sha }}";
@@ -102,7 +108,7 @@ export function reviewWorkflow(forge: Exclude<ForgeName, "gitlab">, image: strin
     "timeout-minutes": review.timeout + (github ? 0 : PLAN_WAIT_MINUTES),
     steps: [
       // The head, with the whole history and no credentials kept: the diff reads the base, and the instructions and the command's tree come from the default branch. Nothing in the checkout runs.
-      new Step({ uses: "actions/checkout@v4", with: { ref: head, "fetch-depth": 0, "persist-credentials": false } }),
+      new Step({ uses: CHECKOUT, with: { ref: head, "fetch-depth": 0, "persist-credentials": false } }),
       new Step({
         id: "prompt",
         name: "Write the review's prompt: the pull request, its diff and plan, and the default branch's instructions",

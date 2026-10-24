@@ -175,7 +175,7 @@ export default defineConfig({
 								{ label: 'Find the state version an apply left', slug: 'guides/find-a-state-version' },
 								{ label: 'Export a state version', slug: 'guides/export-a-state-version' },
 								{ label: 'Track the roots that read other roots\' state', slug: 'guides/track-cross-state-edges' },
-								{ label: 'Query the estate with SQL', slug: 'guides/query-with-sql' },
+								{ label: 'Query the estate', slug: 'guides/query-with-sql' },
 								{ label: 'Send traces and metrics', slug: 'guides/send-traces-and-metrics' },
 								{ label: 'Watch a choudoufu wave apply', slug: 'guides/watch-a-choudoufu-wave' },
 							],
@@ -198,7 +198,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
-								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
+								{ label: 'Read terragucci\'s trust with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
 							],
 						},
 						{

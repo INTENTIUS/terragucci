@@ -33,7 +33,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write", "agent-run"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, a report in the bucket, or a state's list of versions. */
@@ -93,6 +93,8 @@ export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
 export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
 export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
 /** Ephemeral environments since chant runs them: chant's pr-env records, and each pull request's gate `_gates/pr-<n>.jsonl` (../ephemeral.ts). */
+/** Agent runs: the record of each `agent.comment` and `agent.drift` run (../agent-record.ts). */
+export const AGENT_RUNS_FILE = "_gates/agent-runs.jsonl";
 export const PR_ENV_RECORDS_FILE = "_pr-envs/records.jsonl";
 export const PR_ENV_LEDGER_PATTERN = /^_gates\/pr-[1-9][0-9]*\.jsonl$/;
 
@@ -131,6 +133,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
   if (path === EXPORT_DONE_FILE) return exportEntries(project, lines, commitUrl);
   if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, lines, commitUrl);
   if (path === PR_ENV_RECORDS_FILE) return prEnvEntries(project, lines, commitUrl);
+  if (path === AGENT_RUNS_FILE) return agentRunEntries(project, lines, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   const { entries } = deriveGateAudit({
     ledgers: [{ op: opOf(path), path, lines }],
@@ -296,6 +299,35 @@ function unlockEntries(project: string, lines: readonly GateLedgerLine[], commit
 }
 
 /**
+ * The entries of `_gates/agent-runs.jsonl`: one per `agent.comment` or
+ * `agent.drift` run, with the agent's forge identity as `who`, the model, the
+ * prompt's digest, the cost and the commit it made.
+ */
+function agentRunEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
+    if (!r || r.version !== 1 || r.kind !== "agent-run" || typeof r.feature !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    const actor = r.actor && typeof r.actor === "object" ? (r.actor as Line) : {};
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, AGENT_RUNS_FILE, c.text),
+      kind: "agent-run",
+      project,
+      at: r.timestamp,
+      who: str(actor.principal) ?? null,
+      what: r.feature,
+      digest: str(r.promptDigest) ?? null,
+      result: str(r.result) ?? "unknown",
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: AGENT_RUNS_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({ actor: r.actor, model: str(r.model), cost: r.cost, commit: str(r.commit), pull_request: str(r.pullRequest), requested_by: str(r.requestedBy), reason: str(r.reason), run_url: str(r.runUrl) }),
+    });
+  }
+  return out;
+}
+
+/**
  * The entries of `_gates/tf-state-export/done.jsonl`: one per state version
  * exported, naming who exported it, the root and version, who approved it,
  * and the digest of the bytes written. Never the state's contents.
@@ -436,6 +468,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
     commit: report.run.commit,
     roots: wave.roots,
     pull_request: report.run.pull_request,
+    actor: report.run.actor,
   };
   const refused = wave.refused ?? inferredRefusal(report);
   if (refused) {
@@ -445,7 +478,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
       kind: "refused",
       who: refused.by ?? null,
       result: REFUSED[refused.reason],
-      detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules, holder: refused.holder }),
+      detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules, hard_mandatory: refused.hard_mandatory, holder: refused.holder }),
     };
   }
   const failed = failedRoots(report);

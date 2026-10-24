@@ -36,6 +36,7 @@ import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "..
 import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
 import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { checkOwnership, controlClaims, projectKeyFromEnv } from "../estate-ownership";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { pendingEstateMigrations, pendingWhy, type PendingEstateRoot } from "../migrate";
@@ -85,12 +86,15 @@ import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
 import { outsideWatch, settingsChanged, type OutsideRoots } from "../affected";
+import { detectActor } from "../actor";
 import { hookCount, hooksUsed, readHooks, runHooks, runUnitHooks, type HookMoment, type StageHooks } from "../hooks";
 import { binaryText, type ReportStep } from "./schema";
 
 export const STAGES = ["tf-plan", "tf-drift"] as const;
 
 export interface StageOptions {
+  /** The estates' claims in the control repo's records, read now. Default: the checkout TERRAGUCCI_CONTROL_DIR names, else the control repo cloned with TERRAGUCCI_CONTROL_READ_TOKEN. */
+  controlClaims?: () => Map<string, string[]> | undefined;
   /** Runs the cost estimator; tests pass one. */
   costRunner?: CostRunner;
   /** Leave the cost estimate out, with `cost` set: the confirm job's plan posts no note. */
@@ -1140,6 +1144,15 @@ export async function runStage(stage: string, repo: string, options: StageOption
     if (e) estateOwner.set(e, r);
   }
   const readEstates = new Set([...estateReadsOf.values()].flat().map((b) => b.estate));
+  // The control repo's records say which project owns each estate; read now, at this plan, never kept (terragucci#753).
+  if (estatePlans && (estateOwner.size > 0 || [...estateReadsOf.values()].some((r) => r.length > 0))) {
+    const claims = options.controlClaims ? options.controlClaims() : controlClaims(settings.control, env);
+    if (claims) {
+      const found = checkOwnership({ self: options.project ?? projectKeyFromEnv(env), local: new Map([...estateOwner]), reads: estateReadsOf, claims });
+      for (const n of found.notes) log(n);
+      if (found.refusals.length) throw new ConfigError(`estate ownership has ${found.refusals.length} problem(s):\n  ${found.refusals.join("\n  ")}`, found.refusals);
+    }
+  }
   const upstreamPlanFiles = new Map<string, string>();
   // The apply's waves (canary layers first, one dependency layer each), cut from every root so the numbers match its wave-<k> gates.
   // Drift is not applied, so there are no waves to gate.
@@ -2182,7 +2195,7 @@ async function finish(
   if (governing?.note) log(governing.note);
   if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
-    const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
+    const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, actor: detectActor(repo, env, governing.policy.agents), ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
     // hold and allow_unattended come from the base's policy key alone: a pull request's own outcomes key turns nothing on.
     const settled = governing.from === "base" || !(options.base ?? baseRef(env)) ? governing.policy : { ...governing.policy, outcomes: undefined };
     ({ inputs, policy } = await applyPolicy(repo, settled, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));

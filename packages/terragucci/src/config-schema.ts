@@ -13,6 +13,10 @@
  */
 import {
   AGENT_COMMENT_KEYS,
+  CONTROL_KEYS,
+  CONTROL_NAME,
+  CONTROL_REF,
+  IMAGE_KEYS,
   AGENT_KEYS,
   AGENT_LOGIN,
   AGENT_VIA,
@@ -154,7 +158,7 @@ const runnerSpec: JsonSchema = {
 const agentRun: JsonSchema = {
   anyOf: [
     bool,
-    map(AGENT_COMMENT_KEYS, { command: oneLine, key_secret: secret, max_turns: whole(1), timeout: whole(1) }),
+    map(AGENT_COMMENT_KEYS, { command: oneLine, key_secret: secret, max_turns: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 }, timeout: whole(1) }),
   ],
 };
 
@@ -250,6 +254,7 @@ const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
   input: enumOf(POLICY_INPUTS),
   override: { type: "array", minItems: 1, items: { anyOf: [oneLine, overrideEntry] } },
   outcomes: { type: "array", minItems: 1, uniqueItems: true, items: enumOf(POLICY_OUTCOMES) },
+  agents: { type: "array", minItems: 1, items: { type: "string", pattern: "^\\S+$" }, description: "Forge app or bot identities that are agents; a change proposed through one has input.actor.kind agent." },
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
 const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };
@@ -384,7 +389,13 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     drift: { ...cron, description: "A cron schedule for tf-drift, or false." },
     synth: { ...nonBlank, description: "The command that writes the roots before any job reads them." },
-    image: { type: "string", pattern: "^[^\\s]+$", description: "The image every job runs in, built FROM terragucci's." },
+    image: {
+      anyOf: [
+        { type: "string", pattern: "^[^\\s]+$" },
+        { ...map(IMAGE_KEYS, { name: { type: "string", pattern: "^[^\\s]+$" }, mirror: { anyOf: [{ const: true }, { type: "string", pattern: "^/" }] } }), required: ["name"] },
+      ],
+      description: "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries.",
+    },
     notify: {
       ...map(NOTIFY_KEYS, {
         slack: secret,
@@ -408,6 +419,18 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     rollouts: top
       ? { anyOf: [nonBlank, { const: false }], description: "A cron schedule for the job that opens each rollout's next wave, or false." }
       : { const: false, description: "A single repo's key; a control repo runs terragucci respond rollout itself." },
+    control: {
+      ...map(CONTROL_KEYS, {
+        repo: { type: "string", pattern: "^[^/\\s]+(/[^/\\s]+){2,}$" },
+        op: pat(CONTROL_NAME),
+        forge: enumOf(FORGES),
+        member: pat(CONTROL_NAME),
+        token_env: secret,
+        read_token_env: secret,
+        ref: pat(CONTROL_REF),
+      }, { required: ["repo", "op"] }),
+      description: "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents.",
+    },
     gitlab: { ...map(TOKEN_PROTECTION_KEYS, { token: enumOf(TOKEN_PROTECTIONS) }), description: "GitLab only: how the project keeps its forge token." },
     runtime: { ...enumOf(RUNTIMES), description: "Where the stages run." },
     reports: {

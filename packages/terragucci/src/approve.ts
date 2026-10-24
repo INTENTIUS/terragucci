@@ -51,6 +51,7 @@ import { fileURLToPath } from "node:url";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
+import { declaredHardMandatory } from "./report/policy";
 import { checkoutApproval } from "./approval";
 import { reportRuleLine } from "./approval";
 import type { ReportApprovalRule } from "./report/schema";
@@ -320,6 +321,14 @@ export async function overrideDenial(repo: string, o: OverrideOptions): Promise<
   const rules = sortedRules(o.rules);
   if (rules.length === 0) throw new ConfigError("override names each rule it overrides with --rule <id>");
   if (!o.reason.trim()) throw new ConfigError("override needs --reason <text>: why this plan goes out although the policy denies it");
+  // A hard-mandatory rule is not overridable by anyone, so it is refused before the ledger is read.
+  const configFile = findConfig(repo);
+  const policyDir = resolve(repo, (configFile ? (await loadConfig(configFile)).policy?.path : undefined) ?? "policy");
+  const hardMandatory = declaredHardMandatory(policyDir);
+  const hardAsked = rules.filter((r) => hardMandatory.has(r));
+  if (hardAsked.length > 0) {
+    throw new ConfigError(`${hardAsked.join(", ")} ${hardAsked.length === 1 ? "is" : "are"} hard-mandatory: no override, whoever policy.override lists, can pass a denial by ${hardAsked.length === 1 ? "it" : "them"}. Change the plan until the policy passes, or change the rule's level in a reviewed pull request`);
+  }
   const denials = recordedDenials(readLedger(repo, OVERRIDE_LEDGER));
   const denial = denials.find((d) => d.gate === o.root);
   if (!denial) {

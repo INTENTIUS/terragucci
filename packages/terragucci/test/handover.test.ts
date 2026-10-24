@@ -2,6 +2,7 @@
 // and inputs, actions/checkout's post step with `github.token`) and starts with what that code wrote to GITHUB_ENV and
 // GITHUB_PATH. So the jobs that run the change's code end with the step that runs it: the report goes on as the job's
 // outputs, and a job in a fresh container keeps it and posts.
+import { forgeRef, uploadArtifact } from "../src/action-pins";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
@@ -110,7 +111,7 @@ describe.each(FORGES)("%s: the jobs that run the change's code end with the step
       // Each output is one line of a quoted heredoc; no JSON string is the line that ends it.
       expect(steps[0].run, job).toContain("<<'END_OF_REPORT'");
       const keep = steps.find((s) => s.name?.startsWith("Keep the"))!;
-      expect(keep.uses, job).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+      expect(keep.uses, job).toBe(forgeRef(forge, uploadArtifact(forge)));
       expect(keep.with, job).toMatchObject({ name: artifact, "if-no-files-found": "ignore" });
       expect(keep.if, job).toBe("always()");
       expect(JSON.stringify(steps), job).not.toMatch(/checkout|download-artifact/);

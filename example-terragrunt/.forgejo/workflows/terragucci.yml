@@ -110,7 +110,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the check report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-check
           path: terragucci-check/
@@ -185,7 +185,7 @@ jobs:
             *) git checkout -q --force --detach "$target" ;;
           esac
       - name: Restore the Terragrunt sources and providers cache
-        uses: https://code.forgejo.org/actions/cache/restore@v4
+        uses: https://code.forgejo.org/actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -236,7 +236,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report
           path: terragucci-report/
@@ -360,7 +360,7 @@ jobs:
           esac
       - if: steps.decide.outputs.go == '1'
         name: Restore the Terragrunt sources and providers cache
-        uses: https://code.forgejo.org/actions/cache/restore@v4
+        uses: https://code.forgejo.org/actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -438,7 +438,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-replan
           path: terragucci-report/
@@ -458,7 +458,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Commit the formatting
         shell: bash
         run: |
@@ -473,11 +473,11 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: https://code.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -563,7 +563,7 @@ jobs:
           tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-comment
           path: terragucci-report/
@@ -580,9 +580,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: https://code.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -647,7 +647,7 @@ jobs:
           echo "wave 1 of 5 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-1
           path: terragucci-report/
@@ -664,9 +664,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: https://code.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -719,7 +719,7 @@ jobs:
           echo "wave 2 of 5 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-2
           path: terragucci-report/
@@ -736,9 +736,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: https://code.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -791,7 +791,7 @@ jobs:
           echo "wave 3 of 5 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-3
           path: terragucci-report/
@@ -808,9 +808,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: https://code.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -863,7 +863,7 @@ jobs:
           echo "wave 4 of 5 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-4
           path: terragucci-report/
@@ -880,9 +880,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Cache Terragrunt sources and providers
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: https://code.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .terragrunt-cache
           key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
@@ -936,7 +936,7 @@ jobs:
           echo "all units applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-5
           path: terragucci-report/
@@ -953,7 +953,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Open a pull request for each tip

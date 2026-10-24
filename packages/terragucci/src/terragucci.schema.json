@@ -252,9 +252,37 @@
       "description": "The command that writes the roots before any job reads them."
     },
     "image": {
-      "type": "string",
-      "pattern": "^[^\\s]+$",
-      "description": "The image every job runs in, built FROM terragucci's."
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[^\\s]+$"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[^\\s]+$"
+            },
+            "mirror": {
+              "anyOf": [
+                {
+                  "const": true
+                },
+                {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ]
+        }
+      ],
+      "description": "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries."
     },
     "notify": {
       "type": "object",
@@ -359,6 +387,48 @@
         }
       ],
       "description": "A cron schedule for the job that opens each rollout's next wave, or false."
+    },
+    "control": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/\\s]+(/[^/\\s]+){2,}$"
+        },
+        "op": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        },
+        "forge": {
+          "enum": [
+            "github",
+            "gitlab",
+            "forgejo"
+          ]
+        },
+        "member": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        },
+        "token_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "read_token_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "op"
+      ],
+      "description": "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents."
     },
     "gitlab": {
       "type": "object",
@@ -1052,6 +1122,15 @@
               "allow_unattended"
             ]
           }
+        },
+        "agents": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^\\S+$"
+          },
+          "description": "Forge app or bot identities that are agents; a change proposed through one has input.actor.kind agent."
         }
       },
       "additionalProperties": false,
@@ -1189,6 +1268,10 @@
                   "type": "integer",
                   "minimum": 1
                 },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
                 "timeout": {
                   "type": "integer",
                   "minimum": 1
@@ -1217,6 +1300,10 @@
                 "max_turns": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
                 },
                 "timeout": {
                   "type": "integer",
@@ -1998,9 +2085,37 @@
           "description": "The command that writes the roots before any job reads them."
         },
         "image": {
-          "type": "string",
-          "pattern": "^[^\\s]+$",
-          "description": "The image every job runs in, built FROM terragucci's."
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[^\\s]+$"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[^\\s]+$"
+                },
+                "mirror": {
+                  "anyOf": [
+                    {
+                      "const": true
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^/"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name"
+              ]
+            }
+          ],
+          "description": "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries."
         },
         "notify": {
           "type": "object",
@@ -2097,6 +2212,48 @@
         "rollouts": {
           "const": false,
           "description": "A single repo's key; a control repo runs terragucci respond rollout itself."
+        },
+        "control": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "pattern": "^[^/\\s]+(/[^/\\s]+){2,}$"
+            },
+            "op": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            },
+            "forge": {
+              "enum": [
+                "github",
+                "gitlab",
+                "forgejo"
+              ]
+            },
+            "member": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            },
+            "token_env": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "read_token_env": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "repo",
+            "op"
+          ],
+          "description": "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents."
         },
         "gitlab": {
           "type": "object",
@@ -2790,6 +2947,15 @@
                   "allow_unattended"
                 ]
               }
+            },
+            "agents": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^\\S+$"
+              },
+              "description": "Forge app or bot identities that are agents; a change proposed through one has input.actor.kind agent."
             }
           },
           "additionalProperties": false,
@@ -2927,6 +3093,10 @@
                       "type": "integer",
                       "minimum": 1
                     },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
                     "timeout": {
                       "type": "integer",
                       "minimum": 1
@@ -2955,6 +3125,10 @@
                     "max_turns": {
                       "type": "integer",
                       "minimum": 1
+                    },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
                     },
                     "timeout": {
                       "type": "integer",

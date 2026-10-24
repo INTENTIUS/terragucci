@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { CACHE, CACHE_RESTORE, CHECKOUT } from "../src/action-pins";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +33,7 @@ const steps = (doc: Record<string, any>, job: string): Step[] => doc.jobs[job].s
 const planStep = (s: Step[]): Step => s.find((x) => typeof x.run === "string" && x.run.includes("terragucci stage tf-plan"))!;
 const tradeStep = (s: Step[]): Step | undefined => s.find((x) => x.name === "Trade the job's OIDC token for the plan identities");
 /** The last checkout of a job: actions/checkout on GitHub, the checkout script on Forgejo. */
-const lastCheckout = (s: Step[]): number => s.map((x) => (x.uses ?? "").endsWith("actions/checkout@v4") || (x.name ?? "").startsWith("Check out")).lastIndexOf(true);
+const lastCheckout = (s: Step[]): number => s.map((x) => (x.uses ?? "").endsWith(CHECKOUT) || (x.name ?? "").startsWith("Check out")).lastIndexOf(true);
 
 /** What the plan step's lines say past its first, the restart without the token variables. */
 const after = (run: string): string => run.split("\n").slice(1).join("\n");
@@ -424,8 +425,8 @@ describe("what reads the traded credentials", () => {
 describe("the re-plan's Terragrunt cache", () => {
   const TG = { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }] };
   const tgInput = (extra: Partial<PipelineInput> = {}): Partial<PipelineInput> => ({ layers: [["live/dev/app"], ["live/prod/app"]], terragrunt: TG, oidc: OIDC, ...extra } as never);
-  const SAVE = "actions/cache@v4";
-  const RESTORE = "actions/cache/restore@v4";
+  const SAVE = CACHE;
+  const RESTORE = CACHE_RESTORE;
   // Forgejo's workflow names an action by its full URL on code.forgejo.org.
   const action = (uses: string | undefined): string => (uses ?? "").replace(/^https:\/\/code\.forgejo\.org\//, "");
   const cacheSteps = (s: Step[]): (Step & { with?: Record<string, string> })[] => s.filter((x) => action(x.uses).startsWith("actions/cache"));

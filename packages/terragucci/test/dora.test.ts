@@ -5,6 +5,7 @@ import { AUDIT_SCHEMA, appendEntries, readRecord, reportEntry, type AuditEntry, 
 import type { Report } from "../src/report/schema";
 import { buildDora, DORA_METRIC, DORA_WEEKS, doraGauges, driftIncidents, duration, median, renderDoraSection, spanLabel, weekStart, type DoraSource } from "../src/report/dora";
 import { describeEstate, estate } from "../src/estate";
+import { buildPolicyMetrics } from "../src/report/policy-metrics";
 import { readInlineEstate } from "../src/report/estate";
 import { addToIndex, type IndexEntry } from "../src/report/store";
 import type { OtlpFetch } from "../src/telemetry";
@@ -221,7 +222,7 @@ describe("the span a deployment rate divides by", () => {
     expect(d.estate.per_week).toBeGreaterThan((33 / DORA_WEEKS) * 40);
     expect(renderDoraSection(d, (p) => p)).toContain("173.25 <small>(33 in 32 hours)</small>");
     expect(doraGauges(d)[0]).toMatchObject({ name: DORA_METRIC.deployments, value: 173.25, description: "Applied waves per week over the newest 32 hours, the span the history covers in the 8-week window." });
-    const line = describeEstate({ estate: { totals: { projects: 1, waiting: 0, drifted_projects: 0, failed_roots: 0 }, projects: [] }, files: [], unreadable: [], dora: d } as never, "/x");
+    const line = describeEstate({ estate: { totals: { projects: 1, waiting: 0, drifted_projects: 0, failed_roots: 0 }, projects: [] }, files: [], unreadable: [], dora: d, policy: buildPolicyMetrics([], undefined, NOW) } as never, "/x");
     expect(line).toContain("dora: 173.25 deployments per week (33 in 32 hours), ");
   });
 

@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 45;
+export const REPORT_MINOR = 46;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -51,6 +51,15 @@ export interface ReportRun {
   trace_id?: string;
   /** The trace in Grafana, Tempo or another viewer, from `telemetry.trace_url` (minor 4). */
   trace_url?: string;
+  /** Who proposed the change, when `policy` is set (minor 46): the forge identity decides `kind`; the trailer and OIDC subject are signals. */
+  actor?: ReportActor;
+}
+
+/** The run's actor (minor 46), as ../actor.ts detects it. */
+export interface ReportActor {
+  kind: "person" | "agent";
+  principal: string;
+  signals: { forgeIdentity?: string; trailer?: string; oidcSubject?: string };
 }
 
 /** Why something is open: one short reason a reader sees beside it. */
@@ -533,6 +542,8 @@ export interface ReportRootPolicy {
   denials: string[];
   /** The ids of the rules that denied, such as `main.deny_public_bucket`, sorted (minor 10): what an override names. */
   rules?: string[];
+  /** The ids of the rules among `rules` that are hard-mandatory (minor 46; annotated in the Rego, or `enforcement_level = "hard-mandatory"` in `policies.hcl`): no override can pass them. */
+  hard_mandatory?: string[];
   /** The messages of `warn` rules: advice that fails nothing. */
   warnings: string[];
   /** Why the policy could not be checked, with `result: error`. */
@@ -802,6 +813,8 @@ export interface ReportRefusal {
   by?: string;
   /** The roots that planned differently since (every changing root, for a review), or the roots the policy denied, or those whose resources another run held. */
   roots: string[];
+  /** With `policy` (minor 46): the hard-mandatory rules among those that denied, which no override can pass. */
+  hard_mandatory?: string[];
   /** With `held`, the run that held them, and its page (minor 30). */
   holder?: { run: string; url?: string };
 }

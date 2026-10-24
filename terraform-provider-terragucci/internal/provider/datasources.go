@@ -21,7 +21,7 @@ func sourceAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"path": schema.StringAttribute{
 			Optional:    true,
-			Description: "A local terragucci.yml. terragucci reads the repo's roots beside it. Unset: the provider's control repo file, read from the forge, whose roots are not read (roots is null).",
+			Description: "A local terragucci.yml. terragucci reads the repo's roots beside it. Required.",
 		},
 		"project": schema.StringAttribute{
 			Optional:    true,

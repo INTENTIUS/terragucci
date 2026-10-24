@@ -5,7 +5,10 @@
  *   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
- *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
+ *   terragucci control records init|import|put <project>|defaults|retire <project>|list   the control repo's projects and defaults as chant workspace records
+ *   terragucci control init [--forge github|gitlab|forgejo] [--config <file>] [--dry-run] [--force]   write the control repo's job that runs a member's dependents when the member's pipeline dispatches to it
+  terragucci control records init|import [--config <file>]|put <host/owner/name> --settings <file|-> [--estate a,b]|defaults --settings <file|->|retire <host/owner/name>|list   (the control repo's projects and defaults as chant workspace records; --dry-run on the writes)
+  terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -17,6 +20,8 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci check-mirror [--config <file>] [--platform <os_arch>]
+ *   terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
@@ -63,7 +68,7 @@
  *   terragucci relay [--port <n>]   (serve the Approve and Decline buttons of Slack and Teams messages, in your own cloud; settings from the environment)
  *   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]   (write the drift agent's prompt from the drift job's report and issue.json; run by the generated pipeline)
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
- *   terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (SQL over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, in process)
+ *   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (one table, filtered: chant's ledgers on chant/lifecycle (resources, snapshots, runs, gates, deploys, releases, cuts) or the reports bucket's (inventory, versions, changes, history, audit, edges); the "<sql>" form is deprecated)
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
  *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   (an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, read-only; with --propose it also pushes a branch, opens a pull request and reads its plan; credentials from the environment)
  *   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   (write wrappers for the binaries and a Claude Code hook that refuse an apply in a pipeline root; see guard.ts)
@@ -75,9 +80,9 @@
  * config error; 3 waiting on an approval; 4 a wave's plans changed after
  * its approval, so it applied nothing.
  */
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
@@ -85,7 +90,7 @@ import { applyGroups } from "./cloud-identity";
 import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
 import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
-import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -94,11 +99,13 @@ import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
-import { forgePost } from "./forge-post";
+import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
+import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
+import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
@@ -116,6 +123,10 @@ import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
 import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
+import { controlPipeline } from "./control-repo";
+import { configFromEntries, hasControlRecords, importControlConfig, initRecords, KIND_FILE, putEntry, readEntries, retireEntry } from "./control-records";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
+import { MARKER } from "./render";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
@@ -123,6 +134,7 @@ import { applyWave, branchRootProblems, parseBranches, parseGroups, readLedger }
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
+import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
@@ -142,8 +154,8 @@ import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, read
 import { startRelay } from "./relay";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
-import { describeQuery, query } from "./query";
-import { pushDriftChange, writeDriftPrompt } from "./drift-agent";
+import { describeQuery, describeTable, isSql, query, readTable, SQL_DEPRECATED } from "./query";
+import { driftStarter, pushDriftChange, writeDriftPrompt } from "./drift-agent";
 import { parseImport } from "./respond/drift";
 import { unlockState } from "./unlock";
 import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
@@ -166,6 +178,8 @@ const USAGE = `usage:
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
+  terragucci check-mirror [--config <file>] [--platform <os_arch>]   (image.mirror: the prepared image's provider mirror covers every lock file; a gap warns once, then fails)
+  terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]   (write a Dockerfile, CLI config and build script for an image FROM terragucci's with a provider mirror; you build and push it)
   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]   (a root's module and provider sources under sources, before its init; --units: each Terragrunt unit's)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
@@ -194,7 +208,7 @@ const USAGE = `usage:
   terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
-  terragucci query "<sql>" [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   SQL over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, run in this process
+  terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   one table's rows, filtered: resources, snapshots, runs, gates, deploys, releases or cuts from chant/lifecycle, or inventory, versions, changes, history, audit or edges from the reports bucket ("<sql>" is deprecated)
   terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   an MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures, read-only; with --propose, push a branch and open a pull request too; credentials from the environment
   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   refuse apply, destroy and -auto-approve in this repo's pipeline roots, for a coding agent's shell
@@ -215,7 +229,7 @@ const USAGE = `usage:
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
-init, reconcile, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
+init, reconcile, control init, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -266,25 +280,90 @@ function wholeFlag(name: string, v: string): number {
   return n;
 }
 
-function parse(argv: string[]): { cmd: string; flags: Record<string, string | true>; args: string[] } {
+function parse(argv: string[]): { cmd: string; flags: Record<string, string | true>; args: string[]; repeated: Record<string, string[]> } {
   const [cmd = "", ...rest] = argv;
   const flags: Record<string, string | true> = {};
   const args: string[] = [];
+  // Every value of a flag given more than once (--where), in order; flags keeps the last.
+  const repeated: Record<string, string[]> = {};
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a.startsWith("--")) {
-      const [k, v] = a.slice(2).split("=", 2);
+      const eq = a.indexOf("=");
+      const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
+      const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
       else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
+      if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
   }
-  return { cmd, flags, args };
+  return { cmd, flags, args, repeated };
 }
 
 function onHeldFlag(v: string): "wait" | "refuse" {
   if (v !== "wait" && v !== "refuse") throw new ConfigError("--on-held must be wait or refuse");
   return v;
+}
+
+/** The review.agent run's record: the review note was posted (or not), by the review command's model. Never fails the post. */
+async function recordReview(cwd: string, dir: string, forge: "github" | "forgejo" | "gitlab", posted: { posted: boolean; reason: string }): Promise<void> {
+  await recordOutcome({ feature: "review.agent", cwd, change: dir, forge, env: process.env, result: posted.posted ? "posted" : "failed", reason: posted.reason }, { ledger: existsSync(join(cwd, ".git")) });
+}
+
+/** A control repo's config: its records when it has them (terragucci control records init), else its config file. Both is refused, so a project has one place. */
+async function controlConfig(cwd: string, flagPath: string | undefined): Promise<TerragucciConfig | undefined> {
+  const path = flagPath ?? findConfig(cwd);
+  if (flagPath === undefined && hasControlRecords(cwd)) {
+    if (path) throw new ConfigError(`${cwd} keeps its projects in records (${KIND_FILE}) and also has ${basename(path)}; keep one, and move the file's projects into records with \`terragucci control records import\``);
+    return configFromEntries(readEntries(cwd));
+  }
+  return path ? loadConfig(resolve(path)) : undefined;
+}
+
+async function controlRecords(cwd: string, args: string[], flags: Record<string, string | true>, json: boolean, emit: (e: Envelope) => number): Promise<number> {
+  const dryRun = flags["dry-run"] === true;
+  const settingsOf = (): ProjectSettings => {
+    const f = str(flags, "settings");
+    if (!f) throw new ConfigError("--settings <file|-> is needed: the settings as YAML or JSON");
+    const text = readFileSync(f === "-" ? 0 : resolve(cwd, f), "utf-8");
+    const v = text.trim() === "" ? {} : parseYAMLDocument(text);
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new ConfigError("--settings must hold a mapping of settings");
+    return v as ProjectSettings;
+  };
+  const done = (command: string, results: unknown, text: string): number => {
+    if (json) return emit(envelope(command, 0, results));
+    console.log(text);
+    return 0;
+  };
+  const verb = args[0];
+  if (verb === "init") {
+    const r = initRecords(cwd);
+    return done("control records init", r, [...(r.written.length ? r.written.map((w) => `${w}: written`) : ["nothing to write"]), ...r.notes.map((n) => `  ${n}`)].join("\n"));
+  }
+  if (verb === "import") {
+    const path = str(flags, "config") ?? findConfig(cwd);
+    if (!path) throw new ConfigError("import needs the control repo's terragucci.yml, or --config <file>");
+    const r = importControlConfig(cwd, await loadConfig(resolve(path)), undefined, dryRun);
+    return done("control records import", r, r.map((x) => `${x.entry}: ${x.status}${x.path ? ` (${x.path})` : ""}`).join("\n") + (dryRun ? "\n(dry run, nothing written)" : `\nThe records are the store now: delete ${basename(path)} so the repo keeps its projects in one place.`));
+  }
+  if (verb === "put" || verb === "defaults") {
+    const project = verb === "put" ? args[1] : undefined;
+    if (verb === "put" && !project) throw new ConfigError("usage: terragucci control records put <host/owner/name> --settings <file|-> [--estate a,b]");
+    const estate = str(flags, "estate");
+    const r = putEntry(cwd, { entry: verb === "put" ? "project" : "defaults", ...(project ? { project } : {}), settings: settingsOf(), ...(estate !== undefined ? { estates: estate.split(",").map((e) => e.trim()).filter(Boolean) } : {}) }, undefined, dryRun);
+    return done("control records put", r, `${project ?? "defaults"}: ${r.status}${r.path ? ` (${r.path})` : ""}${dryRun ? " (dry run, nothing written)" : ""}`);
+  }
+  if (verb === "retire") {
+    if (!args[1]) throw new ConfigError("usage: terragucci control records retire <host/owner/name>");
+    const r = retireEntry(cwd, args[1], undefined, dryRun);
+    return done("control records retire", r, `${args[1]}: retired (${r.path})${dryRun ? " (dry run, nothing written)" : ""}`);
+  }
+  if (verb === "list") {
+    const entries = readEntries(cwd);
+    return done("control records list", entries, entries.map((e) => `${e.id}  ${e.project ?? "defaults"}${e.estates.length ? `  estates: ${e.estates.join(", ")}` : ""}`).join("\n") || "no active records");
+  }
+  throw new ConfigError("usage: terragucci control records init|import|put <project>|defaults|retire <project>|list");
 }
 
 function str(flags: Record<string, string | true>, k: string): string | undefined {
@@ -306,8 +385,19 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
   return [...out];
 }
 
+/** The forge the repo's origin remote is on, when its host says. */
+function originForge(dir: string): ForgeName | undefined {
+  try {
+    const url = execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const host = /^[a-z+]+:\/\/(?:[^@/]*@)?([^/:]+)/i.exec(url)?.[1] ?? /^[^@]+@([^:]+):/.exec(url)?.[1];
+    return host ? forgeFromHost(host) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function main(argv: string[]): Promise<number> {
-  const { cmd, flags, args } = parse(argv);
+  const { cmd, flags, args, repeated } = parse(argv);
   const cwd = process.cwd();
   const json = flags.json === true;
   const emit = (e: Envelope): number => {
@@ -372,10 +462,10 @@ export async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case "reconcile": {
-        const path = str(flags, "config") ?? findConfig(cwd);
-        if (!path) throw new ConfigError("reconcile needs --config <file>");
+        const config = await controlConfig(cwd, str(flags, "config"));
+        if (!config) throw new ConfigError("reconcile needs --config <file>");
         const mode = checkMode(str(flags, "mode") ?? "dry-run");
-        const outcomes = await reconcile(await loadConfig(resolve(path)), { mode, project: str(flags, "project") });
+        const outcomes = await reconcile(config, { mode, project: str(flags, "project") });
         const code = outcomes.some((o) => o.status === "failed") ? 1 : 0;
         if (json) return emit(envelope("reconcile", code, { mode, projects: outcomes }));
         console.log(describeReconcile(outcomes, mode));
@@ -409,7 +499,7 @@ export async function main(argv: string[]): Promise<number> {
         const linkSeconds = hours === undefined ? undefined : Math.round(Number(hours) * 3600);
         if (hours !== undefined && !(Number(hours) > 0)) throw new ConfigError(`--link-hours is ${JSON.stringify(hours)}; use a number of hours, up to 168`);
         const bucket = str(flags, "bucket");
-        const result = await estate(cwd, path ? await loadConfig(resolve(path)) : {}, {
+        const result = await estate(cwd, (await controlConfig(cwd, str(flags, "config"))) ?? {}, {
           ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
           ...(linkSeconds !== undefined ? { linkSeconds } : {}),
           ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
@@ -424,7 +514,7 @@ export async function main(argv: string[]): Promise<number> {
         if (hours !== undefined && !(Number(hours) > 0)) throw new ConfigError(`--link-hours is ${JSON.stringify(hours)}; use a number of hours, up to 168`);
         const bucket = str(flags, "bucket");
         const check = flags.check === true;
-        const result = await audit(cwd, path ? await loadConfig(resolve(path)) : {}, {
+        const result = await audit(cwd, (await controlConfig(cwd, str(flags, "config"))) ?? {}, {
           ...(check ? { check } : {}),
           ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
           ...(linkSeconds !== undefined ? { linkSeconds } : {}),
@@ -557,6 +647,46 @@ export async function main(argv: string[]): Promise<number> {
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
+      case "check-mirror": {
+        // tf-check's first step when image.mirror is set: the prepared image's provider mirror against every lock file.
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const mirror = imageMirror(settings.image);
+        if (!mirror) return 0;
+        const result = checkMirror(cwd, mirror, { ...(str(flags, "platform") ? { platform: str(flags, "platform") } : {}) });
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
+      }
+      case "image": {
+        // The files for a prepared image the customer builds FROM terragucci's, in their own CI and registry.
+        if (args[0] !== "recipe") throw new ConfigError("usage: terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const binary = str(flags, "binary") ?? settings.binary ?? "tofu";
+        if (!BINARIES.includes(binary as Binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
+        const out = str(flags, "out") ?? "image";
+        let recipe;
+        try {
+          recipe = planRecipe(cwd, {
+            binary: binary as Binary,
+            terragrunt: settings.terragrunt !== undefined || existsSync(resolve(cwd, "root.hcl")) || existsSync(resolve(cwd, "terragrunt.hcl")),
+            ...(str(flags, "from") ? { from: str(flags, "from") } : {}),
+            ...(str(flags, "platform") ? { platforms: str(flags, "platform")!.split(",").map((p) => p.trim()).filter(Boolean) } : {}),
+            ...(imageMirror(settings.image) ? { mirror: imageMirror(settings.image) } : {}),
+          });
+        } catch (e) {
+          throw new ConfigError((e as Error).message);
+        }
+        const dir = resolve(cwd, out);
+        for (const f of recipe.files) {
+          const file = resolve(dir, f.path);
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, f.content);
+          if (f.mode) chmodSync(file, f.mode);
+        }
+        console.log(describeRecipe(recipe, relative(cwd, dir) || "."));
+        return 0;
+      }
       case "check-policy": {
         // tf-check's policy step: the policy's own tests, when `policy:` is set.
         const result = await checkPolicyTests(cwd, { ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "base") ? { base: str(flags, "base") } : {}) });
@@ -672,6 +802,7 @@ export async function main(argv: string[]): Promise<number> {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
           const pushed = await pushGitLabAgentChange({ change: resolve(cwd, change), policyDir });
+          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: "gitlab", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), ...(pushed.stopped ? { stopped: true } : {}), ...(pushed.requestedBy ? { requestedBy: pushed.requestedBy } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
           console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
           return pushed.fail ? 1 : 0;
         }
@@ -695,6 +826,7 @@ export async function main(argv: string[]): Promise<number> {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
           const pushed = await pushAgentChange({ change: resolve(cwd, change), policyDir });
+          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: detectPrForge(process.env) === "forgejo" ? "forgejo" : "github", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), ...(pushed.stopped ? { stopped: true } : {}), ...(pushed.requestedBy ? { requestedBy: pushed.requestedBy } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
           console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
           return pushed.fail ? 1 : 0;
         }
@@ -891,21 +1023,32 @@ export async function main(argv: string[]): Promise<number> {
           const forge = str(flags, "forge") ?? "github";
           if (forge !== "github" && forge !== "forgejo") throw new ConfigError("drift-agent push's --forge is github or forgejo");
           const r = await pushDriftChange({ change: resolve(cwd, change), policyDir, forge });
+          await recordPushOutcome({ feature: "agent.drift", cwd, change: resolve(cwd, change), forge, env: process.env, ok: r.opened, ...(r.fail ? { fail: true } : {}), ...(r.stopped ? { stopped: true } : {}), ...(driftStarter(process.env) ? { requestedBy: driftStarter(process.env)! } : {}), reason: r.reason, ...(r.commit ? { commit: r.commit } : {}), ...(r.pullRequest ? { pullRequest: r.pullRequest } : {}) });
           console.log(`terragucci drift-agent: ${r.reason}`);
           return r.fail ? 1 : 0;
         }
         throw new ConfigError("drift-agent is drift-agent prompt or drift-agent push");
       }
       case "query": {
-        const [sql, extra] = args;
-        if (sql === undefined || extra !== undefined) throw new ConfigError('query takes one statement, quoted: terragucci query "SELECT * FROM inventory"');
+        const [what, extra] = args;
+        if (what === undefined || what.trim() === "" || extra !== undefined) throw new ConfigError("query reads one table: terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>], such as terragucci query gates --where op=tf-apply");
         const path = str(flags, "config") ?? findConfig(cwd);
         const bucket = str(flags, "bucket");
-        const result = await query(path ? await loadConfig(resolve(path)) : {}, sql, {
-          ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
-        });
+        const reports = bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {};
+        const config = path ? await loadConfig(resolve(path)) : {};
+        if (isSql(what)) {
+          console.error(`terragucci: ${SQL_DEPRECATED}`);
+          const result = await query(config, what, reports);
+          if (json) return emit(envelope("query", 0, result));
+          console.log(describeQuery(result));
+          return 0;
+        }
+        if (flags.where === true) throw new ConfigError("--where needs <field><op><value>, such as --where op=tf-apply");
+        const since = str(flags, "since");
+        const at = str(flags, "at");
+        const result = await readTable(config, what, { ...reports, cwd, ...(repeated.where ? { where: repeated.where } : {}), ...(since !== undefined ? { since } : {}), ...(at !== undefined ? { at } : {}) });
         if (json) return emit(envelope("query", 0, result));
-        console.log(describeQuery(result));
+        console.log(describeTable(result));
         return 0;
       }
       case "mcp": {
@@ -959,6 +1102,10 @@ export async function main(argv: string[]): Promise<number> {
       case "post": {
         const forge = str(flags, "forge") ?? process.env.TG_FORGE ?? "github";
         if (forge !== "github" && forge !== "gitlab" && forge !== "forgejo") throw new ConfigError("post's --forge is github, gitlab or forgejo");
+        if (args[0] === "sent") {
+          console.log((await statusSent(args[1] ?? "", { forge })) ? "1" : "0");
+          return 0;
+        }
         const said = await forgePost(args[0] ?? "", args.slice(1), { forge });
         if (said) console.log(said);
         return 0;
@@ -971,6 +1118,34 @@ export async function main(argv: string[]): Promise<number> {
         const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}), ...(str(flags, "agent-login") ? { agentLogin: str(flags, "agent-login") } : {}) });
         for (const line of said) console.log(line);
         return 0;
+      }
+      case "agent": {
+        const sub = args[0];
+        const dir = str(flags, "dir");
+        if (sub === "check-cost") {
+          if (!dir) throw new ConfigError("agent check-cost needs --dir <dir>");
+          const limit = Number(process.env.TG_AGENT_MAX_COST_USD);
+          if (!(limit > 0)) {
+            console.log("terragucci agent: TG_AGENT_MAX_COST_USD is not set, so there is no money limit");
+            return 0;
+          }
+          const r = checkCostLimit(resolve(cwd, dir), limit);
+          console.log(r.over ? `terragucci agent: the agent reported $${r.usd!.toFixed(4)}, above the limit of $${limit}; nothing will be pushed` : r.usd === undefined ? `terragucci agent: the agent reported no cost, so the limit of $${limit} was not checked` : `terragucci agent: the agent reported $${r.usd.toFixed(4)}, within the limit of $${limit}`);
+          return 0;
+        }
+        if (sub === "record") {
+          // The refused-wave summary job and any other model step a project adds: one record of the run, from the job's usage.json and prompt.sha256.
+          const feature = str(flags, "feature") as AgentFeature | undefined;
+          if (!dir || !feature || !(AGENT_FEATURES as readonly string[]).includes(feature)) throw new ConfigError(`agent record needs --dir <dir> and --feature ${AGENT_FEATURES.join("|")}`);
+          const forge = str(flags, "forge") ?? "github";
+          if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("agent record's --forge is github, forgejo or gitlab");
+          const result = (str(flags, "result") ?? "summarized") as AgentRunRecord["result"];
+          if (!["posted", "summarized", "failed"].includes(result)) throw new ConfigError("agent record's --result is posted, summarized or failed");
+          const at = resolve(cwd, dir);
+          await recordOutcome({ feature, cwd, change: at, forge, env: process.env, result, reason: str(flags, "reason") ?? `${feature} ${result}` }, { ledger: existsSync(join(cwd, ".git")) });
+          return 0;
+        }
+        throw new ConfigError("agent is agent check-cost --dir <dir> or agent record --feature <feature> --dir <dir>");
       }
       case "review": {
         const sub = args[0];
@@ -990,6 +1165,7 @@ export async function main(argv: string[]): Promise<number> {
           const at = resolve(cwd, dir);
           const posted = await postGitLabReview({ dir: at, read: (name) => (existsSync(join(at, name)) ? readFileSync(join(at, name), "utf-8") : "") });
           console.log(`terragucci review: ${posted.reason}`);
+          await recordReview(cwd, at, "gitlab", posted);
           return posted.posted ? 0 : 1;
         }
         if (sub === "prompt") {
@@ -1013,6 +1189,7 @@ export async function main(argv: string[]): Promise<number> {
           if (!dir) throw new ConfigError("review post needs --dir <dir>");
           const posted = await postReview({ dir: resolve(cwd, dir) });
           console.log(`terragucci review: ${posted.reason}`);
+          await recordReview(cwd, resolve(cwd, dir), detectPrForge(process.env) === "forgejo" ? "forgejo" : "github", posted);
           return 0;
         }
         throw new ConfigError("review is review prompt --report <dir> [--instructions <path>] or review post --dir <dir>");
@@ -1024,6 +1201,27 @@ export async function main(argv: string[]): Promise<number> {
         const agentLogin = str(flags, "agent-login");
         const posted = await approvalStatus({ forge, ...(report ? { report: resolve(cwd, report) } : {}), ...(agentLogin ? { agentLogin } : {}), log: (l) => console.log(`terragucci approval-status: ${l}`) });
         console.log(`terragucci approval-status: ${posted.state}: ${posted.description}`);
+        return 0;
+      }
+      case "control": {
+        // The control repo's pipeline: the job a member's dispatch starts, which runs that member's dependents (./control-repo.ts).
+        if (args[0] === "records") return controlRecords(cwd, args.slice(1), flags, json, emit);
+        if (args[0] !== "init") throw new ConfigError("usage: terragucci control init [--forge github|gitlab|forgejo] [--dry-run] | terragucci control records init|import|put|defaults|retire|list");
+        const cfg = await controlConfig(cwd, str(flags, "config"));
+        if (!cfg?.projects || Object.keys(cfg.projects).length === 0) throw new ConfigError("control init needs a control repo that lists projects, in terragucci.yml or in records");
+        const forge = (str(flags, "forge") as ForgeName | undefined) ?? cfg.forge ?? originForge(cwd);
+        if (!forge || !(FORGES as readonly string[]).includes(forge)) throw new ConfigError("control init cannot tell which forge this repo is on; pass --forge github|gitlab|forgejo");
+        const pipeline = controlPipeline(forge);
+        const file = join(cwd, pipeline.path);
+        const existing = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
+        if (existing !== undefined && !existing.startsWith(MARKER) && flags.force !== true) throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; pass --force to replace it`);
+        const status = existing === undefined ? "created" : existing === pipeline.content ? "unchanged" : "updated";
+        if (flags["dry-run"] !== true && status !== "unchanged") {
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, pipeline.content);
+        }
+        if (json) return emit(envelope("control", 0, { path: pipeline.path, status, notes: pipeline.notes }));
+        console.log([`${pipeline.path}: ${status}${flags["dry-run"] === true ? " (dry run, nothing written)" : ""}`, ...pipeline.notes.map((n) => `  ${n}`)].join("\n"));
         return 0;
       }
       case "rollout": {

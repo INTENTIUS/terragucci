@@ -235,6 +235,13 @@ export interface PolicySettings {
    */
   override?: (string | OverrideEntry)[];
   /**
+   * The forge app or bot identities that are agents, such as `my-agent[bot]`.
+   * A change proposed through one is an agent's: `input.actor.kind` is
+   * `agent` (./actor.ts). Read at base, like `override`. Unset, every change
+   * is a person's.
+   */
+  agents?: string[];
+  /**
    * The rule outcomes the policy has: `deny` always, and `hold` and
    * `allow_unattended` when listed, read from `hold`, `hold_*`,
    * `allow_unattended` and `allow_unattended_*` rules (engine `opa`). Read
@@ -411,11 +418,122 @@ export interface AgentCommentSettings {
   key_secret?: string;
   /** The most turns the agent takes, as `$TG_AGENT_MAX_TURNS`. Default 30. */
   max_turns?: number;
+  /** The most the agent may spend, in US dollars, as `$TG_AGENT_MAX_COST_USD`. The agent job is stopped and nothing is pushed when the cost it reports is above it. No default: without it there is no money limit. */
+  max_cost_usd?: number;
   /** Minutes before the agent's job is stopped. Default 30. */
   timeout?: number;
 }
 
-export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
+/**
+ * `image` as a map: the image every job runs in, and whether it is a prepared
+ * image carrying a provider mirror (`terragucci image recipe` writes one).
+ * With `mirror` set, tf-check checks the mirror covers every lock file.
+ */
+export interface ImageSettings {
+  /** The image reference, built FROM the terragucci image for the binary. */
+  name: string;
+  /** The provider mirror's directory in the image; `true` is the one the recipe writes (MIRROR_DIR). */
+  mirror?: string | true;
+}
+
+export const IMAGE_KEYS = ["name", "mirror"] as const;
+
+/**
+ * `control`: after a member repo's apply on the default branch succeeds, its pipeline sends a dispatch to the
+ * control repo (a repository_dispatch on GitHub, a pipeline trigger on GitLab, a workflow dispatch on Forgejo),
+ * and the control repo runs the member's dependents with `chant workspace run --dependents-of`. The token the
+ * member holds is for that one call.
+ */
+export interface ControlSettings {
+  /** The control repo, as a project key: `<host>/<owner>/<name>`. Its host says which forge's dispatch is sent. */
+  repo: string;
+  /** The control repo's forge, when its host does not say (forgeFromHost). */
+  forge?: ForgeName;
+  /** The Op the control repo runs on the member's dependents (`chant workspace run --op`). */
+  op: string;
+  /** The member's name in the control repo's workspace. Default: the repo's name. */
+  member?: string;
+  /** The secret holding the token that may dispatch to the control repo. Default `TERRAGUCCI_CONTROL_TOKEN`. */
+  token_env?: string;
+  /** The secret holding a read-only token for the control repo, which the generated tf-plan job checks it out with. Default `TERRAGUCCI_CONTROL_READ_TOKEN`; the job's own token is used when the secret is not set. Never the dispatch token. */
+  read_token_env?: string;
+  /** The branch of the control repo a GitLab pipeline or a Forgejo workflow runs on. Default `main`; GitHub's dispatch always runs the default branch. */
+  ref?: string;
+}
+
+export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref"] as const;
+/** The token a member holds for the dispatch when `control.token_env` is unset. */
+export const CONTROL_TOKEN_ENV = "TERRAGUCCI_CONTROL_TOKEN";
+/** The secret the plan job reads the control repo with when `control.read_token_env` is unset: read-only, and not the dispatch token. */
+export const CONTROL_READ_TOKEN_ENV = "TERRAGUCCI_CONTROL_READ_TOKEN";
+/** A member name or Op name as the control repo's workspace spells them; the dispatch carries both into a shell line. */
+export const CONTROL_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/;
+/** A branch name the dispatch may carry into a URL and a shell line. */
+export const CONTROL_REF = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/;
+
+function forgeFromHostSafe(repo: string): ForgeName | undefined {
+  try {
+    return forgeFromHost(parseProjectKey(repo).host);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The problems with `control`. */
+export function controlProblems(v: unknown, where: string): string[] {
+  if (!isObject(v)) return [`${where} must be a map (settings: ${CONTROL_KEYS.join(", ")})`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!(CONTROL_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${CONTROL_KEYS.join(", ")})`);
+  if (typeof v.repo !== "string") out.push(`${where}.repo must be the control repo's project key, such as github.com/acme/control`);
+  else {
+    try {
+      parseProjectKey(v.repo);
+    } catch {
+      out.push(`${where}.repo must be the control repo's project key, such as github.com/acme/control`);
+    }
+  }
+  if (!(typeof v.op === "string" && CONTROL_NAME.test(v.op))) out.push(`${where}.op must name the Op the control repo runs on this repo's dependents, such as deploy`);
+  oneOf(v.forge, FORGES, `${where}.forge`, out);
+  if (typeof v.repo === "string" && v.forge === undefined && !forgeFromHostSafe(v.repo)) out.push(`${where}.forge is needed: ${v.repo}'s host does not say which forge it is`);
+  if (v.member !== undefined && !(typeof v.member === "string" && CONTROL_NAME.test(v.member))) out.push(`${where}.member must be this repo's name in the control repo's workspace`);
+  if (v.token_env !== undefined && !(typeof v.token_env === "string" && SECRET_NAME.test(v.token_env))) out.push(`${where}.token_env must name the secret holding the dispatch token, such as ${CONTROL_TOKEN_ENV}`);
+  if (v.read_token_env !== undefined && !(typeof v.read_token_env === "string" && SECRET_NAME.test(v.read_token_env))) out.push(`${where}.read_token_env must name the secret holding a read-only token for the control repo, such as ${CONTROL_READ_TOKEN_ENV}`);
+  else if (typeof v.read_token_env === "string" && v.read_token_env === (v.token_env ?? CONTROL_TOKEN_ENV)) out.push(`${where}.read_token_env must not be the dispatch token's secret (${v.read_token_env}): the plan job runs the change's code`);
+  if (v.ref !== undefined && !(typeof v.ref === "string" && CONTROL_REF.test(v.ref))) out.push(`${where}.ref must be a branch name`);
+  return out;
+}
+
+/** Where `terragucci image recipe` puts the provider mirror in the image. */
+export const MIRROR_DIR = "/usr/share/terragucci/providers";
+
+const IMAGE_REF = /^[^\s]+$/;
+
+/** The image reference `image` names, in either form. */
+export function imageName(image: string | ImageSettings | undefined): string | undefined {
+  return typeof image === "string" ? image : image?.name;
+}
+
+/** The provider mirror's directory in the image `image` names, when it carries one. */
+export function imageMirror(image: string | ImageSettings | undefined): string | undefined {
+  if (typeof image !== "object" || image === null || image.mirror === undefined) return undefined;
+  return image.mirror === true ? MIRROR_DIR : image.mirror;
+}
+
+/** The problems with `image`: a reference, or a map of `name` and `mirror`. */
+export function imageProblems(v: unknown, where: string): string[] {
+  const refProblem = `must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`;
+  if (typeof v === "string") return IMAGE_REF.test(v) ? [] : [`${where} ${refProblem}`];
+  if (!isObject(v)) return [`${where} must be an image reference, or a map (settings: ${IMAGE_KEYS.join(", ")})`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!(IMAGE_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${IMAGE_KEYS.join(", ")})`);
+  if (!(typeof v.name === "string" && IMAGE_REF.test(v.name))) out.push(`${where}.name ${refProblem}`);
+  if (v.mirror !== undefined && v.mirror !== true && !(typeof v.mirror === "string" && v.mirror.startsWith("/"))) {
+    out.push(`${where}.mirror must be true (the recipe's ${MIRROR_DIR}) or the mirror's absolute directory in the image`);
+  }
+  return out;
+}
+
+export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "max_cost_usd", "timeout"] as const;
 
 /**
  * `agent.drift`: when the drift job opens the drift issue, a job runs a coding
@@ -494,9 +612,10 @@ export interface ProjectSettings {
   /**
    * The image every job runs in, in place of terragucci's: one built FROM
    * the terragucci image for the binary, so the job still has terragucci and
-   * the binary, plus what the `ci.hooks` need.
+   * the binary, plus what the `ci.hooks` need. A map names it under `name`
+   * and says, with `mirror`, that it carries a provider mirror (ImageSettings).
    */
-  image?: string;
+  image?: string | ImageSettings;
   /**
    * Notifications: the names of the secrets holding a Slack or Teams
    * incoming webhook, and a generic webhook's address with the key that
@@ -527,6 +646,11 @@ export interface ProjectSettings {
    * control repo. `respond.rollout: off` leaves the job out.
    */
   rollouts?: string | false;
+  /**
+   * The control repo to tell once the default branch's apply succeeded (ControlSettings). The pipeline gets a
+   * job that sends the control repo a dispatch, and the control repo runs this project's dependents.
+   */
+  control?: ControlSettings;
   /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
   gitlab?: { token?: GitLabToken };
   runtime?: Runtime;
@@ -979,7 +1103,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1096,9 +1220,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.runner !== undefined) problems.push(...runnerProblems(s.runner, `${where}.runner`, s.forge));
   if (s.pass !== undefined) problems.push(...passProblems(s.pass, `${where}.pass`, s.env));
   if (s.secrets !== undefined) problems.push(...secretsProblems(s.secrets, `${where}.secrets`, s as ProjectSettings, where === "config"));
-  if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
-    problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
-  }
+  if (s.image !== undefined) problems.push(...imageProblems(s.image, `${where}.image`));
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);
   }
@@ -1109,6 +1231,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.rollouts !== undefined && s.rollouts !== false && !(typeof s.rollouts === "string" && s.rollouts.trim() !== "")) {
     problems.push(`${where}.rollouts must be a cron schedule or false`);
   }
+  if (s.control !== undefined) problems.push(...controlProblems(s.control, `${where}.control`));
   if (s.gitlab !== undefined) {
     if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
     else {
@@ -1242,7 +1365,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
-export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes"];
+export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes", "agents"];
 export const SOURCES_KEYS = ["modules", "providers"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
@@ -1650,6 +1773,9 @@ function checkPolicy(p: unknown, where: string, problems: string[], mode?: unkno
   }
   for (const k of Object.keys(p)) if (!POLICY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${POLICY_KEYS.join(", ")})`);
   if (p.override !== undefined) checkOverride(p.override, `${where}.override`, problems, mode);
+  if (p.agents !== undefined && !(Array.isArray(p.agents) && p.agents.length > 0 && p.agents.every((a) => typeof a === "string" && /^\S+$/.test(a)))) {
+    problems.push(`${where}.agents must be a list of forge app or bot identities, such as [my-agent[bot]]`);
+  }
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
   oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
   if (p.outcomes !== undefined) {
@@ -1734,6 +1860,7 @@ function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problem
     for (const k of ["max_turns", "timeout"] as const) {
       if (c[k] !== undefined && !(Number.isInteger(c[k]) && (c[k] as number) >= 1)) problems.push(`${where}.${k} must be a whole number of 1 or more`);
     }
+    if (c.max_cost_usd !== undefined && !(typeof c.max_cost_usd === "number" && Number.isFinite(c.max_cost_usd) && c.max_cost_usd > 0)) problems.push(`${where}.max_cost_usd must be a number of US dollars above 0`);
   }
   if (typeof tokenEnv === "string" && tokenEnv !== "" && !SECRET_NAME.test(tokenEnv)) {
     problems.push(`${where} reads agent.token_env as a secret name, so token_env must be one, such as AGENT_FORGE_TOKEN`);

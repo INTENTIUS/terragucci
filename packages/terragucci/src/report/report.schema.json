@@ -29,7 +29,17 @@
         "pull_request_url": { "type": "string", "description": "The pull or merge request's page (minor 4)." },
         "report_url": { "type": "string", "description": "Where this report.html is served, when reports.url names the bucket's address (minor 4)." },
         "trace_id": { "type": "string", "description": "The run's trace id, when the stage sent a trace (minor 4)." },
-        "trace_url": { "type": "string", "description": "The trace in a viewer, from telemetry.trace_url (minor 4)." }
+        "trace_url": { "type": "string", "description": "The trace in a viewer, from telemetry.trace_url (minor 4)." },
+        "actor": {
+          "type": "object",
+          "description": "Who proposed the change, when policy is set (minor 46). The forge app or bot identity decides kind; trailer and oidcSubject are supporting signals.",
+          "required": ["kind", "principal", "signals"],
+          "properties": {
+            "kind": { "enum": ["person", "agent"] },
+            "principal": { "type": "string" },
+            "signals": { "type": "object", "properties": { "forgeIdentity": { "type": "string" }, "trailer": { "type": "string" }, "oidcSubject": { "type": "string" } } }
+          }
+        }
       }
     },
     "change_set": { "type": "string" },
@@ -186,6 +196,7 @@
               "result": { "enum": ["passed", "denied", "error"] },
               "denials": { "type": "array", "items": { "type": "string" } },
               "rules": { "type": "array", "items": { "type": "string" }, "description": "The ids of the rules that denied, sorted (minor 10)." },
+              "hard_mandatory": { "type": "array", "items": { "type": "string" }, "description": "The ids of the rules among rules that are hard-mandatory (minor 46): no override can pass them." },
               "warnings": { "type": "array", "items": { "type": "string" } },
               "error": { "type": "string" },
               "held_by": { "type": "array", "items": { "type": "string" }, "description": "With hold in policy.outcomes at base: the ids of the hold rules that matched, sorted; its wave waits for an approval (minor 40)." },
@@ -382,7 +393,8 @@
               "reason": { "enum": ["approval", "review", "override", "policy"] },
               "approved": { "type": "string" },
               "by": { "type": "string" },
-              "roots": { "type": "array", "items": { "type": "string" } }
+              "roots": { "type": "array", "items": { "type": "string" } },
+              "hard_mandatory": { "type": "array", "items": { "type": "string" }, "description": "With reason policy (minor 46): the hard-mandatory rules among those that denied, which no override can pass." }
             }
           },
           "review": {

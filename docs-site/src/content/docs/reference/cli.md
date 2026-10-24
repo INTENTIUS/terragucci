@@ -15,7 +15,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml` or a Terragrunt Scale `.gruntwork`, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
-| `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
+| `estate` | writes one page for every project, `estate.html`, `estate.json`, `dora.json` and `policy-metrics.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it, and every state version no wave or migration wrote; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
@@ -43,7 +43,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `config identities` | per environment and stage, prints the roots, the runner, the forge environment, the cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs to accept that job |
 | `forge check` | compares what `config identities` expects with the live forge environments, runners, protections and variables and each cloud's trust, reading only, and exits 1 on a mismatch; a person or a scheduled job of the team's own runs it |
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
-| `check-root`, `check-pins`, `check-policy`, `check-sources` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `check-root`, `check-pins`, `check-policy`, `check-sources`, `check-mirror` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
+| `image recipe` | writes a Dockerfile, CLI config and build script for an image `FROM` terragucci's that carries every provider the lock files pin; you build and push it |
 | `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
@@ -201,7 +202,7 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 | | `estate` |
 |---|---|
 | Reads | each project's `index.json`, `inventory.json`, `versions.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there, for the approvers and each root's [unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes) |
-| Writes | `estate.html`, `estate.json` and `dora.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
+| Writes | `estate.html`, `estate.json`, `dora.json` and `policy-metrics.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
 | Projects | in a control repo, its `projects:`, each read from its own `reports`, the page written to `defaults.reports`; in a repo of its own, the ones the top `index.json` lists |
 | Also | links the audit trail when `audit.json` is beside the page; computes the [delivery metrics](/terragucci/reference/delivery-metrics/) and sends them as gauges when an OTLP endpoint is set |
 | Exit 1 | a project's index could not be read; the page names it |
@@ -523,17 +524,22 @@ The relay runs until stopped, whatever error a request hits.
 ## query
 
 ```bash
-terragucci query "<statement>" [--config <file>] [--json]
-    [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
+terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>]
+    [--config <file>] [--json] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
 ```
 
-Loads the bucket's files into an in-memory SQLite database, runs the statement and prints the rows. It needs Node.js 22.13 or later. [Query the estate with SQL](/terragucci/guides/query-with-sql/) lists the tables.
+Reads one table and prints the rows its filters keep. `resources`, `snapshots`, `runs`, `gates`, `deploys`, `releases` and `cuts` are read from the local `chant/lifecycle` branch, as `chant ledger` reads them. `inventory`, `versions`, `changes`, `history`, `audit` and `edges` are read from the reports bucket. [Query the estate](/terragucci/guides/query-with-sql/) lists the tables and the filters.
+
+`terragucci query "<statement>"`, an SQL statement over the bucket's tables, is deprecated. It still runs, on Node.js 22.13 or later, and prints a notice naming the table read to use.
 
 | Flag | Meaning |
 |---|---|
+| `--where` | a clause `<field><op><value>`, with `=`, `!=`, `<`, `<=`, `>`, `>=` or `~`; give it more than once and every clause must hold |
+| `--since` | the rows from an ISO date or time on, or from a span back from now such as `7d` |
+| `--at` | a commit of `chant/lifecycle` to read the ledger tables at; the bucket's tables refuse it |
 | `--config` | the config file; default the one in the working directory |
 | `--bucket`, `--bucket-endpoint`, `--bucket-prefix` | the bucket to read, in place of `reports` in a repo's config |
-| `--json` | the envelope, with `results.columns`, `results.rows` and `results.tables`, the row count of each table |
+| `--json` | the envelope, with the table read in `results` ([JSON output](/terragucci/reference/cli-json/#query)) |
 
 | | `query` |
 |---|---|
@@ -969,6 +975,20 @@ terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
 | `check-sources` | checks a root's module sources and providers against [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), read at `--base`, before its `init`; `--units` checks every Terragrunt unit instead; prints nothing without the key |
 
 Each appends to `terragucci-check/report.md`, and the generated `tf-check` job runs them, `check-sources` only when `sources` is set. See [Stages](/terragucci/reference/stages/#check).
+
+## image recipe and check-mirror
+
+```bash
+terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
+terragucci check-mirror [--config <file>] [--platform <os_arch>]
+```
+
+| Command | Does |
+|---|---|
+| `image recipe` | reads every `.terraform.lock.hcl` in the repo and writes, under `--out` (default `image`), a `Dockerfile` `FROM` the terragucci image for the binary (or `--from`), a `terragucci.tfrc` whose only installation method is a `filesystem_mirror`, one module per distinct lock file that requires each provider at its locked version, and `build.sh`, which builds for `--platform` (default `linux/amd64`) and pushes to `$IMAGE`. It builds and pushes nothing itself |
+| `check-mirror` | with `image.mirror` set, checks the image's mirror holds every provider each lock file pins, for the job's platform (or `--platform`, such as `linux_arm64`). A gap new at this commit warns; a gap the lock file already had at the commit's first parent fails, naming the provider and the rebuild. Prints nothing without the key |
+
+The generated `tf-check` job runs `check-mirror` before any root's `init` when `image.mirror` is set.
 
 ## check-job
 

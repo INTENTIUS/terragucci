@@ -153,6 +153,61 @@ deny contains msg if {
 }
 ```
 
+### Actor
+
+`input.actor` says who proposed the change, a person or an agent. The forge app or bot identity decides. List the identities that are agents in `policy.agents`, and a change proposed through one has `actor.kind` of `agent`. Any other change is a `person`'s. Like `override`, the list is read at base, so a pull request cannot add its own author to it.
+
+```yaml
+policy:
+  engine: opa
+  path: policy
+  outcomes: [deny, hold, allow_unattended]
+  agents: [my-agent[bot]]
+```
+
+| Field | Value |
+|---|---|
+| `actor.kind` | `agent` when the forge identity is listed in `policy.agents`, else `person` |
+| `actor.principal` | the forge identity: the pull request's author, else the job's actor (`unknown` when the environment names none) |
+| `actor.signals.forgeIdentity` | the same login, as the forge gave it |
+| `actor.signals.trailer` | the value of an `Assisted-by`, `Generated-by` or `Agent` trailer, or of a `Co-authored-by` naming an agent, on the pull request's head commit; absent when there is none |
+| `actor.signals.oidcSubject` | the job's OIDC subject: `TG_OIDC_SUBJECT` when set, else GitHub's default subject for the event; absent otherwise |
+
+The trailer and the subject never change `kind`. A trailer with no listed identity leaves the change a person's, and a listed identity with no trailer is still an agent's. The commit author is not a signal. A policy can still read the signals, for example to hold a person's change that carries an agent trailer.
+
+The policy below lets a small agent change apply without an approval, and holds a larger one, or one with a delete or replacement, for a person. It says nothing about a person's change.
+
+```rego
+package main
+
+import rego.v1
+
+changed := [rc |
+  some rc in input.resource_changes
+  rc.change.actions != ["no-op"]
+  rc.change.actions != ["read"]
+]
+
+small if {
+  count(changed) <= 5
+  every rc in changed { rc.change.actions in [["create"], ["update"]] }
+}
+
+allow_unattended contains msg if {
+  input.actor.kind == "agent"
+  small
+  msg := sprintf("%s made a small change", [input.actor.principal])
+}
+
+hold contains msg if {
+  input.actor.kind == "agent"
+  not small
+  msg := sprintf("%s proposed %d changes, or a delete or replacement; a person approves it", [input.actor.principal, count(changed)])
+}
+```
+
+The same actor is on the report's `run.actor` and on each `apply` and `refused` entry of the [audit trail](/terragucci/reference/audit-trail/).
+
 ### Counted rules
 
 | Rule | Effect |
@@ -187,6 +242,49 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 | a warning | never blocks |
 
 A denial clears when the code changes until the policy passes, or when the policy changes in a pull request your reviewers approve and merge. A listed approver can also override one plan. Responses, agents and comments cannot waive it.
+
+## Enforcement levels
+
+| Level | Set by | A denial |
+|---|---|---|
+| Advisory | a `warn` rule; `enforcement_level = "advisory"` in `policies.hcl` | warns and fails nothing |
+| Soft-mandatory | a `deny` rule (`mandatory` in `policies.hcl`) | fails the root; a listed approver can [override](#overriding-a-denial) one plan |
+| Hard-mandatory | a [hard-mandatory](#hard-mandatory-rules) `deny` rule (`hard-mandatory` in `policies.hcl`) | fails the root; nothing can pass it |
+
+## Hard-mandatory rules
+
+A hard-mandatory rule denies a plan like any `deny` rule, and no override can pass it, whoever `policy.override` lists. Other rules in the same repo stay overridable. The level is set per rule, in either of two places.
+
+In the Rego, put `# terragucci: hard-mandatory` in the comment lines directly above the rule's head. A blank line between the comment and the head cuts the annotation off.
+
+```rego
+package main
+
+import rego.v1
+
+# Public buckets are never acceptable.
+# terragucci: hard-mandatory
+deny_public_bucket contains msg if {
+  some rc in input.resource_changes
+  rc.type == "aws_s3_bucket_public_access_block"
+  rc.change.after.block_public_acls == false
+  msg := sprintf("%s allows public ACLs", [rc.address])
+}
+```
+
+The annotation marks the rule's name in its package (`main.deny_public_bucket`), so every body of that rule shares it. A comment above a `warn` rule does nothing, since it never denies.
+
+In an [HCP Terraform `policies.hcl`](#policieshcl), set `enforcement_level = "hard-mandatory"` on the policy. It denies like `mandatory`.
+
+When a hard-mandatory rule denies a root:
+
+- `tf-apply` records no denial to override, prints no `terragucci override` command, and refuses the wave. The log and the plan note name the rule, as in "main.deny_public_bucket is hard-mandatory: no override, approval or agent action can pass it".
+- An override line already on the ledger, or a later one, passes nothing: the wave is refused before the override gate reads it.
+- `terragucci override` refuses a `--rule` that is hard-mandatory and names it.
+- The refusal is a `refused` entry (`denied-by-policy`) in the [audit trail](/terragucci/reference/audit-trail/), with the hard-mandatory rule ids in `hard_mandatory`. `roots[].policy.hard_mandatory` and `waves[].refused.hard_mandatory` carry them in the report.
+
+The annotation is read from the policy at base, like the rest of the policy, so a pull request cannot remove a rule's level from itself.
+
 
 ## Overriding a denial
 
@@ -444,7 +542,7 @@ policy "owner_tags" {
 }
 ```
 
-Mandatory messages fail the root, as does a missing or unmatched `query` or an unknown level; advisory ones, the default, warn.
+Mandatory messages fail the root, as does a missing or unmatched `query` or an unknown level; advisory ones, the default, warn. A `hard-mandatory` policy fails the root too, and no [override](#hard-mandatory-rules) can pass it.
 
 `namespace` keeps only the policies whose query is in that package.
 

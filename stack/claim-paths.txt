@@ -34,6 +34,8 @@ packages/terragucci/src/unit-pins.ts      init/terragrunt-root-pins waves/terrag
 packages/terragucci/src/render-review.ts  agent/review policy/review-risk
 packages/terragucci/src/review-agent.ts   agent/review policy/review-risk
 packages/terragucci/src/sources.ts        policy/sources-module policy/sources-provider policy/sources-at-base
+# Prepared images: no claim runs a mirror image yet.
+packages/terragucci/src/image-recipe.ts
 packages/terragucci/src/sources-terragrunt.ts policy/sources-module policy/sources-provider
 
 # Stages.
