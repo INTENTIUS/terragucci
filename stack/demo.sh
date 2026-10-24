@@ -142,6 +142,18 @@
 # demo.json and sends the terragucci_dora_* gauges to the stack's collector,
 # which Prometheus keeps for the kiosk.
 #
+# ask, asks, opening and closing drive behold's prompt pane (behold#935) and are
+# written only by a scenario with an ask.json, next to its about.json
+# (<tool's tree>/scenarios/<scenario>/ask.json); every other scenario's
+# demo.json has none of the four. The file's top-level "opening" and "closing"
+# strings become demo.json's. Each other key is a step name, and its value is
+# one ask object, written as ask, or a list of them for a step with two beats,
+# written as asks. An ask is copied as given:
+#   { "prompt": "...", "action": null, "reply": "{dependents} resources ...",
+#     "light": ["network/terraform_data.subnet"], "paths": true, "ghost": false }
+# A step with asks holds 12 s (ASK_BEAT_HOLD) longer for each beat past its
+# first. The steps of a scenario's fix pull request read fix-<step>, and its applied step applied.
+#
 # tool is the tool the scenario shows (terraform, terragrunt) and repo the forge
 # repo its cycle runs on (<admin>/demo, <admin>/demo-terragrunt): the repo whose
 # commit, pull request and runs the step names. Every write has both.
@@ -213,18 +225,20 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
 # chant-pr-loop and the fan-out scenarios stay out of the default list until a
 # cycle of each has run to its reset on the demo host. DEMO_SCENARIOS or a name
-# runs them.
+# runs them. compose-edit and compose-create are the prompt-driven demo's acts 1
+# and 2 (behold#935), in that order; compose-fail, act 3, runs only when
+# DEMO_SCENARIOS or a name asks for it.
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout)
+TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
@@ -233,6 +247,7 @@ scenario_tool() { # scenario -> its tool
     fan-out) echo chant-fanout ;;
     fan-out-tofu) echo tofu-fanout ;;
     fan-out-choudoufu) echo choudoufu-fanout ;;
+    compose-edit|compose-create|compose-fail) echo compose ;;
     *) return 1 ;;
   esac
 }
@@ -244,6 +259,7 @@ tool_repo() { # tool -> the repo's name under the admin
     chant-fanout) echo demo-chant-fanout ;;
     tofu-fanout) echo demo-fanout ;;
     choudoufu-fanout) echo demo-choudoufu-fanout ;;
+    compose) echo demo-compose ;;
     *) return 1 ;;
   esac
 }
@@ -255,6 +271,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     chant-fanout) echo example-demo-chant-fanout ;;
     tofu-fanout) echo example-demo-fanout ;;
     choudoufu-fanout) echo example-demo-choudoufu-fanout ;;
+    compose) echo example-demo-compose ;;
     *) return 1 ;;
   esac
 }
@@ -436,7 +453,7 @@ REVIEWER_KEY="$(person_var TERRAGUCCI_FORGEJO_REVIEWER_KEY)"
 tree_keys() { # dir, tool, [root.hcl]
   local dir="$1" f root key template
   case "$2" in
-    terraform|chant|tofu-fanout)
+    terraform|chant|tofu-fanout|compose)
       for f in "$dir"/*/*.tf; do
         [ -f "$f" ] || continue
         key="$(awk '/backend "s3"/ { b = 1 } b && /^[[:space:]]*key[[:space:]]*=/ { sub(/^[^"]*"/, ""); sub(/".*/, ""); print; exit }' "$f")"
@@ -499,7 +516,7 @@ use_repo() { # tool
   [ -n "$STATE_BUCKET" ] || fail "no state bucket is named in $TREE"
   BASE_KEYS="$(tree_keys "$TREE" "$1")"
   [ -n "$BASE_KEYS" ] || fail "no root with a state key in $TREE"
-  for d in "$TREE"/scenarios/*/pull "$TREE"/scenarios/*/push; do
+  for d in "$TREE"/scenarios/*/pull "$TREE"/scenarios/*/push "$TREE"/scenarios/*/base; do
     [ -d "$d" ] && keys="$keys$(tree_keys "$d" "$1" "$TREE/root.hcl")"$'\n'
   done
   EXTRA_KEYS="$(grep -v '^$' <<<"$keys" | sort -u | grep -vxF -f <(printf '%s\n' "$BASE_KEYS") || true)"
@@ -693,11 +710,73 @@ view_follow() {
   log "view: could not check out ${COMMIT:0:8} in $dir after $try tries; the next step tries again: $(awk '/^(fatal|error):/ && !f { f = $0 } NF { l = $0 } END { print (f != "" ? f : l) }' <<<"$err")"
 }
 
+# ── the prompt pane's fields (behold#935) ────────────────────────────────────
+
+# A scenario may carry an ask.json beside its about.json:
+# <tool's tree>/scenarios/<scenario>/ask.json. Its top level may hold the
+# strings "opening" and "closing", and every other key is a step name that maps
+# to one ask object or to a list of them (two beats). demo_write copies them
+# into demo.json as ask, asks, opening and closing, as given: behold checks the
+# types. A fix pull request's steps are keyed fix-<step> (fix-planned,
+# fix-approved, fix-applied), so the first pull request's steps are not played
+# again; the fix's applied step reads applied. A scenario without the file, or a step without an entry, writes
+# nothing, so every other scenario's demo.json is as it was.
+ASK_BEAT_HOLD=12 # seconds a step holds for each beat past its first
+
+ask_file() { # scenario -> its ask.json's path; fails when it has no tree
+  local tool
+  tool="$(scenario_tool "$1" 2>/dev/null)" || return 1
+  echo "$HERE/../$(tool_tree "$tool")/scenarios/$1/ask.json"
+}
+
+# {"ask": {...}} for a step with one ask, {"asks": [...]} for a list, else {}.
+ask_step() { # ask.json path, step key
+  [ -f "$1" ] || { echo '{}'; return 0; }
+  jq -c --arg k "$2" '(try .[$k] catch null) as $e
+    | if ($e | type) == "array" then {asks: $e} elif ($e | type) == "object" then {ask: $e} else {} end' "$1" 2>/dev/null || echo '{}'
+}
+
+# {"opening": "...", "closing": "..."}, each only when the file has it as a string; else {}.
+ask_ends() { # ask.json path
+  [ -f "$1" ] || { echo '{}'; return 0; }
+  jq -c '{opening: (try .opening catch null), closing: (try .closing catch null)} | with_entries(select(.value | type == "string"))' "$1" 2>/dev/null || echo '{}'
+}
+
+# The ask fields to merge into the step just written: the scenario's own file, the fix's keys while FIX is set.
+# The key a step reads in a file: its name, or while FIX is set fix-<step> when
+# the file has one; a fix's applied step, which ends the scenario, reads applied,
+# and its other steps read nothing, so the first pull request's asks do not replay.
+ask_key() { # ask.json path, step
+  if [ -z "${FIX:-}" ]; then echo "$2"; return 0; fi
+  if [ -f "$1" ] && jq -e --arg k "fix-$2" 'has($k)' "$1" >/dev/null 2>&1; then echo "fix-$2"
+  elif [ "$2" = applied ]; then echo applied
+  else echo "fix-$2"; fi
+}
+
+ask_fields() { # step
+  local f
+  # The driver's own setup push (compose_base) is no step of the scenario's story.
+  [ -z "${SETUP:-}" ] || { echo '{}'; return 0; }
+  f="$(ask_file "$SCENARIO")" || { echo '{}'; return 0; }
+  jq -cn --argjson a "$(ask_step "$f" "$(ask_key "$f" "$1")")" --argjson e "$(ask_ends "$f")" '$a + $e'
+}
+
+# The seconds a step holds past HOLD: ASK_BEAT_HOLD for each beat after its first.
+ask_extra_hold() { # step
+  local f n
+  [ -z "${SETUP:-}" ] || { echo 0; return 0; }
+  f="$(ask_file "$SCENARIO")" || { echo 0; return 0; }
+  n="$(ask_step "$f" "$(ask_key "$f" "$1")" | jq -r '(.asks // []) | length')"
+  if [ "${n:-0}" -gt 1 ]; then echo $(( (n - 1) * ASK_BEAT_HOLD )); else echo 0; fi
+}
+
 # The action and deadline the driver last wrote as next, and when it started
 # waiting for them: next.from stays put while a write repeats both.
 NEXT_KEY="" NEXT_FROM=""
 demo_write() { # step, label, [next action], [next at, epoch seconds]
-  local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null chapter
+  local step="$1" label="$2" action="${3:-}" at="${4:-}" at_iso="" next=null chapter ask
+  ask="$(ask_fields "$step" 2>/dev/null || echo '{}')"
+  [ -n "$ask" ] || ask='{}'
   chapter="$(demo_chapter "$step" 2>/dev/null || echo null)"
   [ -n "$chapter" ] || chapter=null
   view_follow
@@ -713,10 +792,10 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
   jq -n --argjson cycle "$CYCLE" --arg scenario "$SCENARIO" --arg title "$TITLE" --arg step "$step" --arg text "$label" \
     --arg started "$(iso "${STARTED:-$(now)}")" --argjson next "$next" --arg pull "$PULL" --arg commit "$COMMIT" \
     --argjson about "${ABOUT:-null}" --argjson where "$(demo_where)" --argjson chapter "$chapter" --argjson outside "${OUTSIDE:-null}" \
-    --argjson highlight "$(highlight_json "$step" 2>/dev/null || echo null)" \
+    --argjson highlight "$(highlight_json "$step" 2>/dev/null || echo null)" --argjson ask "$ask" \
     '$where + {cycle: $cycle, scenario: $scenario, title: $title, step: $step, label: $text, started_at: $started, next: $next,
       pull: (if $pull == "" then null else ($pull | tonumber) end), commit: (if $commit == "" then null else $commit end),
-      chapter: $chapter, outside: $outside, highlight: $highlight, about: $about}' \
+      chapter: $chapter, outside: $outside, highlight: $highlight, about: $about} + $ask' \
     > "$DEMO_STATE/demo.json.new"
   mv "$DEMO_STATE/demo.json.new" "$DEMO_STATE/demo.json"
   log "cycle $CYCLE $SCENARIO: $step: $label${MIGRATION_WRITE:+ ($action)}"
@@ -853,9 +932,10 @@ chapter_short() { # chapter number
 
 # Write a step whose next action is the driver's own, HOLD seconds on, and wait them out.
 demo_hold() { # step, label, next action
-  local at=$(( $(now) + HOLD ))
+  local hold=$(( HOLD + $(ask_extra_hold "$1") ))
+  local at=$(( $(now) + hold ))
   demo_write "$1" "$2" "$3" "$at"
-  sleep "$HOLD"
+  sleep "$hold"
 }
 
 # A cycle that died or ran past a limit: the last demo.json, as stalled.
@@ -1304,6 +1384,9 @@ scenario_title() {
     fan-out)    echo "A broken stack shouldn't stall the whole rollout" ;;
     fan-out-tofu) echo "A broken stack shouldn't stall the whole rollout" ;;
     fan-out-choudoufu) echo "A broken estate shouldn't stall the rollout" ;;
+    compose-edit)   echo "An edit and an addition, every value known" ;;
+    compose-create) echo "A new subnet the other states need, in one change" ;;
+    compose-fail)   echo "A create that fails part way" ;;
     *) return 1 ;;
   esac
 }
@@ -1323,6 +1406,9 @@ scenario_name() {
     fan-out)    echo "fifteen stacks" ;;
     fan-out-tofu) echo "fifteen stacks" ;;
     fan-out-choudoufu) echo "fifteen estates" ;;
+    compose-edit)   echo "one plan, known values" ;;
+    compose-create) echo "one plan, one apply" ;;
+    compose-fail)   echo "a failed create" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1442,6 +1528,16 @@ say() { # step
     fan-out-choudoufu-fix:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}. The merge plans each estate in full, as every apply does: only the pull request's plan was a cone." ;;
     fan-out-choudoufu-fix:applying) echo "The waves run again. Cluster-a applies, then its six apps. While wave 3 applies app-01, an operator applies to app-01 too." ;;
     fan-out-choudoufu-fix:applied) echo "All fifteen estates are in. The operator's queue landed in app-01's estate beside the fix, and no state file was locked." ;;
+    compose-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
+    compose-edit:planned)   echo "One composed plan covers $COMPOSED. Every value is known at plan time, so each changed card shows its exact before and after." ;;
+    compose-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
+    compose-create:planned) echo "One composed plan covers $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
+    compose-fail:pull-request) echo "Pull request $PULL is open. App adds a load balancer in the subnet, with a postcondition on the subnet's range." ;;
+    compose-fail:planned)   echo "One composed plan covers $COMPOSED. The load balancer's postcondition passes the plan and is checked when it applies." ;;
+    compose-fail:failed)    echo "The load balancer's postcondition failed at apply. Network applied, app applied all but the load balancer, and edge did not apply. Each state holds what applied to it." ;;
+    compose-edit:applied|compose-create:applied|compose-fail-fix:applied) echo "Applied. Network, app and edge each hold what this run applied." ;;
+    compose-fail-fix:pull-request) echo "The fix is pull request $PULL: one line in the load balancer's guard." ;;
+    compose-fail-fix:planned) echo "The fix's plan covers only what is left to apply. Nothing that applied before is touched." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -2028,6 +2124,63 @@ scenario_fan_out_tofu() {
   END_HOLD="$FANOUT_END_HOLD"
 }
 
+# compose-edit, compose-create and compose-fail: the prompt-driven demo's three
+# acts (behold#935) on example-demo-compose, where waves.compose is on, so the
+# pull request's roots plan as one run and apply as one. The cycle is
+# b-composed's: open, check the plan composed, hold, merge, follow. The person's
+# approval is the reviewer's, the waiting wave default_waiting approves, and
+# the approved step's ask.json entry is the action line. What each step says
+# comes from scenarios/<id>/ask.json (demo_write); the driver adds only the
+# time for a step's extra beats.
+scenario_compose() {
+  compose_base
+  open_pull
+  b_composed_planned
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  follow
+}
+
+# A scenario that starts from more than the snapshot has scenarios/<id>/base/:
+# compose-fail's is the roots as compose-create leaves them. The driver pushes
+# it to main as the author and follows its run to applied (approving a waiting
+# wave as usual) before the scenario's own pull request opens. SETUP keeps these
+# steps free of the scenario's asks. A reset puts main and the states back.
+compose_base() {
+  local tree="$WORK/c$CYCLE/base" before
+  [ -d "$TREE/scenarios/$SCENARIO/base" ] || return 0
+  SETUP=1
+  clone_main "$tree"
+  overlay "$TREE/scenarios/$SCENARIO/base" "$tree"
+  before="$(last_run_id)"
+  COMMIT="$(push_as_author "$tree" "$REPO" main "$SCENARIO: the roots as compose-create leaves them (cycle $CYCLE)")"
+  run_started "$before" push "$COMMIT"
+  runs_mark push
+  follow
+  SETUP="" PULL="" COMMIT="" HELD=""
+}
+
+# compose-fail: the load balancer's postcondition fails at apply, never at plan.
+# The merge's run fails; the driver holds the failed step, then opens the fix,
+# a second pull request that changes one line (scenarios/compose-fail/fix), and
+# follows its run, which approves like the first. The fix's steps are keyed
+# fix-<step> in ask.json.
+compose_failed() {
+  [ -z "${SETUP:-}" ] || default_failed
+  demo_hold failed "$(say failed)" "open the fix"
+  FIX=1
+  PULL_FILES="$TREE/scenarios/$SCENARIO/fix" PULL_BRANCH="demo-$SCENARIO-fix" PULL_TITLE="app: the load balancer's range check reads the subnet's block"
+  open_pull
+  demo_hold planned "$(say planned)" "merge pull request $PULL"
+  merge_pull
+  demo_write applying "$(say applying)" "follow the waves"
+}
+
+scenario_compose_fail() {
+  on_failed() { [ -z "$FIX" ] || default_failed; compose_failed; }
+  scenario_compose
+}
+
 # fan-out-choudoufu: fan-out-tofu's cycle on choudoufu's estates, with one
 # more beat. While the fix's wave 3 applies app-01's estate, an operator
 # applies to the same estate from outside the pipeline, adding one queue with
@@ -2226,7 +2379,7 @@ run_cycle() {
   ABOUT="$(scenario_about "$1")"
   MIGRATIONS="$(scenario_migrations "$1")"
   PULL="" COMMIT="" HELD="" LAST_STEP="" LAST_LABEL="" BEAT="" MIGRATIONS_APPROVED=""
-  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" CHANT_MEMBERS="network app edge" END_HOLD="" OUTSIDE=null CONE_BLOCKS="" CONE_OF=""
+  PULL_FILES="" PULL_BRANCH="" PULL_TITLE="" FIX="" SETUP="" CHANT_MEMBERS="network app edge" END_HOLD="" OUTSIDE=null CONE_BLOCKS="" CONE_OF=""
   on_waiting() { default_waiting; }
   on_migrate() { default_migrate; }
   on_failed() { default_failed; }
@@ -2244,6 +2397,8 @@ run_cycle() {
     fan-out) scenario_fan_out ;;
     fan-out-tofu) scenario_fan_out_tofu ;;
     fan-out-choudoufu) scenario_fan_out_choudoufu ;;
+    compose-edit|compose-create) scenario_compose ;;
+    compose-fail) scenario_compose_fail ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
   if [ "$OUTCOME" = applied ]; then
@@ -2269,7 +2424,7 @@ run_cycle() {
 # the run started after the hold. reset is written after the push back's run
 # has ended, so the next cycle's first push finds no run in progress.
 cycle_end() {
-  local at=$(( $(now) + ${END_HOLD:-$HOLD} )) left
+  local at=$(( $(now) + ${END_HOLD:-$HOLD} + $(ask_extra_hold "$LAST_STEP") )) left
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
   reset_work
   left=$(( at - $(now) ))
@@ -2592,6 +2747,7 @@ repo_description() {
     chant-fanout) echo "The terragucci demo on chant: fifteen CloudFormation stacks in three waves, where a failure holds only what depends on it" ;;
     tofu-fanout) echo "The terragucci demo's fan-out: fifteen roots of SQS queues and DynamoDB tables in three waves, where a failure blocks only what depends on it" ;;
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
+    compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
