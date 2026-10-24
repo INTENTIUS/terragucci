@@ -41,20 +41,18 @@ data "terraform_estate_outputs" "network" {
   names  = ["http_proxy_port", "admin_port", "vpc_id"]
 }
 
-resource "aws_sqs_queue" "listener" {
-  name = "choudoufu-compose-listener"
-  tags = { port = tostring(data.terraform_estate_outputs.network.values.http_proxy_port - 10) }
+resource "terraform_data" "listener_port" {
+  input = data.terraform_estate_outputs.network.values.http_proxy_port - 10
 }
 
 output "listener_port" {
-  value = tonumber(aws_sqs_queue.listener.tags.port)
+  value = terraform_data.listener_port.input
 }
 
-resource "aws_sqs_queue" "admin_listener" {
-  name = "choudoufu-compose-admin-listener"
-  tags = { port = tostring(data.terraform_estate_outputs.network.values.admin_port - 10) }
+resource "terraform_data" "admin_listener_port" {
+  input = data.terraform_estate_outputs.network.values.admin_port - 10
 }
 
 output "admin_listener_port" {
-  value = tonumber(aws_sqs_queue.admin_listener.tags.port)
+  value = terraform_data.admin_listener_port.input
 }

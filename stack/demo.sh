@@ -1312,6 +1312,17 @@ only_tips_left() { # jobs JSON (Forgejo's /actions/runs/<id>/jobs)
       and ($jobs | any(.name == "tips" and (ended | not)))' <<<"$1" >/dev/null 2>&1
 }
 
+# Whether the job that runs the composed apply has succeeded: apply-wave-1,
+# which carries "apply as one composed run in wave 1 (compose:wave-1)" in a
+# compose repo. Waves 2 and 3 and tips after it have nothing to apply, and
+# nothing the viewer sees waits on them, so for the choudoufu compose repo the
+# driver writes applied at this point instead of waiting about 8 s more. Only
+# run_ended asks, so quiet still waits for the whole run before a reset pushes.
+composed_apply_done() { # jobs JSON
+  [ "$TOOL" = choudoufu-compose ] || return 1
+  jq -e '(if type == "array" then . else [] end) | any(.name == "apply-wave-1" and .status == "success")' <<<"$1" >/dev/null 2>&1
+}
+
 # Whether every job of a run has ended (Forgejo's /actions/runs/<id>/jobs): a
 # run Forgejo marks failed as soon as one wave fails can still have later waves
 # running or waiting, which start after a failure and block only the roots it
@@ -1326,7 +1337,8 @@ jobs_ended() { # jobs JSON
 
 # Wait for run RUN_ID to end, every job of it (jobs_ended), or for its waves to
 # have ended with only its tips job left (only_tips_left), which counts as
-# success. Sets RUN_STATUS and RUN_URL.
+# success. The choudoufu compose repo's run counts as success once its composed
+# apply has (composed_apply_done). Sets RUN_STATUS and RUN_URL.
 run_ended() { # limit
   local deadline=$(( $(now) + $1 )) run status=""
   while :; do
@@ -1343,6 +1355,11 @@ run_ended() { # limit
     esac
     if [ -n "$status" ] && only_tips_left "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)"; then
       log "run $RUN_ID: its waves ended; the driver goes on while its tips job runs"
+      status=success
+      break
+    fi
+    if [ -n "$status" ] && composed_apply_done "$(api "$URL/api/v1/repos/$REPO/actions/runs/$RUN_ID/jobs" 2>/dev/null || true)"; then
+      log "run $RUN_ID: the composed apply succeeded; the driver goes on while its later waves and tips job end"
       status=success
       break
     fi

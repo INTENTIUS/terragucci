@@ -31,37 +31,22 @@
     }
   ],
   "merged": {
-    "prompt": "Merge it and apply.",
+    "prompt": "Looks right. Merge and apply.",
     "action": null,
     "reply": null,
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Merging and starting one apply across 3 estates"
+    "status": "Merging and applying network, app and edge in one pass"
   },
   "applying": {
-    "status": "Applying network, app and edge together"
-  },
-  "waiting": {
-    "prompt": "Approve the plan.",
-    "action": null,
-    "reply": null,
-    "light": null,
-    "paths": false,
-    "ghost": false,
-    "status": "Approving"
-  },
-  "approved": {
-    "status": "Approved. Applying"
-  },
-  "resumed": {
     "status": "Applying network, app and edge together"
   },
   "applied": [
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. The subnet was created and app and edge got its id in the same apply.",
+      "reply": "Done. The subnet was created and app and edge got its id in the same apply. Next: did anything stay locked?",
       "light": null,
       "paths": false,
       "ghost": false
@@ -69,13 +54,13 @@
     {
       "prompt": "Did anything stay locked?",
       "action": null,
-      "reply": "No. Resource-level locking at the cloud level: each record is written only if unchanged since it was read.",
+      "reply": "No. Resource-level locking at the cloud level: each record is written only if unchanged since it was read. Next: put the estates back.",
       "light": null,
       "paths": false,
       "ghost": false
     }
   ],
-  "closing": "3 estates. 1 plan. 1 approval. 1 apply.",
+  "closing": "3 estates. 1 plan. 1 apply.",
   "reset": {
     "prompt": "Put the estates back to the base.",
     "action": null,

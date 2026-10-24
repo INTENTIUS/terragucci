@@ -41,20 +41,18 @@ data "terraform_estate_outputs" "app" {
   names  = ["listener_port", "admin_listener_port"]
 }
 
-resource "aws_sqs_queue" "upstream" {
-  name = "choudoufu-compose-upstream"
-  tags = { upstream = "http://app:${data.terraform_estate_outputs.app.values.listener_port}" }
+resource "terraform_data" "upstream" {
+  input = "http://app:${data.terraform_estate_outputs.app.values.listener_port}"
 }
 
 output "upstream" {
-  value = aws_sqs_queue.upstream.tags.upstream
+  value = terraform_data.upstream.input
 }
 
-resource "aws_sqs_queue" "admin_upstream" {
-  name = "choudoufu-compose-admin-upstream"
-  tags = { upstream = "http://app:${data.terraform_estate_outputs.app.values.admin_listener_port}" }
+resource "terraform_data" "admin_upstream" {
+  input = "http://app:${data.terraform_estate_outputs.app.values.admin_listener_port}"
 }
 
 output "admin_upstream" {
-  value = aws_sqs_queue.admin_upstream.tags.upstream
+  value = terraform_data.admin_upstream.input
 }

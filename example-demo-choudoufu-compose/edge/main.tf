@@ -41,11 +41,10 @@ data "terraform_estate_outputs" "app" {
   names  = ["listener_port"]
 }
 
-resource "aws_sqs_queue" "upstream" {
-  name = "choudoufu-compose-upstream"
-  tags = { upstream = "http://app:${data.terraform_estate_outputs.app.values.listener_port}" }
+resource "terraform_data" "upstream" {
+  input = "http://app:${data.terraform_estate_outputs.app.values.listener_port}"
 }
 
 output "upstream" {
-  value = aws_sqs_queue.upstream.tags.upstream
+  value = terraform_data.upstream.input
 }

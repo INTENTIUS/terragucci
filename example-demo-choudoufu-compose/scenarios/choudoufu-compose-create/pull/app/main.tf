@@ -41,13 +41,12 @@ data "terraform_estate_outputs" "network" {
   names  = ["http_proxy_port", "subnet_id", "vpc_id"]
 }
 
-resource "aws_sqs_queue" "listener" {
-  name = "choudoufu-compose-listener"
-  tags = { port = tostring(data.terraform_estate_outputs.network.values.http_proxy_port - 10) }
+resource "terraform_data" "listener_port" {
+  input = data.terraform_estate_outputs.network.values.http_proxy_port - 10
 }
 
 output "listener_port" {
-  value = tonumber(aws_sqs_queue.listener.tags.port)
+  value = terraform_data.listener_port.input
 }
 
 # Four resources placed in network's new subnet. Its id is unknown until the
@@ -56,22 +55,19 @@ output "listener_port" {
 resource "aws_security_group" "security_group" {
   name   = "choudoufu-compose-security-group"
   vpc_id = data.terraform_estate_outputs.network.values.vpc_id
-  tags   = { subnet = data.terraform_estate_outputs.network.values.subnet_id }
 }
 
 resource "aws_route_table" "route_table" {
   vpc_id = data.terraform_estate_outputs.network.values.vpc_id
-  tags   = { subnet = data.terraform_estate_outputs.network.values.subnet_id }
-}
-
-resource "aws_instance" "instance" {
-  ami           = "ami-12345678"
-  instance_type = "t3.micro"
-  subnet_id     = data.terraform_estate_outputs.network.values.subnet_id
 }
 
 resource "aws_network_interface" "network_interface" {
   subnet_id = data.terraform_estate_outputs.network.values.subnet_id
+}
+
+resource "aws_route_table_association" "route_table_association" {
+  subnet_id      = data.terraform_estate_outputs.network.values.subnet_id
+  route_table_id = aws_route_table.route_table.id
 }
 
 output "dns_name" {
