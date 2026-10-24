@@ -198,7 +198,7 @@ export default defineConfig({
 							collapsed: true,
 							items: [
 								{ label: 'Govern many repos from one place', slug: 'guides/govern-many-repos' },
-								{ label: 'Manage the control repo with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
+								{ label: 'Read terragucci\'s trust with Terraform', slug: 'guides/manage-the-control-repo-with-terraform' },
 							],
 						},
 						{

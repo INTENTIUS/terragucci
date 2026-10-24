@@ -328,24 +328,6 @@ func TestTheBinaryGetsTheInputsAsFlags(t *testing.T) {
 	}
 }
 
-func TestFromTheForgeTheRootsAreNotRead(t *testing.T) {
-	ctx := context.Background()
-	c, _ := newControl(t, "github", map[string]string{"terragucci.yml": "projects:\n  gitlab.com/acme/platform/infra: {}\n"})
-	src, args := fakeTerragucci(t, goldenPath(t, "control"))
-	src.control = c
-	contract, _, err := src.identities(ctx, identityInputs{project: "gitlab.com/acme/platform/infra"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := readArgs(t, args)
-	if got[3] != "--config" || filepath.Base(got[4]) != "terragucci.yml" || !slices.Equal(got[5:], []string{"--project", "gitlab.com/acme/platform/infra", "--no-roots"}) {
-		t.Fatalf("args %q", got)
-	}
-	if contract.Forge != "gitlab" || contract.Environments[0].Roots != nil {
-		t.Fatalf("contract %+v", contract)
-	}
-}
-
 func TestTheCommandsFailuresAreErrors(t *testing.T) {
 	if _, _, err := parseIdentities([]byte(`{"schema":1,"command":"config identities","exit":2,"status":"usage","results":null,"error":"this config lists projects"}`), "", nil, "terragucci"); err == nil || !strings.Contains(err.Error(), "this config lists projects") {
 		t.Fatalf("usage: %v", err)

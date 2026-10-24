@@ -354,6 +354,9 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | Variable | Flag | Meaning |
 |---|---|---|
 | `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
+| `TERRAGUCCI_CHANT` | | the chant command `terragucci control records` runs; `npx --no-install chant` by default |
+| `TERRAGUCCI_CONTROL_DIR` | | a checkout of the [control repo](/terragucci/concepts/control-repo/) that a plan reads its estate ownership records from, in place of cloning one |
+| `TERRAGUCCI_CONTROL_READ_TOKEN` | | a token that can read the control repo, so a plan clones it to resolve which project owns an estate another project reads |
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
 | `TERRAGUCCI_TERRAMATE` | | the `terramate` executable `init` and `terragucci terramate generate` run; `terramate` on the path by default |
 | `TERRAGUCCI_ATMOS` | | the `atmos` executable `init`, `terragucci atmos write` and, with `oidc.roles`, `terragucci config check` run; `atmos` on the path by default |

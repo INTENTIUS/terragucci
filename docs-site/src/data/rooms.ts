@@ -424,7 +424,7 @@ export const ROOMS: Room[] = [
 		first: { label: 'Govern many repos', href: '/guides/govern-many-repos/' },
 		howto: [
 			{ label: 'Govern many repos', href: '/guides/govern-many-repos/' },
-			{ label: 'Control repo in Terraform', href: '/guides/manage-the-control-repo-with-terraform/' },
+			{ label: 'Trust in Terraform', href: '/guides/manage-the-control-repo-with-terraform/' },
 			{ label: 'Every project, one page', href: '/guides/see-every-project/' },
 			{ label: 'Roll out a module', href: '/guides/roll-out-a-module-version/' },
 		],
