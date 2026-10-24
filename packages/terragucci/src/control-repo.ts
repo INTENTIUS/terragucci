@@ -14,7 +14,7 @@
 import { Job, Step, Workflow } from "@intentius/chant-lexicon-github/generated/index";
 import { Image, Job as GitLabJob, Rule } from "@intentius/chant-lexicon-gitlab/generated/index";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab/serializer";
-import { CONTROL_NAME, CONTROL_TOKEN_ENV, ConfigError, forgeFromHost, parseProjectKey, type ControlSettings, type ForgeName } from "./config";
+import { CONTROL_NAME, CONTROL_READ_TOKEN_ENV, CONTROL_TOKEN_ENV, ConfigError, forgeFromHost, parseProjectKey, type ControlSettings, type ForgeName } from "./config";
 import { MARKER, serializeWorkflow } from "./render";
 import { CHECKOUT, SETUP_NODE } from "./action-pins";
 
@@ -50,6 +50,7 @@ export interface ResolvedControl {
   op: string;
   member: string;
   tokenEnv: string;
+  readTokenEnv: string;
   ref: string;
 }
 
@@ -60,7 +61,35 @@ export function resolveControl(control: ControlSettings, fallbackMember: string)
   if (!forge) throw new ConfigError(`control.forge is needed: ${control.repo}'s host does not say which forge it is`);
   const member = control.member ?? fallbackMember;
   if (!CONTROL_NAME.test(member)) throw new ConfigError(`control.member: "${member}" is not a name the control repo's workspace can hold; set control.member`);
-  return { repo: control.repo, host: pk.host, path: pk.path, forge, op: control.op, member, tokenEnv: control.token_env ?? CONTROL_TOKEN_ENV, ref: control.ref ?? CONTROL_REF_DEFAULT };
+  return { repo: control.repo, host: pk.host, path: pk.path, forge, op: control.op, member, tokenEnv: control.token_env ?? CONTROL_TOKEN_ENV, readTokenEnv: control.read_token_env ?? CONTROL_READ_TOKEN_ENV, ref: control.ref ?? CONTROL_REF_DEFAULT };
+}
+
+/** Where a tf-plan job puts the control repo's checkout, in the job's workspace. */
+export const CONTROL_CHECKOUT_DIR = ".terragucci-control";
+
+/** The plan job's variable that tells estate ownership where the control repo's records are (estate-ownership.ts). */
+export function controlDirEnv(forge: ForgeName): Record<string, string> {
+  return { TERRAGUCCI_CONTROL_DIR: forge === "gitlab" ? `$CI_PROJECT_DIR/${CONTROL_CHECKOUT_DIR}` : `\${{ github.workspace }}/${CONTROL_CHECKOUT_DIR}` };
+}
+
+/** GitHub and Forgejo: the step that checks the control repo out, read-only, with the read secret when it is set and the job's token when not. */
+export function controlCheckoutStep(c: ResolvedControl, cond?: string): InstanceType<typeof Step> {
+  return new Step({
+    ...(cond ? { if: cond } : {}),
+    name: `Check out the control repo ${c.repo}, read-only, for estate ownership`,
+    uses: CHECKOUT,
+    with: { repository: c.path, token: `\${{ secrets.${c.readTokenEnv} || github.token }}`, path: CONTROL_CHECKOUT_DIR, "persist-credentials": false, "fetch-depth": 1 },
+  } as never);
+}
+
+/** GitLab: the lines that clone the control repo, read-only, with the read variable when it is set and the job token when not. */
+export function controlCloneScript(c: ResolvedControl): string {
+  const url = `${c.host}/${c.path}.git`;
+  return [
+    `rm -rf ${CONTROL_CHECKOUT_DIR}`,
+    `git clone --quiet --depth 1 "https://oauth2:\${${c.readTokenEnv}:-\${CI_JOB_TOKEN:-}}@${url}" ${CONTROL_CHECKOUT_DIR} || { echo "terragucci: could not read the control repo ${c.repo}" >&2; exit 1; }`,
+    `git -C ${CONTROL_CHECKOUT_DIR} remote set-url origin "https://${url}"`,
+  ].join("\n");
 }
 
 /** A value that passed CONTROL_NAME is safe in a single-quoted shell word and a JSON string; this keeps it so. */

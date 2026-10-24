@@ -414,6 +414,10 @@
           "type": "string",
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         },
+        "read_token_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
         "ref": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
@@ -2232,6 +2236,10 @@
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
             },
             "token_env": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "read_token_env": {
               "type": "string",
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
             },
