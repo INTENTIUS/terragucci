@@ -20,6 +20,15 @@
  * beside the state in its own backend (`<key>.terragucci-unwritten`), its
  * lock still held, and the next run writes it before it plans anything.
  *
+ * Roots that all run choudoufu compose differently (an estate run): each
+ * is a choudoufu estate with a `live` block and no state file, so the composed
+ * root is only `module` calls of the roots' own directories, which choudoufu
+ * plans and applies as one run (choudoufu#2059). Nothing is pulled, split or
+ * written back: each resource's record goes to its own estate in the record
+ * store as it applies, and a read of one estate's outputs by another resolves
+ * inside the run. Each estate's role comes from the provider blocks in its own
+ * directory, so a set of roots under different roles composes too.
+ *
  * A change applies in waves as without the key, and the note says why, when
  * the set has more roots than `waves.compose_max`, is one root, or holds
  * roots one binary process cannot run together (compositionFor's checks).
@@ -36,14 +45,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join, relative, resolve } from "node:path";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
-import { backendBlock, blockBody, explicitOrder, stateOf, type WavesAfter } from "./detect";
+import { backendBlock, blockBody, estateOf, estateOutputReads, explicitOrder, liveRoots, stateOf, type WavesAfter } from "./detect";
 import { configFiles, hclValue, outputsRead, refRe } from "./linked";
 import { plannedOutputs, plannedRead } from "./planned-outputs";
 import { isStored, rootWorkspace, stateObject, type StateObject } from "./backend";
 import { rootRoleEnv } from "./cloud-identity";
 import { derivedLineage, pullState, runBinary, takeLocks, type BinaryExec, type HeldLock, type StateFile, type StateResource } from "./migrate";
 import { changesSomething } from "./report/changing";
-import type { ReportComposedMember, ReportRead } from "./report/schema";
+import type { ReportCompose, ReportComposedMember, ReportRead } from "./report/schema";
 import type { HookMoment } from "./hooks";
 
 /** Where the composed root is written, in the checkout. */
@@ -109,6 +118,8 @@ export interface Composition {
   reads: Map<string, ComposedReadBlock[]>;
   /** The wave each member is in on its own. */
   ownWave: Map<string, number>;
+  /** Every member runs choudoufu: the run is one choudoufu run over estates, with no state to pull, split or write back. */
+  estate?: boolean;
 }
 
 /** The binary a root runs, as RootBinaries.expected names it before anything is installed. */
@@ -201,13 +212,44 @@ export function compositionFor(repo: string, input: CompositionInput): Compositi
   const order = readOrder(roots, input.deps);
   const ownWave = new Map(input.waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)).filter(([r]) => roots.includes(r)));
   const modules = moduleNames(roots);
-  const reads = composedReads(repo, roots);
-  const base = { roots, order, max, modules, reads, ownWave };
-  const fallback = fallbackOf(repo, roots, input, reads);
+  // Every root runs choudoufu: the roots compose as estates (choudoufu#2059).
+  const estate = roots.length > 1 && roots.every((r) => input.binary(r).name === "choudoufu");
+  const reads = estate ? composedEstateReads(repo, roots) : composedReads(repo, roots);
+  const base = { roots, order, max, modules, reads, ownWave, ...(estate ? { estate } : {}) };
+  const fallback = fallbackOf(repo, roots, input, reads, estate);
   if (fallback) return { ...base, fallback };
   const wave = Math.min(...roots.map((r) => ownWave.get(r) ?? Number.POSITIVE_INFINITY));
   if (!Number.isFinite(wave)) return { ...base, fallback: { kind: "one-root", reason: "none of its roots is in a wave of this apply" } };
   return { ...base, wave };
+}
+
+/** Each member's `terraform_estate_outputs` blocks that read the estate of another member: choudoufu resolves them inside the run. */
+function composedEstateReads(repo: string, roots: readonly string[]): Map<string, ComposedReadBlock[]> {
+  const estates = new Map(roots.map((r) => [r, estateOf(join(repo, r)).estate] as const));
+  const out = new Map<string, ComposedReadBlock[]>();
+  for (const r of roots) {
+    const blocks: ComposedReadBlock[] = [];
+    for (const read of estateOutputReads(join(repo, r))) {
+      const upstream = roots.find((o) => o !== r && estates.get(o) === read.estate);
+      if (upstream) blocks.push({ name: read.name, upstream });
+    }
+    out.set(r, blocks);
+  }
+  return out;
+}
+
+/** The values a root's files read from a `terraform_estate_outputs` block: their names, or undefined when it reads the whole object. */
+function estateValuesRead(texts: readonly string[], name: string): Set<string> | undefined {
+  const re = new RegExp(`\\bdata\\.terraform_estate_outputs\\.${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])(\\.values(?:\\.([A-Za-z_][\\w-]*)|\\[\\s*"([^"]+)"\\s*\\])?)?`, "g");
+  const read = new Set<string>();
+  for (const t of texts) {
+    for (const m of t.matchAll(re)) {
+      const out = m[2] ?? m[3];
+      if (!out) return undefined;
+      read.add(out);
+    }
+  }
+  return read;
 }
 
 /** Each member's `terraform_remote_state` blocks that read another member. */
@@ -315,7 +357,7 @@ function identityOf(env: NodeJS.ProcessEnv, root: string): string {
 }
 
 /** The first reason the set cannot run as one composed run, in the order the checks are listed in the docs. */
-function fallbackOf(repo: string, roots: string[], input: CompositionInput, reads: Map<string, ComposedReadBlock[]>): ComposeFallback | undefined {
+function fallbackOf(repo: string, roots: string[], input: CompositionInput, reads: Map<string, ComposedReadBlock[]>, estate: boolean): ComposeFallback | undefined {
   const max = input.max ?? DEFAULT_COMPOSE_MAX;
   if (roots.length > max) return { kind: "too-many-roots", reason: `this change reaches ${plural(roots.length, "root")}, more than \`waves.compose_max\` (${max})` };
   if (roots.length <= 1) return { kind: "one-root", ...(roots[0] ? { root: roots[0] } : {}), reason: roots.length === 0 ? "this change reaches no root" : `this change reaches one root, \`${roots[0]}\`, which applies in its own run` };
@@ -323,31 +365,35 @@ function fallbackOf(repo: string, roots: string[], input: CompositionInput, read
   const bins = new Map(roots.map((r) => [r, input.binary(r)] as const));
   const first = bins.get(roots[0]!)!;
   for (const [r, b] of bins) {
-    if (b.name === "choudoufu") return { kind: "binary", root: r, reason: `\`${r}\` runs choudoufu, which keeps no state for a composed run to split` };
     if (b.name !== first.name || (b.version ?? "") !== (first.version ?? "")) {
       return { kind: "binary", root: r, reason: `\`${r}\` runs ${b.name}${b.version ? ` ${b.version}` : ""} and \`${roots[0]}\` ${first.name}${first.version ? ` ${first.version}` : ""}, and one run has one binary` };
     }
   }
-  // One binary process has one set of credentials.
+  if (estate) {
+    // Each estate is its own directory with its own `live` block; the composed root calls the directories as they are.
+    const notLive = roots.filter((r) => !liveRoots(repo, [r]).length);
+    if (notLive.length) return { kind: "backend", root: notLive[0]!, reason: `\`${notLive[0]}\` has no \`live\` block, and a composed run of estates calls only directories that carry one` };
+  }
+  // One binary process has one set of credentials. Estates take each one's role from its own provider blocks.
   const ids = new Map(roots.map((r) => [r, identityOf(input.env, r)] as const));
   const firstId = ids.get(roots[0]!);
-  for (const r of roots) {
+  for (const r of estate ? [] : roots) {
     if (ids.get(r) !== firstId) {
       const same = roots.filter((x) => ids.get(x) === firstId);
       return { kind: "identity", root: r, reason: `\`${r}\` runs under another role (\`oidc.roles\`) than ${list(same)}, and one run has one set of credentials` };
     }
   }
-  if (input.groupOf) {
+  if (input.groupOf && !estate) {
     const g = input.groupOf(roots[0]!);
     const other = roots.find((r) => input.groupOf!(r) !== g);
     if (other) return { kind: "identity", root: other, reason: `\`${other}\` is in apply group ${input.groupOf(other)} and \`${roots[0]}\` in ${g}, and one group's job applies a composed run` };
   }
-  for (const r of roots) {
+  for (const r of estate ? [] : roots) {
     const ws = rootWorkspace(join(repo, r));
     if (ws && ws !== "default") return { kind: "workspace", root: r, reason: `\`${r}\` plans in workspace ${ws}, and a composed run plans in default` };
   }
   const initArgs = `${input.env.TF_CLI_ARGS ?? ""} ${input.env.TF_CLI_ARGS_init ?? ""}`;
-  for (const r of roots) {
+  for (const r of estate ? [] : roots) {
     const b = backendBlock(join(repo, r));
     if (b && "cloud" in b) return { kind: "backend", root: r, reason: `\`${r}\` has a \`cloud\` block, whose state terragucci does not lock itself` };
     const type = b?.type ?? "local";
@@ -759,6 +805,35 @@ export function unionLock(dirs: readonly string[]): string | undefined {
   return out.join("\n");
 }
 
+/**
+ * The composed root of an estate run, written into the checkout: one `module`
+ * call per estate, each `source` the estate's own directory and nothing else.
+ * No file of any estate is changed, so there is nothing to put back but the
+ * generated files. choudoufu reads each called directory's own `live` block.
+ */
+export function writeEstateRoot(repo: string, c: Composition): ComposedRoot {
+  const dir = join(repo, COMPOSE_DIR);
+  const generatedFiles: string[] = [];
+  const modules = c.order.map((r) => `module "${c.modules.get(r)}" {\n  source = ${JSON.stringify(`../${r === "." ? "" : r}`)}\n}\n`);
+  // The composed root re-exports each estate's outputs as `<module>__<name>`, which is where the plan shows what an estate's output will be.
+  const outputs = new Map<string, Map<string, boolean>>(c.order.map((r) => [r, declaredOutputs(rootTexts(join(repo, r)))] as const));
+  const outs = c.order.flatMap((r) =>
+    [...outputs.get(r)!].map(([o, sensitive]) => `output "${c.modules.get(r)}__${o}" {\n  value = module.${c.modules.get(r)}.${o}\n${sensitive ? "  sensitive = true\n" : ""}}\n`),
+  );
+  mkdirSync(dir, { recursive: true });
+  const main = join(dir, "main.tf");
+  writeFileSync(main, ["# Written by terragucci for a composed run of estates (waves.compose): each estate's directory a module, its records its own.\n", ...modules, ...outs].join("\n"));
+  generatedFiles.push(main);
+  const lock = unionLock(c.roots.map((r) => join(repo, r)));
+  if (lock) {
+    const lockFile = join(dir, ".terraform.lock.hcl");
+    writeFileSync(lockFile, lock);
+    generatedFiles.push(lockFile);
+  }
+  const generated = generatedFiles.map((f) => [relative(repo, f).split("\\").join("/"), sha256(readFileSync(f, "utf-8"))] as [string, string]).sort(([a], [b]) => (a < b ? -1 : 1));
+  return { dir, generated, outputs, restore: () => { for (const f of generatedFiles) rmSync(f, { force: true }); } };
+}
+
 /** The composed plan's digest: chant's digest of the plan, joined with the generated files, so an approval of one composition never applies another. */
 export function composedDigest(planDigest: string, generated: readonly [string, string][]): string {
   return computePlanDigest("terragucci-composed-plan", { plan: planDigest, files: generated.map(([path, sha]) => `${path} ${sha}`) });
@@ -1000,7 +1075,7 @@ export function composedReportReads(repo: string, c: Composition, slices: Readon
     for (const b of c.reads.get(r) ?? []) {
       const planned = plannedOutputs(slices.get(b.upstream));
       if (!planned) continue;
-      reads.push({ ...plannedRead(b.upstream, b.name, planned.outputs, outputsRead(texts, b.name)), composed: true });
+      reads.push({ ...plannedRead(b.upstream, b.name, planned.outputs, c.estate ? estateValuesRead(texts, b.name) : outputsRead(texts, b.name)), composed: true });
     }
     if (reads.length) out.set(r, reads);
   }
@@ -1178,7 +1253,8 @@ export class ComposedRun {
    * own plan lets it (rootCacheEnv in ./report/stage.ts).
    */
   private composedEnv(): NodeJS.ProcessEnv {
-    const env = withoutVarFiles(this.rootEnv(this.c.order[0]!));
+    // An estate run assumes no role of its own: each estate's provider blocks name its role.
+    const env = withoutVarFiles(this.c.estate ? this.o.env : this.rootEnv(this.c.order[0]!));
     return env.TF_PLUGIN_CACHE_DIR && !existsSync(join(this.composeDir, ".terraform.lock.hcl")) ? { ...env, TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE: "true" } : env;
   }
 
@@ -1208,13 +1284,15 @@ export class ComposedRun {
       if (init.code !== 0) return this.failedPlan(`init failed\n${firstLines(init.out, 40)}`, r);
       e = await this.o.hooks.afterInit?.(r, env);
       if (e) return this.failedPlan(e, r);
+      // An estate has no state: nothing to read, lock or write back.
+      if (this.c.estate) continue;
       const object = stateObject(dir, env);
       if ("unsupported" in object && isStoredBackend(object.backend)) return this.failedPlan(`its state cannot be read where it is: ${object.unsupported}`, r);
       if (object.backend === "s3" && "lockfile" in object && !object.lockfile && this.o.lock) return this.failedPlan("its s3 backend takes no lock file (use_lockfile = true), so a composed run cannot hold its lock", r);
       if (!isStored(object) && object.backend !== "local") return this.failedPlan(`its backend is ${object.backend}, and a composed run locks and writes s3, gcs, azurerm and local states`, r);
       this.objects.set(r, object);
     }
-    if (this.o.lock) {
+    if (this.o.lock && !this.c.estate) {
       const op = { operation: COMPOSE_LOCK.operation, info: `${COMPOSE_LOCK.info}${this.o.runId ? ` (run ${this.o.runId})` : ""}` };
       const files = new Map(this.c.order.map((r) => [r, { object: this.objects.get(r)! }] as const));
       try {
@@ -1238,7 +1316,7 @@ export class ComposedRun {
         }
       }
     }
-    for (const r of this.c.order) {
+    for (const r of this.c.estate ? [] : this.c.order) {
       try {
         this.pulled.set(r, await pullState(this.exec, bin, r, join(repo, r), this.rootEnv(r)));
       } catch (e) {
@@ -1252,7 +1330,7 @@ export class ComposedRun {
     const planFile = join(this.o.work, "composed.tfplan");
     let root: ComposedRoot;
     try {
-      root = writeComposedRoot(repo, this.c, this.o.env);
+      root = this.c.estate ? writeEstateRoot(repo, this.c) : writeComposedRoot(repo, this.c, this.o.env);
     } catch (e) {
       return this.failedPlan(`the composed root could not be written: ${(e as Error).message}`);
     }
@@ -1260,7 +1338,7 @@ export class ComposedRun {
     let text = "";
     let summary = "";
     try {
-      writeFileSync(join(this.composeDir, "terraform.tfstate"), JSON.stringify(mergeStates(repo, this.c, this.pulled), null, 2) + "\n");
+      if (!this.c.estate) writeFileSync(join(this.composeDir, "terraform.tfstate"), JSON.stringify(mergeStates(repo, this.c, this.pulled), null, 2) + "\n");
       const env = this.composedEnv();
       const init = await turn(() => this.exec(bin, ["init", "-input=false", "-no-color"], this.composeDir, env));
       if (init.code !== 0) return this.failedPlan(`the composed root's init failed\n${firstLines(init.out, 40)}`);
@@ -1360,7 +1438,7 @@ export class ComposedRun {
     }
     let root: ComposedRoot;
     try {
-      root = writeComposedRoot(repo, this.c, this.o.env);
+      root = this.c.estate ? writeEstateRoot(repo, this.c) : writeComposedRoot(repo, this.c, this.o.env);
     } catch (e) {
       return { ok: false, members: members(), settled: [], error: `the composed root could not be written: ${(e as Error).message}` };
     }
@@ -1386,6 +1464,7 @@ export class ComposedRun {
     }
     const mods = this.c.order.map((r) => this.c.modules.get(r)!);
     const ev = readApplyEvents(out, mods);
+    if (this.c.estate) return this.finishEstate(p, ev, code);
     const workingFile = existsSync(join(this.composeDir, "errored.tfstate")) ? join(this.composeDir, "errored.tfstate") : join(this.composeDir, "terraform.tfstate");
     let working: StateFile;
     try {
@@ -1433,6 +1512,39 @@ export class ComposedRun {
     }
     const ok = code === 0 && result.every((x) => (x.apply === "applied" || x.apply === "no-changes") && x.state !== "not-written" && !x.error);
     return { ok, members: result, settled, ...(shown.size ? { shown } : {}), ...(ok ? {} : { error: ev.other[0] ?? (code !== 0 ? "the composed apply failed" : result.find((x) => x.error)?.error) }) };
+  }
+
+  /**
+   * How an estate run ended. There is no working state to split: each resource's
+   * record went to its estate as it applied, so a member that applied anything
+   * holds what applied and a member that applied nothing is as it was.
+   */
+  private async finishEstate(p: ComposedPlan, ev: ApplyEvents, code: number): Promise<ComposedApply> {
+    const result: ReportComposedMember[] = [];
+    for (const r of this.c.order) {
+      const m = this.c.modules.get(r)!;
+      const planned = planCounts(p.slices.get(r)).changes;
+      const { apply, done } = memberApply(m, planned, ev);
+      result.push({ root: r, module: `module.${m}`, apply, changes: { done, planned }, state: done > 0 ? "written" : "unchanged", ...(ev.errored.get(m) ? { error: ev.errored.get(m) } : {}) });
+    }
+    const shown = new Map<string, unknown>();
+    for (const r of this.c.order) {
+      try {
+        const s = await this.exec(this.o.binary.path, ["show", "-json", "-no-color"], join(this.o.repo, r), this.o.env);
+        if (s.code === 0) shown.set(r, JSON.parse(s.stdout));
+      } catch (e) {
+        this.log(`composed: ${r} could not be shown after the apply (${(e as Error).message}); the values unknown at plan stay unknown in the report`);
+      }
+    }
+    for (const r of this.c.order) {
+      const row = result.find((x) => x.root === r)!;
+      if (row.apply === "applied" || row.apply === "no-changes") {
+        const e = await this.step(r, "after-apply");
+        if (e) row.error = e;
+      }
+    }
+    const ok = code === 0 && result.every((x) => (x.apply === "applied" || x.apply === "no-changes") && !x.error);
+    return { ok, members: result, settled: [...this.c.order], ...(shown.size ? { shown } : {}), ...(ok ? {} : { error: ev.other[0] ?? (code !== 0 ? "the composed apply failed" : result.find((x) => x.error)?.error) }) };
   }
 
   /**
@@ -1544,4 +1656,9 @@ export function compositionLine(c: Composition): string {
   return c.fallback || c.wave === undefined
     ? `compose: ${c.fallback?.reason ?? "no wave runs it"}, so the change applies in waves`
     : `compose: ${c.order.join(", ")} apply as one composed run in wave ${c.wave} (${composeTarget(c.wave)})`;
+}
+
+/** `Report.compose` from a composition. */
+export function reportCompose(c: Composition): ReportCompose {
+  return { roots: c.roots, max: c.max, ...(c.wave !== undefined && !c.fallback ? { wave: c.wave } : {}), ...(c.estate ? { estate: true as const } : {}), ...(c.fallback ? { fallback: c.fallback } : {}) };
 }

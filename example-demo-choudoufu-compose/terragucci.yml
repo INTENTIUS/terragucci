@@ -1,0 +1,30 @@
+# The choudoufu compose demo's three estates: network, app (reads network) and
+# edge (reads app). Each is a choudoufu estate of SQS queues in floci, with no
+# state file: every resource's record goes to the demo's own record store
+# (stack/demo.sh, tool choudoufu-compose). The plan reports and run views go to
+# the reports bucket there too.
+forge: forgejo
+binary: choudoufu
+# Every job runs in the demo's job image, which carries choudoufu and
+# hashicorp/aws 6.67.0 as a filesystem mirror (stack/demo-yodel/Dockerfile).
+image: terragucci-demo-choudoufu:local
+# A wave that destroys something, or a composed run that reads a value unknown
+# at plan time, waits for an approval before it applies.
+gate: on-destructive
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
+# The estates a change reaches, and the estates they read, plan as one plan and
+# apply as one apply, each keeping its own records.
+waves:
+  compose: true
+env:
+  # Installs hashicorp/aws from the image's mirror, so no job downloads it.
+  TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc
+  # choudoufu's record store addresses its bucket virtual-hosted
+  # (<bucket>.<host>). demo-records forwards those requests to floci
+  # path-style (stack/docker-compose.yml, profile demo).
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  TERRAGUCCI_METRICS_PER_RUN: "true"

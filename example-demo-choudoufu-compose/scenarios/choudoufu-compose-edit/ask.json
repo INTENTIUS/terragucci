@@ -1,0 +1,35 @@
+{
+  "opening": "Three estates: network, app and edge. One record store for every estate. Each one reads the one before it.",
+  "planned": {
+    "prompt": "I changed the proxy port and added an admin port in network. What does that touch?",
+    "action": null,
+    "reply": "All {roots} estates. One plan: {creates} to create, {updates} to change.",
+    "light": [
+      "network/aws_sqs_queue.http_proxy_port",
+      "network/aws_sqs_queue.admin_port",
+      "network/aws_sqs_queue.release",
+      "app/aws_sqs_queue.listener",
+      "app/aws_sqs_queue.admin_listener",
+      "edge/aws_sqs_queue.upstream",
+      "edge/aws_sqs_queue.admin_upstream"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "approved": {
+    "prompt": null,
+    "action": "You approve the plan on the pull request.",
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Applied. One plan, one apply, across estates.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
+}

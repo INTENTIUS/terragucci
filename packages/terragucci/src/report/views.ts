@@ -590,7 +590,7 @@ export function composeBlock(report: Report, name: (root: string) => string = (r
   const unknown = report.roots.flatMap((r) => (r.reads ?? []).filter((x) => x.composed && x.unknown?.length).map((x) => ({ root: r.path, ...x })));
   if (unknown.length > 0) {
     t += `\n**Read before they were known (${unknown.length}).** The run applies these after the root that makes them, so no plan shows their values, and the run waits for an approval under any gate but \`never\`:\n\n`;
-    for (const x of unknown) t += `- ${name(x.root)} reads ${x.unknown!.map(code).join(", ")} from ${code(x.upstream)} (\`data.terraform_remote_state.${x.data}\`)\n`;
+    for (const x of unknown) t += `- ${name(x.root)} reads ${x.unknown!.map(code).join(", ")} from ${code(x.upstream)} (\`data.${report.compose?.estate ? "terraform_estate_outputs" : "terraform_remote_state"}.${x.data}\`)\n`;
   }
   if (report.run.stage === "tf-apply" && members.some((m) => m.state !== undefined)) {
     const ok = members.every((m) => (m.apply === "applied" || m.apply === "no-changes") && m.state !== "not-written" && !m.error);

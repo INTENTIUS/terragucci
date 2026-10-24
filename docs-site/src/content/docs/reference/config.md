@@ -246,7 +246,7 @@ waves:
 
 With it, the roots a change reaches and every root they read plan as one plan and apply as one apply, each root a module of a temporary root, each keeping its own state. The run happens in the job of the earliest wave its roots are in, under that wave's gate, and later waves no longer list its roots. The waves, their numbers, their gates and the rendered pipeline stay as they were. [A composed run](/terragucci/concepts/waves-and-approvals/#a-composed-run) says how the states are locked, written and kept, and when a change applies in waves instead.
 
-`config check` refuses `waves.compose: true` with `binary: choudoufu`, whose runs keep no state to split, and in a Terragrunt repo, whose units apply through Terragrunt. With `waves.jobs` above 1 the composed run is one share of its wave; with one apply job per identity its roots must all be in one group, and that group's job applies it.
+`config check` refuses `waves.compose: true` in a Terragrunt repo, whose units apply through Terragrunt. With `binary: choudoufu` the roots compose as estates, with no state to lock or split ([Composed estates](/terragucci/concepts/waves-and-approvals/#composed-estates)). With `waves.jobs` above 1 the composed run is one share of its wave; with one apply job per identity its roots must all be in one group, and that group's job applies it.
 
 ## Apply before merge
 
