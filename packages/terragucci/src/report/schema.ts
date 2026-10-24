@@ -542,7 +542,7 @@ export interface ReportRootPolicy {
   denials: string[];
   /** The ids of the rules that denied, such as `main.deny_public_bucket`, sorted (minor 10): what an override names. */
   rules?: string[];
-  /** The ids of the rules among `rules` that are hard-mandatory (annotated in the Rego, or `enforcement_level = "hard-mandatory"` in `policies.hcl`): no override can pass them. */
+  /** The ids of the rules among `rules` that are hard-mandatory (minor 46; annotated in the Rego, or `enforcement_level = "hard-mandatory"` in `policies.hcl`): no override can pass them. */
   hard_mandatory?: string[];
   /** The messages of `warn` rules: advice that fails nothing. */
   warnings: string[];
@@ -813,7 +813,7 @@ export interface ReportRefusal {
   by?: string;
   /** The roots that planned differently since (every changing root, for a review), or the roots the policy denied, or those whose resources another run held. */
   roots: string[];
-  /** With `policy`: the hard-mandatory rules among those that denied, which no override can pass. */
+  /** With `policy` (minor 46): the hard-mandatory rules among those that denied, which no override can pass. */
   hard_mandatory?: string[];
   /** With `held`, the run that held them, and its page (minor 30). */
   holder?: { run: string; url?: string };
