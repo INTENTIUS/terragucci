@@ -15,7 +15,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `import` | writes `terragucci.yml` from an `atlantis.yaml`, a `digger.yml` or a Terragrunt Scale `.gruntwork`, or from the workspaces of HCP Terraform, OTF or Scalr, and prints what became of each setting |
 | `reconcile` | from a [control repo](/terragucci/concepts/control-repo/), opens a pull request in each project that needs a change |
 | `generate` | writes each root's backend, provider and version files from the [`generate` key](/terragucci/guides/generate-root-files/), and in a Terragrunt repo `terragucci.hcl`, which each unit includes; `--check` refuses one that differs, and the generated `tf-check` job runs it |
-| `estate` | writes one page for every project, `estate.html`, `estate.json` and `dora.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
+| `estate` | writes one page for every project, `estate.html`, `estate.json`, `dora.json` and `policy-metrics.json`, to the reports bucket, and prints a link to it: presigned on S3, a signed URL on GCS, a SAS on Azure Blob |
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it, and every state version no wave or migration wrote; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
@@ -202,7 +202,7 @@ terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>]
 | | `estate` |
 |---|---|
 | Reads | each project's `index.json`, `inventory.json`, `versions.json`, `changes.json` and `states.json`; `audit.jsonl` and `audit.json` when the audit trail is there, for the approvers and each root's [unrecorded writes](/terragucci/reference/audit-trail/#unrecorded-writes) |
-| Writes | `estate.html`, `estate.json` and `dora.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
+| Writes | `estate.html`, `estate.json`, `dora.json` and `policy-metrics.json` at the top of the prefix; `history.html` and `history.json` once an apply changed a resource, with each apply's approver from `audit.jsonl` |
 | Projects | in a control repo, its `projects:`, each read from its own `reports`, the page written to `defaults.reports`; in a repo of its own, the ones the top `index.json` lists |
 | Also | links the audit trail when `audit.json` is beside the page; computes the [delivery metrics](/terragucci/reference/delivery-metrics/) and sends them as gauges when an OTLP endpoint is set |
 | Exit 1 | a project's index could not be read; the page names it |

@@ -32,6 +32,7 @@ A scheduled job rebuilds `estate.html` and `estate.json` at the top of your repo
 | each root that reads another root's state, with its last plan against the producer's last apply | each project's `edges.json` |
 | a link to the [audit trail](/terragucci/reference/audit-trail/), when the job writes one | `audit.json` beside the page |
 | the four DORA metrics per project and for the estate, week by week, also in `dora.json` | `audit.jsonl` and each project's `index.json` |
+| the [policy metrics](/terragucci/reference/delivery-metrics/#policy-metrics): denials per rule, the override rate and turnaround, and changes blocked before deploy against problems found after, also in `policy-metrics.json` | `audit.jsonl`, and each project's `index.json` for drift |
 
 The page reads only the files above and never a report or a plan.
 
@@ -77,7 +78,7 @@ In a Terragrunt repo the graph groups units into the waves their apply cut from 
      "Version": "2012-10-17",
      "Statement": [
        { "Effect": "Allow", "Action": "s3:GetObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/*index.json", "arn:aws:s3:::acme-terragucci/reports/*inventory.json", "arn:aws:s3:::acme-terragucci/reports/*versions.json", "arn:aws:s3:::acme-terragucci/reports/*changes.json", "arn:aws:s3:::acme-terragucci/reports/*states.json", "arn:aws:s3:::acme-terragucci/reports/*edges.json", "arn:aws:s3:::acme-terragucci/reports/*/runs/*/run.json", "arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/audit.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/*/tf-apply-wave-*/report.json"] },
-       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/audit.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] }
+       { "Effect": "Allow", "Action": "s3:PutObject", "Resource": ["arn:aws:s3:::acme-terragucci/reports/estate.html", "arn:aws:s3:::acme-terragucci/reports/estate.json", "arn:aws:s3:::acme-terragucci/reports/history.html", "arn:aws:s3:::acme-terragucci/reports/history.json", "arn:aws:s3:::acme-terragucci/reports/dora.json", "arn:aws:s3:::acme-terragucci/reports/policy-metrics.json", "arn:aws:s3:::acme-terragucci/reports/audit.jsonl", "arn:aws:s3:::acme-terragucci/reports/audit.html", "arn:aws:s3:::acme-terragucci/reports/audit.json"] }
      ]
    }
    ```
@@ -180,8 +181,9 @@ In a Terragrunt repo the graph groups units into the waves their apply cut from 
      gitlab.example.com/platform/network: wave 2 waits, for 3h 0m
      github.com/acme/data: 2 roots drifted
    dora: 2.5 deployments per week (20 in 8 weeks), lead time 3h 10m, change failure rate 5%, time to restore 1h 20m
-   wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/dora.json, terragucci-estate/history.json and terragucci-estate/history.html
-   copied to s3://acme-terragucci/reports/estate.json, reports/estate.html, reports/dora.json, reports/history.json and reports/history.html
+   policy: 7 denials, override rate 28.6%, override turnaround 2h 5m, 1 override request open, 9 blocked before deploy against 2 found after
+   wrote terragucci-estate/estate.json, terragucci-estate/estate.html, terragucci-estate/dora.json, terragucci-estate/policy-metrics.json, terragucci-estate/history.json and terragucci-estate/history.html
+   copied to s3://acme-terragucci/reports/estate.json, reports/estate.html, reports/dora.json, reports/policy-metrics.json, reports/history.json and reports/history.html
    link, until 2026-10-08T12:00:00.000Z:
    https://acme-terragucci.s3.us-east-1.amazonaws.com/reports/estate.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&...
    ```

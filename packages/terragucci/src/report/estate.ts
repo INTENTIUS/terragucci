@@ -35,6 +35,7 @@ import type { AuditEntry } from "./audit";
 import type { StateVersions } from "./state-versions";
 import { edgesOf, type Edge, type EdgeRun, type StateEdges } from "./state-edges";
 import { renderDoraSection, type Dora } from "./dora";
+import { renderPolicySection, type PolicyMetrics } from "./policy-metrics";
 import type { IndexEntry } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 import { GRAPH_CSS, renderGraphSvg, type GraphEdge } from "./graph";
@@ -732,7 +733,7 @@ function ephemeralSection(estate: Estate, now: Date): string {
  * small script only moves the "ago" times forward while it is open, and the
  * estate JSON rides inline for a reader that wants it.
  */
-export function renderEstateHtml(estate: Estate, dora?: Dora): string {
+export function renderEstateHtml(estate: Estate, dora?: Dora, policy?: PolicyMetrics): string {
   const now = new Date(estate.generated);
   const t = estate.totals;
   const tiles = [
@@ -784,7 +785,7 @@ ${ephemeralSection(estate, now)}
 ${graphSection(estate)}
 <h2>Recent runs</h2>
 ${recentRows.length ? `<div class="scroll"><table><tr><th>Project</th><th>Stage</th><th>Commit</th><th>Pull request</th><th>Changes</th><th></th><th>Finished</th><th></th></tr>\n${recentRows.join("\n")}\n</table></div>` : `<p class="none">No runs yet.</p>`}
-${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}<h2 id="resources">Resources</h2>
+${dora ? `<h2 id="delivery">Delivery</h2>\n${renderDoraSection(dora, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}${policy ? `<h2 id="policy-metrics">Policy</h2>\n${renderPolicySection(policy, (name) => link(estate.projects.find((p) => p.project === name)?.index, esc(name)))}\n` : ""}<h2 id="resources">Resources</h2>
 ${estate.history ? `<p>Change history: <a href="${esc(estate.history.page)}" id="resource-history">${estate.history.resources} ${estate.history.resources === 1 ? "resource" : "resources"}</a>, each apply that changed one with its approver.</p>\n` : ""}${resourcesSection(estate, now)}
 <h2 id="versions">Versions</h2>
 ${versionsSection(estate)}
