@@ -196,6 +196,7 @@
               "result": { "enum": ["passed", "denied", "error"] },
               "denials": { "type": "array", "items": { "type": "string" } },
               "rules": { "type": "array", "items": { "type": "string" }, "description": "The ids of the rules that denied, sorted (minor 10)." },
+              "hard_mandatory": { "type": "array", "items": { "type": "string" }, "description": "The ids of the rules among rules that are hard-mandatory: no override can pass them." },
               "warnings": { "type": "array", "items": { "type": "string" } },
               "error": { "type": "string" },
               "held_by": { "type": "array", "items": { "type": "string" }, "description": "With hold in policy.outcomes at base: the ids of the hold rules that matched, sorted; its wave waits for an approval (minor 40)." },
@@ -392,7 +393,8 @@
               "reason": { "enum": ["approval", "review", "override", "policy"] },
               "approved": { "type": "string" },
               "by": { "type": "string" },
-              "roots": { "type": "array", "items": { "type": "string" } }
+              "roots": { "type": "array", "items": { "type": "string" } },
+              "hard_mandatory": { "type": "array", "items": { "type": "string" }, "description": "With reason policy: the hard-mandatory rules among those that denied, which no override can pass." }
             }
           },
           "review": {
