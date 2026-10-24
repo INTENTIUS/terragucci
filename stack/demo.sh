@@ -3074,7 +3074,16 @@ case "$CMD" in
     started=$(now)
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
-    for t in "${TOOLS[@]}"; do if tool_present "$t"; then LOOP_TOOLS+=("$t"); fi; done
+    # With DEMO_SCENARIOS set, up readies only the tools those scenarios run on (the terraform tree's too, whose
+    # example-demo/ every run reads), so a tree that is in the checkout but in no scenario of this host, such as a new
+    # demo not yet checked, never stops the demo that is.
+    up_tools=" terraform "
+    for s in ${DEMO_SCENARIOS:-}; do up_tools+="$(scenario_tool "$s" 2>/dev/null || true) "; done
+    for t in "${TOOLS[@]}"; do
+      tool_present "$t" || continue
+      [ -z "${DEMO_SCENARIOS:-}" ] || [[ "$up_tools" == *" $t "* ]] || { log "up: $t is in no scenario of DEMO_SCENARIOS; not readied"; continue; }
+      LOOP_TOOLS+=("$t")
+    done
     # DEMO_IMAGE is the terraform tree's image and the fan-out tree's, which
     # installs hashicorp/aws from its mirror. A tree whose roots run on
     # choudoufu names the same image as DEMO_IMAGE_CHOUDOUFU, since it carries
