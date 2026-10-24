@@ -1617,7 +1617,7 @@ say() { # step
     compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
     compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     choudoufu-compose-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
-    choudoufu-compose-*:approved) echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
+    choudoufu-compose-*:approved) echo "The reviewer approves pull request $PULL. The review approves the one plan it saw, the only approval this change needs." ;;
     choudoufu-compose-*:resumed)  echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -2219,8 +2219,22 @@ scenario_compose() {
   open_pull
   b_composed_planned
   demo_hold planned "$(say planned)" "merge pull request $PULL"
+  [ "$TOOL" != choudoufu-compose ] || review_approve
   merge_pull
   follow
+}
+
+# The choudoufu compose demo approves by review (approval: pr-review): the
+# reviewer approves the pull request on its head before the merge, so the
+# merge's one run applies the composed plan the review saw without stopping at
+# its gate and without a second run. The approved step carries the person's
+# "Approve the plan." line.
+review_approve() {
+  as_reviewer -o /dev/null -H 'content-type: application/json' -X POST \
+    -d '{"event":"APPROVED","body":"The plan note shows what this change does."}' \
+    "$URL/api/v1/repos/$REPO/pulls/$PULL/reviews" || fail "$REVIEWER could not approve pull request $PULL"
+  demo_write approved "$(say approved)" "merge pull request $PULL"
+  ask_hold approved
 }
 
 # A scenario that starts from more than the snapshot has scenarios/<id>/base/:

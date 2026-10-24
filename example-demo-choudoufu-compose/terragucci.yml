@@ -9,8 +9,11 @@ binary: choudoufu
 # hashicorp/aws 6.67.0 as a filesystem mirror (stack/demo-yodel/Dockerfile).
 image: terragucci-demo-choudoufu:local
 # A wave that destroys something, or a composed run that reads a value unknown
-# at plan time, waits for an approval before it applies.
+# at plan time, waits for an approval before it applies. The approval is the
+# reviewer's approving review of the pull request (approval: pr-review), given
+# before the merge, so the merge's one run applies without stopping.
 gate: on-destructive
+approval: pr-review
 reports:
   bucket: s3://demo-reports
   endpoint: http://floci:4566
