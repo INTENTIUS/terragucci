@@ -1155,7 +1155,7 @@ describe("the chant compose demo (terragucci#1269)", () => {
   });
 
   it("builds its job image from chant's tree, with no terragucci in the description", () => {
-    expect(/^COMPOSE_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1]).toBe("terragucci-demo-chant-compose:local");
+    expect(/^COMPOSE_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1]).toBe("demo-chant-compose:local");
     const dockerfile = readFileSync(join(root, "stack", "demo-chant-compose.Dockerfile"), "utf8");
     expect(dockerfile).toContain("ARG CHANT_REF");
     expect(dockerfile).toContain(`ARG AWS_CLI_VERSION=${AWS_CLI.version}\n`);

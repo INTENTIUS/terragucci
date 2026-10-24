@@ -1,6 +1,6 @@
 # The image the demo's chant compose repo runs its jobs in (stack/demo.sh,
 # INTENTIUS/chant examples/demo-composed-stacks/). stack/demo.sh up builds it into the local
-# daemon as terragucci-demo-chant-compose:local, where forgejo-runner
+# daemon as demo-chant-compose:local, where forgejo-runner
 # (force_pull: false) finds it without pulling, so a job downloads nothing:
 # terragucci's tofu image brings node and git, and this adds the chant CLI and
 # its aws lexicon, and AWS CLI v2, which cfn-deploy runs. Build context:

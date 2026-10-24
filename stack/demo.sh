@@ -45,7 +45,7 @@
 # exports; floci gets those wrong), and its pipeline is the one chant generates
 # (`chant build --components --generate forgejo --pr-loop`, see
 # scripts/chant-pipelines.mjs), with no terragucci in it. Its jobs run in
-# terragucci-demo-chant-compose:local (stack/demo-chant-compose.Dockerfile),
+# demo-chant-compose:local (stack/demo-chant-compose.Dockerfile),
 # which carries chant built from a commit of INTENTIUS/chant (CHANT_COMPOSE_REF)
 # since one approval covering a composed run's re-plan is in no release yet.
 # Its scenarios are chant-compose-edit and chant-compose-create. Like the other
@@ -380,7 +380,7 @@ CHANT_JOB_IMAGE=terragucci-demo-chant:local
 FANOUT_JOB_IMAGE=terragucci-demo-chant-fanout:local
 # The compose repo's, built by up (stack/demo-chant-compose.Dockerfile) and named
 # by examples/demo-composed-stacks/.forgejo/workflows/chant-pr.yml in INTENTIUS/chant.
-COMPOSE_JOB_IMAGE=terragucci-demo-chant-compose:local
+COMPOSE_JOB_IMAGE=demo-chant-compose:local
 # The commit of INTENTIUS/chant that image's chant and aws lexicon are packed
 # from: a covered round, a preview that keeps its known outputs and planned
 # outputs that state their value (chant#4422, #4423, #4430) are on main and in no
@@ -419,9 +419,12 @@ DEMO_IMAGE=terragucci-demo-tofu:local
 # The same image under a second tag, which a tree whose roots run on choudoufu
 # names, so its jobs say the tool they run.
 DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
+# The same image again for the Atmos-on-choudoufu repo, whose workflow (in INTENTIUS/choudoufu)
+# names no terragucci.
+DEMO_IMAGE_PLAIN_CHOUDOUFU=demo-choudoufu:local
 # The Terragrunt-on-choudoufu repo's job image (stack/demo-terragrunt-choudoufu.Dockerfile), named by
 # examples/demo-terragrunt/.forgejo/workflows/terragrunt-choudoufu.yml in INTENTIUS/choudoufu.
-TGC_JOB_IMAGE=terragucci-demo-terragrunt-choudoufu:local
+TGC_JOB_IMAGE=demo-terragrunt-choudoufu:local
 # The bucket the Terragrunt units' generated backend names (examples/demo-terragrunt/root.hcl in INTENTIUS/choudoufu).
 # choudoufu keeps no state file there; it publishes each unit's outputs to it after an apply.
 TGC_STATE_BUCKET=demo-terragrunt-choudoufu-state
@@ -3392,7 +3395,7 @@ case "$CMD" in
         log "building $DEMO_IMAGE and $DEMO_IMAGE_CHOUDOUFU with choudoufu $CHOUDOUFU_VERSION…"
         choudoufu_args=()
       fi
-      docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
+      docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" -t "$DEMO_IMAGE_PLAIN_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
         --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" --build-arg CHANT_VERSION="$CHANT_VERSION" --build-arg CHANT_REF="$CHANT_REPORT_REF" ${choudoufu_args[@]+"${choudoufu_args[@]}"} "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
       # The Terragrunt-on-choudoufu repo's jobs run in the choudoufu image with terragrunt added.

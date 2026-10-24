@@ -1,6 +1,6 @@
 # The image the demo's Terragrunt-on-choudoufu repo runs its jobs in
 # (stack/demo.sh, INTENTIUS/choudoufu examples/demo-terragrunt/). stack/demo.sh up builds
-# it into the local daemon as terragucci-demo-terragrunt-choudoufu:local.
+# it into the local daemon as demo-terragrunt-choudoufu:local.
 #
 #   CHOUDOUFU_IMAGE   the demo's choudoufu image (terragucci-demo-choudoufu:local):
 #                     choudoufu, node, git, and the hashicorp/aws mirror

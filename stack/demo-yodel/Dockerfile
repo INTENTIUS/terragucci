@@ -116,6 +116,8 @@ COPY --from=choudoufu /out/choudoufu /usr/local/bin/choudoufu
 COPY --from=atmos /out/atmos /usr/local/bin/atmos
 COPY --from=awsprovider /providers /opt/terragucci-demo/providers
 COPY tofu-mirror.tfrc /etc/terragucci-demo/tofu-mirror.tfrc
+# The same file where the product repos' demo workflows (INTENTIUS/choudoufu examples/demo-*) look.
+COPY tofu-mirror.tfrc /etc/demo/tofu-mirror.tfrc
 ARG CHOUDOUFU_VERSION
 LABEL org.opencontainers.image.title="terragucci-demo-tofu"
 LABEL org.opencontainers.image.description="terragucci's tofu CI image with SQL Yodeler 0.9.0, choudoufu ${CHOUDOUFU_VERSION} and a hashicorp/aws mirror, for the demo's jobs"
