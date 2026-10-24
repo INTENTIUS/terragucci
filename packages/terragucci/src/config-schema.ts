@@ -13,6 +13,9 @@
  */
 import {
   AGENT_COMMENT_KEYS,
+  CONTROL_KEYS,
+  CONTROL_NAME,
+  CONTROL_REF,
   IMAGE_KEYS,
   AGENT_KEYS,
   AGENT_LOGIN,
@@ -415,6 +418,17 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     rollouts: top
       ? { anyOf: [nonBlank, { const: false }], description: "A cron schedule for the job that opens each rollout's next wave, or false." }
       : { const: false, description: "A single repo's key; a control repo runs terragucci respond rollout itself." },
+    control: {
+      ...map(CONTROL_KEYS, {
+        repo: { type: "string", pattern: "^[^/\\s]+(/[^/\\s]+){2,}$" },
+        op: pat(CONTROL_NAME),
+        forge: enumOf(FORGES),
+        member: pat(CONTROL_NAME),
+        token_env: secret,
+        ref: pat(CONTROL_REF),
+      }, { required: ["repo", "op"] }),
+      description: "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents.",
+    },
     gitlab: { ...map(TOKEN_PROTECTION_KEYS, { token: enumOf(TOKEN_PROTECTIONS) }), description: "GitLab only: how the project keeps its forge token." },
     runtime: { ...enumOf(RUNTIMES), description: "Where the stages run." },
     reports: {

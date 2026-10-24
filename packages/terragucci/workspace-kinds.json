@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "kinds": [
+    {
+      "name": "terragucci-control",
+      "description": "a terragucci control repo: a terragucci.yml that lists projects and the defaults they share",
+      "precedence": 300,
+      "probe": { "anyFile": ["terragucci.yml", "terragucci.yaml", "terragucci.json"] },
+      "memberFile": { "path": "terragucci.yml", "schema": "dist/terragucci.schema.json" }
+    }
+  ]
+}

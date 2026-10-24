@@ -74,6 +74,11 @@ const forgejoSerializer = {
   },
 };
 
+/** Serializes a workflow's entities for GitHub or Forgejo (the control repo's pipeline, control-repo.ts, writes one too). */
+export function serializeWorkflow(forge: Exclude<ForgeName, "gitlab">, jobs: Map<string, never>): string {
+  return text((forge === "forgejo" ? forgejoSerializer : githubSerializer).serialize(jobs));
+}
+
 /**
  * How many levels of `needs` Forgejo 16 settles while it creates a run. It
  * evaluates a job with no `needs` whose `if` is false as skipped on the spot,
@@ -174,6 +179,7 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
+import { dispatchScript, type ResolvedControl } from "./control-repo";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
@@ -277,6 +283,8 @@ export interface PipelineInput {
   drift?: string;
   /** `rollouts:`, when `respond.rollout` is not off: the cron of the job that continues every rollout in flight. */
   rollouts?: string;
+  /** `control`, settled: after the last apply succeeds on the default branch, a job sends the control repo a dispatch (control-repo.ts). */
+  control?: ResolvedControl;
   /** GitLab only: the comments schedule's cron. The pipeline gets a `comments` job for the pipelines that schedule starts. */
   comments?: string;
   /**
@@ -2531,6 +2539,18 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: [bash("BUMP", versionBumpScript(forge, tokenEnv))],
       } as never) as never);
     }
+    if (input.control) {
+      // After the last apply, from the default branch: a failed or waiting wave sends nothing. GitLab gives the job the token by name.
+      jobs.set("control", new GitLabJob({
+        stage: "control",
+        image: jobImage,
+        needs: [lastApply],
+        variables: { TG_CONTROL_TOKEN: `$${input.control.tokenEnv}`, TG_SHA: gitlabEnv.TG_SHA, GIT_STRATEGY: "none" },
+        rules: [new Rule({ if: onDefault })],
+        resource_group: "terragucci-control",
+        script: [bash("CONTROL", dispatchScript(input.control))],
+      } as never) as never);
+    }
     if (input.publish) {
       // GitLab hands project variables (TERRAGUCCI_REGISTRY_USER and _PASSWORD, and with
       // attest COSIGN_PRIVATE_KEY and COSIGN_PASSWORD) to every job, so mark them
@@ -3103,6 +3123,19 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         new Step({ uses: "actions/checkout@v4", with: { "fetch-depth": 0 } }),
         new Step({ name: "Suggest the next version of each module that changed", shell: "bash", run: versionBumpScript(forge, tokenEnv) }),
       ],
+    } as never) as never);
+  }
+  if (input.control) {
+    // The only job that holds the control repo's dispatch token. It runs none of the repo's code and reads nothing of it.
+    entities.set("control", new Job({
+      "runs-on": "ubuntu-latest",
+      container: { image },
+      needs: lastApply,
+      if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
+      permissions: {},
+      concurrency: { group: "terragucci-control-${{ github.repository }}", "cancel-in-progress": false },
+      env: { TG_CONTROL_TOKEN: `\${{ secrets.${input.control.tokenEnv} }}`, TG_SHA: "${{ github.sha }}" },
+      steps: [new Step({ name: `Tell ${input.control.repo} that this repo applied`, shell: "bash", run: dispatchScript(input.control) })],
     } as never) as never);
   }
   if (input.publish) {
