@@ -55,8 +55,11 @@ export function agentRunScript(command: string): string {
     // Forgejo's runner puts the job's token in the step's environment and ignores \`permissions:\`, so the agent does not get to see it.
     `unset ${RUNNER_TOKEN_VARS}`,
     `export TG_AGENT_PROMPT=${AGENT_DIR}/prompt.md`,
-    `( ${command} ) <"$TG_AGENT_PROMPT"`,
-    `echo "$?" >${AGENT_CHANGE_DIR}/rc`,
+    // The output is kept for the push job's record (model, tokens, cost); the log still shows it.
+    `export TG_AGENT_USAGE=${AGENT_CHANGE_DIR}/usage.json`,
+    `( ${command} ) <"$TG_AGENT_PROMPT" | tee ${AGENT_CHANGE_DIR}/agent-output.json`,
+    `echo "\${PIPESTATUS[0]}" >${AGENT_CHANGE_DIR}/rc`,
+    `sha256sum "$TG_AGENT_PROMPT" | cut -d' ' -f1 >${AGENT_CHANGE_DIR}/prompt.sha256`,
     "git -c core.hooksPath=/dev/null add -A || exit 1",
     `git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
     `git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"`,
@@ -64,7 +67,7 @@ export function agentRunScript(command: string): string {
 }
 
 /** The variables the agent's command keeps on GitLab, where every job holds the project's variables: the environment is cleared but for these and the model's key. */
-export const GL_AGENT_ENV = ["PATH", "HOME", "LANG", "TG_AGENT_PROMPT", "TG_AGENT_MAX_TURNS", "TG_REVIEW_PROMPT"];
+export const GL_AGENT_ENV = ["PATH", "HOME", "LANG", "TG_AGENT_PROMPT", "TG_AGENT_MAX_TURNS", "TG_REVIEW_PROMPT", "TG_AGENT_USAGE"];
 
 /** `env -i` with the variables GitLab's agent and review commands keep, and the model's key. */
 export function gitlabCleanEnv(keySecret: string): string {
@@ -95,8 +98,10 @@ export function gitlabAgentRunScript(agent: AgentCommentInput, artifact: string)
     '  git -c core.hooksPath=/dev/null checkout -q --detach "$TG_SHA" || exit 1',
     '  git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"',
     `  export TG_AGENT_PROMPT=${AGENT_DIR}/prompt.md`,
-    `  ${gitlabCleanEnv(agent.keySecret)} bash -c ${sh(agent.command)} <"$TG_AGENT_PROMPT"`,
-    `  echo "$?" >${AGENT_CHANGE_DIR}/rc`,
+    `  export TG_AGENT_USAGE=${AGENT_CHANGE_DIR}/usage.json`,
+    `  ${gitlabCleanEnv(agent.keySecret)} TG_AGENT_USAGE="$TG_AGENT_USAGE" bash -c ${sh(agent.command)} <"$TG_AGENT_PROMPT" | tee ${AGENT_CHANGE_DIR}/agent-output.json`,
+    `  echo "\${PIPESTATUS[0]}" >${AGENT_CHANGE_DIR}/rc`,
+    `  sha256sum "$TG_AGENT_PROMPT" | cut -d' ' -f1 >${AGENT_CHANGE_DIR}/prompt.sha256`,
     "  git -c core.hooksPath=/dev/null add -A || exit 1",
     `  git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >${AGENT_CHANGE_DIR}/change.patch || exit 1`,
     '  git -c core.hooksPath=/dev/null diff --cached --stat "$TG_SHA"',

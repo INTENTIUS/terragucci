@@ -102,6 +102,8 @@ import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
 import { pushAgentChange, writePrompt } from "./agent-comment";
+import { recordPushOutcome } from "./agent-record";
+import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
@@ -736,6 +738,7 @@ export async function main(argv: string[]): Promise<number> {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
           const pushed = await pushGitLabAgentChange({ change: resolve(cwd, change), policyDir });
+          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: "gitlab", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
           console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
           return pushed.fail ? 1 : 0;
         }
@@ -759,6 +762,7 @@ export async function main(argv: string[]): Promise<number> {
           const change = str(flags, "change");
           if (!change) throw new ConfigError("comment --agent push needs --change <dir>");
           const pushed = await pushAgentChange({ change: resolve(cwd, change), policyDir });
+          await recordPushOutcome({ feature: "agent.comment", cwd, change: resolve(cwd, change), forge: detectPrForge(process.env) === "forgejo" ? "forgejo" : "github", env: process.env, ok: pushed.pushed, ...(pushed.fail ? { fail: true } : {}), reason: pushed.reason, ...(pushed.commit ? { commit: pushed.commit } : {}) });
           console.log(`terragucci comment: ${pushed.pushed ? "" : "nothing pushed: "}${pushed.reason}`);
           return pushed.fail ? 1 : 0;
         }
@@ -955,6 +959,7 @@ export async function main(argv: string[]): Promise<number> {
           const forge = str(flags, "forge") ?? "github";
           if (forge !== "github" && forge !== "forgejo") throw new ConfigError("drift-agent push's --forge is github or forgejo");
           const r = await pushDriftChange({ change: resolve(cwd, change), policyDir, forge });
+          await recordPushOutcome({ feature: "agent.drift", cwd, change: resolve(cwd, change), forge, env: process.env, ok: r.opened, ...(r.fail ? { fail: true } : {}), reason: r.reason, ...(r.commit ? { commit: r.commit } : {}), ...(r.pullRequest ? { pullRequest: r.pullRequest } : {}) });
           console.log(`terragucci drift-agent: ${r.reason}`);
           return r.fail ? 1 : 0;
         }

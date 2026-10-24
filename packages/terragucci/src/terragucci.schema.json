@@ -1118,6 +1118,15 @@
               "allow_unattended"
             ]
           }
+        },
+        "agents": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^\\S+$"
+          },
+          "description": "Forge app or bot identities that are agents; a change proposed through one has input.actor.kind agent."
         }
       },
       "additionalProperties": false,
@@ -2922,6 +2931,15 @@
                   "allow_unattended"
                 ]
               }
+            },
+            "agents": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^\\S+$"
+              },
+              "description": "Forge app or bot identities that are agents; a change proposed through one has input.actor.kind agent."
             }
           },
           "additionalProperties": false,

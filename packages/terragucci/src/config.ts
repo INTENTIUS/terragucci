@@ -235,6 +235,13 @@ export interface PolicySettings {
    */
   override?: (string | OverrideEntry)[];
   /**
+   * The forge app or bot identities that are agents, such as `my-agent[bot]`.
+   * A change proposed through one is an agent's: `input.actor.kind` is
+   * `agent` (./actor.ts). Read at base, like `override`. Unset, every change
+   * is a person's.
+   */
+  agents?: string[];
+  /**
    * The rule outcomes the policy has: `deny` always, and `hold` and
    * `allow_unattended` when listed, read from `hold`, `hold_*`,
    * `allow_unattended` and `allow_unattended_*` rules (engine `opa`). Read
@@ -1350,7 +1357,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
-export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes"];
+export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes", "agents"];
 export const SOURCES_KEYS = ["modules", "providers"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
@@ -1758,6 +1765,9 @@ function checkPolicy(p: unknown, where: string, problems: string[], mode?: unkno
   }
   for (const k of Object.keys(p)) if (!POLICY_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${POLICY_KEYS.join(", ")})`);
   if (p.override !== undefined) checkOverride(p.override, `${where}.override`, problems, mode);
+  if (p.agents !== undefined && !(Array.isArray(p.agents) && p.agents.length > 0 && p.agents.every((a) => typeof a === "string" && /^\S+$/.test(a)))) {
+    problems.push(`${where}.agents must be a list of forge app or bot identities, such as [my-agent[bot]]`);
+  }
   oneOf(p.engine, POLICY_ENGINES, `${where}.engine`, problems);
   oneOf(p.input, POLICY_INPUTS, `${where}.input`, problems);
   if (p.outcomes !== undefined) {

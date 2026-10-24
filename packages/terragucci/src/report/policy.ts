@@ -32,6 +32,7 @@
  * base, so a pull request cannot point it at another repo or ref.
  */
 import type { PolicyReview } from "../review-agent";
+import type { Actor } from "../actor";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -260,6 +261,8 @@ export interface PolicyRunContext {
   cost?: PolicyCost;
   /** The review of the merged pull request's head, in a `tf-apply` wave with `review.agent` on: `input.review`. */
   review?: PolicyReview;
+  /** Who proposed the change, from the forge identity (../actor.ts): `input.actor`. */
+  actor?: Actor;
 }
 
 /** One set of monthly figures, in the estimator's currency. Null where the estimator gave none. */
@@ -326,15 +329,16 @@ export function hcpRun(context: PolicyRunContext): Record<string, unknown> {
 export function policyInput(policy: PolicySettings, planJson: string, context?: PolicyRunContext): string {
   const cost = context?.cost;
   const review = context?.review;
+  const actor = context?.actor;
   if ((policy.input ?? "plan") !== "hcp") {
-    if (!cost && !review) return planJson;
-    // The plan JSON has no `cost` or `review` key of its own: they sit beside the plan's keys, where a policy reads `input.cost` and `input.review`.
+    if (!cost && !review && !actor) return planJson;
+    // The plan JSON has no `cost`, `review` or `actor` key of its own: they sit beside the plan's keys, where a policy reads `input.cost`, `input.review` and `input.actor`.
     const plan = JSON.parse(planJson) as Record<string, unknown>;
-    return JSON.stringify({ ...plan, ...(cost ? { cost } : {}), ...(review ? { review } : {}) });
+    return JSON.stringify({ ...plan, ...(cost ? { cost } : {}), ...(review ? { review } : {}), ...(actor ? { actor } : {}) });
   }
   const run = hcpRun(context ?? { root: "" });
   if (cost) run.cost_estimate = hcpCostEstimate(cost);
-  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}${review ? `,"review":${JSON.stringify(review)}` : ""}}`;
+  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}${review ? `,"review":${JSON.stringify(review)}` : ""}${actor ? `,"actor":${JSON.stringify(actor)}` : ""}}`;
 }
 
 /** The engine's arguments for one input file: chant's argv (`gatePolicyArgv`), less the command, which is the binary terragucci installed. */

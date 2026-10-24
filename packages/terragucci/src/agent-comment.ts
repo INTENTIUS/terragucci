@@ -40,6 +40,7 @@ export const CLAUDE_CODE_VERSION = "2.1.290";
  */
 export const AGENT_COMMAND = [
   `npx -y @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} -p`,
+  "--output-format json",
   '--max-turns "$TG_AGENT_MAX_TURNS"',
   "--permission-prompts none",
   "--setting-sources user",
