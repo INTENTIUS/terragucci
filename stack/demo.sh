@@ -1581,6 +1581,12 @@ say() { # step
     choudoufu-compose-create:planned) echo "One composed plan covers $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
     choudoufu-compose-edit:applied|choudoufu-compose-create:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
+    compose-*:applying)     echo "One apply runs network, app and edge together. Each state is written when the apply ends." ;;
+    compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
+    compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
+    choudoufu-compose-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
+    choudoufu-compose-*:approved) echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
+    choudoufu-compose-*:resumed)  echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
     *:applied)
@@ -1716,6 +1722,7 @@ waiting_label() {
     b-waves:2)    echo "Wave 2 waits for a person to approve app's new plan, which holds the subnet's id." ;;
     failure:2)    echo "Wave 2 waits for a person to approve the migration's second run. The driver gives that approval here." ;;
     stale-plan:1) echo "Wave 1 waits for an approval: it replaces network's release marker" ;;
+    compose-*:1|choudoufu-compose-*:1) echo "The one plan for network, app and edge waits for a person to approve it." ;;
     *)            echo "Wave $WAVE waits for an approval" ;;
   esac
 }
