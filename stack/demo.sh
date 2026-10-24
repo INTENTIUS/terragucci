@@ -349,10 +349,12 @@ TGC_JOB_IMAGE=terragucci-demo-terragrunt-choudoufu:local
 # the build checks the download against.
 CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 # The image builds choudoufu from this commit of INTENTIUS/choudoufu instead of
-# the release: composed estates (choudoufu#2059) are on integration/prompt-demo
-# (f285b9436f) and in no release yet. DEMO_CHOUDOUFU_REF names another commit;
-# set empty, the image carries the release above again.
-CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-f285b9436fc2eeb4932d542585cec0c61397680b}"
+# the release: composed estates (choudoufu#2059) and in-run reads that keep each
+# output's planned value (choudoufu#2211, so an estate's existing resources are
+# not replaced when another estate in the run changes) are on main (eb8fbd9835)
+# and in no release yet. DEMO_CHOUDOUFU_REF names another commit; set empty, the
+# image carries the release above again.
+CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-eb8fbd98357e3fa77f5320d0554ef3c3dfb30bdb}"
 # chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
 # release, and the commit of INTENTIUS/chant the terraform lexicon is packed from.
 CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
