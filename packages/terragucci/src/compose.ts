@@ -1448,7 +1448,9 @@ export class ComposedRun {
       if (JSON.stringify(root.generated) !== JSON.stringify(p.generated)) {
         return { ok: false, members: members(), settled: [], error: "the composed root differs from the one planned, so nothing applied" };
       }
-      const a = await this.exec(this.o.binary.path, ["apply", "-json", "-input=false", "-no-color", p.planFile], this.composeDir, this.composedEnv());
+      // An estate's apply runs under live resource markers, which print no JSON for an apply: run it without -json and read its progress from the exit code.
+      const applyArgs = this.c.estate ? ["apply", "-input=false", "-no-color", p.planFile] : ["apply", "-json", "-input=false", "-no-color", p.planFile];
+      const a = await this.exec(this.o.binary.path, applyArgs, this.composeDir, this.composedEnv());
       out = a.stdout;
       code = a.code;
       for (const line of a.stdout.split("\n")) {
@@ -1464,7 +1466,15 @@ export class ComposedRun {
     }
     const mods = this.c.order.map((r) => this.c.modules.get(r)!);
     const ev = readApplyEvents(out, mods);
-    if (this.c.estate) return this.finishEstate(p, ev, code);
+    if (this.c.estate) {
+      // No events came: a clean exit means every planned change applied; a failure leaves the first error line as the reason.
+      if (code === 0) for (const r of this.c.order) ev.done.set(this.c.modules.get(r)!, planCounts(p.slices.get(r)).changes);
+      else {
+        const err = out.split("\n").map((l) => l.replace(/^[│\s]+/, "")).find((l) => l.startsWith("Error:"));
+        if (err) ev.other.push(err);
+      }
+      return this.finishEstate(p, ev, code);
+    }
     const workingFile = existsSync(join(this.composeDir, "errored.tfstate")) ? join(this.composeDir, "errored.tfstate") : join(this.composeDir, "terraform.tfstate");
     let working: StateFile;
     try {
