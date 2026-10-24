@@ -1,0 +1,16 @@
+{
+  "name": "demo-choudoufu-fanout",
+  "schema": 1,
+  "minReader": "0.124.41",
+  "members": [],
+  "ci": {
+    "hooks": {
+      "before": {
+        "apply": [{ "name": "wait for the operator", "command": ["sh", "-c", "node ../ci/operator-gate.mjs pipeline-before"], "perRun": true, "targets": ["app-01"] }]
+      },
+      "after": {
+        "apply": [{ "name": "mark the apply done", "command": ["sh", "-c", "node ../ci/operator-gate.mjs pipeline-after"], "perRun": true, "targets": ["app-01"] }]
+      }
+    }
+  }
+}
