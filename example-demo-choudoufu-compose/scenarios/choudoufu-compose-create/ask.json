@@ -79,7 +79,7 @@
     {
       "prompt": "Did anything stay locked?",
       "action": null,
-      "reply": "No. Resource-level locking at the cloud level: each record is written only if unchanged since it was read.",
+      "reply": "Never. choudoufu holds no lock to leave behind, so there is nothing to force-unlock. Each record is written only if it is unchanged since it was read: resource-level locking at the cloud level.",
       "light": null,
       "paths": false,
       "ghost": false
