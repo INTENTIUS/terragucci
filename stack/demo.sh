@@ -687,8 +687,8 @@ cycle_publish() { # [timeline]
 # deletes the branch the audit reads. Nothing in it fails the loop.
 HK_PID_FILE="$DEMO_STATE/housekeeping.pid"
 HK_AUDIT=""
-housekeeping_start() {
-  local snap="$DEMO_STATE/timeline.$CYCLE.jsonl" audit="$HK_AUDIT"
+housekeeping_start() { # [after: wait for this tool's background reset first]
+  local snap="$DEMO_STATE/timeline.$CYCLE.jsonl" audit="$HK_AUDIT" after="${1:-}"
   HK_AUDIT=""
   cp "$DEMO_STATE/timeline.jsonl" "$snap" 2>/dev/null || : > "$snap"
   housekeeping_wait
@@ -696,6 +696,11 @@ housekeeping_start() {
     set +e
     WORK="$WORK/hk"
     mkdir -p "$WORK"
+    if [ -n "$after" ] && ! bg_reset_wait "$after"; then
+      log "housekeeping: cycle $CYCLE's background reset failed; nothing is published for it"
+      rm -f "$snap"
+      exit 0
+    fi
     cycle_publish "$snap"
     if [ -n "$audit" ]; then
       audit_trail
@@ -2669,6 +2674,17 @@ cycle_end() {
   [ "${hold:-0}" -gt 0 ] || hold="${END_HOLD:-$HOLD}"
   at=$(( $(now) + hold ))
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
+  if reset_overlaps; then
+    # The next scenario runs on another tool: this tool's reset goes on in the
+    # background, and the kiosk never shows a reset step for it.
+    bg_reset_start
+    left=$(( at - $(now) ))
+    [ "$left" -le 0 ] || sleep "$left"
+    reset_line_timeline
+    HK_AUDIT=1
+    housekeeping_start "$TOOL"
+    return 0
+  fi
   reset_work
   left=$(( at - $(now) ))
   [ "$left" -le 0 ] || sleep "$left"
@@ -2677,8 +2693,99 @@ cycle_end() {
   reset_written
 }
 
+# ── overlapping a reset with the next scenario ───────────────────────────────
+
+# NEXT_TOOL is the tool of the scenario after this one in the loop ("" for the
+# last of a --once loop). When it is not this cycle's tool, the reset of this
+# tool's repo runs in the background (bg_reset_start) while that scenario runs,
+# and bg_join waits for it before this tool's next scenario starts. A cycle that
+# prunes keeps its reset in the foreground: the prunes rewrite indexes the next
+# scenario writes.
+NEXT_TOOL=""
+BG_DIR="$DEMO_STATE/bgreset"
+reset_overlaps() { [ -n "$NEXT_TOOL" ] && [ "$NEXT_TOOL" != "$TOOL" ] && ! prune_due; }
+
+bg_pending() { [ -f "$BG_DIR/$1.run" ]; }
+
+# The background reset of the current tool: reset_work in a subshell of its
+# own. In it nothing reaches demo.json or the driver's reason file, no prune
+# runs, and the runs copy is left to the live scenario's polls. Its result
+# is in <bgreset>/<tool>.rc.
+bg_reset_start() {
+  local tool="$TOOL"
+  mkdir -p "$BG_DIR"
+  rm -f "$BG_DIR/$tool.rc"
+  printf '%s\t%s\t%s\t%s\n' "$CYCLE" "$SCENARIO" "$TITLE" "$STARTED" > "$BG_DIR/$tool.run"
+  (
+    set +e
+    log() { echo "[demo] [bg-reset $tool] $*" >&2; }
+    fail() { log "FAIL: $*"; printf '%s\n' "$*" > "$BG_DIR/$tool.reason" 2>/dev/null || true; exit 1; }
+    runs_export() { return 0; }
+    prune_due() { return 1; }
+    log "cycle $CYCLE: resetting $REPO in the background"
+    ( set -e; reset_work )
+    rc=$?
+    log "cycle $CYCLE: reset ended with status $rc"
+    echo "$rc" > "$BG_DIR/$tool.rc"
+  ) </dev/null &
+  printf '%s\n' "$!" >> "$BG_DIR/$tool.run"
+}
+
+# Wait for a tool's background reset to end. 0 when it succeeded or none ran.
+bg_reset_wait() { # tool
+  local t="$1" pid rc deadline=$(( $(now) + LIMIT_RUN + LIMIT_QUIET + 120 ))
+  bg_pending "$t" || [ -f "$BG_DIR/$t.rc" ] || return 0
+  while [ ! -f "$BG_DIR/$t.rc" ]; do
+    pid="$(sed -n 2p "$BG_DIR/$t.run" 2>/dev/null || true)"
+    case "$pid" in ''|*[!0-9]*) break ;; esac
+    kill -0 "$pid" 2>/dev/null || break
+    [ "$(now)" -lt "$deadline" ] || break
+    sleep 0.5
+  done
+  [ -f "$BG_DIR/$t.rc" ] || { echo 1 > "$BG_DIR/$t.rc"; [ -f "$BG_DIR/$t.reason" ] || echo "the background reset of $t did not finish" > "$BG_DIR/$t.reason"; }
+  rc="$(cat "$BG_DIR/$t.rc")"
+  [ "$rc" = 0 ]
+}
+
+# Before a tool's next scenario: wait for its pending background reset. One
+# that failed stalls the way a foreground reset does: demo_stalled for its
+# cycle, then resets in the foreground until it holds.
+bg_join() { # tool
+  local t="$1" c="$CYCLE" sc="$SCENARIO" ti="$TITLE" st="$STARTED" ab="${ABOUT:-null}" saved cy scn tit sta
+  bg_pending "$t" || return 0
+  saved="$(head -1 "$BG_DIR/$t.run")"
+  IFS=$'\t' read -r cy scn tit sta <<<"$saved"
+  if bg_reset_wait "$t"; then
+    rm -f "$BG_DIR/$t.run" "$BG_DIR/$t.rc" "$BG_DIR/$t.reason"
+    return 0
+  fi
+  cp "$BG_DIR/$t.reason" "$DEMO_STATE/reason" 2>/dev/null || true
+  rm -f "$BG_DIR/$t.run" "$BG_DIR/$t.rc" "$BG_DIR/$t.reason"
+  use_repo "$t"
+  CYCLE="$cy" SCENARIO="$scn" TITLE="$tit" STARTED="$sta" ABOUT="$(scenario_about "$scn")"
+  ATTEMPT=1
+  while [ "$ATTEMPT" != 0 ]; do
+    demo_stalled
+    sleep "$(scenario_hold "$scn")"
+    : > "$DEMO_STATE/reason"
+    attempt reset_base
+  done
+  CYCLE="$c" SCENARIO="$sc" TITLE="$ti" STARTED="$st" ABOUT="$ab"
+}
+
+# The cycle's timeline gets its reset line without demo.json changing: the
+# publish of the cycle (scripts/demo-cycles.ts) wants a cycle that ends in reset.
+reset_line_timeline() {
+  local base
+  base="$(cat "$RSTATE/base.sha")"
+  jq -c --arg at "$(iso "$(now)")" --arg base "$base" \
+    '. + {step: "reset", label: ("Outside the pipeline, the driver resets every state to how it started. It also moves main back to " + $base[0:8] + " for the next scenario."), next: null, pull: null, commit: $base, outside: null, at: $at}' \
+    "$DEMO_STATE/demo.json" >> "$DEMO_STATE/timeline.jsonl" 2>/dev/null || log "could not add the reset to the cycle's timeline"
+}
+
 # The cycle at hand ended with its own reset written (cycle_end).
 cycle_reset() {
+  bg_pending "$TOOL" && return 0
   jq -e --argjson c "$CYCLE" '.cycle == $c and .step == "reset"' "$DEMO_STATE/demo.json" >/dev/null 2>&1
 }
 
@@ -3226,6 +3333,7 @@ OUT
     echo "$$" > "$DEMO_STATE/driver.pid"
     # An earlier driver's background copy is not this one's to wait on.
     mkdir -p "$RUNS_STATE" && : > "$RUNS_PID"
+    rm -rf "$BG_DIR"
     CYCLE="$(cat "$DEMO_STATE/cycle" 2>/dev/null || echo 0)"
     SCENARIO=base TITLE="The base" ABOUT=null STARTED="$(now)" INDEX="" ACT="" ACTS=""
     # A driver the watchdog restarted may have left a cycle half done, in any of the loop's repos.
@@ -3246,6 +3354,11 @@ OUT
           ACTS=$((ACTS + 1))
           [ "$ACT" -gt 0 ] || { [ "$x" = "$s" ] && ACT="$ACTS"; }
         done
+        # This tool's reset from its last scenario may still run in the background.
+        bg_join "$(scenario_tool "$s")"
+        NEXT_TOOL=""
+        if [ "$INDEX" -lt "$COUNT" ]; then NEXT_TOOL="$(scenario_tool "${list[$INDEX]}")"
+        elif [ -z "$ONCE" ]; then NEXT_TOOL="$(scenario_tool "${list[0]}")"; fi
         CYCLE=$((CYCLE + 1))
         echo "$CYCLE" > "$DEMO_STATE/cycle"
         : > "$DEMO_STATE/reason"
@@ -3272,5 +3385,6 @@ OUT
     done
     # The last cycle's housekeeping, before the driver's exit removes its work directory.
     housekeeping_wait
+    for t in "${LOOP_TOOLS[@]}"; do bg_join "$t"; done
     ;;
 esac
