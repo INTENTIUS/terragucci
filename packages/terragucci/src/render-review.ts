@@ -8,6 +8,7 @@ import type { ForgeName } from "./config";
 import { READS_EXIT } from "./render";
 import { gitlabCleanEnv, RUNNER_TOKEN_VARS } from "./render-agent";
 import { REVIEW_ARTIFACT, REVIEW_DIR, REVIEW_FILE, REVIEW_OUT, REVIEW_WORK, type ReviewInput } from "./review-agent";
+import { CHECKOUT, uploadArtifact, downloadArtifact } from "./action-pins";
 
 /** Where the prompt's step puts the plan report it fetches: outside the checkout. */
 export const REVIEW_REPORT = `${REVIEW_DIR}/report`;
@@ -73,8 +74,8 @@ export const PLAN_WAIT_MINUTES = 30;
  * file does nothing until it merges.
  */
 export function reviewWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, review: ReviewInput, o: { pipelineName: string; env: Record<string, string> }): Map<string, never> {
-  const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
-  const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
+  const upload = uploadArtifact(forge);
+  const download = downloadArtifact(forge);
   const github = forge === "github";
   // What the event says was planned: GitHub's workflow_run names the pipeline's run, Forgejo's pull_request_target the pull request.
   const head = github ? "${{ github.event.workflow_run.head_sha }}" : "${{ github.event.pull_request.head.sha }}";
@@ -102,7 +103,7 @@ export function reviewWorkflow(forge: Exclude<ForgeName, "gitlab">, image: strin
     "timeout-minutes": review.timeout + (github ? 0 : PLAN_WAIT_MINUTES),
     steps: [
       // The head, with the whole history and no credentials kept: the diff reads the base, and the instructions and the command's tree come from the default branch. Nothing in the checkout runs.
-      new Step({ uses: "actions/checkout@v4", with: { ref: head, "fetch-depth": 0, "persist-credentials": false } }),
+      new Step({ uses: CHECKOUT, with: { ref: head, "fetch-depth": 0, "persist-credentials": false } }),
       new Step({
         id: "prompt",
         name: "Write the review's prompt: the pull request, its diff and plan, and the default branch's instructions",

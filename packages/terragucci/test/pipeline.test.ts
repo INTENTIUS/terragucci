@@ -1,3 +1,4 @@
+import { CACHE, CHECKOUT, downloadArtifact, forgeRef, uploadArtifact } from "../src/action-pins";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -110,7 +111,7 @@ describe("the check job", () => {
       expect(keeper.needs).toBe("check");
       expect(keeper.steps[0].run).toContain("${{ toJSON(needs.check.outputs.report_0) }}");
       const keep = keeper.steps.find((s: { name?: string }) => s.name === "Keep the check report");
-      expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+      expect(keep.uses).toBe(forgeRef(forge, uploadArtifact(forge)));
       expect(keep.with).toMatchObject({ name: "terragucci-check", path: "terragucci-check/" });
       expect(JSON.stringify(keeper)).not.toMatch(/checkout|TG_TOKEN/);
     }
@@ -365,7 +366,7 @@ describe("the comment trigger", () => {
     expect(run).toContain(OIDC.apply_role);
     expect(run).not.toContain(OIDC.plan_role);
     // It checks out the merge commit from the default branch's history, never a pull request's head.
-    expect(job.steps[0]).toEqual({ uses: forge === "forgejo" ? "https://code.forgejo.org/actions/checkout@v4" : "actions/checkout@v4", with: { "fetch-depth": 0 } });
+    expect(job.steps[0]).toEqual({ uses: forgeRef(forge, CHECKOUT), with: { "fetch-depth": 0 } });
     expect(run).not.toContain("refs/pull/");
     expect(run).toContain('git checkout --quiet --detach "$TG_SHA"');
     if (forge === "github") expect(job.permissions["id-token"]).toBe("write");
@@ -394,7 +395,7 @@ describe("the comment trigger", () => {
     expect(run).not.toContain("TERRAGUCCI_PHASE=plan");
     expect(run.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(run.indexOf("TERRAGUCCI_PHASE=apply"));
     expect(run).toContain('tg status terragucci/apply success "every wave of units applied"');
-    expect(job.steps.find((s: { uses?: string }) => s.uses?.endsWith("actions/cache@v4"))?.with.path).toBe(".terragrunt-cache");
+    expect(job.steps.find((s: { uses?: string }) => s.uses?.endsWith(CACHE))?.with.path).toBe(".terragrunt-cache");
     if (forge === "github") expect(job.permissions).toMatchObject({ contents: "write", "id-token": "write" });
   });
 
@@ -802,7 +803,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       // No cloud role, no install, no checkout of the pull request: the default branch's checkout and the merge.
       expect(JSON.stringify(merge)).not.toContain(OIDC.apply_role);
       expect(merge.steps).toHaveLength(2);
-      expect(merge.steps[0].uses).toMatch(/actions\/checkout@v4$/);
+      expect(merge.steps[0].uses).toMatch(new RegExp(`${CHECKOUT}$`));
       expect(merge.steps[0].with).toBeUndefined();
       // The outputs never reach the script as expressions, only through the environment.
       expect(merge.steps[1].run).not.toContain("${{");
@@ -1014,8 +1015,8 @@ describe("the agent comment", () => {
     expect(run).toContain('git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >/tmp/terragucci-agent/change/change.patch');
     const push = doc.jobs["agent-push"].steps.at(-1).run as string;
     expect(push).toContain("terragucci comment --agent push --change /tmp/terragucci-agent/change --policy-dir 'rego'");
-    expect(doc.jobs.agent.steps.at(-1).uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
-    expect(doc.jobs["agent-push"].steps[1].uses).toMatch(forge === "forgejo" ? /download-artifact@v3$/ : /^actions\/download-artifact@v4$/);
+    expect(doc.jobs.agent.steps.at(-1).uses).toBe(forgeRef(forge, uploadArtifact(forge)));
+    expect(doc.jobs["agent-push"].steps[1].uses).toBe(forgeRef(forge, downloadArtifact(forge)));
   });
 
   it("the default command is Claude Code in print mode with the file tools and no web, MCP or project settings", () => {
@@ -1522,7 +1523,7 @@ describe("the plan stage", () => {
       // The plan job hands the report on, and the plan-note job keeps it.
       const keep = doc.jobs["plan-note"].steps.find((s: { name?: string }) => s.name === "Keep the plan report");
       expect(keep.if).toBe("always()");
-      expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+      expect(keep.uses).toBe(forgeRef(forge, uploadArtifact(forge)));
       expect(keep.with).toMatchObject({ name: "terragucci-report", path: "terragucci-report/" });
       expect(JSON.stringify(doc.jobs.plan.steps)).not.toContain("upload-artifact");
     }
@@ -1536,7 +1537,7 @@ describe("the plan stage", () => {
     } else {
       const keep = doc.jobs[name].steps.find((s: { name?: string }) => s.name === "Keep the apply report");
       expect(keep.if).toBe("always()");
-      expect(keep.uses).toMatch(forge === "forgejo" ? /upload-artifact@v3$/ : /^actions\/upload-artifact@v4$/);
+      expect(keep.uses).toBe(forgeRef(forge, uploadArtifact(forge)));
       expect(keep.with).toMatchObject({ name: `terragucci-report-${name}`, path: "terragucci-report/" });
     }
   });

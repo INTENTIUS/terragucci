@@ -8,6 +8,7 @@ import { Job, Step } from "@intentius/chant-lexicon-github/generated/index";
 import { AGENT_CHANGE_DIR, AGENT_DECISION_JS, AGENT_DIR, type AgentCommentInput } from "./agent-comment";
 import type { ForgeName } from "./config";
 import { READS_EXIT } from "./render";
+import { CHECKOUT, uploadArtifact, downloadArtifact } from "./action-pins";
 
 /** Comments the agent job reads. The replan job leaves them alone when the agent comment is on. */
 export const AGENT_COMMENT_IF = "startsWith(github.event.comment.body, '/terragucci agent ')";
@@ -117,8 +118,8 @@ export function agentPushScript(policyDir: string): string {
 }
 
 export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: string, agent: AgentCommentInput): [string, never][] {
-  const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
-  const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
+  const upload = uploadArtifact(forge);
+  const download = downloadArtifact(forge);
   const secret = (name: string): string => `\${{ secrets.${name} }}`;
   // The agent runs here. The job's token reads the pull request and answers a refusal; it cannot push.
   // No oidc, no role, no forge token in the agent's step: the model's key is all it holds.
@@ -139,7 +140,7 @@ export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: str
     steps: [
       new Step({ id: "ask", name: "Read the comment and write the agent's prompt", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: agentAskScript(forge, agent.policyDir) }),
       // The head comes from the pull request, by number; the checkout keeps no credentials for the agent to find.
-      new Step({ name: "Check out the pull request's head", if: "steps.ask.outputs.go == '1'", uses: "actions/checkout@v4", with: { ref: "refs/pull/${{ steps.ask.outputs.pr }}/head", "persist-credentials": false } }),
+      new Step({ name: "Check out the pull request's head", if: "steps.ask.outputs.go == '1'", uses: CHECKOUT, with: { ref: "refs/pull/${{ steps.ask.outputs.pr }}/head", "persist-credentials": false } }),
       new Step({
         name: "Run the agent on the ask",
         if: "steps.ask.outputs.go == '1'",
@@ -165,7 +166,7 @@ export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: str
       TG_HEAD: "${{ needs.agent.outputs.head }}",
     },
     steps: [
-      new Step({ name: "Check out the pull request's head", uses: "actions/checkout@v4", with: { ref: "refs/pull/${{ needs.agent.outputs.pr }}/head", "persist-credentials": false } }),
+      new Step({ name: "Check out the pull request's head", uses: CHECKOUT, with: { ref: "refs/pull/${{ needs.agent.outputs.pr }}/head", "persist-credentials": false } }),
       new Step({ name: "Fetch the agent's change", uses: download, with: { name: "terragucci-agent", path: AGENT_CHANGE_DIR } }),
       new Step({ name: "Push the change to the pull request's branch, unless it touches CI, terragucci.yml or the policy", shell: "bash", run: agentPushScript(agent.policyDir) }),
     ],
@@ -179,8 +180,8 @@ export function agentCommentJobs(forge: Exclude<ForgeName, "gitlab">, image: str
  * drift issue, on the commit it planned, from its report artifact.
  */
 export function driftAgentJobs(forge: Exclude<ForgeName, "gitlab">, image: string, agent: AgentCommentInput, reportArtifact: string): [string, never][] {
-  const upload = forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4";
-  const download = forge === "forgejo" ? "actions/download-artifact@v3" : "actions/download-artifact@v4";
+  const upload = uploadArtifact(forge);
+  const download = downloadArtifact(forge);
   const secret = (name: string): string => `\${{ secrets.${name} }}`;
   const opened = "needs.drift.outputs.agent == '1'";
   // The agent runs here: a read-only job token, which its step runs without; no oidc and no role, whatever the drift job holds.
@@ -194,7 +195,7 @@ export function driftAgentJobs(forge: Exclude<ForgeName, "gitlab">, image: strin
     concurrency: { group: "terragucci-drift-agent-${{ github.repository }}", "cancel-in-progress": false },
     steps: [
       // The commit the drift job planned; the checkout keeps no credentials for the agent to find.
-      new Step({ name: "Check out the commit the drift job planned", uses: "actions/checkout@v4", with: { ref: "${{ github.sha }}", "persist-credentials": false } }),
+      new Step({ name: "Check out the commit the drift job planned", uses: CHECKOUT, with: { ref: "${{ github.sha }}", "persist-credentials": false } }),
       new Step({ name: "Fetch the drift report", uses: download, with: { name: reportArtifact, path: `${AGENT_DIR}/drift` } }),
       new Step({ name: "Write the agent's prompt from the drift report", shell: "bash", run: driftPromptScript(agent.policyDir) }),
       new Step({
@@ -216,7 +217,7 @@ export function driftAgentJobs(forge: Exclude<ForgeName, "gitlab">, image: strin
     concurrency: { group: "terragucci-drift-agent-push-${{ github.repository }}", "cancel-in-progress": false },
     env: { TG_TOKEN: secret(agent.tokenSecret), TG_SHA: "${{ github.sha }}", TG_ISSUE: "${{ needs.drift.outputs.issue }}" },
     steps: [
-      new Step({ name: "Check out the commit the drift job planned", uses: "actions/checkout@v4", with: { ref: "${{ github.sha }}", "persist-credentials": false } }),
+      new Step({ name: "Check out the commit the drift job planned", uses: CHECKOUT, with: { ref: "${{ github.sha }}", "persist-credentials": false } }),
       new Step({ name: "Fetch the agent's change", uses: download, with: { name: "terragucci-drift-agent", path: AGENT_CHANGE_DIR } }),
       new Step({ name: "Open a pull request with the change, unless it touches CI, terragucci.yml or the policy", shell: "bash", run: driftPushScript(forge, agent.policyDir) }),
     ],

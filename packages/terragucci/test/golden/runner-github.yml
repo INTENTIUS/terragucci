@@ -111,7 +111,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the check report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-check
           path: terragucci-check/
@@ -235,7 +235,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report
           path: terragucci-report/
@@ -436,7 +436,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report-replan
           path: terragucci-report/
@@ -460,7 +460,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Commit the formatting
         shell: bash
         run: |
@@ -483,7 +483,7 @@ jobs:
       TF_VAR_region: '${{ vars.TF_VAR_region }}'
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Apply a merged pull request on request, from its merge commit
@@ -564,7 +564,7 @@ jobs:
           tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"
       - name: Keep the apply report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report-apply-comment
           path: terragucci-report/
@@ -590,7 +590,7 @@ jobs:
       TG_SHA: '${{ github.event.pull_request.head.sha }}'
       TG_ACTION: '${{ github.event.action }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Apply the pull request's copy of the ephemeral roots, or destroy it once it closes
@@ -621,7 +621,7 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Apply wave 1 of 2
         shell: bash
         run: |
@@ -681,7 +681,7 @@ jobs:
           echo "wave 1 of 2 applied"
       - name: Keep the apply report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report-apply-wave-1
           path: terragucci-report/
@@ -706,9 +706,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Fetch the earlier waves' outcomes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:
           pattern: terragucci-report-apply-wave-*
@@ -761,7 +761,7 @@ jobs:
           echo "all roots applied"
       - name: Keep the apply report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report-apply-wave-2
           path: terragucci-report/
@@ -783,7 +783,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Open a pull request for each tip
@@ -810,7 +810,7 @@ jobs:
       TERRAGUCCI_REGISTRY_PASSWORD: '${{ secrets.TERRAGUCCI_REGISTRY_PASSWORD }}'
       TERRAGUCCI_REGISTRY_INSECURE: '${{ secrets.TERRAGUCCI_REGISTRY_INSECURE }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Publish the modules that changed
@@ -833,7 +833,7 @@ jobs:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Plan every root against what exists, and keep the drift issue
         shell: bash
         run: |
@@ -845,7 +845,7 @@ jobs:
           exit "$rc"
       - name: Keep the drift report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report-drift
           path: terragucci-report/

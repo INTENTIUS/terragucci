@@ -25,6 +25,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | A plan and an apply role per environment | one environment's roots from another's state | [State access per environment](#state-access-per-environment) |
 | `runner.apply` on runners of its own | the apply role, and the network its runners reach, from the machines where pull request code runs | [Runners](#runners) |
 | Signing keys in `publish` alone; on GitLab, as protected variables | the jobs that run a pull request's code from the keys that sign module releases | [Job access](#job-access) |
+| Actions pinned by commit SHA | a moved tag from changing the code a job runs | [Actions in the workflows](#actions-in-the-workflows) |
 
 ## Trust
 
@@ -34,7 +35,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | Reviewers | decide what reaches the default branch | branch protection |
 | Approvers: under `approval: ledger` anyone who can push to `chant/lifecycle`, under `sealed` the people `.chant/allowed_signers` lists | release a gated wave | the plan digest the approval names, and under `sealed` its seal |
 | Overriders: the people `policy.override` lists at base | let one denied plan of one root through `tf-apply` | the root, plan digest and rules the override names, and under `sealed` its seal |
-| The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone |
+| The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone, or with `environments` on GitHub to each environment's own subject ([State access per environment](#state-access-per-environment)) |
 | On GitLab, anyone allowed to run a pipeline on the default branch | start `mr-apply` with any variables | `mr-apply` reads the merge request, the note and the head from GitLab, and refuses a head the merge request does not have |
 | The review command, with `review.agent` | read a change and write a note about it | no forge token and no cloud role in its step; the note approves nothing ([The review](#the-review)) |
 | The drift agent's command, with `agent.drift` | edit files after the drift job opens the drift issue | no forge token and no cloud role in its step; its change comes back as a pull request, refused when it touches a guarded path, that plans and applies like any other |
@@ -357,6 +358,31 @@ The relay's token pushes `chant/lifecycle` like any approver's, so it is one mor
 If the base's declaration cannot be read, the stage fails when the checkout names hooks and runs none otherwise; it never runs the change's. An edit to `ci.hooks` takes effect for the changes after it merges.
 
 This does not stop a hook from running whatever its command runs at the time: a hook that calls a script in the repo runs the change's copy. Keep what a hook runs out of the roots a change can edit, or call a pinned tool. A change can still run code with the plan role through its providers, modules and external data sources, as without hooks. An `onFailure: "approve"` hook holds a wave at the same gate as the gate policy, so the [approval mode](#approval-modes) decides who can release it.
+
+## Actions in the workflows
+
+Every action a GitHub or Forgejo workflow from `terragucci init` uses is pinned by commit SHA, with its release in a comment beside it:
+
+```yaml
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+```
+
+A tag can be moved to other code; a commit SHA cannot. On Forgejo the same commits come from `https://code.forgejo.org/actions/`, whose actions carry the same SHAs as GitHub's.
+
+| Action | Release |
+|---|---|
+| `actions/checkout` | v4.4.0 |
+| `actions/cache` and `actions/cache/restore` | v4.3.0 |
+| `actions/upload-artifact` | v4.6.2 on GitHub, v3.2.1 on Forgejo |
+| `actions/download-artifact` | v4.3.0 on GitHub, v3.0.2 on Forgejo |
+
+| Not covered | |
+|---|---|
+| jobs you add yourself (`ci/own-jobs.yml` and the like) | they keep the refs you wrote; pin them the same way |
+| a workflow written by an earlier terragucci | its refs are tags until `terragucci init` writes it again |
+| what a pinned action fetches when it runs | an action that downloads a tool at run time gets whatever the tool's source serves |
+
+GitLab jobs run terragucci's image and use no actions.
 
 ## Module and provider sources
 

@@ -1,3 +1,4 @@
+import { CHECKOUT } from "../src/action-pins";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -407,7 +408,7 @@ describe("the ephemeral jobs", () => {
     // The apply role, never the plan role.
     expect(run).toContain("arn:aws:iam::1:role/a");
     expect(run).not.toContain("arn:aws:iam::1:role/p");
-    expect(job.steps[0].uses).toMatch(/actions\/checkout@v4$/);
+    expect(job.steps[0].uses).toMatch(new RegExp(`${CHECKOUT}$`));
     expect(job.steps[0].with).toEqual({ "fetch-depth": 0 });
     const sweep = rendered.extra!.find((f) => f.path.endsWith("terragucci-ephemeral.yml"))!;
     expect(sweep.path).toBe(`.${forge}/workflows/terragucci-ephemeral.yml`);
