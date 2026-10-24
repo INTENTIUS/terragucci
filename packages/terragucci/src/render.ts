@@ -1208,6 +1208,8 @@ export interface CommentApplyInput {
   terragrunt?: { prelude: string };
   /** `synth`: the command that writes the roots, run on the checked-out commit before the credentials. */
   synth?: string;
+  /** `control` is set: an apply of the default branch's commit that ran every wave hands the commit on (`control_sha`), for the job that tells the control repo. */
+  control?: boolean;
   /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
   notify?: boolean;
   /** GitHub, when the pipeline splits a wave across jobs: the apply takes the lock tag those jobs hold, as on Forgejo, since the shares run outside the concurrency group. */
@@ -1496,6 +1498,8 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
     "else",
     `  tg status terragucci/apply pending "wave $last of ${count} applied"`,
     "fi",
+    // Every wave applied from the default branch's merge commit (not an open pull request's head): the control repo is told by a job of its own.
+    ...(input.control ? [`if [ "$last" = ${count} ] && [ "\${TG_OPEN:-0}" != 1 ]; then ${HAND_ON_COMMIT}; fi`] : []),
     ...(prMode
       ? ['if [ "$TG_OPEN" = 1 ]; then', ...openReply(count, input.merge).map((l) => `  ${l}`), "else", '  tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"', "fi"]
       : ['tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"']),
@@ -1552,6 +1556,9 @@ export function checkJobLine(forge: ForgeName, group: ApplyGroup, runner: Runner
   return forge === "gitlab" ? line : `if [ -z "\${${OIDC_RESTART}:-}" ]; then ${line}; fi`;
 }
 
+/** The line that gives the job telling the control repo the commit whose every wave applied (the step's id is `apply`). */
+const HAND_ON_COMMIT = 'echo "control_sha=$TG_SHA" >> "$GITHUB_OUTPUT"';
+
 const RESUME_AGAIN = "Approve the plans with \\`$cmd\\`; the resume job applies them on its next run";
 
 /**
@@ -1588,6 +1595,7 @@ export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<
     'tg status terragucci/apply pending "applying after an approval"',
     ...waveLoop(binary, layers, input, "", RESUME_AGAIN),
     input.terragrunt ? 'tg status terragucci/apply success "every wave of units applied"' : `tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
+    ...(input.control ? [HAND_ON_COMMIT] : []),
     'tg reply "applied wave $done_waves at ${TG_SHA:0:8} after its approval. $run_url"',
   ].join("\n");
 }
@@ -2126,6 +2134,21 @@ const GL_KEYWORDS_NOT_JOBS = ["default", "include", "stages", "variables", "work
 /** The line above the jobs `own_jobs` adds, which says where they come from. */
 export const OWN_JOBS_LINE = "# Your own jobs, from own_jobs in terragucci.yml, as they are there.";
 
+/** The job that sends the control repo its dispatch (GitHub, Forgejo): holds the dispatch token and a status-only token, and no code. */
+function controlJob(c: ResolvedControl, forge: Exclude<ForgeName, "gitlab">, image: string, at: { needs: string; cond: string; sha: string }): never {
+  return new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    needs: at.needs,
+    if: at.cond,
+    permissions: { statuses: "write" },
+    // One send at a time per commit, so the path that tells the control repo second finds the first's mark.
+    concurrency: { group: `terragucci-control-\${{ github.repository }}-${at.sha}`, "cancel-in-progress": false },
+    env: { TG_CONTROL_TOKEN: `\${{ secrets.${c.tokenEnv} }}`, TG_TOKEN: "${{ github.token }}", TG_SHA: at.sha },
+    steps: [new Step({ name: `Tell ${c.repo} that this repo applied`, shell: "bash", run: dispatchScript(c, forge) })],
+  } as never) as never;
+}
+
 /**
  * `own_jobs`, after the jobs terragucci writes: on GitHub and Forgejo under
  * the workflow's `jobs:`, which the serializer writes last, and on GitLab as
@@ -2329,7 +2352,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const renderedApplyJobs: PipelineApplyJob[] = prApply
     ? [{ name: forge === "gitlab" ? "mr-apply" : "apply-comment", needs: [], applies: roots }]
     : applyJobs.map((j) => ({ name: j.name, needs: j.needs.length === 0 && forge !== "gitlab" && !j.done ? ["check"] : [...j.needs], wave: j.wave, applies: j.applies }));
-  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
+  const prInput: CommentApplyInput = { ...(tg ? tgApply : { canary: input.canary }), ...synth, ...notifyOn, ...(sharedLock && repoWide && forge === "github" ? { lockTag: true } : {}), gate, ...(input.approval ? { approval: input.approval } : {}), ...(input.control ? { control: true } : {}), respond: input.respond, ...(applyBranches ? { branches: applyBranches } : {}), ...(prApply ? { when: "pull-request" as const, ...(input.applyMerge ? { merge: input.applyMerge } : {}), ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : {}) };
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
   const what = tg ? "unit" : "root";
   // The fmt commit: the binary's fmt, and in a Terragrunt repo terragrunt hcl fmt too. The drift pull request, for roots and units:
@@ -2943,12 +2966,20 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
     // The job runs the pull request's code, so it never holds the merge token; with apply.merge: auto it hands the head on to pr-merge.
     env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
-    ...(autoMerge ? { outputs: { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } } : {}),
+    ...(autoMerge || input.control ? { outputs: { ...(autoMerge ? { merge: "${{ steps.apply.outputs.merge }}", sha: "${{ steps.apply.outputs.sha }}", waves: "${{ steps.apply.outputs.waves }}" } : {}), ...(input.control ? { control_sha: "${{ steps.apply.outputs.control_sha }}" } : {}) } } : {}),
     steps: [
-      ...steps(new Step({ ...(autoMerge ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
+      ...steps(new Step({ ...(autoMerge || input.control ? { id: "apply" } : {}), name: prApply ? "Apply a pull request on request, from its head before merge or its merge commit after" : "Apply a merged pull request on request, from its merge commit", shell: "bash", run: commentApplyScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
       new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-apply-comment`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
     ],
   } as never) as never);
+  if (input.control && !environmentGroups) {
+    // A comment that completed the apply of a merged pull request's commit tells the control repo, as the push's last apply does.
+    entities.set("control-comment", controlJob(input.control, forge, image, {
+      needs: "apply-comment",
+      cond: "needs.apply-comment.outputs.control_sha != ''",
+      sha: "${{ needs.apply-comment.outputs.control_sha }}",
+    }));
+  }
   // apply.merge: auto merges in a job of its own, after the apply-comment job applied every wave from the head. It runs no
   // code of the pull request: a fresh container, the default branch's checkout (to release the locks), and the merge token.
   if (autoMerge) {
@@ -3126,17 +3157,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     } as never) as never);
   }
   if (input.control) {
-    // The only job that holds the control repo's dispatch token. It runs none of the repo's code and reads nothing of it.
-    entities.set("control", new Job({
-      "runs-on": "ubuntu-latest",
-      container: { image },
+    // The only jobs that hold the control repo's dispatch token. They run none of the repo's code and read nothing of it.
+    // The push's last apply sends it; so does a resume or a comment that completes the apply (below), and the first to send marks the commit.
+    entities.set("control", controlJob(input.control, forge, image, {
       needs: lastApply,
-      if: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
-      permissions: {},
-      concurrency: { group: "terragucci-control-${{ github.repository }}", "cancel-in-progress": false },
-      env: { TG_CONTROL_TOKEN: `\${{ secrets.${input.control.tokenEnv} }}`, TG_SHA: "${{ github.sha }}" },
-      steps: [new Step({ name: `Tell ${input.control.repo} that this repo applied`, shell: "bash", run: dispatchScript(input.control) })],
-    } as never) as never);
+      cond: `${drift ? "github.event_name == 'push' && " : ""}github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`,
+      sha: "${{ github.sha }}",
+    }));
   }
   if (input.publish) {
     // The only job that sees the registry credentials. It pushes tags, so it is
@@ -3214,12 +3241,15 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ...openid(needsToken),
         ...(repoWide ? { concurrency: applyConcurrency(forge) } : {}),
         env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv, ...notifyEnv, ...costEnv },
+        ...(input.control ? { outputs: { control_sha: "${{ steps.resume.outputs.control_sha }}" } } : {}),
         steps: [
-          ...steps(new Step({ name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
+          ...steps(new Step({ ...(input.control ? { id: "resume" } : {}), name: "Apply a waiting wave once its approval stands", shell: "bash", run: resumeScript(binary, layers, forge, oidc, prInput) } as never), true, true, undefined, true),
           new Step({ name: "Keep the apply report", if: "always()", uses: forge === "forgejo" ? "actions/upload-artifact@v3" : "actions/upload-artifact@v4", with: { name: `${REPORT_DIR}-resume`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
         ],
       } as never) as never],
     ]);
+    // The resume applies a commit the push's own pipeline left waiting: the control repo is told here, once, by a job of its own.
+    if (input.control) resume.set("control", controlJob(input.control, forge, image, { needs: "resume", cond: "needs.resume.outputs.control_sha != ''", sha: "${{ needs.resume.outputs.control_sha }}" }));
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(resume) });
   }
   if (ephemeral) {

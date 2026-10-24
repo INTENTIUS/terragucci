@@ -97,7 +97,7 @@ import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, forgeCalls } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
-import { forgePost } from "./forge-post";
+import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
 import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
@@ -1038,6 +1038,10 @@ export async function main(argv: string[]): Promise<number> {
       case "post": {
         const forge = str(flags, "forge") ?? process.env.TG_FORGE ?? "github";
         if (forge !== "github" && forge !== "gitlab" && forge !== "forgejo") throw new ConfigError("post's --forge is github, gitlab or forgejo");
+        if (args[0] === "sent") {
+          console.log((await statusSent(args[1] ?? "", { forge })) ? "1" : "0");
+          return 0;
+        }
         const said = await forgePost(args[0] ?? "", args.slice(1), { forge });
         if (said) console.log(said);
         return 0;
