@@ -52,6 +52,12 @@
 # Each reset's push back to the base applies the base tree, which deletes what
 # the cycle added; the operator's queue is destroyed first (states_back).
 #
+# The Terragrunt-on-choudoufu repo, <admin>/demo-terragrunt-choudoufu from
+# example-demo-terragrunt-choudoufu/, has no terragucci in it: a Forgejo workflow
+# runs Terragrunt's own CLI with choudoufu as its binary, on one unit
+# (live/all) whose source composes the network, app and edge estates. Its
+# scenarios are terragrunt-choudoufu-edit and terragrunt-choudoufu-create; the
+# approval is a person's approving review, then the merge.
 # The choudoufu compose repo, <admin>/demo-choudoufu-compose from
 # example-demo-choudoufu-compose/, is example-demo-compose's network, app and
 # edge as choudoufu estates on one record store (demo-choudoufu-compose-records,
@@ -234,7 +240,7 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create terragrunt-choudoufu-edit terragrunt-choudoufu-create)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
@@ -249,7 +255,7 @@ SCENARIOS=(b-waves failure tg-planned-outputs)
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose choudoufu-compose)
+TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose choudoufu-compose terragrunt-choudoufu)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
@@ -260,6 +266,7 @@ scenario_tool() { # scenario -> its tool
     fan-out-choudoufu) echo choudoufu-fanout ;;
     compose-edit|compose-create|compose-fail) echo compose ;;
     choudoufu-compose-edit|choudoufu-compose-create) echo choudoufu-compose ;;
+    terragrunt-choudoufu-edit|terragrunt-choudoufu-create) echo terragrunt-choudoufu ;;
     *) return 1 ;;
   esac
 }
@@ -273,6 +280,7 @@ tool_repo() { # tool -> the repo's name under the admin
     choudoufu-fanout) echo demo-choudoufu-fanout ;;
     compose) echo demo-compose ;;
     choudoufu-compose) echo demo-choudoufu-compose ;;
+    terragrunt-choudoufu) echo demo-terragrunt-choudoufu ;;
     *) return 1 ;;
   esac
 }
@@ -286,6 +294,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     choudoufu-fanout) echo example-demo-choudoufu-fanout ;;
     compose) echo example-demo-compose ;;
     choudoufu-compose) echo example-demo-choudoufu-compose ;;
+    terragrunt-choudoufu) echo example-demo-terragrunt-choudoufu ;;
     *) return 1 ;;
   esac
 }
@@ -305,6 +314,9 @@ tool_image() { # tool
     *) return 1 ;;
   esac
 }
+# The Terragrunt-on-choudoufu repo: a plain Forgejo workflow runs Terragrunt's own
+# CLI with choudoufu as its binary. No terragucci pipeline, config or gate is in it.
+tool_tgc() { [ "$1" = terragrunt-choudoufu ]; }
 # A tool whose repo runs chant's own pull-request pipeline, not terragucci's.
 tool_chant() { case "$1" in chant|chant-fanout) return 0 ;; *) return 1 ;; esac; }
 
@@ -324,6 +336,9 @@ DEMO_IMAGE=terragucci-demo-tofu:local
 # The same image under a second tag, which a tree whose roots run on choudoufu
 # names, so its jobs say the tool they run.
 DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
+# The Terragrunt-on-choudoufu repo's job image (stack/demo-terragrunt-choudoufu.Dockerfile), named by
+# example-demo-terragrunt-choudoufu/.forgejo/workflows/terragrunt-choudoufu.yml.
+TGC_JOB_IMAGE=terragucci-demo-terragrunt-choudoufu:local
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
@@ -519,6 +534,12 @@ use_repo() { # tool
   INIT_PULL="" BASE_RUN=""
   # choudoufu's estates have no state bucket or keys: its roots are the tree's
   # directories with a main.tf, and each reset's push back applies the base.
+  if tool_tgc "$1"; then
+    # Three estates under estates/, one record store, one unit (live/all) that composes them. The base commit says [skip ci].
+    STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS="" INIT_PULL="" BASE_RUN=""
+    ROOTS=(network app edge)
+    return 0
+  fi
   if [ "$1" = choudoufu-fanout ] || [ "$1" = choudoufu-compose ]; then
     STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS="" INIT_PULL="" BASE_RUN=1
     # The compose repo's base commit says [skip ci] (its base is applied outside the pipeline), so its push back starts no run.
@@ -1454,6 +1475,8 @@ scenario_title() {
     compose-fail)   echo "A create that fails part way" ;;
     choudoufu-compose-edit)   echo "An edit and an addition across three estates" ;;
     choudoufu-compose-create) echo "A new subnet the other estates need, in one change" ;;
+    terragrunt-choudoufu-edit)   echo "Terragrunt on choudoufu: an edit across three estates" ;;
+    terragrunt-choudoufu-create) echo "Terragrunt on choudoufu: a new subnet the other estates need" ;;
     *) return 1 ;;
   esac
 }
@@ -1478,6 +1501,8 @@ scenario_name() {
     compose-fail)   echo "a failed create" ;;
     choudoufu-compose-edit)   echo "one plan, three estates" ;;
     choudoufu-compose-create) echo "a subnet across estates" ;;
+    terragrunt-choudoufu-edit)   echo "Terragrunt, one plan" ;;
+    terragrunt-choudoufu-create) echo "Terragrunt, a subnet" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1612,6 +1637,13 @@ say() { # step
     choudoufu-compose-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
     choudoufu-compose-create:planned) echo "One composed plan covers $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
     choudoufu-compose-edit:applied|choudoufu-compose-create:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
+    terragrunt-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
+    terragrunt-choudoufu-edit:planned) echo "terragrunt plan in live/all made one plan over $COMPOSED. Every value is known at plan, so each card shows before and after." ;;
+    terragrunt-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
+    terragrunt-choudoufu-create:planned) echo "terragrunt plan in live/all made one plan over $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply, not as mock_outputs." ;;
+    terragrunt-choudoufu-*:applied) echo "Applied. One terragrunt apply ran network, app and edge, and each resource's record went to the one record store." ;;
+    terragrunt-choudoufu-*:applying) echo "terragrunt apply in live/all runs network, app and edge together. Each resource's record is written as it applies." ;;
+    terragrunt-choudoufu-*:approved) echo "The reviewer approves pull request $PULL. The apply job checks for that approving review before it applies." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     compose-*:applying)     echo "One apply runs network, app and edge together. Each state is written when the apply ends." ;;
     compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
@@ -1653,7 +1685,7 @@ open_pull() {
   run_ended "$LIMIT_PLAN"
   [ "$RUN_STATUS" = success ] || fail "the plan run of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
   # chant's plan job posts a note of its own.
-  case "$TOOL" in chant|chant-fanout) chant_note; return 0 ;; esac
+  case "$TOOL" in chant|chant-fanout) chant_note; return 0 ;; terragrunt-choudoufu) tgc_note; return 0 ;; esac
   # The plan job's note is a comment on the pull request.
   local deadline=$(( $(now) + 60 ))
   until api "$URL/api/v1/repos/$REPO/issues/$PULL/comments?limit=50" | jq -e '[.[] | select(.body | contains("terragucci tf-plan"))] | length > 0' >/dev/null; do
@@ -2237,6 +2269,46 @@ review_approve() {
   ask_hold approved
 }
 
+# terragrunt-choudoufu-edit and terragrunt-choudoufu-create: the same two acts
+# as the choudoufu compose demo, on a repo with no terragucci in it. Its
+# workflow runs Terragrunt's own CLI with choudoufu as the binary
+# (root.hcl: terraform_binary): live/all is one unit whose source is a
+# composed root, so one `terragrunt plan` on the pull request is one plan across
+# network, app and edge, and one `terragrunt apply` on the merge is one apply.
+# The approval is a person's approving review of the pull request, which the
+# apply job checks before it applies. No wave waits, so the cycle is: open,
+# plan, review, merge, follow. What each step says comes from ask.json.
+scenario_terragrunt_choudoufu() {
+  open_pull
+  demo_hold planned "$(say planned)" "approve pull request $PULL"
+  review_approve
+  merge_pull
+  follow
+}
+
+# The plan job's comment on the pull request (marker terragrunt-choudoufu-plan):
+# it must show one plan over the three estates, and for the create act the
+# subnet's id as known after apply. A plan with an error or no summary line
+# stalls the cycle. Sets COMPOSED.
+tgc_note() {
+  local deadline=$(( $(now) + 60 )) note=""
+  while :; do
+    note="$(api "$URL/api/v1/repos/$REPO/issues/$PULL/comments?limit=50" | jq -r '[.[] | select(.body | contains("terragrunt-choudoufu-plan"))][0].body // empty' || true)"
+    [ -z "$note" ] || break
+    [ "$(now)" -lt "$deadline" ] || fail "the plan run passed but no plan comment is on pull request $PULL"
+    sleep "$POLL"
+  done
+  grep -qE 'Plan: [0-9]+ to add' <<<"$note" || fail "the plan comment on pull request $PULL has no plan summary"
+  local e
+  for e in network app edge; do
+    grep -q "module\.$e\." <<<"$note" || grep -q "$e" <<<"$note" || fail "the plan comment does not mention $e"
+  done
+  case "$SCENARIO" in
+    terragrunt-choudoufu-create) grep -q 'known after apply' <<<"$note" || fail "the create act's plan does not show the subnet's id as known after apply" ;;
+  esac
+  COMPOSED="network, app and edge"
+}
+
 # A scenario that starts from more than the snapshot has scenarios/<id>/base/:
 # compose-fail's is the roots as compose-create leaves them. The driver pushes
 # it to main as the author and follows its run to applied (approving a waiting
@@ -2457,6 +2529,7 @@ RECORDS_BUCKET=demo-live-records
 tool_records_bucket() { # tool
   case "$1" in
     choudoufu-compose) echo demo-choudoufu-compose-records ;;
+    terragrunt-choudoufu) echo demo-terragrunt-choudoufu-records ;;
     *) echo "$RECORDS_BUCKET" ;;
   esac
 }
@@ -2475,7 +2548,7 @@ records_up() { # [bucket]
 }
 
 # Whether a tool's tree runs its roots on choudoufu, so its jobs need the record store.
-tool_choudoufu() { grep -qx 'binary: choudoufu' "$HERE/../$(tool_tree "$1")/terragucci.yml" 2>/dev/null; }
+tool_choudoufu() { tool_tgc "$1" || grep -qx 'binary: choudoufu' "$HERE/../$(tool_tree "$1")/terragucci.yml" 2>/dev/null; }
 
 run_cycle() {
   SCENARIO="$1"
@@ -2502,6 +2575,7 @@ run_cycle() {
     fan-out-tofu) scenario_fan_out_tofu ;;
     fan-out-choudoufu) scenario_fan_out_choudoufu ;;
     compose-edit|compose-create|choudoufu-compose-edit|choudoufu-compose-create) scenario_compose ;;
+    terragrunt-choudoufu-edit|terragrunt-choudoufu-create) scenario_terragrunt_choudoufu ;;
     compose-fail) scenario_compose_fail ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
@@ -2558,7 +2632,7 @@ cycle_reset() {
 audit_trail() {
   local clone out
   # The chant repos' pipelines write no terragucci reports for the trail to read.
-  case "$TOOL" in chant|chant-fanout) return 0 ;; esac
+  case "$TOOL" in chant|chant-fanout|terragrunt-choudoufu) return 0 ;; esac
   mkdir -p "$WORK/c$CYCLE" && clone="$(mktemp -d "$WORK/c$CYCLE/audit.XXXXXX")" || { log "audit: could not make a directory to clone $REPO into"; return 0; }
   git clone -q "$REMOTE" "$clone" 2>/dev/null || { log "audit: could not clone $REPO"; return 0; }
   if out="$(cd "$clone" && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
@@ -2588,7 +2662,7 @@ estate_page() {
   local dir="$WORK/c$CYCLE/estate"
   ESTATE_PID=""
   # The chant repos' pipelines write no terragucci reports, so their cycles add nothing to count.
-  case "$TOOL" in chant|chant-fanout) return 0 ;; esac
+  case "$TOOL" in chant|chant-fanout|terragrunt-choudoufu) return 0 ;; esac
   mkdir -p "$dir" || { log "estate: could not make $dir; the delivery numbers stay as they were"; return 0; }
   (cd "$dir" && exec env AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
     OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:${TERRAGUCCI_OTLP_PORT:-4328}" OTEL_TRACES_EXPORTER=none \
@@ -2630,7 +2704,7 @@ states_back() { # [missing-ok]
   # applies the base tree, which deletes what the cycle added, once the
   # operator's queue, which app-01's estate keeps, is destroyed (operator_back).
   if [ "$TOOL" = choudoufu-fanout ]; then operator_back; return 0; fi
-  if [ "$TOOL" = choudoufu-compose ]; then estates_back "${1:-}"; return 0; fi
+  if [ "$TOOL" = choudoufu-compose ] || tool_tgc "$TOOL"; then estates_back "${1:-}"; return 0; fi
   if [ "$TOOL" = chant-fanout ]; then stacks_back "${1:-}"; return 0; fi
   for root in "${ROOTS[@]}"; do
     key="$(root_key "$root")"
@@ -2682,8 +2756,8 @@ estates_apply() { # the base tree
   if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" --entrypoint sh \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
       -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 \
-      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; a() { (cd "$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done' 2>&1)"; then
+      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e ESTATES_DIR="$(tool_tgc "$TOOL" && echo estates || true)" \
+      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; a() { (cd "${ESTATES_DIR:+$ESTATES_DIR/}$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done' 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail "choudoufu apply did not apply the base of $REPO"
   fi
@@ -2800,11 +2874,11 @@ up_repo() {
   mkdir -p "$bt"
   (cd "$TREE" && tar cf - --exclude ./scenarios --exclude ./node_modules .) | (cd "$bt" && tar xf -)
   # The chant trees carry chant's pipeline; the others get terragucci's from init.
-  if ! tool_chant "$TOOL"; then
+  if ! tool_chant "$TOOL" && ! tool_tgc "$TOOL"; then
     (cd "$bt" && "$TERRAGUCCI" init >/dev/null) || fail "terragucci init failed on $(tool_tree "$TOOL")"
   fi
-  mkdir -p "$bt/.chant"
-  echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"
+  if ! tool_tgc "$TOOL"; then mkdir -p "$bt/.chant"; fi
+  if ! tool_tgc "$TOOL"; then echo "$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" > "$bt/.chant/allowed_signers"; fi
   # chant's pull-request gate names the reviewer as the forge does (chant_note).
   ! tool_chant "$TOOL" || echo "forgejo@$CHANT_FORGE_HOST:$REVIEWER $(cut -d' ' -f1,2 "$REVIEWER_KEY.pub")" >> "$bt/.chant/allowed_signers"
   # The snapshots an older release kept in <state>/base, copied once (snapshot).
@@ -2837,7 +2911,7 @@ up_repo() {
     sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
     log "pushed the base to $REPO's main at ${sha:0:8}, applied outside its pipeline"
     RUN_URL="(applied outside the pipeline)"
-  elif [ "$TOOL" = choudoufu-compose ]; then
+  elif [ "$TOOL" = choudoufu-compose ] || tool_tgc "$TOOL"; then
     # The composed estates' first apply would wait for an approval (the values network's subnet gives are read
     # before they exist), which an up cannot give: the driver applies the base itself, as for the chant repos.
     estates_apply "$bt"
@@ -2854,7 +2928,7 @@ up_repo() {
     fi
   fi
   # The fan-out stacks and estates keep no Terraform state to snapshot: each reset applies the base again.
-  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ]; then
+  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ] && ! tool_tgc "$TOOL"; then
     mkdir -p "$RSTATE/snapshots"
     for root in "${ROOTS[@]}"; do
       curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
@@ -2901,6 +2975,7 @@ repo_description() {
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
     compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
     choudoufu-compose) echo "The terragucci demo's composed run on choudoufu: network, app and edge estates in one record store, planned and applied across estates" ;;
+    terragrunt-choudoufu) echo "Terragrunt with choudoufu as its binary: one unit composes network, app and edge, so one terragrunt plan and one terragrunt apply cover all three" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -2919,7 +2994,7 @@ base_label() {
     chant-fanout) echo "The base is applied: fifteen CloudFormation stacks. Network, then cluster-a and cluster-b on it, and six apps on each cluster." ;;
     tofu-fanout) echo "The base is applied. Fifteen roots each have their own state. Cluster-a and cluster-b sit on network, and six apps sit on each cluster." ;;
     choudoufu-fanout) echo "The base is applied. Fifteen estates keep a record per resource and no state file. Cluster-a and cluster-b sit on network." ;;
-    choudoufu-compose) echo "The base is applied. Network, app and edge are estates in one record store, and each keeps a record per resource." ;;
+    choudoufu-compose|terragrunt-choudoufu) echo "The base is applied. Network, app and edge are estates in one record store, and each keeps a record per resource." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
@@ -2954,6 +3029,8 @@ case "$CMD" in
     image_tools=()
     for t in "${LOOP_TOOLS[@]}"; do
       image=""
+      # The Terragrunt-on-choudoufu repo has no terragucci.yml to name an image; its workflow names its own (below).
+      if tool_tgc "$t"; then image_tools+=("$t"); continue; fi
       if tool_choudoufu "$t"; then image="$DEMO_IMAGE_CHOUDOUFU"
       elif [ "$t" = terraform ] || [ "$t" = tofu-fanout ]; then image="$DEMO_IMAGE"
       fi
@@ -2974,6 +3051,14 @@ case "$CMD" in
       docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
         --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" ${choudoufu_args[@]+"${choudoufu_args[@]}"} "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
+      # The Terragrunt-on-choudoufu repo's jobs run in the choudoufu image with terragrunt added.
+      if tool_present terragrunt-choudoufu; then
+        log "building $TGC_JOB_IMAGE…"
+        docker build -q -t "$TGC_JOB_IMAGE" --build-arg CHOUDOUFU_IMAGE="$DEMO_IMAGE_CHOUDOUFU" \
+          --build-arg TERRAGRUNT_IMAGE="$(awk '$1 == "terragrunt" { print $2 }' <<<"$refs")" \
+          -f "$HERE/demo-terragrunt-choudoufu.Dockerfile" "$HERE/demo-yodel" >/dev/null \
+          || fail "the Terragrunt-on-choudoufu job image did not build: docker build -f stack/demo-terragrunt-choudoufu.Dockerfile stack/demo-yodel"
+      fi
       if tool_present terraform; then
         log "starting demo-postgres…"
         docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \

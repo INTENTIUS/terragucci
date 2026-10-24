@@ -1,0 +1,71 @@
+name: terragrunt-choudoufu-demo
+
+# Terragrunt's own CLI, with choudoufu as its binary (root.hcl). No other tool
+# is involved: a pull request runs a plan and posts it as a comment, and a
+# merge runs the apply once a person has approved the pull request.
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  TG_NON_INTERACTIVE: "true"
+  TG_NO_COLOR: "true"
+  TF_IN_AUTOMATION: "1"
+  TF_CLI_CONFIG_FILE: /etc/terragucci-demo/tofu-mirror.tfrc
+  AWS_ENDPOINT_URL: http://floci:4566
+  # choudoufu addresses its record store bucket virtual-hosted; demo-records
+  # forwards those requests to floci path-style (stack/docker-compose.yml).
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_REGION: us-east-1
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: docker
+    container: terragucci-demo-terragrunt-choudoufu:local
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+      - name: One plan across network, app and edge
+        working-directory: live/all
+        run: |
+          terragrunt run -- init -input=false
+          terragrunt run -- plan -input=false -no-color 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+      - name: Post the plan on the pull request
+        if: always()
+        env:
+          API: '${{ github.server_url }}/api/v1/repos/${{ github.repository }}'
+          PR: '${{ github.event.pull_request.number }}'
+          TOKEN: '${{ github.token }}'
+        run: |
+          jq -Rs '{body: ("<!-- terragrunt-choudoufu-plan -->\nterragrunt plan, live/all (choudoufu):\n\n```\n" + . + "\n```")}' "$RUNNER_TEMP/plan.txt" \
+            | curl -fsS -o /dev/null -H "Authorization: token $TOKEN" -H 'content-type: application/json' -X POST -d @- "$API/issues/$PR/comments"
+  apply:
+    if: github.event_name == 'push'
+    runs-on: docker
+    container: terragucci-demo-terragrunt-choudoufu:local
+    concurrency:
+      group: terragrunt-choudoufu-apply
+      cancel-in-progress: false
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v7
+      - name: Require a person's approving review of the merged pull request
+        env:
+          API: '${{ github.server_url }}/api/v1/repos/${{ github.repository }}'
+          SHA: '${{ github.sha }}'
+          TOKEN: '${{ github.token }}'
+        run: |
+          pr="$(curl -fsS -H "Authorization: token $TOKEN" "$API/commits/$SHA/pull" | jq -r '.number // empty')"
+          [ -n "$pr" ] || { echo "no pull request merged $SHA; nothing here applies it" >&2; exit 1; }
+          curl -fsS -H "Authorization: token $TOKEN" "$API/pulls/$pr/reviews" | jq -e 'any(.[]; .state == "APPROVED")' >/dev/null \
+            || { echo "pull request $pr has no approving review" >&2; exit 1; }
+      - name: One apply across network, app and edge
+        working-directory: live/all
+        run: |
+          terragrunt run -- init -input=false
+          terragrunt run -- apply -input=false -no-color -auto-approve

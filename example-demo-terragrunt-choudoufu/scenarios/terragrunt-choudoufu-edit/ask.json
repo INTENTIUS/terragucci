@@ -1,0 +1,69 @@
+{
+  "opening": "Your Terragrunt repo, with choudoufu as the binary: one plan across network, app and edge.",
+  "pull-request": {
+    "prompt": "Port 8080 to 8090; add admin port 9000.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Opening a pull request; the workflow runs terragrunt plan in live/all"
+  },
+  "planned": {
+    "prompt": null,
+    "action": null,
+    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change. Next: merge and apply.",
+    "light": [
+      "network/terraform_data.http_proxy_port",
+      "network/terraform_data.admin_port",
+      "app/terraform_data.listener_port",
+      "app/terraform_data.admin_listener_port",
+      "edge/terraform_data.upstream",
+      "edge/terraform_data.admin_upstream"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approving review of the pull request"
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging; the workflow runs terragrunt apply in live/all"
+  },
+  "applying": {
+    "status": "terragrunt apply is applying network, app and edge together",
+    "tips": [
+      "A dependency block plans on mock_outputs until its parent applies. Here app plans on 'known after apply'.",
+      "Keep your root.hcl and includes. Set the binary to choudoufu and add a live block per unit."
+    ]
+  },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Done. Both ports changed in network, app and edge in the same apply. Next: put the estates back.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "closing": "3 estates. 1 terragrunt plan. 1 approval. 1 terragrunt apply.",
+  "reset": {
+    "prompt": "Put the estates back to the base.",
+    "action": null,
+    "reply": "Done. network, app and edge are back to the base. Next: add a subnet the other estates need.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
+}
