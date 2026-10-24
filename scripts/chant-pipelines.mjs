@@ -33,6 +33,15 @@ export const PIPELINES = {
       "--pr-build-command", "ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build",
     ],
   },
+  // The compose tree's: the same pipeline, in the compose job image (stack/demo-chant-compose.Dockerfile), over three templates.
+  "example-demo-chant-compose": {
+    file: ".forgejo/workflows/chant-pr.yml",
+    args: [
+      "build", "--components", "--generate", "forgejo", "--pr-loop", "--env", "demo", "--image", "terragucci-demo-chant-compose:local",
+      "--events-json", "--report-url", "s3://demo-reports/demo/chant/${{ github.repository }}",
+      "--pr-build-command", "ln -s /opt/demo-chant-compose/node_modules node_modules && npm run build",
+    ],
+  },
 };
 
 /** The example trees that are chant projects: a chant.config.ts at their root. */
@@ -45,7 +54,12 @@ export function chantTrees(dir = root) {
 function generate(tree, { file, args }) {
   const tmp = mkdtempSync(join(tmpdir(), "chant-pipeline-"));
   try {
-    cpSync(join(root, tree), tmp, { recursive: true, filter: (src) => !src.split("/").includes("node_modules") });
+    // The repo the demo pushes has no scenarios/ (stack/demo.sh leaves it out of the base), and a scenario's pull
+    // request can carry a *.component.ts of its own, which chant would read as a second component of the same name.
+    cpSync(join(root, tree), tmp, {
+      recursive: true,
+      filter: (src) => !src.split("/").includes("node_modules") && !src.startsWith(join(root, tree, "scenarios")),
+    });
     const ci = spawnSync("npm", ["ci", "--no-audit", "--no-fund"], { cwd: tmp, encoding: "utf8" });
     if (ci.status !== 0) throw new Error(`${tree}: npm ci failed\n${ci.stderr}`);
     const out = join(tmp, "generated.yml");

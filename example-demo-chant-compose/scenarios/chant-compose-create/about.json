@@ -1,0 +1,5 @@
+{
+  "changes": "Network creates a subnet. App puts a network interface in it, and edge allows its range.",
+  "watch": "The subnet's id does not exist until it is created, so the plan shows it as known after apply. The driver approves once, and the apply plans app again with the real id under that approval.",
+  "shows": "One plan and one approval carry a new resource's id to the stack that needs it."
+}

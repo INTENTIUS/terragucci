@@ -1,0 +1,151 @@
+{
+  "opening": "This second act adds a subnet to network. Its id is known only after apply.",
+  "pull-request": [
+    {
+      "prompt": "Add a second subnet to network; put a worker in it.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it. edge allows the new range. Plan all three stacks next.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "+ network  subnetB  10.0.2.0/24",
+        "+ app      workerInterface",
+        "~ edge     allowlist  + 10.0.2.0/24"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Planning all three stacks together",
+      "tips": [
+        {
+          "title": "One plan, three stacks",
+          "body": "chant plans all three stacks in one pass and posts one note with one digest. A stack that reads another's output is planned on what that output will be.",
+          "link": {
+            "label": "Generated CI for pull requests",
+            "url": "https://intentius.io/chant/guide/pull-request-ci/"
+          }
+        }
+      ]
+    }
+  ],
+  "planned": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "One plan across 3 stacks. Only one value is unknown: subnet b's id, which app's worker needs.",
+      "light": [
+        "network/subnetB"
+      ],
+      "paths": false,
+      "ghost": true
+    },
+    {
+      "prompt": "What depends on the new subnet?",
+      "action": null,
+      "reply": "One resource reads it: app's worker. Edge allows the subnet's range, but it never reads the id.",
+      "light": [
+        "network/subnetB"
+      ],
+      "paths": true,
+      "ghost": false,
+      "status": "Tracing what reads subnet b",
+      "tips": [
+        {
+          "title": "Known after apply",
+          "body": "CloudFormation gives a new subnet its id only when it creates it. chant previews app's change set with a stand-in for that id and marks the worker's SubnetId as known after apply. Before it runs the real change set, it checks it against the preview.",
+          "link": {
+            "label": "How a round is covered",
+            "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+          }
+        }
+      ]
+    }
+  ],
+  "approved": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Recording your approval of the plan's digest",
+    "tips": [
+      {
+        "title": "One approval",
+        "body": "Once network applies, chant plans app again with the real id. The approval already given covers that plan if it only fills in what the preview marked unknown.",
+        "link": {
+          "label": "How a round is covered",
+          "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+        }
+      }
+    ]
+  },
+  "merged": {
+    "prompt": "Merge and apply.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Merging; the apply job runs the stacks in order",
+    "tips": [
+      {
+        "title": "Parameters, not exports",
+        "body": "Each stack reads the one before it through parameters that chant fills from its outputs with stackOutput. No CloudFormation exports are involved."
+      }
+    ]
+  },
+  "applying": {
+    "status": "Applying the three stacks in order",
+    "tips": [
+      {
+        "title": "One approval",
+        "body": "Once network applies, chant plans app again with the real id. The approval already given covers that plan if it only fills in what the preview marked unknown.",
+        "link": {
+          "label": "How a round is covered",
+          "url": "https://intentius.io/chant/guide/apply-on-merge/#a-round-the-first-approval-covers"
+        }
+      },
+      {
+        "title": "A stock chant project",
+        "body": "These are three stacks in a chant project. The pull request pipeline is the one chant generates for the project. No other tool is in it.",
+        "link": {
+          "label": "chant on GitHub",
+          "url": "https://github.com/INTENTIUS/chant"
+        }
+      }
+    ]
+  },
+  "applied": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    },
+    {
+      "prompt": "Did anything stay locked?",
+      "action": null,
+      "reply": "No. CloudFormation locks a stack while its update runs and lets go when it ends. All three updates finished, so no stack is locked.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Checking the three stacks",
+      "tips": [
+        {
+          "title": "Locking",
+          "body": "CloudFormation locks a stack while one of its updates runs. chant runs one change set per stack, and each stack here waits for the one before it to finish."
+        }
+      ]
+    }
+  ],
+  "closing": "3 stacks, 1 plan, 1 approval, 1 apply."
+}

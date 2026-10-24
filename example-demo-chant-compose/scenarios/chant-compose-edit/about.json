@@ -1,0 +1,5 @@
+{
+  "changes": "Network changes its proxy port and adds an admin port. App and edge follow both, each with a resource of its own.",
+  "watch": "Every value is known at plan. The plan shows what each stack changes from and to. One approval covers the whole change.",
+  "shows": "A change that reaches three CloudFormation stacks is planned together and applied under one approval."
+}

@@ -36,6 +36,19 @@
 # tofu image with chant, its aws lexicon and AWS CLI v2. Its stacks have no
 # Terraform state: up applies the base with `chant run --components all`, and
 # each reset applies the base's templates again, the same way (stacks_back).
+# The chant compose repo, <admin>/demo-chant-compose from
+# example-demo-chant-compose/, is the prompt-driven demo's network, app and edge
+# as three CloudFormation stacks in floci. A stock chant project: each stack's
+# parameters are filled from the stack before it by `stackOutput` inputs (no
+# exports; floci gets those wrong), and its pipeline is the one chant generates
+# (`chant build --components --generate forgejo --pr-loop`, see
+# scripts/chant-pipelines.mjs), with no terragucci in it. Its jobs run in
+# terragucci-demo-chant-compose:local (stack/demo-chant-compose.Dockerfile),
+# which carries chant built from a commit of INTENTIUS/chant (CHANT_COMPOSE_REF)
+# since one approval covering a composed run's re-plan is in no release yet.
+# Its scenarios are chant-compose-edit and chant-compose-create. Like the other
+# chant repos, its base is applied by the driver outside the pipeline and so is
+# each reset (stacks_back); the base commit says [skip ci].
 # The fan-out repo, <admin>/demo-fanout from example-demo-fanout/, is fifteen
 # plain roots of SQS queues and DynamoDB tables in floci: network, cluster-a
 # and cluster-b on it, and six apps on each cluster, each with its own state.
@@ -240,7 +253,7 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create terragrunt-choudoufu-edit terragrunt-choudoufu-create atmos-choudoufu-edit atmos-choudoufu-create)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create terragrunt-choudoufu-edit terragrunt-choudoufu-create atmos-choudoufu-edit atmos-choudoufu-create chant-compose-edit chant-compose-create)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
@@ -255,13 +268,14 @@ SCENARIOS=(b-waves failure tg-planned-outputs)
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose choudoufu-compose terragrunt-choudoufu atmos-choudoufu)
+TOOLS=(terraform terragrunt chant chant-fanout chant-compose tofu-fanout choudoufu-fanout compose choudoufu-compose terragrunt-choudoufu atmos-choudoufu)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
     tg-planned-outputs) echo terragrunt ;;
     chant-pr-loop) echo chant ;;
     fan-out) echo chant-fanout ;;
+    chant-compose-edit|chant-compose-create) echo chant-compose ;;
     fan-out-tofu) echo tofu-fanout ;;
     fan-out-choudoufu) echo choudoufu-fanout ;;
     compose-edit|compose-create|compose-fail) echo compose ;;
@@ -277,6 +291,7 @@ tool_repo() { # tool -> the repo's name under the admin
     terragrunt) echo demo-terragrunt ;;
     chant) echo demo-chant ;;
     chant-fanout) echo demo-chant-fanout ;;
+    chant-compose) echo demo-chant-compose ;;
     tofu-fanout) echo demo-fanout ;;
     choudoufu-fanout) echo demo-choudoufu-fanout ;;
     compose) echo demo-compose ;;
@@ -292,6 +307,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     terragrunt) echo example-demo-terragrunt ;;
     chant) echo example-demo-chant ;;
     chant-fanout) echo example-demo-chant-fanout ;;
+    chant-compose) echo example-demo-chant-compose ;;
     tofu-fanout) echo example-demo-fanout ;;
     choudoufu-fanout) echo example-demo-choudoufu-fanout ;;
     compose) echo example-demo-compose ;;
@@ -309,11 +325,20 @@ CHANT_JOB_IMAGE=terragucci-demo-chant:local
 # The fan-out repo's, built by up (stack/demo-chant-fanout.Dockerfile) and named
 # by example-demo-chant-fanout/.forgejo/workflows/chant-pr.yml.
 FANOUT_JOB_IMAGE=terragucci-demo-chant-fanout:local
+# The compose repo's, built by up (stack/demo-chant-compose.Dockerfile) and named
+# by example-demo-chant-compose/.forgejo/workflows/chant-pr.yml.
+COMPOSE_JOB_IMAGE=terragucci-demo-chant-compose:local
+# The commit of INTENTIUS/chant that image's chant and aws lexicon are packed
+# from: a covered round, a preview that keeps its known outputs and planned
+# outputs that state their value (chant#4422, #4423, #4430) are on main and in no
+# release yet. DEMO_CHANT_COMPOSE_REF names another commit.
+CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-70e5ec19809ee0ffdbeffcf06233d8fe42b83982}"
 # The image a chant tool's jobs run in, which its base is applied in too.
 tool_image() { # tool
   case "$1" in
     chant) echo "$CHANT_JOB_IMAGE" ;;
     chant-fanout) echo "$FANOUT_JOB_IMAGE" ;;
+    chant-compose) echo "$COMPOSE_JOB_IMAGE" ;;
     *) return 1 ;;
   esac
 }
@@ -323,7 +348,7 @@ tool_tgc() { [ "$1" = terragrunt-choudoufu ]; }
 # A tool whose repo runs its own tool's plain workflow (Terragrunt, Atmos) and approves by pull request review: no chant seal, no signers.
 tool_plain() { tool_tgc "$1" || [ "$1" = atmos-choudoufu ]; }
 # A tool whose repo runs chant's own pull-request pipeline, not terragucci's.
-tool_chant() { case "$1" in chant|chant-fanout) return 0 ;; *) return 1 ;; esac; }
+tool_chant() { case "$1" in chant|chant-fanout|chant-compose) return 0 ;; *) return 1 ;; esac; }
 
 # The stacks a CloudFormation tree's chant.config.ts lists, one a line, in its
 # order: the fan-out tree's roots. They have no Terraform state.
@@ -450,6 +475,14 @@ if [ "$CMD" = up ]; then
       -f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)" >/dev/null \
       || fail "the fan-out job image did not build: docker build -f stack/demo-chant-fanout.Dockerfile example-demo-chant-fanout"
   fi
+  # The compose repo's the same way, with chant and its aws lexicon packed from CHANT_COMPOSE_REF.
+  if tool_present chant-compose; then
+    log "building $COMPOSE_JOB_IMAGE from chant ${CHANT_COMPOSE_REF:0:10} (a few minutes the first time)…"
+    docker build -q -t "$COMPOSE_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
+      --build-arg CHANT_REF="$CHANT_COMPOSE_REF" \
+      -f "$HERE/demo-chant-compose.Dockerfile" "$HERE/../$(tool_tree chant-compose)" >/dev/null \
+      || fail "the compose job image did not build: docker build -f stack/demo-chant-compose.Dockerfile example-demo-chant-compose"
+  fi
   log "starting Forgejo, its runner and floci (a minute or two the first time)…"
   mkdir -p "$HERE/.state"
   UP_BOOT_LOG="$HERE/.state/demo-up-bootstrap.log"
@@ -566,7 +599,7 @@ use_repo() { # tool
     [ "${#ROOTS[@]}" -gt 0 ] || fail "no root with a main.tf is in $TREE"
     return 0
   fi
-  if [ "$1" = chant-fanout ]; then
+  if [ "$1" = chant-fanout ] || [ "$1" = chant-compose ]; then
     STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS=""
     read -r -a ROOTS <<<"$(tree_stacks "$TREE" | tr '\n' ' ')"
     [ "${#ROOTS[@]}" -gt 0 ] || fail "no stack is listed in $TREE/chant.config.ts"
@@ -1496,6 +1529,8 @@ scenario_title() {
     tg-planned-outputs) echo "A new unit planned on real values" ;;
     chant-pr-loop) echo "Each component planned, reviewed, then applied in waves" ;;
     fan-out)    echo "A broken stack shouldn't stall the whole rollout" ;;
+    chant-compose-edit)   echo "An edit and an addition across three stacks" ;;
+    chant-compose-create) echo "A new subnet the other stacks need, in one change" ;;
     fan-out-tofu) echo "A broken stack shouldn't stall the whole rollout" ;;
     fan-out-choudoufu) echo "A broken estate shouldn't stall the rollout" ;;
     compose-edit)   echo "An edit and an addition, every value known" ;;
@@ -1524,6 +1559,8 @@ scenario_name() {
     tg-planned-outputs) echo "two new units" ;;
     chant-pr-loop) echo "a reviewed plan" ;;
     fan-out)    echo "fifteen stacks" ;;
+    chant-compose-edit)   echo "one plan, three stacks" ;;
+    chant-compose-create) echo "a subnet across stacks" ;;
     fan-out-tofu) echo "fifteen stacks" ;;
     fan-out-choudoufu) echo "fifteen estates" ;;
     compose-edit)   echo "one plan, known values" ;;
@@ -1664,6 +1701,14 @@ say() { # step
     compose-edit:applied|compose-create:applied|compose-fail-fix:applied) echo "Applied. Network, app and edge each hold what this run applied." ;;
     compose-fail-fix:pull-request) echo "The fix is pull request $PULL: one line in the load balancer's guard." ;;
     compose-fail-fix:planned) echo "The fix's plan covers only what is left to apply. Nothing that applied before is touched." ;;
+    chant-compose-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
+    chant-compose-edit:planned) echo "One plan covers network, app and edge. Every value is known at plan, so each change shows before and after." ;;
+    chant-compose-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts a worker interface in it, and edge allows its range." ;;
+    chant-compose-create:planned) echo "One plan covers network, app and edge. The subnet's id exists only after it is created, so app's worker interface shows it as known after apply." ;;
+    chant-compose-edit:approved) echo "The reviewer approves pull request $PULL and its plan's digest. It is the only approval this change needs." ;;
+    chant-compose-create:approved) echo "The reviewer approves pull request $PULL and its plan's digest. It is the only approval this change needs, including the plan the apply makes once the subnet exists." ;;
+    chant-compose-*:applying) echo "The apply updates network first, then app and edge. CloudFormation locks each stack while its update runs." ;;
+    chant-compose-*:applied) echo "Applied. Network, app and edge are three stacks that now hold this change, and no stack is left locked." ;;
     choudoufu-compose-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
     choudoufu-compose-edit:planned) echo "One composed plan covers $COMPOSED. Each estate's changes show as the one apply will make them." ;;
     choudoufu-compose-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
@@ -1725,7 +1770,7 @@ open_pull() {
   run_ended "$LIMIT_PLAN"
   [ "$RUN_STATUS" = success ] || fail "the plan run of pull request $PULL ended $RUN_STATUS ($RUN_URL)"
   # chant's plan job posts a note of its own.
-  case "$TOOL" in chant|chant-fanout) chant_note; return 0 ;; terragrunt-choudoufu) tgc_note; return 0 ;; esac
+  case "$TOOL" in chant|chant-fanout|chant-compose) chant_note; return 0 ;; terragrunt-choudoufu) tgc_note; return 0 ;; esac
   # The Atmos repo's workflow posts the plan it made as a comment of its own.
   if [ "$TOOL" = atmos-choudoufu ]; then
     local limit=$(( $(now) + 60 ))
@@ -2068,7 +2113,7 @@ scenario_tg_planned_outputs() {
 # (docker-compose.yml), which the jobs' GITHUB_SERVER_URL carries. up lists the
 # reviewer's key under that principal too, in .chant/allowed_signers.
 CHANT_FORGE_HOST=forgejo:3000
-CHANT_DIGEST="" PLAN_DIGEST="" CHANT_APPROVER=""
+CHANT_DIGEST="" PLAN_DIGEST="" CHANT_APPROVER="" CHANT_NOTE=""
 # The members the plan note must list: chant-pr-loop's three by default; the
 # fan-out scenario names its own for each of its two pull requests.
 CHANT_MEMBERS="network app edge"
@@ -2083,6 +2128,7 @@ chant_note() {
     [ "$(now)" -lt "$deadline" ] || fail "the plan run passed but no chant plan note is on pull request $PULL"
     sleep "$POLL"
   done
+  CHANT_NOTE="$note"
   CHANT_DIGEST="$(grep -oE -- '--plan jcs1-sha256:[0-9a-f]+' <<<"$note" | awk 'NR == 1 { print $2 }' || true)"
   [ -n "$CHANT_DIGEST" ] || fail "the plan note on pull request $PULL names no digest to approve"
   PLAN_DIGEST="${CHANT_DIGEST:0:20}"
@@ -2228,6 +2274,50 @@ scenario_fan_out() {
   fanout_round "$FANOUT_CHANT_FIX_PLANNED" "$FANOUT_FIX_HOLD"
   fanout_fixed
   END_HOLD="$FANOUT_END_HOLD"
+  OUTCOME=applied
+}
+
+# chant-compose-edit and chant-compose-create: the prompt-driven demo's two acts
+# (behold#935) on example-demo-chant-compose/, three CloudFormation stacks in
+# floci with no terragucci in the pipeline: chant's own pull-request loop. The
+# plan job (`chant components pr-plan`) plans network, app and edge in one
+# change-set document and posts one note with its digest. The reviewer approves
+# that digest as in chant-pr-loop (chant_approve), and the author merges. The
+# apply job (`pr-apply --require-review`) plans again and applies network, app
+# and edge in order. In the create act app's worker interface reads network's
+# new subnet id, which the first plan could only preview against a stand-in; the
+# apply plans app and edge again once network applied, and that round is covered
+# by the approval already given (chant#4419), so it asks for no second one: the
+# run passes. A round that was not covered would stop the apply `waiting`, and
+# the driver stalls the cycle on it. What each step says comes from
+# scenarios/<id>/ask.json.
+# The plan note of a chant-compose act says what the act is about: the edit's
+# values are all known (nothing is "known only after apply"), and the create's
+# only unknown is the id of network's new subnet, read by app. A note that says
+# otherwise stalls the cycle rather than show the viewer a different story.
+chant_compose_planned() {
+  case "$SCENARIO" in
+    chant-compose-edit)
+      ! grep -q 'Known only after apply' <<<"$CHANT_NOTE" || fail "the edit act's plan note has a value known only after apply: $(grep -o 'Known only after apply:[^.]*' <<<"$CHANT_NOTE" | head -1)" ;;
+    chant-compose-create)
+      grep -q 'Known only after apply: `app` reads `network.SubnetBId`\.' <<<"$CHANT_NOTE" \
+        || fail "the create act's plan note does not say that only app reads network.SubnetBId after apply: $(grep -o 'Known only after apply:[^.]*' <<<"$CHANT_NOTE" | head -1)" ;;
+  esac
+}
+
+scenario_chant_compose() {
+  open_pull
+  chant_compose_planned
+  demo_hold planned "$(say planned)" "approve the plan's digest"
+  HELD="pr-apply"
+  chant_approve
+  HELD=""
+  demo_write approved "$(say approved)" "merge pull request $PULL"
+  ask_hold approved
+  merge_pull
+  demo_write applying "$(say applying)" "follow the apply"
+  run_ended "$LIMIT_RUN"
+  [ "$RUN_STATUS" = success ] || fail "$(chant_refusal)"
   OUTCOME=applied
 }
 
@@ -2638,6 +2728,7 @@ run_cycle() {
     tg-planned-outputs) scenario_tg_planned_outputs ;;
     chant-pr-loop) scenario_chant_pr_loop ;;
     fan-out) scenario_fan_out ;;
+    chant-compose-edit|chant-compose-create) scenario_chant_compose ;;
     fan-out-tofu) scenario_fan_out_tofu ;;
     fan-out-choudoufu) scenario_fan_out_choudoufu ;;
     compose-edit|compose-create|choudoufu-compose-edit|choudoufu-compose-create) scenario_compose ;;
@@ -2801,7 +2892,7 @@ cycle_reset() {
 audit_trail() {
   local clone out
   # The chant repos' pipelines write no terragucci reports for the trail to read.
-  case "$TOOL" in chant|chant-fanout|terragrunt-choudoufu) return 0 ;; esac
+  case "$TOOL" in chant|chant-fanout|chant-compose|terragrunt-choudoufu) return 0 ;; esac
   mkdir -p "$WORK/c$CYCLE" && clone="$(mktemp -d "$WORK/c$CYCLE/audit.XXXXXX")" || { log "audit: could not make a directory to clone $REPO into"; return 0; }
   git clone -q "$REMOTE" "$clone" 2>/dev/null || { log "audit: could not clone $REPO"; return 0; }
   if out="$(cd "$clone" && AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
@@ -2831,7 +2922,7 @@ estate_page() {
   local dir="$WORK/c$CYCLE/estate"
   ESTATE_PID=""
   # The chant repos' pipelines write no terragucci reports, so their cycles add nothing to count.
-  case "$TOOL" in chant|chant-fanout|terragrunt-choudoufu) return 0 ;; esac
+  case "$TOOL" in chant|chant-fanout|chant-compose|terragrunt-choudoufu) return 0 ;; esac
   mkdir -p "$dir" || { log "estate: could not make $dir; the delivery numbers stay as they were"; return 0; }
   (cd "$dir" && exec env AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1 \
     OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:${TERRAGUCCI_OTLP_PORT:-4328}" OTEL_TRACES_EXPORTER=none \
@@ -2874,7 +2965,7 @@ states_back() { # [missing-ok]
   # operator's queue, which app-01's estate keeps, is destroyed (operator_back).
   if [ "$TOOL" = choudoufu-fanout ]; then operator_back; return 0; fi
   if [ "$TOOL" = choudoufu-compose ] || [ "$TOOL" = atmos-choudoufu ] || tool_tgc "$TOOL"; then estates_back "${1:-}"; return 0; fi
-  if [ "$TOOL" = chant-fanout ]; then stacks_back "${1:-}"; return 0; fi
+  if [ "$TOOL" = chant-fanout ] || [ "$TOOL" = chant-compose ]; then stacks_back "${1:-}"; return 0; fi
   for root in "${ROOTS[@]}"; do
     key="$(root_key "$root")"
     if [ -f "$(snapshot "$root")" ]; then
@@ -3097,7 +3188,7 @@ up_repo() {
     fi
   fi
   # The fan-out stacks and estates keep no Terraform state to snapshot: each reset applies the base again.
-  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ] &&  ! tool_tgc "$TOOL" && [ "$TOOL" != atmos-choudoufu ]; then
+  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != chant-compose ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ] &&  ! tool_tgc "$TOOL" && [ "$TOOL" != atmos-choudoufu ]; then
     mkdir -p "$RSTATE/snapshots"
     for root in "${ROOTS[@]}"; do
       curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
@@ -3126,6 +3217,7 @@ chant_base_apply() { # the base tree
   grep -qF "container: $image" "$1/.forgejo/workflows/chant-pr.yml" \
     || fail "$(tool_tree "$TOOL")/.forgejo/workflows/chant-pr.yml does not run in $image, the image up builds"
   [ "$TOOL" != chant-fanout ] || build='ln -s /opt/demo-chant-fanout/node_modules node_modules; npm run build >/dev/null;'
+  [ "$TOOL" != chant-compose ] || build='ln -s /opt/demo-chant-compose/node_modules node_modules; npm run build >/dev/null;'
   log "applying the base of $REPO with chant run in $image (a minute or two)…"
   if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
@@ -3140,6 +3232,7 @@ repo_description() {
     terraform) echo "The terragucci demo: four roots of terraform_data, a change across their states" ;;
     chant) echo "The terragucci demo on chant: three components of terraform_data, planned on each pull request and applied in waves" ;;
     chant-fanout) echo "The terragucci demo on chant: fifteen CloudFormation stacks in three waves, where a failure holds only what depends on it" ;;
+    chant-compose) echo "The terragucci demo's composed run on chant: network, app and edge as three CloudFormation stacks, planned together and applied under one approval" ;;
     tofu-fanout) echo "The terragucci demo's fan-out: fifteen roots of SQS queues and DynamoDB tables in three waves, where a failure blocks only what depends on it" ;;
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
     compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
@@ -3162,6 +3255,7 @@ base_label() {
     terraform) echo "The base is applied: $(applied_values), and other" ;;
     chant) echo "The base is applied. Network, app and edge are chant components, each with its own state." ;;
     chant-fanout) echo "The base is applied: fifteen CloudFormation stacks. Network, then cluster-a and cluster-b on it, and six apps on each cluster." ;;
+    chant-compose) echo "The base is applied. Network, app and edge are three CloudFormation stacks, and each reads the one before it through its parameters." ;;
     tofu-fanout) echo "The base is applied. Fifteen roots each have their own state. Cluster-a and cluster-b sit on network, and six apps sit on each cluster." ;;
     choudoufu-fanout) echo "The base is applied. Fifteen estates keep a record per resource and no state file. Cluster-a and cluster-b sit on network." ;;
     choudoufu-compose|terragrunt-choudoufu|atmos-choudoufu) echo "The base is applied. Network, app and edge are estates in one record store, and each keeps a record per resource." ;;

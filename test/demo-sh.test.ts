@@ -1126,3 +1126,94 @@ describe("ask.json to demo.json", () => {
     expect(demo).toMatch(/^SCENARIOS=\(b-waves failure tg-planned-outputs\)$/m);
   });
 });
+
+describe("the chant compose demo (terragucci#1269)", () => {
+  const tree = join(root, "example-demo-chant-compose");
+  const acts = ["chant-compose-edit", "chant-compose-create"];
+  const read = (...p: string[]) => readFileSync(join(tree, ...p), "utf8");
+  const sh = (body: string) => spawnSync("bash", ["-c", `set -euo pipefail\n${fn("scenario_tool")}\n${fn("tool_repo")}\n${fn("tool_tree")}\n${body}`], { cwd: root, encoding: "utf8" });
+
+  it("runs both acts on their own forge repo, from their own tree, in the loop's scenario list", () => {
+    const r = sh(`for s in ${acts.join(" ")}; do t="$(scenario_tool $s)"; echo "$t $(tool_repo $t) $(tool_tree $t)"; done`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(Array(2).fill("chant-compose demo-chant-compose example-demo-chant-compose"));
+    expect(demo).toMatch(/^TOOLS=\(.* chant-fanout chant-compose .*\)$/m);
+    expect(demo).toMatch(/^ALL_SCENARIOS=\(.* chant-compose-edit chant-compose-create\)$/m);
+    expect(demo).toContain("chant-compose-edit|chant-compose-create) scenario_chant_compose ;;");
+    expect(fn("states_back")).toContain('[ "$TOOL" = chant-compose ]; then stacks_back');
+    expect(fn("tool_chant")).toContain("chant|chant-fanout|chant-compose");
+  });
+
+  it("reads its three stacks from chant.config.ts, in order", () => {
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_stacks")}\ntree_stacks example-demo-chant-compose`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["network", "app", "edge"]);
+  });
+
+  it("is a stock chant project: chant's own pipeline, in the image up builds, with no terragucci in it", () => {
+    const image = /^COMPOSE_JOB_IMAGE=(\S+)$/m.exec(demo)?.[1];
+    expect(image).toBe("terragucci-demo-chant-compose:local");
+    const pipeline = read(".forgejo", "workflows", "chant-pr.yml");
+    expect(pipeline.match(new RegExp(`container: ${image}$`, "gm"))).toHaveLength(2);
+    const stages = [...pipeline.matchAll(/^ *run: (.*)$/gm)].map((m) => m[1]!).filter((r) => r.startsWith("chant components "));
+    expect(stages.map((r) => r.split(" ").slice(0, 3).join(" "))).toEqual(["chant components pr-plan", "chant components pr-apply"]);
+    expect(pipeline.replaceAll(image!, "")).not.toMatch(/terragucci/);
+    expect(pipeline).toContain("ln -s /opt/demo-chant-compose/node_modules node_modules && npm run build");
+    expect(existsSync(join(tree, "terragucci.yml"))).toBe(false);
+    // Cross-stack values are parameters filled by stackOutput, not exports (floci gets exports wrong).
+    const files = ["app.component.ts", "edge.component.ts", ...["network", "app", "edge"].map((s) => `src/${s}/resources.ts`)].map((f) => read(f)).join("\n");
+    expect(files).toContain("stackOutput");
+    expect(files).not.toMatch(/ImportValue|Export:/);
+    const dockerfile = readFileSync(join(root, "stack", "demo-chant-compose.Dockerfile"), "utf8");
+    expect(dockerfile).toContain("ARG CHANT_REF");
+    expect(dockerfile).toContain(`ARG AWS_CLI_VERSION=${AWS_CLI.version}\n`);
+    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
+    expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
+    expect(demo).toContain(`-f "$HERE/demo-chant-compose.Dockerfile" "$HERE/../$(tool_tree chant-compose)"`);
+    expect(demo).toMatch(/^CHANT_COMPOSE_REF="\$\{DEMO_CHANT_COMPOSE_REF:-[0-9a-f]{40}\}"$/m);
+  });
+
+  it("has both acts' cards and scripts, and says nothing a CloudFormation stack does not do", () => {
+    const text = acts.flatMap((sc) => ["ask.json", "about.json"].map((f) => read("scenarios", sc, f))).join("\n");
+    expect(text + read("README.md")).not.toMatch(/transaction|atomic|terraform cloud|spacelift|env0|scalr|atlantis/i);
+    // The words of the other demos' subjects stay out of this one's screens.
+    expect(text).not.toMatch(/choudoufu|estate|record store|terragucci/i);
+    for (const sc of acts) {
+      for (const f of ["ask.json", "about.json"]) expect(existsSync(join(tree, "scenarios", sc, f)), `${sc}/${f}`).toBe(true);
+      const ask = JSON.parse(read("scenarios", sc, "ask.json")) as Record<string, unknown>;
+      expect(Object.keys(ask)).toEqual(expect.arrayContaining(["opening", "pull-request", "planned", "approved", "merged", "applying", "applied", "closing"]));
+      // Every light address is <stack>/<logical id> of a resource the scenario's pull, or the base, declares.
+      const lights = [...JSON.stringify(ask).matchAll(/"((?:network|app|edge)\/[A-Za-z]+)"/g)].map((m) => m[1]!);
+      expect(lights.length, sc).toBeGreaterThan(0);
+      for (const l of lights) {
+        const [stack, id] = l.split("/");
+        const src = ["resources.ts"].map((f) => {
+          const pulled = join(tree, "scenarios", sc, "pull", "src", stack!, f);
+          return (existsSync(pulled) ? readFileSync(pulled, "utf8") : "") + read("src", stack!, f);
+        }).join("\n");
+        expect(src, `${sc}: ${l}`).toContain(`export const ${id} = new `);
+      }
+      // behold reads a tip as { title, body, link? }; a bare string is dropped (web/kiosk-ask-tips.js validTips).
+      const tips = JSON.stringify(ask).includes('"tips"') ? (JSON.stringify(ask).match(/"tips":\[("[^"]*",?)+\]/g) ?? []) : [];
+      expect(tips, `${sc}: a tips list of strings`).toEqual([]);
+    }
+  });
+
+  it("changes in each act only what the card says", () => {
+    const at = (sc: string, f: string) => readFileSync(join(tree, "scenarios", sc, "pull", f), "utf8");
+    const edit = at("chant-compose-edit", "src/network/resources.ts");
+    expect(edit).toContain('HTTP_PROXY_PORT = "8090"');
+    expect(edit).toContain('ADMIN_PORT = "9000"');
+    expect(read("src/network/resources.ts")).toContain('HTTP_PROXY_PORT = "8080"');
+    const create = at("chant-compose-create", "src/network/resources.ts");
+    expect(create).toContain('CidrBlock: "10.0.2.0/24"');
+    expect(at("chant-compose-create", "src/app/resources.ts")).toContain("workerInterface");
+    expect(at("chant-compose-create", "src/edge/resources.ts")).toContain('"10.0.1.0/24,10.0.2.0/24"');
+    // Neither act replaces or deletes anything: no resource of the base is renamed or dropped.
+    for (const sc of acts) for (const s of ["network", "app", "edge"]) {
+      const pulled = join(tree, "scenarios", sc, "pull", "src", s, "resources.ts");
+      if (!existsSync(pulled)) continue;
+      for (const m of read("src", s, "resources.ts").matchAll(/^export const (\w+) = new /gm)) expect(readFileSync(pulled, "utf8"), `${sc}: ${m[1]}`).toContain(`export const ${m[1]} = new `);
+    }
+  });
+});
