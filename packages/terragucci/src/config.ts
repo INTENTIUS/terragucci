@@ -455,13 +455,17 @@ export interface ControlSettings {
   member?: string;
   /** The secret holding the token that may dispatch to the control repo. Default `TERRAGUCCI_CONTROL_TOKEN`. */
   token_env?: string;
+  /** The secret holding a read-only token for the control repo, which the generated tf-plan job checks it out with. Default `TERRAGUCCI_CONTROL_READ_TOKEN`; the job's own token is used when the secret is not set. Never the dispatch token. */
+  read_token_env?: string;
   /** The branch of the control repo a GitLab pipeline or a Forgejo workflow runs on. Default `main`; GitHub's dispatch always runs the default branch. */
   ref?: string;
 }
 
-export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "ref"] as const;
+export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref"] as const;
 /** The token a member holds for the dispatch when `control.token_env` is unset. */
 export const CONTROL_TOKEN_ENV = "TERRAGUCCI_CONTROL_TOKEN";
+/** The secret the plan job reads the control repo with when `control.read_token_env` is unset: read-only, and not the dispatch token. */
+export const CONTROL_READ_TOKEN_ENV = "TERRAGUCCI_CONTROL_READ_TOKEN";
 /** A member name or Op name as the control repo's workspace spells them; the dispatch carries both into a shell line. */
 export const CONTROL_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/;
 /** A branch name the dispatch may carry into a URL and a shell line. */
@@ -493,6 +497,8 @@ export function controlProblems(v: unknown, where: string): string[] {
   if (typeof v.repo === "string" && v.forge === undefined && !forgeFromHostSafe(v.repo)) out.push(`${where}.forge is needed: ${v.repo}'s host does not say which forge it is`);
   if (v.member !== undefined && !(typeof v.member === "string" && CONTROL_NAME.test(v.member))) out.push(`${where}.member must be this repo's name in the control repo's workspace`);
   if (v.token_env !== undefined && !(typeof v.token_env === "string" && SECRET_NAME.test(v.token_env))) out.push(`${where}.token_env must name the secret holding the dispatch token, such as ${CONTROL_TOKEN_ENV}`);
+  if (v.read_token_env !== undefined && !(typeof v.read_token_env === "string" && SECRET_NAME.test(v.read_token_env))) out.push(`${where}.read_token_env must name the secret holding a read-only token for the control repo, such as ${CONTROL_READ_TOKEN_ENV}`);
+  else if (typeof v.read_token_env === "string" && v.read_token_env === (v.token_env ?? CONTROL_TOKEN_ENV)) out.push(`${where}.read_token_env must not be the dispatch token's secret (${v.read_token_env}): the plan job runs the change's code`);
   if (v.ref !== undefined && !(typeof v.ref === "string" && CONTROL_REF.test(v.ref))) out.push(`${where}.ref must be a branch name`);
   return out;
 }

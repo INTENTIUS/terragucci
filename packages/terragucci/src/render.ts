@@ -180,7 +180,7 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { dispatchScript, type ResolvedControl } from "./control-repo";
+import { controlCheckoutStep, controlCloneScript, controlDirEnv, dispatchScript, type ResolvedControl } from "./control-repo";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
@@ -2446,11 +2446,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv },
+      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv, ...(input.control ? controlDirEnv("gitlab") : {}) },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens("plan"),
       ...(tg ? forgeCache("gitlab") : {}),
-      script: [...(costInstall ? [costInstall] : []), ...script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report)))],
+      script: [...(costInstall ? [costInstall] : []), ...(input.control ? [controlCloneScript(input.control)] : []), ...script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report)))],
       // The report stays with the job; its counts feed the merge request's widget.
       artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
     } as never);
@@ -2832,11 +2832,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...decideEnv,
       ...costEnv,
       ...reportKeyEnv(forge, input.reports),
+      ...(input.control ? controlDirEnv(forge) : {}),
     },
     outputs: handoverOutputs("plan", forge),
     steps: [
       new Step({ name: "Say on the head that the plan started", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: [forgeApi(forge), 'tg status terragucci/plan pending "planning"'].join("\n") }),
       bareCheckout(true),
+      ...(input.control ? [controlCheckoutStep(input.control)] : []),
       ...toolSteps(true, true, undefined, true),
       new Step({ id: "plan", name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
     ],
@@ -2879,7 +2881,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const go = "steps.decide.outputs.go == '1'";
   const azureReplan = Boolean(oidc?.azure);
   const trades = needsToken && !azureReplan;
-  const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
+  const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports), ...(input.control ? controlDirEnv(forge) : {}) };
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
@@ -2899,6 +2901,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       // The head comes from the pull request, by number; the base branch comes with the history, for the range.
       bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go, "Check out the pull request's head"),
+      ...(input.control ? [controlCheckoutStep(input.control, go)] : []),
       ...toolSteps(true, true, go, true),
       new Step({
         if: go,

@@ -426,6 +426,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
         forge: enumOf(FORGES),
         member: pat(CONTROL_NAME),
         token_env: secret,
+        read_token_env: secret,
         ref: pat(CONTROL_REF),
       }, { required: ["repo", "op"] }),
       description: "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents.",
