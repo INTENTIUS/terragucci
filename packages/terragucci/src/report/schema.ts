@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 45;
+export const REPORT_MINOR = 46;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -51,6 +51,15 @@ export interface ReportRun {
   trace_id?: string;
   /** The trace in Grafana, Tempo or another viewer, from `telemetry.trace_url` (minor 4). */
   trace_url?: string;
+  /** Who proposed the change, when `policy` is set (minor 46): the forge identity decides `kind`; the trailer and OIDC subject are signals. */
+  actor?: ReportActor;
+}
+
+/** The run's actor (minor 46), as ../actor.ts detects it. */
+export interface ReportActor {
+  kind: "person" | "agent";
+  principal: string;
+  signals: { forgeIdentity?: string; trailer?: string; oidcSubject?: string };
 }
 
 /** Why something is open: one short reason a reader sees beside it. */

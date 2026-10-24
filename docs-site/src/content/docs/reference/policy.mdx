@@ -153,6 +153,61 @@ deny contains msg if {
 }
 ```
 
+### Actor
+
+`input.actor` says who proposed the change, a person or an agent. The forge app or bot identity decides. List the identities that are agents in `policy.agents`, and a change proposed through one has `actor.kind` of `agent`. Any other change is a `person`'s. Like `override`, the list is read at base, so a pull request cannot add its own author to it.
+
+```yaml
+policy:
+  engine: opa
+  path: policy
+  outcomes: [deny, hold, allow_unattended]
+  agents: [my-agent[bot]]
+```
+
+| Field | Value |
+|---|---|
+| `actor.kind` | `agent` when the forge identity is listed in `policy.agents`, else `person` |
+| `actor.principal` | the forge identity: the pull request's author, else the job's actor (`unknown` when the environment names none) |
+| `actor.signals.forgeIdentity` | the same login, as the forge gave it |
+| `actor.signals.trailer` | the value of an `Assisted-by`, `Generated-by` or `Agent` trailer, or of a `Co-authored-by` naming an agent, on the pull request's head commit; absent when there is none |
+| `actor.signals.oidcSubject` | the job's OIDC subject: `TG_OIDC_SUBJECT` when set, else GitHub's default subject for the event; absent otherwise |
+
+The trailer and the subject never change `kind`. A trailer with no listed identity leaves the change a person's, and a listed identity with no trailer is still an agent's. The commit author is not a signal. A policy can still read the signals, for example to hold a person's change that carries an agent trailer.
+
+The policy below lets a small agent change apply without an approval, and holds a larger one, or one with a delete or replacement, for a person. It says nothing about a person's change.
+
+```rego
+package main
+
+import rego.v1
+
+changed := [rc |
+  some rc in input.resource_changes
+  rc.change.actions != ["no-op"]
+  rc.change.actions != ["read"]
+]
+
+small if {
+  count(changed) <= 5
+  every rc in changed { rc.change.actions in [["create"], ["update"]] }
+}
+
+allow_unattended contains msg if {
+  input.actor.kind == "agent"
+  small
+  msg := sprintf("%s made a small change", [input.actor.principal])
+}
+
+hold contains msg if {
+  input.actor.kind == "agent"
+  not small
+  msg := sprintf("%s proposed %d changes, or a delete or replacement; a person approves it", [input.actor.principal, count(changed)])
+}
+```
+
+The same actor is on the report's `run.actor` and on each `apply` and `refused` entry of the [audit trail](/terragucci/reference/audit-trail/).
+
 ### Counted rules
 
 | Rule | Effect |

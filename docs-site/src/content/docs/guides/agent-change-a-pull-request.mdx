@@ -121,7 +121,7 @@ On GitLab the `comments` job answers the note and starts a pipeline on the defau
 The default command pins one release of Claude Code and runs it in print mode:
 
 ```text
-npx -y @anthropic-ai/claude-code@2.1.290 -p --max-turns "$TG_AGENT_MAX_TURNS"
+npx -y @anthropic-ai/claude-code@2.1.290 -p --output-format json --max-turns "$TG_AGENT_MAX_TURNS"
   --permission-prompts none --setting-sources user --strict-mcp-config --no-session-persistence
   --tools "Read,Edit,Write,Glob,Grep,Bash"
   --allowedTools "Read" "Edit" "Write" "Glob" "Grep" "Bash(terragucci config check)" "Bash(terragucci init --dry-run)"

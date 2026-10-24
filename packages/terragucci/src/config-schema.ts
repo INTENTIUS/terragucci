@@ -251,6 +251,7 @@ const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
   input: enumOf(POLICY_INPUTS),
   override: { type: "array", minItems: 1, items: { anyOf: [oneLine, overrideEntry] } },
   outcomes: { type: "array", minItems: 1, uniqueItems: true, items: enumOf(POLICY_OUTCOMES) },
+  agents: { type: "array", minItems: 1, items: { type: "string", pattern: "^\\S+$" }, description: "Forge app or bot identities that are agents; a change proposed through one has input.actor.kind agent." },
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
 const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };

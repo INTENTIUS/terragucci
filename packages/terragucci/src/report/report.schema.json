@@ -29,7 +29,17 @@
         "pull_request_url": { "type": "string", "description": "The pull or merge request's page (minor 4)." },
         "report_url": { "type": "string", "description": "Where this report.html is served, when reports.url names the bucket's address (minor 4)." },
         "trace_id": { "type": "string", "description": "The run's trace id, when the stage sent a trace (minor 4)." },
-        "trace_url": { "type": "string", "description": "The trace in a viewer, from telemetry.trace_url (minor 4)." }
+        "trace_url": { "type": "string", "description": "The trace in a viewer, from telemetry.trace_url (minor 4)." },
+        "actor": {
+          "type": "object",
+          "description": "Who proposed the change, when policy is set (minor 46). The forge app or bot identity decides kind; trailer and oidcSubject are supporting signals.",
+          "required": ["kind", "principal", "signals"],
+          "properties": {
+            "kind": { "enum": ["person", "agent"] },
+            "principal": { "type": "string" },
+            "signals": { "type": "object", "properties": { "forgeIdentity": { "type": "string" }, "trailer": { "type": "string" }, "oidcSubject": { "type": "string" } } }
+          }
+        }
       }
     },
     "change_set": { "type": "string" },

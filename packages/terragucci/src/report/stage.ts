@@ -85,6 +85,7 @@ import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { binaryEnv, terragruntExec } from "../binary-env";
 import { synthAffected } from "../synth";
 import { outsideWatch, settingsChanged, type OutsideRoots } from "../affected";
+import { detectActor } from "../actor";
 import { hookCount, hooksUsed, readHooks, runHooks, runUnitHooks, type HookMoment, type StageHooks } from "../hooks";
 import { binaryText, type ReportStep } from "./schema";
 
@@ -2182,7 +2183,7 @@ async function finish(
   if (governing?.note) log(governing.note);
   if (governing?.policy) {
     const facts = runFacts(repo, env, options.forge ?? settings.forge);
-    const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
+    const run = { stage: "tf-plan" as const, project: facts.project, commit: facts.commit, actor: detectActor(repo, env, governing.policy.agents), ...(facts.pull_request ? { pullRequest: facts.pull_request } : {}) };
     // hold and allow_unattended come from the base's policy key alone: a pull request's own outcomes key turns nothing on.
     const settled = governing.from === "base" || !(options.base ?? baseRef(env)) ? governing.policy : { ...governing.policy, outcomes: undefined };
     ({ inputs, policy } = await applyPolicy(repo, settled, inputs, options.base ?? baseRef(env), governing.trust, options.policy, log, run, costOf));
