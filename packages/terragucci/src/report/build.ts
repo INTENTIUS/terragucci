@@ -14,6 +14,7 @@ import { changesSomething, destroysSomething } from "./changing";
 import { costMember } from "./cost";
 import { changeKind, foldChange } from "./highlight";
 import { planAppliedChanges } from "./history";
+import { resolveUnknowns, stateSecrets } from "./applied-values";
 import { planResources } from "./inventory";
 import { isObject, scrubSecrets, sensitiveStrings } from "./redact";
 import { secretCounts, type StoredSecret } from "../tips/secrets";
@@ -68,6 +69,8 @@ export interface RootInput {
   applied?: boolean;
   /** The state version the root's backend holds after the apply. */
   state?: ReportStateVersion;
+  /** `show -json` of the root's state after the apply: the values the plan left unknown are read from it (./applied-values.ts). */
+  appliedState?: unknown;
   /** The provider and module versions it ran at the applied commit, read after its init. */
   versions?: ReportRootVersions;
   /** A choudoufu root's record versions after the apply, by the address the apply changed. */
@@ -334,7 +337,7 @@ export function buildReport(input: BuildInput): Report {
     const src = byPath.get(m.member)!;
     const raw = rawChanges(src.plan);
     // A value the plan marks sensitive in one attribute can sit unmarked in another, so it is cut from every attribute.
-    const secrets = src.plan !== undefined ? sensitiveStrings(src.plan) : [];
+    const secrets = [...(src.plan !== undefined ? sensitiveStrings(src.plan) : []), ...(src.appliedState !== undefined ? stateSecrets(src.appliedState) : [])];
     const counts: ReportRoot["counts"] = {};
     const changes: ReportChange[] = [];
     for (const e of doc.entries) {
@@ -344,7 +347,7 @@ export function buildReport(input: BuildInput): Report {
       if (r?.mode === "ephemeral" || e.address.startsWith("ephemeral.")) continue;
       counts[e.action] = (counts[e.action] ?? 0) + 1;
       if (e.action === "no-op" && r?.importing === undefined) continue;
-      const c = reportChange({ ...e, attributes: scrubSecrets(e.attributes, secrets) }, r, src.preventDestroy ?? new Set());
+      const c = reportChange({ ...e, attributes: scrubSecrets(src.appliedState !== undefined ? resolveUnknowns(e.attributes, e.address, src.appliedState) : e.attributes, secrets) }, r, src.preventDestroy ?? new Set());
       changes.push(c);
       // An import is named whether it leaves the object as found or also
       // updates it; a destroy, replace or forget of it is named as that.

@@ -836,6 +836,19 @@ async function applyRoot(repo: string, p: PlannedRoot, observer: StageObserver, 
   return false;
 }
 
+/**
+ * `show -json` of a root's state once it applied, from the working state: the values its plan left unknown are read
+ * from it for the report. Undefined when the state cannot be shown; the report then leaves those values unknown.
+ */
+function showAppliedState(repo: string, p: PlannedRoot): unknown {
+  const show = spawnSync(p.binary, [`-chdir=${join(repo, p.root)}`, "show", "-json", "-no-color"], { encoding: "utf-8", env: binaryEnv(p.env), maxBuffer: 512 * 1024 * 1024 });
+  try {
+    return show.status === 0 ? JSON.parse(show.stdout) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The first `Error:` line a binary printed, past its box drawing, or else its last line; at most 300 characters. */
 export function firstError(out: string): string {
   const lines = out.split("\n").map((l) => l.replace(/^[\s│╷╵]+/, "").trim()).filter(Boolean);
@@ -1590,6 +1603,8 @@ export interface WaveRun {
   applied?: Set<string>;
   /** The state version each applied root's backend holds afterwards, by root. */
   states?: Map<string, ReportStateVersion>;
+  /** `show -json` of each applied root's state, by root: where the report reads the values its plan left unknown. */
+  appliedStates?: Map<string, unknown>;
   /** Each applied choudoufu root's record versions, by the address its apply changed, by root. */
   recordVersions?: Map<string, Map<string, ReportRecordVersions>>;
   /** A wave split across jobs that decided and left the applies to its shares: its report stays with the job, and the shares' go to the bucket. */
@@ -1806,7 +1821,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     const state = w.states?.get(p.root);
     const versions = w.recordVersions?.get(p.root);
     const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(join(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
+    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(join(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(w.appliedStates?.has(p.root) ? { appliedState: w.appliedStates.get(p.root) } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
   }
   if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);
@@ -2118,6 +2133,10 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
       await eachLimited(applying, limit.value, async (p, i) => {
         await progress?.phase(p.root, "applying");
         ok[i] = p.root === target && composed ? await applyComposedWave(label, composed, w) : await applyRoot(repo, p, w.observer, ws);
+        if (ok[i] && !(p.root === target && composed)) {
+          const shown = showAppliedState(repo, p);
+          if (shown !== undefined) (w.appliedStates ??= new Map()).set(p.root, shown);
+        }
         await progress?.phase(p.root, ok[i] ? "applied" : "failed");
       });
     } finally {
@@ -2357,6 +2376,7 @@ async function settleComposed(repo: string, label: string, composed: ComposedWav
   for (const root of whole) w.applied.add(root);
   w.states ??= new Map();
   for (const root of r.settled) w.states.set(root, await stateVersion(join(repo, root), composed.run.rootEnv(root)));
+  for (const [root, state] of r.shown ?? []) (w.appliedStates ??= new Map()).set(root, state);
   logStateVersions(r.settled, w.states);
   composed.failed = r.members.filter((m) => !whole.includes(m.root)).map((m) => m.root);
   if (composed.failed.length) console.log(`${label}: of the composed run, ${composed.failed.join(", ")} did not apply in full`);
