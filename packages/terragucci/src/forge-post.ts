@@ -28,6 +28,24 @@ import { PLAN_MARK } from "./plan-note-gitlab";
 export const POST_COMMANDS = ["status", "note", "reply", "stale"] as const;
 export type PostCommand = (typeof POST_COMMANDS)[number];
 
+/**
+ * `terragucci post sent <context>`: whether TG_SHA already carries a successful status of that context, as `1` or `0`.
+ * The control dispatch uses it to send once per commit whichever path completed the apply. A read that fails answers
+ * `0`: a dispatch twice is better than none.
+ */
+export async function statusSent(context: string, o: PostOptions): Promise<boolean> {
+  const env = o.env ?? process.env;
+  const sha = (env.TG_SHA ?? "").trim();
+  if (!env.TG_TOKEN || !/^[0-9a-f]{7,64}$/.test(sha) || o.forge === "gitlab") return false;
+  try {
+    const t = forgeTargetFromEnv(env, { kind: o.forge, tokenEnv: "TG_TOKEN" });
+    const list = await call(o.fetch ?? (globalThis.fetch as unknown as Fetch), { forge: o.forge, origin: `https://${t.host}`, path: t.repo, token: t.token, api: t.apiBase }, "GET", `/repos/${t.repo}/commits/${sha}/statuses?per_page=100`);
+    return (Array.isArray(list) ? list : []).some((s: any) => s?.context === context && s?.state === "success");
+  } catch {
+    return false;
+  }
+}
+
 /** The line a stale plan note carries, and how it is told apart. */
 export const STALE_MARKER = "<!-- terragucci:stale -->";
 const STATES = new Set(["pending", "success", "failure"]);

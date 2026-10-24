@@ -17,6 +17,9 @@ import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab/serializer";
 import { CONTROL_NAME, CONTROL_TOKEN_ENV, ConfigError, forgeFromHost, parseProjectKey, type ControlSettings, type ForgeName } from "./config";
 import { MARKER, serializeWorkflow } from "./render";
 
+/** The commit status that marks a commit whose apply the control repo was told about. */
+export const CONTROL_STATUS = "terragucci/control";
+
 /** The event type of the GitHub repository_dispatch a member sends. */
 export const DISPATCH_EVENT = "terragucci-applied";
 
@@ -72,15 +75,30 @@ function quoted(v: string): string {
  * never on a command line or into the log. A status other than success fails
  * the step, with the status and the forge's answer.
  */
-export function dispatchScript(c: ResolvedControl): string {
+export function dispatchScript(c: ResolvedControl, memberForge?: ForgeName): string {
   const member = quoted(c.member);
   const op = quoted(c.op);
-  const common = ["set -u", `member=${member}`, `op=${op}`, 'sha="${TG_SHA:-}"'];
+  // The sha may come from another job's output: it is data, and only a commit sha goes into the request.
+  const common = [
+    "set -u",
+    `member=${member}`,
+    `op=${op}`,
+    'sha="${TG_SHA:-}"',
+    'case "$sha" in ""|*[!0-9a-f]*) echo "terragucci: the dispatch names no commit sha, so ' + c.repo + ' was not told" >&2; exit 1 ;; esac',
+    // Three paths can complete an apply of a commit (the push's last wave, a resume, a comment): the first to tell the control repo marks the commit, the others find the mark.
+    ...(memberForge && memberForge !== "gitlab"
+      ? [
+          `export TG_FORGE=${memberForge}`,
+          `if [ "$(terragucci post sent ${CONTROL_STATUS} 2>/dev/null)" = 1 ]; then echo "terragucci: ${c.repo} was told about \${sha:0:8} already"; exit 0; fi`,
+        ]
+      : []),
+  ];
+  const mark = memberForge && memberForge !== "gitlab" ? `; terragucci post status ${CONTROL_STATUS} success "told ${c.repo} that $member applied"` : "";
   const api = (url: string, args: string[]): string[] => [
     `url=${url}`,
     'body="$(mktemp)"',
     `code="$(curl -sS -o "$body" -w '%{http_code}' -X POST ${args.join(" ")} "$url")" || { echo "terragucci: the dispatch to ${c.repo} could not be sent" >&2; exit 1; }`,
-    `case "$code" in 2??) echo "terragucci: told ${c.repo} that $member applied (HTTP $code)" ;; *) echo "terragucci: ${c.repo} refused the dispatch (HTTP $code): $(head -c 400 "$body")" >&2; exit 1 ;; esac`,
+    `case "$code" in 2??) echo "terragucci: told ${c.repo} that $member applied (HTTP $code)"${mark} ;; *) echo "terragucci: ${c.repo} refused the dispatch (HTTP $code): $(head -c 400 "$body")" >&2; exit 1 ;; esac`,
   ];
   if (c.forge === "github") {
     const base = c.host === "github.com" ? "https://api.github.com" : `https://${c.host}/api/v3`;
