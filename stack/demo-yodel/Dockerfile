@@ -61,9 +61,11 @@ RUN set -e; \
   GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH="$a" go build -trimpath -ldflags "-s -w" -o /out/choudoufu ./cmd/choudoufu
 FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu
 # The Atmos CLI the Atmos demo's workflow runs, checked against the release's SHA256SUMS.
+# 1.233 or later: `deploy --affected --ci` verifies each component's stored plan
+# (components.terraform.planfiles), which the demo's merge job applies.
 FROM fetch AS atmos
 ARG TARGETARCH
-ARG ATMOS_VERSION=1.230.1
+ARG ATMOS_VERSION=1.233.2
 RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   f="atmos_${ATMOS_VERSION}_linux_${a}"; base="https://github.com/cloudposse/atmos/releases/download/v${ATMOS_VERSION}"; \
   curl -fsSLo "/tmp/$f" "$base/$f"; curl -fsSLo /tmp/SHA256SUMS "$base/atmos_${ATMOS_VERSION}_SHA256SUMS"; \
