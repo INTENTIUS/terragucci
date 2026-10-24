@@ -353,6 +353,10 @@ CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 # (f285b9436f) and in no release yet. DEMO_CHOUDOUFU_REF names another commit;
 # set empty, the image carries the release above again.
 CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-f285b9436fc2eeb4932d542585cec0c61397680b}"
+# chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
+# release, and the commit of INTENTIUS/chant the terraform lexicon is packed from.
+CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
+CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-101bd18aec262484e2a7cb89a26e7e729a09a337}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold unless DEMO_HOLD_<SCENARIO> names one
@@ -3119,7 +3123,7 @@ case "$CMD" in
         choudoufu_args=()
       fi
       docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
-        --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" ${choudoufu_args[@]+"${choudoufu_args[@]}"} "$HERE/demo-yodel" >/dev/null \
+        --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" --build-arg CHANT_VERSION="$CHANT_VERSION" --build-arg CHANT_REF="$CHANT_REPORT_REF" ${choudoufu_args[@]+"${choudoufu_args[@]}"} "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
       # The Terragrunt-on-choudoufu repo's jobs run in the choudoufu image with terragrunt added.
       if tool_present terragrunt-choudoufu; then

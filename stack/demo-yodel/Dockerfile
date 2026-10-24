@@ -83,8 +83,35 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   echo "$sum  /tmp/$f" | sha256sum -c -; \
   (cd /tmp && grep "  $f\$" SHA256SUMS | sha256sum -c -); \
   mkdir -p /providers/registry.opentofu.org/hashicorp/aws && mv "/tmp/$f" /providers/registry.opentofu.org/hashicorp/aws/
+# chant's `terraform report` (INTENTIUS/chant#4420), which the workflows of the
+# Terragrunt and Atmos demos run after a plan and an apply to write what behold
+# reads. chant core is the published CHANT_VERSION; the terraform lexicon is
+# packed from the commit CHANT_REF of INTENTIUS/chant, because the verb is newer
+# than any release in the images. Nothing is published. It sits under
+# /opt/chant-report with its own chant.config.json (chant finds a lexicon's
+# verbs through a project's config), and chant-report runs from there, so the
+# wave's chant on PATH stays the tofu image's.
+FROM ${BASE} AS chant-report
+USER root
+ARG CHANT_VERSION
+ARG CHANT_REF
+RUN set -e; \
+  [ -n "${CHANT_REF:-}" ] && [ -n "${CHANT_VERSION:-}" ] || { echo "pass --build-arg CHANT_VERSION and CHANT_REF" >&2; exit 1; }; \
+  mkdir -p /src /opt/chant-report; cd /src; \
+  git init -q; git remote add origin https://github.com/INTENTIUS/chant.git; \
+  git fetch -q --depth 1 origin "$CHANT_REF"; git checkout -q FETCH_HEAD; \
+  npm ci --ignore-scripts --no-audit --no-fund; \
+  (cd lexicons/terraform && npm pack --pack-destination /opt/chant-report >/dev/null); \
+  cd /opt/chant-report; \
+  printf '{"name":"chant-report","private":true}\n' > package.json; \
+  printf '{"lexicons":["terraform"]}\n' > chant.config.json; \
+  npm install --no-audit --no-fund "@intentius/chant@${CHANT_VERSION}" ./intentius-chant-lexicon-terraform-*.tgz; \
+  rm -f ./*.tgz; rm -rf /root/.npm /src; \
+  node_modules/.bin/chant terraform report 2>&1 | grep -q "^usage: chant terraform report"
 FROM ${BASE}
 COPY --from=yodel /opt/yodel /opt/yodel
+COPY --from=chant-report /opt/chant-report /opt/chant-report
+COPY --chmod=0755 chant-report /usr/local/bin/chant-report
 COPY --from=choudoufu /out/choudoufu /usr/local/bin/choudoufu
 COPY --from=atmos /out/atmos /usr/local/bin/atmos
 COPY --from=awsprovider /providers /opt/terragucci-demo/providers

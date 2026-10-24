@@ -1,0 +1,4 @@
+#!/bin/sh
+# chant's `terraform report`, run where its lexicon is installed. Paths in the
+# arguments must be absolute: it changes directory first.
+cd /opt/chant-report && exec node_modules/.bin/chant terraform report "$@"

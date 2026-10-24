@@ -23,6 +23,10 @@ env:
   AWS_ACCESS_KEY_ID: test
   AWS_SECRET_ACCESS_KEY: test
   AWS_REGION: us-east-1
+  # Where behold reads the run's report and index row (the same bucket and
+  # prefix as the other demos). chant-report is chant's `terraform report`.
+  CHANT_REPORTS: http://floci:4566/demo-reports/demo
+  FORGEJO_ACTIONS: "true"
 
 jobs:
   plan:
@@ -35,7 +39,15 @@ jobs:
         working-directory: live/all
         run: |
           terragrunt run -- init -input=false
-          terragrunt run -- plan -input=false -no-color 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+          terragrunt run -- plan -input=false -no-color -out="$RUNNER_TEMP/plan.bin" 2>&1 | tee "$RUNNER_TEMP/plan.txt"
+      - name: Write the plan's report for behold
+        working-directory: live/all
+        env:
+          PR: '${{ github.event.pull_request.number }}'
+        run: |
+          terragrunt run -- show -json "$RUNNER_TEMP/plan.bin" > "$RUNNER_TEMP/plan.json"
+          chant-report --stage tf-plan --plan "$RUNNER_TEMP/plan.json" --pull-request "$PR" \
+            --binary choudoufu --root-dir estates --to "$CHANT_REPORTS"
       - name: Post the plan on the pull request
         if: always()
         env:
@@ -68,4 +80,15 @@ jobs:
         working-directory: live/all
         run: |
           terragrunt run -- init -input=false
+          # The plan this apply makes, kept for the report.
+          terragrunt run -- plan -input=false -no-color -out="$RUNNER_TEMP/plan.bin" >/dev/null
+          terragrunt run -- show -json "$RUNNER_TEMP/plan.bin" > "$RUNNER_TEMP/plan.json"
           terragrunt run -- apply -input=false -no-color -auto-approve
+      - name: Write the apply's report for behold
+        working-directory: live/all
+        run: |
+          # A plan made after the apply: its prior_state holds the values the first plan left unknown.
+          terragrunt run -- plan -input=false -no-color -out="$RUNNER_TEMP/after.bin" >/dev/null
+          terragrunt run -- show -json "$RUNNER_TEMP/after.bin" > "$RUNNER_TEMP/after.json"
+          chant-report --stage tf-apply --plan "$RUNNER_TEMP/plan.json" --applied "$RUNNER_TEMP/after.json" \
+            --binary choudoufu --root-dir estates --to "$CHANT_REPORTS"
