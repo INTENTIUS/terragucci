@@ -233,8 +233,10 @@ describe("stack/demo.sh under pipefail", () => {
     expect(fn("operator_beat")).toContain("node ../ci/operator-gate.mjs operator-before; choudoufu apply -auto-approve");
     expect(fn("fan_out_failed")).toMatch(/operator_expect\n\s+merge_pull/);
     const config = readFileSync(join(tree, "terragucci.yml"), "utf8");
-    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-before\n    before: apply\n    roots: [\"app-01\"]");
-    expect(config).toContain("run: node ../ci/operator-gate.mjs pipeline-after\n    after: apply\n    roots: [\"app-01\"]");
+    expect(config).not.toMatch(/^steps:/m);
+    const hooks = JSON.parse(readFileSync(join(tree, "chant.workspace.json"), "utf8")).ci.hooks;
+    expect(hooks.before.apply).toEqual([{ name: "wait for the operator", command: ["sh", "-c", "node ../ci/operator-gate.mjs pipeline-before"], perRun: true, targets: ["app-01"] }]);
+    expect(hooks.after.apply).toEqual([{ name: "mark the apply done", command: ["sh", "-c", "node ../ci/operator-gate.mjs pipeline-after"], perRun: true, targets: ["app-01"] }]);
     expect(config).toContain("TG_DEMO_OPERATOR_MARKERS: http://floci:4566/demo-reports/demo/operator/demo-choudoufu-fanout");
     expect(demo).toContain('OPERATOR_MARKERS_IN_STACK="http://floci:4566/$REPORT_BUCKET/$REPORT_PREFIX/operator/demo-choudoufu-fanout"');
   });
