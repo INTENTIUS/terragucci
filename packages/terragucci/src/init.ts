@@ -327,6 +327,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.image ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
+    ...(settings.parallelism !== undefined && !tgInput ? { parallelism: settings.parallelism } : {}),
     ...(settings.generate && !tgInput ? { generate: true } : {}),
     // sources: tf-check checks each root's sources before its init.
     ...(settings.sources && !tgInput ? { sources: true } : {}),

@@ -83,9 +83,34 @@ jobs:
           set -eu
           tofu fmt -check -recursive -diff .
           failed=0
+          tg_check() {
+            dir="$1"
+            tg_init tofu -chdir="$dir" init -backend=false -input=false -no-color >/dev/null || return 1
+            terragucci check-root "$dir" --binary tofu
+          }
+          tg_init() {
+            if [ -n "${TF_PLUGIN_CACHE_DIR:-}" ]; then until mkdir "$tgtmp/init.lock" 2>/dev/null; do sleep 1; done; fi
+            "$@"; rc=$?
+            if [ -n "${TF_PLUGIN_CACHE_DIR:-}" ]; then rmdir "$tgtmp/init.lock"; fi
+            return $rc
+          }
+          tgtmp="$(mktemp -d)"
+          n=0
           for dir in 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/platform' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/platform' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/platform' 'envs/staging/search'; do
-            tofu -chdir="$dir" init -backend=false -input=false -no-color >/dev/null
-            terragucci check-root "$dir" --binary tofu || failed=1
+            n=$((n+1))
+            { export TERRAGUCCI_CHECK_PART="$tgtmp/$n.md"; if tg_check "$dir"; then echo 0 >"$tgtmp/$n.rc"; else echo 1 >"$tgtmp/$n.rc"; fi; } >"$tgtmp/$n.out" 2>&1 &
+            eval "tgpid$n=$!"
+          done
+          wait
+          n=0
+          for dir in 'envs/dev/email' 'envs/dev/orders' 'envs/dev/payments' 'envs/dev/platform' 'envs/dev/search' 'envs/prod/email' 'envs/prod/orders' 'envs/prod/payments' 'envs/prod/platform' 'envs/prod/search' 'envs/staging/email' 'envs/staging/orders' 'envs/staging/payments' 'envs/staging/platform' 'envs/staging/search'; do
+            n=$((n+1))
+            cat "$tgtmp/$n.out"
+            if [ -s "$tgtmp/$n.md" ]; then
+              mkdir -p terragucci-check; cat "$tgtmp/$n.md" >>terragucci-check/report.md
+              if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$tgtmp/$n.md" >>"$GITHUB_STEP_SUMMARY"; fi
+            fi
+            [ "$(cat "$tgtmp/$n.rc" 2>/dev/null)" = 0 ] || failed=1
           done
           terragucci check-policy || failed=1
           exit "$failed"

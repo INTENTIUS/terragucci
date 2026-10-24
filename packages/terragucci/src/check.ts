@@ -340,6 +340,17 @@ export function emitCheck(repo: string, result: CheckResult, env: NodeJS.Process
   for (const l of result.log) console.log(l);
   if (result.report.length === 0) return;
   const text = `${result.report.join("\n")}\n`;
+  // Roots checked at once each write their own part (the check job sets TERRAGUCCI_CHECK_PART) and the job
+  // appends the parts to the report and the job summary in root order, so concurrent roots never share a file.
+  const part = env.TERRAGUCCI_CHECK_PART;
+  if (part) {
+    try {
+      appendFileSync(part, text);
+    } catch {
+      // As below: the report is help on top of the log.
+    }
+    return;
+  }
   const file = join(repo, CHECK_DIR, "report.md");
   try {
     mkdirSync(dirname(file), { recursive: true });

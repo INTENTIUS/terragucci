@@ -86,7 +86,10 @@ describe("the check job", () => {
   it.each(["github", "forgejo"] as const)("%s: validates through check-root, tests the policy, keeps the report and has the history", (forge) => {
     const check = body(render(forge)).jobs.check;
     const run = check.steps.find((s: { run?: string }) => s.run?.includes("check-root")).run as string;
-    expect(run).toContain('terragucci check-root "$dir" --binary tofu || failed=1');
+    expect(run).toContain('terragucci check-root "$dir" --binary tofu\n');
+    // Three roots check at once, each into its own files; the output is printed in root order and a root's status sets `failed`.
+    expect(run).toContain('tg_check "$dir"; then echo 0 >"$tgtmp/$n.rc"');
+    expect(run).toContain('[ "$(cat "$tgtmp/$n.rc" 2>/dev/null)" = 0 ] || failed=1');
     expect(run).toContain("terragucci check-policy || failed=1");
     expect(run).toContain('exit "$failed"');
     expect(run).not.toContain("validate -no-color");
@@ -119,7 +122,7 @@ describe("the check job", () => {
 
   it("gitlab: the same script, the report as an artifact, the history in the clone", () => {
     const doc = body(render("gitlab"));
-    expect(doc.check.script.join("\n")).toContain('terragucci check-root "$dir" --binary tofu || failed=1');
+    expect(doc.check.script.join("\n")).toContain('tg_check "$dir"; then echo 0 >"$tgtmp/$n.rc"');
     expect(doc.check.artifacts).toEqual({ name: "terragucci-check", when: "always", paths: ["terragucci-check/"] });
     expect(doc.check.variables).toMatchObject({ TG_BRANCH: "$CI_DEFAULT_BRANCH" });
     expect(doc.check.variables.GIT_DEPTH).toBeUndefined();
@@ -142,7 +145,8 @@ describe("the check job", () => {
 
   it("a choudoufu pipeline passes its binary, which check-root uses to run live-check", () => {
     const text = renderPipeline({ forge: "github", binary: "choudoufu", version: "1.0.0", image: "img:1", layers, env: {} }).content;
-    expect(text).toContain('terragucci check-root "$dir" --binary choudoufu || failed=1');
+    expect(text).toContain('terragucci check-root "$dir" --binary choudoufu\n');
+    expect(text).toContain('tg_init choudoufu -chdir="$dir" init -backend=false');
   });
 });
 

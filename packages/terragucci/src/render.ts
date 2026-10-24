@@ -250,6 +250,8 @@ export interface PipelineInput {
   sources?: boolean;
   /** `image.mirror` is set: the check job runs `terragucci check-mirror` before any init, with the history it compares against. */
   mirror?: boolean;
+  /** `parallelism` from terragucci.yml: at most this many roots check at once. Unset: all of them. */
+  parallelism?: number;
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
@@ -561,22 +563,63 @@ function notifyLine(event: "waiting" | "refused" | "failed", wave: string): stri
 const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
 const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
-export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false, sources = false, mirror = false): string {
+export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false, sources = false, mirror = false, parallelism?: number): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
-  const loop = [
+  // The steps are the same in both shapes; `miss` is what a step that fails does: the serial loop goes on to the next root, the function returns.
+  const steps = (miss: string): string[] => [
     // With `sources` set, a root using a module or provider outside the list at base is refused before its init downloads anything.
-    ...(sources ? ['  terragucci check-sources "$dir" || { failed=1; continue; }'] : []),
+    ...(sources ? [`  terragucci check-sources "$dir" || ${miss}`] : []),
     ...(rootPins
       ? [
-          `  bin="$(terragucci binary "$dir" --binary ${binary})" || { failed=1; continue; }`,
+          `  bin="$(terragucci binary "$dir" --binary ${binary})" || ${miss}`,
           '  "$bin" -chdir="$dir" init -backend=false -input=false -no-color >/dev/null',
-          '  terragucci check-root "$dir" --binary "$bin" || failed=1',
+          '  terragucci check-root "$dir" --binary "$bin"',
         ]
       : [
           `  ${binary} -chdir="$dir" init -backend=false -input=false -no-color >/dev/null`,
           // validate's diagnostics and, for choudoufu, live-check's refusals go to the log and the check report; a root that fails does not stop the next.
-          `  terragucci check-root "$dir" --binary ${binary} || failed=1`,
+          `  terragucci check-root "$dir" --binary ${binary}`,
         ]),
+  ];
+  const list = roots.map(sh).join(" ");
+  // One root, or parallelism 1: the roots check one after another, as they always did.
+  const limit = parallelism !== undefined && parallelism < roots.length ? parallelism : roots.length;
+  const serial = roots.length < 2 || limit === 1;
+  const loop = steps("{ failed=1; continue; }").map((l) => l.replace(/^(\s+(?:terragucci check-root|.*init) .*)$/, (m) => (m.includes("check-root") ? `${m} || failed=1` : m)));
+  const parallel = [
+    // Each root's init and check run in the background, writing to a file of their own; the files are printed in root order after the last one.
+    // A step that fails ends only that root's function, and the root counts as failed through its status file.
+    "tg_check() {",
+    '  dir="$1"',
+    ...steps("return 1").map((l) => (l.includes("init -backend=false") ? `  tg_init ${l.trim()} || return 1` : l)),
+    "}",
+    // The provider cache is not safe for inits that run together: with TF_PLUGIN_CACHE_DIR set, they take turns.
+    "tg_init() {",
+    '  if [ -n "${TF_PLUGIN_CACHE_DIR:-}" ]; then until mkdir "$tgtmp/init.lock" 2>/dev/null; do sleep 1; done; fi',
+    '  "$@"; rc=$?',
+    '  if [ -n "${TF_PLUGIN_CACHE_DIR:-}" ]; then rmdir "$tgtmp/init.lock"; fi',
+    "  return $rc",
+    "}",
+    'tgtmp="$(mktemp -d)"',
+    "n=0",
+    `for dir in ${list}; do`,
+    "  n=$((n+1))",
+    // A bound below the number of roots: the next root starts when the one `limit` places back is done.
+    ...(limit < roots.length ? [`  if [ "$n" -gt ${limit} ]; then eval "wait \\$tgpid$((n-${limit}))" || true; fi`] : []),
+    '  { export TERRAGUCCI_CHECK_PART="$tgtmp/$n.md"; if tg_check "$dir"; then echo 0 >"$tgtmp/$n.rc"; else echo 1 >"$tgtmp/$n.rc"; fi; } >"$tgtmp/$n.out" 2>&1 &',
+    '  eval "tgpid$n=$!"',
+    "done",
+    "wait",
+    "n=0",
+    `for dir in ${list}; do`,
+    "  n=$((n+1))",
+    '  cat "$tgtmp/$n.out"',
+    '  if [ -s "$tgtmp/$n.md" ]; then',
+    `    mkdir -p ${CHECK_DIR}; cat "$tgtmp/$n.md" >>${CHECK_DIR}/report.md`,
+    '    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat "$tgtmp/$n.md" >>"$GITHUB_STEP_SUMMARY"; fi',
+    "  fi",
+    '  [ "$(cat "$tgtmp/$n.rc" 2>/dev/null)" = 0 ] || failed=1',
+    "done",
   ];
   return [
     "set -eu",
@@ -594,9 +637,7 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
     ...(generate ? ["terragucci generate --check || failed=1"] : []),
     // With image.mirror set, the image's provider mirror must cover every lock file: a gap warns once, then fails.
     ...(mirror ? ["terragucci check-mirror || failed=1"] : []),
-    `for dir in ${roots.map(sh).join(" ")}; do`,
-    ...loop,
-    "done",
+    ...(serial ? [`for dir in ${list}; do`, ...loop, "done"] : parallel),
     // With `policy:` set, the policy's own tests; no `policy:` key prints nothing.
     "terragucci check-policy || failed=1",
     'exit "$failed"',
@@ -2236,7 +2277,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true);
+  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism);
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
