@@ -320,6 +320,8 @@ tool_image() { # tool
 # The Terragrunt-on-choudoufu repo: a plain Forgejo workflow runs Terragrunt's own
 # CLI with choudoufu as its binary. No terragucci pipeline, config or gate is in it.
 tool_tgc() { [ "$1" = terragrunt-choudoufu ]; }
+# A tool whose repo runs its own tool's plain workflow (Terragrunt, Atmos) and approves by pull request review: no chant seal, no signers.
+tool_plain() { tool_tgc "$1" || [ "$1" = atmos-choudoufu ]; }
 # A tool whose repo runs chant's own pull-request pipeline, not terragucci's.
 tool_chant() { case "$1" in chant|chant-fanout) return 0 ;; *) return 1 ;; esac; }
 
@@ -3059,7 +3061,8 @@ loop_ready() {
   # in .chant/allowed_signers, so the reviewer's seal would not verify.
   local signers
   signers="$(git -C "$RSTATE/base-tree" show "$(cat "$RSTATE/base.sha"):.chant/allowed_signers" 2>/dev/null || true)"
-  grep -q "^$REVIEWER " <<<"$signers" \
+  # A plain-workflow repo approves by review and keeps no signers (up writes none for it).
+  tool_plain "$TOOL" || grep -q "^$REVIEWER " <<<"$signers" \
     || fail "the base of $REPO: .chant/allowed_signers does not name $REVIEWER; run 'just demo up' again"
   # Each reset copies app's database back from demo_base, which up keeps.
   if has_db; then
