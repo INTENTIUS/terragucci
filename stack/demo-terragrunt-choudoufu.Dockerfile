@@ -1,5 +1,5 @@
 # The image the demo's Terragrunt-on-choudoufu repo runs its jobs in
-# (stack/demo.sh, example-demo-terragrunt-choudoufu/). stack/demo.sh up builds
+# (stack/demo.sh, INTENTIUS/choudoufu examples/demo-terragrunt/). stack/demo.sh up builds
 # it into the local daemon as terragucci-demo-terragrunt-choudoufu:local.
 #
 #   CHOUDOUFU_IMAGE   the demo's choudoufu image (terragucci-demo-choudoufu:local):

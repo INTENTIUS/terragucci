@@ -33,15 +33,6 @@ export const PIPELINES = {
       "--pr-build-command", "ln -s /opt/demo-chant-fanout/node_modules node_modules && npm run build",
     ],
   },
-  // The compose tree's: the same pipeline, in the compose job image (stack/demo-chant-compose.Dockerfile), over three templates.
-  "example-demo-chant-compose": {
-    file: ".forgejo/workflows/chant-pr.yml",
-    args: [
-      "build", "--components", "--generate", "forgejo", "--pr-loop", "--env", "demo", "--image", "terragucci-demo-chant-compose:local",
-      "--events-json", "--report-url", "s3://demo-reports/demo/chant/${{ github.repository }}",
-      "--pr-build-command", "ln -s /opt/demo-chant-compose/node_modules node_modules && npm run build",
-    ],
-  },
 };
 
 /** The example trees that are chant projects: a chant.config.ts at their root. */

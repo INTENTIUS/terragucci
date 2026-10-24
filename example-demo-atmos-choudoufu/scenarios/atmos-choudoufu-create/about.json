@@ -1,5 +1,0 @@
-{
-  "changes": "Network adds a second subnet. App adds one network interface in it, and edge's allowlist gains the subnet's range.",
-  "watch": "The id does not exist until the subnet is created, so the plan shows it as known after apply. A reviewer approves once, and app gets the real id when it applies after network.",
-  "shows": "A new resource's id reaches the component that needs it, through !terraform.output, in a plan Atmos could not make alone."
-}

@@ -1,5 +1,0 @@
-{
-  "changes": "Network's proxy port moves to 8090 and gains an admin port. App and edge follow both.",
-  "watch": "One plan covers all three components. A reviewer approves the pull request, then the components apply in order.",
-  "shows": "A stock Atmos stack planned as one, with choudoufu as the binary."
-}

@@ -1,7 +1,0 @@
-.terraform
-.terraform.lock.hcl
-*.tfstate*
-*.planfile
-*.terraform.tfvars.json
-backend.tf.json
-.tofu-records

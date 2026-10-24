@@ -36,8 +36,10 @@
 # tofu image with chant, its aws lexicon and AWS CLI v2. Its stacks have no
 # Terraform state: up applies the base with `chant run --components all`, and
 # each reset applies the base's templates again, the same way (stacks_back).
-# The chant compose repo, <admin>/demo-chant-compose from
-# example-demo-chant-compose/, is the prompt-driven demo's network, app and edge
+# The chant compose repo, <admin>/demo-chant-compose from chant's
+# examples/demo-composed-stacks/ (INTENTIUS/chant, read from DEMO_CHANT_TREES or
+# a clone under <state>/trees; the tree is not in terragucci), is the
+# prompt-driven demo's network, app and edge
 # as three CloudFormation stacks in floci. A stock chant project: each stack's
 # parameters are filled from the stack before it by `stackOutput` inputs (no
 # exports; floci gets those wrong), and its pipeline is the one chant generates
@@ -66,7 +68,9 @@
 # the cycle added; the operator's queue is destroyed first (states_back).
 #
 # The Terragrunt-on-choudoufu repo, <admin>/demo-terragrunt-choudoufu from
-# example-demo-terragrunt-choudoufu/, has no terragucci in it: a Forgejo workflow
+# choudoufu's examples/demo-terragrunt/ (INTENTIUS/choudoufu, read from
+# DEMO_CHOUDOUFU_TREES or a clone under <state>/trees; the tree is not in
+# terragucci), has no terragucci in it: a Forgejo workflow
 # runs Terragrunt's own CLI with choudoufu as its binary, on three units
 # (network, app, edge), each a directory with its own terragrunt.hcl, inputs and
 # dependency blocks. `terragrunt run --all plan` on the pull request is one joint
@@ -98,6 +102,13 @@
 #                                     (Terragrunt). Any of ALL_SCENARIOS can be
 #                                     named.
 #   stack/demo.sh down                remove the stack
+#
+# The terragrunt-choudoufu, atmos-choudoufu and chant-compose trees are not in
+# terragucci: they live in INTENTIUS/choudoufu (examples/demo-terragrunt/,
+# examples/demo-atmos/) and INTENTIUS/chant (examples/demo-composed-stacks/).
+# DEMO_CHOUDOUFU_TREES and DEMO_CHANT_TREES point at a checkout of each. Without
+# them the driver clones the repo into <state>/trees/ and checks out
+# DEMO_CHOUDOUFU_TREES_REF / DEMO_CHANT_TREES_REF (default main) on every start.
 #
 # The roots are network, app (reads network), edge (reads app) and other (reads
 # nothing), each terraform_data with its own state. terragucci applies them as
@@ -238,7 +249,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEMO="$(cd "$HERE/../example-demo" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+DEMO="$REPO_ROOT/example-demo"
 CMD="${1:-}"; shift || true
 
 log()  { echo "[demo] $*" >&2; }
@@ -303,23 +315,63 @@ tool_repo() { # tool -> the repo's name under the admin
     *) return 1 ;;
   esac
 }
-tool_tree() { # tool -> its example tree, from the checkout's root
+# Three tools run trees that live in their products' repos, not here:
+# terragrunt-choudoufu and atmos-choudoufu in INTENTIUS/choudoufu (examples/demo-terragrunt/,
+# examples/demo-atmos/), chant-compose in INTENTIUS/chant (examples/demo-composed-stacks/).
+# DEMO_CHOUDOUFU_TREES and DEMO_CHANT_TREES name a checkout of each to use as it is.
+# Without one, the driver keeps a clone under the state dir (<state>/trees/<repo>),
+# fetched and checked out at DEMO_CHOUDOUFU_TREES_REF / DEMO_CHANT_TREES_REF
+# (default main) by sync_product_trees, which runs once, below.
+DEMO_CHOUDOUFU_TREES_REF="${DEMO_CHOUDOUFU_TREES_REF:-main}"
+DEMO_CHANT_TREES_REF="${DEMO_CHANT_TREES_REF:-main}"
+product_checkout() { # repo -> the absolute path of the checkout its trees are read from
   case "$1" in
-    terraform) echo example-demo ;;
-    terragrunt) echo example-demo-terragrunt ;;
-    chant) echo example-demo-chant ;;
-    chant-fanout) echo example-demo-chant-fanout ;;
-    chant-compose) echo example-demo-chant-compose ;;
-    tofu-fanout) echo example-demo-fanout ;;
-    choudoufu-fanout) echo example-demo-choudoufu-fanout ;;
-    compose) echo example-demo-compose ;;
-    choudoufu-compose) echo example-demo-choudoufu-compose ;;
-    terragrunt-choudoufu) echo example-demo-terragrunt-choudoufu ;;
-    atmos-choudoufu) echo example-demo-atmos-choudoufu ;;
+    choudoufu) echo "${DEMO_CHOUDOUFU_TREES:-${TG_STATE:-$HERE/.state}/trees/choudoufu}" ;;
+    chant) echo "${DEMO_CHANT_TREES:-${TG_STATE:-$HERE/.state}/trees/chant}" ;;
+  esac
+}
+sync_product_trees() { # clone or refresh each product checkout that has no override
+  local repo override ref dir
+  for repo in choudoufu chant; do
+    case "$repo" in
+      choudoufu) override="${DEMO_CHOUDOUFU_TREES:-}" ref="$DEMO_CHOUDOUFU_TREES_REF" ;;
+      chant) override="${DEMO_CHANT_TREES:-}" ref="$DEMO_CHANT_TREES_REF" ;;
+    esac
+    dir="$(product_checkout "$repo")"
+    if [ -n "$override" ]; then
+      [ -d "$override" ] || fail "DEMO_$(printf '%s' "$repo" | tr a-z A-Z)_TREES is $override, which is not a directory"
+      continue
+    fi
+    if [ ! -d "$dir/.git" ]; then
+      mkdir -p "$(dirname "$dir")"
+      log "cloning INTENTIUS/$repo into $dir for its demo trees…"
+      git clone -q "https://github.com/INTENTIUS/$repo.git" "$dir" || fail "could not clone INTENTIUS/$repo into $dir"
+    fi
+    if git -C "$dir" fetch -q origin "$ref" && git -C "$dir" checkout -q --detach FETCH_HEAD; then
+      :
+    else
+      log "could not fetch $ref of INTENTIUS/$repo; using $dir as it is"
+    fi
+  done
+}
+tool_tree() { # tool -> its example tree, as an absolute path
+  case "$1" in
+    terraform) echo "$REPO_ROOT/example-demo" ;;
+    terragrunt) echo "$REPO_ROOT/example-demo-terragrunt" ;;
+    chant) echo "$REPO_ROOT/example-demo-chant" ;;
+    chant-fanout) echo "$REPO_ROOT/example-demo-chant-fanout" ;;
+    chant-compose) echo "$(product_checkout chant)/examples/demo-composed-stacks" ;;
+    tofu-fanout) echo "$REPO_ROOT/example-demo-fanout" ;;
+    choudoufu-fanout) echo "$REPO_ROOT/example-demo-choudoufu-fanout" ;;
+    compose) echo "$REPO_ROOT/example-demo-compose" ;;
+    choudoufu-compose) echo "$REPO_ROOT/example-demo-choudoufu-compose" ;;
+    terragrunt-choudoufu) echo "$(product_checkout choudoufu)/examples/demo-terragrunt" ;;
+    atmos-choudoufu) echo "$(product_checkout choudoufu)/examples/demo-atmos" ;;
     *) return 1 ;;
   esac
 }
-tool_present() { [ -d "$HERE/../$(tool_tree "$1")" ]; }
+tool_present() { [ -d "$(tool_tree "$1")" ]; }
+sync_product_trees
 
 # The image the chant repo's jobs run in, built by up (stack/demo-chant.Dockerfile)
 # and named by example-demo-chant/.forgejo/workflows/chant-pr.yml.
@@ -328,7 +380,7 @@ CHANT_JOB_IMAGE=terragucci-demo-chant:local
 # by example-demo-chant-fanout/.forgejo/workflows/chant-pr.yml.
 FANOUT_JOB_IMAGE=terragucci-demo-chant-fanout:local
 # The compose repo's, built by up (stack/demo-chant-compose.Dockerfile) and named
-# by example-demo-chant-compose/.forgejo/workflows/chant-pr.yml.
+# by examples/demo-composed-stacks/.forgejo/workflows/chant-pr.yml in INTENTIUS/chant.
 COMPOSE_JOB_IMAGE=terragucci-demo-chant-compose:local
 # The commit of INTENTIUS/chant that image's chant and aws lexicon are packed
 # from: a covered round, a preview that keeps its known outputs and planned
@@ -369,9 +421,9 @@ DEMO_IMAGE=terragucci-demo-tofu:local
 # names, so its jobs say the tool they run.
 DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
 # The Terragrunt-on-choudoufu repo's job image (stack/demo-terragrunt-choudoufu.Dockerfile), named by
-# example-demo-terragrunt-choudoufu/.forgejo/workflows/terragrunt-choudoufu.yml.
+# examples/demo-terragrunt/.forgejo/workflows/terragrunt-choudoufu.yml in INTENTIUS/choudoufu.
 TGC_JOB_IMAGE=terragucci-demo-terragrunt-choudoufu:local
-# The bucket the Terragrunt units' generated backend names (example-demo-terragrunt-choudoufu/root.hcl).
+# The bucket the Terragrunt units' generated backend names (examples/demo-terragrunt/root.hcl in INTENTIUS/choudoufu).
 # choudoufu keeps no state file there; it publishes each unit's outputs to it after an apply.
 TGC_STATE_BUCKET=demo-terragrunt-choudoufu-state
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
@@ -471,14 +523,14 @@ if [ "$CMD" = up ]; then
   if tool_present chant; then
     log "building $CHANT_JOB_IMAGE…"
     docker build -q -t "$CHANT_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
-      -f "$HERE/demo-chant.Dockerfile" "$HERE/../$(tool_tree chant)" >/dev/null \
+      -f "$HERE/demo-chant.Dockerfile" "$(tool_tree chant)" >/dev/null \
       || fail "the chant job image did not build: docker build -f stack/demo-chant.Dockerfile example-demo-chant"
   fi
   # The fan-out repo's the same way, with the aws lexicon and AWS CLI v2 for cfn-deploy.
   if tool_present chant-fanout; then
     log "building $FANOUT_JOB_IMAGE…"
     docker build -q -t "$FANOUT_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
-      -f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)" >/dev/null \
+      -f "$HERE/demo-chant-fanout.Dockerfile" "$(tool_tree chant-fanout)" >/dev/null \
       || fail "the fan-out job image did not build: docker build -f stack/demo-chant-fanout.Dockerfile example-demo-chant-fanout"
   fi
   # The compose repo's the same way, with chant and its aws lexicon packed from CHANT_COMPOSE_REF.
@@ -486,8 +538,8 @@ if [ "$CMD" = up ]; then
     log "building $COMPOSE_JOB_IMAGE from chant ${CHANT_COMPOSE_REF:0:10} (a few minutes the first time)…"
     docker build -q -t "$COMPOSE_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
       --build-arg CHANT_REF="$CHANT_COMPOSE_REF" \
-      -f "$HERE/demo-chant-compose.Dockerfile" "$HERE/../$(tool_tree chant-compose)" >/dev/null \
-      || fail "the compose job image did not build: docker build -f stack/demo-chant-compose.Dockerfile example-demo-chant-compose"
+      -f "$HERE/demo-chant-compose.Dockerfile" "$(tool_tree chant-compose)" >/dev/null \
+      || fail "the compose job image did not build: docker build -f stack/demo-chant-compose.Dockerfile $(tool_tree chant-compose)"
   fi
   log "starting Forgejo, its runner and floci (a minute or two the first time)…"
   mkdir -p "$HERE/.state"
@@ -577,7 +629,7 @@ use_repo() { # tool
   local d keys=""
   TOOL="$1"
   REPO="$USER/$(tool_repo "$1")" || fail "unknown tool '$1'"
-  TREE="$(cd "$HERE/../$(tool_tree "$1")" 2>/dev/null && pwd)" || fail "the $1 demo's tree $(tool_tree "$1")/ is not in this checkout"
+  TREE="$(cd "$(tool_tree "$1")" 2>/dev/null && pwd)" || fail "the $1 demo's tree $(tool_tree "$1")/ is not in this checkout"
   REMOTE="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$REPO.git"
   REVIEWER_REMOTE="${URL/#http:\/\//http://${REVIEWER}:${REVIEWER_TOKEN}@}/$REPO.git"
   if [ "$1" = terraform ]; then RSTATE="$DEMO_STATE"; else RSTATE="$DEMO_STATE/repos/${REPO#*/}"; fi
@@ -829,7 +881,7 @@ view_follow() {
 ask_file() { # scenario -> its ask.json's path; fails when it has no tree
   local tool
   tool="$(scenario_tool "$1" 2>/dev/null)" || return 1
-  echo "$HERE/../$(tool_tree "$tool")/scenarios/$1/ask.json"
+  echo "$(tool_tree "$tool")/scenarios/$1/ask.json"
 }
 
 # {"ask": {...}} for a step with one ask, {"asks": [...]} for a list, else {}.
@@ -942,7 +994,7 @@ demo_write() { # step, label, [next action], [next at, epoch seconds]
 scenario_migrations() { # scenario
   local tree f
   tree="$(tool_tree "$(scenario_tool "$1" 2>/dev/null)" 2>/dev/null)" || return 0
-  for f in "$HERE/../$tree/scenarios/$1"/{pull,push}/migrations/*.yml; do
+  for f in "$tree/scenarios/$1"/{pull,push}/migrations/*.yml; do
     if [ -f "$f" ]; then basename "$f" .yml; fi
   done | sort -u
 }
@@ -1010,7 +1062,7 @@ DELIVERY="$(jq -r '.delivery // empty' "$DEMO/scenarios/intro.json" 2>/dev/null 
 # The scenario's card from its about.json, compact; null when it has none.
 scenario_about() { # scenario
   local f
-  f="$HERE/../$(tool_tree "$(scenario_tool "$1")")/scenarios/$1/about.json"
+  f="$(tool_tree "$(scenario_tool "$1")")/scenarios/$1/about.json"
   [ -f "$f" ] && jq -ce '{changes, watch, shows}' "$f" 2>/dev/null || echo null
 }
 
@@ -2284,7 +2336,7 @@ scenario_fan_out() {
 }
 
 # chant-compose-edit and chant-compose-create: the prompt-driven demo's two acts
-# (behold#935) on example-demo-chant-compose/, three CloudFormation stacks in
+# (behold#935) on chant's examples/demo-composed-stacks/, three CloudFormation stacks in
 # floci with no terragucci in the pipeline: chant's own pull-request loop. The
 # plan job (`chant components pr-plan`) plans network, app and edge in one
 # change-set document and posts one note with its digest. The reviewer approves
@@ -2710,7 +2762,7 @@ records_up() { # [bucket]
 }
 
 # Whether a tool's tree runs its roots on choudoufu, so its jobs need the record store.
-tool_choudoufu() { [ "$1" = atmos-choudoufu ] || tool_tgc "$1" || grep -qx 'binary: choudoufu' "$HERE/../$(tool_tree "$1")/terragucci.yml" 2>/dev/null; }
+tool_choudoufu() { [ "$1" = atmos-choudoufu ] || tool_tgc "$1" || grep -qx 'binary: choudoufu' "$(tool_tree "$1")/terragucci.yml" 2>/dev/null; }
 
 run_cycle() {
   SCENARIO="$1"
@@ -3323,10 +3375,10 @@ case "$CMD" in
       fi
       if [ -n "$image" ]; then
         if [ "$t" = atmos-choudoufu ]; then
-          grep -q "container: $image" "$HERE/../$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml" \
+          grep -q "container: $image" "$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml" \
             || fail "$(tool_tree "$t")/.forgejo/workflows/atmos-choudoufu.yml does not name $image as its container"
         else
-          grep -qx "image: $image" "$HERE/../$(tool_tree "$t")/terragucci.yml" \
+          grep -qx "image: $image" "$(tool_tree "$t")/terragucci.yml" \
             || fail "$(tool_tree "$t")/terragucci.yml does not name $image as its image"
         fi
         image_tools+=("$t")
