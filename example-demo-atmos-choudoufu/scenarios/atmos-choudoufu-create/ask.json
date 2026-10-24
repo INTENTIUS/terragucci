@@ -12,7 +12,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "One plan across 3 estates. app needs the subnet's id, which doesn't exist until it's created. Next: why is app's plan a guess?",
+      "reply": "One plan across 3 estates. app needs the subnet's id, which doesn't exist until it's created.",
       "light": [
         "network/aws_subnet.subnet"
       ],
@@ -22,7 +22,7 @@
     {
       "prompt": "Why is app's plan a guess?",
       "action": null,
-      "reply": "With one Atmos component per estate, app reads the subnet with !terraform.output, which reads applied state, and the subnet isn't there yet. Here one plan holds both, so app's value is known after apply. Next: what depends on the subnet?",
+      "reply": "With one Atmos component per estate, app reads the subnet with !terraform.output, which reads applied state, and the subnet isn't there yet. Here one plan holds both, so app's value is known after apply.",
       "light": [
         "app/aws_network_interface.network_interface"
       ],
@@ -32,7 +32,7 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "{dependents} resources in app and edge. Next: merge and apply.",
+      "reply": "{dependents} resources in app and edge.",
       "light": [
         "network/aws_subnet.subnet"
       ],
@@ -69,7 +69,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. The subnet was created and app and edge got its id in the same apply. Next: did anything stay locked?",
+      "reply": "Done. The subnet was created and app and edge got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false

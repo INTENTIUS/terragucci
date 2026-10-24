@@ -28,7 +28,7 @@
   "planned": {
     "prompt": null,
     "action": null,
-    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change. Next: merge and apply.",
+    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change.",
     "light": [
       "network/terraform_data.http_proxy_port",
       "network/terraform_data.admin_port",

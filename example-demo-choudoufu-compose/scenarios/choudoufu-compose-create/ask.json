@@ -27,7 +27,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "One plan across 3 estates. Only one value is unknown: subnet b's id, which app's worker needs. Next: what depends on it?",
+      "reply": "One plan across 3 estates. Only one value is unknown: subnet b's id, which app's worker needs.",
       "light": [
         "network/aws_subnet.subnet_b"
       ],
@@ -37,7 +37,7 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "{dependents} resources: app's worker and edge's allowlist. Next: approve.",
+      "reply": "{dependents} resources: app's worker and edge's allowlist.",
       "light": [
         "network/aws_subnet.subnet_b"
       ],
@@ -70,7 +70,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. Subnet b was created and app's worker got its id in the same apply. Next: did anything stay locked?",
+      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false
