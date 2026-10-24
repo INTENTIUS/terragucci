@@ -75,7 +75,7 @@ describe("stack/demo.sh under pipefail", () => {
     // The image carries chant and OpenTofu, at the version the tree's lockfile pins.
     const dockerfile = readFileSync(join(root, "stack", "demo-chant.Dockerfile"), "utf8");
     expect(dockerfile).toMatch(/npm ci --omit=dev/);
-    expect(demo).toContain(`-f "$HERE/demo-chant.Dockerfile" "$HERE/../$(tool_tree chant)"`);
+    expect(demo).toContain(`-f "$HERE/demo-chant.Dockerfile" "$(tool_tree chant)"`);
   });
 
   it("reads the fan-out tree's fifteen stacks from its chant.config.ts, in order", () => {
@@ -113,7 +113,7 @@ describe("stack/demo.sh under pipefail", () => {
     // The generated pipeline names no endpoint: the image points the AWS CLI and chant at the stack's floci.
     expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
     expect(pipeline).toContain("ln -s /opt/demo-chant-fanout/node_modules node_modules");
-    expect(demo).toContain(`-f "$HERE/demo-chant-fanout.Dockerfile" "$HERE/../$(tool_tree chant-fanout)"`);
+    expect(demo).toContain(`-f "$HERE/demo-chant-fanout.Dockerfile" "$(tool_tree chant-fanout)"`);
   });
 
   it("installs the AWS CLI release terragucci's drift job pins, checked against the same sha256", () => {
@@ -270,13 +270,14 @@ describe("stack/demo.sh under pipefail", () => {
   });
 
   it("runs the choudoufu compose scenarios on their own forge repo, and applies and resets its base with choudoufu outside the pipeline", () => {
-    const sh = (body: string) => spawnSync("bash", ["-c", `set -euo pipefail\n${fn("scenario_tool")}\n${fn("tool_repo")}\n${fn("tool_tree")}\n${body}`], { cwd: root, encoding: "utf8" });
+    const sh = (body: string) => spawnSync("bash", ["-c", `set -euo pipefail\nREPO_ROOT=${JSON.stringify(root)}\n${fn("scenario_tool")}\n${fn("tool_repo")}\n${fn("tool_tree")}\n${body}`], { cwd: root, encoding: "utf8" });
     const r = sh(`for s in choudoufu-compose-edit choudoufu-compose-create; do t="$(scenario_tool $s)"; echo "$t $(tool_repo $t) $(tool_tree $t)"; done`);
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout.trim().split("\n")).toEqual(Array(2).fill("choudoufu-compose demo-choudoufu-compose example-demo-choudoufu-compose"));
-    expect(demo).toMatch(/^TOOLS=\(.* choudoufu-fanout compose choudoufu-compose\)$/m);
+    expect(r.stdout.trim().split("\n")).toEqual(Array(2).fill(`choudoufu-compose demo-choudoufu-compose ${root}/example-demo-choudoufu-compose`));
+    expect(demo).toMatch(/^TOOLS=\(.* choudoufu-fanout compose choudoufu-compose .*\)$/m);
     expect(demo).toContain("compose-edit|compose-create|choudoufu-compose-edit|choudoufu-compose-create) scenario_compose ;;");
-    expect(fn("states_back")).toContain('choudoufu-compose ]; then estates_back');
+    expect(fn("states_back")).toContain('[ "$TOOL" = choudoufu-compose ]');
+    expect(fn("states_back")).toContain('estates_back "${1:-}"');
     expect(fn("estates_apply")).toContain("choudoufu apply -auto-approve");
     expect(fn("estates_apply")).toContain('"$DEMO_IMAGE_CHOUDOUFU"');
     expect(fn("up_repo")).toContain("estates_apply \"$bt\"");
@@ -290,9 +291,9 @@ describe("stack/demo.sh under pipefail", () => {
   it("says on screen the words the maintainer ruled, and never transaction, atomic or another product's name", () => {
     const dir = join(root, "example-demo-choudoufu-compose", "scenarios");
     const text = ["choudoufu-compose-edit", "choudoufu-compose-create"].flatMap((sc) => ["ask.json", "about.json"].map((f) => readFileSync(join(dir, sc, f), "utf8"))).join("\n");
-    expect(text).toContain("One record store for every estate.");
-    expect(text).toContain("Resource-level locking at the cloud level: each resource's record is written only if it's unchanged since it was read, so nothing is ever left locked.");
-    expect(text).toContain("One plan, one apply, across estates.");
+    expect(text).toContain("one record store for every estate");
+    expect(text).toContain("Each record is written only if it is unchanged since it was read: resource-level locking at the cloud level.");
+    expect(text).toContain("One plan, one apply, across estates");
     const all = text + readFileSync(join(root, "example-demo-choudoufu-compose", "README.md"), "utf8");
     expect(all).not.toMatch(/transaction|atomic|terraform cloud|spacelift|env0|scalr|atlantis/i);
     // Every light address names a resource the scenario's pull has.
@@ -308,7 +309,7 @@ describe("stack/demo.sh under pipefail", () => {
   });
 
   it("builds the demo image's choudoufu from the commit composed estates are on, with the release as the way back", () => {
-    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-f285b9436fc2eeb4932d542585cec0c61397680b}"');
+    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-662d85ec07225e83f58b586574efe25d9904b12b}"');
     expect(demo).toContain("--build-arg CHOUDOUFU_FROM=source --build-arg CHOUDOUFU_REF=");
     const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
     expect(dockerfile).toContain("FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu");
@@ -1038,7 +1039,7 @@ describe("ask.json to demo.json", () => {
     mkdirSync(join(dir, "stack"));
     if (file !== null) writeFileSync(join(scen, "ask.json"), file);
     const fns = ["scenario_tool", "tool_tree", "ask_file", "ask_step", "ask_ends", "ask_key", "ask_fields", "ask_secs", "ask_hold"].map(fn).join("\n");
-    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
+    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} REPO_ROOT=${JSON.stringify(dir)} SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
     return spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8" });
   }
   const json = (r: ReturnType<typeof ask>) => {
@@ -1104,14 +1105,14 @@ describe("ask.json to demo.json", () => {
 
   it("computes a step's hold from its prompts, actions and replies, at least 6 s, and 0 without any", () => {
     const secs = (file: string | null, step: string, pre = "") => ask(file, `${pre}ask_secs ${step}`).stdout.trim();
-    // approved: 0.6 + 38 x 0.065 + 3.5 = 6.57 -> 7
-    expect(secs(JSON.stringify({ approved: { action: "x".repeat(38), reply: null } }), "approved")).toBe("7");
+    // approved: 0.6 + 38 x 0.09 + 3.5 = 7.52 -> 8
+    expect(secs(JSON.stringify({ approved: { action: "x".repeat(38), reply: null } }), "approved")).toBe("8");
     // a short action: below the 6 s floor
     expect(secs(JSON.stringify({ approved: { action: "Go.", reply: null } }), "approved")).toBe("6");
-    // two asks sum: (0.6 + 30 x 0.065 + 80 x 0.025 + 3.5) x 2 = 16.1 -> 17
-    expect(secs(JSON.stringify({ planned: [{ prompt: "x".repeat(30), reply: "r".repeat(80) }, { prompt: "x".repeat(30), reply: "r".repeat(80) }] }), "planned")).toBe("17");
-    // a reply with {dependents} counts as 30 characters
-    expect(secs(JSON.stringify({ planned: { prompt: "x".repeat(40), reply: "{dependents} resources in app and edge. Next: approve." } }), "planned")).toBe("8");
+    // two asks sum: (0.6 + 30 x 0.09 + 80 x 0.035 + 3.5) x 2 = 19.2 -> 20
+    expect(secs(JSON.stringify({ planned: [{ prompt: "x".repeat(30), reply: "r".repeat(80) }, { prompt: "x".repeat(30), reply: "r".repeat(80) }] }), "planned")).toBe("20");
+    // a reply with {dependents} counts as 30 characters: 0.6 + 40 x 0.09 + 30 x 0.035 + 3.5 = 8.75 -> 9
+    expect(secs(JSON.stringify({ planned: { prompt: "x".repeat(40), reply: "{dependents} resources in app and edge. Next: approve." } }), "planned")).toBe("9");
     // status-only steps, missing steps and a missing file do not hold
     expect(secs(JSON.stringify({ merged: { status: "Merged." } }), "merged")).toBe("0");
     expect(secs(JSON.stringify({ merged: { status: "Merged." } }), "applied")).toBe("0");
@@ -1122,7 +1123,7 @@ describe("ask.json to demo.json", () => {
   it("merges the fields into a step of demo.json only through ask_fields, so a step without them is unchanged", () => {
     const writer = fn("demo_write");
     expect(writer).toContain("+ $ask");
-    expect(demo).toMatch(/^ALL_SCENARIOS=\(.* compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create\)$/m);
+    expect(demo).toMatch(/^ALL_SCENARIOS=\(.* compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create .*\)$/m);
     expect(demo).toMatch(/^SCENARIOS=\(b-waves failure tg-planned-outputs\)$/m);
   });
 });
