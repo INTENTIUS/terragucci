@@ -342,7 +342,7 @@ export function renderNote(report: Report, options: NoteOptions = {}): string {
     blocks.push({ kind: "line", units: 0, text: "\n" });
   }
   // A denial a listed approver may override: the override that stands, or the command that writes one.
-  const overridable = report.policy?.overriders?.length ? report.roots.filter((r) => r.policy?.result === "denied") : report.roots.filter((r) => r.policy?.override);
+  const overridable = report.policy?.overriders?.length ? report.roots.filter((r) => r.policy?.result === "denied" && !r.policy.hard_mandatory?.length) : report.roots.filter((r) => r.policy?.override);
   if (overridable.length > 0) {
     let t = `**Policy overrides (${report.roots.filter((r) => r.policy?.override).length} of ${overridable.length} denied):**\n\n`;
     for (const r of overridable) {

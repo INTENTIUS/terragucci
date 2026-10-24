@@ -2994,13 +2994,16 @@ async function policyCheck(
   for (const p of planned) if (found.failed.has(p.root)) byRoot.set(p.root, scoped ? rootOverriders(repo, scoped, p.root, p.policy?.rules ?? []) : { principals: [], shown: [] });
   const overriders = [...new Set([...byRoot.values()].flatMap((o) => o.principals))];
   // A denial with its rules and plan can be overridden by someone named for it; one the policy could not check never is.
-  const overridable = (p: WavePlan): boolean => (byRoot.get(p.root)?.principals.length ?? 0) > 0 && found.failed.has(p.root) && p.policy?.result === "denied" && (p.policy.rules?.length ?? 0) > 0 && !!p.member?.planDigest;
+  const overridable = (p: WavePlan): boolean => (byRoot.get(p.root)?.principals.length ?? 0) > 0 && found.failed.has(p.root) && p.policy?.result === "denied" && (p.policy.rules?.length ?? 0) > 0 && !p.policy.hard_mandatory?.length && !!p.member?.planDigest;
   const hard = planned.filter((p) => found.failed.has(p.root) && !overridable(p));
   if (scoped?.overrideEntries) {
     j.overridersByRoot = byRoot;
     for (const p of hard) if (p.policy?.result === "denied" && p.policy.rules?.length) console.log(`${p.root}: policy.override at base names nobody who may override it for ${p.policy.rules.join(", ")}`);
   }
   j.denials = new Map(found.failed);
+  // A hard-mandatory rule is not overridable: name it, whoever policy.override lists.
+  const hardRules = [...new Set(planned.flatMap((p) => (found.failed.has(p.root) ? p.policy?.hard_mandatory ?? [] : [])))].sort();
+  for (const p of planned) if (found.failed.has(p.root) && p.policy?.hard_mandatory?.length) console.log(`${p.root}: ${p.policy.hard_mandatory.join(", ")} ${p.policy.hard_mandatory.length === 1 ? "is" : "are"} hard-mandatory, so no override, approval or agent action can pass this denial`);
   if (hard.length > 0) {
     for (const p of planned) {
       const error = found.failed.get(p.root);
@@ -3010,8 +3013,8 @@ async function policyCheck(
       console.log(indent(error));
     }
     console.log(`${label}: policy refused ${found.failed.size} root${found.failed.size === 1 ? "" : "s"}, so nothing in it was applied`);
-    w.refused = { reason: "policy", roots: [...found.failed.keys()].sort() };
-    writeOutcome(options.env, `wave ${wave} refused by policy: ${[...found.failed.keys()].join(", ")}`, w);
+    w.refused = { reason: "policy", roots: [...found.failed.keys()].sort(), ...(hardRules.length ? { hard_mandatory: hardRules } : {}) };
+    writeOutcome(options.env, `wave ${wave} refused by policy: ${[...found.failed.keys()].join(", ")}${hardRules.length ? ` (hard-mandatory: ${hardRules.join(", ")})` : ""}`, w);
     return EXIT.failed;
   }
   j.overriders = overriders;

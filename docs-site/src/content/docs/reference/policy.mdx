@@ -243,6 +243,49 @@ If no Rego file outside the tests declares the namespace and has a `deny`, `viol
 
 A denial clears when the code changes until the policy passes, or when the policy changes in a pull request your reviewers approve and merge. A listed approver can also override one plan. Responses, agents and comments cannot waive it.
 
+## Enforcement levels
+
+| Level | Set by | A denial |
+|---|---|---|
+| Advisory | a `warn` rule; `enforcement_level = "advisory"` in `policies.hcl` | warns and fails nothing |
+| Soft-mandatory | a `deny` rule (`mandatory` in `policies.hcl`) | fails the root; a listed approver can [override](#overriding-a-denial) one plan |
+| Hard-mandatory | a [hard-mandatory](#hard-mandatory-rules) `deny` rule (`hard-mandatory` in `policies.hcl`) | fails the root; nothing can pass it |
+
+## Hard-mandatory rules
+
+A hard-mandatory rule denies a plan like any `deny` rule, and no override can pass it, whoever `policy.override` lists. Other rules in the same repo stay overridable. The level is set per rule, in either of two places.
+
+In the Rego, put `# terragucci: hard-mandatory` in the comment lines directly above the rule's head. A blank line between the comment and the head cuts the annotation off.
+
+```rego
+package main
+
+import rego.v1
+
+# Public buckets are never acceptable.
+# terragucci: hard-mandatory
+deny_public_bucket contains msg if {
+  some rc in input.resource_changes
+  rc.type == "aws_s3_bucket_public_access_block"
+  rc.change.after.block_public_acls == false
+  msg := sprintf("%s allows public ACLs", [rc.address])
+}
+```
+
+The annotation marks the rule's name in its package (`main.deny_public_bucket`), so every body of that rule shares it. A comment above a `warn` rule does nothing, since it never denies.
+
+In an [HCP Terraform `policies.hcl`](#policieshcl), set `enforcement_level = "hard-mandatory"` on the policy. It denies like `mandatory`.
+
+When a hard-mandatory rule denies a root:
+
+- `tf-apply` records no denial to override, prints no `terragucci override` command, and refuses the wave. The log and the plan note name the rule, as in "main.deny_public_bucket is hard-mandatory: no override, approval or agent action can pass it".
+- An override line already on the ledger, or a later one, passes nothing: the wave is refused before the override gate reads it.
+- `terragucci override` refuses a `--rule` that is hard-mandatory and names it.
+- The refusal is a `refused` entry (`denied-by-policy`) in the [audit trail](/terragucci/reference/audit-trail/), with the hard-mandatory rule ids in `hard_mandatory`. `roots[].policy.hard_mandatory` and `waves[].refused.hard_mandatory` carry them in the report.
+
+The annotation is read from the policy at base, like the rest of the policy, so a pull request cannot remove a rule's level from itself.
+
+
 ## Overriding a denial
 
 With `override` set, a person it lists can let one denied plan through `tf-apply`. The override is a line on the ledger beside the approvals, and it never edits the policy. `tf-plan` still fails the root.
@@ -499,7 +542,7 @@ policy "owner_tags" {
 }
 ```
 
-Mandatory messages fail the root, as does a missing or unmatched `query` or an unknown level; advisory ones, the default, warn.
+Mandatory messages fail the root, as does a missing or unmatched `query` or an unknown level; advisory ones, the default, warn. A `hard-mandatory` policy fails the root too, and no [override](#hard-mandatory-rules) can pass it.
 
 `namespace` keeps only the policies whose query is in that package.
 
