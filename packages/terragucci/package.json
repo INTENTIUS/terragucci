@@ -19,10 +19,12 @@
     },
     "./report.schema.json": "./dist/report.schema.json",
     "./notify.schema.json": "./dist/notify.schema.json",
-    "./terragucci.schema.json": "./dist/terragucci.schema.json"
+    "./terragucci.schema.json": "./dist/terragucci.schema.json",
+    "./workspace-kinds": "./workspace-kinds.json"
   },
   "files": [
     "dist",
+    "workspace-kinds.json",
     "README.md",
     "LICENSE"
   ],

@@ -429,6 +429,65 @@ export interface ImageSettings {
 
 export const IMAGE_KEYS = ["name", "mirror"] as const;
 
+/**
+ * `control`: after a member repo's apply on the default branch succeeds, its pipeline sends a dispatch to the
+ * control repo (a repository_dispatch on GitHub, a pipeline trigger on GitLab, a workflow dispatch on Forgejo),
+ * and the control repo runs the member's dependents with `chant workspace run --dependents-of`. The token the
+ * member holds is for that one call.
+ */
+export interface ControlSettings {
+  /** The control repo, as a project key: `<host>/<owner>/<name>`. Its host says which forge's dispatch is sent. */
+  repo: string;
+  /** The control repo's forge, when its host does not say (forgeFromHost). */
+  forge?: ForgeName;
+  /** The Op the control repo runs on the member's dependents (`chant workspace run --op`). */
+  op: string;
+  /** The member's name in the control repo's workspace. Default: the repo's name. */
+  member?: string;
+  /** The secret holding the token that may dispatch to the control repo. Default `TERRAGUCCI_CONTROL_TOKEN`. */
+  token_env?: string;
+  /** The branch of the control repo a GitLab pipeline or a Forgejo workflow runs on. Default `main`; GitHub's dispatch always runs the default branch. */
+  ref?: string;
+}
+
+export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "ref"] as const;
+/** The token a member holds for the dispatch when `control.token_env` is unset. */
+export const CONTROL_TOKEN_ENV = "TERRAGUCCI_CONTROL_TOKEN";
+/** A member name or Op name as the control repo's workspace spells them; the dispatch carries both into a shell line. */
+export const CONTROL_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/;
+/** A branch name the dispatch may carry into a URL and a shell line. */
+export const CONTROL_REF = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,127}$/;
+
+function forgeFromHostSafe(repo: string): ForgeName | undefined {
+  try {
+    return forgeFromHost(parseProjectKey(repo).host);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The problems with `control`. */
+export function controlProblems(v: unknown, where: string): string[] {
+  if (!isObject(v)) return [`${where} must be a map (settings: ${CONTROL_KEYS.join(", ")})`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!(CONTROL_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${CONTROL_KEYS.join(", ")})`);
+  if (typeof v.repo !== "string") out.push(`${where}.repo must be the control repo's project key, such as github.com/acme/control`);
+  else {
+    try {
+      parseProjectKey(v.repo);
+    } catch {
+      out.push(`${where}.repo must be the control repo's project key, such as github.com/acme/control`);
+    }
+  }
+  if (!(typeof v.op === "string" && CONTROL_NAME.test(v.op))) out.push(`${where}.op must name the Op the control repo runs on this repo's dependents, such as deploy`);
+  oneOf(v.forge, FORGES, `${where}.forge`, out);
+  if (typeof v.repo === "string" && v.forge === undefined && !forgeFromHostSafe(v.repo)) out.push(`${where}.forge is needed: ${v.repo}'s host does not say which forge it is`);
+  if (v.member !== undefined && !(typeof v.member === "string" && CONTROL_NAME.test(v.member))) out.push(`${where}.member must be this repo's name in the control repo's workspace`);
+  if (v.token_env !== undefined && !(typeof v.token_env === "string" && SECRET_NAME.test(v.token_env))) out.push(`${where}.token_env must name the secret holding the dispatch token, such as ${CONTROL_TOKEN_ENV}`);
+  if (v.ref !== undefined && !(typeof v.ref === "string" && CONTROL_REF.test(v.ref))) out.push(`${where}.ref must be a branch name`);
+  return out;
+}
+
 /** Where `terragucci image recipe` puts the provider mirror in the image. */
 export const MIRROR_DIR = "/usr/share/terragucci/providers";
 
@@ -572,6 +631,11 @@ export interface ProjectSettings {
    * control repo. `respond.rollout: off` leaves the job out.
    */
   rollouts?: string | false;
+  /**
+   * The control repo to tell once the default branch's apply succeeded (ControlSettings). The pipeline gets a
+   * job that sends the control repo a dispatch, and the control repo runs this project's dependents.
+   */
+  control?: ControlSettings;
   /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
   gitlab?: { token?: GitLabToken };
   runtime?: Runtime;
@@ -1024,7 +1088,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1152,6 +1216,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.rollouts !== undefined && s.rollouts !== false && !(typeof s.rollouts === "string" && s.rollouts.trim() !== "")) {
     problems.push(`${where}.rollouts must be a cron schedule or false`);
   }
+  if (s.control !== undefined) problems.push(...controlProblems(s.control, `${where}.control`));
   if (s.gitlab !== undefined) {
     if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
     else {

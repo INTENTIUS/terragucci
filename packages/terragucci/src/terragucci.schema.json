@@ -388,6 +388,44 @@
       ],
       "description": "A cron schedule for the job that opens each rollout's next wave, or false."
     },
+    "control": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/\\s]+(/[^/\\s]+){2,}$"
+        },
+        "op": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        },
+        "forge": {
+          "enum": [
+            "github",
+            "gitlab",
+            "forgejo"
+          ]
+        },
+        "member": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        },
+        "token_env": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "op"
+      ],
+      "description": "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents."
+    },
     "gitlab": {
       "type": "object",
       "properties": {
@@ -2153,6 +2191,44 @@
         "rollouts": {
           "const": false,
           "description": "A single repo's key; a control repo runs terragucci respond rollout itself."
+        },
+        "control": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "pattern": "^[^/\\s]+(/[^/\\s]+){2,}$"
+            },
+            "op": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            },
+            "forge": {
+              "enum": [
+                "github",
+                "gitlab",
+                "forgejo"
+              ]
+            },
+            "member": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            },
+            "token_env": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "repo",
+            "op"
+          ],
+          "description": "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents."
         },
         "gitlab": {
           "type": "object",

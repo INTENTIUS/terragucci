@@ -7,7 +7,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { declaredGates } from "./approval";
@@ -45,6 +45,7 @@ import { reportsBase } from "./report/store";
 import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
+import { resolveControl } from "./control-repo";
 import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
@@ -316,6 +317,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   // The rollout job: when rollouts names a schedule and respond.rollout is not off.
   const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
+  const control = settings.control ? resolveControl(settings.control, options.name ?? basename(resolve(repo))) : undefined;
   const pipeline = renderPipeline({
     forge: forgeChoice.value,
     binary: binary.value,
@@ -345,6 +347,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(rollouts ? { rollouts } : {}),
+    // control: after the last apply, a job tells the control repo (./control-repo.ts). The member is this repo's name in the control repo's workspace.
+    ...(control ? { control } : {}),
     // Every job runs the shape's prepare before it reads the roots; an Atmos repo's jobs install Atmos for it.
     ...(shape.prepare ? { synth: shape.prepare } : {}),
     ...(atmos ? { atmos: { version: atmos.version } } : {}),
@@ -479,6 +483,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
   if (rollouts && forgeChoice.value === "gitlab") {
     notes.push(`rollouts is set: add a pipeline schedule with the cron ${rollouts} and the variable TERRAGUCCI_SCHEDULE set to rollouts under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api and write_repository scopes so the rollout job can push a wave's branch and open its merge request`);
+  }
+  if (control) {
+    notes.push(`control is set: give this repo a ${control.tokenEnv} secret, a token that may dispatch to ${control.repo} and do nothing else; its apply on the default branch then runs ${control.member}'s dependents there with the Op ${control.op}`);
   }
   if (settings.rollouts && !rollouts) notes.push("rollouts is set and respond.rollout is off, so no rollout job is written");
   if (settings.comments && forgeChoice.value === "gitlab") {

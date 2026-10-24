@@ -5,7 +5,8 @@
  *   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
- *   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
+ *   terragucci control init [--forge github|gitlab|forgejo] [--config <file>] [--dry-run] [--force]   write the control repo's job that runs a member's dependents when the member's pipeline dispatches to it
+  terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
  *   terragucci audit [--check] [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -77,7 +78,7 @@
  * config error; 3 waiting on an approval; 4 a wave's plans changed after
  * its approval, so it applied nothing.
  */
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,6 +119,8 @@ import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
 import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
+import { controlPipeline } from "./control-repo";
+import { MARKER } from "./render";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
@@ -220,7 +223,7 @@ const USAGE = `usage:
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
 
-init, reconcile, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
+init, reconcile, control init, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -314,6 +317,17 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
     if (forge) out.add(forge);
   }
   return [...out];
+}
+
+/** The forge the repo's origin remote is on, when its host says. */
+function originForge(dir: string): ForgeName | undefined {
+  try {
+    const url = execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const host = /^[a-z+]+:\/\/(?:[^@/]*@)?([^/:]+)/i.exec(url)?.[1] ?? /^[^@]+@([^:]+):/.exec(url)?.[1];
+    return host ? forgeFromHost(host) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -1084,6 +1098,27 @@ export async function main(argv: string[]): Promise<number> {
         const agentLogin = str(flags, "agent-login");
         const posted = await approvalStatus({ forge, ...(report ? { report: resolve(cwd, report) } : {}), ...(agentLogin ? { agentLogin } : {}), log: (l) => console.log(`terragucci approval-status: ${l}`) });
         console.log(`terragucci approval-status: ${posted.state}: ${posted.description}`);
+        return 0;
+      }
+      case "control": {
+        // The control repo's pipeline: the job a member's dispatch starts, which runs that member's dependents (./control-repo.ts).
+        if (args[0] !== "init") throw new ConfigError("usage: terragucci control init [--forge github|gitlab|forgejo] [--dry-run]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const cfg = path ? await loadConfig(resolve(path)) : undefined;
+        if (!cfg?.projects || Object.keys(cfg.projects).length === 0) throw new ConfigError("control init needs a control repo's terragucci.yml, which lists projects");
+        const forge = (str(flags, "forge") as ForgeName | undefined) ?? cfg.forge ?? originForge(cwd);
+        if (!forge || !(FORGES as readonly string[]).includes(forge)) throw new ConfigError("control init cannot tell which forge this repo is on; pass --forge github|gitlab|forgejo");
+        const pipeline = controlPipeline(forge);
+        const file = join(cwd, pipeline.path);
+        const existing = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
+        if (existing !== undefined && !existing.startsWith(MARKER) && flags.force !== true) throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; pass --force to replace it`);
+        const status = existing === undefined ? "created" : existing === pipeline.content ? "unchanged" : "updated";
+        if (flags["dry-run"] !== true && status !== "unchanged") {
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, pipeline.content);
+        }
+        if (json) return emit(envelope("control", 0, { path: pipeline.path, status, notes: pipeline.notes }));
+        console.log([`${pipeline.path}: ${status}${flags["dry-run"] === true ? " (dry run, nothing written)" : ""}`, ...pipeline.notes.map((n) => `  ${n}`)].join("\n"));
         return 0;
       }
       case "rollout": {
