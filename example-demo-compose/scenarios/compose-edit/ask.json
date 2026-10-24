@@ -1,0 +1,35 @@
+{
+  "opening": "Three Terraform states: network, app and edge. Each one reads the one before it.",
+  "planned": {
+    "prompt": "I changed the proxy port and added an admin port in network. What does that touch?",
+    "action": null,
+    "reply": "All {roots} states. One plan: {creates} to create, {updates} to change.",
+    "light": [
+      "network/terraform_data.http_proxy_port",
+      "network/terraform_data.admin_port",
+      "network/terraform_data.release",
+      "app/terraform_data.listener",
+      "app/terraform_data.admin_listener",
+      "edge/terraform_data.upstream",
+      "edge/terraform_data.admin_upstream"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "approved": {
+    "prompt": null,
+    "action": "You approve the plan on the pull request.",
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Applied. {roots} states, 1 plan, 1 apply.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
+}

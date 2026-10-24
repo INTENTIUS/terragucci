@@ -932,3 +932,100 @@ describe("quiet", () => {
     expect(r.stderr).toMatch(/waiting for run 8 of/);
   });
 });
+
+// behold#935: a scenario's ask.json becomes demo.json's ask, asks, opening and
+// closing, and nothing else in demo.json moves.
+describe("ask.json to demo.json", () => {
+  const dirs: string[] = [];
+  afterAll(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+  const ask1 = { prompt: "Show me everything that depends on the new subnet.", action: null, reply: "{dependents} resources depend on it.", paths: true };
+  const ask2 = { action: "You approve the plan on the pull request.", reply: null };
+  const fixture = {
+    opening: "Three Terraform states.",
+    closing: 7,
+    planned: [ask1, { prompt: "A second beat.", reply: "Done." }],
+    approved: ask2,
+    "fix-planned": { prompt: "The fix.", reply: "Only what is left." },
+    applied: "not an ask",
+  };
+
+  /** Run `body` in a checkout whose example-demo-compose/scenarios/compose-edit has `file` as its ask.json, and in the shell's function set. */
+  function ask(file: string | null, body: string) {
+    const dir = mkdtempSync(join(tmpdir(), "ask-"));
+    dirs.push(dir);
+    const scen = join(dir, "example-demo-compose", "scenarios", "compose-edit");
+    mkdirSync(scen, { recursive: true });
+    mkdirSync(join(dir, "stack"));
+    if (file !== null) writeFileSync(join(scen, "ask.json"), file);
+    const fns = ["scenario_tool", "tool_tree", "ask_file", "ask_step", "ask_ends", "ask_key", "ask_fields", "ask_extra_hold"].map(fn).join("\n");
+    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} ASK_BEAT_HOLD=12 SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
+    return spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8" });
+  }
+  const json = (r: ReturnType<typeof ask>) => {
+    expect(r.status, r.stderr).toBe(0);
+    return JSON.parse(r.stdout);
+  };
+
+  it("writes a step's one ask as ask, and a list as asks, as given", () => {
+    const f = JSON.stringify(fixture);
+    expect(json(ask(f, "ask_fields approved")).ask).toEqual(ask2);
+    expect(json(ask(f, "ask_fields planned")).asks).toEqual(fixture.planned);
+    expect(json(ask(f, "ask_fields planned")).ask).toBeUndefined();
+  });
+
+  it("writes opening and closing only when they are strings", () => {
+    const f = JSON.stringify(fixture);
+    const got = json(ask(f, "ask_fields approved"));
+    expect(got.opening).toBe("Three Terraform states.");
+    expect("closing" in got).toBe(false);
+  });
+
+  it("writes nothing for a step without an entry, an entry of the wrong shape, no file or a broken file", () => {
+    const f = JSON.stringify({ planned: ask1 });
+    expect(json(ask(f, "ask_fields applied"))).toEqual({});
+    expect(json(ask(JSON.stringify(fixture), "ask_fields applied"))).toMatchObject({ opening: "Three Terraform states." });
+    expect(json(ask(JSON.stringify(fixture), "ask_fields applied")).ask).toBeUndefined();
+    expect(json(ask(null, "ask_fields planned"))).toEqual({});
+    expect(json(ask("{not json", "ask_fields planned"))).toEqual({});
+    expect(json(ask("[1, 2]", "ask_fields planned"))).toEqual({});
+  });
+
+  it("writes nothing for a scenario with no tree", () => {
+    expect(json(ask(JSON.stringify(fixture), "SCENARIO=a-known; ask_fields planned"))).toEqual({});
+    expect(json(ask(JSON.stringify(fixture), "SCENARIO=base; ask_fields planned"))).toEqual({});
+  });
+
+  it("reads a fix's steps as fix-<step>, and not the first pull request's", () => {
+    const f = JSON.stringify(fixture);
+    const got = json(ask(f, "FIX=1; ask_fields planned"));
+    expect(got.ask).toEqual(fixture["fix-planned"]);
+    expect(got.asks).toBeUndefined();
+    expect(json(ask(f, "FIX=1; ask_fields approved")).ask).toBeUndefined();
+    // The fix's applied step ends the scenario and reads applied.
+    expect(json(ask(JSON.stringify({ applied: ask2 }), "FIX=1; ask_fields applied")).ask).toEqual(ask2);
+  });
+
+  it("writes nothing for the driver's own setup push", () => {
+    expect(json(ask(JSON.stringify(fixture), "SETUP=1; ask_fields approved"))).toEqual({});
+    expect(ask(JSON.stringify(fixture), "SETUP=1; ask_extra_hold planned").stdout.trim()).toBe("0");
+  });
+
+  it("holds a step ASK_BEAT_HOLD seconds for each beat past the first", () => {
+    const f = JSON.stringify(fixture);
+    const three = JSON.stringify({ planned: [ask1, ask1, ask1], approved: ask2 });
+    expect(ask(f, "ask_extra_hold planned").stdout.trim()).toBe("12");
+    expect(ask(three, "ask_extra_hold planned").stdout.trim()).toBe("24");
+    expect(ask(f, "ask_extra_hold approved").stdout.trim()).toBe("0");
+    expect(ask(f, "ask_extra_hold applied").stdout.trim()).toBe("0");
+    expect(ask(null, "ask_extra_hold planned").stdout.trim()).toBe("0");
+  });
+
+  it("merges the fields into a step of demo.json only through ask_fields, so a step without them is unchanged", () => {
+    const writer = fn("demo_write");
+    expect(writer).toContain("+ $ask");
+    expect(demo).toMatch(/^ALL_SCENARIOS=\(.* compose-edit compose-create compose-fail\)$/m);
+    expect(demo).toMatch(/^SCENARIOS=\(b-waves failure tg-planned-outputs\)$/m);
+  });
+});

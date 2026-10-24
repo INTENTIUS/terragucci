@@ -148,6 +148,7 @@
                 "index": { "type": ["string", "integer"] },
                 "attributes": {
                   "type": "array",
+                  "description": "On a tf-apply wave, a root that applied: an attribute the plan marked unknown carries the value the state holds after the apply, as after with no unknown, stated once; a sensitive one stays sensitive with no value (minor 47).",
                   "items": {
                     "type": "object",
                     "required": ["path"],

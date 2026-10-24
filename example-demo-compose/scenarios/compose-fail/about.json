@@ -1,0 +1,5 @@
+{
+  "changes": "App adds a load balancer whose address falls outside the subnet's range.",
+  "watch": "The plan passes, since the address is known only after apply. The load balancer is created and its check fails, so edge is not applied. The fix changes one line.",
+  "shows": "A failure part way through is not rolled back. Each state keeps what applied."
+}

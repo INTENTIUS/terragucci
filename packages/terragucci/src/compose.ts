@@ -1127,6 +1127,8 @@ export interface ComposedApply {
   members: ReportComposedMember[];
   /** The members whose state the run wrote or left as it was: their backend holds what applied to them. */
   settled: string[];
+  /** `show -json` of each member's part of the working state, as if the member had applied alone: where the report reads the values its plan left unknown. */
+  shown?: Map<string, unknown>;
   error?: string;
 }
 
@@ -1393,6 +1395,7 @@ export class ComposedRun {
       for (const r of this.c.order) this.heldOnPurpose.add(r);
       return { ok: false, members: members().map((m) => ({ ...m, state: "not-written" as const, lock_held: true, error: `the working state could not be read: ${(e as Error).message}` })), settled: [], error: "the working state could not be read after the apply" };
     }
+    const shown = await this.showMembers(workingFile);
     const result: ReportComposedMember[] = [];
     const settled: string[] = [];
     for (const r of this.c.order) {
@@ -1429,7 +1432,26 @@ export class ComposedRun {
       }
     }
     const ok = code === 0 && result.every((x) => (x.apply === "applied" || x.apply === "no-changes") && x.state !== "not-written" && !x.error);
-    return { ok, members: result, settled, ...(ok ? {} : { error: ev.other[0] ?? (code !== 0 ? "the composed apply failed" : result.find((x) => x.error)?.error) }) };
+    return { ok, members: result, settled, ...(shown.size ? { shown } : {}), ...(ok ? {} : { error: ev.other[0] ?? (code !== 0 ? "the composed apply failed" : result.find((x) => x.error)?.error) }) };
+  }
+
+  /**
+   * `show -json` of the working state, cut into each member's part (the member's module as the root module, addresses
+   * unprefixed). Empty when the state cannot be shown: the report then leaves the values unknown. Never fails the run.
+   */
+  private async showMembers(workingFile: string): Promise<Map<string, unknown>> {
+    const out = new Map<string, unknown>();
+    try {
+      // `show` reads the state the root holds; the errored state is shown by naming its file.
+      const args = workingFile.endsWith("errored.tfstate") ? ["show", "-json", "-no-color", workingFile] : ["show", "-json", "-no-color"];
+      const r = await this.exec(this.o.binary.path, args, this.composeDir, this.composedEnv());
+      if (r.code !== 0) return out;
+      const whole = JSON.parse(r.stdout) as { values?: unknown };
+      for (const root of this.c.order) out.set(root, { ...whole, values: moduleValues(whole.values, this.c.modules.get(root)!, {}) });
+    } catch (e) {
+      this.log(`composed: the applied state could not be shown (${(e as Error).message}); the values unknown at plan stay unknown in the report`);
+    }
+    return out;
   }
 
   /** Write one state, retrying while the lock is held. Undefined once written; the last error otherwise. */

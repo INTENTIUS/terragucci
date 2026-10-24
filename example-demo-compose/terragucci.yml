@@ -1,0 +1,17 @@
+# The compose demo's three roots: network, app (reads network) and edge (reads
+# app). Each is terraform_data with its own state in floci; the plan reports
+# and run views go to the reports bucket there too (stack/demo.sh).
+forge: forgejo
+binary: tofu
+image: terragucci-demo-tofu:local
+# A wave that destroys something, or a composed run that reads a value unknown
+# at plan time, waits for an approval before it applies.
+gate: on-destructive
+reports:
+  bucket: s3://demo-reports
+  endpoint: http://floci:4566
+  prefix: demo
+# The roots a change reaches, and the roots they read, plan as one plan and
+# apply as one apply, each keeping its own state.
+waves:
+  compose: true
