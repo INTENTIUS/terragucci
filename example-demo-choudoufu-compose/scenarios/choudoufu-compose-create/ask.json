@@ -43,7 +43,8 @@
         "network/aws_subnet.subnet_b"
       ],
       "paths": true,
-      "ghost": false
+      "ghost": false,
+      "status": "Tracing what reads subnet b"
     }
   ],
   "approved": {
@@ -82,7 +83,8 @@
       "reply": "Never. choudoufu holds no lock to leave behind, so there is nothing to force-unlock. Each record is written only if it is unchanged since it was read: resource-level locking at the cloud level.",
       "light": null,
       "paths": false,
-      "ghost": false
+      "ghost": false,
+      "status": "Checking the record store"
     }
   ],
   "closing": "3 estates. 1 plan. 1 approval. 1 apply."
