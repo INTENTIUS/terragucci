@@ -45,7 +45,7 @@
   "applying": {
     "status": "terragrunt apply is applying network, app and edge together",
     "tips": [
-      "A dependency block plans on mock_outputs until its parent applies. Here app plans on 'known after apply'.",
+      "With a unit per estate, the plan you review for app uses a mock until network applies. Here the plan shows it as known after apply.",
       "Keep your root.hcl and includes. Set the binary to choudoufu and add a live block per unit."
     ]
   },
@@ -57,5 +57,5 @@
     "paths": false,
     "ghost": false
   },
-  "closing": "3 estates. 1 terragrunt plan. 1 approval. 1 terragrunt apply."
+  "closing": "3 estates, 1 plan, 1 review, 1 apply."
 }

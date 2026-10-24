@@ -38,7 +38,7 @@
     {
       "prompt": "Why is app's plan a guess?",
       "action": null,
-      "reply": "With one Atmos component per estate, app reads the subnet with !terraform.output, which only sees applied state. The subnet isn't there yet, so the plan is a guess. Here one plan holds both, and the worker's subnet is known after apply.",
+      "reply": "app reads network with !terraform.output, which reads applied state. App's plan uses a default or a mock until network applies, or fails.",
       "light": [
         "app/aws_network_interface.worker"
       ],
@@ -99,5 +99,5 @@
       "ghost": false
     }
   ],
-  "closing": "Three estates, one plan, one approval, one apply."
+  "closing": "3 estates, 1 plan, 1 review, 1 apply."
 }

@@ -1670,9 +1670,9 @@ say() { # step
     choudoufu-compose-create:planned) echo "One composed plan covers $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
     choudoufu-compose-edit:applied|choudoufu-compose-create:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     terragrunt-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
-    terragrunt-choudoufu-edit:planned) echo "terragrunt plan in live/all made one plan over $COMPOSED. Every value is known at plan, so each card shows before and after." ;;
+    terragrunt-choudoufu-edit:planned) echo "Terragrunt runs one unit, and choudoufu plans the three estates inside it. Every value is known at plan, so each card shows before and after." ;;
     terragrunt-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
-    terragrunt-choudoufu-create:planned) echo "terragrunt plan in live/all made one plan over $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply, not as mock_outputs." ;;
+    terragrunt-choudoufu-create:planned) echo "Terragrunt runs one unit, and choudoufu plans the three estates inside it. The subnet's id exists only after it is created, so app's values show as known after apply, not as mock_outputs." ;;
     terragrunt-choudoufu-*:applied) echo "Applied. One terragrunt apply ran network, app and edge, and each resource's record went to the one record store." ;;
     terragrunt-choudoufu-*:applying) echo "terragrunt apply in live/all runs network, app and edge together. Each resource's record is written as it applies." ;;
     terragrunt-choudoufu-*:approved) echo "The reviewer approves pull request $PULL. The apply job checks for that approving review before it applies." ;;

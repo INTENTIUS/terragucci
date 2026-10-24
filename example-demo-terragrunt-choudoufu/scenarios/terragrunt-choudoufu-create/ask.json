@@ -38,7 +38,7 @@
     {
       "prompt": "Why not run each unit?",
       "action": null,
-      "reply": "With a unit per estate, app's dependency block plans on mock_outputs until network applies. Here the worker plans once with the subnet and gets the real id in the apply.",
+      "reply": "With a unit per estate, the plan you review for app uses a mock for subnet b's id, because network hasn't applied it. Here that plan shows it as known after apply.",
       "light": [
         "app/aws_network_interface.worker"
       ],
@@ -77,7 +77,7 @@
   "applying": {
     "status": "terragrunt apply is applying all three estates together",
     "tips": [
-      "A dependency block plans on mock_outputs until its parent applies. Here app plans on 'known after apply'.",
+      "With a unit per estate, the plan you review for app uses a mock until network applies. Here the plan shows it as known after apply.",
       "Keep your root.hcl and includes. Set the binary to choudoufu and add a live block per unit."
     ]
   },
@@ -99,5 +99,5 @@
       "ghost": false
     }
   ],
-  "closing": "Three estates, one terragrunt plan, one approval, one terragrunt apply."
+  "closing": "3 estates, 1 plan, 1 review, 1 apply."
 }
