@@ -45,8 +45,7 @@ There is no failure act; failures are a separate demo.
   `admin_upstream`. The plan is 3 to add, 3 to change and 0 to destroy.
 - `choudoufu-compose-create`: network creates an `aws_subnet` named `subnet` in
   that VPC and outputs `subnet_id`, which exists only after apply. app puts an
-  `aws_security_group`, `aws_route_table`, `aws_network_interface` and
-  `aws_route_table_association` in it, and edge's `dns_upstream` reads app's
+  `aws_security_group`, `aws_route_table`, two `aws_network_interface`s in it, and edge's `dns_upstream` reads app's
   `dns_name`, which is built from the id. The plan is 6 to add, 0 to change and
   0 to destroy.
 

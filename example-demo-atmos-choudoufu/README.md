@@ -44,7 +44,7 @@ without the id.
 `atmos-choudoufu-edit` and `atmos-choudoufu-create` are the two acts of
 `example-demo-choudoufu-compose`, on the same resources: `terraform_data` for
 the ports, and an `aws_subnet`, `aws_security_group`, `aws_route_table`,
-`aws_network_interface` and `aws_route_table_association` for the create. No
+`aws_network_interface` and a second `aws_network_interface` for the create. No
 scenario replaces or destroys anything. Each has `pull/` (the pull request's
 files), `ask.json` (the prompts and replies behold's pane plays) and
 `about.json`.

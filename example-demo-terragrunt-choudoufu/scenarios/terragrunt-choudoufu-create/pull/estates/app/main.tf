@@ -65,9 +65,8 @@ resource "aws_network_interface" "network_interface" {
   subnet_id = data.terraform_estate_outputs.network.values.subnet_id
 }
 
-resource "aws_route_table_association" "route_table_association" {
-  subnet_id      = data.terraform_estate_outputs.network.values.subnet_id
-  route_table_id = aws_route_table.route_table.id
+resource "aws_network_interface" "worker_network_interface" {
+  subnet_id = data.terraform_estate_outputs.network.values.subnet_id
 }
 
 output "dns_name" {

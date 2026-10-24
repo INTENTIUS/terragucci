@@ -55,8 +55,7 @@ apply plans again before it applies; it is not bound to the plan the review saw.
 - `terragrunt-choudoufu-edit`: network's proxy port goes from 8080 to 8090 and
   it gains an `admin_port`. app and edge follow. 3 to add, 3 to change.
 - `terragrunt-choudoufu-create`: network creates an `aws_subnet`; app puts an
-  `aws_security_group`, `aws_route_table`, `aws_network_interface` and
-  `aws_route_table_association` in it; edge reads an address built from the
+  `aws_security_group`, `aws_route_table`, two `aws_network_interface`s in it; edge reads an address built from the
   subnet's id. 6 to add. Nothing is replaced or destroyed in either act.
 
 `stack/demo.sh` applies the base with choudoufu in each estate (`estates_apply`),
