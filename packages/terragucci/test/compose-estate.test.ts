@@ -111,6 +111,18 @@ const plan = {
   ],
 };
 
+const after = {
+  format_version: "1.0",
+  values: {
+    root_module: {
+      child_modules: [
+        { address: "module.network", resources: [{ address: "module.network.aws_subnet.main", values: { id: "subnet-0a1b2c" } }] },
+        { address: "module.app", resources: [{ address: "module.app.aws_instance.web", values: { subnet_id: "subnet-0a1b2c" } }] },
+      ],
+    },
+  },
+};
+
 describe("a composed run of estates", () => {
   it("plans and applies from the composed root with no state handling, and reports each estate", async () => {
     const dir = tree();
@@ -124,6 +136,8 @@ describe("a composed run of estates", () => {
         writeFileSync(out, "plan");
         return ok("Plan: 2 to add, 0 to change, 0 to destroy.");
       }
+      // The plan after the apply: choudoufu builds its prior state from the records and the live system.
+      if (args[0] === "show" && args[2]?.endsWith("composed-after.tfplan")) return ok(JSON.stringify({ ...plan, prior_state: after }));
       if (args[0] === "show" && args.includes("-json") && args.length === 3) return ok(JSON.stringify(plan));
       if (args[0] === "apply") {
         return ok(
@@ -163,6 +177,11 @@ describe("a composed run of estates", () => {
       ["edge", "no-changes", "unchanged"],
     ]);
     expect(applied.settled).toEqual(["network", "app", "edge"]);
+    // What each estate holds after the apply comes from a second plan's prior state, cut per member with addresses
+    // unprefixed: choudoufu refuses a bare show, and the report reads the values the first plan left unknown here.
+    const app = applied.shown?.get("app") as { values: { root_module: { resources: { address: string; values: Record<string, unknown> }[] } } };
+    expect(app.values.root_module.resources).toEqual([{ address: "aws_instance.web", values: { subnet_id: "subnet-0a1b2c" } }]);
+    expect(calls.some((x) => x.args[0] === "show" && x.args.length === 3 && x.args[2] === "-no-color")).toBe(false);
     expect(existsSync(join(dir, COMPOSE_DIR))).toBe(false);
     expect(readdirSync(dir).sort()).toEqual(["app", "edge", "network"]);
     expect(reportCompose(c as Composition)).toMatchObject({ roots: ["app", "edge", "network"], wave: 1, estate: true });

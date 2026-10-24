@@ -1537,15 +1537,7 @@ export class ComposedRun {
       const { apply, done } = memberApply(m, planned, ev);
       result.push({ root: r, module: `module.${m}`, apply, changes: { done, planned }, state: done > 0 ? "written" : "unchanged", ...(ev.errored.get(m) ? { error: ev.errored.get(m) } : {}) });
     }
-    const shown = new Map<string, unknown>();
-    for (const r of this.c.order) {
-      try {
-        const s = await this.exec(this.o.binary.path, ["show", "-json", "-no-color"], join(this.o.repo, r), this.o.env);
-        if (s.code === 0) shown.set(r, JSON.parse(s.stdout));
-      } catch (e) {
-        this.log(`composed: ${r} could not be shown after the apply (${(e as Error).message}); the values unknown at plan stay unknown in the report`);
-      }
-    }
+    const shown = await this.showEstateMembers();
     for (const r of this.c.order) {
       const row = result.find((x) => x.root === r)!;
       if (row.apply === "applied" || row.apply === "no-changes") {
@@ -1555,6 +1547,33 @@ export class ComposedRun {
     }
     const ok = code === 0 && result.every((x) => (x.apply === "applied" || x.apply === "no-changes") && !x.error);
     return { ok, members: result, settled: [...this.c.order], ...(shown.size ? { shown } : {}), ...(ok ? {} : { error: ev.other[0] ?? (code !== 0 ? "the composed apply failed" : result.find((x) => x.error)?.error) }) };
+  }
+
+  /**
+   * What each estate holds after the apply, cut into each member's part. choudoufu refuses a bare `show` under live
+   * markers (there is no state to show), so the composed root is planned again and the saved plan's `prior_state`,
+   * which choudoufu builds from the records and the live system, is read instead. Empty when that fails: the report
+   * then leaves the values unknown. Never fails the run.
+   */
+  private async showEstateMembers(): Promise<Map<string, unknown>> {
+    const out = new Map<string, unknown>();
+    const planFile = join(this.o.work, "composed-after.tfplan");
+    try {
+      const env = this.composedEnv();
+      const p = await this.exec(this.o.binary.path, ["plan", "-input=false", "-no-color", "-lock=false", `-out=${planFile}`], this.composeDir, env);
+      if (p.code !== 0 || !existsSync(planFile)) {
+        this.log(`composed: the estates could not be planned after the apply; the values unknown at plan stay unknown in the report\n${firstLines(p.out, 20)}`);
+        return out;
+      }
+      const s = await this.exec(this.o.binary.path, ["show", "-json", planFile], this.composeDir, env);
+      if (s.code !== 0) return out;
+      const prior = (JSON.parse(s.stdout) as { prior_state?: { values?: unknown } }).prior_state;
+      if (!prior) return out;
+      for (const root of this.c.order) out.set(root, { ...prior, values: moduleValues(prior.values, this.c.modules.get(root)!, {}) });
+    } catch (e) {
+      this.log(`composed: the estates could not be read after the apply (${(e as Error).message}); the values unknown at plan stay unknown in the report`);
+    }
+    return out;
   }
 
   /**
