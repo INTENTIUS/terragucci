@@ -1,0 +1,5 @@
+{
+  "changes": "Network creates a subnet. App puts four resources in it, and edge reads an address built from its id.",
+  "watch": "The id does not exist until the subnet is created, so the plan shows it as known after apply. The driver (this demo's script) approves once, and one apply fills the id into app and edge.",
+  "shows": "A new resource's id reaches the states that need it in a single plan and apply."
+}
