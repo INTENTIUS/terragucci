@@ -1,21 +1,36 @@
 {
   "opening": "Your Atmos stack, with choudoufu as the component command. This second act adds a subnet to network. Its id is known only after apply.",
-  "pull-request": {
-    "prompt": "Add a subnet in network; put app's servers in it.",
-    "action": null,
-    "reply": null,
-    "light": null,
-    "paths": false,
-    "ghost": false,
-    "status": "Opening a pull request; its workflow runs atmos terraform plan on the estates component"
-  },
+  "pull-request": [
+    {
+      "prompt": "Add a second subnet to network; put a worker in it.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it, and edge allows the range.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "+ network aws_subnet.subnet_b 10.0.2.0/24",
+        "+ app aws_network_interface.worker",
+        "+ edge terraform_data.allowlist 10.0.2.0/24"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "The workflow runs atmos terraform plan on the estates component"
+    }
+  ],
   "planned": [
     {
       "prompt": null,
       "action": null,
-      "reply": "One plan across 3 estates. app needs the subnet's id, which doesn't exist until it's created.",
+      "reply": "One plan across 3 estates. Only one value is unknown: subnet b's id, which app's worker needs.",
       "light": [
-        "network/aws_subnet.subnet"
+        "network/aws_subnet.subnet_b"
       ],
       "paths": false,
       "ghost": true
@@ -23,9 +38,9 @@
     {
       "prompt": "Why is app's plan a guess?",
       "action": null,
-      "reply": "With one Atmos component per estate, app reads the subnet with !terraform.output, which reads applied state, and the subnet isn't there yet. Here one plan holds both, so app's value is known after apply.",
+      "reply": "With one Atmos component per estate, app reads the subnet with !terraform.output, which only sees applied state. The subnet isn't there yet, so the plan is a guess. Here one plan holds both, and the worker's subnet is known after apply.",
       "light": [
-        "app/aws_network_interface.network_interface"
+        "app/aws_network_interface.worker"
       ],
       "paths": false,
       "ghost": false
@@ -33,9 +48,9 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "{dependents} resources in app and edge.",
+      "reply": "Two resources depend on it: app's worker and edge's allowlist.",
       "light": [
-        "network/aws_subnet.subnet"
+        "network/aws_subnet.subnet_b"
       ],
       "paths": true,
       "ghost": false
@@ -60,7 +75,7 @@
     "status": "Merging; the workflow runs atmos terraform apply"
   },
   "applying": {
-    "status": "Applying network, app and edge together",
+    "status": "Applying all three estates together",
     "tips": [
       "Ordered deployments apply parents first. The child's plan still can't see an id that doesn't exist yet.",
       "Set the component command to choudoufu and give each component a live block."
@@ -70,7 +85,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. The subnet was created and app and edge got its id in the same apply.",
+      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false
@@ -84,5 +99,5 @@
       "ghost": false
     }
   ],
-  "closing": "3 estates. 1 plan. 1 approval. 1 apply."
+  "closing": "Three estates, one plan, one approval, one apply."
 }

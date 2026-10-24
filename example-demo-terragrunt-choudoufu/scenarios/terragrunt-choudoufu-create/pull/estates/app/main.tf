@@ -38,7 +38,31 @@ provider "aws" {
 # network's recorded outputs; this estate goes in the wave after network's.
 data "terraform_estate_outputs" "network" {
   estate = "tgc-network"
-  names  = ["http_proxy_port", "subnet_id", "vpc_id"]
+  names  = ["http_proxy_port", "vpc_id", "subnet_a_id"]
+}
+
+# The estate already running: a security group in the VPC and an interface in
+# subnet a.
+resource "aws_security_group" "web" {
+  name   = "tgc-web"
+  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+}
+
+resource "aws_network_interface" "web" {
+  subnet_id = data.terraform_estate_outputs.network.values.subnet_a_id
+}
+
+# The new subnet's id, read apart from the rest so that the one value unknown at
+# plan reaches nothing but the worker.
+data "terraform_estate_outputs" "network_new" {
+  estate = "tgc-network"
+  names  = ["subnet_b_id"]
+}
+
+# The one new resource: a worker in network's new subnet. The subnet's id does
+# not exist until the apply creates it.
+resource "aws_network_interface" "worker" {
+  subnet_id = data.terraform_estate_outputs.network_new.values.subnet_b_id
 }
 
 resource "terraform_data" "listener_port" {
@@ -47,28 +71,4 @@ resource "terraform_data" "listener_port" {
 
 output "listener_port" {
   value = terraform_data.listener_port.input
-}
-
-# Four resources placed in network's new subnet. Its id is unknown until the
-# subnet is created, so the composed plan shows each of them as known after
-# apply, and the same apply computes them once it has created the subnet.
-resource "aws_security_group" "security_group" {
-  name   = "tgc-security-group"
-  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
-}
-
-resource "aws_route_table" "route_table" {
-  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
-}
-
-resource "aws_network_interface" "network_interface" {
-  subnet_id = data.terraform_estate_outputs.network.values.subnet_id
-}
-
-resource "aws_network_interface" "worker_network_interface" {
-  subnet_id = data.terraform_estate_outputs.network.values.subnet_id
-}
-
-output "dns_name" {
-  value = "app-${aws_network_interface.network_interface.subnet_id}.demo.internal"
 }

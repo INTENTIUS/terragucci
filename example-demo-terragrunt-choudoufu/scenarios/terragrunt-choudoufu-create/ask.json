@@ -1,21 +1,36 @@
 {
   "opening": "Your Terragrunt repo, with choudoufu as the binary. This second act adds a subnet to network. Its id is known only after apply.",
-  "pull-request": {
-    "prompt": "Add a subnet in network; put app's servers in it.",
-    "action": null,
-    "reply": null,
-    "light": null,
-    "paths": false,
-    "ghost": false,
-    "status": "Opening a pull request; the workflow runs terragrunt plan in live/all"
-  },
+  "pull-request": [
+    {
+      "prompt": "Add a second subnet to network; put a worker in it.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network adds subnet b and app adds a worker in it, and edge allows the range.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "+ network aws_subnet.subnet_b 10.0.2.0/24",
+        "+ app aws_network_interface.worker",
+        "+ edge terraform_data.allowlist 10.0.2.0/24"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "The workflow runs terragrunt plan in live/all"
+    }
+  ],
   "planned": [
     {
       "prompt": null,
       "action": null,
-      "reply": "One terragrunt plan across 3 estates. app needs the subnet's id, which doesn't exist until it's created, so it shows 'known after apply'.",
+      "reply": "One plan across 3 estates. Only one value is unknown: subnet b's id, which app's worker needs.",
       "light": [
-        "network/aws_subnet.subnet"
+        "network/aws_subnet.subnet_b"
       ],
       "paths": false,
       "ghost": true
@@ -23,9 +38,9 @@
     {
       "prompt": "Why not run each unit?",
       "action": null,
-      "reply": "With run --all, app's dependency block plans on mock_outputs until network applies, then plans again. Here app plans on the real id once, in the same plan as network.",
+      "reply": "With a unit per estate, app's dependency block plans on mock_outputs until network applies. Here the worker plans once with the subnet and gets the real id in the apply.",
       "light": [
-        "network/aws_subnet.subnet"
+        "app/aws_network_interface.worker"
       ],
       "paths": false,
       "ghost": false
@@ -33,9 +48,9 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "{dependents} resources in app and edge.",
+      "reply": "Two resources depend on it: app's worker and edge's allowlist.",
       "light": [
-        "network/aws_subnet.subnet"
+        "network/aws_subnet.subnet_b"
       ],
       "paths": true,
       "ghost": false
@@ -60,7 +75,7 @@
     "status": "Merging; the workflow runs terragrunt apply in live/all"
   },
   "applying": {
-    "status": "terragrunt apply is applying network, app and edge together",
+    "status": "terragrunt apply is applying all three estates together",
     "tips": [
       "A dependency block plans on mock_outputs until its parent applies. Here app plans on 'known after apply'.",
       "Keep your root.hcl and includes. Set the binary to choudoufu and add a live block per unit."
@@ -70,7 +85,7 @@
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. The subnet was created and app and edge got its id in the same apply.",
+      "reply": "Done. Subnet b was created and app's worker got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false
@@ -84,5 +99,5 @@
       "ghost": false
     }
   ],
-  "closing": "3 estates. 1 terragrunt plan. 1 approval. 1 terragrunt apply."
+  "closing": "Three estates, one terragrunt plan, one approval, one terragrunt apply."
 }

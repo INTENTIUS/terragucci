@@ -1,5 +1,5 @@
 {
-  "changes": "Network creates a subnet. App puts four resources in it, and edge reads an address built from its id.",
-  "watch": "The id does not exist until the subnet is created, so the plan shows it as known after apply. A reviewer approves once, and one apply fills the id into app and edge.",
-  "shows": "A new resource's id reaches the estates that need it in one plan and one apply."
+  "changes": "Network adds a second subnet. App adds one network interface in it, and edge's allowlist gains the subnet's range.",
+  "watch": "The id does not exist until the subnet is created, so the plan shows it as known after apply. A reviewer approves once, and one apply fills the id into app.",
+  "shows": "A new resource's id reaches the estate that needs it in one plan and one apply."
 }

@@ -38,7 +38,18 @@ provider "aws" {
 # network's recorded outputs; this estate goes in the wave after network's.
 data "terraform_estate_outputs" "network" {
   estate = "ac-network"
-  names  = ["http_proxy_port", "admin_port", "vpc_id"]
+  names  = ["http_proxy_port", "admin_port", "vpc_id", "subnet_a_id"]
+}
+
+# The estate already running: a security group in the VPC and an interface in
+# subnet a.
+resource "aws_security_group" "web" {
+  name   = "ac-web"
+  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+}
+
+resource "aws_network_interface" "web" {
+  subnet_id = data.terraform_estate_outputs.network.values.subnet_a_id
 }
 
 resource "terraform_data" "listener_port" {

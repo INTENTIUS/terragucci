@@ -41,13 +41,27 @@ without the id.
 
 ## The scenarios
 
+The base is a running estate that matches `example-demo-choudoufu-compose`.
+network holds `aws_vpc.main`, `aws_subnet.subnet_a` (10.0.1.0/24) and the
+`http_proxy_port` terraform_data. app holds `aws_security_group.web`,
+`aws_network_interface.web` in subnet a and the `listener_port` terraform_data.
+edge holds `terraform_data.allowlist` (`["10.0.1.0/24"]`) and the `upstream`
+terraform_data.
+
 `atmos-choudoufu-edit` and `atmos-choudoufu-create` are the two acts of
-`example-demo-choudoufu-compose`, on the same resources: `terraform_data` for
-the ports, and an `aws_subnet`, `aws_security_group`, `aws_route_table`,
-`aws_network_interface` and a second `aws_network_interface` for the create. No
-scenario replaces or destroys anything. Each has `pull/` (the pull request's
-files), `ask.json` (the prompts and replies behold's pane plays) and
-`about.json`.
+`example-demo-choudoufu-compose`, on the same resources. Each has `pull/` (the
+pull request's files), `ask.json` (the prompts and replies behold's pane plays)
+and `about.json`. No scenario replaces or destroys anything.
+
+- `atmos-choudoufu-edit`: network's proxy port goes from 8080 to 8090 and it
+  gains an `admin_port`. app adds an `admin_listener_port` and edge an
+  `admin_upstream`. 3 to add, 3 to change, 0 to destroy, every value known at
+  plan.
+- `atmos-choudoufu-create`: network adds `aws_subnet.subnet_b` (10.0.2.0/24)
+  and outputs `subnet_b_id` and `subnet_b_cidr`. app adds
+  `aws_network_interface.worker` in that subnet, and edge's `allowlist` gains
+  the new range. 2 to add, 1 to change, 0 to destroy. One value is unknown at
+  plan: subnet b's id, at its source and in the worker's `subnet_id`.
 
 `stack/demo.sh` applies the base with choudoufu in the demo image, outside the
 workflow (`estates_apply`), and each reset applies it again.

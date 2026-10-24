@@ -35,10 +35,21 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
+# network's recorded outputs: the range of the new subnet, known at plan.
+data "terraform_estate_outputs" "network" {
+  estate = "ac-network"
+  names  = ["subnet_b_cidr"]
+}
+
 # app's recorded outputs.
 data "terraform_estate_outputs" "app" {
   estate = "ac-app"
-  names  = ["listener_port", "dns_name"]
+  names  = ["listener_port"]
+}
+
+# The ranges edge lets through: subnet a's and now subnet b's.
+resource "terraform_data" "allowlist" {
+  input = ["10.0.1.0/24", data.terraform_estate_outputs.network.values.subnet_b_cidr]
 }
 
 resource "terraform_data" "upstream" {
@@ -47,13 +58,4 @@ resource "terraform_data" "upstream" {
 
 output "upstream" {
   value = terraform_data.upstream.input
-}
-
-# An address of app's that is built from the subnet's id.
-resource "terraform_data" "dns_upstream" {
-  input = "http://${data.terraform_estate_outputs.app.values.dns_name}:${data.terraform_estate_outputs.app.values.listener_port}"
-}
-
-output "dns_upstream" {
-  value = terraform_data.dns_upstream.input
 }

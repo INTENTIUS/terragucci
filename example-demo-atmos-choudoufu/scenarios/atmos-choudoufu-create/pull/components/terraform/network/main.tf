@@ -46,25 +46,39 @@ resource "terraform_data" "http_proxy_port" {
   input = 8080
 }
 
-# A new subnet. Its id is chosen when it is created, so a plan shows it as
-# known after apply until then.
-resource "aws_subnet" "subnet" {
+# The estate already running: one subnet in the VPC.
+resource "aws_subnet" "subnet_a" {
   vpc_id     = aws_vpc.main.id
   cidr_block = "10.0.1.0/24"
+}
+
+# The new subnet. Its id is chosen when it is created, so the plan shows it as
+# known after apply. The range is a local, so it is known at plan.
+locals {
+  subnet_b_cidr = "10.0.2.0/24"
+}
+
+resource "aws_subnet" "subnet_b" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = local.subnet_b_cidr
 }
 
 output "vpc_id" {
   value = aws_vpc.main.id
 }
 
+output "subnet_a_id" {
+  value = aws_subnet.subnet_a.id
+}
+
 output "http_proxy_port" {
   value = terraform_data.http_proxy_port.input
 }
 
-output "subnet_id" {
-  value = aws_subnet.subnet.id
+output "subnet_b_id" {
+  value = aws_subnet.subnet_b.id
 }
 
-output "subnet_cidr" {
-  value = aws_subnet.subnet.cidr_block
+output "subnet_b_cidr" {
+  value = local.subnet_b_cidr
 }

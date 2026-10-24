@@ -50,13 +50,28 @@ A person's approving review of the pull request, then the merge. The apply job
 asks Forgejo for the merged pull request's reviews and stops without one. The
 apply plans again before it applies; it is not bound to the plan the review saw.
 
+## The base
+
+Every scenario starts from a running estate that matches
+`example-demo-choudoufu-compose`. network holds `aws_vpc.main`,
+`aws_subnet.subnet_a` (10.0.1.0/24) and the `http_proxy_port` terraform_data.
+app holds `aws_security_group.web`, `aws_network_interface.web` in subnet a
+and the `listener_port` terraform_data. edge holds `terraform_data.allowlist`
+(`["10.0.1.0/24"]`) and the `upstream` terraform_data. Each estate keeps its
+own `tgc-` name and the `test` keys in its provider block.
+
 ## Scenarios
 
 - `terragrunt-choudoufu-edit`: network's proxy port goes from 8080 to 8090 and
-  it gains an `admin_port`. app and edge follow. 3 to add, 3 to change.
-- `terragrunt-choudoufu-create`: network creates an `aws_subnet`; app puts an
-  `aws_security_group`, `aws_route_table`, two `aws_network_interface`s in it; edge reads an address built from the
-  subnet's id. 6 to add. Nothing is replaced or destroyed in either act.
+  it gains an `admin_port`. app adds an `admin_listener_port` and edge an
+  `admin_upstream`. 3 to add, 3 to change, 0 to destroy, every value known at
+  plan.
+- `terragrunt-choudoufu-create`: one resource is added to the running estate.
+  network adds `aws_subnet.subnet_b` (10.0.2.0/24) and outputs `subnet_b_id`
+  and `subnet_b_cidr`. app adds `aws_network_interface.worker` in that subnet,
+  and edge's `allowlist` gains the new range. 2 to add, 1 to change, 0 to
+  destroy. One value is unknown at plan: subnet b's id, at its source and in
+  the worker's `subnet_id`. Nothing is replaced or destroyed in either act.
 
 `stack/demo.sh` applies the base with choudoufu in each estate (`estates_apply`),
 outside the workflow, and each reset applies it again, downstream first.

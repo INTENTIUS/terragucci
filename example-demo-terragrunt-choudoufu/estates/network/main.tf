@@ -46,8 +46,18 @@ resource "terraform_data" "http_proxy_port" {
   input = 8080
 }
 
+# The estate already running: one subnet in the VPC.
+resource "aws_subnet" "subnet_a" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
+}
+
 output "vpc_id" {
   value = aws_vpc.main.id
+}
+
+output "subnet_a_id" {
+  value = aws_subnet.subnet_a.id
 }
 
 output "http_proxy_port" {
