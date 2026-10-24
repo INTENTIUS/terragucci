@@ -100,7 +100,7 @@ export function gitlabAgentRunScript(agent: AgentCommentInput, artifact: string)
     '  git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"',
     `  export TG_AGENT_PROMPT=${AGENT_DIR}/prompt.md`,
     `  export TG_AGENT_USAGE=${AGENT_CHANGE_DIR}/usage.json`,
-    `  ${gitlabCleanEnv(agent.keySecret)} TG_AGENT_USAGE="$TG_AGENT_USAGE" bash -c ${sh(agent.command)} <"$TG_AGENT_PROMPT" | tee ${AGENT_CHANGE_DIR}/agent-output.json`,
+    `  ${gitlabCleanEnv(agent.keySecret)} bash -c ${sh(agent.command)} <"$TG_AGENT_PROMPT" | tee ${AGENT_CHANGE_DIR}/agent-output.json`,
     `  echo "\${PIPESTATUS[0]}" >${AGENT_CHANGE_DIR}/rc`,
     `  sha256sum "$TG_AGENT_PROMPT" | cut -d' ' -f1 >${AGENT_CHANGE_DIR}/prompt.sha256`,
     "  git -c core.hooksPath=/dev/null add -A || exit 1",
