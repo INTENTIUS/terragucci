@@ -20,7 +20,9 @@
  * Its `unrecorded-write` entries go beside each root's state versions.
  * The same record and the index rows give the DORA metrics (report/dora.ts):
  * `dora.json` beside the page, a section on it, and, when an OTLP endpoint
- * is set, gauges beside the stages' metrics.
+ * is set, gauges beside the stages' metrics. The record and the drift rows
+ * also give the policy metrics (report/policy-metrics.ts):
+ * `policy-metrics.json` beside the page, and a section on it.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -37,6 +39,7 @@ import { readStateEdges, type StateEdges } from "./report/state-edges";
 import { RUN_SCHEMA, runViewKey, type RunView } from "./report/run-view";
 import { changesKey, edgesKey, inventoryKey, statesKey, versionsKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 import { buildDora, DORA_FILE, doraGauges, duration, spanLabel, type Dora } from "./report/dora";
+import { buildPolicyMetrics, POLICY_METRICS_FILE, type PolicyMetrics } from "./report/policy-metrics";
 import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
 import { EPHEMERAL_SCHEMA, ephemeralKey, type EphemeralList } from "./ephemeral";
 import { version as VERSION } from "../package.json";
@@ -69,6 +72,8 @@ export interface EstateResult {
   unreadable: string[];
   /** The DORA metrics, also in dora.json. */
   dora: Dora;
+  /** The policy metrics, also in policy-metrics.json. */
+  policy: PolicyMetrics;
   /** The DORA gauges: sent, or why not. Absent when no OTLP metrics endpoint is set. */
   metrics?: { sent: number } | { problem: string };
 }
@@ -318,6 +323,8 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   // The DORA metrics from the audit trail and the index rows.
   const dora = buildDora(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
   page.dora = { file: DORA_FILE, generated: dora.generated, deployments: dora.estate.deployments };
+  // The policy metrics from the audit trail, with the drift the same rows found.
+  const policy = buildPolicyMetrics(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
   // The history of every address an apply changed, with each wave's approver from the audit trail, on a page of its own.
   let history: History | undefined;
   const changed = indexes.filter((p) => p.changes && p.changes.length > 0);
@@ -325,12 +332,12 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
     history = buildHistory(changed.map((p) => ({ project: p.project, changes: p.changes!, ...(p.base !== undefined ? { base: p.base } : {}) })), audit, now);
     linkHistory(page, history);
   }
-  const files: Record<string, string> = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page, dora), [DORA_FILE]: JSON.stringify(dora, null, 2) + "\n" };
+  const files: Record<string, string> = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page, dora, policy), [DORA_FILE]: JSON.stringify(dora, null, 2) + "\n", [POLICY_METRICS_FILE]: JSON.stringify(policy, null, 2) + "\n" };
   if (history) Object.assign(files, { [HISTORY_FILES.json]: JSON.stringify(history, null, 2) + "\n", [HISTORY_FILES.page]: renderHistoryHtml(history) });
   const dir = resolve(cwd, options.out ?? "terragucci-estate");
   mkdirSync(dir, { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
-  const result: EstateResult = { estate: page, files: Object.keys(files).map((f) => join(dir, f)), unreadable: indexes.filter((i) => i.error !== undefined).map((i) => i.project), dora };
+  const result: EstateResult = { estate: page, files: Object.keys(files).map((f) => join(dir, f)), unreadable: indexes.filter((i) => i.error !== undefined).map((i) => i.project), dora, policy };
   const tel = telemetryFromEnv(env);
   if (tel?.metrics) {
     const gauges = doraGauges(dora);
@@ -369,6 +376,8 @@ export function describeEstate(r: EstateResult, cwd: string): string {
   const d = r.dora;
   const c = d.estate.change_failure.rate;
   lines.push(`dora: ${d.estate.per_week} deployments per week (${d.estate.deployments} in ${spanLabel(d.estate.span_seconds)}), lead time ${duration(d.estate.lead_time.median_seconds)}, change failure rate ${c === null ? "none" : `${Math.round(c * 1000) / 10}%`}, time to restore ${duration(d.estate.restore.median_seconds)}`);
+  const pm = r.policy.estate;
+  lines.push(`policy: ${plural(pm.denials, "denial", "denials")}, override rate ${pm.override_rate === null ? "none" : `${Math.round(pm.override_rate * 1000) / 10}%`}, override turnaround ${duration(pm.requests.turnaround_median_seconds)}, ${plural(pm.requests.open, "override request", "override requests")} open, ${pm.blocked.waves} blocked before deploy against ${pm.found_after.total} found after`);
   if (r.metrics) lines.push("sent" in r.metrics ? `sent ${plural(r.metrics.sent, "DORA gauge", "DORA gauges")}` : `the DORA gauges were not sent: ${r.metrics.problem}`);
   lines.push(`wrote ${listed(r.files.map((f) => (f.startsWith(cwd + "/") ? f.slice(cwd.length + 1) : f)))}`);
   if (r.uploaded) lines.push(`copied to ${named(r.uploaded.bucket)}/${listed(r.uploaded.keys)}`);

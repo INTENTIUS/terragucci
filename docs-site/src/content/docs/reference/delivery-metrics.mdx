@@ -1,6 +1,6 @@
 ---
 title: Delivery metrics
-description: The four DORA metrics, per project and for the estate, computed by terragucci estate from the audit trail and each project's report index.
+description: The four DORA metrics and the policy metrics, per project and for the estate, computed by terragucci estate from the audit trail and each project's report index.
 prompt: |
   Read https://intentius.io/terragucci/reference/delivery-metrics/.
   Download dora.json from the top of my reports prefix with a read-only identity, validate it against
@@ -104,3 +104,45 @@ With `OTEL_EXPORTER_OTLP_ENDPOINT` (or the metrics endpoint) set, `terragucci es
 | `terragucci_dora_restore_seconds` | `project` |
 
 A metric with nothing to count, such as a lead time with no plan found, is not sent. [Traces and metrics](/terragucci/reference/observability/) covers the collector and the dashboards.
+
+## Policy metrics
+
+The same run writes the policy metrics to `policy-metrics.json` beside `dora.json` and to the Policy section of `estate.html`. They come from `audit.jsonl` alone, except drift, which comes from the `tf-drift` rows of each `index.json`. Use them to watch a rule while it is advisory or overridable before you make it mandatory. The window and the weeks are the ones the DORA metrics use.
+
+| Metric | terragucci counts | From |
+|---|---|---|
+| Denials | roots a wave's policy denied, counted once per wave plan (project, gate, set digest and root) however often the wave ran | `refused` entries with result `denied-by-policy` (`detail.denied`), and the `overrides` of `apply` entries |
+| Denials per rule | each denial once under every rule id it names; a denial with no rule id counts under `(no rule id)` | `detail.rules` of those entries |
+| Override rate | denials an override let through, over all denials | `apply` entries whose `overrides` name the root |
+| Override turnaround | the median and the longest time from a denial recorded for an override to the first override of that root and digest | `override-requested` and `override` entries |
+| Open and expired requests | a request with no override is open until its `expires`, then expired; open requests show their median and oldest age | `override-requested` entries and `detail.expires` |
+| Revoked overrides | overrides a commit removed from the ledger | `override-revoked` entries |
+| Blocked before deploy | refused waves, once per project, gate, set digest and reason, by reason | `refused` entries |
+| Found after | failed applies, state versions written outside terragucci, and drift incidents found by drift checks | `apply` entries with result `failed`, `unrecorded-write` entries, and `tf-drift` rows |
+| Blocked share | blocked before deploy over blocked plus found after | the two rows above |
+
+Every count is of events in the window, and open requests are counted as of the run. A denial a wave recorded before the window and ran into again inside it counts at its first time, so it stays outside.
+
+### policy-metrics.json
+
+`policy-metrics.json` is `terragucci.policy-metrics/v1`.
+
+| Field | What it holds |
+|---|---|
+| `generated`, `weeks`, `window` | when it was built, how many weeks it covers, and the first Monday and the end |
+| `audit` | whether `audit.jsonl` was read; without it nothing but drift counts |
+| `drift` | whether drift checks were read; without them `found_after.drift` is `null` |
+| `estate` | the metrics across every project |
+| `projects[]` | each project's metrics, with `project` |
+
+Each set of metrics holds:
+
+| Field | What it holds |
+|---|---|
+| `denials`, `overridden`, `override_rate` | denials in the window, how many an override let through, and the ratio; `override_rate` is `null` with no denial |
+| `rules[]` | `rule`, `denials` and `overridden`, most denials first |
+| `requests` | `requested`, `overridden`, `open`, `expired`, `revoked`, `turnaround_median_seconds`, `turnaround_max_seconds`, `open_age_median_seconds`, `open_age_max_seconds` |
+| `blocked` | `waves`, `policy` (denied by the policy), `other`, and `by_reason`, the count for each `refused` result |
+| `found_after` | `failed_applies`, `unrecorded_writes`, `drift` and `total` |
+| `blocked_share` | `blocked.waves` over itself plus `found_after.total`; `null` when both are zero |
+| `trend[]` | a row per week, oldest first: `week`, `denials`, `overridden`, `override_rate`, `overrides` (written to the ledger that week), `blocked`, `found_after` |
