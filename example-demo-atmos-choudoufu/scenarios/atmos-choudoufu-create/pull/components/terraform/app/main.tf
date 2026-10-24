@@ -1,4 +1,4 @@
-# app: reads network's http_proxy_port and listens ten below it. edge reads app's output.
+# app: listens ten below network's proxy port. edge reads its output.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -10,8 +10,10 @@ terraform {
     }
   }
 
-  # No backend and no state file: each resource's record goes to the Atmos
-  # demo's own record store, under this estate's prefix.
+  # The one choudoufu-specific thing in a component: where its resources are
+  # recorded, in place of a state file. Atmos still generates backend.tf.json
+  # from the stack; a live block ignores it (and choudoufu publishes the
+  # component's outputs to it after an apply).
   live {
     estate = "ac-app"
 
@@ -35,38 +37,47 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
-# network's recorded outputs; this estate goes in the wave after network's.
-data "terraform_estate_outputs" "network" {
-  estate = "ac-network"
-  names  = ["http_proxy_port", "vpc_id", "subnet_a_id"]
+# Atmos passes the stack's name here.
+variable "stage" {
+  type = string
+}
+
+# All four arrive from network's outputs, through !terraform.output in the stack.
+variable "vpc_id" {
+  type = string
+}
+
+variable "subnet_a_id" {
+  type = string
+}
+
+variable "http_proxy_port" {
+  type = number
+}
+
+variable "subnet_b_id" {
+  type = string
 }
 
 # The estate already running: a security group in the VPC and an interface in
 # subnet a.
 resource "aws_security_group" "web" {
   name   = "ac-web"
-  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+  vpc_id = var.vpc_id
 }
 
 resource "aws_network_interface" "web" {
-  subnet_id = data.terraform_estate_outputs.network.values.subnet_a_id
-}
-
-# The new subnet's id, read apart from the rest so that the one value unknown at
-# plan reaches nothing but the worker.
-data "terraform_estate_outputs" "network_new" {
-  estate = "ac-network"
-  names  = ["subnet_b_id"]
+  subnet_id = var.subnet_a_id
 }
 
 # The one new resource: a worker in network's new subnet. The subnet's id does
 # not exist until the apply creates it.
 resource "aws_network_interface" "worker" {
-  subnet_id = data.terraform_estate_outputs.network_new.values.subnet_b_id
+  subnet_id = var.subnet_b_id
 }
 
 resource "terraform_data" "listener_port" {
-  input = data.terraform_estate_outputs.network.values.http_proxy_port - 10
+  input = var.http_proxy_port - 10
 }
 
 output "listener_port" {

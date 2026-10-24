@@ -1,4 +1,4 @@
-# edge: routes to app on the port app's records hold.
+# edge: routes to app on app's listener port, and lets through network's subnets.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -10,8 +10,10 @@ terraform {
     }
   }
 
-  # No backend and no state file: each resource's record goes to the Atmos
-  # demo's own record store, under this estate's prefix.
+  # The one choudoufu-specific thing in a component: where its resources are
+  # recorded, in place of a state file. Atmos still generates backend.tf.json
+  # from the stack; a live block ignores it (and choudoufu publishes the
+  # component's outputs to it after an apply).
   live {
     estate = "ac-edge"
 
@@ -35,25 +37,30 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
-# network's recorded outputs: the range of the new subnet, known at plan.
-data "terraform_estate_outputs" "network" {
-  estate = "ac-network"
-  names  = ["subnet_b_cidr"]
+# Atmos passes the stack's name here.
+variable "stage" {
+  type = string
 }
 
-# app's recorded outputs.
-data "terraform_estate_outputs" "app" {
-  estate = "ac-app"
-  names  = ["listener_port"]
+variable "listener_port" {
+  type = number
+}
+
+variable "subnet_a_cidr" {
+  type = string
+}
+
+variable "subnet_b_cidr" {
+  type = string
 }
 
 # The ranges edge lets through: subnet a's and now subnet b's.
 resource "terraform_data" "allowlist" {
-  input = ["10.0.1.0/24", data.terraform_estate_outputs.network.values.subnet_b_cidr]
+  input = [var.subnet_a_cidr, var.subnet_b_cidr]
 }
 
 resource "terraform_data" "upstream" {
-  input = "http://app:${data.terraform_estate_outputs.app.values.listener_port}"
+  input = "http://app:${var.listener_port}"
 }
 
 output "upstream" {

@@ -1,4 +1,4 @@
-# network: the producer. app reads its recorded outputs through terraform_estate_outputs.
+# network: the producer. app and edge read its outputs with !terraform.output in the stack.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -10,8 +10,10 @@ terraform {
     }
   }
 
-  # No backend and no state file: each resource's record goes to the Atmos
-  # demo's own record store, under this estate's prefix.
+  # The one choudoufu-specific thing in a component: where its resources are
+  # recorded, in place of a state file. Atmos still generates backend.tf.json
+  # from the stack; a live block ignores it (and choudoufu publishes the
+  # component's outputs to it after an apply).
   live {
     estate = "ac-network"
 
@@ -35,32 +37,44 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
+# Atmos passes the stack's name here.
+variable "stage" {
+  type = string
+}
+
+variable "http_proxy_port" {
+  type = number
+}
+
+variable "subnet_a_cidr" {
+  type = string
+}
+
+variable "subnet_b_cidr" {
+  type = string
+}
+
 # A terraform_data holds a value in a record and creates nothing in the cloud, so
-# a plan and an apply of it take no time. Outputs read `input`, which is known at
-# plan, so a changed port reaches the estates that read it in the same plan.
+# a plan and an apply of it take no time.
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 }
 
 resource "terraform_data" "http_proxy_port" {
-  input = 8080
+  input = var.http_proxy_port
 }
 
 # The estate already running: one subnet in the VPC.
 resource "aws_subnet" "subnet_a" {
   vpc_id     = aws_vpc.main.id
-  cidr_block = "10.0.1.0/24"
+  cidr_block = var.subnet_a_cidr
 }
 
 # The new subnet. Its id is chosen when it is created, so the plan shows it as
-# known after apply. The range is a local, so it is known at plan.
-locals {
-  subnet_b_cidr = "10.0.2.0/24"
-}
-
+# known after apply. Its range is a variable, known at plan.
 resource "aws_subnet" "subnet_b" {
   vpc_id     = aws_vpc.main.id
-  cidr_block = local.subnet_b_cidr
+  cidr_block = var.subnet_b_cidr
 }
 
 output "vpc_id" {
@@ -71,8 +85,8 @@ output "subnet_a_id" {
   value = aws_subnet.subnet_a.id
 }
 
-output "http_proxy_port" {
-  value = terraform_data.http_proxy_port.input
+output "subnet_a_cidr" {
+  value = aws_subnet.subnet_a.cidr_block
 }
 
 output "subnet_b_id" {
@@ -80,5 +94,9 @@ output "subnet_b_id" {
 }
 
 output "subnet_b_cidr" {
-  value = local.subnet_b_cidr
+  value = aws_subnet.subnet_b.cidr_block
+}
+
+output "http_proxy_port" {
+  value = terraform_data.http_proxy_port.input
 }

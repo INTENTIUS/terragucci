@@ -596,7 +596,7 @@ use_repo() { # tool
     # The compose repos' base commit says [skip ci] (its base is applied outside the pipeline), so its push back starts no run.
     [ "$1" != choudoufu-compose ] && [ "$1" != atmos-choudoufu ] || BASE_RUN=
     if [ "$1" = atmos-choudoufu ]; then
-      # The estates are plain Terraform directories beside the one Atmos component (estates) that calls them.
+      # Three Atmos components, one directory each; the base is applied with atmos, in order.
       ESTATES_DIR=components/terraform
       ROOTS=("$ESTATES_DIR/network" "$ESTATES_DIR/app" "$ESTATES_DIR/edge")
       return 0
@@ -1731,13 +1731,13 @@ say() { # step
     compose-*:applying)     echo "One apply runs network, app and edge together. Each state is written when the apply ends." ;;
     compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
     compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
-    atmos-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow. The workflow runs atmos terraform plan." ;;
-    atmos-choudoufu-edit:planned) echo "One plan from atmos terraform plan covers network, app and edge. Each estate's changes show as the one apply will make them." ;;
-    atmos-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id. The workflow runs atmos terraform plan." ;;
-    atmos-choudoufu-create:planned) echo "One plan covers network, app and edge. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
+    atmos-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow. The workflow runs atmos terraform plan --affected --include-dependents." ;;
+    atmos-choudoufu-edit:planned) echo "One plan from atmos terraform plan --affected --include-dependents covers network, app and edge. Each component's changes show as the one apply will make them." ;;
+    atmos-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id. The workflow runs atmos terraform plan --affected --include-dependents." ;;
+    atmos-choudoufu-create:planned) echo "One plan covers network, app and edge. The subnet's id exists only after it is created, so app's worker shows its subnet as known after apply." ;;
     atmos-choudoufu-*:approved) echo "The reviewer approves pull request $PULL as a review. The merge's workflow checks that review before it applies." ;;
-    atmos-choudoufu-*:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}, and the workflow runs atmos terraform apply." ;;
-    atmos-choudoufu-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
+    atmos-choudoufu-*:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}, and the workflow applies network, app and edge in that order." ;;
+    atmos-choudoufu-*:applying) echo "Atmos refuses plan files with --affected, so the apply runs network, then app, then edge. Each reads the real outputs of the one before it." ;;
     atmos-choudoufu-*:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     choudoufu-compose-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
     choudoufu-compose-*:approved) echo "The reviewer approves pull request $PULL. The review approves the one plan it saw, the only approval this change needs." ;;
@@ -3021,7 +3021,7 @@ estates_apply() { # the base tree
   log "applying the base of $REPO with choudoufu in $DEMO_IMAGE_CHOUDOUFU…"
   # The Terragrunt repo's units are applied with its own CLI in the job image: downstream units first (edge, then
   # app) to delete what the last cycle added, then every unit in dependency order, as `terragrunt run --all apply`.
-  script='set -e; mkdir /w; cd /w; tar xf -; a() { (cd "${ESTATES_DIR:+$ESTATES_DIR/}$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done'
+  script='set -e; mkdir /w; cd /w; tar xf -; a() { if [ -n "$ATMOS_STACK" ]; then atmos terraform apply "$1" -s "$ATMOS_STACK" -auto-approve; else (cd "${ESTATES_DIR:+$ESTATES_DIR/}$1"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); fi; }; for r in edge app; do a "$r" || echo "cleanup pass: $r did not apply; the pass below applies it again"; done; for r in network app edge; do a "$r"; done'
   if tool_tgc "$TOOL"; then
     image="$TGC_JOB_IMAGE"
     script='set -e; mkdir /w; cd /w; tar xf -; export TG_NON_INTERACTIVE=true TG_NO_COLOR=true TG_LOG_FORMAT=bare; curl -sS -o /dev/null -X PUT "$AWS_ENDPOINT_URL/$TGC_STATE_BUCKET" || true; for u in edge app; do (cd "$u" && terragrunt run -- apply -auto-approve -input=false >/dev/null) || echo "cleanup pass: $u did not apply; the pass below applies it again"; done; terragrunt run --all apply'
@@ -3029,7 +3029,7 @@ estates_apply() { # the base tree
   if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" --entrypoint sh \
       -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
       -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
-      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e ESTATES_DIR="${ESTATES_DIR:-}" -e TGC_STATE_BUCKET="$TGC_STATE_BUCKET" \
+      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 -e NO_COLOR=1 -e ATMOS_TELEMETRY_ENABLED=false -e ATMOS_STACK="$([ "$TOOL" = atmos-choudoufu ] && echo dev)" -e ESTATES_DIR="${ESTATES_DIR:-}" -e TGC_STATE_BUCKET="$TGC_STATE_BUCKET" \
       "$image" -c "$script" 2>&1)"; then
     printf '%s\n' "$out" >&2
     fail "choudoufu apply did not apply the base of $REPO"
@@ -3362,6 +3362,8 @@ case "$CMD" in
       for t in "${image_tools[@]}"; do
         tool_choudoufu "$t" || continue
         records_up "$(tool_records_bucket "$t")"
+        # The Atmos stack names an S3 backend for Atmos to write backend.tf.json from; choudoufu ignores it and publishes outputs there.
+        [ "$t" != atmos-choudoufu ] || curl -s -o /dev/null -X PUT "$FLOCI/demo-atmos-choudoufu-state" || true
         records_front=1
       done
       if [ -n "$records_front" ]; then

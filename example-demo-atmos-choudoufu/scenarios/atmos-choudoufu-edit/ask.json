@@ -1,5 +1,5 @@
 {
-  "opening": "Your Atmos stack, with choudoufu as the component command. This first act edits all three estates, with every value known at plan. A new subnet comes in the second.",
+  "opening": "Your Atmos stack with three components, and choudoufu as the binary. This first act edits all three, with every value known at plan. A new subnet comes in the second.",
   "pull-request": {
     "prompt": "Port 8080 to 8090; add admin port 9000.",
     "action": null,
@@ -7,12 +7,12 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Opening a pull request; its workflow runs atmos terraform plan on the estates component"
+    "status": "Opening a pull request; its workflow runs Atmos's affected plan with dependents"
   },
   "planned": {
     "prompt": null,
     "action": null,
-    "reply": "One plan across 3 estates. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change.",
+    "reply": "One plan across 3 components. Every value is known at plan, so each card shows before and after: {creates} to create, {updates} to change.",
     "light": [
       "network/terraform_data.http_proxy_port",
       "network/terraform_data.admin_port",
@@ -40,22 +40,32 @@
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Merging; the workflow runs atmos terraform apply"
+    "status": "Merging; the workflow applies the components in order"
   },
   "applying": {
-    "status": "Applying network, app and edge together",
+    "status": "Applying the components in order",
     "tips": [
-      "Ordered deployments apply parents first. The child's plan still can't see an id that doesn't exist yet.",
-      "Set the component command to choudoufu and give each component a live block."
+      {
+        "title": "Only the binary changes",
+        "body": "Set the component command to choudoufu and give each component a live block. Nothing else in the repo moves.",
+        "link": {
+          "label": "choudoufu on GitHub",
+          "url": "https://github.com/INTENTIUS/choudoufu"
+        }
+      },
+      {
+        "title": "Plan together, apply in order",
+        "body": "Atmos refuses plan files in a bulk apply, so the apply runs one component at a time. Each reads the real outputs of the one before it."
+      }
     ]
   },
   "applied": {
     "prompt": null,
     "action": null,
-    "reply": "Done. Both ports changed in network, app and edge in the same apply.",
+    "reply": "Done. Both ports changed in network, app and edge, applied in that order.",
     "light": null,
     "paths": false,
     "ghost": false
   },
-  "closing": "3 estates, 1 plan, 1 review, 1 apply."
+  "closing": "1 plan across 3 components, 1 review, applied in order."
 }

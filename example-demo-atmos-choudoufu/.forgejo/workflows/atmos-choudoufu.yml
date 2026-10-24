@@ -1,7 +1,8 @@
-# Plain Atmos in a plain workflow. A pull request runs `atmos terraform plan`,
-# a merge runs `atmos terraform apply`. The component command is choudoufu
-# (atmos.yaml), and the `estates` component calls network, app and edge as
-# modules, so each of those is one plan and one apply across the three estates.
+# Stock Atmos CI. A pull request runs `atmos terraform plan --affected
+# --include-dependents`: one plan across the components the change reaches. A
+# merge applies network, app and edge one after another, because Atmos refuses
+# a plan file with --affected and --all; each apply reads its upstream's real
+# outputs. The component command is choudoufu (atmos.yaml).
 name: atmos-choudoufu-demo
 
 on:
@@ -37,16 +38,19 @@ jobs:
     container: terragucci-demo-choudoufu:local
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
-      - name: Plan network, app and edge as one plan
+        with:
+          # --affected compares against origin/main, so the history is needed.
+          fetch-depth: 0
+      - name: One plan across the components the change reaches
         run: |
           set -o pipefail
-          atmos terraform plan estates -s dev 2>&1 | tee plan.txt
+          atmos terraform plan --affected --include-dependents --ref refs/remotes/origin/main 2>&1 | tee plan.txt
       - name: Write the plan's report for behold
         env:
           PR: '${{ github.event.pull_request.number }}'
         run: |
-          # Atmos leaves the plan it just made as a *.planfile in the component's directory.
-          (cd components/terraform/estates && choudoufu show -json "$(ls -t *.planfile | head -n 1)") > "$RUNNER_TEMP/plan.json"
+          # The report reads one document for the run; composed-plan.mjs joins the components' slices of the joint plan.
+          node .forgejo/composed-plan.mjs network app edge > "$RUNNER_TEMP/plan.json"
           chant-report --stage tf-plan --plan "$RUNNER_TEMP/plan.json" --pull-request "$PR" \
             --binary choudoufu --root-dir components/terraform --to "$CHANT_REPORTS"
       - name: Post the plan on the pull request
@@ -59,7 +63,7 @@ jobs:
           node -e '
             const fs = require("fs");
             const plan = fs.existsSync("plan.txt") ? fs.readFileSync("plan.txt", "utf8").slice(-60000) : "no plan output";
-            const body = "<!-- atmos-choudoufu-plan -->\n`atmos terraform plan estates -s dev`, with choudoufu as the component command:\n\n```\n" + plan + "\n```\n";
+            const body = "<!-- atmos-choudoufu-plan -->\n`atmos terraform plan --affected --include-dependents`, with choudoufu as the component command:\n\n```\n" + plan + "\n```\n";
             fetch(process.env.API + "/issues/" + process.env.PR_NUMBER + "/comments", {
               method: "POST",
               headers: { authorization: "token " + process.env.GITHUB_TOKEN, "content-type": "application/json" },
@@ -75,6 +79,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Require a reviewer's approval of the merged pull request
         env:
           GITHUB_TOKEN: '${{ github.token }}'
@@ -92,16 +98,22 @@ jobs:
               console.log("pull request " + pr.number + " was approved by a reviewer");
             })().catch((e) => { console.error(e.message); process.exit(1); });
           '
-      - name: Apply network, app and edge as one apply
+      - name: The plan this merge applies, kept for the report
         run: |
-          # The plan this apply makes, kept for the report.
-          atmos terraform plan estates -s dev >/dev/null
-          (cd components/terraform/estates && choudoufu show -json "$(ls -t *.planfile | head -n 1)") > "$RUNNER_TEMP/plan.json"
-          atmos terraform apply estates -s dev -auto-approve
+          atmos terraform plan --affected --include-dependents --sha '${{ github.event.before }}' >/dev/null
+          node .forgejo/composed-plan.mjs network app edge > "$RUNNER_TEMP/plan.json"
+      - name: Apply network, then app, then edge
+        run: |
+          # One plan across the components was made on the pull request. Atmos refuses
+          # plan files with --affected and --all, so the apply runs per component, in
+          # order, and each one reads the real outputs of the one before it.
+          for c in network app edge; do
+            atmos terraform apply "$c" -s dev -auto-approve
+          done
       - name: Write the apply's report for behold
         run: |
           # A plan made after the apply: its prior_state holds the values the first plan left unknown.
-          atmos terraform plan estates -s dev >/dev/null
-          (cd components/terraform/estates && choudoufu show -json "$(ls -t *.planfile | head -n 1)") > "$RUNNER_TEMP/after.json"
+          atmos terraform plan --affected --include-dependents --sha '${{ github.event.before }}' >/dev/null
+          node .forgejo/composed-plan.mjs network app edge > "$RUNNER_TEMP/after.json"
           chant-report --stage tf-apply --plan "$RUNNER_TEMP/plan.json" --applied "$RUNNER_TEMP/after.json" \
             --binary choudoufu --root-dir components/terraform --to "$CHANT_REPORTS"
