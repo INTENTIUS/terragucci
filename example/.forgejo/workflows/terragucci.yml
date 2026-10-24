@@ -108,7 +108,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the check report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-check
           path: terragucci-check/
@@ -227,7 +227,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report
           path: terragucci-report/
@@ -421,7 +421,7 @@ jobs:
           END_OF_REPORT
       - name: Keep the plan report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-replan
           path: terragucci-report/
@@ -441,7 +441,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Commit the formatting
         shell: bash
         run: |
@@ -456,7 +456,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Apply a merged pull request on request, from its merge commit
@@ -537,7 +537,7 @@ jobs:
           tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-comment
           path: terragucci-report/
@@ -554,7 +554,7 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Apply wave 1 of 4
         shell: bash
         run: |
@@ -614,7 +614,7 @@ jobs:
           echo "wave 1 of 4 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-1
           path: terragucci-report/
@@ -631,9 +631,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Fetch the earlier waves' outcomes
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+        uses: https://code.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           path: terragucci-earlier
       - name: Apply wave 2 of 4
@@ -683,7 +683,7 @@ jobs:
           echo "wave 2 of 4 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-2
           path: terragucci-report/
@@ -700,9 +700,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Fetch the earlier waves' outcomes
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+        uses: https://code.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           path: terragucci-earlier
       - name: Apply wave 3 of 4
@@ -752,7 +752,7 @@ jobs:
           echo "wave 3 of 4 applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-3
           path: terragucci-report/
@@ -769,9 +769,9 @@ jobs:
       TG_BEFORE: '${{ github.event.before }}'
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Fetch the earlier waves' outcomes
-        uses: https://code.forgejo.org/actions/download-artifact@v3
+        uses: https://code.forgejo.org/actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           path: terragucci-earlier
       - name: Apply wave 4 of 4
@@ -822,7 +822,7 @@ jobs:
           echo "all roots applied"
       - name: Keep the apply report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-apply-wave-4
           path: terragucci-report/
@@ -839,7 +839,7 @@ jobs:
     env:
       TG_TOKEN: '${{ github.token }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Open a pull request for each tip
@@ -857,7 +857,7 @@ jobs:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Plan every root against what exists, and keep the drift issue
         shell: bash
         run: |
@@ -869,7 +869,7 @@ jobs:
           exit "$rc"
       - name: Keep the drift report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
         with:
           name: terragucci-report-drift
           path: terragucci-report/

@@ -32,6 +32,7 @@ import type { Binary, ForgeName, RolePair } from "./config";
 import type { Tool } from "./install";
 import { ROLES_ENV, rolesFor } from "./terragrunt";
 import { NO_FETCH_FROM_STATE } from "./tg-preview";
+import { CACHE_RESTORE, CACHE } from "./action-pins";
 
 export interface TerragruntPipelineInput {
   /** The Terragrunt release the jobs run. */
@@ -143,7 +144,7 @@ export const GITHUB_CACHE_KEY = "terragucci-tg-${{ hashFiles('**/*.hcl') }}";
 export function forgeCache(forge: ForgeName): Record<string, unknown> {
   return forge === "gitlab"
     ? { cache: [{ key: "terragucci-terragrunt", paths: [`${TG_CACHE_DIR}/`] }] }
-    : { uses: "actions/cache@v4", with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
+    : { uses: CACHE, with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
 }
 
 /**
@@ -152,5 +153,5 @@ export function forgeCache(forge: ForgeName): Record<string, unknown> {
  * Forgejo resolves actions/cache/restore as GitHub does.
  */
 export function forgeCacheRestore(): Record<string, unknown> {
-  return { uses: "actions/cache/restore@v4", with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
+  return { uses: CACHE_RESTORE, with: { path: TG_CACHE_DIR, key: GITHUB_CACHE_KEY, "restore-keys": "terragucci-tg-" } };
 }

@@ -16,6 +16,7 @@ import { Image, Job as GitLabJob, Rule } from "@intentius/chant-lexicon-gitlab/g
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab/serializer";
 import { CONTROL_NAME, CONTROL_TOKEN_ENV, ConfigError, forgeFromHost, parseProjectKey, type ControlSettings, type ForgeName } from "./config";
 import { MARKER, serializeWorkflow } from "./render";
+import { CHECKOUT, SETUP_NODE } from "./action-pins";
 
 /** The commit status that marks a commit whose apply the control repo was told about. */
 export const CONTROL_STATUS = "terragucci/control";
@@ -208,8 +209,8 @@ export function controlPipeline(forge: ForgeName): ControlPipeline {
   const job = new Job({
     "runs-on": "ubuntu-latest",
     steps: [
-      new Step({ uses: "actions/checkout@v4" }),
-      new Step({ uses: "actions/setup-node@v4", with: { "node-version": "22", cache: "npm" } }),
+      new Step({ uses: CHECKOUT }),
+      new Step({ uses: SETUP_NODE, with: { "node-version": "22", cache: "npm" } }),
       new Step({ name: "Run the dependents of the member that applied", shell: "bash", env: { [MEMBER_VAR]: member, [OP_VAR]: op }, run: script }),
     ],
   } as never);
