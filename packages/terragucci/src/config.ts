@@ -415,6 +415,50 @@ export interface AgentCommentSettings {
   timeout?: number;
 }
 
+/**
+ * `image` as a map: the image every job runs in, and whether it is a prepared
+ * image carrying a provider mirror (`terragucci image recipe` writes one).
+ * With `mirror` set, tf-check checks the mirror covers every lock file.
+ */
+export interface ImageSettings {
+  /** The image reference, built FROM the terragucci image for the binary. */
+  name: string;
+  /** The provider mirror's directory in the image; `true` is the one the recipe writes (MIRROR_DIR). */
+  mirror?: string | true;
+}
+
+export const IMAGE_KEYS = ["name", "mirror"] as const;
+
+/** Where `terragucci image recipe` puts the provider mirror in the image. */
+export const MIRROR_DIR = "/usr/share/terragucci/providers";
+
+const IMAGE_REF = /^[^\s]+$/;
+
+/** The image reference `image` names, in either form. */
+export function imageName(image: string | ImageSettings | undefined): string | undefined {
+  return typeof image === "string" ? image : image?.name;
+}
+
+/** The provider mirror's directory in the image `image` names, when it carries one. */
+export function imageMirror(image: string | ImageSettings | undefined): string | undefined {
+  if (typeof image !== "object" || image === null || image.mirror === undefined) return undefined;
+  return image.mirror === true ? MIRROR_DIR : image.mirror;
+}
+
+/** The problems with `image`: a reference, or a map of `name` and `mirror`. */
+export function imageProblems(v: unknown, where: string): string[] {
+  const refProblem = `must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`;
+  if (typeof v === "string") return IMAGE_REF.test(v) ? [] : [`${where} ${refProblem}`];
+  if (!isObject(v)) return [`${where} must be an image reference, or a map (settings: ${IMAGE_KEYS.join(", ")})`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!(IMAGE_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${IMAGE_KEYS.join(", ")})`);
+  if (!(typeof v.name === "string" && IMAGE_REF.test(v.name))) out.push(`${where}.name ${refProblem}`);
+  if (v.mirror !== undefined && v.mirror !== true && !(typeof v.mirror === "string" && v.mirror.startsWith("/"))) {
+    out.push(`${where}.mirror must be true (the recipe's ${MIRROR_DIR}) or the mirror's absolute directory in the image`);
+  }
+  return out;
+}
+
 export const AGENT_COMMENT_KEYS = ["command", "key_secret", "max_turns", "timeout"] as const;
 
 /**
@@ -494,9 +538,10 @@ export interface ProjectSettings {
   /**
    * The image every job runs in, in place of terragucci's: one built FROM
    * the terragucci image for the binary, so the job still has terragucci and
-   * the binary, plus what the `ci.hooks` need.
+   * the binary, plus what the `ci.hooks` need. A map names it under `name`
+   * and says, with `mirror`, that it carries a provider mirror (ImageSettings).
    */
-  image?: string;
+  image?: string | ImageSettings;
   /**
    * Notifications: the names of the secrets holding a Slack or Teams
    * incoming webhook, and a generic webhook's address with the key that
@@ -1096,9 +1141,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.runner !== undefined) problems.push(...runnerProblems(s.runner, `${where}.runner`, s.forge));
   if (s.pass !== undefined) problems.push(...passProblems(s.pass, `${where}.pass`, s.env));
   if (s.secrets !== undefined) problems.push(...secretsProblems(s.secrets, `${where}.secrets`, s as ProjectSettings, where === "config"));
-  if (s.image !== undefined && !(typeof s.image === "string" && /^[^\s]+$/.test(s.image))) {
-    problems.push(`${where}.image must be an image reference, such as registry.example.com/infra/terragucci-tofu:1.2.3, built FROM the terragucci image for the binary`);
-  }
+  if (s.image !== undefined) problems.push(...imageProblems(s.image, `${where}.image`));
   if (s.drift !== undefined && s.drift !== false && typeof s.drift !== "string") {
     problems.push(`${where}.drift must be a cron schedule or false`);
   }

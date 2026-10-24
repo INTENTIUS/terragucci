@@ -13,6 +13,7 @@
  */
 import {
   AGENT_COMMENT_KEYS,
+  IMAGE_KEYS,
   AGENT_KEYS,
   AGENT_LOGIN,
   AGENT_VIA,
@@ -384,7 +385,13 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     drift: { ...cron, description: "A cron schedule for tf-drift, or false." },
     synth: { ...nonBlank, description: "The command that writes the roots before any job reads them." },
-    image: { type: "string", pattern: "^[^\\s]+$", description: "The image every job runs in, built FROM terragucci's." },
+    image: {
+      anyOf: [
+        { type: "string", pattern: "^[^\\s]+$" },
+        { ...map(IMAGE_KEYS, { name: { type: "string", pattern: "^[^\\s]+$" }, mirror: { anyOf: [{ const: true }, { type: "string", pattern: "^/" }] } }), required: ["name"] },
+      ],
+      description: "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries.",
+    },
     notify: {
       ...map(NOTIFY_KEYS, {
         slack: secret,

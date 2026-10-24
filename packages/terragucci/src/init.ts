@@ -24,6 +24,8 @@ import {
   ownJobsProblems,
   loadConfig,
   BUILT_IN,
+  imageMirror,
+  imageName,
   PROJECT_FILE_KEYS,
   resolveRepo,
   responseTo,
@@ -297,6 +299,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       ...(settings.generate ? { generate: true } : {}),
       // sources: the check job checks each unit's sources before its validate fetches them.
       ...(settings.sources ? { sources: true } : {}),
+      // image.mirror: the check job checks the image's provider mirror covers every lock file.
+      ...(imageMirror(settings.image) ? { mirror: true } : {}),
       ...(settings.terragrunt?.credentials ? { credentials: settings.terragrunt.credentials } : {}),
       installs: terragruntInstalls(binary.value, version.value, terragrunt.version.value, binary.value === "choudoufu" ? { choudoufu: TOOL_VERSIONS.choudoufu } : { tofu: TOOL_VERSIONS.tofu, terragrunt: TOOL_VERSIONS.terragrunt }),
     };
@@ -317,13 +321,15 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     binary: binary.value,
     version: version.value,
     // image: the repo's own, built FROM terragucci's, so the jobs still carry terragucci and the binary.
-    image: settings.image ?? imageReference(ref),
+    image: imageName(settings.image) ?? imageReference(ref),
     ...(settings.image ? { imageFromConfig: true } : {}),
     install: !tgInput && version.value !== carried ? { binary: binary.value, version: version.value } : undefined,
     ...(pins.length > 0 ? { rootPins: true } : {}),
     ...(settings.generate && !tgInput ? { generate: true } : {}),
     // sources: tf-check checks each root's sources before its init.
     ...(settings.sources && !tgInput ? { sources: true } : {}),
+    // image.mirror: tf-check checks the image's provider mirror covers every lock file (./image-recipe.ts).
+    ...(imageMirror(settings.image) && !tgInput ? { mirror: true } : {}),
     ...(tgInput ? { terragrunt: tgInput } : {}),
     layers,
     env: settings.env,
@@ -519,7 +525,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: settings.image ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
 }
 
 /**
