@@ -1,5 +1,5 @@
 {
-  "opening": "This second act adds a subnet to network. Its id is the only value known after apply.",
+  "opening": "This second act adds a subnet to network. Its id is known only after apply.",
   "pull-request": [
     {
       "prompt": "Add a second subnet to network; put a worker in it.",
