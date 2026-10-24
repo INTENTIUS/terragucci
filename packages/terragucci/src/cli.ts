@@ -5,7 +5,9 @@
  *   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
+ *   terragucci control records init|import|put <project>|defaults|retire <project>|list   the control repo's projects and defaults as chant workspace records
  *   terragucci control init [--forge github|gitlab|forgejo] [--config <file>] [--dry-run] [--force]   write the control repo's job that runs a member's dependents when the member's pipeline dispatches to it
+  terragucci control records init|import [--config <file>]|put <host/owner/name> --settings <file|-> [--estate a,b]|defaults --settings <file|->|retire <host/owner/name>|list   (the control repo's projects and defaults as chant workspace records; --dry-run on the writes)
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -80,7 +82,7 @@
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
@@ -122,6 +124,8 @@ import { plan } from "./plan";
 import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { controlPipeline } from "./control-repo";
+import { configFromEntries, hasControlRecords, importControlConfig, initRecords, KIND_FILE, putEntry, readEntries, retireEntry } from "./control-records";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { MARKER } from "./render";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
@@ -302,6 +306,61 @@ function onHeldFlag(v: string): "wait" | "refuse" {
   return v;
 }
 
+/** A control repo's config: its records when it has them (terragucci control records init), else its config file. Both is refused, so a project has one place. */
+async function controlConfig(cwd: string, flagPath: string | undefined): Promise<TerragucciConfig | undefined> {
+  const path = flagPath ?? findConfig(cwd);
+  if (flagPath === undefined && hasControlRecords(cwd)) {
+    if (path) throw new ConfigError(`${cwd} keeps its projects in records (${KIND_FILE}) and also has ${basename(path)}; keep one, and move the file's projects into records with \`terragucci control records import\``);
+    return configFromEntries(readEntries(cwd));
+  }
+  return path ? loadConfig(resolve(path)) : undefined;
+}
+
+async function controlRecords(cwd: string, args: string[], flags: Record<string, string | true>, json: boolean, emit: (e: Envelope) => number): Promise<number> {
+  const dryRun = flags["dry-run"] === true;
+  const settingsOf = (): ProjectSettings => {
+    const f = str(flags, "settings");
+    if (!f) throw new ConfigError("--settings <file|-> is needed: the settings as YAML or JSON");
+    const text = readFileSync(f === "-" ? 0 : resolve(cwd, f), "utf-8");
+    const v = text.trim() === "" ? {} : parseYAMLDocument(text);
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new ConfigError("--settings must hold a mapping of settings");
+    return v as ProjectSettings;
+  };
+  const done = (command: string, results: unknown, text: string): number => {
+    if (json) return emit(envelope(command, 0, results));
+    console.log(text);
+    return 0;
+  };
+  const verb = args[0];
+  if (verb === "init") {
+    const r = initRecords(cwd);
+    return done("control records init", r, [...(r.written.length ? r.written.map((w) => `${w}: written`) : ["nothing to write"]), ...r.notes.map((n) => `  ${n}`)].join("\n"));
+  }
+  if (verb === "import") {
+    const path = str(flags, "config") ?? findConfig(cwd);
+    if (!path) throw new ConfigError("import needs the control repo's terragucci.yml, or --config <file>");
+    const r = importControlConfig(cwd, await loadConfig(resolve(path)), undefined, dryRun);
+    return done("control records import", r, r.map((x) => `${x.entry}: ${x.status}${x.path ? ` (${x.path})` : ""}`).join("\n") + (dryRun ? "\n(dry run, nothing written)" : `\nThe records are the store now: delete ${basename(path)} so the repo keeps its projects in one place.`));
+  }
+  if (verb === "put" || verb === "defaults") {
+    const project = verb === "put" ? args[1] : undefined;
+    if (verb === "put" && !project) throw new ConfigError("usage: terragucci control records put <host/owner/name> --settings <file|-> [--estate a,b]");
+    const estate = str(flags, "estate");
+    const r = putEntry(cwd, { entry: verb === "put" ? "project" : "defaults", ...(project ? { project } : {}), settings: settingsOf(), ...(estate !== undefined ? { estates: estate.split(",").map((e) => e.trim()).filter(Boolean) } : {}) }, undefined, dryRun);
+    return done("control records put", r, `${project ?? "defaults"}: ${r.status}${r.path ? ` (${r.path})` : ""}${dryRun ? " (dry run, nothing written)" : ""}`);
+  }
+  if (verb === "retire") {
+    if (!args[1]) throw new ConfigError("usage: terragucci control records retire <host/owner/name>");
+    const r = retireEntry(cwd, args[1], undefined, dryRun);
+    return done("control records retire", r, `${args[1]}: retired (${r.path})${dryRun ? " (dry run, nothing written)" : ""}`);
+  }
+  if (verb === "list") {
+    const entries = readEntries(cwd);
+    return done("control records list", entries, entries.map((e) => `${e.id}  ${e.project ?? "defaults"}${e.estates.length ? `  estates: ${e.estates.join(", ")}` : ""}`).join("\n") || "no active records");
+  }
+  throw new ConfigError("usage: terragucci control records init|import|put <project>|defaults|retire <project>|list");
+}
+
 function str(flags: Record<string, string | true>, k: string): string | undefined {
   const v = flags[k];
   if (v === true) throw new ConfigError(`--${k} needs a value`);
@@ -398,10 +457,10 @@ export async function main(argv: string[]): Promise<number> {
         return 0;
       }
       case "reconcile": {
-        const path = str(flags, "config") ?? findConfig(cwd);
-        if (!path) throw new ConfigError("reconcile needs --config <file>");
+        const config = await controlConfig(cwd, str(flags, "config"));
+        if (!config) throw new ConfigError("reconcile needs --config <file>");
         const mode = checkMode(str(flags, "mode") ?? "dry-run");
-        const outcomes = await reconcile(await loadConfig(resolve(path)), { mode, project: str(flags, "project") });
+        const outcomes = await reconcile(config, { mode, project: str(flags, "project") });
         const code = outcomes.some((o) => o.status === "failed") ? 1 : 0;
         if (json) return emit(envelope("reconcile", code, { mode, projects: outcomes }));
         console.log(describeReconcile(outcomes, mode));
@@ -435,7 +494,7 @@ export async function main(argv: string[]): Promise<number> {
         const linkSeconds = hours === undefined ? undefined : Math.round(Number(hours) * 3600);
         if (hours !== undefined && !(Number(hours) > 0)) throw new ConfigError(`--link-hours is ${JSON.stringify(hours)}; use a number of hours, up to 168`);
         const bucket = str(flags, "bucket");
-        const result = await estate(cwd, path ? await loadConfig(resolve(path)) : {}, {
+        const result = await estate(cwd, (await controlConfig(cwd, str(flags, "config"))) ?? {}, {
           ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
           ...(linkSeconds !== undefined ? { linkSeconds } : {}),
           ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
@@ -450,7 +509,7 @@ export async function main(argv: string[]): Promise<number> {
         if (hours !== undefined && !(Number(hours) > 0)) throw new ConfigError(`--link-hours is ${JSON.stringify(hours)}; use a number of hours, up to 168`);
         const bucket = str(flags, "bucket");
         const check = flags.check === true;
-        const result = await audit(cwd, path ? await loadConfig(resolve(path)) : {}, {
+        const result = await audit(cwd, (await controlConfig(cwd, str(flags, "config"))) ?? {}, {
           ...(check ? { check } : {}),
           ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
           ...(linkSeconds !== undefined ? { linkSeconds } : {}),
@@ -1111,10 +1170,10 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "control": {
         // The control repo's pipeline: the job a member's dispatch starts, which runs that member's dependents (./control-repo.ts).
-        if (args[0] !== "init") throw new ConfigError("usage: terragucci control init [--forge github|gitlab|forgejo] [--dry-run]");
-        const path = str(flags, "config") ?? findConfig(cwd);
-        const cfg = path ? await loadConfig(resolve(path)) : undefined;
-        if (!cfg?.projects || Object.keys(cfg.projects).length === 0) throw new ConfigError("control init needs a control repo's terragucci.yml, which lists projects");
+        if (args[0] === "records") return controlRecords(cwd, args.slice(1), flags, json, emit);
+        if (args[0] !== "init") throw new ConfigError("usage: terragucci control init [--forge github|gitlab|forgejo] [--dry-run] | terragucci control records init|import|put|defaults|retire|list");
+        const cfg = await controlConfig(cwd, str(flags, "config"));
+        if (!cfg?.projects || Object.keys(cfg.projects).length === 0) throw new ConfigError("control init needs a control repo that lists projects, in terragucci.yml or in records");
         const forge = (str(flags, "forge") as ForgeName | undefined) ?? cfg.forge ?? originForge(cwd);
         if (!forge || !(FORGES as readonly string[]).includes(forge)) throw new ConfigError("control init cannot tell which forge this repo is on; pass --forge github|gitlab|forgejo");
         const pipeline = controlPipeline(forge);

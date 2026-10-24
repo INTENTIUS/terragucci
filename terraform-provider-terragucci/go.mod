@@ -5,7 +5,6 @@ go 1.25.5
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.17.0
 	github.com/hashicorp/terraform-plugin-go v0.29.0
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
