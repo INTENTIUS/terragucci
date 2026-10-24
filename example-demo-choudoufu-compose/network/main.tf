@@ -30,6 +30,10 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
 resource "aws_sqs_queue" "http_proxy_port" {
   name = "choudoufu-compose-http-proxy-port"
   tags = { port = "8080" }
@@ -38,6 +42,10 @@ resource "aws_sqs_queue" "http_proxy_port" {
 # A new name replaces this queue, which gate: on-destructive holds for an approval.
 resource "aws_sqs_queue" "release" {
   name = "choudoufu-compose-release-r0"
+}
+
+output "vpc_id" {
+  value = aws_vpc.main.id
 }
 
 output "http_proxy_port" {

@@ -33,7 +33,15 @@ provider "aws" {
 # network's recorded outputs; this estate goes in the wave after network's.
 data "terraform_estate_outputs" "network" {
   estate = "cc-network"
-  names  = ["http_proxy_port", "subnet_id"]
+  names  = ["http_proxy_port", "subnet_id", "vpc_id"]
+}
+
+resource "aws_route53_zone" "internal" {
+  name = "demo.internal"
+
+  vpc {
+    vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+  }
 }
 
 resource "aws_sqs_queue" "listener" {
@@ -48,26 +56,31 @@ output "listener_port" {
 # Four resources placed in network's new subnet. Its id is unknown until the
 # subnet is created, so the composed plan shows each of them as known after
 # apply, and the same apply computes them once it has created the subnet.
-resource "aws_sqs_queue" "security_group_queue" {
-  name = "choudoufu-compose-security-group"
-  tags = { placement = "sg in ${data.terraform_estate_outputs.network.values.subnet_id}" }
+resource "aws_security_group" "security_group" {
+  name   = "choudoufu-compose-security-group"
+  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+  tags   = { subnet = data.terraform_estate_outputs.network.values.subnet_id }
 }
 
-resource "aws_sqs_queue" "route_table_queue" {
-  name = "choudoufu-compose-route-table"
-  tags = { placement = "rt in ${data.terraform_estate_outputs.network.values.subnet_id}" }
+resource "aws_route_table" "route_table" {
+  vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+  tags   = { subnet = data.terraform_estate_outputs.network.values.subnet_id }
 }
 
-resource "aws_sqs_queue" "instance_queue" {
-  name = "choudoufu-compose-instance"
-  tags = { placement = "instance in ${data.terraform_estate_outputs.network.values.subnet_id}" }
+resource "aws_instance" "instance" {
+  ami           = "ami-12345678"
+  instance_type = "t3.micro"
+  subnet_id     = data.terraform_estate_outputs.network.values.subnet_id
 }
 
-resource "aws_sqs_queue" "dns_record_queue" {
-  name = "choudoufu-compose-dns-record"
-  tags = { dns = "app.${data.terraform_estate_outputs.network.values.subnet_id}.internal" }
+resource "aws_route53_record" "dns_record" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "app-${data.terraform_estate_outputs.network.values.subnet_id}.demo.internal"
+  type    = "A"
+  ttl     = 60
+  records = ["10.0.1.10"]
 }
 
 output "dns_name" {
-  value = aws_sqs_queue.dns_record_queue.tags.dns
+  value = aws_route53_record.dns_record.name
 }

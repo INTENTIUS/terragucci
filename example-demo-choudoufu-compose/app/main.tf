@@ -33,7 +33,15 @@ provider "aws" {
 # network's recorded outputs; this estate goes in the wave after network's.
 data "terraform_estate_outputs" "network" {
   estate = "cc-network"
-  names  = ["http_proxy_port"]
+  names  = ["http_proxy_port", "vpc_id"]
+}
+
+resource "aws_route53_zone" "internal" {
+  name = "demo.internal"
+
+  vpc {
+    vpc_id = data.terraform_estate_outputs.network.values.vpc_id
+  }
 }
 
 resource "aws_sqs_queue" "listener" {

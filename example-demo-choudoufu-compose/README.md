@@ -15,7 +15,8 @@ network  <-  app  <-  edge
 app reads network's recorded outputs through `data.terraform_estate_outputs`,
 and edge reads app's. The base: network's `http_proxy_port` is 8080, app's
 listener is ten below it, and edge's upstream URL is built from app's listener
-port. `release` on network is a queue whose name changes with each cycle: a new
+port. network also holds an `aws_vpc`, and app an `aws_route53_zone` in it.
+`release` on network is a queue whose name changes with each cycle: a new
 name replaces it, which `gate: on-destructive` holds for an approval.
 
 Every scenario applies as one composed run through choudoufu's composed root:
@@ -37,11 +38,11 @@ There is no failure act; failures are a separate demo.
 - `choudoufu-compose-edit`: network's proxy port goes from 8080 to 8090 and it
   gains an `admin_port` of 9000. app adds an `admin_listener`, and edge an
   `admin_upstream`.
-- `choudoufu-compose-create`: network creates a `subnet_queue` and outputs
-  `subnet_id`, its ARN, which exists only after apply. app puts a
-  `security_group_queue`, `route_table_queue`, `instance_queue` and
-  `dns_record_queue` in it, and
-  edge's `dns_upstream` reads app's `dns_name`, which is built from the id.
+- `choudoufu-compose-create`: network creates an `aws_subnet` named `subnet` in
+  that VPC and outputs `subnet_id`, which exists only after apply. app puts an
+  `aws_security_group`, `aws_route_table`, `aws_instance` and
+  `aws_route53_record` in it, and edge's `dns_upstream` reads app's `dns_name`,
+  which is built from the id.
 
 ## The base and the reset
 
@@ -49,9 +50,3 @@ There is no failure act; failures are a separate demo.
 pipeline (`estates_apply`), and pushes it with `[skip ci]`. Each reset applies
 the base tree again the same way, which deletes what the cycle added and puts
 every tag back.
-
-The stand-ins are SQS queues, and the names say so. The emulator's capability
-record (`live/floci-capabilities.json` in choudoufu) does not prove `aws_subnet`,
-`aws_route_table` or `aws_instance` can be created, and it lists `aws_lb` and
-Route 53 hosted zones as unimplemented, so no resource here is named as a type
-it is not.

@@ -5,7 +5,7 @@
       "action": null,
       "reply": "The id doesn't exist until the subnet is created, so app's plan can't know it. Planned one estate at a time, app would wait for network, plan again and need a second approval. Planned together, one apply creates the subnet first and hands its id to app.",
       "light": [
-        "network/aws_sqs_queue.subnet_queue"
+        "network/aws_subnet.subnet"
       ],
       "paths": false,
       "ghost": true
@@ -15,7 +15,7 @@
       "action": null,
       "reply": "{dependents} resources depend on it, in app and edge.",
       "light": [
-        "network/aws_sqs_queue.subnet_queue"
+        "network/aws_subnet.subnet"
       ],
       "paths": true,
       "ghost": false

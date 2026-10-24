@@ -30,6 +30,10 @@ provider "aws" {
   s3_use_path_style           = true
 }
 
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
 resource "aws_sqs_queue" "http_proxy_port" {
   name = "choudoufu-compose-http-proxy-port"
   tags = { port = "8080" }
@@ -37,9 +41,9 @@ resource "aws_sqs_queue" "http_proxy_port" {
 
 # A new subnet. Its id is chosen when it is created, so a plan shows it as
 # known after apply until then.
-resource "aws_sqs_queue" "subnet_queue" {
-  name = "choudoufu-compose-subnet"
-  tags = { cidr = "10.0.1.0/24" }
+resource "aws_subnet" "subnet" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.1.0/24"
 }
 
 # A new name replaces this queue, which gate: on-destructive holds for an approval.
@@ -47,14 +51,18 @@ resource "aws_sqs_queue" "release" {
   name = "choudoufu-compose-release-r0"
 }
 
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
 output "http_proxy_port" {
   value = tonumber(aws_sqs_queue.http_proxy_port.tags.port)
 }
 
 output "subnet_id" {
-  value = aws_sqs_queue.subnet_queue.arn
+  value = aws_subnet.subnet.id
 }
 
 output "subnet_cidr" {
-  value = aws_sqs_queue.subnet_queue.tags.cidr
+  value = aws_subnet.subnet.cidr_block
 }

@@ -1,5 +1,5 @@
 # The choudoufu compose demo's three estates: network, app (reads network) and
-# edge (reads app). Each is a choudoufu estate of SQS queues in floci, with no
+# edge (reads app). Each is a choudoufu estate in floci, with no
 # state file: every resource's record goes to the demo's own record store
 # (stack/demo.sh, tool choudoufu-compose). The plan reports and run views go to
 # the reports bucket there too.
