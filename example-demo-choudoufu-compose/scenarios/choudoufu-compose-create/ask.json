@@ -1,0 +1,51 @@
+{
+  "planned": [
+    {
+      "prompt": "Now I'm adding a subnet in network and putting app's servers in it. app needs the subnet's id. Can that go in one change?",
+      "action": null,
+      "reply": "The id doesn't exist until the subnet is created, so app's plan can't know it. Planned one estate at a time, app would wait for network, plan again and need a second approval. Planned together, one apply creates the subnet first and hands its id to app.",
+      "light": [
+        "network/aws_sqs_queue.subnet"
+      ],
+      "paths": false,
+      "ghost": true
+    },
+    {
+      "prompt": "Show me everything that depends on the new subnet.",
+      "action": null,
+      "reply": "{dependents} resources depend on it, in app and edge.",
+      "light": [
+        "network/aws_sqs_queue.subnet"
+      ],
+      "paths": true,
+      "ghost": false
+    }
+  ],
+  "approved": {
+    "prompt": null,
+    "action": "You approve the plan on the pull request.",
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "applied": [
+    {
+      "prompt": null,
+      "action": null,
+      "reply": "Applied. The subnet's id went from network to app to edge in one apply.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    },
+    {
+      "prompt": "Did the apply lock anything while it ran?",
+      "action": null,
+      "reply": "Resource-level locking at the cloud level: each resource's record is written only if it's unchanged since it was read, so nothing is ever left locked.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    }
+  ],
+  "closing": "One record store for every estate. One plan, one apply, across estates."
+}

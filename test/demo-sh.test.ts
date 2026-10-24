@@ -239,6 +239,82 @@ describe("stack/demo.sh under pipefail", () => {
     expect(demo).toContain('OPERATOR_MARKERS_IN_STACK="http://floci:4566/$REPORT_BUCKET/$REPORT_PREFIX/operator/demo-choudoufu-fanout"');
   });
 
+  it("keeps the choudoufu compose tree's three estates in a record store of its own, with compose on and no state file", () => {
+    const tree = join(root, "example-demo-choudoufu-compose");
+    const r = spawnSync("bash", ["-c", `set -euo pipefail\n${fn("tree_roots")}\ntree_roots example-demo-choudoufu-compose`], { cwd: root, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(["app", "edge", "network"]);
+    const buckets = new Set<string>();
+    for (const rt of ["network", "app", "edge"]) {
+      const tf = readFileSync(join(tree, rt, "main.tf"), "utf8");
+      expect(tf).toContain(`estate = "cc-${rt}"`);
+      expect(tf).not.toMatch(/backend "/);
+      expect(tf).not.toContain("demo-live-records");
+      buckets.add(tf.match(/record_store "s3" \{\s*bucket = "([^"]+)"/)![1]!);
+    }
+    expect([...buckets]).toEqual(["demo-choudoufu-compose-records"]);
+    // No other tree names the bucket, and the fan-out tree's stays its own.
+    for (const other of ["example-demo-choudoufu-fanout", "example-demo-compose", "example-demo"]) {
+      const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (e.name.startsWith(".") ? [] : walk(join(dir, e.name))) : e.name.endsWith(".tf") ? [readFileSync(join(dir, e.name), "utf8")] : []));
+      expect(walk(join(root, other)).some((t) => t.includes("demo-choudoufu-compose-records")), other).toBe(false);
+    }
+    const config = readFileSync(join(tree, "terragucci.yml"), "utf8");
+    expect(config).toMatch(/^binary: choudoufu$/m);
+    expect(config).toMatch(/^waves:\n {2}compose: true$/m);
+    expect(config).toContain("image: terragucci-demo-choudoufu:local\n");
+    // demo-records answers for the bucket's virtual-hosted name, and up makes the bucket.
+    expect(readFileSync(join(root, "stack", "docker-compose.yml"), "utf8")).toContain("demo-choudoufu-compose-records.demo-records");
+    expect(fn("tool_records_bucket")).toContain("choudoufu-compose) echo demo-choudoufu-compose-records");
+  });
+
+  it("runs the choudoufu compose scenarios on their own forge repo, and applies and resets its base with choudoufu outside the pipeline", () => {
+    const sh = (body: string) => spawnSync("bash", ["-c", `set -euo pipefail\n${fn("scenario_tool")}\n${fn("tool_repo")}\n${fn("tool_tree")}\n${body}`], { cwd: root, encoding: "utf8" });
+    const r = sh(`for s in choudoufu-compose-edit choudoufu-compose-create; do t="$(scenario_tool $s)"; echo "$t $(tool_repo $t) $(tool_tree $t)"; done`);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.trim().split("\n")).toEqual(Array(2).fill("choudoufu-compose demo-choudoufu-compose example-demo-choudoufu-compose"));
+    expect(demo).toMatch(/^TOOLS=\(.* choudoufu-fanout compose choudoufu-compose\)$/m);
+    expect(demo).toContain("compose-edit|compose-create|choudoufu-compose-edit|choudoufu-compose-create) scenario_compose ;;");
+    expect(fn("states_back")).toContain('choudoufu-compose ]; then estates_back');
+    expect(fn("estates_apply")).toContain("choudoufu apply -auto-approve");
+    expect(fn("estates_apply")).toContain('"$DEMO_IMAGE_CHOUDOUFU"');
+    expect(fn("up_repo")).toContain("estates_apply \"$bt\"");
+    // A scenario has an ask.json and an about.json, and no failure act.
+    for (const sc of ["choudoufu-compose-edit", "choudoufu-compose-create"]) {
+      for (const f of ["ask.json", "about.json"]) expect(existsSync(join(root, "example-demo-choudoufu-compose", "scenarios", sc, f)), `${sc}/${f}`).toBe(true);
+    }
+    expect(existsSync(join(root, "example-demo-choudoufu-compose", "scenarios", "choudoufu-compose-fail"))).toBe(false);
+  });
+
+  it("says on screen the words the maintainer ruled, and never transaction, atomic or another product's name", () => {
+    const dir = join(root, "example-demo-choudoufu-compose", "scenarios");
+    const text = ["choudoufu-compose-edit", "choudoufu-compose-create"].flatMap((sc) => ["ask.json", "about.json"].map((f) => readFileSync(join(dir, sc, f), "utf8"))).join("\n");
+    expect(text).toContain("One record store for every estate.");
+    expect(text).toContain("Resource-level locking at the cloud level: each resource's record is written only if it's unchanged since it was read, so nothing is ever left locked.");
+    expect(text).toContain("One plan, one apply, across estates.");
+    const all = text + readFileSync(join(root, "example-demo-choudoufu-compose", "README.md"), "utf8");
+    expect(all).not.toMatch(/transaction|atomic|terraform cloud|spacelift|env0|scalr|atlantis/i);
+    // Every light address names a resource the scenario's pull has.
+    for (const sc of ["choudoufu-compose-edit", "choudoufu-compose-create"]) {
+      const ask = JSON.parse(readFileSync(join(dir, sc, "ask.json"), "utf8")) as Record<string, unknown>;
+      const lights = JSON.stringify(ask).match(/"([a-z]+\/aws_sqs_queue\.[a-z_]+)"/g) ?? [];
+      for (const l of lights.map((x) => x.slice(1, -1))) {
+        const [rt, addr] = l.split("/");
+        const tf = readFileSync(join(dir, sc, "pull", rt!, "main.tf"), "utf8");
+        expect(tf, `${sc}: ${l}`).toContain(`resource "${addr!.replace(".", '" "')}"`);
+      }
+    }
+  });
+
+  it("builds the demo image's choudoufu from the commit composed estates are on, with the release as the way back", () => {
+    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-f285b9436fc2eeb4932d542585cec0c61397680b}"');
+    expect(demo).toContain("--build-arg CHOUDOUFU_FROM=source --build-arg CHOUDOUFU_REF=");
+    const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu");
+    expect(dockerfile).toContain("go build -trimpath");
+    expect(dockerfile).toContain("git fetch -q --depth 1 origin \"$CHOUDOUFU_REF\"");
+    expect(dockerfile).toContain("COPY --from=choudoufu /out/choudoufu /usr/local/bin/choudoufu");
+  });
+
   it("tells the two applies overlapped only when each started before the other ended", () => {
     const check = (marks: Record<string, string>) => {
       const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }\nnow() { date +%s; }\nPOLL=0`;
@@ -1025,7 +1101,7 @@ describe("ask.json to demo.json", () => {
   it("merges the fields into a step of demo.json only through ask_fields, so a step without them is unchanged", () => {
     const writer = fn("demo_write");
     expect(writer).toContain("+ $ask");
-    expect(demo).toMatch(/^ALL_SCENARIOS=\(.* compose-edit compose-create compose-fail\)$/m);
+    expect(demo).toMatch(/^ALL_SCENARIOS=\(.* compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create\)$/m);
     expect(demo).toMatch(/^SCENARIOS=\(b-waves failure tg-planned-outputs\)$/m);
   });
 });

@@ -161,6 +161,10 @@ Nothing about this is atomic. A failure part way leaves what applied applied, an
 
 A write that fails is retried five times over up to five minutes, with the lock still held. A state still not written after that is kept beside the state in the root's own backend, as `<key>.terragucci-unwritten`, under the state's own access controls, and the root's lock stays held, naming the run. The next run of the wave takes that lock over, writes the kept state first, and only then plans. If the backend cannot take the kept copy either, the job keeps it under `terragucci-report/unwritten/` in its artifacts, which never go to the reports bucket.
 
+### Composed estates
+
+When every root of the set runs choudoufu, the run composes them as estates (choudoufu#2059) rather than as states. Each root has a `live` block and no state file, so there is nothing to lock, pull, split or write back. `.terragucci-compose/main.tf` holds one `module "name" { source = "../name" }` call per root and nothing else, and no root's files are changed. terragucci runs `choudoufu plan` and `choudoufu apply` from it, with no flag. Each resource's record goes to its own estate in the one record store as it applies, and a `terraform_estate_outputs` read of another estate in the run resolves to that estate's outputs inside the run, so an id created in the apply reaches the estate that reads it. Each estate's role comes from the provider blocks in its own directory, so roots under different roles compose. A re-run plans what is left. The report's `compose.estate` is `true`.
+
 ### The composed root
 
 Each root's `backend` block is cut from its files while it is composed, so the composed root's working state is local. Each `terraform_remote_state` block that reads another root of the run is cut too, and its references point at a variable the composed root fills with that root's module outputs. A read of a root outside the run stays as it is. `import` and `removed` blocks are lifted into the composed root with the module's address in front, and `moved` blocks stay where they are. Provider blocks stay in each root, so two roots that configure one provider for two regions keep two configurations. Each root's `terraform.tfvars`, `*.auto.tfvars` and `-var-file` values become arguments of its module, and a `TF_VAR_` variable in the job's environment still sets the variable it names. Every file goes back as it was when the run ends.
@@ -183,8 +187,8 @@ The whole change applies in waves, as without the key, and the note says why in 
 |---|---|
 | `too-many-roots` | the set has more roots than `waves.compose_max` (10 when unset) |
 | `one-root` | the set is one root |
-| `binary` | its roots run different binaries or versions, or one runs choudoufu |
-| `identity` | its roots run under different roles (`oidc.roles`), or sit in different apply groups: one process has one set of credentials |
+| `binary` | its roots run different binaries or versions |
+| `identity` | its roots run under different roles (`oidc.roles`), or sit in different apply groups: one process has one set of credentials. Not for choudoufu estates, which take each role from their own provider blocks |
 | `workspace` | a root plans in a workspace other than `default` |
 | `backend` | a root's backend is not one whose lock terragucci takes itself (s3 with `use_lockfile`, gcs, azurerm, local), or it has a `cloud` block |
 | `provider-lock` | two roots lock one provider at different versions |

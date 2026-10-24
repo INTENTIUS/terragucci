@@ -52,6 +52,16 @@
 # Each reset's push back to the base applies the base tree, which deletes what
 # the cycle added; the operator's queue is destroyed first (states_back).
 #
+# The choudoufu compose repo, <admin>/demo-choudoufu-compose from
+# example-demo-choudoufu-compose/, is example-demo-compose's network, app and
+# edge as choudoufu estates on one record store (demo-choudoufu-compose-records,
+# its own bucket), with waves.compose on: terragucci composes them through
+# choudoufu's composed root, one plan and one apply across estates, with no
+# state to pull, split or write back. Its scenarios are choudoufu-compose-edit
+# and choudoufu-compose-create. Like the chant repos, its base is applied by the
+# driver outside the pipeline, here with choudoufu in the demo image, and so is
+# each reset (estates_apply); the base commit says [skip ci].
+#
 #   stack/demo.sh up                  boot the forgejo profile, and for each
 #                                     tool whose tree is in the checkout push
 #                                     the tree to its repo, apply its roots, and
@@ -225,7 +235,7 @@ case "$CMD" in
 esac
 
 # Every scenario the driver knows, and the ones a loop runs by default, in order.
-ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail)
+ALL_SCENARIOS=(a-known a-output b-waves failure stale-plan b-composed tg-planned-outputs chant-pr-loop fan-out fan-out-tofu fan-out-choudoufu compose-edit compose-create compose-fail choudoufu-compose-edit choudoufu-compose-create)
 # The default list. tg-planned-outputs runs on the Terragrunt repo, which behold
 # draws since behold 0.29.8 (#611).
 SCENARIOS=(b-waves failure tg-planned-outputs)
@@ -233,12 +243,14 @@ SCENARIOS=(b-waves failure tg-planned-outputs)
 # cycle of each has run to its reset on the demo host. DEMO_SCENARIOS or a name
 # runs them. compose-edit and compose-create are the prompt-driven demo's acts 1
 # and 2 (behold#935), in that order; compose-fail, act 3, runs only when
-# DEMO_SCENARIOS or a name asks for it.
+# DEMO_SCENARIOS or a name asks for it. choudoufu-compose-edit and
+# choudoufu-compose-create are the same two acts on choudoufu estates
+# (behold#938), on their own repo; they have no failure act.
 
 # Each scenario runs on its tool's repo: one forge repo per tool, pushed from
 # that tool's example tree. A tool whose tree is not in the checkout has no
 # repo; up skips it.
-TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose)
+TOOLS=(terraform terragrunt chant chant-fanout tofu-fanout choudoufu-fanout compose choudoufu-compose)
 scenario_tool() { # scenario -> its tool
   case "$1" in
     a-known|a-output|b-waves|failure|stale-plan|b-composed|base) echo terraform ;;
@@ -248,6 +260,7 @@ scenario_tool() { # scenario -> its tool
     fan-out-tofu) echo tofu-fanout ;;
     fan-out-choudoufu) echo choudoufu-fanout ;;
     compose-edit|compose-create|compose-fail) echo compose ;;
+    choudoufu-compose-edit|choudoufu-compose-create) echo choudoufu-compose ;;
     *) return 1 ;;
   esac
 }
@@ -260,6 +273,7 @@ tool_repo() { # tool -> the repo's name under the admin
     tofu-fanout) echo demo-fanout ;;
     choudoufu-fanout) echo demo-choudoufu-fanout ;;
     compose) echo demo-compose ;;
+    choudoufu-compose) echo demo-choudoufu-compose ;;
     *) return 1 ;;
   esac
 }
@@ -272,6 +286,7 @@ tool_tree() { # tool -> its example tree, from the checkout's root
     tofu-fanout) echo example-demo-fanout ;;
     choudoufu-fanout) echo example-demo-choudoufu-fanout ;;
     compose) echo example-demo-compose ;;
+    choudoufu-compose) echo example-demo-choudoufu-compose ;;
     *) return 1 ;;
   esac
 }
@@ -314,6 +329,11 @@ DEMO_IMAGE_CHOUDOUFU=terragucci-demo-choudoufu:local
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
 CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
+# The image builds choudoufu from this commit of INTENTIUS/choudoufu instead of
+# the release: composed estates (choudoufu#2059) are on integration/prompt-demo
+# (f285b9436f) and in no release yet. DEMO_CHOUDOUFU_REF names another commit;
+# set empty, the image carries the release above again.
+CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-f285b9436fc2eeb4932d542585cec0c61397680b}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold unless DEMO_HOLD_<SCENARIO> names one
@@ -500,8 +520,10 @@ use_repo() { # tool
   INIT_PULL="" BASE_RUN=""
   # choudoufu's estates have no state bucket or keys: its roots are the tree's
   # directories with a main.tf, and each reset's push back applies the base.
-  if [ "$1" = choudoufu-fanout ]; then
+  if [ "$1" = choudoufu-fanout ] || [ "$1" = choudoufu-compose ]; then
     STATE_BUCKET="" BASE_KEYS="" EXTRA_KEYS="" INIT_PULL="" BASE_RUN=1
+    # The compose repo's base commit says [skip ci] (its base is applied outside the pipeline), so its push back starts no run.
+    [ "$1" != choudoufu-compose ] || BASE_RUN=
     read -r -a ROOTS <<<"$(tree_roots "$TREE" | tr '\n' ' ')"
     [ "${#ROOTS[@]}" -gt 0 ] || fail "no root with a main.tf is in $TREE"
     return 0
@@ -1387,6 +1409,8 @@ scenario_title() {
     compose-edit)   echo "An edit and an addition, every value known" ;;
     compose-create) echo "A new subnet the other states need, in one change" ;;
     compose-fail)   echo "A create that fails part way" ;;
+    choudoufu-compose-edit)   echo "An edit and an addition across three estates" ;;
+    choudoufu-compose-create) echo "A new subnet the other estates need, in one change" ;;
     *) return 1 ;;
   esac
 }
@@ -1409,6 +1433,8 @@ scenario_name() {
     compose-edit)   echo "one plan, known values" ;;
     compose-create) echo "one plan, one apply" ;;
     compose-fail)   echo "a failed create" ;;
+    choudoufu-compose-edit)   echo "one plan, three estates" ;;
+    choudoufu-compose-create) echo "a subnet across estates" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1538,6 +1564,11 @@ say() { # step
     compose-edit:applied|compose-create:applied|compose-fail-fix:applied) echo "Applied. Network, app and edge each hold what this run applied." ;;
     compose-fail-fix:pull-request) echo "The fix is pull request $PULL: one line in the load balancer's guard." ;;
     compose-fail-fix:planned) echo "The fix's plan covers only what is left to apply. Nothing that applied before is touched." ;;
+    choudoufu-compose-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
+    choudoufu-compose-edit:planned) echo "One composed plan covers $COMPOSED. Each estate's changes show as the one apply will make them." ;;
+    choudoufu-compose-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
+    choudoufu-compose-create:planned) echo "One composed plan covers $COMPOSED. The subnet's id exists only after it is created, so app's values show as known after apply." ;;
+    choudoufu-compose-edit:applied|choudoufu-compose-create:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     stale-plan:planned)     echo "One plan note: network replaces its release marker, so wave 1 will wait for an approval; other is not planned. $COST_STUB" ;;
     *:merged)               echo "Pull request $PULL is merged into main (the branch the pipeline applies) at ${COMMIT:0:8}, and the pipeline starts." ;;
     *:applying)             echo "The waves apply in order: network, then app, then edge, each in its own state" ;;
@@ -2356,8 +2387,16 @@ scenario_stale_plan() {
 # forwards each request to floci path-style (stack/docker-compose.yml, profile
 # demo). up makes it when a tree in the checkout runs on choudoufu.
 RECORDS_BUCKET=demo-live-records
-records_up() {
-  local ns='xmlns="http://s3.amazonaws.com/doc/2006-03-01/"' xml md5
+# The bucket a choudoufu tool's estates keep their records in. The compose tree has its own, so
+# no key of the fan-out tree's meets it.
+tool_records_bucket() { # tool
+  case "$1" in
+    choudoufu-compose) echo demo-choudoufu-compose-records ;;
+    *) echo "$RECORDS_BUCKET" ;;
+  esac
+}
+records_up() { # [bucket]
+  local RECORDS_BUCKET="${1:-$RECORDS_BUCKET}" ns='xmlns="http://s3.amazonaws.com/doc/2006-03-01/"' xml md5
   curl -s -o /dev/null -X PUT "$FLOCI/$RECORDS_BUCKET" || true
   curl -fsS -o /dev/null -X PUT "$FLOCI/$RECORDS_BUCKET?versioning" -H 'content-type: application/xml' \
     --data-binary "<VersioningConfiguration $ns><Status>Enabled</Status></VersioningConfiguration>" || fail "could not turn on versioning in $RECORDS_BUCKET"
@@ -2397,7 +2436,7 @@ run_cycle() {
     fan-out) scenario_fan_out ;;
     fan-out-tofu) scenario_fan_out_tofu ;;
     fan-out-choudoufu) scenario_fan_out_choudoufu ;;
-    compose-edit|compose-create) scenario_compose ;;
+    compose-edit|compose-create|choudoufu-compose-edit|choudoufu-compose-create) scenario_compose ;;
     compose-fail) scenario_compose_fail ;;
   esac
   # A scenario that ends on a refusal names its own last step; the rest end applied.
@@ -2523,6 +2562,7 @@ states_back() { # [missing-ok]
   # applies the base tree, which deletes what the cycle added, once the
   # operator's queue, which app-01's estate keeps, is destroyed (operator_back).
   if [ "$TOOL" = choudoufu-fanout ]; then operator_back; return 0; fi
+  if [ "$TOOL" = choudoufu-compose ]; then estates_back "${1:-}"; return 0; fi
   if [ "$TOOL" = chant-fanout ]; then stacks_back "${1:-}"; return 0; fi
   for root in "${ROOTS[@]}"; do
     key="$(root_key "$root")"
@@ -2542,6 +2582,36 @@ states_back() { # [missing-ok]
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.tflock" || true
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.terragucci-unwritten" || true
   done <<<"$BASE_KEYS"$'\n'"$EXTRA_KEYS"
+}
+
+# The compose repo's estates back to the base: the base tree applied again with
+# choudoufu, as up applied it (estates_apply). Each estate's apply deletes what
+# the last cycle added and puts every tag back, so the push back to the base
+# has nothing to apply. With "missing-ok", a repo with no base tree yet is skipped.
+estates_back() { # [missing-ok]
+  if [ ! -d "$RSTATE/base-tree" ]; then
+    [ -n "${1:-}" ] || fail "$REPO has no base tree in $RSTATE; run 'just demo up' again"
+    return 0
+  fi
+  estates_apply "$RSTATE/base-tree"
+}
+
+# The compose repo's base, applied by the driver outside its pipeline: choudoufu
+# apply in each estate of the tree, upstreams first, in the demo's job image on
+# the stack's network against floci and the record store, as the pipeline's jobs
+# reach them. An estate is applied alone here, reading the recorded outputs of
+# the one before it.
+estates_apply() { # the base tree
+  local out
+  log "applying the base of $REPO with choudoufu in $DEMO_IMAGE_CHOUDOUFU…"
+  if ! out="$(tar -C "$1" -cf - --exclude ./.git . | docker run --rm -i --network "$TG_NETWORK" --entrypoint sh \
+      -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ENDPOINT_URL_S3=http://demo-records:4566 \
+      -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+      -e TF_CLI_CONFIG_FILE=/etc/terragucci-demo/tofu-mirror.tfrc -e TF_IN_AUTOMATION=1 \
+      "$DEMO_IMAGE_CHOUDOUFU" -c 'set -e; mkdir /w; cd /w; tar xf -; for r in network app edge; do (cd "$r"; choudoufu init -input=false -no-color >/dev/null; choudoufu apply -auto-approve -input=false -no-color); done' 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    fail "choudoufu apply did not apply the base of $REPO"
+  fi
 }
 
 # The fan-out repo's stacks back to the base: the base tree's templates built
@@ -2692,6 +2762,13 @@ up_repo() {
     sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
     log "pushed the base to $REPO's main at ${sha:0:8}, applied outside its pipeline"
     RUN_URL="(applied outside the pipeline)"
+  elif [ "$TOOL" = choudoufu-compose ]; then
+    # The composed estates' first apply would wait for an approval (the values network's subnet gives are read
+    # before they exist), which an up cannot give: the driver applies the base itself, as for the chant repos.
+    estates_apply "$bt"
+    sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words) [skip ci]")"
+    log "pushed the base to $REPO's main at ${sha:0:8}, applied outside its pipeline"
+    RUN_URL="(applied outside the pipeline)"
   else
     sha="$(push_tree "$bt" "$REPO" main "The demo's base: $(roots_words)")"
     log "pushed the base to $REPO's main at ${sha:0:8}; the pipeline applies every root…"
@@ -2702,7 +2779,7 @@ up_repo() {
     fi
   fi
   # The fan-out stacks and estates keep no Terraform state to snapshot: each reset applies the base again.
-  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ]; then
+  if [ "$TOOL" != chant-fanout ] && [ "$TOOL" != choudoufu-fanout ] && [ "$TOOL" != choudoufu-compose ]; then
     mkdir -p "$RSTATE/snapshots"
     for root in "${ROOTS[@]}"; do
       curl -fsS -o "$(snapshot "$root")" "$FLOCI/$STATE_BUCKET/$(root_key "$root")" || fail "$root has no state in floci after the base applied"
@@ -2748,6 +2825,7 @@ repo_description() {
     tofu-fanout) echo "The terragucci demo's fan-out: fifteen roots of SQS queues and DynamoDB tables in three waves, where a failure blocks only what depends on it" ;;
     choudoufu-fanout) echo "The terragucci demo's fan-out on choudoufu: fifteen estates with no state files, where two applies to one estate both land" ;;
     compose) echo "The terragucci demo's composed run: network, app and edge planned together and applied in one apply, each with its own state" ;;
+    choudoufu-compose) echo "The terragucci demo's composed run on choudoufu: network, app and edge estates in one record store, planned and applied across estates" ;;
     *) echo "The terragucci demo on $TOOL: units of terraform_data, a change across their states" ;;
   esac
 }
@@ -2766,6 +2844,7 @@ base_label() {
     chant-fanout) echo "The base is applied: fifteen CloudFormation stacks. Network, then cluster-a and cluster-b on it, and six apps on each cluster." ;;
     tofu-fanout) echo "The base is applied. Fifteen roots each have their own state. Cluster-a and cluster-b sit on network, and six apps sit on each cluster." ;;
     choudoufu-fanout) echo "The base is applied. Fifteen estates keep a record per resource and no state file. Cluster-a and cluster-b sit on network." ;;
+    choudoufu-compose) echo "The base is applied. Network, app and edge are estates in one record store, and each keeps a record per resource." ;;
     *) echo "The base is applied. Its units, $(roots_words), each have a state of their own." ;;
   esac
 }
@@ -2810,9 +2889,15 @@ case "$CMD" in
       fi
     done
     if [ "${#image_tools[@]}" -gt 0 ]; then
-      log "building $DEMO_IMAGE and $DEMO_IMAGE_CHOUDOUFU with choudoufu $CHOUDOUFU_VERSION…"
+      if [ -n "$CHOUDOUFU_REF" ]; then
+        log "building $DEMO_IMAGE and $DEMO_IMAGE_CHOUDOUFU with choudoufu built from ${CHOUDOUFU_REF:0:10}…"
+        choudoufu_args=(--build-arg CHOUDOUFU_FROM=source --build-arg CHOUDOUFU_REF="$CHOUDOUFU_REF")
+      else
+        log "building $DEMO_IMAGE and $DEMO_IMAGE_CHOUDOUFU with choudoufu $CHOUDOUFU_VERSION…"
+        choudoufu_args=()
+      fi
       docker build -q -t "$DEMO_IMAGE" -t "$DEMO_IMAGE_CHOUDOUFU" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
-        --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" "$HERE/demo-yodel" >/dev/null \
+        --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" ${choudoufu_args[@]+"${choudoufu_args[@]}"} "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
       if tool_present terraform; then
         log "starting demo-postgres…"
@@ -2821,14 +2906,17 @@ case "$CMD" in
       fi
       # A choudoufu tree's record store and its front, in the image just built:
       # recreated, so it runs the new one.
+      records_front=""
       for t in "${image_tools[@]}"; do
         tool_choudoufu "$t" || continue
-        records_up
+        records_up "$(tool_records_bucket "$t")"
+        records_front=1
+      done
+      if [ -n "$records_front" ]; then
         log "starting demo-records…"
         docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait --force-recreate demo-records >/dev/null \
           || fail "demo-records did not start"
-        break
-      done
+      fi
     fi
     # behold#571: the pipeline's metrics and traces. The demo trees'
     # terragucci.yml send each job's metrics and spans over OTLP to

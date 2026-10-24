@@ -8,6 +8,10 @@
 #
 #   BASE                the tofu CI image (scripts/images.ts tags)
 #   CHOUDOUFU_VERSION   the choudoufu release (stack/demo.sh's CHOUDOUFU_VERSION)
+#   CHOUDOUFU_FROM      release (the default) or source
+#   CHOUDOUFU_REF       with source, the commit of INTENTIUS/choudoufu to build
+#                       (stack/demo.sh's CHOUDOUFU_REF): a change composed
+#                       estates need, which no release carries yet
 #
 # yodel, chant and the sql lexicon come from SQL Yodeler's own CI image, pinned
 # by digest, under /opt/yodel. Nothing here puts them on PATH or in a
@@ -17,7 +21,9 @@
 #
 # choudoufu comes from its GitHub release, checked against the sha256 that
 # choudoufu.sha256 records for the version and arch, and goes to
-# /usr/local/bin/choudoufu.
+# /usr/local/bin/choudoufu. With CHOUDOUFU_FROM=source it is built from the
+# commit CHOUDOUFU_REF names instead (go build ./cmd/choudoufu), and the release
+# is not downloaded.
 #
 # hashicorp/aws (AWS_PROVIDER_VERSION) comes from its release zip, checked
 # against aws-provider.sha256 and the release's SHA256SUMS, and goes into a
@@ -25,12 +31,14 @@
 # TF_CLI_CONFIG_FILE names /etc/terragucci-demo/tofu-mirror.tfrc installs from
 # it (example-demo-fanout); every other tree's init is as it was.
 ARG BASE
+ARG CHOUDOUFU_FROM=release
 FROM ghcr.io/intentius/sql-yodeler:0.9.0@sha256:15f7406fd59f2f74f4299de0fb6121c9905278276aac86dde993e2223eb97946 AS yodel
-FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS choudoufu
+FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS fetch
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+FROM fetch AS choudoufu-release
 ARG TARGETARCH
 ARG CHOUDOUFU_VERSION
 COPY choudoufu.sha256 /tmp/choudoufu.sha256
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   v="${CHOUDOUFU_VERSION:?pass --build-arg CHOUDOUFU_VERSION}"; f="choudoufu_v${v}_linux_${a}.tar.gz"; \
   sum="$(awk -v v="$v" -v a="$a" '$1 == v && $2 == a { print $3 }' /tmp/choudoufu.sha256)"; \
@@ -38,7 +46,21 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   curl -fsSLo "/tmp/$f" "https://github.com/INTENTIUS/choudoufu/releases/download/v${v}/$f"; \
   echo "$sum  /tmp/$f" | sha256sum -c -; \
   mkdir -p /out && tar -xzf "/tmp/$f" -C /out choudoufu
-FROM choudoufu AS awsprovider
+# The same binary, built from a commit of INTENTIUS/choudoufu. go.mod names the
+# toolchain it needs, which GOTOOLCHAIN=auto fetches when the image's is older.
+FROM --platform=$BUILDPLATFORM golang:1.27 AS choudoufu-source
+ARG TARGETARCH
+ARG CHOUDOUFU_REF
+RUN set -e; \
+  [ -n "${CHOUDOUFU_REF:-}" ] || { echo "pass --build-arg CHOUDOUFU_REF with CHOUDOUFU_FROM=source" >&2; exit 1; }; \
+  git init -q /src; cd /src; \
+  git remote add origin https://github.com/INTENTIUS/choudoufu.git; \
+  git fetch -q --depth 1 origin "$CHOUDOUFU_REF"; \
+  git checkout -q FETCH_HEAD; \
+  case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
+  GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH="$a" go build -trimpath -ldflags "-s -w" -o /out/choudoufu ./cmd/choudoufu
+FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu
+FROM fetch AS awsprovider
 ARG TARGETARCH
 ARG AWS_PROVIDER_VERSION=6.67.0
 COPY aws-provider.sha256 /tmp/aws-provider.sha256

@@ -1261,7 +1261,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       const max = s.waves.compose_max;
       if (max !== undefined && !(Number.isInteger(max) && (max as number) >= 2)) problems.push(`${where}.waves.compose_max must be a whole number of 2 or more`);
       if (s.waves.compose === true) {
-        if (s.binary === "choudoufu") problems.push(`${where}.waves.compose: ${COMPOSE_NOT_CHOUDOUFU}`);
         if (s.terragrunt !== undefined) problems.push(`${where}.waves.compose: ${COMPOSE_NOT_TERRAGRUNT}`);
       }
     }
@@ -1543,8 +1542,6 @@ export interface RegistrySettings {
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
-/** Why `waves.compose` is refused with `binary: choudoufu`: one run would have to carry several estates (INTENTIUS/choudoufu#2059). */
-export const COMPOSE_NOT_CHOUDOUFU = "a composed run splits one working state back into each root's state, and choudoufu keeps no state to split, so leave waves.compose unset with binary: choudoufu";
 /** Why `waves.compose` is refused in a Terragrunt repo. */
 export const COMPOSE_NOT_TERRAGRUNT = "a Terragrunt repo's units apply through terragrunt, one run per unit, so they cannot compose; leave waves.compose unset";
 export const WAVE_JOBS_NOT_PR_APPLY = "apply.when: pull-request applies every wave in the one job a comment starts, so a wave has no jobs to spread across; leave waves.jobs unset";
