@@ -1,4 +1,5 @@
 {
+  "opening": "Your Terragrunt repo, with choudoufu as the binary. This second act adds a subnet to network. Its id is the only value known after apply.",
   "pull-request": {
     "prompt": "Add a subnet in network; put app's servers in it.",
     "action": null,
@@ -83,6 +84,5 @@
       "ghost": false
     }
   ],
-  "closing": "3 estates. 1 terragrunt plan. 1 approval. 1 terragrunt apply.",
-  "opening": "Your Terragrunt repo, with choudoufu as the binary: a new subnet that app and edge need."
+  "closing": "3 estates. 1 terragrunt plan. 1 approval. 1 terragrunt apply."
 }

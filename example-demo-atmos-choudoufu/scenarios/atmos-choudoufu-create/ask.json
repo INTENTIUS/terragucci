@@ -1,4 +1,5 @@
 {
+  "opening": "Your Atmos stack, with choudoufu as the component command. This second act adds a subnet to network. Its id is the only value known after apply.",
   "pull-request": {
     "prompt": "Add a subnet in network; put app's servers in it.",
     "action": null,

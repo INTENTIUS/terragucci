@@ -1,5 +1,5 @@
 {
-  "opening": "Three estates: network, app and edge, one plan.",
+  "opening": "Your Atmos stack, with choudoufu as the component command. This first act edits all three estates, with every value known at plan. A new subnet comes in the second.",
   "pull-request": {
     "prompt": "Port 8080 to 8090; add admin port 9000.",
     "action": null,
