@@ -1,9 +1,9 @@
 {
-  "opening": "Three estates: network, app and edge. One record store for every estate. Each one reads the one before it.",
+  "opening": "Three estates: network, app and edge, one plan.",
   "planned": {
-    "prompt": "I changed the proxy port and added an admin port in network. What does that touch?",
+    "prompt": "Change the proxy port from 8080 to 8090 and add an admin port 9000.",
     "action": null,
-    "reply": "All {roots} estates. One plan: {creates} to create, {updates} to change.",
+    "reply": "It reaches network, app and edge: {roots} estates, every value known. One plan: {creates} to create, {updates} to change. Next: one approval, one apply.",
     "light": [
       "network/aws_sqs_queue.http_proxy_port",
       "network/aws_sqs_queue.admin_port",
@@ -16,20 +16,26 @@
     "paths": false,
     "ghost": false
   },
+  "merged": { "status": "Merged. Starting the one apply across 3 estates..." },
+  "applying": { "status": "Applying network, app and edge together..." },
+  "waiting": { "status": "Waiting for your approval of the one plan..." },
   "approved": {
     "prompt": null,
-    "action": "You approve the plan on the pull request.",
+    "action": "You approve the plan.",
     "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Approved. Applying..."
+  },
+  "resumed": { "status": "Applying network, app and edge together..." },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Done. Both ports changed in network, app and edge in the same apply. One plan, one apply, across estates.",
     "light": null,
     "paths": false,
     "ghost": false
   },
-  "applied": {
-    "prompt": null,
-    "action": null,
-    "reply": "Applied. One plan, one apply, across estates.",
-    "light": null,
-    "paths": false,
-    "ghost": false
-  }
+  "closing": "3 estates. 1 plan. 1 approval. 1 apply."
 }

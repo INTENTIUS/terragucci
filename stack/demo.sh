@@ -161,8 +161,7 @@
 # written as asks. An ask is copied as given:
 #   { "prompt": "...", "action": null, "reply": "{dependents} resources ...",
 #     "light": ["network/terraform_data.subnet"], "paths": true, "ghost": false }
-# A step with asks holds 12 s (ASK_BEAT_HOLD) longer for each beat past its
-# first. The steps of a scenario's fix pull request read fix-<step>, and its applied step applied.
+# A step with asks holds ask_secs seconds (see there) in place of HOLD. The steps of a scenario's fix pull request read fix-<step>, and its applied step applied.
 #
 # tool is the tool the scenario shows (terraform, terragrunt) and repo the forge
 # repo its cycle runs on (<admin>/demo, <admin>/demo-terragrunt): the repo whose
@@ -743,8 +742,6 @@ view_follow() {
 # fix-approved, fix-applied), so the first pull request's steps are not played
 # again; the fix's applied step reads applied. A scenario without the file, or a step without an entry, writes
 # nothing, so every other scenario's demo.json is as it was.
-ASK_BEAT_HOLD=12 # seconds a step holds for each beat past its first
-ASK_ACTION_HOLD=8 # seconds the approved step holds when it carries an ask: the person's action line shows on the kiosk's next poll
 
 ask_file() { # scenario -> its ask.json's path; fails when it has no tree
   local tool
@@ -784,23 +781,35 @@ ask_fields() { # step
   jq -cn --argjson a "$(ask_step "$f" "$(ask_key "$f" "$1")")" --argjson e "$(ask_ends "$f")" '$a + $e'
 }
 
-# The seconds a step holds past HOLD: ASK_BEAT_HOLD for each beat after its first.
-ask_extra_hold() { # step
-  local f n
+# The seconds a step with asks holds, so a viewer can watch each prompt type,
+# read the reply and look at the graph. Per ask: 0.6 s of cursor, 0.065 s for
+# each character of the prompt (or the action), 0.025 s for each character of
+# the reply (a reply with {dependents} counts as 30 characters) and 3.5 s to
+# read; the step's sum, rounded up, but at least 6 s. A step with no asks, or
+# only status-only asks (ask.status), does not hold: the pipeline's own time is
+# its time. Prints 0 for those.
+ask_secs() { # step
+  local f
   [ -z "${SETUP:-}" ] || { echo 0; return 0; }
   f="$(ask_file "$SCENARIO")" || { echo 0; return 0; }
-  n="$(ask_step "$f" "$(ask_key "$f" "$1")" | jq -r '(.asks // []) | length')"
-  if [ "${n:-0}" -gt 1 ]; then echo $(( (n - 1) * ASK_BEAT_HOLD )); else echo 0; fi
+  ask_step "$f" "$(ask_key "$f" "$1")" | jq -r '
+    [(.ask // empty), ((.asks // [])[])]
+    | map(select(type == "object" and ((.prompt // .action // .reply) | type == "string")))
+    | if length == 0 then 0 else
+        (map(0.6 + ((.prompt // .action // "") | tostring | length) * 0.065
+             + (if (.reply | type) != "string" then 0 elif (.reply | contains("{dependents}")) then 30 else (.reply | length) end) * 0.025
+             + 3.5) | add | ceil) as $s
+        | if $s < 6 then 6 else $s end
+      end' 2>/dev/null || echo 0
 }
 
-# Hold a step that carries an ask. The approved step is written and resumed in
-# the same second, so without this the kiosk (which polls every 3 s) never shows
-# the person's "You approve the plan" line.
+# Hold a step that carries an ask for ask_secs. The approved step is written and
+# resumed in the same second, so without this the kiosk (which polls every 3 s)
+# never shows the person's "You approve the plan" line.
 ask_hold() { # step
-  local f
-  [ -z "${SETUP:-}" ] || return 0
-  f="$(ask_file "$SCENARIO")" || return 0
-  if ask_step "$f" "$(ask_key "$f" "$1")" | jq -e '(.ask // .asks) != null' >/dev/null 2>&1; then sleep "$ASK_ACTION_HOLD"; fi
+  local n
+  n="$(ask_secs "$1")"
+  if [ "${n:-0}" -gt 0 ]; then sleep "$n"; fi
 }
 
 # The action and deadline the driver last wrote as next, and when it started
@@ -965,7 +974,8 @@ chapter_short() { # chapter number
 
 # Write a step whose next action is the driver's own, HOLD seconds on, and wait them out.
 demo_hold() { # step, label, next action
-  local hold=$(( HOLD + $(ask_extra_hold "$1") ))
+  local hold="$(ask_secs "$1")"
+  [ "${hold:-0}" -gt 0 ] || hold="$HOLD"
   local at=$(( $(now) + hold ))
   demo_write "$1" "$2" "$3" "$at"
   sleep "$hold"
@@ -2482,7 +2492,10 @@ run_cycle() {
 # the run started after the hold. reset is written after the push back's run
 # has ended, so the next cycle's first push finds no run in progress.
 cycle_end() {
-  local at=$(( $(now) + ${END_HOLD:-$HOLD} + $(ask_extra_hold "$LAST_STEP") )) left
+  local at hold left
+  hold="$(ask_secs "$LAST_STEP")"
+  [ "${hold:-0}" -gt 0 ] || hold="${END_HOLD:-$HOLD}"
+  at=$(( $(now) + hold ))
   demo_write "$LAST_STEP" "$LAST_LABEL" reset "$at"
   reset_work
   left=$(( at - $(now) ))

@@ -1037,8 +1037,8 @@ describe("ask.json to demo.json", () => {
     mkdirSync(scen, { recursive: true });
     mkdirSync(join(dir, "stack"));
     if (file !== null) writeFileSync(join(scen, "ask.json"), file);
-    const fns = ["scenario_tool", "tool_tree", "ask_file", "ask_step", "ask_ends", "ask_key", "ask_fields", "ask_extra_hold", "ask_hold"].map(fn).join("\n");
-    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} ASK_BEAT_HOLD=12 ASK_ACTION_HOLD=1 SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
+    const fns = ["scenario_tool", "tool_tree", "ask_file", "ask_step", "ask_ends", "ask_key", "ask_fields", "ask_secs", "ask_hold"].map(fn).join("\n");
+    const script = `set -euo pipefail\nHERE=${JSON.stringify(join(dir, "stack"))} SCENARIO=compose-edit FIX=\n${fns}\n${body}`;
     return spawnSync("bash", ["-c", script], { cwd: root, encoding: "utf8" });
   }
   const json = (r: ReturnType<typeof ask>) => {
@@ -1087,31 +1087,36 @@ describe("ask.json to demo.json", () => {
 
   it("writes nothing for the driver's own setup push", () => {
     expect(json(ask(JSON.stringify(fixture), "SETUP=1; ask_fields approved"))).toEqual({});
-    expect(ask(JSON.stringify(fixture), "SETUP=1; ask_extra_hold planned").stdout.trim()).toBe("0");
+    expect(ask(JSON.stringify(fixture), "SETUP=1; ask_secs planned").stdout.trim()).toBe("0");
   });
 
-  it("holds a step that carries an ask ASK_ACTION_HOLD seconds, and one without or in setup not at all", () => {
+  it("holds a step that carries an ask for ask_secs, and one without or in setup not at all", () => {
     const f = JSON.stringify(fixture);
-    const held = (r: ReturnType<typeof ask>) => (expect(r.status, r.stderr).toBe(0), r.stdout.trim());
     const t = (body: string, file: string | null = f) => {
       const t0 = Date.now();
-      held(ask(file, `${body}; echo`));
+      const r = ask(file, `ask_secs() { echo 1; }; ${body}; echo`);
+      expect(r.status, r.stderr).toBe(0);
       return Date.now() - t0;
     };
     expect(t("ask_hold approved")).toBeGreaterThanOrEqual(900);
-    expect(t("ask_hold applied")).toBeLessThan(900);
-    expect(t("SETUP=1; ask_hold approved")).toBeLessThan(900);
-    expect(t("ask_hold approved", null)).toBeLessThan(900);
+    expect(t("ask_secs() { echo 0; }; ask_hold applied")).toBeLessThan(900);
   });
 
-  it("holds a step ASK_BEAT_HOLD seconds for each beat past the first", () => {
-    const f = JSON.stringify(fixture);
-    const three = JSON.stringify({ planned: [ask1, ask1, ask1], approved: ask2 });
-    expect(ask(f, "ask_extra_hold planned").stdout.trim()).toBe("12");
-    expect(ask(three, "ask_extra_hold planned").stdout.trim()).toBe("24");
-    expect(ask(f, "ask_extra_hold approved").stdout.trim()).toBe("0");
-    expect(ask(f, "ask_extra_hold applied").stdout.trim()).toBe("0");
-    expect(ask(null, "ask_extra_hold planned").stdout.trim()).toBe("0");
+  it("computes a step's hold from its prompts, actions and replies, at least 6 s, and 0 without any", () => {
+    const secs = (file: string | null, step: string, pre = "") => ask(file, `${pre}ask_secs ${step}`).stdout.trim();
+    // approved: 0.6 + 38 x 0.065 + 3.5 = 6.57 -> 7
+    expect(secs(JSON.stringify({ approved: { action: "x".repeat(38), reply: null } }), "approved")).toBe("7");
+    // a short action: below the 6 s floor
+    expect(secs(JSON.stringify({ approved: { action: "Go.", reply: null } }), "approved")).toBe("6");
+    // two asks sum: (0.6 + 30 x 0.065 + 80 x 0.025 + 3.5) x 2 = 16.1 -> 17
+    expect(secs(JSON.stringify({ planned: [{ prompt: "x".repeat(30), reply: "r".repeat(80) }, { prompt: "x".repeat(30), reply: "r".repeat(80) }] }), "planned")).toBe("17");
+    // a reply with {dependents} counts as 30 characters
+    expect(secs(JSON.stringify({ planned: { prompt: "x".repeat(40), reply: "{dependents} resources in app and edge. Next: approve." } }), "planned")).toBe("8");
+    // status-only steps, missing steps and a missing file do not hold
+    expect(secs(JSON.stringify({ merged: { status: "Merged." } }), "merged")).toBe("0");
+    expect(secs(JSON.stringify({ merged: { status: "Merged." } }), "applied")).toBe("0");
+    expect(secs(null, "planned")).toBe("0");
+    expect(secs(JSON.stringify(fixture), "approved", "SETUP=1; ")).toBe("0");
   });
 
   it("merges the fields into a step of demo.json only through ask_fields, so a step without them is unchanged", () => {
