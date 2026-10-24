@@ -15,7 +15,7 @@ network  <-  app  <-  edge
 app reads network's recorded outputs through `data.terraform_estate_outputs`,
 and edge reads app's. The base: network's `http_proxy_port` is 8080, app's
 listener is ten below it, and edge's upstream URL is built from app's listener
-port. network also holds an `aws_vpc`, and app an `aws_route53_zone` in it.
+port. network also holds an `aws_vpc`.
 `release` on network is a queue whose name changes with each cycle: a new
 name replaces it, which `gate: on-destructive` holds for an approval.
 
@@ -41,7 +41,7 @@ There is no failure act; failures are a separate demo.
 - `choudoufu-compose-create`: network creates an `aws_subnet` named `subnet` in
   that VPC and outputs `subnet_id`, which exists only after apply. app puts an
   `aws_security_group`, `aws_route_table`, `aws_instance` and
-  `aws_route53_record` in it, and edge's `dns_upstream` reads app's `dns_name`,
+  `aws_network_interface` in it, and edge's `dns_upstream` reads app's `dns_name`,
   which is built from the id.
 
 ## The base and the reset
@@ -50,3 +50,7 @@ There is no failure act; failures are a separate demo.
 pipeline (`estates_apply`), and pushes it with `[skip ci]`. Each reset applies
 the base tree again the same way, which deletes what the cycle added and puts
 every tag back.
+
+Every type here is one choudoufu marks in its create call. A Route 53 hosted
+zone takes its tags only after it is created, and a record set takes none, so
+neither can carry choudoufu's ownership marker and neither is used.

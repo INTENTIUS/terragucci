@@ -36,14 +36,6 @@ data "terraform_estate_outputs" "network" {
   names  = ["http_proxy_port", "subnet_id", "vpc_id"]
 }
 
-resource "aws_route53_zone" "internal" {
-  name = "demo.internal"
-
-  vpc {
-    vpc_id = data.terraform_estate_outputs.network.values.vpc_id
-  }
-}
-
 resource "aws_sqs_queue" "listener" {
   name = "choudoufu-compose-listener"
   tags = { port = tostring(data.terraform_estate_outputs.network.values.http_proxy_port - 10) }
@@ -73,14 +65,10 @@ resource "aws_instance" "instance" {
   subnet_id     = data.terraform_estate_outputs.network.values.subnet_id
 }
 
-resource "aws_route53_record" "dns_record" {
-  zone_id = aws_route53_zone.internal.zone_id
-  name    = "app-${data.terraform_estate_outputs.network.values.subnet_id}.demo.internal"
-  type    = "A"
-  ttl     = 60
-  records = ["10.0.1.10"]
+resource "aws_network_interface" "network_interface" {
+  subnet_id = data.terraform_estate_outputs.network.values.subnet_id
 }
 
 output "dns_name" {
-  value = aws_route53_record.dns_record.name
+  value = "app-${aws_network_interface.network_interface.subnet_id}.demo.internal"
 }

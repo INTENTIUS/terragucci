@@ -36,14 +36,6 @@ data "terraform_estate_outputs" "network" {
   names  = ["http_proxy_port", "admin_port", "vpc_id"]
 }
 
-resource "aws_route53_zone" "internal" {
-  name = "demo.internal"
-
-  vpc {
-    vpc_id = data.terraform_estate_outputs.network.values.vpc_id
-  }
-}
-
 resource "aws_sqs_queue" "listener" {
   name = "choudoufu-compose-listener"
   tags = { port = tostring(data.terraform_estate_outputs.network.values.http_proxy_port - 10) }
