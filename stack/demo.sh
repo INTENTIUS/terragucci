@@ -785,8 +785,9 @@ ask_fields() { # step
 # read the reply and look at the graph. Per ask: 0.6 s of cursor, 0.065 s for
 # each character of the prompt (or the action), 0.025 s for each character of
 # the reply (a reply with {dependents} counts as 30 characters) and 3.5 s to
-# read; the step's sum, rounded up, but at least 6 s. A step with no asks, or
-# only status-only asks (ask.status), does not hold: the pipeline's own time is
+# read; the step's sum, rounded up, but at least 6 s. An ask with a status and
+# no reply holds its prompt's typing plus 1.5 s, with no 6 s floor. A step with no asks, or
+# only status-only asks (ask.status with no prompt), does not hold: the pipeline's own time is
 # its time. Prints 0 for those.
 ask_secs() { # step
   local f
@@ -796,10 +797,14 @@ ask_secs() { # step
     [(.ask // empty), ((.asks // [])[])]
     | map(select(type == "object" and ((.prompt // .action // .reply) | type == "string")))
     | if length == 0 then 0 else
-        (map(0.6 + ((.prompt // .action // "") | tostring | length) * 0.065
+        # An ask with a status and no reply holds its prompt typing plus 1.5 s (0 with no prompt): the pipeline runs the rest.
+        def plen: ((.prompt // .action // "") | tostring | length);
+        def stat: ((.status | type) == "string") and ((.reply | type) != "string");
+        (map(if stat then (if plen > 0 then 0.6 + plen * 0.065 + 1.5 else 0 end)
+             else 0.6 + plen * 0.065
              + (if (.reply | type) != "string" then 0 elif (.reply | contains("{dependents}")) then 30 else (.reply | length) end) * 0.025
-             + 3.5) | add | ceil) as $s
-        | if $s < 6 then 6 else $s end
+             + 3.5 end) | add | ceil) as $s
+        | if all(.[]; stat) then $s elif $s < 6 then 6 else $s end
       end' 2>/dev/null || echo 0
 }
 

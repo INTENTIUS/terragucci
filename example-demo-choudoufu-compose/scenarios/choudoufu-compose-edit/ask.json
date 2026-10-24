@@ -1,9 +1,18 @@
 {
   "opening": "Three estates: network, app and edge, one plan.",
-  "planned": {
-    "prompt": "Change the proxy port from 8080 to 8090 and add an admin port 9000.",
+  "pull-request": {
+    "prompt": "Port 8080 to 8090; add admin port 9000.",
     "action": null,
-    "reply": "It reaches network, app and edge: {roots} estates, every value known. One plan: {creates} to create, {updates} to change. Next: one approval, one apply.",
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Opening a pull request and planning network, app and edge together"
+  },
+  "planned": {
+    "prompt": null,
+    "action": null,
+    "reply": "Every value is known at plan, so the cards show before and after: {creates} to create, {updates} to change. Next: merge and apply.",
     "light": [
       "network/aws_sqs_queue.http_proxy_port",
       "network/aws_sqs_queue.admin_port",
@@ -16,23 +25,37 @@
     "paths": false,
     "ghost": false
   },
-  "merged": { "status": "Merged. Starting the one apply across 3 estates..." },
-  "applying": { "status": "Applying network, app and edge together..." },
-  "waiting": { "status": "Waiting for your approval of the one plan..." },
-  "approved": {
-    "prompt": null,
-    "action": "You approve the plan.",
+  "merged": {
+    "prompt": "Merge it and apply.",
+    "action": null,
     "reply": null,
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Approved. Applying..."
+    "status": "Merging and starting one apply across 3 estates"
   },
-  "resumed": { "status": "Applying network, app and edge together..." },
+  "applying": {
+    "status": "Applying network, app and edge together"
+  },
+  "waiting": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Approving"
+  },
+  "approved": {
+    "status": "Approved. Applying"
+  },
+  "resumed": {
+    "status": "Applying network, app and edge together"
+  },
   "applied": {
     "prompt": null,
     "action": null,
-    "reply": "Done. Both ports changed in network, app and edge in the same apply. One plan, one apply, across estates.",
+    "reply": "Done. Both ports changed in network, app and edge in the same apply.",
     "light": null,
     "paths": false,
     "ghost": false

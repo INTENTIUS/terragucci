@@ -1,9 +1,18 @@
 {
+  "pull-request": {
+    "prompt": "Add a subnet in network; put app's servers in it.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Opening a pull request and planning network, app and edge together"
+  },
   "planned": [
     {
-      "prompt": "Add a subnet in network and put app's servers in it.",
+      "prompt": null,
       "action": null,
-      "reply": "One plan across network, app and edge. app's 4 resources need the subnet's id, which doesn't exist until it's created. Next: one approval, one apply.",
+      "reply": "One plan across 3 estates. app needs the subnet's id, which doesn't exist until it's created. Next: what depends on it?",
       "light": [
         "network/aws_subnet.subnet"
       ],
@@ -13,7 +22,7 @@
     {
       "prompt": "What depends on the new subnet?",
       "action": null,
-      "reply": "{dependents} resources in app and edge. Next: approve.",
+      "reply": "{dependents} resources in app and edge. Next: merge and apply.",
       "light": [
         "network/aws_subnet.subnet"
       ],
@@ -21,24 +30,38 @@
       "ghost": false
     }
   ],
-  "merged": { "status": "Merged. Starting the one apply across 3 estates..." },
-  "applying": { "status": "Applying network, app and edge together..." },
-  "waiting": { "status": "Waiting for your approval of the one plan..." },
-  "approved": {
-    "prompt": null,
-    "action": "You approve the plan.",
+  "merged": {
+    "prompt": "Merge it and apply.",
+    "action": null,
     "reply": null,
     "light": null,
     "paths": false,
     "ghost": false,
-    "status": "Approved. Applying..."
+    "status": "Merging and starting one apply across 3 estates"
   },
-  "resumed": { "status": "Applying network, app and edge together..." },
+  "applying": {
+    "status": "Applying network, app and edge together"
+  },
+  "waiting": {
+    "prompt": "Approve the plan.",
+    "action": null,
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false,
+    "status": "Approving"
+  },
+  "approved": {
+    "status": "Approved. Applying"
+  },
+  "resumed": {
+    "status": "Applying network, app and edge together"
+  },
   "applied": [
     {
       "prompt": null,
       "action": null,
-      "reply": "Done. The subnet was created and its id used by app and edge in the same apply. One plan, one apply, across estates.",
+      "reply": "Done. The subnet was created and app and edge got its id in the same apply.",
       "light": null,
       "paths": false,
       "ghost": false
