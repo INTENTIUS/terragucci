@@ -48,26 +48,26 @@ output "listener_port" {
 # Four resources placed in network's new subnet. Its id is unknown until the
 # subnet is created, so the composed plan shows each of them as known after
 # apply, and the same apply computes them once it has created the subnet.
-resource "aws_sqs_queue" "security_group" {
+resource "aws_sqs_queue" "security_group_queue" {
   name = "choudoufu-compose-security-group"
   tags = { placement = "sg in ${data.terraform_estate_outputs.network.values.subnet_id}" }
 }
 
-resource "aws_sqs_queue" "route_table" {
+resource "aws_sqs_queue" "route_table_queue" {
   name = "choudoufu-compose-route-table"
   tags = { placement = "rt in ${data.terraform_estate_outputs.network.values.subnet_id}" }
 }
 
-resource "aws_sqs_queue" "instance" {
+resource "aws_sqs_queue" "instance_queue" {
   name = "choudoufu-compose-instance"
   tags = { placement = "instance in ${data.terraform_estate_outputs.network.values.subnet_id}" }
 }
 
-resource "aws_sqs_queue" "dns_record" {
+resource "aws_sqs_queue" "dns_record_queue" {
   name = "choudoufu-compose-dns-record"
   tags = { dns = "app.${data.terraform_estate_outputs.network.values.subnet_id}.internal" }
 }
 
 output "dns_name" {
-  value = aws_sqs_queue.dns_record.tags.dns
+  value = aws_sqs_queue.dns_record_queue.tags.dns
 }

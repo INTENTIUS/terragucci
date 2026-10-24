@@ -37,7 +37,7 @@ resource "aws_sqs_queue" "http_proxy_port" {
 
 # A new subnet. Its id is chosen when it is created, so a plan shows it as
 # known after apply until then.
-resource "aws_sqs_queue" "subnet" {
+resource "aws_sqs_queue" "subnet_queue" {
   name = "choudoufu-compose-subnet"
   tags = { cidr = "10.0.1.0/24" }
 }
@@ -52,9 +52,9 @@ output "http_proxy_port" {
 }
 
 output "subnet_id" {
-  value = aws_sqs_queue.subnet.arn
+  value = aws_sqs_queue.subnet_queue.arn
 }
 
 output "subnet_cidr" {
-  value = aws_sqs_queue.subnet.tags.cidr
+  value = aws_sqs_queue.subnet_queue.tags.cidr
 }

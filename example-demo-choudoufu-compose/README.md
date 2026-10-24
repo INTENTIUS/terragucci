@@ -37,9 +37,10 @@ There is no failure act; failures are a separate demo.
 - `choudoufu-compose-edit`: network's proxy port goes from 8080 to 8090 and it
   gains an `admin_port` of 9000. app adds an `admin_listener`, and edge an
   `admin_upstream`.
-- `choudoufu-compose-create`: network creates a `subnet` queue and outputs
+- `choudoufu-compose-create`: network creates a `subnet_queue` and outputs
   `subnet_id`, its ARN, which exists only after apply. app puts a
-  `security_group`, `route_table`, `instance` and `dns_record` in it, and
+  `security_group_queue`, `route_table_queue`, `instance_queue` and
+  `dns_record_queue` in it, and
   edge's `dns_upstream` reads app's `dns_name`, which is built from the id.
 
 ## The base and the reset
@@ -48,3 +49,9 @@ There is no failure act; failures are a separate demo.
 pipeline (`estates_apply`), and pushes it with `[skip ci]`. Each reset applies
 the base tree again the same way, which deletes what the cycle added and puts
 every tag back.
+
+The stand-ins are SQS queues, and the names say so. The emulator's capability
+record (`live/floci-capabilities.json` in choudoufu) does not prove `aws_subnet`,
+`aws_route_table` or `aws_instance` can be created, and it lists `aws_lb` and
+Route 53 hosted zones as unimplemented, so no resource here is named as a type
+it is not.
