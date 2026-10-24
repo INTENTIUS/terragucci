@@ -77,20 +77,12 @@
     {
       "prompt": "Did anything stay locked?",
       "action": null,
-      "reply": "No. Resource-level locking at the cloud level: each record is written only if unchanged since it was read. Next: put the estates back.",
+      "reply": "No. Resource-level locking at the cloud level: each record is written only if unchanged since it was read.",
       "light": null,
       "paths": false,
       "ghost": false
     }
   ],
   "closing": "3 estates. 1 terragrunt plan. 1 approval. 1 terragrunt apply.",
-  "reset": {
-    "prompt": "Put the estates back to the base.",
-    "action": null,
-    "reply": "Done. network, app and edge are back to the base. Next: change a port across the estates.",
-    "light": null,
-    "paths": false,
-    "ghost": false
-  },
   "opening": "Your Terragrunt repo, with choudoufu as the binary: a new subnet that app and edge need."
 }
