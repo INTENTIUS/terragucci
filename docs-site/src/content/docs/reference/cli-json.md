@@ -244,10 +244,19 @@ The issuer is `https://token.actions.githubusercontent.com` on github.com and `h
 
 ## query
 
-`terragucci query "<statement>" --json` prints the rows the statement returned.
+`terragucci query <table> --json` prints the table read. For a ledger table, `results` is the document `chant ledger <table> --json` prints ([`ledger.schema.json`](https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json)), with `source` added. A bucket table's `results` has the same fields but `$schema` and `contract`.
 
 | `results` field | Holds |
 |---|---|
+| `source` | `ledger` or `bucket` |
+| `table` | the table read |
 | `columns` | the column names, in order |
-| `rows` | one object per row, by column name; SQL `NULL` is `null` |
-| `tables` | the row count of each table: `inventory`, `versions`, `changes`, `history`, `audit` and `edges` |
+| `at` | the `--at` revision as given, or `null` |
+| `filter` | `where`, the clauses as given, and `since`, the instant `--since` named or `null` |
+| `total` | the table's rows before the filters |
+| `rows` | one object per row the filters kept, by column name; JSON columns are parsed |
+| `malformed` | the ledger entries that could not be read and were left out; 0 for a bucket table |
+
+A table, filter or revision that is refused exits 1 with `error` naming its code: `table-unknown`, `filter-invalid`, `revision-unknown` or `ledger-unreadable`.
+
+`terragucci query "<statement>" --json`, the deprecated SQL form, prints `columns`, `rows` (SQL `NULL` is `null`) and `tables`, the row count of each bucket table.

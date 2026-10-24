@@ -3,10 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { gitLedgerReadPort } from "@intentius/chant/lifecycle/git";
-import { loadQueryData, runQuery as chantQuery } from "@intentius/chant/lifecycle/query";
 import { ConfigError } from "../src/config";
-import { describeQuery, query, QUERY_TABLES, runQuery, type QueryOptions } from "../src/query";
+import { describeQuery, describeTable, isSql, query, QUERY_TABLES, readTable, runQuery, type QueryOptions } from "../src/query";
 import type { ObjectStore } from "../src/report/object-store";
 import { changesKey, edgesKey, inventoryKey, versionsKey } from "../src/report/store";
 
@@ -176,23 +174,88 @@ describe("terragucci query", () => {
   });
 });
 
-// The waves' gates are chant's ledger on chant/lifecycle, so chant query reads them, with no table of terragucci's.
-describe("the waves' gates through chant query", () => {
-  it("reads a wave's pending fact and its approval from _gates/tf-apply.jsonl", async () => {
+describe("terragucci query <table> over the reports bucket", () => {
+  it("filters a table with --where and --since, with no SQL", async () => {
+    const { store } = bucket();
+    const r = await readTable({}, "history", { ...opts(store), where: ["type=aws_sqs_queue"], since: "7d" });
+    expect(r.source).toBe("bucket");
+    expect(r.total).toBe(5);
+    expect(r.rows).toHaveLength(3);
+    expect(r.rows.map((x) => [x.project, x.actions, x.approver])).toEqual(expect.arrayContaining([
+      [OTHER, "create", "cy"],
+      [PROJECT, "update", "bo"],
+      [PROJECT, "update", null],
+    ]));
+    expect(new Set(r.rows.map((x) => x.approver))).toEqual(new Set(["bo", null, "cy"]));
+    expect(store.puts).toBe(0);
+  });
+
+  it("filters on a number, a key under JSON and a substring, and prints JSON parsed", async () => {
+    const { store } = bucket();
+    const mods = await readTable({}, "versions", { ...opts(store), where: ["kind=module", "wave>=1", "name~/acme/vpc"] });
+    expect(mods.rows.map((x) => x.root).sort()).toEqual(["app", "shop"]);
+    const ana = await readTable({}, "audit", { ...opts(store), where: ["detail.approval=sha256:approval-a"] });
+    expect(ana.rows).toHaveLength(1);
+    expect(ana.rows[0]).toMatchObject({ who: "ana", detail: { approval: "sha256:approval-a" } });
+    const attrs = await readTable({}, "changes", { ...opts(store), where: ["attributes~visibility_timeout_seconds"] });
+    expect(attrs.rows[0].attributes).toEqual(["visibility_timeout_seconds"]);
+    expect(attrs.columns).toEqual([...QUERY_TABLES.changes]);
+  });
+
+  it("refuses an unknown table, a bad filter, --since on edges and --at on the bucket", async () => {
+    const { store } = bucket();
+    await expect(readTable({}, "states", opts(store))).rejects.toThrow(/no table "states"; the tables are resources, .*gates.*, inventory/);
+    await expect(readTable({}, "history", { ...opts(store), where: ["nope=1"] })).rejects.toThrow(/^filter-invalid: /);
+    await expect(readTable({}, "edges", { ...opts(store), since: "1d" })).rejects.toThrow(/edges has no time column/);
+    await expect(readTable({}, "inventory", { ...opts(store), at: "HEAD" })).rejects.toThrow(/no revisions/);
+  });
+
+  it("tells the SQL form from a table name", () => {
+    expect(isSql("SELECT * FROM inventory")).toBe(true);
+    expect(isSql("  with x as (select 1) select * from x")).toBe(true);
+    expect(isSql("gates")).toBe(false);
+    expect(isSql("inventory")).toBe(false);
+  });
+});
+
+// The waves' gates are chant's ledger on chant/lifecycle, so chant's ledger read (chant ledger gates) reads them, with no table of terragucci's.
+describe("the waves' gates through chant's ledger read", () => {
+  function lifecycle(): { repo: string; git: (...a: string[]) => string } {
     const repo = mkdtempSync(join(tmpdir(), "tg-query-gates-"));
     const git = (...a: string[]): string => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { encoding: "utf-8" });
     git("init", "-q", "-b", "chant/lifecycle");
     mkdirSync(join(repo, "_gates"));
-    const pending = { version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: "2026-10-09T05:00:00.000Z", expiresAt: "2026-10-10T05:00:00.000Z", planDigest: "sha256:aa" };
-    const approval = { version: 1, op: "tf-apply", gate: "wave-1", timestamp: "2026-10-09T05:10:00.000Z", resolvedBy: "approver-one", planDigest: "sha256:aa" };
+    return { repo, git };
+  }
+  const pending = { version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: "2026-10-09T05:00:00.000Z", expiresAt: "2026-10-10T05:00:00.000Z", planDigest: "sha256:aa" };
+  const approval = { version: 1, op: "tf-apply", gate: "wave-1", timestamp: "2026-10-09T05:10:00.000Z", resolvedBy: "approver-one", planDigest: "sha256:aa" };
+
+  it("reads a wave's pending fact and its approval from _gates/tf-apply.jsonl, filtered on op", async () => {
+    const { repo, git } = lifecycle();
     writeFileSync(join(repo, "_gates", "tf-apply.jsonl"), `${JSON.stringify(pending)}\n${JSON.stringify(approval)}\n`);
+    writeFileSync(join(repo, "_gates", "other.jsonl"), `${JSON.stringify({ ...pending, op: "other" })}\n`);
     git("add", "-A");
     git("commit", "-q", "-m", "gates");
-    const load = await loadQueryData([{ member: null, port: gitLedgerReadPort({ cwd: repo }) }]);
-    const r = await chantQuery("SELECT op, gate, kind, resolved_by, plan_digest FROM gates ORDER BY timestamp", load);
-    expect(r.rows).toEqual([
+    const r = await readTable({}, "gates", { cwd: repo, where: ["op=tf-apply"] });
+    expect(r).toMatchObject({ source: "ledger", $schema: "https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json", table: "gates", total: 3, at: null });
+    expect(r.rows.map((x) => ({ op: x.op, gate: x.gate, kind: x.kind, resolved_by: x.resolved_by, plan_digest: x.plan_digest }))).toEqual([
       { op: "tf-apply", gate: "wave-1", kind: "pending", resolved_by: null, plan_digest: "sha256:aa" },
       { op: "tf-apply", gate: "wave-1", kind: "resolution", resolved_by: "approver-one", plan_digest: "sha256:aa" },
     ]);
+    expect(describeTable(r).split("\n").at(-1)).toBe("(2 of 3 rows)");
+  });
+
+  it("reads the gates as an earlier commit held them with --at, and refuses a revision that names none", async () => {
+    const { repo, git } = lifecycle();
+    writeFileSync(join(repo, "_gates", "tf-apply.jsonl"), `${JSON.stringify(pending)}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "pending");
+    writeFileSync(join(repo, "_gates", "tf-apply.jsonl"), `${JSON.stringify(pending)}\n${JSON.stringify(approval)}\n`);
+    git("commit", "-q", "-am", "approved");
+    const before = await readTable({}, "gates", { cwd: repo, at: "chant/lifecycle~1" });
+    expect(before.rows.map((x) => x.kind)).toEqual(["pending"]);
+    expect(before.at).toBe("chant/lifecycle~1");
+    await expect(readTable({}, "gates", { cwd: repo, at: "nope" })).rejects.toThrow(/^revision-unknown: /);
+    await expect(readTable({}, "gates", { cwd: repo, where: ["nope=1"] })).rejects.toThrow(/^filter-invalid: /);
   });
 });
