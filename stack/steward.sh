@@ -73,7 +73,7 @@ case "$CMD" in
     stoken=""
     [ -f "$STEWARD_STATE" ] && stoken="$(sed -n 's/^STEWARD_FORGEJO_TOKEN=//p' "$STEWARD_STATE")"
     if [ -z "$stoken" ] || ! curl -fs -o /dev/null -H "Authorization: token $stoken" "$URL/api/v1/user"; then
-      pw="Terragucci-local-pw-1234"
+      pw="$TG_FORGEJO_ADMIN_PW"
       curl -s -o /dev/null -u "$USER:$pw" -X DELETE "$URL/api/v1/users/$USER/tokens/$NAME" || true
       stoken="$(curl -fsS -u "$USER:$pw" -H 'content-type: application/json' \
         -d "{\"name\":\"$NAME\",\"scopes\":[\"write:repository\"]}" "$URL/api/v1/users/$USER/tokens" | jq -r '.sha1 // empty')"

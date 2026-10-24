@@ -3566,7 +3566,7 @@ fork_trust_once() { # repo, pull request number
   csrf_of() { awk '$6 == "_csrf" { print $7 }' "$jar" | tail -1; }
   curl -fsS -o /dev/null -c "$jar" -b "$jar" "$URL/user/login" || return 1
   curl -fsS -o /dev/null -c "$jar" -b "$jar" -X POST --data-urlencode "_csrf=$(csrf_of)" --data-urlencode "user_name=$USER" \
-    --data-urlencode "password=Terragucci-local-pw-1234" "$URL/user/login" || return 1
+    --data-urlencode "password=$TG_FORGEJO_ADMIN_PW" "$URL/user/login" || return 1
   curl -fsS -o /dev/null -c "$jar" -b "$jar" "$URL/$1/pulls/$2" || return 1
   csrf="$(csrf_of)"
   case "$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" -b "$jar" -X POST --data-urlencode "_csrf=$csrf" -d trust=once "$URL/$1/pulls/$2/action-user-trust")" in

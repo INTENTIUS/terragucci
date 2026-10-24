@@ -217,13 +217,16 @@ PY
       turn="$("$HERE/steward.sh" turns | tail -1)"
       [ -n "$turn" ] && printf '\n  Steward     terragucci-steward, turn %s: %s (%s)\n' "$(cut -f1 <<<"$turn")" "$(cut -f3 <<<"$turn")" "$(cut -f2 <<<"$turn")"
     fi
+    # The local default is printed; an overridden password never is.
+    SIGNIN_PW="Terragucci-local-pw-1234"
+    [ "$TG_FORGEJO_ADMIN_PW" = "$SIGNIN_PW" ] || SIGNIN_PW="(the password in TERRAGUCCI_FORGEJO_ADMIN_PASSWORD)"
     cat <<OUT
 
   The example is running.
 
   Forgejo     $URL/$REPO
   Pipeline    $RUN_URL
-  Sign in as  $USER / Terragucci-local-pw-1234 (only needed to merge or comment)
+  Sign in as  $USER / $SIGNIN_PW (only needed to merge or comment)
   floci       $FLOCI (the AWS stand-in)
 
   Next: just example change one-root

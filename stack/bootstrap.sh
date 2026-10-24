@@ -48,7 +48,7 @@ NETWORK="$TG_NETWORK"
 
 # A throwaway instance on localhost; these never leave the machine.
 ADMIN_USER="terragucci-admin"
-ADMIN_PW="Terragucci-local-pw-1234"
+ADMIN_PW="$TG_FORGEJO_ADMIN_PW"
 ADMIN_EMAIL="terragucci-admin@example.com"
 REPO="validate"
 
@@ -356,7 +356,7 @@ person_token() { # login, env var holding its token -> prints a token that signs
   [ -n "$t" ] && [ "$t" != null ] || die "could not mint a token for $login"
   echo "$t"
 }
-PEOPLE_PW="Terragucci-local-pw-5678"
+PEOPLE_PW="$TG_FORGEJO_PEOPLE_PW"
 DEMO_AUTHOR="demo-author"
 DEMO_REVIEWER="demo-reviewer"
 DEMO_REVIEWER_KEY="$STATE/demo-reviewer.key"

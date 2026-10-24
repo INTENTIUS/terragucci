@@ -51,3 +51,12 @@ case "${TG_STACK:-shared}" in
 esac
 TG_NETWORK="$TG_PROJECT"
 export TG_STACK TG_PROJECT TG_NETWORK TG_STATE
+
+# The Forgejo admin's and the demo people's passwords. The defaults are for a
+# throwaway instance on localhost; a host that is reachable by others (the
+# demo host) sets TERRAGUCCI_FORGEJO_ADMIN_PASSWORD and
+# TERRAGUCCI_FORGEJO_PEOPLE_PASSWORD to its own values. Plain shell variables,
+# not exported, and never printed. Every script that signs in with a password
+# reads these two.
+TG_FORGEJO_ADMIN_PW="${TERRAGUCCI_FORGEJO_ADMIN_PASSWORD:-Terragucci-local-pw-1234}"
+TG_FORGEJO_PEOPLE_PW="${TERRAGUCCI_FORGEJO_PEOPLE_PASSWORD:-Terragucci-local-pw-5678}"
