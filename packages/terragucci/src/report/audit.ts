@@ -445,7 +445,7 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
       kind: "refused",
       who: refused.by ?? null,
       result: REFUSED[refused.reason],
-      detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules, holder: refused.holder }),
+      detail: drop({ ...common, approved: refused.approved, moved: refused.reason === "policy" ? undefined : refused.roots, denied: refused.reason === "policy" ? refused.roots : undefined, rules, hard_mandatory: refused.hard_mandatory, holder: refused.holder }),
     };
   }
   const failed = failedRoots(report);

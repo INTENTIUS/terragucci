@@ -92,6 +92,8 @@ export interface PolicyVerdict {
   violations: string[];
   /** The ids of the rules that denied, sorted, each once: what an override names (ruleId). */
   rules?: string[];
+  /** The denying rules among `rules` that are hard-mandatory: no override can pass them. */
+  hard?: string[];
   /** `warn` messages: shown in the note and the report, and never fail the root. */
   warnings?: string[];
   /** Set when the engine did not run or did not answer; the root fails all the same. */
@@ -355,8 +357,8 @@ export interface HcpPolicy {
   name: string;
   /** The Rego query, such as `data.terraform.policies.public_buckets.deny`. */
   query: string;
-  /** `advisory` (HCP's default) warns; `mandatory` denies. */
-  level: "advisory" | "mandatory";
+  /** `advisory` (HCP's default) warns; `mandatory` denies; `hard-mandatory` denies and no override can pass it. */
+  level: "advisory" | "mandatory" | "hard-mandatory";
 }
 
 /** The file HCP Terraform reads a policy set's policies and enforcement levels from. */
@@ -376,7 +378,7 @@ export function hcpPolicySet(dir: string): HcpPolicy[] | string | undefined {
     const attrs = Object.fromEntries([...m[2].matchAll(/([A-Za-z_]+)\s*=\s*"((?:[^"\\]|\\.)*)"/g)].map((a) => [a[1], a[2].replace(/\\(.)/g, "$1")]));
     if (!attrs.query) return `${HCP_POLICY_FILE}: policy "${m[1]}" has no query`;
     const level = attrs.enforcement_level ?? "advisory";
-    if (level !== "advisory" && level !== "mandatory") return `${HCP_POLICY_FILE}: policy "${m[1]}" has enforcement_level ${level}; HCP Terraform reads advisory or mandatory`;
+    if (level !== "advisory" && level !== "mandatory" && level !== "hard-mandatory") return `${HCP_POLICY_FILE}: policy "${m[1]}" has enforcement_level ${level}; HCP Terraform reads advisory, mandatory or hard-mandatory`;
     out.push({ name: m[1], query: attrs.query, level });
   }
   if (out.length === 0) return `${HCP_POLICY_FILE} declares no policy block`;
@@ -395,6 +397,7 @@ async function checkHcpSet(binary: string, set: HcpPolicy[], policy: PolicySetti
   const run = hcpPoliciesToRun(set, policy.namespace);
   if (run.length === 0) return { violations: [], error: `no policy in ${HCP_POLICY_FILE} has a query under data.${policy.namespace}` };
   const out: PolicyFindings = { violations: [], warnings: [], rules: [] };
+  const hard: string[] = [];
   for (const p of run) {
     const r = await exec(binary, ["eval", "--format", "json", "--data", path, "--input", file, p.query], repo);
     const answer = opaAnswer(r.stdout);
@@ -404,10 +407,11 @@ async function checkHcpSet(binary: string, set: HcpPolicy[], policy: PolicySetti
     if (found === undefined) return { violations: [], error: `policy ${p.name}: its query ${p.query} gives ${JSON.stringify(answer.value)}, not a set of messages` };
     // HCP reads the query's messages as the policy's result, whatever the rule is named; the level decides what they do.
     const messages = [...found.violations, ...found.warnings].map((m) => `${p.name}: ${m}`);
-    (p.level === "mandatory" ? out.violations : out.warnings).push(...messages);
-    if (p.level === "mandatory") out.rules.push(...messages.map(() => p.name));
+    (p.level === "advisory" ? out.warnings : out.violations).push(...messages);
+    if (p.level !== "advisory") out.rules.push(...messages.map(() => p.name));
+    if (p.level === "hard-mandatory" && messages.length > 0) hard.push(p.name);
   }
-  return { violations: out.violations, ...ruleList(out.rules), ...(out.warnings.length > 0 ? { warnings: out.warnings } : {}) };
+  return { violations: out.violations, ...ruleList(out.rules), ...hardList(hard), ...(out.warnings.length > 0 ? { warnings: out.warnings } : {}) };
 }
 
 /** Check one plan. `planJson` is the unredacted `show -json` text; `context` fills `input.run` with `input: hcp`. */
@@ -436,7 +440,10 @@ export async function checkPlan(binary: string, policy: PolicySettings, repo: st
     // hold and allow_unattended count only when policy.outcomes, read at base, names them.
     const holds = policy.outcomes?.includes("hold") && found.holds?.length ? { holds: found.holds } : {};
     const allows = policy.outcomes?.includes("allow_unattended") && found.allows?.length ? { allows: [...new Set(found.allows)].sort() } : {};
-    return { violations: found.violations, ...ruleList(found.rules), ...(found.warnings.length > 0 ? { warnings: found.warnings } : {}), ...holds, ...allows };
+    // A rule annotated hard-mandatory in the Rego denies like any other, and no override can pass it.
+    const annotated = hardMandatoryRules(path);
+    const hard = found.rules.filter((id) => annotated.has(id));
+    return { violations: found.violations, ...ruleList(found.rules), ...hardList(hard), ...(found.warnings.length > 0 ? { warnings: found.warnings } : {}), ...holds, ...allows };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -451,10 +458,50 @@ const outcomesBeyondDeny = (policy: PolicySettings): string | undefined => {
 /** A verdict's `rules`: each id once, sorted; nothing when no rule denied. */
 const ruleList = (rules: string[]): { rules?: string[] } => (rules.length > 0 ? { rules: [...new Set(rules)].sort() } : {});
 
+/** A verdict's `hard`: each hard-mandatory rule that denied, once, sorted; nothing when none did. */
+const hardList = (rules: string[]): { hard?: string[] } => (rules.length > 0 ? { hard: [...new Set(rules)].sort() } : {});
+
+/** What a Rego rule carries to be hard-mandatory: this comment on the line above its head (more comment lines may sit between). */
+const HARD_ANNOTATION = /^\s*#\s*terragucci:\s*hard-mandatory(?![\w-])/;
+
+/**
+ * The ids (`<package>.<rule>`, as an override names them) of the rules under
+ * `dir` annotated `# terragucci: hard-mandatory` on the line above their head.
+ * The annotation marks the rule name in its package, so every body of
+ * `deny_x` shares it.
+ */
+export function hardMandatoryRules(dir: string): Set<string> {
+  const ids = new Set<string>();
+  for (const { text } of regoFiles(dir)) {
+    const pkg = /^\s*package\s+(\S+)/m.exec(text)?.[1];
+    if (!pkg) continue;
+    let marked = false;
+    for (const line of text.split("\n")) {
+      if (HARD_ANNOTATION.test(line)) marked = true;
+      else if (/^\s*#/.test(line)) continue;
+      else {
+        const head = marked ? /^\s*(?:default\s+)?([A-Za-z_][A-Za-z0-9_]*)/.exec(line)?.[1] : undefined;
+        if (head && !/^package$|^import$/.test(head)) ids.add(`${pkg}.${head}`);
+        marked = false;
+      }
+    }
+  }
+  return ids;
+}
+
+/** Every rule id the policy under `dir` declares hard-mandatory: Rego annotations, and the policies of a `policies.hcl` at that level. */
+export function declaredHardMandatory(dir: string): Set<string> {
+  const ids = hardMandatoryRules(dir);
+  const set = hcpPolicySet(dir);
+  if (Array.isArray(set)) for (const p of set) if (p.level === "hard-mandatory") ids.add(p.name);
+  return ids;
+}
+
 /** The error a failed root carries, which the report and the note show as the reason. */
 export function describeVerdict(engine: string, v: PolicyVerdict): string {
   if (v.error) return `policy could not be checked, so the root fails: ${v.error}`;
-  return `policy violation (${engine}):\n${v.violations.map((m) => `- ${m}`).join("\n")}`;
+  const hard = v.hard?.length ? `\n${v.hard.join(", ")} ${v.hard.length === 1 ? "is" : "are"} hard-mandatory: no override, approval or agent action can pass ${v.hard.length === 1 ? "it" : "them"}` : "";
+  return `policy violation (${engine}):\n${v.violations.map((m) => `- ${m}`).join("\n")}${hard}`;
 }
 
 /** A verdict as the report keeps it under the root. */
@@ -465,6 +512,7 @@ export function rootPolicy(v: PolicyVerdict): ReportRootPolicy {
     result,
     denials: v.violations,
     ...(v.rules?.length ? { rules: v.rules } : {}),
+    ...(v.hard?.length ? { hard_mandatory: v.hard } : {}),
     warnings: v.warnings ?? [],
     ...(v.error !== undefined ? { error: v.error } : {}),
     ...(held.length ? { held_by: held, holds: (v.holds ?? []).map((h) => h.message) } : {}),
@@ -558,6 +606,7 @@ export function redactVerdict(v: PolicyVerdict, plan: unknown): PolicyVerdict {
   return {
     violations: v.violations.map(clean),
     ...(v.rules ? { rules: v.rules } : {}),
+    ...(v.hard ? { hard: v.hard } : {}),
     ...(v.warnings ? { warnings: v.warnings.map(clean) } : {}),
     ...(v.error !== undefined ? { error: clean(v.error) } : {}),
     ...(v.holds ? { holds: v.holds.map((h) => ({ rule: h.rule, message: clean(h.message) })) } : {}),
