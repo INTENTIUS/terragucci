@@ -1,14 +1,30 @@
 {
   "opening": "Three estates: network, app and edge, one plan.",
-  "pull-request": {
-    "prompt": "Port 8080 to 8090; add admin port 9000.",
-    "action": null,
-    "reply": null,
-    "light": null,
-    "paths": false,
-    "ghost": false,
-    "status": "Opening a pull request and planning network, app and edge together"
-  },
+  "pull-request": [
+    {
+      "prompt": "Port 8080 to 8090; add admin port 9000.",
+      "action": null,
+      "reply": "Opened pull request {pull}. network changes the proxy port and adds an admin port; app and edge follow both. Next: plan all three.",
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "diff": [
+        "~ network  terraform_data.http_proxy_port  8080 -> 8090",
+        "+ network  terraform_data.admin_port  9000",
+        "+ app      terraform_data.admin_listener_port",
+        "+ edge     terraform_data.admin_upstream"
+      ]
+    },
+    {
+      "prompt": null,
+      "action": null,
+      "reply": null,
+      "light": null,
+      "paths": false,
+      "ghost": false,
+      "status": "Planning network, app and edge together"
+    }
+  ],
   "planned": {
     "prompt": null,
     "action": null,

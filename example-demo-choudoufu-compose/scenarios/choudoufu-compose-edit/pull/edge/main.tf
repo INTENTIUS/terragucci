@@ -41,6 +41,11 @@ data "terraform_estate_outputs" "app" {
   names  = ["listener_port", "admin_listener_port"]
 }
 
+# The ranges edge lets through: subnet a's.
+resource "terraform_data" "allowlist" {
+  input = ["10.0.1.0/24"]
+}
+
 resource "terraform_data" "upstream" {
   input = "http://app:${data.terraform_estate_outputs.app.values.listener_port}"
 }

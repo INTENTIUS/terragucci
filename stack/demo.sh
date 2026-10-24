@@ -809,14 +809,16 @@ ask_fields() { # step
   # The driver's own setup push (compose_base) is no step of the scenario's story.
   [ -z "${SETUP:-}" ] || { echo '{}'; return 0; }
   f="$(ask_file "$SCENARIO")" || { echo '{}'; return 0; }
-  jq -cn --argjson a "$(ask_step "$f" "$(ask_key "$f" "$1")")" --argjson e "$(ask_ends "$f")" '$a + $e'
+  # {pull} in any string becomes "#<number>"; every other {...} token is behold's to fill.
+  jq -cn --argjson a "$(ask_step "$f" "$(ask_key "$f" "$1")")" --argjson e "$(ask_ends "$f")" --arg pull "${PULL:+#$PULL}" \
+    '($a + $e) | if $pull == "" then . else walk(if type == "string" then gsub("\\{pull\\}"; $pull) else . end) end'
 }
 
 # The seconds a step with asks holds, so a viewer can watch each prompt type,
 # read the reply and look at the graph. Per ask: 0.6 s of cursor, 0.065 s for
 # each character of the prompt (or the action), 0.025 s for each character of
-# the reply (a reply with {dependents} counts as 30 characters) and 3.5 s to
-# read; the step's sum, rounded up, but at least 6 s. An ask with a status and
+# the reply (a reply with {dependents} counts as 30 characters; the lines of
+# an ask's diff count as reply characters) and 3.5 s to read; the step's sum, rounded up, but at least 6 s. An ask with a status and
 # no reply holds its prompt's typing plus 1.5 s, with no 6 s floor. A step with no asks, or
 # only status-only asks (ask.status with no prompt), does not hold: the pipeline's own time is
 # its time. Prints 0 for those.
@@ -834,6 +836,7 @@ ask_secs() { # step
         (map(if stat then (if plen > 0 then 0.6 + plen * 0.065 + 1.5 else 0 end)
              else 0.6 + plen * 0.065
              + (if (.reply | type) != "string" then 0 elif (.reply | contains("{dependents}")) then 30 else (.reply | length) end) * 0.025
+             + (([(.diff // [])[] | tostring | length] | add) // 0) * 0.025
              + 3.5 end) | add | ceil) as $s
         | if all(.[]; stat) then $s elif $s < 6 then 6 else $s end
       end' 2>/dev/null || echo 0
