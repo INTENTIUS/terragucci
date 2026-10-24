@@ -1,0 +1,41 @@
+{
+  "planned": [
+    {
+      "prompt": "Now I'm adding a subnet in network and putting app's servers in it. app needs the subnet's id. Can that go in one change?",
+      "action": null,
+      "reply": "The id doesn't exist until the subnet is created, so app's plan can't know it. Planned separately, app would wait for network, plan again and need a second approval. Planned together, one apply creates the subnet first and hands its id to app.",
+      "light": [
+        "network/terraform_data.subnet"
+      ],
+      "paths": false,
+      "ghost": true
+    },
+    {
+      "prompt": "Show me everything that depends on the new subnet.",
+      "action": null,
+      "reply": "{dependents} resources depend on it, in app and edge.",
+      "light": [
+        "network/terraform_data.subnet"
+      ],
+      "paths": true,
+      "ghost": false
+    }
+  ],
+  "approved": {
+    "prompt": null,
+    "action": "You approve the plan on the pull request.",
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "applied": {
+    "prompt": null,
+    "action": null,
+    "reply": "Applied. The subnet's id went from network to app to edge in one apply.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "closing": "3 states. 1 plan. 1 approval. 1 apply."
+}

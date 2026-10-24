@@ -1,0 +1,57 @@
+{
+  "planned": {
+    "prompt": "Add a load balancer in app's subnet.",
+    "action": null,
+    "reply": "One plan: {creates} to create, in app and edge.",
+    "light": [
+      "app/terraform_data.load_balancer"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "approved": {
+    "prompt": null,
+    "action": "You approve the plan on the pull request.",
+    "reply": null,
+    "light": null,
+    "paths": false,
+    "ghost": false
+  },
+  "failed": [
+    {
+      "prompt": "What happened? What's applied and what isn't?",
+      "action": null,
+      "reply": "The load balancer's check failed: {error}. network: nothing to change. app: applied except the load balancer. edge: not applied. Each state file holds exactly what applied. Nothing was rolled back.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    },
+    {
+      "prompt": "Is anything half-written or locked?",
+      "action": null,
+      "reply": "No. Every state was written and every lock released.",
+      "light": null,
+      "paths": false,
+      "ghost": false
+    }
+  ],
+  "fix-planned": {
+    "prompt": null,
+    "action": "You push the fix: the load balancer's address moves from 10.0.2.10 to 10.0.1.10, inside the subnet.",
+    "reply": "The plan covers only what's left: {creates} to create, {updates} to change. Nothing that applied before is touched.",
+    "light": [
+      "app/terraform_data.load_balancer",
+      "edge/terraform_data.load_balancer_upstream"
+    ],
+    "paths": false,
+    "ghost": false
+  },
+  "applied": {
+    "prompt": null,
+    "action": "You approve.",
+    "reply": "Done. The failed run left every state correct, and the fix applied only what was left.",
+    "light": null,
+    "paths": false,
+    "ghost": false
+  }
+}
