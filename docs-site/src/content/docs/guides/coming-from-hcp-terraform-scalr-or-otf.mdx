@@ -25,8 +25,8 @@ HCP Terraform already does some of this with less setup:
 |---|---|
 | [Run triggers](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/run-triggers) | queue a run in a workspace when a source workspace applies |
 | Stacks, with [deferred changes](https://developer.hashicorp.com/terraform/cloud-docs/stacks/deploy/runs) and [deployment groups](https://developer.hashicorp.com/terraform/language/stacks/deploy/conditions) | order components by their dependencies and defer a step until the values it needs exist; a deployment group sets auto-approve rules for several deployments at once |
-| [Cost estimation](https://developer.hashicorp.com/terraform/cloud-docs/cost-estimation) | built in; terragucci's [`cost`](/terragucci/guides/estimate-cost/) needs Infracost |
-| [Health assessments](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/health) | drift detection and continuous validation of `check` blocks; terragucci's [`drift`](/terragucci/guides/turn-on-drift-checks/) runs on a cron schedule you set |
+| [Cost estimation](https://developer.hashicorp.com/terraform/cloud-docs/cost-estimation) | built in on Standard and Premium, and on Free per HashiCorp's [free-tier post](https://www.hashicorp.com/en/blog/continuing-hcp-terraform-s-enhanced-free-tier-experience); terragucci's [`cost`](/terragucci/guides/estimate-cost/) needs Infracost |
+| [Health assessments](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/health) | on Standard and Premium, drift detection and continuous validation of `check` blocks; terragucci's [`drift`](/terragucci/guides/turn-on-drift-checks/) runs on a cron schedule you set |
 
 Staying is reasonable when your workspaces depend on Stacks' deferred changes, or when built-in cost estimates and health assessments matter more to you than keeping state and records in your own bucket. A team that relies on no-code provisioning or the workspace UI has the same reason, since terragucci has [neither](#limits).
 
