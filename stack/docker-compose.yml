@@ -118,7 +118,8 @@ services:
   # virtual-hosted, at demo-live-records.demo-records (and, for the compose
   # trees' own buckets, demo-choudoufu-compose-records, demo-terragrunt-choudoufu-records and
   # demo-atmos-choudoufu-records, each at <bucket>.demo-records; and the Atmos demo's state bucket,
-  # demo-atmos-choudoufu-state, which holds Atmos's planfile store), and this forwards each request to
+  # demo-atmos-choudoufu-state, which holds Atmos's planfile store; and the Terragrunt demo's state
+  # bucket, demo-terragrunt-choudoufu-state, which Terragrunt reads dependency outputs from), and this forwards each request to
   # floci path-style (stack/fixtures/cdf-race/s3-hold.mjs, which holds nothing
   # unless told to). It runs in the demo's job image, which demo.sh up builds
   # before it starts this; the AWS provider's S3 Control host is
@@ -137,7 +138,7 @@ services:
     restart: unless-stopped
     networks:
       default:
-        aliases: [demo-records, demo-live-records.demo-records, demo-choudoufu-compose-records.demo-records, demo-terragrunt-choudoufu-records.demo-records, demo-atmos-choudoufu-records.demo-records, demo-atmos-choudoufu-state.demo-records, 000000000000.demo-records]
+        aliases: [demo-records, demo-live-records.demo-records, demo-choudoufu-compose-records.demo-records, demo-terragrunt-choudoufu-records.demo-records, demo-atmos-choudoufu-records.demo-records, demo-atmos-choudoufu-state.demo-records, demo-terragrunt-choudoufu-state.demo-records, 000000000000.demo-records]
 
   # ── forgejo ──────────────────────────────────────────────────────────────
   # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
