@@ -1789,12 +1789,12 @@ say() { # step
     compose-*:approved)     echo "The plan is approved, sealed with the reviewer's key. It is the only approval this change needs." ;;
     compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     atmos-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow. The workflow runs atmos terraform plan --affected --include-dependents." ;;
-    atmos-choudoufu-edit:planned) echo "One plan from atmos terraform plan --affected --include-dependents covers network, app and edge. Each component's changes show as the one apply will make them." ;;
+    atmos-choudoufu-edit:planned) echo "One plan from atmos terraform plan --affected --include-dependents covers network, app and edge. Atmos stores each component's part of it for the merge." ;;
     atmos-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id. The workflow runs atmos terraform plan --affected --include-dependents." ;;
     atmos-choudoufu-create:planned) echo "One plan covers network, app and edge. The subnet's id exists only after it is created, so app's worker shows its subnet as known after apply." ;;
     atmos-choudoufu-*:approved) echo "The reviewer approves pull request $PULL as a review. The merge's workflow checks that review before it applies." ;;
-    atmos-choudoufu-*:merged) echo "Pull request $PULL is merged at ${COMMIT:0:8}, and the workflow applies network, app and edge in that order." ;;
-    atmos-choudoufu-*:applying) echo "Atmos refuses plan files with --affected, so the apply runs network, then app, then edge. Each reads the real outputs of the one before it." ;;
+    atmos-choudoufu-*:merged) echo "Pull request $PULL is merged fast-forward at ${COMMIT:0:8}, the commit Atmos stored the plans under, and the workflow applies network, app and edge in that order." ;;
+    atmos-choudoufu-*:applying) echo "Atmos's deploy applies network, then app, then edge, each from its stored plan. choudoufu stops any component whose plan has moved from the reviewed one." ;;
     atmos-choudoufu-*:applied) echo "Applied. Network, app and edge each wrote their resources' records to the one record store." ;;
     choudoufu-compose-*:applying) echo "One apply runs network, app and edge together. Each resource's record is written as it applies." ;;
     choudoufu-compose-*:approved) echo "The reviewer approves pull request $PULL. The review approves the one plan it saw, the only approval this change needs." ;;
@@ -1874,11 +1874,15 @@ pr_open() { # branch, title -> prints the number of the pull request into main, 
 }
 
 merge_pull() { # the author merges -> COMMIT is the merge commit, RUN_ID its push run
-  local before merged=""
+  local before merged="" style=merge
   quiet
   before="$(last_run_id)"
+  # The Atmos repo merges fast-forward only (up_repo), so COMMIT is the pull
+  # request's head. Its pull request is opened from main as it stands
+  # (open_pull clones main), so it is never behind main when it is planned.
+  [ "$TOOL" != atmos-choudoufu ] || style=fast-forward-only
   for _ in $(seq 1 10); do
-    as_author -o /dev/null -H 'content-type: application/json' -X POST -d '{"Do":"merge"}' "$URL/api/v1/repos/$REPO/pulls/$PULL/merge" 2>/dev/null && { merged=1; break; }
+    as_author -o /dev/null -H 'content-type: application/json' -X POST -d "{\"Do\":\"$style\"}" "$URL/api/v1/repos/$REPO/pulls/$PULL/merge" 2>/dev/null && { merged=1; break; }
     sleep 3
   done
   [ -n "$merged" ] || fail "pull request $PULL did not merge"
@@ -3194,6 +3198,14 @@ up_repo() {
       "$URL/api/v1/user/repos"
   fi
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$REPO"
+  # Atmos keys each stored plan by the commit that planned it, the pull
+  # request's head, so the Atmos repo merges fast-forward only: the merge
+  # pushes that same commit, and the deploy finds the plans the reviewer saw.
+  if [ "$TOOL" = atmos-choudoufu ]; then
+    api -o /dev/null -H 'content-type: application/json' -X PATCH \
+      -d '{"allow_fast_forward_only_merge":true,"default_merge_style":"fast-forward-only","allow_merge_commits":false,"allow_rebase":false,"allow_rebase_explicit":false,"allow_squash_merge":false}' \
+      "$URL/api/v1/repos/$REPO" || fail "could not make $REPO merge fast-forward only"
+  fi
   people_join
   # The new base is built in base-tree.new and replaces base-tree, beside
   # base.sha, only once it applied. An up that fails part way leaves the last
