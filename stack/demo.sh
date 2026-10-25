@@ -383,9 +383,10 @@ FANOUT_JOB_IMAGE=terragucci-demo-chant-fanout:local
 COMPOSE_JOB_IMAGE=demo-chant-compose:local
 # The commit of INTENTIUS/chant that image's chant and aws lexicon are packed
 # from: a covered round, a preview that keeps its known outputs and planned
-# outputs that state their value (chant#4422, #4423, #4430) are on main and in no
-# release yet. DEMO_CHANT_COMPOSE_REF names another commit.
-CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-70e5ec19809ee0ffdbeffcf06233d8fe42b83982}"
+# outputs that state their value (chant#4422, #4423, #4430), and a report that
+# names every read between stacks, known at plan or not (chant#4433), are on
+# main and in no release yet. DEMO_CHANT_COMPOSE_REF names another commit.
+CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-8cd73461a7050a0a793219036b9c86b09703ce7f}"
 # The image a chant tool's jobs run in, which its base is applied in too.
 tool_image() { # tool
   case "$1" in
