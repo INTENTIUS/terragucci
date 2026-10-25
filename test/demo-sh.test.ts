@@ -309,7 +309,7 @@ describe("stack/demo.sh under pipefail", () => {
   });
 
   it("builds the demo image's choudoufu from the commit composed estates are on, with the release as the way back", () => {
-    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-2100822db57cf7f32de16dacbe9b39fa359e2423}"');
+    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-042bc40664819a30400327520ace3a89c4e2f516}"');
     expect(demo).toContain("--build-arg CHOUDOUFU_FROM=source --build-arg CHOUDOUFU_REF=");
     const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
     expect(dockerfile).toContain("FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu");
