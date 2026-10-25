@@ -1,14 +1,21 @@
 ---
-title: Changes in 0.4.44
-description: "terragucci 0.4.44, released 2026-10-24."
+title: Changes in 0.4.45
+description: "terragucci 0.4.45, released 2026-10-24."
 ---
 
-Release `0.4.44` is on npm as `@intentius/terragucci@0.4.44`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.44) lists every change.
+Release `0.4.45` is on npm as `@intentius/terragucci@0.4.45`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.45) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.44 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.45 init`, then merge the pipeline it writes |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.45
+
+- `waves.compose` works with `binary: choudoufu`. A composed set whose roots all run choudoufu is planned and applied once as estates, and the composed root calls each estate's own directory. Nothing is pulled or split back. A `terraform_estate_outputs` read of an estate in the same run counts as a read of that member, so a value unknown at plan holds the run for an approval as it does in any composed run.
+- The apply report records the values that were unknown at plan. Once a wave or a composed set has applied, each root's state supplies every attribute its plan marked unknown, and the report states it as the value after. A sensitive value stays sensitive and carries no value. Report schema minor 48.
+- `tf-check` checks the roots in parallel, up to `parallelism` from `terragucci.yml` at once. With one root or `parallelism: 1` it checks them one at a time as before. Terragrunt repos keep their own check script.
+- chant moves to 0.124.52 in the package and the CI images.
 
 ## In 0.4.44
 
