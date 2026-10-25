@@ -444,8 +444,10 @@ CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 # and 042bc406 drops the source excerpt from the ignored-backend warning that broke Atmos's
 # reading of "show -json" after its init. c0a7a040 takes a unit's dependency inputs from the
 # joint plan, so the Terragrunt tree declares its backend with remote_state and Terragrunt reads
-# dependency outputs from state as it does by default (choudoufu#2231).
-CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-c0a7a04043aa3cbc1aac456df315c12d9922b2ee}"
+# dependency outputs from state as it does by default (choudoufu#2231). b38a13b2 answers "output"
+# in a joint run only for a unit its plan registered, so Terragrunt's fallback from a failed state
+# read no longer strips the upstream's inputs from the joint root.
+CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-b38a13b2e54aa8fdf303e16ea9f77dd532b65725}"
 # chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
 # release, and the commit of INTENTIUS/chant the terraform lexicon is packed from. 0f051037
 # reads an Atmos stack's !terraform.output as the report's reads (chant#4432), the lines
