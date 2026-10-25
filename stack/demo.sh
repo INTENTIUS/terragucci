@@ -442,9 +442,11 @@ CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
 # the joint plan, so the merge applies the plan reviewed on the pull request (choudoufu#2226).
 CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-2100822db57cf7f32de16dacbe9b39fa359e2423}"
 # chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
-# release, and the commit of INTENTIUS/chant the terraform lexicon is packed from.
+# release, and the commit of INTENTIUS/chant the terraform lexicon is packed from. 0f051037
+# reads an Atmos stack's !terraform.output as the report's reads (chant#4432), the lines
+# between the Atmos demo's components.
 CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
-CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-1db9b16b5e05797f857e9b4870cb2b3153ac123a}"
+CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-0f051037bbc6cd3b822841d6008bd245fbb5a834}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold unless DEMO_HOLD_<SCENARIO> names one
