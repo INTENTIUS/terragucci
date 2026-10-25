@@ -6,11 +6,13 @@
 # its aws lexicon, and AWS CLI v2, which cfn-deploy runs. Build context:
 # INTENTIUS/chant examples/demo-composed-stacks/ (not read: the packages come from chant).
 # BASE: the tofu image's reference (scripts/images.ts tags).
-# CHANT_REF: the commit of INTENTIUS/chant the packages are built from. One
-# approval covers a composed run's re-plan (chant#4422, #4423, #4430) only on
-# chant main, in no release yet, so core and the aws lexicon are packed from
-# the commit with `npm pack`, as the release workflow packs them. The jobs
-# run the CLI and the lexicon as any project installs them from npm.
+# CHANT_VERSION: the chant release whose core and aws lexicon the image
+# installs. One approval covers a composed run's re-plan (chant#4422, #4423,
+# #4430) from 0.124.52.
+# CHANT_REF: a commit of INTENTIUS/chant to pack the two from instead, with
+# `npm pack` as the release workflow packs them, for a change no release
+# carries yet. Either way the jobs run the CLI and the lexicon as any project
+# installs them from npm.
 #
 # The AWS CLI is the release terragucci's drift job installs, checked against
 # the same sha256 (AWS_CLI in packages/terragucci/src/render.ts;
@@ -30,16 +32,21 @@ RUN set -e; case "$TARGETARCH" in \
   /tmp/aws/install --install-dir /usr/local/aws-cli --bin-dir /tmp/aws-bin
 
 FROM ${BASE} AS chant-packs
+ARG CHANT_VERSION
 ARG CHANT_REF
 RUN set -e; \
-  [ -n "${CHANT_REF:-}" ] || { echo "pass --build-arg CHANT_REF" >&2; exit 1; }; \
   mkdir -p /src /packs; cd /src; \
-  git init -q; git remote add origin https://github.com/INTENTIUS/chant.git; \
-  git fetch -q --depth 1 origin "$CHANT_REF"; git checkout -q FETCH_HEAD; \
-  npm ci --ignore-scripts --no-audit --no-fund >/dev/null; \
-  npm rebuild esbuild >/dev/null; \
-  (cd packages/core && npm pack --pack-destination /packs >/dev/null); \
-  (cd lexicons/aws && npm pack --pack-destination /packs >/dev/null); \
+  if [ -n "${CHANT_REF:-}" ]; then \
+    git init -q; git remote add origin https://github.com/INTENTIUS/chant.git; \
+    git fetch -q --depth 1 origin "$CHANT_REF"; git checkout -q FETCH_HEAD; \
+    npm ci --ignore-scripts --no-audit --no-fund >/dev/null; \
+    npm rebuild esbuild >/dev/null; \
+    (cd packages/core && npm pack --pack-destination /packs >/dev/null); \
+    (cd lexicons/aws && npm pack --pack-destination /packs >/dev/null); \
+  else \
+    [ -n "${CHANT_VERSION:-}" ] || { echo "pass --build-arg CHANT_VERSION or CHANT_REF" >&2; exit 1; }; \
+    npm pack --pack-destination /packs "@intentius/chant@${CHANT_VERSION}" "@intentius/chant-lexicon-aws@${CHANT_VERSION}" >/dev/null; \
+  fi; \
   ls /packs
 
 FROM ${BASE}
@@ -59,4 +66,4 @@ RUN ln -sf /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws \
   && ln -sf /opt/demo-chant-compose/node_modules/.bin/chant /usr/local/bin/chant \
   && chant --version && aws --version && git --version
 LABEL org.opencontainers.image.title="terragucci-demo-chant-compose"
-LABEL org.opencontainers.image.description="terragucci's tofu image with the chant CLI, its aws lexicon (from a chant commit) and AWS CLI v2, for the demo's compose repo"
+LABEL org.opencontainers.image.description="terragucci's tofu image with the chant CLI, its aws lexicon and AWS CLI v2, for the demo's compose repo"

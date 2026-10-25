@@ -392,12 +392,12 @@ FANOUT_JOB_IMAGE=terragucci-demo-chant-fanout:local
 # The compose repo's, built by up (stack/demo-chant-compose.Dockerfile) and named
 # by examples/demo-composed-stacks/.forgejo/workflows/chant-pr.yml in INTENTIUS/chant.
 COMPOSE_JOB_IMAGE=demo-chant-compose:local
-# The commit of INTENTIUS/chant that image's chant and aws lexicon are packed
-# from: a covered round, a preview that keeps its known outputs and planned
-# outputs that state their value (chant#4422, #4423, #4430), and a report that
-# names every read between stacks, known at plan or not (chant#4433), are on
-# main and in no release yet. DEMO_CHANT_COMPOSE_REF names another commit.
-CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-8cd73461a7050a0a793219036b9c86b09703ce7f}"
+# That image installs chant and its aws lexicon at CHANT_VERSION (below): a
+# covered round, a preview that keeps its known outputs and planned outputs
+# that state their value (chant#4422, #4423, #4430), and a report that names
+# every read between stacks, known at plan or not (chant#4433), are in 0.124.52.
+# DEMO_CHANT_COMPOSE_REF names a commit of INTENTIUS/chant to pack them from instead.
+CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-}"
 # The image a chant tool's jobs run in, which its base is applied in too.
 tool_image() { # tool
   case "$1" in
@@ -443,28 +443,22 @@ TGC_STATE_BUCKET=demo-terragrunt-choudoufu-state
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
-CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.30.0}"
-# The image builds choudoufu from this commit of INTENTIUS/choudoufu instead of
-# the release: composed estates (choudoufu#2059) and in-run reads that keep each
-# output's planned value (choudoufu#2211, so an estate's existing resources are
-# not replaced when another estate in the run changes) and joint runs (choudoufu#2222,
-# so a Terragrunt run --all or an Atmos --all plans its units as one) are on main
-# and in no release yet. DEMO_CHOUDOUFU_REF names another commit; set empty, the
-# image carries the release above again. 2100822d makes a joint run's plan files carry
-# the joint plan, so the merge applies the plan reviewed on the pull request (choudoufu#2226),
-# and 042bc406 drops the source excerpt from the ignored-backend warning that broke Atmos's
-# reading of "show -json" after its init. c0a7a040 takes a unit's dependency inputs from the
-# joint plan, so the Terragrunt tree declares its backend with remote_state and Terragrunt reads
-# dependency outputs from state as it does by default (choudoufu#2231). b38a13b2 answers "output"
-# in a joint run only for a unit its plan registered, so Terragrunt's fallback from a failed state
-# read no longer strips the upstream's inputs from the joint root.
-CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-b38a13b2e54aa8fdf303e16ea9f77dd532b65725}"
-# chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core's
-# release, and the commit of INTENTIUS/chant the terraform lexicon is packed from. 0f051037
-# reads an Atmos stack's !terraform.output as the report's reads (chant#4432), the lines
-# between the Atmos demo's components.
-CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.50}"
-CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-0f051037bbc6cd3b822841d6008bd245fbb5a834}"
+CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.31.0}"
+# 0.31.0 carries composed estates (choudoufu#2059), in-run reads that keep each output's
+# planned value (choudoufu#2211), joint runs for Terragrunt run --all and Atmos --all
+# (choudoufu#2222), plan files that carry the joint plan so the merge applies the plan
+# reviewed on the pull request (choudoufu#2226), and a joint run that takes a unit's
+# dependency inputs from the plan (choudoufu#2231). DEMO_CHOUDOUFU_REF names a commit of
+# INTENTIUS/choudoufu to build the image's choudoufu from instead, for a change no release
+# carries yet; set empty, as here, the image carries the release above.
+CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-}"
+# chant's `terraform report` in the job images (stack/demo-yodel/Dockerfile): chant core and
+# the terraform lexicon at this release, which reads an Atmos stack's !terraform.output as the
+# report's reads (chant#4432), the lines between the Atmos demo's components. The compose job
+# image installs the same release. DEMO_CHANT_REPORT_REF names a commit of INTENTIUS/chant to
+# pack the terraform lexicon from instead.
+CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.52}"
+CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.
 # DEMO_HOLD is every scenario's hold unless DEMO_HOLD_<SCENARIO> names one
@@ -561,11 +555,15 @@ if [ "$CMD" = up ]; then
       -f "$HERE/demo-chant-fanout.Dockerfile" "$(tool_tree chant-fanout)" >/dev/null \
       || fail "the fan-out job image did not build: docker build -f stack/demo-chant-fanout.Dockerfile example-demo-chant-fanout"
   fi
-  # The compose repo's the same way, with chant and its aws lexicon packed from CHANT_COMPOSE_REF.
+  # The compose repo's the same way, with chant and its aws lexicon at CHANT_VERSION, or packed from CHANT_COMPOSE_REF.
   if tool_wanted chant-compose; then
-    log "building $COMPOSE_JOB_IMAGE from chant ${CHANT_COMPOSE_REF:0:10} (a few minutes the first time)…"
+    if [ -n "$CHANT_COMPOSE_REF" ]; then
+      log "building $COMPOSE_JOB_IMAGE from chant ${CHANT_COMPOSE_REF:0:10} (a few minutes the first time)…"
+    else
+      log "building $COMPOSE_JOB_IMAGE with chant $CHANT_VERSION…"
+    fi
     docker build -q -t "$COMPOSE_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
-      --build-arg CHANT_REF="$CHANT_COMPOSE_REF" \
+      --build-arg CHANT_VERSION="$CHANT_VERSION" --build-arg CHANT_REF="$CHANT_COMPOSE_REF" \
       -f "$HERE/demo-chant-compose.Dockerfile" "$(tool_tree chant-compose)" >/dev/null \
       || fail "the compose job image did not build: docker build -f stack/demo-chant-compose.Dockerfile $(tool_tree chant-compose)"
   fi
@@ -1657,7 +1655,7 @@ scenario_name() {
     terragrunt-choudoufu-edit)   echo "Terragrunt, one plan" ;;
     terragrunt-choudoufu-create) echo "Terragrunt, a subnet" ;;
     atmos-choudoufu-edit)   echo "Atmos, one plan" ;;
-    atmos-choudoufu-create) echo "Atmos, a subnet across estates" ;;
+    atmos-choudoufu-create) echo "Atmos, a subnet" ;;
     *)          echo "$1" ;;
   esac
 }
@@ -1803,7 +1801,7 @@ say() { # step
     terragrunt-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow." ;;
     terragrunt-choudoufu-edit:planned) echo "terragrunt run --all plan runs the three units, and choudoufu plans them together. Every value is known at plan, so each card shows before and after." ;;
     terragrunt-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id." ;;
-    terragrunt-choudoufu-create:planned) echo "terragrunt run --all plan runs the three units, and choudoufu plans them together. The subnet's id exists only after it is created, so app's dependency block hands the worker a value that shows as known after apply, not the mock." ;;
+    terragrunt-choudoufu-create:planned) echo "terragrunt run --all plan runs the three units, and choudoufu plans them together. The subnet's id exists only after it is created, so the worker's subnet shows as known after apply, not the mock." ;;
     terragrunt-choudoufu-*:applied) echo "Applied. One terragrunt run --all apply applied the saved plan to network, app and edge, and each resource's record went to the one record store." ;;
     terragrunt-choudoufu-*:applying) echo "terragrunt run --all apply -- tfplan applies network, app and edge together. Each resource's record is written as it applies." ;;
     terragrunt-choudoufu-*:approved) echo "The reviewer approves pull request $PULL. The apply job checks for that approving review before it applies." ;;
@@ -1813,7 +1811,7 @@ say() { # step
     compose-*:resumed)      echo "The driver comments /terragucci apply on pull request $PULL, and the one apply runs." ;;
     atmos-choudoufu-edit:pull-request) echo "Pull request $PULL is open. Network's proxy port goes from 8080 to 8090 and it gains an admin port, 9000. App and edge follow. The workflow runs atmos terraform plan --affected --include-dependents." ;;
     atmos-choudoufu-edit:planned) echo "One plan from atmos terraform plan --affected --include-dependents covers network, app and edge. Atmos stores each component's part of it for the merge." ;;
-    atmos-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address of app's built from the subnet's id. The workflow runs atmos terraform plan --affected --include-dependents." ;;
+    atmos-choudoufu-create:pull-request) echo "Pull request $PULL is open. Network creates a subnet, app puts four resources in it, and edge reads an address built from its id. The workflow runs atmos terraform plan --affected --include-dependents." ;;
     atmos-choudoufu-create:planned) echo "One plan covers network, app and edge. The subnet's id exists only after it is created, so app's worker shows its subnet as known after apply." ;;
     atmos-choudoufu-*:approved) echo "The reviewer approves pull request $PULL as a review. The merge's workflow checks that review before it applies." ;;
     atmos-choudoufu-*:merged) echo "Pull request $PULL is merged fast-forward at ${COMMIT:0:8}, the commit Atmos stored the plans under, and the workflow applies network, app and edge in that order." ;;

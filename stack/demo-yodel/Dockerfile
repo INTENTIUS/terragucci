@@ -93,9 +93,9 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   mkdir -p /providers/registry.opentofu.org/hashicorp/aws && mv "/tmp/$f" /providers/registry.opentofu.org/hashicorp/aws/
 # chant's `terraform report` (INTENTIUS/chant#4420), which the workflows of the
 # Terragrunt and Atmos demos run after a plan and an apply to write what behold
-# reads. chant core is the published CHANT_VERSION; the terraform lexicon is
-# packed from the commit CHANT_REF of INTENTIUS/chant, because the verb is newer
-# than any release in the images. Nothing is published. It sits under
+# reads. chant core is the published CHANT_VERSION, and so is the terraform
+# lexicon unless CHANT_REF names a commit of INTENTIUS/chant to pack it from
+# instead, for a report change no release carries yet. Nothing is published. It sits under
 # /opt/chant-report with its own chant.config.json (chant finds a lexicon's
 # verbs through a project's config), and chant-report runs from there, so the
 # wave's chant on PATH stays the tofu image's.
@@ -111,12 +111,16 @@ ARG CHANT_VERSION
 ARG CHANT_REF
 RUN --mount=type=cache,target=/root/.npm \
   set -e; \
-  [ -n "${CHANT_REF:-}" ] && [ -n "${CHANT_VERSION:-}" ] || { echo "pass --build-arg CHANT_VERSION and CHANT_REF" >&2; exit 1; }; \
+  [ -n "${CHANT_VERSION:-}" ] || { echo "pass --build-arg CHANT_VERSION" >&2; exit 1; }; \
   mkdir -p /src /opt/chant-report; cd /src; \
-  git init -q; git remote add origin https://github.com/INTENTIUS/chant.git; \
-  git fetch -q --depth 1 origin "$CHANT_REF"; git checkout -q FETCH_HEAD; \
-  npm ci --ignore-scripts --no-audit --no-fund; \
-  (cd lexicons/terraform && npm pack --pack-destination /opt/chant-report >/dev/null); \
+  if [ -n "${CHANT_REF:-}" ]; then \
+    git init -q; git remote add origin https://github.com/INTENTIUS/chant.git; \
+    git fetch -q --depth 1 origin "$CHANT_REF"; git checkout -q FETCH_HEAD; \
+    npm ci --ignore-scripts --no-audit --no-fund; \
+    (cd lexicons/terraform && npm pack --pack-destination /opt/chant-report >/dev/null); \
+  else \
+    npm pack --pack-destination /opt/chant-report "@intentius/chant-lexicon-terraform@${CHANT_VERSION}" >/dev/null; \
+  fi; \
   cd /opt/chant-report; \
   printf '{"name":"chant-report","private":true}\n' > package.json; \
   printf '{"lexicons":["terraform"]}\n' > chant.config.json; \

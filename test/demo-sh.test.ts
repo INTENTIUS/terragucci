@@ -308,9 +308,12 @@ describe("stack/demo.sh under pipefail", () => {
     }
   });
 
-  it("builds the demo image's choudoufu from the commit composed estates are on, with the release as the way back", () => {
-    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-042bc40664819a30400327520ace3a89c4e2f516}"');
+  it("puts choudoufu's release in the demo image, with a commit build as the way forward", () => {
+    expect(demo).toContain('CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.31.0}"');
+    expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-}"');
     expect(demo).toContain("--build-arg CHOUDOUFU_FROM=source --build-arg CHOUDOUFU_REF=");
+    const sums = readFileSync(join(root, "stack", "demo-yodel", "choudoufu.sha256"), "utf8");
+    for (const arch of ["amd64", "arm64"]) expect(sums).toMatch(new RegExp(`^0\\.31\\.0 ${arch} [0-9a-f]{64}$`, "m"));
     const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
     expect(dockerfile).toContain("FROM choudoufu-${CHOUDOUFU_FROM} AS choudoufu");
     expect(dockerfile).toContain("go build -trimpath");
@@ -1215,7 +1218,10 @@ describe("the chant compose demo (terragucci#1269)", () => {
     expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
     expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
     expect(demo).toContain(`-f "$HERE/demo-chant-compose.Dockerfile" "$(tool_tree chant-compose)"`);
-    expect(demo).toMatch(/^CHANT_COMPOSE_REF="\$\{DEMO_CHANT_COMPOSE_REF:-[0-9a-f]{40}\}"$/m);
+    expect(demo).toContain('CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.52}"');
+    expect(demo).toContain('CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-}"');
+    expect(demo).toContain('CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-}"');
+    expect(dockerfile).toContain('"@intentius/chant@${CHANT_VERSION}" "@intentius/chant-lexicon-aws@${CHANT_VERSION}"');
     expect(demo).toMatch(/^ +chant-compose\) echo "chant's composed run: /m);
   });
 });
