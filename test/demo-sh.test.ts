@@ -332,6 +332,44 @@ describe("stack/demo.sh under pipefail", () => {
     expect(from).toBe(`${node} AS chant-report`);
   });
 
+  it("builds the job images of, and readies, only the tools DEMO_SCENARIOS runs on, and every tool here when it is unset", () => {
+    const lines = demo.split("\n");
+    const start = lines.findIndex((l) => l.startsWith('UP_TOOLS=""'));
+    const end = lines.findIndex((l, i) => i > start && l.startsWith("tool_wanted()"));
+    const script = (scenarios: string | undefined) =>
+      [
+        "set -euo pipefail",
+        `REPO_ROOT=${JSON.stringify(root)} HERE=${JSON.stringify(join(root, "stack"))}`,
+        // The product trees are cloned at run time; stand them in with an empty dir that has the same layout.
+        `DEMO_CHOUDOUFU_TREES="$(mktemp -d)"; mkdir -p "$DEMO_CHOUDOUFU_TREES/examples/demo-terragrunt" "$DEMO_CHOUDOUFU_TREES/examples/demo-atmos"`,
+        `DEMO_CHANT_TREES="$(mktemp -d)"; mkdir -p "$DEMO_CHANT_TREES/examples/demo-composed-stacks"`,
+        scenarios === undefined ? "unset DEMO_SCENARIOS" : `DEMO_SCENARIOS=${JSON.stringify(scenarios)}`,
+        fn("scenario_tool"),
+        fn("product_checkout"),
+        fn("tool_tree"),
+        lines.find((l) => l.startsWith("tool_present()"))!,
+        ...lines.slice(start, end + 1),
+        "for t in terraform chant chant-fanout chant-compose choudoufu-compose terragrunt-choudoufu atmos-choudoufu; do tool_wanted $t && echo $t; done",
+      ].join("\n");
+    const wanted = (scenarios?: string) => {
+      const r = spawnSync("bash", ["-c", script(scenarios)], { cwd: root, encoding: "utf8" });
+      expect(r.stderr).toBe("");
+      expect(r.status).toBe(0);
+      return r.stdout.trim().split("\n");
+    };
+    expect(wanted("choudoufu-compose-edit choudoufu-compose-create terragrunt-choudoufu-edit atmos-choudoufu-create")).toEqual([
+      "choudoufu-compose",
+      "terragrunt-choudoufu",
+      "atmos-choudoufu",
+    ]);
+    expect(wanted()).toEqual(["terraform", "chant", "chant-fanout", "chant-compose", "choudoufu-compose", "terragrunt-choudoufu", "atmos-choudoufu"]);
+    expect(wanted("")).toEqual(wanted());
+    for (const image of ["CHANT_JOB_IMAGE", "FANOUT_JOB_IMAGE", "COMPOSE_JOB_IMAGE", "TGC_JOB_IMAGE"]) {
+      const build = lines.findIndex((l) => l.includes(`log "building $${image}`));
+      expect(lines[build - 1], image).toMatch(/^\s+if tool_wanted /);
+    }
+  });
+
   it("tells the two applies overlapped only when each started before the other ended", () => {
     const check = (marks: Record<string, string>) => {
       const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }\nnow() { date +%s; }\nPOLL=0`;

@@ -371,6 +371,17 @@ tool_tree() { # tool -> its example tree, as an absolute path
   esac
 }
 tool_present() { [ -d "$(tool_tree "$1")" ]; }
+# The tools DEMO_SCENARIOS runs on, as " tool tool ", or empty when it is unset.
+# With it set, up builds the job images of, and readies, only those tools, so a
+# host that runs three scenarios waits for no other tool's image or base. Unset,
+# up does both for every tool whose tree is in the checkout.
+UP_TOOLS=""
+if [ -n "${DEMO_SCENARIOS:-}" ]; then
+  read -r -a up_names <<<"$DEMO_SCENARIOS"
+  UP_TOOLS=" "
+  for s in ${up_names[@]+"${up_names[@]}"}; do UP_TOOLS+="$(scenario_tool "$s" 2>/dev/null || true) "; done
+fi
+tool_wanted() { tool_present "$1" && { [ -z "$UP_TOOLS" ] || [[ "$UP_TOOLS" == *" $1 "* ]]; }; }
 
 # The image the chant repo's jobs run in, built by up (stack/demo-chant.Dockerfile)
 # and named by example-demo-chant/.forgejo/workflows/chant-pr.yml.
@@ -511,42 +522,47 @@ if [ "$CMD" = up ]; then
   # build it into the local daemon, where the runner finds it without pulling.
   # The tag names the version, not the commit, so a checkout that moved within
   # one version would keep running the images of an older commit: they are
-  # built again whenever the checkout's commit differs from the one they came from.
+  # built again whenever what they are built from changed. That is the git
+  # trees of what goes into the bundle and the images (packages/, package.json and its lockfile,
+  # the bundle's build scripts, images/), recorded in ci-images.commit, so a
+  # commit that touched none of them (a demo tree, a pin in this file, docs)
+  # builds nothing.
   # Each tool's repo runs in its own image: tofu's, and terragrunt's when that tree is here.
   refs="$(cd "$HERE/.." && npx tsx scripts/images.ts tags | awk '$1 == "tofu" || $1 == "terragrunt" { print $1, $2 }')"
   built_from="$HERE/.state/ci-images.commit"
   head="$(git -C "$HERE/.." rev-parse HEAD)"
+  inputs="$(git -C "$HERE/.." rev-parse HEAD:packages HEAD:package.json HEAD:package-lock.json HEAD:scripts/build-cli.mjs HEAD:scripts/cli-bundle.mjs HEAD:images | git hash-object --stdin)"
   missing=""
   while read -r name ref; do
     [ "$name" = tofu ] || tool_present terragrunt || continue
     docker image inspect "$ref" >/dev/null 2>&1 || missing=1
   done <<<"$refs"
-  if [ -n "$missing" ] || [ "$(cat "$built_from" 2>/dev/null || true)" != "$head" ]; then
+  if [ -n "$missing" ] || [ "$(cat "$built_from" 2>/dev/null || true)" != "$inputs" ]; then
     log "building the CI images at ${head:0:8} (a few minutes the first time)…"
     (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null && npx tsx scripts/images.ts build >/dev/null 2>&1) \
       || fail "the CI images did not build; run 'just images' to see why"
     mkdir -p "$HERE/.state"
-    echo "$head" > "$built_from"
+    echo "$inputs" > "$built_from"
   fi
   # The chant repo's jobs run in an image of their own, built on the tofu image
   # with chant at the version its tree pins (stack/demo-chant.Dockerfile), so no
   # job downloads OpenTofu or chant. Built every up: Docker's cache makes an
   # unchanged one quick, and a new tofu image or lockfile builds it again.
-  if tool_present chant; then
+  if tool_wanted chant; then
     log "building $CHANT_JOB_IMAGE…"
     docker build -q -t "$CHANT_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
       -f "$HERE/demo-chant.Dockerfile" "$(tool_tree chant)" >/dev/null \
       || fail "the chant job image did not build: docker build -f stack/demo-chant.Dockerfile example-demo-chant"
   fi
   # The fan-out repo's the same way, with the aws lexicon and AWS CLI v2 for cfn-deploy.
-  if tool_present chant-fanout; then
+  if tool_wanted chant-fanout; then
     log "building $FANOUT_JOB_IMAGE…"
     docker build -q -t "$FANOUT_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
       -f "$HERE/demo-chant-fanout.Dockerfile" "$(tool_tree chant-fanout)" >/dev/null \
       || fail "the fan-out job image did not build: docker build -f stack/demo-chant-fanout.Dockerfile example-demo-chant-fanout"
   fi
   # The compose repo's the same way, with chant and its aws lexicon packed from CHANT_COMPOSE_REF.
-  if tool_present chant-compose; then
+  if tool_wanted chant-compose; then
     log "building $COMPOSE_JOB_IMAGE from chant ${CHANT_COMPOSE_REF:0:10} (a few minutes the first time)…"
     docker build -q -t "$COMPOSE_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
       --build-arg CHANT_REF="$CHANT_COMPOSE_REF" \
@@ -3376,14 +3392,13 @@ case "$CMD" in
     started=$(now)
     curl -fsS -o /dev/null -X PUT "$FLOCI/$REPORT_BUCKET" || true
     LOOP_TOOLS=()
-    # With DEMO_SCENARIOS set, up readies only the tools those scenarios run on (the terraform tree's too, whose
-    # example-demo/ every run reads), so a tree that is in the checkout but in no scenario of this host, such as a new
-    # demo not yet checked, never stops the demo that is.
-    up_tools=" terraform "
-    for s in ${DEMO_SCENARIOS:-}; do up_tools+="$(scenario_tool "$s" 2>/dev/null || true) "; done
+    # With DEMO_SCENARIOS set, up readies only the tools those scenarios run on (tool_wanted), so a tree that is in
+    # the checkout but in no scenario of this host, such as a new demo not yet checked, never stops the demo that is,
+    # and no base the loop never resets to is applied. The terraform tree's example-demo/ is still read from the
+    # checkout (its scenarios/intro.json); its repo and base are made only when a terraform scenario runs.
     for t in "${TOOLS[@]}"; do
       tool_present "$t" || continue
-      [ -z "${DEMO_SCENARIOS:-}" ] || [[ "$up_tools" == *" $t "* ]] || { log "up: $t is in no scenario of DEMO_SCENARIOS; not readied"; continue; }
+      tool_wanted "$t" || { log "up: $t is in no scenario of DEMO_SCENARIOS; not readied"; continue; }
       LOOP_TOOLS+=("$t")
     done
     # DEMO_IMAGE is the terraform tree's image and the fan-out tree's, which
@@ -3422,14 +3437,14 @@ case "$CMD" in
         --build-arg CHOUDOUFU_VERSION="$CHOUDOUFU_VERSION" --build-arg CHANT_VERSION="$CHANT_VERSION" --build-arg CHANT_REF="$CHANT_REPORT_REF" ${choudoufu_args[@]+"${choudoufu_args[@]}"} "$HERE/demo-yodel" >/dev/null \
         || fail "$DEMO_IMAGE did not build from stack/demo-yodel/Dockerfile"
       # The Terragrunt-on-choudoufu repo's jobs run in the choudoufu image with terragrunt added.
-      if tool_present terragrunt-choudoufu; then
+      if tool_wanted terragrunt-choudoufu; then
         log "building $TGC_JOB_IMAGE…"
         docker build -q -t "$TGC_JOB_IMAGE" --build-arg CHOUDOUFU_IMAGE="$DEMO_IMAGE_CHOUDOUFU" \
           --build-arg TERRAGRUNT_IMAGE="$(awk '$1 == "terragrunt" { print $2 }' <<<"$refs")" \
           -f "$HERE/demo-terragrunt-choudoufu.Dockerfile" "$HERE/demo-yodel" >/dev/null \
           || fail "the Terragrunt-on-choudoufu job image did not build: docker build -f stack/demo-terragrunt-choudoufu.Dockerfile stack/demo-yodel"
       fi
-      if tool_present terraform; then
+      if tool_wanted terraform; then
         log "starting demo-postgres…"
         docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT" --profile demo up -d --wait demo-postgres >/dev/null \
           || fail "demo-postgres did not start"
