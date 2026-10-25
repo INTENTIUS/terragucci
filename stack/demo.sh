@@ -557,11 +557,7 @@ if [ "$CMD" = up ]; then
   fi
   # The compose repo's the same way, with chant and its aws lexicon at CHANT_VERSION, or packed from CHANT_COMPOSE_REF.
   if tool_wanted chant-compose; then
-    if [ -n "$CHANT_COMPOSE_REF" ]; then
-      log "building $COMPOSE_JOB_IMAGE from chant ${CHANT_COMPOSE_REF:0:10} (a few minutes the first time)…"
-    else
-      log "building $COMPOSE_JOB_IMAGE with chant $CHANT_VERSION…"
-    fi
+    log "building $COMPOSE_JOB_IMAGE with chant ${CHANT_COMPOSE_REF:-$CHANT_VERSION}…"
     docker build -q -t "$COMPOSE_JOB_IMAGE" --build-arg BASE="$(awk '$1 == "tofu" { print $2 }' <<<"$refs")" \
       --build-arg CHANT_VERSION="$CHANT_VERSION" --build-arg CHANT_REF="$CHANT_COMPOSE_REF" \
       -f "$HERE/demo-chant-compose.Dockerfile" "$(tool_tree chant-compose)" >/dev/null \
