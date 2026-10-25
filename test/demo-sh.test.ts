@@ -318,6 +318,20 @@ describe("stack/demo.sh under pipefail", () => {
     expect(dockerfile).toContain("COPY --from=choudoufu /out/choudoufu /usr/local/bin/choudoufu");
   });
 
+  it("keeps Go's module and build caches between demo image builds, so a moved choudoufu commit builds incrementally", () => {
+    const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
+    const stage = dockerfile.slice(dockerfile.indexOf("AS choudoufu-source"), dockerfile.indexOf("FROM choudoufu-${CHOUDOUFU_FROM}"));
+    expect(stage).toContain("RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build");
+  });
+
+  it("builds chant-report on the tofu image's own node image, so a new terragucci bundle does not install chant again", () => {
+    const dockerfile = readFileSync(join(root, "stack", "demo-yodel", "Dockerfile"), "utf8");
+    const from = dockerfile.split("\n").find((l) => l.endsWith(" AS chant-report"))!;
+    expect(from).not.toContain("${BASE}");
+    const node = readFileSync(join(root, "images", "Dockerfile.tofu"), "utf8").split("\n").find((l) => l.startsWith("FROM node:"))!;
+    expect(from).toBe(`${node} AS chant-report`);
+  });
+
   it("tells the two applies overlapped only when each started before the other ended", () => {
     const check = (marks: Record<string, string>) => {
       const stub = `operator_mark() { case "$1" in ${Object.entries(marks).map(([k, v]) => `${k}) echo "${v}" ;;`).join(" ")} *) echo "" ;; esac; }\nnow() { date +%s; }\nPOLL=0`;

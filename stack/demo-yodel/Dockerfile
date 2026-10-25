@@ -48,10 +48,16 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
   mkdir -p /out && tar -xzf "/tmp/$f" -C /out choudoufu
 # The same binary, built from a commit of INTENTIUS/choudoufu. go.mod names the
 # toolchain it needs, which GOTOOLCHAIN=auto fetches when the image's is older.
+# The module cache (with any toolchain GOTOOLCHAIN fetched) and the build cache
+# are BuildKit cache mounts, which the daemon keeps between builds: a moved
+# CHOUDOUFU_REF downloads only the modules that changed and compiles only the
+# packages that did, instead of a cold `go build` (10+ minutes on the demo
+# host's 4 vCPUs). Neither cache ends up in the image.
 FROM --platform=$BUILDPLATFORM golang:1.27 AS choudoufu-source
 ARG TARGETARCH
 ARG CHOUDOUFU_REF
-RUN set -e; \
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+  set -e; \
   [ -n "${CHOUDOUFU_REF:-}" ] || { echo "pass --build-arg CHOUDOUFU_REF with CHOUDOUFU_FROM=source" >&2; exit 1; }; \
   git init -q /src; cd /src; \
   git remote add origin https://github.com/INTENTIUS/choudoufu.git; \
@@ -93,11 +99,18 @@ RUN set -e; case "$TARGETARCH" in arm64) a=arm64 ;; *) a=amd64 ;; esac; \
 # /opt/chant-report with its own chant.config.json (chant finds a lexicon's
 # verbs through a project's config), and chant-report runs from there, so the
 # wave's chant on PATH stays the tofu image's.
-FROM ${BASE} AS chant-report
-USER root
+#
+# It is built on the node image the tofu CI image is built on (the digest in
+# images/Dockerfile.tofu), not on BASE itself: BASE carries terragucci's bundle,
+# which changes with nearly every terragucci commit, and a stage FROM it would
+# fetch and install chant again each time although CHANT_VERSION and CHANT_REF
+# did not move. npm's download cache is a BuildKit cache mount.
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS chant-report
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 ARG CHANT_VERSION
 ARG CHANT_REF
-RUN set -e; \
+RUN --mount=type=cache,target=/root/.npm \
+  set -e; \
   [ -n "${CHANT_REF:-}" ] && [ -n "${CHANT_VERSION:-}" ] || { echo "pass --build-arg CHANT_VERSION and CHANT_REF" >&2; exit 1; }; \
   mkdir -p /src /opt/chant-report; cd /src; \
   git init -q; git remote add origin https://github.com/INTENTIUS/chant.git; \
@@ -108,7 +121,7 @@ RUN set -e; \
   printf '{"name":"chant-report","private":true}\n' > package.json; \
   printf '{"lexicons":["terraform"]}\n' > chant.config.json; \
   npm install --no-audit --no-fund "@intentius/chant@${CHANT_VERSION}" ./intentius-chant-lexicon-terraform-*.tgz; \
-  rm -f ./*.tgz; rm -rf /root/.npm /src; \
+  rm -f ./*.tgz; rm -rf /src; \
   node_modules/.bin/chant terraform report 2>&1 | grep -q "^usage: chant terraform report"
 FROM ${BASE}
 COPY --from=yodel /opt/yodel /opt/yodel
