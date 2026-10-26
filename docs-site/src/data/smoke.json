@@ -1089,7 +1089,7 @@
     },
     {
       "claim": "choudoufu/concurrency",
-      "says": "with binary: choudoufu two tf-apply waves of one estate, each adding a resource whose apply takes 60 seconds, finish both in under 90 seconds; two that change different resources reach their record writes together and both apply, with no lock wait and no lock object; and two that change one resource at once settle on one record: one lands, the other fails its conditional write naming the resource and overwrites nothing, and its re-plan shows the value that landed",
+      "says": "with binary: choudoufu, two waves on one estate that each add a resource taking 60 seconds to create both finish in under 90 seconds. Two that change different resources both write their records and apply, with no lock wait and no lock object. Two that change the same resource at once: one write lands, the other fails naming the resource and overwrites nothing, and its re-plan shows the value that landed",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1097,7 +1097,7 @@
     },
     {
       "claim": "choudoufu/killed",
-      "says": "with binary: choudoufu while an approved tf-apply wave applies, its run view and progress.json show the resource whose apply returned done and the slow one after it in flight; killed then, the wave leaves a record for the first and none for the second, and the wave run again applies only the second under the same approval, with no new one",
+      "says": "with binary: choudoufu, while an approved wave applies, the run view and progress.json show the first resource done and a slow second one in progress. Killed then, the wave leaves a record for the first and none for the second, and running the wave again applies only the second, under the same approval",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1113,7 +1113,7 @@
     },
     {
       "claim": "choudoufu/iam",
-      "says": "with binary: choudoufu a role granted one estate by its ownership tag applies a change to that estate, and IAM refuses it a change to an instance of another estate",
+      "says": "with binary: choudoufu, a role that IAM limits to resources tagged with one estate applies a change to that estate, and IAM denies it a change to a resource of another estate",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1137,7 +1137,7 @@
     },
     {
       "claim": "choudoufu/rows-overlap",
-      "says": "with binary: choudoufu two pushes whose plans change different resources of one estate apply at the same time: each wave holds the resource it changes, both reach their record writes together, both apply, and no row is left held",
+      "says": "with binary: choudoufu, two pushes that change different resources of one estate apply at the same time. Each wave lists the resource it changes in _locks/apply-rows.json, both apply, and both entries are removed afterward",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1145,7 +1145,7 @@
     },
     {
       "claim": "choudoufu/rows-wait",
-      "says": "with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value",
+      "says": "with binary: choudoufu, two waves change the visibility timeout of one SQS queue on floci. The second makes no call until the first finishes its call, as the floci request log shows, then plans again and applies its own value",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1161,7 +1161,7 @@
     },
     {
       "claim": "choudoufu/rows-takeover",
-      "says": "with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call",
+      "says": "with binary: choudoufu, a wave killed after its change lands leaves its entry for the queue in _locks/apply-rows.json. The wave of the next push takes that entry over with no unlock step. Its apply finds the queue changed by the killed run and refuses its own plan before any call",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -1654,7 +1654,7 @@
     },
     {
       "claim": "choudoufu/shared-bucket",
-      "says": "with binary: choudoufu one tf-apply wave applies two estates into one record store bucket, each under its own prefix and estate tag, and the next plan of both shows no change",
+      "says": "with binary: choudoufu, one wave applies two estates that keep their records in one S3 bucket, each under its own key prefix and estate tag, and the next plan of both shows no changes",
       "needs": null,
       "verdict": "pass",
       "break": "caught",
@@ -2360,7 +2360,7 @@
     },
     {
       "claim": "state/unlock",
-      "says": "with binary: choudoufu and a root under live resource markers, terragucci unlock-state finds no state file and no state lock: it says there is nothing to release, runs no binary, asks for no approval and records nothing",
+      "says": "with binary: choudoufu, on a root whose resources carry ownership tags, terragucci unlock-state finds no state file and no state lock. It says there is nothing to release, runs no binary, asks for no approval and records nothing",
       "needs": null,
       "verdict": "pass",
       "break": "caught",

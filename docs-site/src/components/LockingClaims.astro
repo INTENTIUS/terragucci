@@ -85,6 +85,12 @@ const state = (c: Row | undefined): { cls: string; text: string } => {
 	return { cls: 'fail', text: 'fails' };
 };
 
+// Every row of the choudoufu table runs with binary: choudoufu, so its text drops that lead and reads as sentences.
+const plain = (says: string | undefined): string => {
+	const t = (says ?? '').replace(/^with binary: choudoufu,? /, '');
+	return t ? `${t[0]!.toUpperCase()}${t.slice(1)}${t.endsWith('.') ? '' : '.'}` : '';
+};
+
 const layers = [...new Set(SPEC.map((s) => s.layer))];
 const cdf = CDF.map(([claim, forge, binary]) => ({ claim, row: find(claim, forge, binary) }));
 ---
@@ -122,7 +128,7 @@ const cdf = CDF.map(([claim, forge, binary]) => ({ claim, row: find(claim, forge
 					return (
 						<tr>
 							<td><code>{claim}</code></td>
-							<td>{row?.says ?? ''}</td>
+							<td>{plain(row?.says)}</td>
 							<td class={v.cls}>{v.text}</td>
 						</tr>
 					);
