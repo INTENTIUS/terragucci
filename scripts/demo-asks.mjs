@@ -1,17 +1,29 @@
 // The prompt-driven demos read as one set (terragucci#1269): a scenario's ask.json beside the choudoufu demo's
 // (example-demo-choudoufu-compose) has the same moments in the same order, the same number of asks at each, and
-// the same prompts word for word. Everything else on screen (opening, replies, statuses, closing, the about.json
-// card) may name its own subject: estates, stacks or roots, and its own tool. differences() lists, once those
-// subject words are put as one word, what still differs, so a reader can see it is only the subject.
+// the same prompts word for word. Every other string on screen (opening, replies, statuses, actions, closing)
+// matches too once the subject words (estates, stacks or roots, and the tool's name) are put as one word.
+// Two things are left out, as ruled for epic:engine-ship round 2: tips, which only chant's demos have, and the
+// replies in EXEMPT, which state a fact about the engine and so cannot match. Diffs and lights name each
+// scenario's own resources and are left out too.
 //
 // Usage: node scripts/demo-asks.mjs <scenarios dir> [<scenarios dir> ...]
 // Each dir holds <tool>-compose-edit and <tool>-compose-create; each is compared with the choudoufu demo's.
-// Exits 1 when a moment or a prompt differs; prints the remaining differences either way.
+// Exits 1 when a moment, a prompt or any other compared string differs; prints the exempt differences either way.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 /** The choudoufu demo's scenarios, the set the others match. */
 export const REFERENCE = "example-demo-choudoufu-compose/scenarios";
+
+/**
+ * Strings that may differ from the choudoufu demo's because they state an engine fact, by where differences()
+ * puts them, with the reason. The create act's "Did anything stay locked?" ask: choudoufu holds no lock and checks
+ * its record store; CloudFormation locks each stack during its update, and chant takes each root's state lock.
+ */
+export const EXEMPT = {
+  "chant-compose-create: applied[1].reply": "engine fact: how the engine locks during an apply",
+  "chant-compose-create: applied[1].status": "engine fact: chant has no record store to check",
+};
 
 /** Words that name a demo's subject or tool, each put as one word before two strings are compared. */
 const SUBJECT = [
@@ -32,7 +44,7 @@ function moments(ask) {
   return out;
 }
 
-/** The strings an ask puts on screen besides its prompt, by field. Diffs and lights name the scenario's own resources and are left out. */
+/** The strings an ask puts on screen besides its prompt, by field. Tips are chant-only, and diffs and lights name the scenario's own resources; all three are left out. */
 const shown = (a) => Object.fromEntries(["reply", "status", "action"].flatMap((f) => (typeof a?.[f] === "string" ? [[f, a[f]]] : [])));
 
 /** What makes two scenarios not one set: a moment or a prompt that differs. Empty when they match. */
@@ -77,11 +89,14 @@ export function differences(ref, other, label = "") {
 /** The act a scenario directory plays: `edit` or `create`, from its name. */
 const act = (name) => name.match(/-(edit|create)$/)?.[1];
 
-/** Compare every scenario under `dir` with the reference scenario of its act, under the repo at `root`. */
-export function compareDir(dir, root = ".") {
+/**
+ * Compare every scenario under `dir` with the reference scenario of its act, under the repo at `root`.
+ * `differences` holds what must still change; `exempt` holds the differences EXEMPT names.
+ */
+export function compareDir(dir, root = ".", exempt = EXEMPT) {
   const ref = join(root, REFERENCE);
   const refs = Object.fromEntries(readdirSync(ref).flatMap((n) => (act(n) && existsSync(join(ref, n, "ask.json")) ? [[act(n), join(ref, n, "ask.json")]] : [])));
-  const found = { problems: [], differences: [] };
+  const found = { problems: [], differences: [], exempt: [] };
   for (const n of readdirSync(dir).sort()) {
     const file = join(dir, n, "ask.json");
     const r = refs[act(n) ?? ""];
@@ -89,7 +104,7 @@ export function compareDir(dir, root = ".") {
     const a = JSON.parse(readFileSync(r, "utf8"));
     const b = JSON.parse(readFileSync(file, "utf8"));
     found.problems.push(...problems(a, b, `${n}: `));
-    found.differences.push(...differences(a, b, `${n}: `));
+    for (const d of differences(a, b, `${n}: `)) (Object.hasOwn(exempt, d.where) ? found.exempt : found.differences).push(d);
   }
   return found;
 }
@@ -99,10 +114,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   let failed = false;
   for (const dir of process.argv.slice(2)) {
     const f = compareDir(dir, root);
-    console.log(`${dir}: ${f.problems.length ? `${f.problems.length} problems` : "same moments and prompts as the choudoufu demo"}`);
+    const bad = f.problems.length + f.differences.length;
+    console.log(`${dir}: ${bad ? `${bad} problems` : "matches the choudoufu demo but for its subject"}`);
     for (const p of f.problems) console.log(`  PROBLEM ${p}`);
-    for (const d of f.differences) console.log(`  differs ${d.where}\n    choudoufu: ${d.reference}\n    this:      ${d.other}`);
-    failed ||= f.problems.length > 0;
+    for (const d of f.differences) console.log(`  DIFFERS ${d.where}\n    choudoufu: ${d.reference}\n    this:      ${d.other}`);
+    for (const d of f.exempt) console.log(`  exempt  ${d.where} (${EXEMPT[d.where] ?? "named exemption"})\n    choudoufu: ${d.reference}\n    this:      ${d.other}`);
+    failed ||= bad > 0;
   }
   process.exit(failed ? 1 : 0);
 }
