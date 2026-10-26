@@ -114,6 +114,8 @@ import { comparePreview } from "./tg-preview-gate";
 import { readsOf, unitTexts } from "./tg-preview";
 import { rootOutputsRead } from "./linked";
 import { unknownReadLine, unknownReads, type PullReport, type UnknownRead, type WaveRead } from "./unknown-reads";
+import { waveCoverage } from "./covered-wave";
+import type { RoundCover } from "@intentius/chant/components";
 import { runPath, type IndexEntry } from "./report/store";
 import { buildReport, planFiles, planTotals, policyGate, withEnvironment, type RootInput } from "./report/build";
 import { StageObserver } from "./report/observe";
@@ -1631,6 +1633,8 @@ export interface WaveRun {
   waveReads?: number[];
   /** A Terragrunt wave: its plans against the merged pull request's preview of them. */
   preview?: ReportWave["preview"];
+  /** A wave that planned again after its upstreams applied, covered by the pull request's approval (./covered-wave.ts): that plan's digest and the inputs filled in. */
+  covered?: RoundCover;
   /** When its roots finished planning. */
   plannedAt?: string;
   /** When the wait at its gate began: the pending record its approval answered, or the first run that asked. */
@@ -1804,7 +1808,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
   const report = buildReport({
     run: { ...runFacts(repo, env, settings.forge), ...(settings.policy ? { actor: detectActor(repo, env, settings.policy.agents) } : {}), stage: APPLY_OP, wave, ...(w.share !== undefined ? { share: w.share } : {}), binary, runtime: settings.runtime, started: w.started, finished: new Date().toISOString(), terragucci: VERSION },
     roots: w.planned.map((p) => withEnvironment(planInput(p), envOf(p.root))),
-    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.blocked?.size ? { blocked: w.blocked } : {}), ...(w.outcomes?.length ? { outcomes: w.outcomes } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
+    waves: [{ number: wave, roots: w.roots, ...(waveEnvironments.length ? { environments: waveEnvironments } : {}), ...(w.digest ? { setDigest: w.digest } : {}), ...(w.approval ? { approval: w.approval } : {}), ...(w.gate ? { gate: w.gate } : {}), ...(w.waitingSince ? { waitingSince: w.waitingSince } : {}), ...(w.refused ? { refused: w.refused } : {}), ...(w.review ? { review: w.review } : {}), ...(w.excluded?.length ? { excluded: w.excluded } : {}), ...(w.approvalRules?.length ? { approvalRules: w.approvalRules } : {}), ...(w.policyGate ? { policyGate: w.policyGate } : {}), ...(w.heldBySteps ? { heldBySteps: w.heldBySteps } : {}), ...(w.covered ? { covered: w.covered } : {}), ...(w.waveCost ? { cost: w.waveCost } : {}), ...(w.state ? { state: w.state } : {}), ...(w.blocked?.size ? { blocked: w.blocked } : {}), ...(w.outcomes?.length ? { outcomes: w.outcomes } : {}), ...(w.waveReads?.length ? { reads: w.waveReads } : {}), ...(w.preview ? { preview: w.preview } : {}), ...(w.composed ? { composed: w.composed } : {}) }],
     redacted,
     ...(w.policy ? { policy: w.policy } : {}),
   });
@@ -2081,7 +2085,8 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   // An Atmos or Terramate read was reviewed on the upstream's applied state: one the change moved holds it the same way (#1053).
   // In a composed run, a root that reads another root's value unknown at plan time applies a value nobody reviewed: the same hold.
   const linkedReads = deciding && changes > 0 && gate !== "never" ? [...rootReads(repo, waves, wave, w.reads, changing), ...toolReads(repo, waves, wave, changing), ...(composed?.reads ?? [])] : [];
-  const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads)).length > 0;
+  const fresh = (composed ? w.planned! : planned).filter((p) => p.root !== target && changesSomething(p.plan)).map((p) => ({ root: p.root, plan: p.plan }));
+  const byReads = (await unknownReadHold(repo, options, ctx, w, label, gate, linkedReads, fresh)).length > 0;
   // The policy's hold and allow_unattended rules, over the plans that change something (policy.outcomes at base).
   const ruled = deciding && changes > 0 ? waveRules(repo, ctx, j, (composed ? w.planned! : planned).filter((p) => changesSomething(p.plan)), gate, destroys > 0) : undefined;
   // A hook that asks for an approval, a change over cost.approve_above at base, or a hold rule, holds the wave whatever the gate policy says.
@@ -2860,7 +2865,7 @@ function unitReads(repo: string, waves: readonly string[][], wave: number, edges
  * read holds the wave. Each read is logged, with the outputs that were
  * unknown and the wave that settled them.
  */
-async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: WavesContext, w: WaveRun, label: string, gate: Gate, reads: WaveRead[]): Promise<UnknownRead[]> {
+async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: WavesContext, w: WaveRun, label: string, gate: Gate, reads: WaveRead[], fresh?: { root: string; plan: unknown }[]): Promise<UnknownRead[]> {
   if (reads.length === 0) return [];
   const env = options.env ?? process.env;
   const settings = w.settings;
@@ -2887,6 +2892,7 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
     const body = await store!.get(key(prefix, facts.project, path, "report.json"));
     return body === undefined ? undefined : (JSON.parse(body) as Report);
   };
+  let pulled: Promise<PullReport & { path?: string }> | undefined;
   const verdict = await unknownReads(reads, {
     async upstreamPlans(upstream, k) {
       // Every plan of the upstream at this commit: this job's, then each run's of its wave in the bucket (a comment's apply plans
@@ -2913,32 +2919,55 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
       const row = rows.find((c) => c.commit === facts.commit && c.root === upstream && (c.wave === undefined || c.wave === k));
       return row ? `${row.path} applied ${upstream} at this commit before this run (${row.address})` : undefined;
     },
-    async pullReport(): Promise<PullReport> {
-      if (!store) return { missing: storeError ? `the reports bucket could not be read (${storeError})` : "the config names no reports bucket to read the pull request's report from" };
-      const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-      let pr: { number: number; head: string } | undefined;
-      try {
-        if (env.GITLAB_CI === "true" || settings?.forge === "gitlab") {
-          const mr = await gitlabMergeRequestOf(gitlabCalls(env, options.fetch), sha, env);
-          pr = mr ? { number: mr.iid, head: typeof mr.sha === "string" ? mr.sha : "" } : undefined;
-        } else {
-          pr = await pullOf(forgeCalls(env, options.fetch), env, sha);
-        }
-      } catch (e) {
-        return { missing: `the forge could not say which pull request made ${sha.slice(0, 8)} (${(e as Error).message.split("\n")[0]})` };
-      }
-      if (!pr) return { missing: `no pull request made ${sha.slice(0, 8)} (a direct push, or a merge the forge maps to no pull request)` };
-      const plans = (await indexRows()).filter((r) => r.stage === "tf-plan" && (r.commit === pr.head || r.pull_request === String(pr.number)));
-      // The plan of the head reviewed, else the newest plan of the pull request.
-      const row = plans.find((r) => r.commit === pr.head) ?? plans[0];
-      if (!row) return { missing: `the reports bucket holds no plan report of pull request ${pr.number}` };
-      const report = await reportAt(row.path);
-      if (!report) return { missing: `the reports bucket has no ${row.path}/report.json` };
-      return { report, from: `pull request ${pr.number}'s plan of ${row.commit.slice(0, 8)}` };
-    },
+    pullReport: () => (pulled ??= pullReport()),
   });
+  async function pullReport(): Promise<PullReport & { path?: string }> {
+    if (!store) return { missing: storeError ? `the reports bucket could not be read (${storeError})` : "the config names no reports bucket to read the pull request's report from" };
+    const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+    let pr: { number: number; head: string } | undefined;
+    try {
+      if (env.GITLAB_CI === "true" || settings?.forge === "gitlab") {
+        const mr = await gitlabMergeRequestOf(gitlabCalls(env, options.fetch), sha, env);
+        pr = mr ? { number: mr.iid, head: typeof mr.sha === "string" ? mr.sha : "" } : undefined;
+      } else {
+        pr = await pullOf(forgeCalls(env, options.fetch), env, sha);
+      }
+    } catch (e) {
+      return { missing: `the forge could not say which pull request made ${sha.slice(0, 8)} (${(e as Error).message.split("\n")[0]})` };
+    }
+    if (!pr) return { missing: `no pull request made ${sha.slice(0, 8)} (a direct push, or a merge the forge maps to no pull request)` };
+    const plans = (await indexRows()).filter((r) => r.stage === "tf-plan" && (r.commit === pr.head || r.pull_request === String(pr.number)));
+    // The plan of the head reviewed, else the newest plan of the pull request.
+    const row = plans.find((r) => r.commit === pr.head) ?? plans[0];
+    if (!row) return { missing: `the reports bucket holds no plan report of pull request ${pr.number}` };
+    const report = await reportAt(row.path);
+    if (!report) return { missing: `the reports bucket has no ${row.path}/report.json` };
+    return { report, from: `pull request ${pr.number}'s plan of ${row.commit.slice(0, 8)}`, path: row.path };
+  }
   for (const l of verdict.lines) console.log(`${label}: ${l}`);
   for (const u of verdict.unknown) console.log(`${label}: ${unknownReadLine(u)}`);
+  if (verdict.unknown.length && fresh?.length && store) {
+    // A covered round (chant#4422): the plan made on those outputs against the pull request's plan of the same roots.
+    const got = await (pulled ??= pullReport()).catch((e: Error): PullReport & { path?: string } => ({ missing: `the pull request's report could not be read (${e.message.split("\n")[0]})` }));
+    if ("missing" in got) console.log(`${label}: the pull request's plan cannot be compared with this one: ${got.missing}`);
+    else {
+      const previewed = await Promise.all(
+        fresh.map(async (f) => {
+          const json = got.report.roots.find((x) => x.path === f.root)?.plan.json;
+          const text = json && got.path ? await store!.get(key(prefix, facts.project, got.path, json)).catch(() => undefined) : undefined;
+          return { root: f.root, fresh: f.plan, ...(text !== undefined ? { previewed: JSON.parse(text) as unknown } : {}) };
+        }),
+      );
+      const wave = got.report.waves.find((x) => fresh.some((f) => x.roots.includes(f.root)));
+      const cover = waveCoverage(previewed, verdict.unknown, wave?.set_digest ?? "");
+      if (cover.covered && cover.digest) {
+        w.covered = { digest: cover.digest, filledInputs: cover.filledInputs };
+        console.log(`${label}: the plan made on those outputs is covered by ${got.from} (digest ${cover.digest}): it differs only where ${cover.filledInputs.length ? cover.filledInputs.join(", ") : "the outputs it read"}, previewed as known after apply, filled in, so the approval of that plan stands for it`);
+        return [];
+      }
+      console.log(`${label}: the plan made on those outputs is not covered by ${got.from}: ${cover.covered ? "the pull request's wave has no digest to bind it to" : cover.reason}`);
+    }
+  }
   if (verdict.unknown.length) console.log(`${label}: nobody reviewed the plan it made on those outputs, so it waits for an approval of it${gate === "always" ? "" : ` although gate is ${gate}`}`);
   return verdict.unknown;
 }
@@ -3263,6 +3292,15 @@ async function beforeGateRules(repo: string, options: ApplyWaveOptions, ctx: Wav
       console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished, but ${c.why}, so these plans need an approval of their own`);
     }
   }
+  // A wave that planned again after its upstreams applied, covered by the pull request's plan (unknownReadHold): an approval of that plan's digest at this gate stands for it.
+  if (w.covered) {
+    const first = decideGate(ruled, name, w.covered.digest, now);
+    if (first.status === "approved") {
+      appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: first.by, timestamp: now, planDigest: digest, note: `covered by the approval of ${w.covered.digest} by ${first.by}: only ${w.covered.filledInputs.join(", ") || "inputs previewed as known after apply"} differ` }, {}, `Approved as a covered round: ${APPLY_OP} ${name}`);
+      console.log(`${label}: ${first.by} approved ${w.covered.digest}, the pull request's plan these plans are covered by, so that approval stands for ${digest}`);
+      return undefined;
+    }
+  }
   if (decision.spent) console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);
   // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
   if (rule.mode === "pr-review") {
@@ -3270,7 +3308,7 @@ async function beforeGateRules(repo: string, options: ApplyWaveOptions, ctx: Wav
     const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
     const priced = costMember(w.waveCost);
     const changesDigest = reviewDigest(planned.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
-    const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest, ...(involved ? { involved } : {}) });
+    const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge, sha, wave, digest: changesDigest, ...(w.covered ? { covered: w.covered.digest } : {}), ...(involved ? { involved } : {}) });
     if (r.excluded?.length) {
       for (const e of r.excluded) console.log(`${label}: ${notCounted(e, "review")}`);
       w.excluded = mergeExcluded(w.excluded ?? [], r.excluded);
