@@ -13,7 +13,7 @@
  */
 import type { ChangeSetDocument } from "@intentius/chant/change-set";
 import { coveredRound, type CoverageSide, type PlanShape, type RoundCoverage } from "@intentius/chant/components";
-import { terraformPlanShape } from "@intentius/chant-lexicon-terraform";
+import { terraformPlanShape } from "@intentius/chant-lexicon-terraform/plan-shape";
 import type { UnknownRead } from "./unknown-reads";
 
 /** One root of the wave as the pull request planned it, and as the wave planned it now. */
