@@ -51,6 +51,11 @@
 # Its scenarios are chant-compose-edit and chant-compose-create. Like the other
 # chant repos, its base is applied by the driver outside the pipeline and so is
 # each reset (stacks_back); the base commit says [skip ci].
+# chant's Terraform version of the same acts, examples/demo-composed-roots, is
+# not a kiosk act (terragucci#1269 ruling): its e2e test in chant runs it, and
+# the compose-* acts here run chant's Terraform composed run through terragucci.
+# scripts/demo-asks.mjs holds every demo's ask.json to the choudoufu demo's
+# moments and prompts.
 # The fan-out repo, <admin>/demo-fanout from example-demo-fanout/, is fifteen
 # plain roots of SQS queues and DynamoDB tables in floci: network, cluster-a
 # and cluster-b on it, and six apps on each cluster, each with its own state.
