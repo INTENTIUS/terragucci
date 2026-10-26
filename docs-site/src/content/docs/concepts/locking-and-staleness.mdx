@@ -137,7 +137,7 @@ The role also reads with `ec2:Describe*`. [choudoufu's marker spec](https://gith
 
 ### One backend for all your estates
 
-Values the cloud has nowhere to keep go in a record store: an S3 bucket you own. One bucket serves every estate, and each root names its estate and the bucket:
+A record store holds what a read of a resource leaves out, such as a generated password. One S3 bucket serves every estate, and each root names its estate and the bucket:
 
 ```hcl
 terraform {
