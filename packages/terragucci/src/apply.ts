@@ -2195,7 +2195,7 @@ async function waveComposition(repo: string, options: ApplyWaveOptions, waves: s
     console.log(`wave ${options.wave}: compose: the roots this change reaches could not be found (${(e as Error).message.split("\n")[0]}), so every root counts`);
   }
   const binaries = new RootBinaries(repo, options.binary, settings.version, env, options.installer);
-  const c = compositionFor(repo, {
+  const c = await compositionFor(repo, {
     all,
     ...(selected ? { selected } : {}),
     waves,
@@ -2959,7 +2959,7 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
         }),
       );
       const wave = got.report.waves.find((x) => fresh.some((f) => x.roots.includes(f.root)));
-      const cover = waveCoverage(previewed, verdict.unknown, wave?.set_digest ?? "");
+      const cover = await waveCoverage(previewed, verdict.unknown, wave?.set_digest ?? "");
       if (cover.covered && cover.digest) {
         w.covered = { digest: cover.digest, filledInputs: cover.filledInputs };
         console.log(`${label}: the plan made on those outputs is covered by ${got.from} (digest ${cover.digest}): it differs only where ${cover.filledInputs.length ? cover.filledInputs.join(", ") : "the outputs it read"}, previewed as known after apply, filled in, so the approval of that plan stands for it`);

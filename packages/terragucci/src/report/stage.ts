@@ -1432,7 +1432,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   if (!drift && !options.root && settings.waves?.compose === true && roots.length > 0) {
     // One apply job per identity: the composed run's roots must be in one group, as the apply checks (../cloud-identity.ts).
     const groups = applyGroups(settings, all);
-    const c = compositionFor(repo, { all, ...(selected ? { selected } : {}), waves: applyOrder, max: settings.waves.compose_max, env: binEnv, binary: (r) => binaries.expected(r), deps: rootDependencies(repo, all), after, ...(groups ? { groupOf: (r: string) => groups.find((g) => g.roots.includes(r))?.name ?? "" } : {}) });
+    const c = await compositionFor(repo, { all, ...(selected ? { selected } : {}), waves: applyOrder, max: settings.waves.compose_max, env: binEnv, binary: (r) => binaries.expected(r), deps: rootDependencies(repo, all), after, ...(groups ? { groupOf: (r: string) => groups.find((g) => g.roots.includes(r))?.name ?? "" } : {}) });
     composition = c;
     const refusedMember = c.fallback ? undefined : c.roots.find((r) => pinRefusals.has(r) || sourceRefusals.has(r));
     if (refusedMember) composition = { ...c, wave: undefined, fallback: { kind: "plan-failed", root: refusedMember, reason: `\`${refusedMember}\` is refused before its init, so the roots plan one by one and the refusal shows against it` } };

@@ -32,21 +32,11 @@
  * read and written first by the next run.
  */
 import { join, resolve } from "node:path";
-// Subpaths, not the lexicon's index: the index carries its lint plugin, which
+// chant's composed run is loaded on first use (./chant-next.ts): chant 0.124.52, the newest published, has none, and
+// with it `waves.compose` applies in waves. Subpaths, not the lexicon's index: the index carries its lint plugin, which
 // imports typescript, and the CLI bundle leaves typescript out (scripts/cli-bundle.mjs).
-import {
-  compositionFor as chantCompositionFor,
-  moduleNames,
-  readOrder,
-  type Composition as ChantComposition,
-  type ComposeFallbackKind as ChantFallbackKind,
-} from "@intentius/chant-lexicon-terraform/compose";
-import { EstateRun, type ComposedRunApply, type ComposedRunPlan } from "@intentius/chant-lexicon-terraform/compose/estate";
-import { ComposedRun as ChantComposedRun, type StateRunApply, type StateRunPlan } from "@intentius/chant-lexicon-terraform/compose/run";
-import type { ComposedMemberRead } from "@intentius/chant-lexicon-terraform/compose/slice";
+import { chantCompose, chantComposeRun, type ChantComposedRoot, type ChantComposeRun, type ChantComposition, type ChantFallbackKind, type ChantMemberRead, type ChantRunner, type ChantStateRunApply } from "./chant-next";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
-import { COMPOSE_DIR as CHANT_COMPOSE_DIR, writeEstateRoot as chantEstateRoot, type ComposedRoot } from "@intentius/chant-lexicon-terraform/compose/root";
-import { moduleValues } from "@intentius/chant-lexicon-terraform/compose/slice";
 import type { DriverComponent } from "@intentius/chant/components";
 import { backendConfigArgs, explicitOrder, initBackendConfigs, type WavesAfter } from "./detect";
 import { rootWorkspace } from "./backend";
@@ -55,13 +45,29 @@ import type { BinaryExec } from "./migrate";
 import type { ReportCompose, ReportComposedMember, ReportRead } from "./report/schema";
 import type { HookMoment } from "./hooks";
 
-export { composeSet } from "@intentius/chant-lexicon-terraform/compose";
+/** The members a composed run covers: those of `all` the change reaches and every one of `all` they read, followed upstream. chant's, kept here so a change that applies in waves still names them. */
+export function composeSet(all: readonly string[], selected: ReadonlySet<string> | undefined, deps: ReadonlyMap<string, ReadonlySet<string>>): string[] {
+  const set = new Set(selected ? [...selected].filter((r) => all.includes(r)) : all);
+  const queue = [...set];
+  while (queue.length > 0) {
+    const r = queue.pop()!;
+    for (const u of deps.get(r) ?? []) {
+      if (!set.has(u) && all.includes(u)) {
+        set.add(u);
+        queue.push(u);
+      }
+    }
+  }
+  return [...set].sort();
+}
 
 /** Where the composed root is written, in the checkout: chant's `.chant-compose/`. */
-export const COMPOSE_DIR = CHANT_COMPOSE_DIR;
+export const COMPOSE_DIR = ".chant-compose";
 /** Where a state is kept, under the job's report directory (kept out of the reports bucket), when its own backend could not take it either. */
 export const UNWRITTEN_REPORT_DIR = "terragucci-report";
 export const DEFAULT_COMPOSE_MAX = 10;
+/** Why a composed run cannot run when the installed chant lacks chant's run (terragucci#1278). */
+export const NO_CHANT_RUN = "the installed chant has no composed run (`@intentius/chant-lexicon-terraform/compose/run`)";
 
 /** The run target a wave's composed run is to chant: one run, one digest, in place of its roots. */
 export const composeTarget = (wave: number): string => `compose:wave-${wave}`;
@@ -204,17 +210,27 @@ function inTerragucciTerms(f: { kind: string; reason: string }): string {
     .replace(/terraform-apply step/g, "root");
 }
 
+/** The reason a change applies in waves when the installed chant has no composed run (terragucci#1278). */
+export const NO_CHANT_COMPOSE = "the installed chant has no composed run (`@intentius/chant-lexicon-terraform/compose`), so the roots apply one by one";
+
 /**
  * What `waves.compose` comes to for a change: chant's composition of the
  * pipeline's roots, the wave that runs it and each root's module, or why it
  * applies in waves. A change that cannot compose whole applies wholly in
- * waves: the first root chant leaves out gives the reason.
+ * waves: the first root chant leaves out gives the reason. With a chant that
+ * has no composed run, every change applies in waves, with the `off` kind.
  */
-export function compositionFor(repo: string, input: CompositionInput): Composition {
+export async function compositionFor(repo: string, input: CompositionInput): Promise<Composition> {
   const max = input.max ?? DEFAULT_COMPOSE_MAX;
+  const ownWaves = (roots: readonly string[]) => new Map(input.waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)).filter(([r]) => roots.includes(r)));
+  const lib = await chantCompose();
+  if (!lib) {
+    const roots = composeSet(input.all, input.selected, input.deps);
+    return { roots, order: roots, max, modules: new Map(), reads: new Map(), ownWave: ownWaves(roots), fallback: { kind: "off", reason: NO_CHANT_COMPOSE } };
+  }
   const { terraform, components } = chantProject(repo, input);
   const identity = (r: string): string => `${identityOf(input.env, r)}${input.groupOf ? `\ngroup ${input.groupOf(r)}` : ""}`;
-  const chant = chantCompositionFor({
+  const chant = lib.compositionFor({
     projectRoot: resolve(repo),
     terraform,
     components,
@@ -227,7 +243,7 @@ export function compositionFor(repo: string, input: CompositionInput): Compositi
     },
   });
   const roots = chant.candidates;
-  const ownWave = new Map(input.waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)).filter(([r]) => roots.includes(r)));
+  const ownWave = ownWaves(roots);
   // chant judges each member first and the whole change after, so its `one-root` over a change of two or more
   // roots means its checks left one or none: the first root left out is the reason. A whole-change reason
   // chant gives over the roots themselves (`cli-args`, `too-many-roots`, one root reached) stands.
@@ -236,9 +252,9 @@ export function compositionFor(repo: string, input: CompositionInput): Compositi
   const reads = new Map(roots.map((r) => [r, (chant.reads.get(r) ?? []).flatMap((x) => (x.via === "vars" ? [] : [{ name: x.name, upstream: x.upstream }]))] as const));
   const base = {
     roots,
-    order: chant.order.length ? chant.order : readOrder(roots, input.deps),
+    order: chant.order.length ? chant.order : lib.readOrder(roots, input.deps),
     max,
-    modules: chant.modules.size ? chant.modules : moduleNames(roots),
+    modules: chant.modules.size ? chant.modules : lib.moduleNames(roots),
     reads,
     ownWave,
     // chant composes the members it kept as estates; a change that leaves a root out applies wholly in waves, so it is no estate run.
@@ -261,9 +277,11 @@ export function fallbackLine(f: ComposeFallback): string {
 }
 
 /** The composed root of an estate run, written into the checkout: chant's, one `module` call per estate. */
-export function writeEstateRoot(repo: string, c: Composition): ComposedRoot {
+export async function writeEstateRoot(repo: string, c: Composition): Promise<ChantComposedRoot> {
   if (!c.chant) throw new Error("the composition was not made by compositionFor");
-  return chantEstateRoot({ projectRoot: resolve(repo), composition: c.chant });
+  const run = await chantComposeRun();
+  if (!run) throw new Error(NO_CHANT_RUN);
+  return run.writeEstateRoot({ projectRoot: resolve(repo), composition: c.chant });
 }
 
 // ── the run ───────────────────────────────────────────────────────────────
@@ -334,7 +352,7 @@ export interface ComposedApply {
 }
 
 /** A member's read of another member, as the report names it. */
-function reportRead(r: ComposedMemberRead): ReportRead {
+function reportRead(r: ChantMemberRead): ReportRead {
   return { upstream: r.upstream, data: r.name, outputs: "planned", ...(r.unknown.length ? { unknown: [...r.unknown] } : {}), composed: true };
 }
 
@@ -345,7 +363,8 @@ function reportRead(r: ComposedMemberRead): ReportRead {
  * says what came of it in terragucci's shapes.
  */
 export class ComposedRun {
-  private inner?: ChantComposedRun | EstateRun;
+  private inner?: ChantRunner;
+  private lib?: ChantComposeRun;
   private planned?: ComposedPlan;
 
   constructor(private readonly o: ComposeRunOptions) {}
@@ -363,11 +382,14 @@ export class ComposedRun {
     return this.c.chant?.estate === true;
   }
 
-  /** chant's run, made once. Throws for a composition chant did not make or that falls back. */
-  private runner(): ChantComposedRun | EstateRun {
+  /** chant's run, made once. Throws for a composition chant did not make or that falls back, or when the installed chant has no composed run. */
+  private async runner(): Promise<ChantRunner> {
     if (this.inner) return this.inner;
     const { chant, terraform } = this.c;
     if (!chant || !terraform) throw new Error("the composition was not made by compositionFor");
+    const lib = (this.lib ??= await chantComposeRun());
+    if (!lib) throw new Error(NO_CHANT_RUN);
+    const { EstateRun, ComposedRun: ChantComposedRun } = lib;
     const log = (l: string) => this.o.hooks.log(l);
     if (chant.estate) {
       this.inner = new EstateRun({ projectRoot: resolve(this.o.repo), composition: chant, terraform, env: this.o.env, binary: this.o.binary.path, work: this.o.work, ...(this.o.exec ? { exec: this.o.exec } : {}), log });
@@ -436,9 +458,9 @@ export class ComposedRun {
 
   /** Plan the composed run once, cut back into each member's part. */
   async plan(): Promise<ComposedPlan> {
-    let runner: ChantComposedRun | EstateRun;
+    let runner: ChantRunner;
     try {
-      runner = this.runner();
+      runner = await this.runner();
     } catch (e) {
       return this.failedPlan((e as Error).message);
     }
@@ -446,7 +468,7 @@ export class ComposedRun {
       const stop = await this.estateBefore();
       if (stop) return stop;
     }
-    const p: ComposedRunPlan | StateRunPlan = await runner.plan();
+    const p = await runner.plan();
     if (p.fallback) return this.failedPlan(p.fallback.reason, p.fallback.member);
     if (p.error || p.plan === undefined) return this.failedPlan(p.error ?? "the composed run did not plan", p.member);
     if (this.estate) {
@@ -464,7 +486,7 @@ export class ComposedRun {
       texts.set(r, p.texts[r] ?? "");
       if (m?.reads.length) reads.set(r, m.reads.map(reportRead));
     }
-    const unknown = (p as Partial<StateRunPlan>).unknownReads ?? this.c.order.filter((r) => (p.members[r]?.reads ?? []).some((x) => x.unknown.length > 0)).sort();
+    const unknown = p.unknownReads ?? this.c.order.filter((r) => (p.members[r]?.reads ?? []).some((x) => x.unknown.length > 0)).sort();
     const planned: ComposedPlan = { plan: p.plan, planFile: p.planFile, text: p.text, digest: p.digest, generated: p.generated, slices, texts, reads, unknown, changes: p.counts.changes, destroys: p.counts.destroys, summary: p.summary };
     this.planned = planned;
     return planned;
@@ -491,8 +513,8 @@ export class ComposedRun {
         if (e) return notStarted(`a step before the apply of ${r} failed, so nothing applied`, r, e);
       }
     }
-    const a: ComposedRunApply | StateRunApply = await this.inner.apply();
-    const state = "settled" in a ? (a as StateRunApply) : undefined;
+    const a = await this.inner.apply();
+    const state = "settled" in a ? (a as ChantStateRunApply) : undefined;
     const members: ReportComposedMember[] = this.c.order.map((r) => {
       const o = a.members[r];
       if (!o) return { root: r, module: module(r) };
@@ -525,7 +547,7 @@ export class ComposedRun {
     else {
       // What each estate holds after the apply: the post-apply plan's prior state, which choudoufu builds from the records and the live system, cut per member.
       const prior = (a.after as { prior_state?: { values?: unknown } } | undefined)?.prior_state;
-      if (prior) for (const r of this.c.order) shown.set(r, { ...prior, values: moduleValues(prior.values, this.c.modules.get(r)!, {}) });
+      if (prior) for (const r of this.c.order) shown.set(r, { ...prior, values: this.lib!.moduleValues(prior.values, this.c.modules.get(r)!, {}) });
     }
     const settled = state ? state.settled : [...this.c.order];
     const error = ok ? undefined : (a.error ?? members.find((m) => m.error)?.error ?? "the composed apply failed");

@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { chantNextParts } from "../src/chant-next";
 import { COMPOSE_DIR, ComposedRun, compositionFor, reportCompose, writeEstateRoot, type Composition } from "../src/compose";
 import { tmp, write } from "./helpers";
 
@@ -47,9 +48,14 @@ const input = (binary: (r: string) => { name: string; version?: string }) => ({
   deps,
 });
 
-describe("compositionFor on choudoufu estates", () => {
-  it("composes roots that all run choudoufu, in read order, as estates", () => {
-    const c = compositionFor(tree(), input(() => ({ name: "choudoufu" })));
+// chant's composed run is in no published chant yet (terragucci#1278): these run when the installed chant has it.
+// test/compose-without-chant.test.ts holds what happens without it.
+const parts = await chantNextParts();
+const withChant = parts.compose && parts.composeRun;
+
+describe.runIf(withChant)("compositionFor on choudoufu estates", () => {
+  it("composes roots that all run choudoufu, in read order, as estates", async () => {
+    const c = await compositionFor(tree(), input(() => ({ name: "choudoufu" })));
     expect(c.fallback).toBeUndefined();
     expect(c.estate).toBe(true);
     expect(c.order).toEqual(["network", "app", "edge"]);
@@ -60,33 +66,33 @@ describe("compositionFor on choudoufu estates", () => {
     expect(c.reads.get("network")).toEqual([]);
   });
 
-  it("does not fall back for roots in different apply groups or roles, which each take theirs from their own provider blocks", () => {
-    const c = compositionFor(tree(), { ...input(() => ({ name: "choudoufu" })), groupOf: (r) => r });
+  it("does not fall back for roots in different apply groups or roles, which each take theirs from their own provider blocks", async () => {
+    const c = await compositionFor(tree(), { ...input(() => ({ name: "choudoufu" })), groupOf: (r) => r });
     expect(c.fallback).toBeUndefined();
-    const stock = compositionFor(tree(), { ...input(() => ({ name: "tofu" })), groupOf: (r) => r });
+    const stock = await compositionFor(tree(), { ...input(() => ({ name: "tofu" })), groupOf: (r) => r });
     expect(stock.fallback?.kind).toBe("identity");
   });
 
-  it("still falls back for choudoufu mixed with another binary", () => {
-    const c = compositionFor(tree(), input((r) => ({ name: r === "edge" ? "tofu" : "choudoufu" })));
+  it("still falls back for choudoufu mixed with another binary", async () => {
+    const c = await compositionFor(tree(), input((r) => ({ name: r === "edge" ? "tofu" : "choudoufu" })));
     expect(c.fallback?.kind).toBe("binary");
     expect(c.estate).toBeUndefined();
   });
 
-  it("falls back for a root with no live block", () => {
+  it("falls back for a root with no live block", async () => {
     const dir = tree();
     write(dir, { "edge/main.tf": `output "x" {\n  value = 1\n}\n` });
-    const c = compositionFor(dir, input(() => ({ name: "choudoufu" })));
+    const c = await compositionFor(dir, input(() => ({ name: "choudoufu" })));
     expect(c.fallback).toMatchObject({ kind: "backend", root: "edge" });
   });
 });
 
-describe("the composed root of an estate run", () => {
-  it("holds one module call per estate and nothing else, and changes no estate file", () => {
+describe.runIf(withChant)("the composed root of an estate run", () => {
+  it("holds one module call per estate and nothing else, and changes no estate file", async () => {
     const dir = tree();
     const before = Object.fromEntries(["network", "app", "edge"].map((r) => [r, readFileSync(join(dir, r, "main.tf"), "utf-8")]));
-    const c = compositionFor(dir, input(() => ({ name: "choudoufu" })));
-    const root = writeEstateRoot(dir, c);
+    const c = await compositionFor(dir, input(() => ({ name: "choudoufu" })));
+    const root = await writeEstateRoot(dir, c);
     const main = readFileSync(join(dir, COMPOSE_DIR, "main.tf"), "utf-8");
     expect(main.match(/^module "/gm)).toHaveLength(3);
     expect(main).toContain('module "network" {\n  source = "../network"\n}');
@@ -123,10 +129,10 @@ const after = {
   },
 };
 
-describe("a composed run of estates", () => {
+describe.runIf(withChant)("a composed run of estates", () => {
   it("plans and applies from the composed root with no state handling, and reports each estate", async () => {
     const dir = tree();
-    const c = compositionFor(dir, input(() => ({ name: "choudoufu" })));
+    const c = await compositionFor(dir, input(() => ({ name: "choudoufu" })));
     const calls: { args: string[]; dir: string }[] = [];
     const exec = async (_bin: string, args: string[], at: string) => {
       calls.push({ args, dir: at });
