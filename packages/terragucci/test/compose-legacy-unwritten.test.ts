@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { chantNextParts } from "../src/chant-next";
 import { COMPOSE_DIR, ComposedRun, compositionFor } from "../src/compose";
 import { tmp, write } from "./helpers";
 
@@ -23,7 +24,10 @@ const tree = (): string =>
     "app/main.tf": `terraform {\n  backend "local" {}\n}\nresource "terraform_data" "web" {}\n`,
   });
 
-describe("a state the old composed run kept unwritten", () => {
+// chant's composed run is in no published chant yet (terragucci#1278): this runs when the installed chant has it.
+const parts = await chantNextParts();
+
+describe.runIf(parts.compose && parts.composeRun)("a state the old composed run kept unwritten", () => {
   it("is written first by the next composed run, under the lock it took over, and then removed", async () => {
     const dir = tree();
     const kept = state(7, "kept-by-0.4.45");
@@ -31,7 +35,7 @@ describe("a state the old composed run kept unwritten", () => {
     // The old run's lock, still held for the state it kept.
     writeFileSync(join(dir, "app/terraform.tfstate.tflock"), JSON.stringify({ ID: "old-lock", Operation: "terragucci compose", Info: "a composed run (waves.compose) holds this state while it plans, applies and writes it" }));
 
-    const c = compositionFor(dir, {
+    const c = await compositionFor(dir, {
       all: ["network", "app"],
       waves: [["network"], ["app"]],
       env: {},
