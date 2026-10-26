@@ -220,7 +220,7 @@ export function reviewUrl(env: NodeJS.ProcessEnv, forge: "github" | "forgejo" | 
 }
 
 /** Decide one wave by the merged pull request's reviews. Never throws: a forge it cannot read leaves the wave waiting, with the reason. */
-export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo" | "gitlab"; sha: string; wave: number; digest: string | null; involved?: Involved }): Promise<ReviewOutcome> {
+export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; forge: "github" | "forgejo" | "gitlab"; sha: string; wave: number; digest: string | null; covered?: string; involved?: Involved }): Promise<ReviewOutcome> {
   let excluded: Excluded[] = [];
   const out = (r: ReviewOutcome): ReviewOutcome => (excluded.length ? { ...r, excluded } : r);
   try {
@@ -246,6 +246,9 @@ export async function reviewWave(o: { env: NodeJS.ProcessEnv; fetch?: Fetch; for
     excluded = got.excluded;
     if (by.length === 0) return out({ kind: "none", why: `${o.forge === "gitlab" ? "merge request" : "pull request"} ${pr.number} is not approved: ${got.reason}${own}`, ...reviewOf(o, pr.number, note, reviewable) });
     const row = note?.waves.find((w) => w.number === o.wave);
+    // A covered round (`covered`, the digest of the pull request's plan it is covered by): the review of that plan approves it.
+    // The note shows no digest for a wave that plans again once its upstreams apply, so the review of the head is that review.
+    if (o.covered && (!row?.digest || row.digest === o.covered)) return out({ kind: "approved", pr: pr.number, head: pr.head, by });
     if (!row || !row.digest) return out({ kind: "none", why: `the plan note of head ${pr.head.slice(0, 8)} has no digest for wave ${o.wave}, so its review did not cover these plans` });
     if (o.digest !== null && row.digest === o.digest) return out({ kind: "approved", pr: pr.number, head: pr.head, by });
     return out({ kind: "moved", pr: pr.number, head: pr.head, by, reviewed: row.digest });

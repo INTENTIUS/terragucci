@@ -131,6 +131,8 @@ export interface WaveInput {
   excluded?: { login: string; reason: string }[];
   /** The roots whose `on_failure: approve` step failed: the gate holds the wave. */
   heldBySteps?: string[];
+  /** A `tf-apply` wave covered by the pull request's plan of its roots (chant's coveredRound): that plan's digest and the inputs filled in. */
+  covered?: { digest: string; filledInputs: string[] };
   /** The `approval_rules` entries its roots take, and where each stands. */
   approvalRules?: ReportApprovalRule[];
   /** A `tf-apply` wave: what the policy's hold and allow_unattended rules made of its gate. A plan's wave works it out from its roots' verdicts. */
@@ -479,6 +481,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.approvalRules?.length ? { approval_rules: w.approvalRules.map((r) => ({ ...r, roots: [...r.roots], approvers: [...r.approvers] })) } : {}),
       ...(w.policyGate ? { policy_gate: w.policyGate } : {}),
       ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
+      ...(w.covered ? { covered: { digest: w.covered.digest, filled_inputs: [...w.covered.filledInputs] } } : {}),
       ...(w.cost ? { cost: w.cost } : {}),
       ...(w.state ? { state: w.state } : {}),
       ...(w.blocked?.size ? { blocked: [...w.blocked].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, by]) => ({ root, blocked_by: by })) } : {}),

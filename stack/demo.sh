@@ -3067,6 +3067,7 @@ states_back() { # [missing-ok]
     [ -n "$key" ] || continue
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.tflock" || true
     curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.terragucci-unwritten" || true
+    curl -sS -o /dev/null -X DELETE "$FLOCI/$STATE_BUCKET/$key.chant-unwritten" || true
   done <<<"$BASE_KEYS"$'\n'"$EXTRA_KEYS"
 }
 

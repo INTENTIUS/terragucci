@@ -7,7 +7,8 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { blankComments, hclAttributes } from "../compose";
+import { blankComments } from "@intentius/chant-lexicon-terraform/compose";
+import { hclAttributes } from "@intentius/chant-lexicon-terraform/compose/root";
 import { blockBody } from "../detect";
 import type { Bump } from "./semver";
 
