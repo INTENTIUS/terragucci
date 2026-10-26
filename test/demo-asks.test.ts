@@ -1,9 +1,10 @@
 // scripts/demo-asks.mjs: the prompt-driven demos read as one set (terragucci#1269). chant's composed-run demos have
-// the choudoufu demo's moments and prompts; the rest may name its own subject.
+// the choudoufu demo's moments, prompts, replies and statuses with only the subject changed; tips and the replies
+// in EXEMPT (engine facts) are left out.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { REFERENCE, compareDir, differences, problems, subjectless } from "../scripts/demo-asks.mjs";
+import { EXEMPT, REFERENCE, compareDir, differences, problems, subjectless } from "../scripts/demo-asks.mjs";
 
 const root = join(__dirname, "..");
 const ref = (act: string) => JSON.parse(readFileSync(join(root, REFERENCE, `choudoufu-compose-${act}`, "ask.json"), "utf8")) as Record<string, unknown>;
@@ -40,7 +41,30 @@ describe("the demos' asks", () => {
     expect(differences(a, b)).toEqual([]);
   });
 
-  it.skipIf(!chantDirs.every(existsSync))("holds chant's composed-run demos to the choudoufu demo's moments and prompts", () => {
-    for (const d of chantDirs) expect(compareDir(d, root).problems, d).toEqual([]);
+  it("names a reply or a status that differs beyond its subject", () => {
+    const a = ref("edit");
+    const approved = a.approved as { status: string };
+    const b = { ...a, approved: { ...approved, status: "Recording your approval of the plan's digest" } };
+    expect(differences(a, b).map((d) => d.where)).toEqual(["approved[0].status"]);
+  });
+
+  it("leaves tips out", () => {
+    const a = ref("edit");
+    const approved = a.approved as Record<string, unknown>;
+    const b = { ...a, approved: { ...approved, tips: [{ title: "chant only", body: "Shown in chant's demos alone." }] } };
+    expect(differences(a, b)).toEqual([]);
+  });
+
+  it("names only the create act's lock question as an engine-fact exemption", () => {
+    expect(Object.keys(EXEMPT).sort()).toEqual(["chant-compose-create: applied[1].reply", "chant-compose-create: applied[1].status"]);
+  });
+
+  it.skipIf(!chantDirs.every(existsSync))("holds chant's composed-run demos to the choudoufu demo but for the subject and the exemptions", () => {
+    for (const d of chantDirs) {
+      const f = compareDir(d, root);
+      expect(f.problems, d).toEqual([]);
+      expect(f.differences, d).toEqual([]);
+      expect(f.exempt.map((x) => x.where).sort(), d).toEqual(Object.keys(EXEMPT).sort());
+    }
   });
 });
