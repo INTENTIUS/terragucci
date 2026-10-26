@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 49;
+export const REPORT_MINOR = 50;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -772,8 +772,10 @@ export interface ReportComposedMember {
 
 /** `waves.compose` on a run (minor 38). */
 export interface ReportCompose {
-  /** The roots the change reaches plus the roots they read, followed upstream, sorted. */
+  /** The roots the change reaches plus the roots they read, followed upstream, sorted. With `left_out`, the roots of the run only. */
   roots: string[];
+  /** Minor 50: the roots left out of a run that composes the rest, each with its kind and reason; each applies in its own wave. */
+  left_out?: { kind: string; root?: string; reason: string }[];
   /** `waves.compose_max`. */
   max: number;
   /** The wave whose run composes them. Absent when the change applies in waves. */

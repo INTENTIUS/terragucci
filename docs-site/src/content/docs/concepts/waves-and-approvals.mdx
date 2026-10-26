@@ -156,7 +156,7 @@ The composed run is chant's: terragucci hands each root of the pipeline to chant
 |---|---|
 | The set | the roots of the pipeline, ordered by their reads and by `waves.after`; `waves.compose_max` caps it (10 when unset) |
 | Credentials | `oidc.roles` and the apply groups: roots under different roles, or in different apply groups, do not compose. Not for choudoufu estates, which take each role from their own provider blocks |
-| The wave | the composed run sits in the earliest wave its roots are in, as one run target (`compose:wave-<n>`), and the later waves no longer list its roots |
+| The wave | the composed run sits in the earliest wave its roots are in, as one run target (`compose:wave-<n>`), and the later waves no longer list its roots. When a root of the run reads a root left out of it, the run sits in the wave after the one that root applies in |
 | Hooks and sources | each root's `ci.hooks` run at the same moments as on a wave, and the [sources check](/terragucci/standards/supply-chain/) runs after each root's init, before anything plans |
 | Policy and cost | each read each root's part of the composed plan as that root's plan; a denied root refuses the whole run |
 
@@ -176,7 +176,9 @@ A composed run in which a root reads another root's value that is unknown at pla
 
 ### Falling back to waves
 
-The whole change applies in waves, as without the key, and the note says why in one line, when chant leaves out any root of the set. terragucci never composes part of a change: the first root chant leaves out gives the reason. chant's [In a composed run](https://intentius.io/chant/lexicons/terraform/ops/#in-a-composed-run) lists every kind, among them:
+chant can leave a root of the set out and compose the rest. The roots it keeps are one run, and each root it leaves out applies in its own wave, as without the key. The note lists each one left out with its reason, and the report's `compose.left_out` holds them. A root of the run can read a root that was left out: the run then sits in the wave after the one that root applies in, so the run reads its state once it has applied.
+
+The whole change applies in waves, and the note says why in one line, when fewer than two roots of the set compose, or when chant gives a reason for the whole set, such as `too-many-roots` or `cli-args`. The first root chant leaves out gives the reason when it is about one root. The whole change also applies in waves (`split`) when a root outside the run reads a root of the run and would apply before the run, in its wave or an earlier one: that happens when a left-out root a member reads pushes the run past it. chant's [In a composed run](https://intentius.io/chant/lexicons/terraform/ops/#in-a-composed-run) lists every kind, among them:
 
 | Kind | When |
 |---|---|
@@ -195,7 +197,7 @@ The whole change applies in waves, as without the key, and the note says why in 
 | `path` | a root's code uses `path.root` or `path.cwd` |
 | `plan-failed` | the composed plan failed in a pull request; its roots then plan one by one, so the error shows against the root it is in |
 
-The kind and the reason are `compose.fallback` in the [report](/terragucci/reference/report-schema/).
+The kind and the reason are `compose.fallback` in the [report](/terragucci/reference/report-schema/), or each entry of `compose.left_out` for a root left out of a run.
 
 ## The run view
 

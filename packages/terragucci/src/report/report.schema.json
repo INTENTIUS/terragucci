@@ -602,7 +602,20 @@
       "description": "waves.compose (minor 38), on a tf-plan and on a tf-apply wave's report when the run's config turns it on: the roots it covers, and the wave that composes them or why the change applies in waves.",
       "required": ["roots", "max"],
       "properties": {
-        "roots": { "type": "array", "items": { "type": "string" }, "description": "The roots the change reaches plus the roots they read, followed upstream, sorted." },
+        "roots": { "type": "array", "items": { "type": "string" }, "description": "The roots the change reaches plus the roots they read, followed upstream, sorted. With left_out, the roots of the run only." },
+        "left_out": {
+          "type": "array",
+          "description": "The roots left out of a run that composes the rest (minor 50), each with its kind and reason: each applies in its own wave.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "reason"],
+            "properties": {
+              "kind": { "type": "string" },
+              "root": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
         "max": { "type": "integer", "description": "waves.compose_max." },
         "wave": { "type": "integer", "description": "The wave whose run composes them. Absent when the change applies in waves." },
         "estate": { "const": true, "description": "Every root is a choudoufu estate, composed as one run (minor 48): no state is pulled, split or written back, and each estate's records are written as its resources apply." },
