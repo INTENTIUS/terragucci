@@ -7,6 +7,7 @@ import { builtinModules } from "node:module";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
+import { chantNext } from "./chant-next-plugin.mjs";
 
 // The dashboards template (src/dashboards/rendered.json, terragucci#163) and
 // chant's workspace schemas (declaration.schema.json alone is 67 KB as a JS
@@ -108,5 +109,5 @@ export const bundleOptions = (pkgDir, plugins = []) => ({
   minifyIdentifiers: true,
   keepNames: false,
   logLevel: "warning",
-  plugins: [...plugins, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir)],
+  plugins: [...plugins, chantNext, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir)],
 });

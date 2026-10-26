@@ -581,6 +581,11 @@ export function composeBlock(report: Report, name: (root: string) => string = (r
   const members = w.composed.members;
   const roots = members.map((m) => name(m.root));
   let t = `**One composed run, in wave ${c.wave}** (\`waves.compose\`): ${joinAnd(roots)} plan as one plan and apply as one apply. Each root keeps its own state: the run locks each state, applies, and writes each state back with what applied to it. If the apply fails part way, what applied stays applied, and wave ${c.wave}'s report names which roots applied and each state as written.\n\n`;
+  if (c.left_out?.length) {
+    t += `**Left out of the run (${c.left_out.length}).** Each applies in its own wave, as without \`waves.compose\`:\n\n`;
+    for (const f of c.left_out) t += `- ${f.root ? name(f.root) : "a root"}: ${f.reason} (\`${f.kind}\`)\n`;
+    t += "\n";
+  }
   t += "| Root | In the run as | To add | To change | To destroy |\n|---|---|---|---|---|\n";
   for (const m of members) {
     const r = report.roots.find((x) => x.path === m.root);

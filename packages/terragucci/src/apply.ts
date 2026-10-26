@@ -489,6 +489,24 @@ export function decideGate(ledger: GateLedger, gate: string, digest: string, now
   return { status: "waiting", ...(standing ? { standing } : {}), ...(used ? { spent: { approved: used.planDigest!, by: used.resolvedBy, at: used.timestamp } } : {}) };
 }
 
+/**
+ * A covered round's approval (./covered-wave.ts): the wave planned again
+ * after its upstreams applied and its plans now have `digest`, chant's
+ * coveredRound found them covered by the pull request's plan of
+ * `cover.digest`, and the approval of that digest at this gate stands for
+ * them. Undefined when `digest` is approved already (nothing to add), and
+ * when nothing approved `cover.digest` or its approval is spent by an apply.
+ */
+export function coveredApproval(ledger: GateLedger, gate: string, digest: string, cover: RoundCover, now: string): { by: string; at: string } | undefined {
+  if (decideGate(ledger, gate, digest, now).status === "approved") return undefined;
+  const d = decideGate(ledger, gate, cover.digest, now);
+  if (d.status !== "approved") return undefined;
+  // decideGate counts an approval of the digest it is asked about even when a wave applied under it, so the spent
+  // check that it makes only for another digest's approval is made here.
+  const spent = (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, cover.digest) && at(a.approvedAt) >= at(d.at));
+  return spent ? undefined : { by: d.by, at: d.at };
+}
+
 /** The roots whose plan digest differs between the approved members and the ones planned now. */
 export function movedMembers(approved: readonly WaveMember[], now: readonly WaveMember[]): string[] {
   const before = new Map(approved.map((m) => [m.member, m.planDigest]));
@@ -2195,7 +2213,7 @@ async function waveComposition(repo: string, options: ApplyWaveOptions, waves: s
     console.log(`wave ${options.wave}: compose: the roots this change reaches could not be found (${(e as Error).message.split("\n")[0]}), so every root counts`);
   }
   const binaries = new RootBinaries(repo, options.binary, settings.version, env, options.installer);
-  const c = compositionFor(repo, {
+  const c = await compositionFor(repo, {
     all,
     ...(selected ? { selected } : {}),
     waves,
@@ -2355,8 +2373,8 @@ function foldDenials(denied: Map<string, { rules: string[]; reason?: string }>, 
   denied.set(target, { rules, reason });
 }
 
-/** Apply the wave's composed run, and say what came of each root. True when every root's part applied and every state was written. */
-async function applyComposedWave(label: string, composed: ComposedWave, w: WaveRun): Promise<boolean> {
+/** Apply the wave's composed run, and say what came of each root. True when every root's part applied and every state was written. Exported for its test (test/compose-fails-part-way.test.ts). */
+export async function applyComposedWave(label: string, composed: Pick<ComposedWave, "run" | "planned" | "result">, w: Pick<WaveRun, "composed">): Promise<boolean> {
   let result: ComposedApply;
   try {
     result = await composed.run.apply();
@@ -2959,7 +2977,7 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
         }),
       );
       const wave = got.report.waves.find((x) => fresh.some((f) => x.roots.includes(f.root)));
-      const cover = waveCoverage(previewed, verdict.unknown, wave?.set_digest ?? "");
+      const cover = await waveCoverage(previewed, verdict.unknown, wave?.set_digest ?? "");
       if (cover.covered && cover.digest) {
         w.covered = { digest: cover.digest, filledInputs: cover.filledInputs };
         console.log(`${label}: the plan made on those outputs is covered by ${got.from} (digest ${cover.digest}): it differs only where ${cover.filledInputs.length ? cover.filledInputs.join(", ") : "the outputs it read"}, previewed as known after apply, filled in, so the approval of that plan stands for it`);
@@ -3251,6 +3269,17 @@ async function beforeGateRules(repo: string, options: ApplyWaveOptions, ctx: Wav
   }
   const asChant = decideGate(ledger, name, digest, now);
   const decision = decideGate(ruled, name, digest, now);
+  // A wave that planned again after its upstreams applied, covered by the pull request's plan (unknownReadHold): an approval
+  // of that plan's digest at this gate stands for it. It comes first: that approval names another digest than these plans',
+  // so on its own the gate would refuse them.
+  if (w.covered) {
+    const first = coveredApproval(ruled, name, digest, w.covered, now);
+    if (first) {
+      appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: first.by, timestamp: now, planDigest: digest, note: `covered by the approval of ${w.covered.digest} by ${first.by}: only ${w.covered.filledInputs.join(", ") || "inputs previewed as known after apply"} differ` }, {}, `Approved as a covered round: ${APPLY_OP} ${name}`);
+      console.log(`${label}: ${first.by} approved ${w.covered.digest}, the pull request's plan these plans are covered by, so that approval stands for ${digest}`);
+      return undefined;
+    }
+  }
   if ((asChant.status === "approved" && decision.status !== "approved") || (asChant.status === "refused" && decision.status === "waiting")) {
     const env2 = options.env ?? process.env;
     const commit = env2.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
@@ -3290,15 +3319,6 @@ async function beforeGateRules(repo: string, options: ApplyWaveOptions, ctx: Wav
         return undefined;
       }
       console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished, but ${c.why}, so these plans need an approval of their own`);
-    }
-  }
-  // A wave that planned again after its upstreams applied, covered by the pull request's plan (unknownReadHold): an approval of that plan's digest at this gate stands for it.
-  if (w.covered) {
-    const first = decideGate(ruled, name, w.covered.digest, now);
-    if (first.status === "approved") {
-      appendRecord(repo, { version: 1, kind: "resolution", op: APPLY_OP, gate: name, resolvedBy: first.by, timestamp: now, planDigest: digest, note: `covered by the approval of ${w.covered.digest} by ${first.by}: only ${w.covered.filledInputs.join(", ") || "inputs previewed as known after apply"} differ` }, {}, `Approved as a covered round: ${APPLY_OP} ${name}`);
-      console.log(`${label}: ${first.by} approved ${w.covered.digest}, the pull request's plan these plans are covered by, so that approval stands for ${digest}`);
-      return undefined;
     }
   }
   if (decision.spent) console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);

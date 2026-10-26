@@ -1,8 +1,12 @@
 // A wave that read an upstream output unknown at review plans again once the upstream applied (Linked roots). chant's
 // coveredRound decides whether the pull request's plan covers that plan (terragucci#1268): only the inputs it previewed
 // as known after apply may differ, and anything else stops for a new approval with planShapeCovers's reason.
-import { describe, expect, it } from "vitest";
-import { unknownInputs, waveCoverage } from "../src/covered-wave";
+//
+// chant's plan shape is its `/plan-shape` subpath, which chant 0.124.52 lacks (terragucci#1278): the cases that
+// compare shapes run when the installed chant has it, and the last block holds the wave without it.
+import { afterEach, describe, expect, it } from "vitest";
+import { chantNextParts, overrideChantNext } from "../src/chant-next";
+import { NO_PLAN_SHAPE, unknownInputs, waveCoverage } from "../src/covered-wave";
 import type { UnknownRead } from "../src/unknown-reads";
 
 const unknown: UnknownRead[] = [{ root: "app", upstream: "network", wave: 1, outputs: ["subnet_id"], carrier: "pull-request", from: "pull request 7's plan of abcdef12" }];
@@ -22,6 +26,8 @@ const instance = (subnet: string | undefined, extra: Record<string, unknown> = {
 
 const plan = (...changes: unknown[]) => ({ format_version: "1.2", resource_changes: changes });
 
+const parts = await chantNextParts();
+
 describe("a covered round of linked roots", () => {
   it("names the inputs a root was previewed without", () => {
     expect(unknownInputs("app", unknown)).toEqual(["network.subnet_id"]);
@@ -29,25 +35,49 @@ describe("a covered round of linked roots", () => {
     expect(unknownInputs("edge", unknown)).toEqual([]);
   });
 
-  it("is covered when only the input previewed as known after apply is filled in", () => {
-    const cover = waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new")) }], unknown, "sha256:note");
+  it.runIf(parts.planShape)("is covered when only the input previewed as known after apply is filled in", async () => {
+    const cover = await waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new")) }], unknown, "sha256:note");
     expect(cover).toEqual({ covered: true, digest: "sha256:note", filledInputs: ["network.subnet_id"] });
   });
 
-  it("is not covered when the plan touches a resource the pull request's did not, and says why", () => {
+  it.runIf(parts.planShape)("is not covered when the plan touches a resource the pull request's did not, and says why", async () => {
     const more = { ...instance("subnet-new"), address: "aws_instance.extra", name: "extra" };
-    const cover = waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new"), more) }], unknown, "sha256:note");
+    const cover = await waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new"), more) }], unknown, "sha256:note");
     expect(cover.covered).toBe(false);
     expect(cover.covered ? "" : cover.reason).toMatch(/aws_instance\.extra/);
   });
 
-  it("is not covered when a property no unknown input drives changes", () => {
-    const cover = waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new", { ami: "ami-2" })) }], unknown, "sha256:note");
+  it.runIf(parts.planShape)("is not covered when a property no unknown input drives changes", async () => {
+    const cover = await waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new", { ami: "ami-2" })) }], unknown, "sha256:note");
     expect(cover.covered).toBe(false);
   });
 
-  it("is not covered when the pull request's plan of a root cannot be read", () => {
-    const cover = waveCoverage([{ root: "app", fresh: plan(instance("subnet-new")) }], unknown, "sha256:note");
+  it("is not covered when the pull request's plan of a root cannot be read", async () => {
+    const cover = await waveCoverage([{ root: "app", fresh: plan(instance("subnet-new")) }], unknown, "sha256:note");
     expect(cover).toEqual({ covered: false, reason: expect.stringMatching(/could not be read/) });
+  });
+});
+
+describe("a covered round on a chant with no plan shape", () => {
+  let restore: (() => void) | undefined;
+  afterEach(() => restore?.());
+
+  it("covers no wave, so each waits for an approval of its own, and says why", async () => {
+    restore = overrideChantNext("planShape", null);
+    const cover = await waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new")) }], unknown, "sha256:note");
+    expect(cover).toEqual({ covered: false, reason: NO_PLAN_SHAPE });
+  });
+
+  it("still names a root the pull request did not plan first", async () => {
+    restore = overrideChantNext("planShape", null);
+    const cover = await waveCoverage([{ root: "app", fresh: plan(instance("subnet-new")) }], unknown, "sha256:note");
+    expect(cover).toEqual({ covered: false, reason: expect.stringMatching(/could not be read/) });
+  });
+
+  it("hands each root's plan to chant's plan shape when there is one", async () => {
+    const seen: string[] = [];
+    restore = overrideChantNext("planShape", { terraformPlanShape: (_plan: unknown, member: string) => (seen.push(member), { member, entries: [] }) });
+    await waveCoverage([{ root: "app", previewed: plan(instance(undefined)), fresh: plan(instance("subnet-new")) }], unknown, "sha256:note").catch(() => undefined);
+    expect(seen).toEqual(["app", "app"]);
   });
 });

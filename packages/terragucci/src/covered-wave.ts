@@ -10,10 +10,14 @@
  *
  * chant decides (`coveredRound`); this hands it each root's shape, from the
  * pull request's stored plan of the root and from the wave's plan of it now.
+ *
+ * The plan shape is chant's `/plan-shape`, loaded on first use: chant 0.124.52
+ * has none, and with it no wave is covered, so each is held as before
+ * (terragucci#1278).
  */
 import type { ChangeSetDocument } from "@intentius/chant/change-set";
 import { coveredRound, type CoverageSide, type PlanShape, type RoundCoverage } from "@intentius/chant/components";
-import { terraformPlanShape } from "@intentius/chant-lexicon-terraform/plan-shape";
+import { chantPlanShape } from "./chant-next";
 import type { UnknownRead } from "./unknown-reads";
 
 /** One root of the wave as the pull request planned it, and as the wave planned it now. */
@@ -24,6 +28,9 @@ export interface CoveredRoot {
   /** The wave's plan of the root, made after its upstreams applied. */
   fresh: unknown;
 }
+
+/** Why no wave is covered when the installed chant has no plan shape. */
+export const NO_PLAN_SHAPE = "the installed chant cannot compare plan shapes (`@intentius/chant-lexicon-terraform/plan-shape`), so the wave waits for an approval of its own";
 
 /** Every member carries a shape, so neither side's change set is read. */
 const NO_DOC = {} as ChangeSetDocument;
@@ -44,9 +51,12 @@ export function unknownInputs(root: string, unknown: readonly UnknownRead[]): st
  * plans of `roots` (the ones that change something). A root the pull request
  * did not plan is not covered.
  */
-export function waveCoverage(roots: readonly CoveredRoot[], unknown: readonly UnknownRead[], approvedDigest: string): RoundCoverage {
+export async function waveCoverage(roots: readonly CoveredRoot[], unknown: readonly UnknownRead[], approvedDigest: string): Promise<RoundCoverage> {
   const missing = roots.find((r) => r.previewed === undefined);
   if (missing) return { covered: false, reason: `the pull request's plan of ${missing.root} could not be read, so nothing says what was approved for it` };
+  const lib = await chantPlanShape();
+  if (!lib) return { covered: false, reason: NO_PLAN_SHAPE };
+  const terraformPlanShape = (plan: unknown, root: string, options?: { unknownInputs?: string[] }): PlanShape => lib.terraformPlanShape(plan, root, options) as PlanShape;
   const approvedShapes: Record<string, PlanShape> = {};
   const freshShapes: Record<string, PlanShape> = {};
   const approved: CoverageSide = { doc: NO_DOC, members: [], shapes: approvedShapes };
