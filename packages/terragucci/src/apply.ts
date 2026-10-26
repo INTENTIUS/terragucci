@@ -500,7 +500,11 @@ export function decideGate(ledger: GateLedger, gate: string, digest: string, now
 export function coveredApproval(ledger: GateLedger, gate: string, digest: string, cover: RoundCover, now: string): { by: string; at: string } | undefined {
   if (decideGate(ledger, gate, digest, now).status === "approved") return undefined;
   const d = decideGate(ledger, gate, cover.digest, now);
-  return d.status === "approved" ? { by: d.by, at: d.at } : undefined;
+  if (d.status !== "approved") return undefined;
+  // decideGate counts an approval of the digest it is asked about even when a wave applied under it, so the spent
+  // check that it makes only for another digest's approval is made here.
+  const spent = (ledger.applied ?? []).some((a) => a.gate === gate && samePlanDigest(a.planDigest, cover.digest) && at(a.approvedAt) >= at(d.at));
+  return spent ? undefined : { by: d.by, at: d.at };
 }
 
 /** The roots whose plan digest differs between the approved members and the ones planned now. */
