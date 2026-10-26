@@ -236,11 +236,23 @@ export interface ChantPlanShape {
 
 // ── loading ────────────────────────────────────────────────────────────────
 
+/**
+ * The imports below take turns. The subpaths share a module graph with import cycles in it, and vitest's module
+ * runner never settles two concurrent imports into such a graph: with them in parallel the suite hung on a chant
+ * that has them, though plain node and the bundle are fine either way.
+ */
+let turn: Promise<unknown> = Promise.resolve();
+function inTurn<T>(load: () => Promise<T>): Promise<T> {
+  const next = turn.then(load);
+  turn = next.catch(() => undefined);
+  return next;
+}
+
 /** A module once: its promise, kept, resolving undefined when the import fails. */
 function once<T>(load: () => Promise<unknown>, pick: (m: Record<string, unknown>) => T | undefined): () => Promise<T | undefined> {
   let p: Promise<T | undefined> | undefined;
   return () =>
-    (p ??= load().then(
+    (p ??= inTurn(load).then(
       (m) => pick(m as Record<string, unknown>),
       () => undefined,
     ));
@@ -255,17 +267,18 @@ const loaders = {
     (m) => (has(m, "compositionFor", "moduleNames", "readOrder") ? (m as unknown as ChantCompose) : undefined),
   ),
   composeRun: once<ChantComposeRun>(
-    () =>
-      Promise.all([
-        // @ts-ignore chant 0.124.52 has no compose/run subpath (terragucci#1278)
-        import("@intentius/chant-lexicon-terraform/compose/run"),
-        // @ts-ignore chant 0.124.52 has no compose/estate subpath (terragucci#1278)
-        import("@intentius/chant-lexicon-terraform/compose/estate"),
-        // @ts-ignore chant 0.124.52 has no compose/root subpath (terragucci#1278)
-        import("@intentius/chant-lexicon-terraform/compose/root"),
-        // @ts-ignore chant 0.124.52 has no compose/slice subpath (terragucci#1278)
-        import("@intentius/chant-lexicon-terraform/compose/slice"),
-      ]).then(([run, estate, root, slice]) => ({ ...(slice as object), ...(root as object), ...(estate as object), ...(run as object) })),
+    // One subpath at a time, for the reason inTurn gives.
+    async () => {
+      // @ts-ignore chant 0.124.52 has no compose/run subpath (terragucci#1278)
+      const run: object = await import("@intentius/chant-lexicon-terraform/compose/run");
+      // @ts-ignore chant 0.124.52 has no compose/estate subpath (terragucci#1278)
+      const estate: object = await import("@intentius/chant-lexicon-terraform/compose/estate");
+      // @ts-ignore chant 0.124.52 has no compose/root subpath (terragucci#1278)
+      const root: object = await import("@intentius/chant-lexicon-terraform/compose/root");
+      // @ts-ignore chant 0.124.52 has no compose/slice subpath (terragucci#1278)
+      const slice: object = await import("@intentius/chant-lexicon-terraform/compose/slice");
+      return { ...slice, ...root, ...estate, ...run };
+    },
     (m) => (has(m, "ComposedRun", "EstateRun", "writeEstateRoot", "moduleValues") ? (m as unknown as ChantComposeRun) : undefined),
   ),
   state: once<ChantState>(
