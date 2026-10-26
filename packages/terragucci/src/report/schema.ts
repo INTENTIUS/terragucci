@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 48;
+export const REPORT_MINOR = 49;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -674,6 +674,14 @@ export interface ReportWave {
    * holds the wave whatever the gate policy says, when it changes anything.
    */
   held_by_steps?: string[];
+  /**
+   * A `tf-apply` wave that planned again after its upstreams applied, having
+   * read an output they left unknown (minor 49): its plan is covered by the
+   * pull request's plan of the same roots, so the approval of `digest`, that
+   * plan's set digest, stands for it. `filled_inputs` are the inputs the pull
+   * request planned as known after apply, as `<upstream>.<output>`.
+   */
+  covered?: { digest: string; filled_inputs: string[] };
   /** The wave's monthly cost, when `cost` is on (minor 19): the sums over its roots estimated, and with `cost.approve_above` whether it waits for it. */
   cost?: ReportWaveCost;
   /** Where the wave stands (minor 21). */

@@ -450,6 +450,16 @@
             "items": { "type": "string" },
             "description": "The roots whose on_failure: approve step failed: the gate holds the wave whatever the gate policy says, when it changes anything (minor 17)."
           },
+          "covered": {
+            "type": "object",
+            "required": ["digest", "filled_inputs"],
+            "additionalProperties": false,
+            "properties": {
+              "digest": { "type": "string", "description": "The set digest of the pull request's plan the wave's plan is covered by: its approval stands for the wave." },
+              "filled_inputs": { "type": "array", "items": { "type": "string" }, "description": "The inputs the pull request planned as known after apply, as <upstream>.<output>." }
+            },
+            "description": "A tf-apply wave that planned again after its upstreams applied, covered by the pull request's plan of the same roots (minor 49)."
+          },
           "cost": {
             "type": "object",
             "description": "The wave's monthly cost, when cost is on (minor 19): the sums over its roots estimated, and with cost.approve_above at base whether the change is over it, so the wave waits for an approval whatever the gate.",

@@ -33,7 +33,7 @@ that). No scenario destroys or replaces a resource, so `gate: on-destructive`
 holds nothing for them.
 
 Every scenario applies as one composed run through choudoufu's composed root:
-`.terragucci-compose/` holds one `module` call per estate and nothing else, and
+`.chant-compose/` holds one `module` call per estate and nothing else, and
 choudoufu plans and applies it once. Each resource's record goes to its own
 estate in the one record store, and a read of another estate in the run
 resolves inside the run, so an id the apply creates reaches the estate that
