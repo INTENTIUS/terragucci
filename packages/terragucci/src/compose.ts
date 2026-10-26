@@ -32,21 +32,19 @@
  * read and written first by the next run.
  */
 import { join, resolve } from "node:path";
+// Subpaths, not the lexicon's index: the index carries its lint plugin, which
+// imports typescript, and the CLI bundle leaves typescript out (scripts/cli-bundle.mjs).
 import {
-  ComposedRun as ChantComposedRun,
-  EstateRun,
   compositionFor as chantCompositionFor,
   moduleNames,
   readOrder,
-  type ComposedMemberRead,
-  type ComposedRunApply,
-  type ComposedRunPlan,
   type Composition as ChantComposition,
   type ComposeFallbackKind as ChantFallbackKind,
-  type StateRunApply,
-  type StateRunPlan,
-  type TerraformConfig,
-} from "@intentius/chant-lexicon-terraform";
+} from "@intentius/chant-lexicon-terraform/compose";
+import { EstateRun, type ComposedRunApply, type ComposedRunPlan } from "@intentius/chant-lexicon-terraform/compose/estate";
+import { ComposedRun as ChantComposedRun, type StateRunApply, type StateRunPlan } from "@intentius/chant-lexicon-terraform/compose/run";
+import type { ComposedMemberRead } from "@intentius/chant-lexicon-terraform/compose/slice";
+import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import { COMPOSE_DIR as CHANT_COMPOSE_DIR, writeEstateRoot as chantEstateRoot, type ComposedRoot } from "@intentius/chant-lexicon-terraform/compose/root";
 import { moduleValues } from "@intentius/chant-lexicon-terraform/compose/slice";
 import type { DriverComponent } from "@intentius/chant/components";
@@ -57,7 +55,7 @@ import type { BinaryExec } from "./migrate";
 import type { ReportCompose, ReportComposedMember, ReportRead } from "./report/schema";
 import type { HookMoment } from "./hooks";
 
-export { composeSet } from "@intentius/chant-lexicon-terraform";
+export { composeSet } from "@intentius/chant-lexicon-terraform/compose";
 
 /** Where the composed root is written, in the checkout: chant's `.chant-compose/`. */
 export const COMPOSE_DIR = CHANT_COMPOSE_DIR;
@@ -230,7 +228,11 @@ export function compositionFor(repo: string, input: CompositionInput): Compositi
   });
   const roots = chant.candidates;
   const ownWave = new Map(input.waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)).filter(([r]) => roots.includes(r)));
-  const first = chant.fallback ?? chant.fallbacks[0];
+  // chant judges each member first and the whole change after, so its `one-root` over a change of two or more
+  // roots means its checks left one or none: the first root left out is the reason. A whole-change reason
+  // chant gives over the roots themselves (`cli-args`, `too-many-roots`, one root reached) stands.
+  const whole = chant.fallback && !(chant.fallback.kind === "one-root" && roots.length > 1) ? chant.fallback : undefined;
+  const first = whole ?? chant.fallbacks[0] ?? chant.fallback;
   const reads = new Map(roots.map((r) => [r, (chant.reads.get(r) ?? []).flatMap((x) => (x.via === "vars" ? [] : [{ name: x.name, upstream: x.upstream }]))] as const));
   const base = {
     roots,
@@ -239,7 +241,8 @@ export function compositionFor(repo: string, input: CompositionInput): Compositi
     modules: chant.modules.size ? chant.modules : moduleNames(roots),
     reads,
     ownWave,
-    ...(chant.estate ? { estate: true } : {}),
+    // chant composes the members it kept as estates; a change that leaves a root out applies wholly in waves, so it is no estate run.
+    ...(chant.estate && chant.fallbacks.length === 0 ? { estate: true } : {}),
     chant,
     terraform,
   };
