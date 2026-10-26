@@ -73,17 +73,23 @@ describe.runIf(withChant)("compositionFor on choudoufu estates", () => {
     expect(stock.fallback?.kind).toBe("identity");
   });
 
-  it("still falls back for choudoufu mixed with another binary", async () => {
+  // Part of a change composes (terragucci#1276): the root chant leaves out applies in its own wave, after the run it reads.
+  it("leaves a root on another binary out, and composes the choudoufu roots as estates", async () => {
     const c = await compositionFor(tree(), input((r) => ({ name: r === "edge" ? "tofu" : "choudoufu" })));
-    expect(c.fallback?.kind).toBe("binary");
-    expect(c.estate).toBeUndefined();
+    expect(c.fallback).toBeUndefined();
+    expect(c.roots).toEqual(["app", "network"]);
+    expect(c.leftOut).toEqual([expect.objectContaining({ kind: "binary", root: "edge" })]);
+    expect(c.estate).toBe(true);
+    expect(c.wave).toBe(1);
   });
 
-  it("falls back for a root with no live block", async () => {
+  it("leaves a root with no live block out", async () => {
     const dir = tree();
     write(dir, { "edge/main.tf": `output "x" {\n  value = 1\n}\n` });
     const c = await compositionFor(dir, input(() => ({ name: "choudoufu" })));
-    expect(c.fallback).toMatchObject({ kind: "backend", root: "edge" });
+    expect(c.fallback).toBeUndefined();
+    expect(c.leftOut).toEqual([expect.objectContaining({ kind: "backend", root: "edge" })]);
+    expect(c.roots).toEqual(["app", "network"]);
   });
 });
 

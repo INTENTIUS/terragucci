@@ -17,9 +17,11 @@
  * - each root of the pipeline becomes a chant component with one
  *   `terraform-apply` step, `waves.after` and the roots it reads its
  *   `dependsOn`, and `oidc.roles` with the apply groups its identity;
- * - a change composes whole or not at all: a root chant leaves out makes the
- *   whole change apply in waves, with that root's reason, as it did before
- *   chant could compose part of a change;
+ * - part of a change can compose (terragucci#1276): the roots chant keeps
+ *   are one run, and each root it leaves out applies in its own wave with
+ *   chant's reason. The run sits after every wave a left-out root it reads
+ *   applies in, and when that would put it after a root that reads it, the
+ *   whole change applies in waves;
  * - the wave a composed run sits in, its target for chant's spec, and the
  *   report's `compose`;
  * - `ci.hooks` and the sources check around each member, and the results
@@ -91,13 +93,15 @@ export interface ComposedReadBlock {
 
 /** What `waves.compose` comes to for one change. */
 export interface Composition {
-  /** The roots the change reaches plus the roots they read, followed upstream, sorted. */
+  /** The roots of the run: the roots the change reaches plus the roots they read, followed upstream, sorted, less those chant left out. Every one of them when the change applies in waves. */
   roots: string[];
+  /** The roots chant left out of a run that composes the rest, each with its reason: each applies in its own wave. */
+  leftOut?: ComposeFallback[];
   /** The same roots, each after every root it reads. */
   order: string[];
   /** `waves.compose_max`. */
   max: number;
-  /** The wave whose job runs it: the earliest wave its roots are in. Absent when the change applies in waves. */
+  /** The wave whose job runs it: the earliest wave its roots are in, or the one after the last wave a left-out root it reads applies in. Absent when the change applies in waves. */
   wave?: number;
   /** Why the change applies in waves. */
   fallback?: ComposeFallback;
@@ -167,13 +171,74 @@ export function chantProject(repo: string, input: Pick<CompositionInput, "all" |
     const ws = rootWorkspace(join(repo, r));
     roots[r] = { dir: r === "" ? "." : r, ...(ws ? { workspace: ws } : {}), ...(Object.keys(backendConfig).length ? { backendConfig } : {}) };
   }
-  const order = explicitOrder(input.after, input.all);
+  const ups = upstreamsOf(input);
   const components: DriverComponent[] = input.all.map((r) => {
-    const dependsOn = [...new Set([...(order.get(r) ?? []), ...(input.deps.get(r) ?? [])])].filter((u) => u !== r && input.all.includes(u)).sort();
+    const dependsOn = [...(ups.get(r) ?? [])].sort();
     return { name: r, ...(dependsOn.length ? { dependsOn } : {}), deploy: [{ phase: "deploy", steps: [{ kind: "terraform-apply", root: r }] }] };
   });
   const terraform = { roots, compose: { enabled: true, max: input.max ?? DEFAULT_COMPOSE_MAX }, ...(binary ? { binary } : {}) } as TerraformConfig;
   return { terraform, components };
+}
+
+/** Each root's upstreams among the pipeline's roots: the roots it reads and the roots `waves.after` puts before it. */
+function upstreamsOf(input: Pick<CompositionInput, "all" | "deps" | "after">): Map<string, Set<string>> {
+  const order = explicitOrder(input.after, input.all);
+  return new Map(input.all.map((r) => [r, new Set([...(order.get(r) ?? []), ...(input.deps.get(r) ?? [])].filter((u) => u !== r && input.all.includes(u)))] as const));
+}
+
+/** Every root `from` reaches by following `next`, `from` left out. */
+function reach(from: string, next: (r: string) => Iterable<string>): Set<string> {
+  const seen = new Set<string>();
+  const queue = [...next(from)];
+  while (queue.length > 0) {
+    const r = queue.pop()!;
+    if (seen.has(r) || r === from) continue;
+    seen.add(r);
+    queue.push(...next(r));
+  }
+  return seen;
+}
+
+export interface RunPlacement {
+  /** The wave the run sits in. */
+  wave?: number;
+  /** Why it has none: a root outside the run that reads it would apply before it. */
+  fallback?: ComposeFallback;
+}
+
+/**
+ * Where a run of `members` sits in the apply's waves (terragucci#1276): the
+ * earliest wave a member is in, unless a root outside the run that a member
+ * reads, directly or through other roots outside it, applies in that wave or
+ * later; then the wave after the last of those. A root outside the run that
+ * reads a member must apply after the run: when it is in the run's wave or
+ * earlier, the run has no place, and the fallback names that root.
+ */
+export function placeRun(members: readonly string[], waves: readonly string[][], upstreams: ReadonlyMap<string, ReadonlySet<string>>): RunPlacement {
+  const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
+  const inRun = new Set(members);
+  const earliest = Math.min(...members.map((r) => waveOf.get(r) ?? Number.POSITIVE_INFINITY));
+  if (!Number.isFinite(earliest)) return { fallback: { kind: "one-root", reason: "none of its roots is in a wave of this apply" } };
+  // The roots outside the run its members read, followed upstream.
+  const outsideUp = new Set<string>();
+  for (const m of members) for (const u of reach(m, (r) => upstreams.get(r) ?? [])) if (!inRun.has(u)) outsideUp.add(u);
+  const before = [...outsideUp].filter((u) => waveOf.has(u)).sort((a, b) => waveOf.get(b)! - waveOf.get(a)! || (a < b ? -1 : 1));
+  const after = before.length && waveOf.get(before[0]!)! >= earliest ? before[0] : undefined;
+  const wave = after ? waveOf.get(after)! + 1 : earliest;
+  // A root outside the run that reads one of its members, directly or through other roots outside it.
+  const downs = new Map<string, Set<string>>();
+  for (const [r, us] of upstreams) for (const u of us) downs.set(u, (downs.get(u) ?? new Set()).add(r));
+  for (const m of [...members].sort()) {
+    for (const d of [...reach(m, (r) => (inRun.has(r) && r !== m ? [] : (downs.get(r) ?? [])))].sort()) {
+      if (inRun.has(d)) continue;
+      const k = waveOf.get(d);
+      if (k !== undefined && k <= wave) {
+        const why = after ? `, since it waits for \`${after}\`, a root left out of it that it reads, in wave ${waveOf.get(after)}` : "";
+        return { fallback: { kind: "split", root: d, reason: `\`${d}\` reads \`${m}\` of the composed run and applies in wave ${k}, before the run, which applies in wave ${wave}${why}` } };
+      }
+    }
+  }
+  return { wave };
 }
 
 /** The `key=value` `-backend-config` pairs of the job's own `TF_CLI_ARGS` and `TF_CLI_ARGS_init`. */
@@ -242,33 +307,40 @@ export async function compositionFor(repo: string, input: CompositionInput): Pro
       return { name: b.name, ...(b.version ? { version: b.version } : {}) };
     },
   });
-  const roots = chant.candidates;
-  const ownWave = ownWaves(roots);
-  // chant judges each member first and the whole change after, so its `one-root` over a change of two or more
-  // roots means its checks left one or none: the first root left out is the reason. A whole-change reason
-  // chant gives over the roots themselves (`cli-args`, `too-many-roots`, one root reached) stands.
-  const whole = chant.fallback && !(chant.fallback.kind === "one-root" && roots.length > 1) ? chant.fallback : undefined;
-  const first = whole ?? chant.fallbacks[0] ?? chant.fallback;
-  const reads = new Map(roots.map((r) => [r, (chant.reads.get(r) ?? []).flatMap((x) => (x.via === "vars" ? [] : [{ name: x.name, upstream: x.upstream }]))] as const));
+  const fallbackOf = (f: { kind: ChantFallbackKind; member?: string; reason: string }): ComposeFallback => ({ kind: f.kind, ...(f.member ? { root: f.member } : {}), reason: inTerragucciTerms(f) });
+  const upstreams = upstreamsOf(input);
+  // chant judges each member first and the whole change after. Its `one-root` over a change of two or more roots means
+  // its checks left one or none: the first root left out is the reason. A whole-change reason chant gives over the roots
+  // themselves (`cli-args`, `too-many-roots`, one root reached) stands.
+  if (chant.fallback || chant.members.length < 2) {
+    const roots = chant.candidates;
+    const whole = chant.fallback && !(chant.fallback.kind === "one-root" && roots.length > 1) ? chant.fallback : undefined;
+    const first = whole ?? chant.fallbacks[0] ?? chant.fallback ?? { kind: "one-root" as const, reason: "fewer than two of its roots compose" };
+    return { roots, order: chant.order.length ? chant.order : lib.readOrder(roots, input.deps), max, modules: chant.modules.size ? chant.modules : lib.moduleNames(roots), reads: readsOf(chant, roots), ownWave: ownWaves(roots), chant, terraform, fallback: fallbackOf(first) };
+  }
+  // Part of the change composes (terragucci#1276): chant's members are the run, and each root it left out applies in its own wave.
+  const roots = [...chant.members].sort();
+  const leftOut = chant.fallbacks.filter((f) => f.member !== undefined).map(fallbackOf);
   const base = {
     roots,
+    ...(leftOut.length ? { leftOut } : {}),
     order: chant.order.length ? chant.order : lib.readOrder(roots, input.deps),
     max,
     modules: chant.modules.size ? chant.modules : lib.moduleNames(roots),
-    reads,
-    ownWave,
-    // chant composes the members it kept as estates; a change that leaves a root out applies wholly in waves, so it is no estate run.
-    ...(chant.estate && chant.fallbacks.length === 0 ? { estate: true } : {}),
+    reads: readsOf(chant, roots),
+    ownWave: ownWaves(roots),
+    // chant composes the members it kept as estates.
+    ...(chant.estate ? { estate: true } : {}),
     chant,
     terraform,
   };
-  if (first) {
-    const fallback: ComposeFallback = { kind: first.kind, ...(first.member ? { root: first.member } : {}), reason: inTerragucciTerms(first) };
-    return { ...base, fallback };
-  }
-  const wave = Math.min(...roots.map((r) => ownWave.get(r) ?? Number.POSITIVE_INFINITY));
-  if (!Number.isFinite(wave)) return { ...base, fallback: { kind: "one-root", reason: "none of its roots is in a wave of this apply" } };
-  return { ...base, wave };
+  const placed = placeRun(roots, input.waves, upstreams);
+  return placed.wave === undefined ? { ...base, fallback: placed.fallback! } : { ...base, wave: placed.wave };
+}
+
+/** Each member's reads of another member, as the run rewrites them. */
+function readsOf(chant: ChantComposition, roots: readonly string[]): Map<string, ComposedReadBlock[]> {
+  return new Map(roots.map((r) => [r, (chant.reads.get(r) ?? []).flatMap((x) => (x.via === "vars" ? [] : [{ name: x.name, upstream: x.upstream }]))] as const));
 }
 
 /** The one line a note, a log and the report's fallback reason say for a change that applies in waves. */
@@ -590,12 +662,13 @@ export function specWavesWithRun(waves: readonly string[][], c: Composition | un
 
 /** The log line that says what `waves.compose` came to. */
 export function compositionLine(c: Composition): string {
-  return c.fallback || c.wave === undefined
-    ? `compose: ${c.fallback?.reason ?? "no wave runs it"}, so the change applies in waves`
-    : `compose: ${c.order.join(", ")} apply as one composed run in wave ${c.wave} (${composeTarget(c.wave)})`;
+  if (c.fallback || c.wave === undefined) return `compose: ${c.fallback?.reason ?? "no wave runs it"}, so the change applies in waves`;
+  const left = c.leftOut?.length ? `; ${c.leftOut.map((f) => `${f.root} applies in its own wave (${f.reason})`).join("; ")}` : "";
+  return `compose: ${c.order.join(", ")} apply as one composed run in wave ${c.wave} (${composeTarget(c.wave)})${left}`;
 }
 
 /** `Report.compose` from a composition. */
 export function reportCompose(c: Composition): ReportCompose {
-  return { roots: c.roots, max: c.max, ...(c.wave !== undefined && !c.fallback ? { wave: c.wave } : {}), ...(c.estate ? { estate: true as const } : {}), ...(c.fallback ? { fallback: c.fallback } : {}) };
+  const run = c.wave !== undefined && !c.fallback;
+  return { roots: c.roots, max: c.max, ...(run ? { wave: c.wave } : {}), ...(run && c.leftOut?.length ? { left_out: c.leftOut } : {}), ...(c.estate ? { estate: true as const } : {}), ...(c.fallback ? { fallback: c.fallback } : {}) };
 }
