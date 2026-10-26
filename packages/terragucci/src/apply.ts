@@ -2241,8 +2241,8 @@ interface ComposedWave {
 }
 
 /**
- * Plan the wave's composed run (./compose.ts): each root's lock taken (the
- * migration's lock, naming the run), its state pulled, one plan made. The
+ * Plan the wave's composed run (./compose.ts, chant's ComposedRun): each
+ * root's lock taken (naming the run), its state pulled, one plan made. The
  * locks stay held until the apply writes each state back, or until the job
  * ends without applying.
  */
