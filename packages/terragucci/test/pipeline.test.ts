@@ -1377,10 +1377,12 @@ beforeAll(async () => {
 async function terragucciBin(bin: string): Promise<void> {
   if (!CLI) {
     const { build } = await import("esbuild");
+    // The shipped bundle's stand-in for a chant subpath the installed chant lacks (terragucci#1278).
+    const { chantNext } = await import("../../../scripts/chant-next-plugin.mjs");
     CLI = join(tmp("tg-cli-"), "terragucci.mjs");
     await build({
       entryPoints: [join(import.meta.dirname, "../src/cli.ts")], outfile: CLI, bundle: true, platform: "node", format: "esm", target: "node22",
-      external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"], logLevel: "silent",
+      external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"], logLevel: "silent", plugins: [chantNext],
       banner: { js: "import { createRequire as __r } from 'node:module';\nconst require = __r(import.meta.url);" },
     });
   }

@@ -7,6 +7,7 @@ import { builtinModules } from "node:module";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
+import { chantNext } from "./chant-next-plugin.mjs";
 
 // The dashboards template (src/dashboards/rendered.json, terragucci#163) and
 // chant's workspace schemas (declaration.schema.json alone is 67 KB as a JS
@@ -89,25 +90,6 @@ const lazyMcpSdk = (pkgDir) => ({
     });
   },
 });
-
-// The Terraform lexicon subpaths src/chant-next.ts loads on first use: chant 0.124.52, the newest published, has
-// none of them (terragucci#1278). One the installed chant lacks resolves to a module that throws when it is
-// imported, so the bundle builds on either chant, and the CLI built on the published one applies in waves.
-const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape)$/;
-const chantNext = {
-  name: "chant-next",
-  setup(b) {
-    b.onResolve({ filter: CHANT_NEXT }, async (args) => {
-      if (args.pluginData?.chantNext) return undefined;
-      const r = await b.resolve(args.path, { kind: args.kind, importer: args.importer, resolveDir: args.resolveDir, pluginData: { chantNext: true } });
-      return r.errors.length === 0 ? undefined : { path: args.path, namespace: "chant-next-missing" };
-    });
-    b.onLoad({ filter: /.*/, namespace: "chant-next-missing" }, (args) => ({
-      loader: "js",
-      contents: `throw new Error(${JSON.stringify(`the installed chant has no ${args.path}`)});\n`,
-    }));
-  },
-};
 
 /** The options for the bundle of the package at pkgDir; `plugins` run before the shipped ones. */
 export const bundleOptions = (pkgDir, plugins = []) => ({
