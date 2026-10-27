@@ -51,7 +51,7 @@ import { poster, type Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
 import { planNoteBodyOf } from "./plan-note";
 import type { ForgeCalls, ReviewedPull } from "./review";
-import { REVIEW_COMMAND, REVIEW_RISKS as RISKS, riskOf, type ReviewRisk as Risk } from "@intentius/chant/op/activities/review-agent";
+import { MAX_DIFF, REVIEW_COMMAND, REVIEW_RISKS as RISKS, riskOf, type ReviewRisk as Risk } from "@intentius/chant/op/activities/review-agent";
 
 /** Where the review instructions live on the default branch unless `review.instructions` names another file. */
 export const REVIEW_INSTRUCTIONS = ".terragucci/review.md";
@@ -98,7 +98,6 @@ export interface PolicyReview {
 }
 
 /** The longest diff, plan note and description the prompt carries; the rest is cut and said so. */
-const MAX_DIFF = 60_000;
 const MAX_NOTE = 40_000;
 const MAX_BODY = 10_000;
 /** The longest review the note carries. */
