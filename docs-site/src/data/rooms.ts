@@ -98,44 +98,44 @@ export const FORGES: { id: string; label: string; differs: string[]; href: strin
 	{ id: 'forgejo', label: 'Forgejo', differs: [], href: '/guides/add-to-a-repo/#per-forge' },
 ];
 
-/** What you are leaving: its first page, and what carries over, shown in the picker's Works card. */
+/** The tool you already use: its first page, and how terragucci works with it, shown in the picker's Works card. */
 export const FROM: { id: string; label: string; first: Link; carries: string[] }[] = [
 	{ id: 'none', label: 'Nothing yet, or a CI script', first: { label: 'Get your first plan note', href: '/getting-started/' }, carries: [] },
 	{
 		id: 'atlantis',
 		label: 'Atlantis',
-		first: { label: 'Coming from Atlantis or OpenTaco', href: '/guides/coming-from-atlantis-or-opentaco/' },
-		carries: ['terragucci import atlantis writes terragucci.yml from atlantis.yaml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of atlantis plan and atlantis apply'],
+		first: { label: 'Use terragucci with Atlantis or OpenTaco', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import atlantis writes terragucci.yml from atlantis.yaml', 'Apply before merge stays, and atlantis plan and atlantis apply comments keep working with atlantis_comments: true'],
 	},
 	{
 		id: 'digger',
 		label: 'OpenTaco or Digger',
-		first: { label: 'Coming from Atlantis or OpenTaco', href: '/guides/coming-from-atlantis-or-opentaco/' },
-		carries: ['terragucci import digger writes terragucci.yml from digger.yml', 'Apply before merge stays, and /terragucci plan and /terragucci apply take the place of digger plan and digger apply'],
+		first: { label: 'Use terragucci with Atlantis or OpenTaco', href: '/guides/coming-from-atlantis-or-opentaco/' },
+		carries: ['terragucci import digger writes terragucci.yml from digger.yml', 'Apply before merge stays, and /terragucci plan and /terragucci apply do the work of digger plan and digger apply'],
 	},
 	{
 		id: 'hcp',
 		label: 'HCP Terraform or Terraform Enterprise',
-		first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
-		carries: ['terragucci import hcp reads your workspaces over the API, and each becomes a root', 'An OPA policy set runs as it is; a Sentinel policy is rewritten in Rego', 'Workspace state moves to your bucket, one root at a time'],
+		first: { label: 'Use terragucci with HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
+		carries: ['terragucci import hcp reads your workspaces over the API, and each becomes a root', 'An OPA policy set runs as it is; a Sentinel policy is rewritten in Rego', 'Your workspaces keep their cloud block; terragucci adds a plan note and waves to the pull request'],
 	},
 	{
 		id: 'scalr',
 		label: 'Scalr or OTF',
-		first: { label: 'Coming from HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
-		carries: ['terragucci import scalr or import otf reads your workspaces, and each becomes a root', 'A Scalr OPA policy group runs with its input paths changed', 'Workspace state moves to your bucket, one root at a time'],
+		first: { label: 'Use terragucci with HCP Terraform, Scalr or OTF', href: '/guides/coming-from-hcp-terraform-scalr-or-otf/' },
+		carries: ['terragucci import scalr or import otf reads your workspaces, and each becomes a root', 'A Scalr OPA policy group runs with its input paths changed', 'Your workspaces keep their cloud block; terragucci adds a plan note and waves to the pull request'],
 	},
 	{
 		id: 'spacelift',
 		label: 'Spacelift',
-		first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
-		carries: ['terragucci import spacelift reads .spacelift/config.yml and the spacelift_* resources, and each stack becomes a root', 'Hooks become steps, and the drift schedule carries over', 'Managed state moves to your bucket, one root at a time'],
+		first: { label: 'Use terragucci with Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
+		carries: ['terragucci import spacelift reads .spacelift/config.yml and the spacelift_* resources, and each stack becomes a root', 'Hooks become steps, and the drift schedule carries over', 'Your stacks keep running; terragucci adds a plan note and waves to the pull request'],
 	},
 	{
 		id: 'env0',
 		label: 'env zero',
-		first: { label: 'Coming from Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
-		carries: ['terragucci import env0 reads env0-discovery.yml and the env0_* resources, and each environment becomes a root', 'An environment with a TTL becomes an ephemeral environment per pull request', 'State in env zero\'s backend moves to your bucket, one root at a time'],
+		first: { label: 'Use terragucci with Spacelift or env zero', href: '/guides/coming-from-spacelift-or-env-zero/' },
+		carries: ['terragucci import env0 reads env0-discovery.yml and the env0_* resources, and each environment becomes a root', 'An environment with a TTL becomes an ephemeral environment per pull request', 'Your environments keep running; terragucci adds a plan note and waves to the pull request'],
 	},
 	{
 		id: 'tgscale',
@@ -221,8 +221,8 @@ export const ROOMS: Room[] = [
 			adds: [
 				'A pull request plans each unit on its upstream\'s planned outputs in place of mock_outputs, and a plan that would read mocks fails',
 				'A wave waits for an approval when it would apply a value no review saw',
-				'An approval counts only for the plan digest it saw, and only from someone with no hand in the change, where Pipelines relies on branch protection',
-				'A wave whose plans moved since the approval applies nothing, where the Pipelines docs ask for branches kept up to date',
+				'An approval counts only for the plan digest it saw, and only from someone with no hand in the change',
+				'A wave whose plans moved since the approval applies nothing',
 			],
 		},
 		howto: [
@@ -260,7 +260,7 @@ export const ROOMS: Room[] = [
 			choose: 'If Atmos Pro\'s ordered deployments and apply on merge already fit your team, you may not need terragucci\'s waves or its stale-plan refusal.',
 			adds: [
 				'An approval counts only for the plan digest it saw, and only from someone with no hand in the change',
-				'Every job runs in your own CI, and no hosted service takes part',
+				'Every job runs in your own CI',
 				'Pipelines for GitLab and Forgejo as well as GitHub',
 			],
 		},
@@ -396,14 +396,13 @@ export const ROOMS: Room[] = [
 		works: [
 			'Apache-2.0, with nothing to buy and no server to host',
 			'Every pipeline feature that runs on Forgejo is proven by a recorded check, listed by tool and forge',
-			'Scored against the 24 tacos.guru criteria',
 		],
 		differs: [],
 		first: { label: 'See a plan note in about 10 minutes', href: '/tutorial/' },
 		howto: [{ label: 'Add terragucci to a repo', href: '/guides/add-to-a-repo/' }],
 		explain: [
 			{ label: 'Architecture', href: '/concepts/how-it-works/' },
-			{ label: 'tacos.guru', href: '/standards/tacos-guru/' },
+			{ label: 'Feature checklist', href: '/standards/tacos-guru/' },
 		],
 		reference: [
 			{ label: 'Validation', href: '/reference/validation/' },

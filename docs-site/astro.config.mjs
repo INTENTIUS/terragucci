@@ -110,7 +110,7 @@ export default defineConfig({
 					items: [{ autogenerate: { directory: 'for' } }],
 				},
 				{
-					label: 'Coming from',
+					label: 'With your platform',
 					collapsed: true,
 					items: [
 						{ label: 'Atlantis or OpenTaco', slug: 'guides/coming-from-atlantis-or-opentaco' },
@@ -272,7 +272,7 @@ export default defineConfig({
 					collapsed: true,
 					items: [
 						{ label: 'Overview', slug: 'standards' },
-						{ label: 'tacos.guru', slug: 'standards/tacos-guru' },
+						{ label: 'Feature checklist', slug: 'standards/tacos-guru' },
 						{ label: 'Access and identity', slug: 'standards/access-and-identity' },
 						{ label: 'Supply chain', slug: 'standards/supply-chain' },
 					],

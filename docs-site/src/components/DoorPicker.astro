@@ -20,7 +20,7 @@ const forges = FORGES.map((f) => ({ ...f, proven: provenFor(f.label) }));
 const data = { base, shapes, binaries, forges, from: FROM };
 const first = shapes[0];
 const taco = `${base}/brand/taco.svg`;
-const fromLabel = (label: string, id: string) => (id === 'none' ? 'Coming from a CI script, or nothing' : `Coming from ${label}`);
+const fromLabel = (label: string, id: string) => (id === 'none' ? 'You already use a CI script, or nothing' : `You already use ${label}`);
 const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, ${binaries[0].proven} on ${binaries[0].label} and ${forges[0].proven} on ${forges[0].label}. Each count covers one choice.`;
 ---
 <section class="tg-doors not-content" aria-label="Your setup" style={`--tg-taco: url(${taco}); --tg-diamond: url(${base}/brand/diamond.svg)`}>
@@ -41,7 +41,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 			{FORGES.map((f, i) => <button type="button" data-pick="forge" value={f.id} aria-pressed={String(i === 0)}>{f.label}</button>)}
 		</div>
 		<span class="fancy">
-			<select data-pick="from" aria-label="Coming from">
+			<select data-pick="from" aria-label="You already use">
 				{FROM.map((f) => <option value={f.id}>{fromLabel(f.label, f.id)}</option>)}
 			</select>
 		</span>

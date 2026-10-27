@@ -1,5 +1,5 @@
 /**
- * The tables of the guide "Coming from Atlantis or OpenTaco"
+ * The tables of the guide "Use terragucci with Atlantis or OpenTaco"
  * (docs-site/src/content/docs/guides/coming-from-atlantis-or-opentaco.mdx),
  * cell for cell. `terragucci import atlantis` and `import digger` map settings
  * by these rows and print their text, and the `atlantis plan` and

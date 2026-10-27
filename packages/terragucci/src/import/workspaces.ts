@@ -1,8 +1,8 @@
 /**
  * `terragucci import hcp|otf|scalr`: read a platform's workspaces over its
  * API (./tfe.ts for HCP Terraform and OTF, ./scalr.ts for Scalr) and write
- * terragucci.yml, with each note naming a row of the guide "Coming from HCP
- * Terraform, Scalr or OTF" (./platform-guide.ts).
+ * terragucci.yml, with each note naming a row of the guide "Use terragucci
+ * with HCP Terraform, Scalr or OTF" (./platform-guide.ts).
  *
  * A terragucci root is one directory with one state. A workspace becomes a
  * root at the directory a `cloud` block or `remote` backend in the repo names

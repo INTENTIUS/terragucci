@@ -1,5 +1,5 @@
 /**
- * The concepts table of the guide "Coming from Spacelift or env zero"
+ * The concepts table of the guide "Use terragucci with Spacelift or env zero"
  * (docs-site/src/content/docs/guides/coming-from-spacelift-or-env-zero.mdx),
  * cell for cell. `terragucci import spacelift` and `import env0` map settings
  * by these rows and print their terragucci cell. A test

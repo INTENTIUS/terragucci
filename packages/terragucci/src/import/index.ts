@@ -5,7 +5,7 @@
  * a Terragrunt Scale repo's Pipelines HCL (./terragrunt-scale.ts), and say what became of every setting.
  * `import spacelift` (./spacelift.ts) and `import env0` (./env0.ts) do the
  * same from a Spacelift or env zero repo, its files and its admin code, by
- * the guide "Coming from Spacelift or env zero".
+ * the guide "Use terragucci with Spacelift or env zero".
  *
  * The mapping is the guide's (./guide.ts holds its tables, which a test holds
  * equal to the page). Each setting the file carries ends up as one note:
