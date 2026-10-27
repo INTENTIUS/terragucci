@@ -1038,7 +1038,7 @@ export interface HeldLock {
  * state's. Releases what it took and throws ConfigError when one is held.
  *
  * chant's lock code is its `/state` subpath, loaded on first use. chant
- * 0.124.52 has none, and with it the same locks are taken in the same order
+ * 0.124.52 and earlier have none, and with it the same locks are taken in the same order
  * by takeLocksHere (terragucci#1278).
  */
 export async function takeLocks(files: ReadonlyMap<string, { object: StateObject; source?: Source }>, now: string, fetchFn?: S3Fetch): Promise<HeldLock[]> {

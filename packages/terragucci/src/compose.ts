@@ -34,8 +34,8 @@
  * read and written first by the next run.
  */
 import { join, resolve } from "node:path";
-// chant's composed run is loaded on first use (./chant-next.ts): chant 0.124.52, the newest published, has none, and
-// with it `waves.compose` applies in waves. Subpaths, not the lexicon's index: the index carries its lint plugin, which
+// chant's composed run is loaded on first use (./chant-next.ts): chant 0.124.52 and earlier have none, and
+// with one of those `waves.compose` applies in waves. Subpaths, not the lexicon's index: the index carries its lint plugin, which
 // imports typescript, and the CLI bundle leaves typescript out (scripts/cli-bundle.mjs).
 import { chantCompose, chantComposeRun, type ChantComposedRoot, type ChantComposeRun, type ChantComposition, type ChantFallbackKind, type ChantMemberRead, type ChantRunner, type ChantStateRunApply } from "./chant-next";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";

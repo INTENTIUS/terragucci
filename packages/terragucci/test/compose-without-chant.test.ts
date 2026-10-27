@@ -1,5 +1,5 @@
 // chant's composed run (`/compose`, `/compose/run`, `/compose/root`, `/compose/estate`, `/compose/slice`) and its lock
-// code (`/state`) are in no published chant yet: chant 0.124.52 has none of them (terragucci#1278). terragucci loads
+// code (`/state`) are in chant 0.124.54 but not in 0.124.52 and earlier (terragucci#1278). terragucci loads
 // them on first use (src/chant-next.ts). Without them `waves.compose` applies in waves with the `off` kind and migrate
 // takes its locks with its own loop; with them, chant's run and chant's lock code do the work. Each case below either
 // makes a part missing, stands a module in for it, or runs only when the installed chant has it.

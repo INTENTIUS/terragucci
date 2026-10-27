@@ -264,7 +264,7 @@ describe("a wave behind its gate", () => {
     const seen = join(work, "..", "env.log");
     // The fake binary records its environment on every call, then does what FAKE does.
     writeFileSync(bin, FAKE.replace("#!/usr/bin/env bash\n", `#!/usr/bin/env bash\nenv >> ${JSON.stringify(seen)}\n`));
-    const tokens = { TG_TOKEN: "job-token-1234", TG_MERGE_TOKEN: "merge-token-5678", GITHUB_TOKEN: "gh-1", GITLAB_TOKEN: "job-token-1234", CI_JOB_TOKEN: "ci-1", FORGEJO_TOKEN: "fj-1", MY_BOT_TOKEN: "merge-token-5678" };
+    const tokens = { TG_TOKEN: "job-token-1234", TG_MERGE_TOKEN: "merge-token-5678", GITHUB_TOKEN: "gh-token-9012", GITLAB_TOKEN: "job-token-1234", CI_JOB_TOKEN: "ci-token-3456", FORGEJO_TOKEN: "fj-token-7890", MY_BOT_TOKEN: "merge-token-5678" };
     for (const [k, v] of Object.entries(tokens)) vi.stubEnv(k, v);
     vi.stubEnv("TF_HTTP_PASSWORD", "job-token-1234");
     try {
@@ -275,7 +275,7 @@ describe("a wave behind its gate", () => {
     const env = readFileSync(seen, "utf-8");
     expect(env).toContain("TF_PLUGIN_CACHE_DIR=");
     for (const k of Object.keys(tokens)) expect(env, k).not.toMatch(new RegExp(`^${k}=`, "m"));
-    for (const v of ["job-token-1234", "merge-token-5678", "gh-1", "ci-1", "fj-1"]) expect(env.split("\n").filter((l) => l.includes(v) && !l.startsWith("TF_HTTP_PASSWORD="))).toEqual([]);
+    for (const v of ["job-token-1234", "merge-token-5678", "gh-token-9012", "ci-token-3456", "fj-token-7890"]) expect(env.split("\n").filter((l) => l.includes(v) && !l.startsWith("TF_HTTP_PASSWORD="))).toEqual([]);
     // A TF_ variable is given to the binary on purpose, so it stays.
     expect(env).toMatch(/^TF_HTTP_PASSWORD=job-token-1234$/m);
   });

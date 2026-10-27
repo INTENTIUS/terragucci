@@ -1,16 +1,17 @@
 /**
- * The Terraform lexicon subpaths a chant release has yet to carry
+ * The Terraform lexicon subpaths chant 0.124.52 and earlier lack
  * (terragucci#1278): the composed run (`compose`, `compose/run`,
  * `compose/root`, `compose/estate`, `compose/slice`), the lock code
- * (`state`) and the plan shape (`plan-shape`). chant 0.124.52, the newest
- * published, has none of them, and main builds and tests against it.
+ * (`state`) and the plan shape (`plan-shape`). chant 0.124.54, the pinned
+ * release, carries all of them; the loaders stay so terragucci still builds
+ * and runs on a chant without them.
  *
  * Each is imported on first use and is undefined when the installed chant
  * lacks it. The callers fall back: `waves.compose` applies in waves
  * (./compose.ts), migrate takes its locks with its own loop (./migrate.ts),
  * and a covered round holds the wave for an approval of its own
- * (./covered-wave.ts). A chant release that carries them turns the full
- * behaviour on with no change here.
+ * (./covered-wave.ts). A chant that carries them, as 0.124.54 does, turns
+ * the full behaviour on with no change here.
  *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
