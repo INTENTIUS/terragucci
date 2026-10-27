@@ -58,7 +58,7 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { chantCheckHooks, chantCiProduct } from "./chant-next";
+import { chantCheckHooks, chantCiControl, chantCiProduct } from "./chant-next";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 
@@ -345,6 +345,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   // The rollout job: when rollouts names a schedule and respond.rollout is not off.
   const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
+  // chant's control repo (chant#4568), loaded before the control settings are resolved, so the dispatch step and the read checkout are chant's when it is there.
+  if (settings.control) await chantCiControl();
   const control = settings.control ? resolveControl(settings.control, options.name ?? basename(resolve(repo))) : undefined;
   // check.pre_commit: tf-check runs the repo's pre-commit hooks as a chant check hook (./pre-commit.ts). The check
   // job also runs check-hooks when the declaration already names check hooks of its own.
