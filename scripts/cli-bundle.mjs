@@ -7,6 +7,7 @@ import { builtinModules } from "node:module";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
+import { chantExternal } from "./chant-external.mjs";
 import { chantNext } from "./chant-next-plugin.mjs";
 
 // The dashboards template (src/dashboards/rendered.json, terragucci#163) and
@@ -109,5 +110,7 @@ export const bundleOptions = (pkgDir, plugins = []) => ({
   minifyIdentifiers: true,
   keepNames: false,
   logLevel: "warning",
-  plugins: [...plugins, chantNext, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir)],
+  // chant core the installed chant serves as compiled JS stays external
+  // (scripts/chant-external.mjs); chant-next stands in for a subpath it lacks.
+  plugins: [...plugins, chantExternal(pkgDir), chantNext, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir)],
 });

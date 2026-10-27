@@ -1,10 +1,12 @@
 // Builds @intentius/terragucci for release: the CLI as one bundled file that
-// imports no package, and the config types for a terragucci.ts.
+// imports Node's own modules and the installed @intentius/chant, and the
+// config types for a terragucci.ts.
 //   node scripts/build-cli.mjs
-// The bundle carries the chant code it uses; the package depends on
-// @intentius/chant only for the bin `terragucci approve` runs (bundle-check
-// holds that pin to the root's). The TypeScript folder that a .ts config
-// needs, and the HCL parser a module rollout needs, stay external and optional.
+// The package depends on @intentius/chant at an exact pin (bundle-check holds
+// it to the root's). The bundle imports chant core from it wherever that chant
+// serves compiled JS (scripts/chant-external.mjs, chant#4591) and carries the
+// lexicon code it uses. The TypeScript folder that a .ts config needs, and the
+// HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
