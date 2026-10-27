@@ -52,6 +52,13 @@
  * (`productPipelineJobs`, ./render.ts). Without them terragucci's own code
  * gives the same names.
  *
+ * Newer than the pin too (chant#4568, terragucci#1282): the control repo in
+ * chant core, `@intentius/chant/ci-control`, and each forge lexicon's
+ * `components/control-pipeline`. With them the member's dispatch, the control
+ * repo's pipeline, its entries on the ledger and reconcile are chant's
+ * (./control-repo.ts, ./control-records.ts, ./reconcile.ts). Without them
+ * terragucci's own code runs, with its record files.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -499,6 +506,109 @@ export interface ChantCiProduct extends ChantCiProductWords {
   CI_PRODUCT_FLOOR: string;
 }
 
+// ── ci-control (chant#4568) ────────────────────────────────────────────────
+
+/** chant's control settings with the defaults filled in (`ControlTarget`). */
+export interface ChantControlTarget {
+  repo: string;
+  host: string;
+  path: string;
+  forge: "github" | "gitlab" | "forgejo";
+  apiBase: string;
+  op: string;
+  member: string;
+  ref: string;
+  tokenSecret: string;
+  readTokenSecret: string;
+}
+
+export type ChantControlEntryKind = "project" | "defaults";
+
+/** An entry's current version on the control repo's ledger (`ControlEntry`). */
+export interface ChantControlEntry {
+  id: string;
+  entry: ChantControlEntryKind;
+  project?: string;
+  settings: Record<string, unknown>;
+  estates: string[];
+  digest: string;
+  at: string;
+  by?: string;
+}
+
+/** Where the entries are read and appended (`ControlLedgerPort`). */
+export interface ChantControlLedgerPort {
+  read(): Promise<string | null>;
+  append(line: string, message: string): Promise<string>;
+}
+
+export type ChantControlValidator = (entry: ChantControlEntryKind, project: string | undefined, settings: Record<string, unknown>) => string[];
+
+export interface ChantControlWriteOptions {
+  product: string;
+  by?: string;
+  validate?: ChantControlValidator;
+  expect?: string;
+  dryRun?: boolean;
+}
+
+export interface ChantControlPut {
+  id: string;
+  status: "created" | "updated" | "unchanged" | "retired";
+  commit?: string;
+}
+
+/** A file reconcile's generator wrote, relative to the project's root. */
+export interface ChantControlFileChange {
+  path: string;
+  status: "created" | "updated" | "unchanged" | "removed";
+}
+
+export interface ChantReconcileOutcome {
+  key: string;
+  status: "unchanged" | "would-change" | "pull-request" | "failed";
+  changes: ChantControlFileChange[];
+  pullRequest?: string;
+  error?: string;
+}
+
+/** chant core's control repo (`@intentius/chant/ci-control`, chant#4568). */
+export interface ChantCiControl {
+  resolveControlTarget(
+    input: { repo: string; forge?: "github" | "gitlab" | "forgejo"; op: string; member?: string; tokenSecret?: string; readTokenSecret?: string; ref?: string; apiBase?: string },
+    fallbackMember: string,
+  ): ChantControlTarget;
+  controlDispatchScript(target: ChantControlTarget, opts?: { words?: object; sentCheck?: string; markSent?: string }): string;
+  controlStatusContext(words?: object): string;
+  gitControlLedger(opts?: { cwd?: string }): ChantControlLedgerPort;
+  readControlEntries(port: ChantControlLedgerPort, opts?: { validate?: ChantControlValidator; lenient?: boolean }): Promise<ChantControlEntry[]>;
+  putControlEntry(port: ChantControlLedgerPort, want: { entry: ChantControlEntryKind; project?: string; settings: Record<string, unknown>; estates?: string[] }, opts: ChantControlWriteOptions): Promise<ChantControlPut>;
+  retireControlEntry(port: ChantControlLedgerPort, project: string, opts: ChantControlWriteOptions): Promise<ChantControlPut>;
+  importControlConfig(
+    port: ChantControlLedgerPort,
+    config: { defaults?: Record<string, unknown>; projects: Record<string, Record<string, unknown>>; estates?: Record<string, string[]> },
+    opts: ChantControlWriteOptions,
+  ): Promise<(ChantControlPut & { entry: string })[]>;
+  estateClaims(entries: readonly ChantControlEntry[]): Map<string, string[]>;
+  reconcileProjects(
+    projects: readonly { key: string; settings: Record<string, unknown>; forge?: "github" | "gitlab" | "forgejo"; url?: string; tokenEnv?: string; apiBase?: string }[],
+    options: {
+      mode: "dry-run" | "apply";
+      project?: string;
+      words?: object;
+      generate: (dir: string, target: { key: string; name: string; forge: "github" | "gitlab" | "forgejo"; settings: Record<string, unknown>; dryRun: boolean }) => Promise<ChantControlFileChange[]>;
+      env?: Record<string, string | undefined>;
+      fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+    },
+  ): Promise<ChantReconcileOutcome[]>;
+  CI_CONTROL_FLOOR: string;
+}
+
+/** A forge lexicon's control repo pipeline (`components/control-pipeline`, chant#4568). */
+export interface ChantControlPipeline {
+  generateControlPipeline(options?: { words?: object; image?: string; command?: string }): { path: string; content: string; notes: string[] };
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -595,6 +705,27 @@ const loaders = {
     // chant#4550's own feature-detect: these three present means the rest is too.
     (m) => (has(m, "productPipelineJobs", "approveLine", "assertProductWords") && has(m, "parseProductComment", "productStatusContext", "commentLine", "productWavesSpec") ? (m as unknown as ChantCiProduct) : undefined),
   ),
+  ciControl: once<ChantCiControl>(
+    // @ts-ignore chant 0.124.54 has no ci-control subpath (chant#4568)
+    () => import("@intentius/chant/ci-control"),
+    // chant#4568's own feature-detect: these three present means the rest is too.
+    (m) => (has(m, "controlDispatchRequest", "putControlEntry", "reconcileProjects") && has(m, "resolveControlTarget", "controlDispatchScript", "gitControlLedger", "readControlEntries", "retireControlEntry", "importControlConfig", "estateClaims") ? (m as unknown as ChantCiControl) : undefined),
+  ),
+  controlPipelineGithub: once<ChantControlPipeline>(
+    // @ts-ignore chant 0.124.54 has no components/control-pipeline in the github lexicon (chant#4568)
+    () => import("@intentius/chant-lexicon-github/components/control-pipeline"),
+    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
+  ),
+  controlPipelineGitlab: once<ChantControlPipeline>(
+    // @ts-ignore chant 0.124.54 has no components/control-pipeline in the gitlab lexicon (chant#4568)
+    () => import("@intentius/chant-lexicon-gitlab/components/control-pipeline"),
+    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
+  ),
+  controlPipelineForgejo: once<ChantControlPipeline>(
+    // @ts-ignore chant 0.124.54 has no components/control-pipeline in the forgejo lexicon (chant#4568)
+    () => import("@intentius/chant-lexicon-forgejo/components/control-pipeline"),
+    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -664,6 +795,15 @@ export const chantCiProduct = (): Promise<ChantCiProduct | undefined> => load("c
  */
 export const chantCiProductWordsNow = (): ChantCiProductWords | undefined => loaded("ciProductWords");
 
+/** chant core's control repo (`@intentius/chant/ci-control`, chant#4568), or undefined. */
+export const chantCiControl = (): Promise<ChantCiControl | undefined> => load("ciControl");
+/** chant's control repo as it already loaded, for the synchronous script builders (./control-repo.ts). init loads it first. */
+export const chantCiControlNow = (): ChantCiControl | undefined => loaded("ciControl");
+/** The forge lexicon's control repo pipeline (chant#4568), or undefined. */
+export function chantControlPipeline(forge: "github" | "gitlab" | "forgejo"): Promise<ChantControlPipeline | undefined> {
+  return load(forge === "github" ? "controlPipelineGithub" : forge === "gitlab" ? "controlPipelineGitlab" : "controlPipelineForgejo");
+}
+
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
  * Returns the function that puts the import back.
@@ -677,8 +817,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, ciProductWords, ciProduct] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantCiProductWords(), chantCiProduct()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo")]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

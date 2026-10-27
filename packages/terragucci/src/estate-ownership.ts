@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, parseProjectKey, type ControlSettings } from "./config";
-import { hasControlRecords, readClaims, type ChantRunner } from "./control-records";
+import { hasControlEntries, hasControlRecords, readClaims, readClaimsAt, type ChantRunner } from "./control-records";
 
 /** The token a plan may read the control repo with, when no checkout is given. */
 export const CONTROL_READ_TOKEN_ENV = "TERRAGUCCI_CONTROL_READ_TOKEN";
@@ -108,6 +108,51 @@ export function controlClaims(
     }
     if (!hasControlRecords(into)) return undefined;
     return readClaims(into, run);
+  } finally {
+    rmSync(into, { recursive: true, force: true });
+  }
+}
+
+/** What fetches the control repo's chant/lifecycle into a clone, as a local branch. Tests pass a fake. */
+export type FetchLifecycle = (dir: string) => void;
+const gitFetchLifecycle: FetchLifecycle = (dir) => {
+  try {
+    execFileSync("git", ["-C", dir, "fetch", "--quiet", "--depth", "1", "origin", "+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle"], { stdio: ["ignore", "ignore", "pipe"] });
+  } catch {
+    // A control repo whose records are still files has no chant/lifecycle.
+  }
+};
+
+/**
+ * {@link controlClaims}, with the control repo's entries read from its
+ * ledger when they are there (chant#4568): the checkout's local
+ * chant/lifecycle, which the pipeline's read step fetches, or, for a clone,
+ * fetched here with the same token. A control repo whose records are still
+ * files is read as before.
+ */
+export async function controlClaimsAt(
+  control: ControlSettings | undefined,
+  env: NodeJS.ProcessEnv,
+  run?: ChantRunner,
+  clone: Clone = gitClone,
+  fetchLifecycle: FetchLifecycle = gitFetchLifecycle,
+): Promise<Map<string, string[]> | undefined> {
+  const dir = env[CONTROL_DIR_ENV];
+  if (dir) return readClaimsAt(dir, run);
+  const token = env[CONTROL_READ_TOKEN_ENV];
+  if (!control || !token) return undefined;
+  const into = mkdtempSync(join(tmpdir(), "terragucci-control-"));
+  try {
+    const pk = parseProjectKey(control.repo);
+    const url = `https://oauth2:${encodeURIComponent(token)}@${pk.host}/${pk.path}.git`;
+    try {
+      clone(url, into);
+    } catch (e) {
+      throw new ConfigError(`could not read the control repo ${control.repo} to resolve estate ownership: ${String((e as Error).message).replaceAll(token, "***").split("\n")[0]}`);
+    }
+    fetchLifecycle(into);
+    if (!(await hasControlEntries(into))) return undefined;
+    return readClaimsAt(into, run);
   } finally {
     rmSync(into, { recursive: true, force: true });
   }

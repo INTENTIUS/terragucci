@@ -4,11 +4,19 @@
  * pipeline would become. `--mode apply` pushes a branch to each project that
  * changes and opens a pull request there; it never writes a default branch.
  * One project failing does not stop the others.
+ *
+ * chant core holds reconcile now (chant#4568). When the installed chant has
+ * `@intentius/chant/ci-control`, `reconcileProjects` clones each project,
+ * pushes the branch and opens or edits the pull request, and terragucci's
+ * generator (its generated files, then init) writes the pipeline, with its
+ * tips on a dry run. Without it, the loop below.
  */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { chantCiControl, type ChantCiControl } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch, type ForgeTarget } from "./forge";
 import { findRoots } from "./detect";
@@ -90,6 +98,8 @@ export async function reconcile(config: TerragucciConfig, options: ReconcileOpti
   if (!config.projects || Object.keys(config.projects).length === 0) {
     throw new ConfigError("reconcile needs a control repo config with projects; in a single repo, run terragucci init");
   }
+  const chant = await chantCiControl();
+  if (chant) return reconcileWithChant(chant, config, options);
   const keys = options.project ? [options.project] : Object.keys(config.projects);
   const env = options.env ?? process.env;
   const fetch = options.fetch ?? (globalThis.fetch as unknown as Fetch);
@@ -155,6 +165,64 @@ export async function reconcile(config: TerragucciConfig, options: ReconcileOpti
     }
   }
   return outcomes;
+}
+
+/**
+ * Reconcile through chant's `reconcileProjects` (chant#4568), with
+ * terragucci's generator and words. Each project's settings are resolved
+ * here, the defaults applied, and a project whose settings do not resolve
+ * fails alone, as in the loop above. The branch is `terragucci/pipeline` and
+ * the token the one `token_env` names, else terragucci's default for the
+ * forge.
+ */
+async function reconcileWithChant(chant: ChantCiControl, config: TerragucciConfig, options: ReconcileOptions): Promise<ProjectOutcome[]> {
+  const keys = options.project ? [options.project] : Object.keys(config.projects!);
+  const failed = new Map<string, string>();
+  const resolved = new Map<string, ResolvedSettings>();
+  const projects: Parameters<ChantCiControl["reconcileProjects"]>[0][number][] = [];
+  for (const key of keys) {
+    try {
+      const settings = resolveProject(config, key);
+      const pk = parseProjectKey(key);
+      const forge = settings.forge ?? forgeFromHost(pk.host);
+      if (!forge) throw new ConfigError(`cannot tell which forge ${pk.host} is; set forge for this project`);
+      const projectSettings: ResolvedSettings = { ...settings, forge, ...(settings.generate ? { generate: projectGenerate(settings) } : {}) };
+      resolved.set(key, projectSettings);
+      projects.push({ key, settings: projectSettings as unknown as Record<string, unknown>, forge, ...(settings.url ? { url: settings.url } : {}), tokenEnv: settings.token_env ?? DEFAULT_TOKEN_ENV[forge] });
+    } catch (e) {
+      failed.set(key, (e as Error).message);
+    }
+  }
+  const tips = new Map<string, ReportTip[]>();
+  // What the generator wrote for each project, contents included, as the loop above reports it.
+  const written = new Map<string, FileChange[]>();
+  const generate = async (dir: string, target: { key: string; name: string; dryRun: boolean }) => {
+    const settings = resolved.get(target.key)!;
+    // generate: each root's backend, provider and version files, written into the clone first, so init finds the roots they make.
+    const generated = settings.generate ? writeGenerated(dir, settings) : [];
+    const result = await init(dir, { settings, name: target.name, dryRun: target.dryRun });
+    if (target.dryRun && settings.tips) tips.set(target.key, await tipsOf(dir, settings));
+    const changes = [...generated, ...result.files].map((f) => ({ ...f, path: relative(dir, f.path) }));
+    written.set(target.key, changes);
+    return changes.map((f) => ({ path: f.path, status: f.status }));
+  };
+  const outcomes = projects.length
+    ? await chant.reconcileProjects(projects, {
+        mode: options.mode,
+        words: TERRAGUCCI_WORDS,
+        generate,
+        env: options.env ?? process.env,
+        ...(options.fetch ? { fetch: options.fetch as unknown as (url: string, init?: RequestInit) => Promise<Response> } : {}),
+      })
+    : [];
+  const byKey = new Map(outcomes.map((o) => [o.key, o]));
+  return keys.map((key): ProjectOutcome => {
+    const why = failed.get(key);
+    if (why !== undefined) return { key, status: "failed", changes: [], error: why };
+    const o = byKey.get(key)!;
+    const t = tips.get(key);
+    return { key, status: o.status, changes: o.status === "failed" ? [] : (written.get(key) ?? []), ...(o.pullRequest ? { pullRequest: o.pullRequest } : {}), ...(o.error ? { error: o.error } : {}), ...(t ? { tips: t } : {}) };
+  });
 }
 
 export function describeReconcile(outcomes: ProjectOutcome[], mode: "dry-run" | "apply"): string {

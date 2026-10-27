@@ -37,7 +37,7 @@ import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_D
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
 import { readLiveSetup, resolvedEstate } from "../live-setup";
 import { applyLayers, detectBinary, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
-import { checkOwnership, controlClaims, projectKeyFromEnv } from "../estate-ownership";
+import { checkOwnership, controlClaimsAt, projectKeyFromEnv } from "../estate-ownership";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { pendingEstateMigrations, pendingWhy, type PendingEstateRoot } from "../migrate";
@@ -1149,7 +1149,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const readEstates = new Set([...estateReadsOf.values()].flat().map((b) => b.estate));
   // The control repo's records say which project owns each estate; read now, at this plan, never kept (terragucci#753).
   if (estatePlans && (estateOwner.size > 0 || [...estateReadsOf.values()].some((r) => r.length > 0))) {
-    const claims = options.controlClaims ? options.controlClaims() : controlClaims(settings.control, env);
+    const claims = options.controlClaims ? options.controlClaims() : await controlClaimsAt(settings.control, env);
     if (claims) {
       const found = checkOwnership({ self: options.project ?? projectKeyFromEnv(env), local: new Map([...estateOwner]), reads: estateReadsOf, claims });
       for (const n of found.notes) log(n);

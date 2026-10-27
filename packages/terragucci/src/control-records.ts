@@ -18,10 +18,21 @@
  * chant is run as a command (`npx --no-install chant`, or `TERRAGUCCI_CHANT`),
  * so this file reads no record file itself and needs chant 0.124.47 or later,
  * which has `workspace records new|amend` and `--where`.
+ *
+ * chant core holds the control entries now (chant#4568): lines of
+ * `_control/entries.jsonl` on the control repo's `chant/lifecycle`, with no
+ * record files and no product git writes. When the installed chant has
+ * `@intentius/chant/ci-control` and the control repo's ledger has entries,
+ * the `*At` functions below read and write there, with terragucci's config
+ * check as chant's `validate`. `migrateRecords` (`terragucci control records
+ * migrate`) moves a repo's record files onto the ledger with chant's
+ * `importControlConfig`. A repo that has not moved keeps its files, on any
+ * chant.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { chantCiControl, type ChantCiControl, type ChantControlEntry, type ChantControlLedgerPort } from "./chant-next";
 import { ConfigError, parseProjectKey, validateConfig, type ProjectSettings, type TerragucciConfig } from "./config";
 
 /** Where `control records init` puts the kind, from the control repo's root. */
@@ -283,4 +294,158 @@ export function estateClaims(entries: ControlEntry[]): Map<string, string[]> {
 /** The estates' claims read now, from the control repo's checkout at `dir`. Called at every plan; nothing is kept between plans. */
 export function readClaims(dir: string, run: ChantRunner = chantRunner): Map<string, string[]> {
   return estateClaims(readEntries(dir, run));
+}
+
+// ── the control repo's ledger (chant#4568) ───────────────────────────────────
+
+/** Where an entry read from the ledger is: the file on the control repo's chant/lifecycle. */
+export const LEDGER_PATH = "chant/lifecycle:_control/entries.jsonl";
+
+/** The product the ledger's entries are written as. */
+const PRODUCT = "terragucci";
+
+/** chant's control repo and the ledger of the control repo at `dir`, when the installed chant has it. */
+export interface ControlLedger {
+  chant: ChantCiControl;
+  port: ChantControlLedgerPort;
+}
+
+/** The control repo's ledger at `dir`, or undefined on a chant without `@intentius/chant/ci-control`. */
+export async function controlLedger(dir: string): Promise<ControlLedger | undefined> {
+  const chant = await chantCiControl();
+  return chant ? { chant, port: chant.gitControlLedger({ cwd: dir }) } : undefined;
+}
+
+/** Does the control repo's ledger hold entries, so it is the store? */
+export async function ledgerHasEntries(ledger: ControlLedger | undefined): Promise<boolean> {
+  if (!ledger) return false;
+  const text = await ledger.port.read();
+  return text !== null && text.trim() !== "";
+}
+
+/** terragucci's config check of one entry's settings, as chant's `validate`: the problems, none when it passes. */
+export function validateSettings(entry: EntryKind, project: string | undefined, settings: Record<string, unknown>): string[] {
+  try {
+    checkSettings(entry, project, settings as ProjectSettings);
+    return [];
+  } catch (e) {
+    const problems = (e as ConfigError & { problems?: string[] }).problems;
+    return problems && problems.length > 0 ? problems : [(e as Error).message];
+  }
+}
+
+const fromLedger = (e: ChantControlEntry): ControlEntry => ({
+  id: e.id,
+  path: LEDGER_PATH,
+  digest: e.digest,
+  entry: e.entry,
+  ...(e.project !== undefined ? { project: e.project } : {}),
+  settings: e.settings as ProjectSettings,
+  estates: e.estates,
+});
+
+/** chant's errors as terragucci's, so the CLI reports them as config errors. */
+async function asConfig<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof ConfigError) throw e;
+    const problems = (e as { problems?: string[] }).problems;
+    throw new ConfigError(`${what}: ${(e as Error).message}`, problems);
+  }
+}
+
+/** The store the control repo at `dir` keeps its entries in: the ledger once it has entries there, else its record files. */
+async function storeOf(dir: string): Promise<ControlLedger | undefined> {
+  const ledger = await controlLedger(dir);
+  return (await ledgerHasEntries(ledger)) ? ledger : undefined;
+}
+
+/** Does the control repo at `dir` keep entries anywhere: on its ledger, or in its record files? */
+export async function hasControlEntries(dir: string): Promise<boolean> {
+  return (await storeOf(dir)) !== undefined || hasControlRecords(dir);
+}
+
+/** {@link readEntries}, from the ledger when the control repo's entries are there. */
+export async function readEntriesAt(dir: string, run: ChantRunner = chantRunner): Promise<ControlEntry[]> {
+  const ledger = await storeOf(dir);
+  if (!ledger) return readEntries(dir, run);
+  const entries = await asConfig("reading the control repo's entries", () => ledger.chant.readControlEntries(ledger.port, { validate: validateSettings }));
+  return entries.map(fromLedger);
+}
+
+/** {@link putEntry}, on the ledger when the control repo's entries are there. The ledger commit is local: push chant/lifecycle after. */
+export async function putEntryAt(
+  dir: string,
+  want: { entry: EntryKind; project?: string; settings: ProjectSettings; estates?: string[] },
+  run: ChantRunner = chantRunner,
+  dryRun = false,
+): Promise<PutResult> {
+  const ledger = await storeOf(dir);
+  if (!ledger) return putEntry(dir, want, run, dryRun);
+  const r = await asConfig(`writing ${want.project ?? "defaults"}`, () =>
+    ledger.chant.putControlEntry(ledger.port, { entry: want.entry, ...(want.project ? { project: want.project } : {}), settings: want.settings as Record<string, unknown>, ...(want.estates ? { estates: want.estates } : {}) }, { product: PRODUCT, validate: validateSettings, dryRun }),
+  );
+  return { id: r.id, path: LEDGER_PATH, status: r.status === "retired" ? "updated" : r.status };
+}
+
+/** {@link retireEntry}, on the ledger when the control repo's entries are there. */
+export async function retireEntryAt(dir: string, project: string, run: ChantRunner = chantRunner, dryRun = false): Promise<PutResult> {
+  const ledger = await storeOf(dir);
+  if (!ledger) return retireEntry(dir, project, run, dryRun);
+  const r = await asConfig(`retiring ${project}`, () => ledger.chant.retireControlEntry(ledger.port, project, { product: PRODUCT, dryRun }));
+  return { id: r.id, path: LEDGER_PATH, status: "updated" };
+}
+
+/** {@link importControlConfig}, onto the ledger when the control repo's entries are there. */
+export async function importControlConfigAt(dir: string, config: TerragucciConfig, run: ChantRunner = chantRunner, dryRun = false): Promise<(PutResult & { entry: string })[]> {
+  const ledger = await storeOf(dir);
+  if (!ledger) return importControlConfig(dir, config, run, dryRun);
+  if (!config.projects || Object.keys(config.projects).length === 0) throw new ConfigError("only a control repo's config, which lists projects, becomes records");
+  const projects = config.projects as Record<string, Record<string, unknown>>;
+  const out = await asConfig("importing the control repo's config", () =>
+    ledger.chant.importControlConfig(ledger.port, { ...(config.defaults ? { defaults: config.defaults as Record<string, unknown> } : {}), projects }, { product: PRODUCT, validate: validateSettings, dryRun }),
+  );
+  return out.map((r) => ({ entry: r.entry, id: r.id, path: LEDGER_PATH, status: r.status === "retired" ? "updated" : r.status }));
+}
+
+/** {@link readClaims}, from the ledger when the control repo's entries are there. */
+export async function readClaimsAt(dir: string, run: ChantRunner = chantRunner): Promise<Map<string, string[]>> {
+  return estateClaims(await readEntriesAt(dir, run));
+}
+
+/** What `control records migrate` did: each entry written to the ledger, and the record files it read them from. */
+export interface MigrateResult {
+  results: (PutResult & { entry: string })[];
+  /** The record files read, which the repo can delete once the ledger is pushed. */
+  files: string[];
+}
+
+/**
+ * `terragucci control records migrate`: the control repo's record files
+ * (terragucci/records) written onto its ledger with chant's
+ * `importControlConfig`, each project with its estates. Writing again is
+ * safe: an entry that already holds the settings is left as it is. The files
+ * stay where they are; the ledger is the store once it has entries, so the
+ * repo deletes them after it pushes chant/lifecycle.
+ */
+export async function migrateRecords(dir: string, run: ChantRunner = chantRunner, dryRun = false): Promise<MigrateResult> {
+  const ledger = await controlLedger(dir);
+  if (!ledger) throw new ConfigError("moving the records onto the ledger needs a chant with the control repo (@intentius/chant/ci-control); this one has none, so the record files stay the store");
+  const entries = readEntries(dir, run);
+  const defaults = entries.find((e) => e.entry === "defaults");
+  const projects: Record<string, Record<string, unknown>> = {};
+  const estates: Record<string, string[]> = {};
+  for (const e of entries.filter((x) => x.entry === "project")) {
+    projects[e.project!] = e.settings as Record<string, unknown>;
+    estates[e.project!] = e.estates;
+  }
+  if (Object.keys(projects).length === 0) throw new ConfigError("the control repo's records list no project, so there is nothing to move");
+  const out = await asConfig("moving the records onto the ledger", () =>
+    ledger.chant.importControlConfig(ledger.port, { ...(defaults ? { defaults: defaults.settings as Record<string, unknown> } : {}), projects, estates }, { product: PRODUCT, validate: validateSettings, dryRun }),
+  );
+  return {
+    results: out.map((r) => ({ entry: r.entry, id: r.id, path: LEDGER_PATH, status: r.status === "retired" ? "updated" : r.status })),
+    files: entries.map((e) => e.path),
+  };
 }
