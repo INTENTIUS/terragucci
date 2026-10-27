@@ -122,7 +122,7 @@ The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/rend
 |---|---|---|
 | `diff-guard.yml` | by hand (`gh workflow run diff-guard.yml --ref <branch>`; the `allow_revert` input replaces the `revert` label) | `scripts/diff-guard.sh origin/main <head>`: fails when the squash would undo a commit main already has; `scripts/lfs-check.sh origin/main <head>`: fails when the pull request adds a binary outside Git LFS |
 | `ci.yml` | every pull request, each push to main, and by hand | `just check-unit` in `static`, `just test-shard <n>` in `test (<n>/3)` |
-| `chant-ci-green.yml` | when `ci.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
+| `chant-ci-green.yml` | when `ci.yml` or `publish.yml` completes on main, and every 15 minutes | `chant ci tick`: tags each commit that passed every `ci.green` phase `ci/green/<sha>`, and a green commit that later fails `ci/revoked/<sha>` |
 | `ci-red.yml` | hourly | `scripts/ci-red`: opens one issue, "main is red", when main has had no green commit for `TERRAGUCCI_RED_HOURS` (6) hours or a green commit is revoked, and closes it once main is green again |
 
 main's runs of `ci.yml` are never cancelled. GitHub keeps one run going and one waiting per concurrency group, so in a burst of merges the first and the newest are tested and the commits between them get no tag. A pull request's new push cancels its run in progress, and so does a run by hand on a branch. The tick reads main's commits alone, so a pull request's runs tag nothing.
@@ -145,7 +145,7 @@ Media too large even for LFS, such as the launch video, stays out of the reposit
 
 ### Green commits
 
-`chant.workspace.json` declares `ci.green` for main over the `ci.yml` jobs, `static` and the three `test` jobs by name, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here: after changing `ci.green` or a job name in `ci.yml`, regenerate it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`.
+`chant.workspace.json` declares `ci.green` for main over the `ci.yml` jobs, `static` and the three `test` jobs by name, with a 24-hour window. `chant.config.ts` sets `rootOnly`, since the declaration has no members and `chant build` and `chant lint` keep building this project alone. `chant-ci-green.yml` is written by chant, not declared here. `just ci` regenerates it with `npx chant ci workflow --token-secret CI_GREEN_TOKEN`, and `just ci-check` fails when it has drifted. The tick runs `npx @intentius/chant@<version>` with the version of the installed chant, so the pin in `packages/terragucci/package.json` sets it: after a pin bump, or a change to `ci.green` or a job name, run `just ci`. chant triggers the tick on every workflow holding a required job's name, which is why `publish.yml` and its `test` jobs are in the list.
 
 ```bash
 git fetch origin --tags
@@ -153,7 +153,7 @@ npx chant ci last-green                        # the newest commit on main that 
 npx chant ci tick --dry-run                    # what a tick would tag; needs GITHUB_REPOSITORY and GH_TOKEN, never CI_GREEN_TOKEN
 ```
 
-The tick pushes its tags with the repository secret `CI_GREEN_TOKEN`, a fine-grained personal access token for this repository with Contents and Workflows read and write. GitHub refuses the Actions token a new ref to a commit that changes `.github/workflows/`, so without the secret such a commit gets no green tag, and the tick reports it. Nothing else needs the secret: CI, `diff-guard`, `ci-red` and every local run work without it. `chant ci workflow` writes the checkout with `token: ${{ secrets.CI_GREEN_TOKEN }}` and no fallback, so until the secret exists the tick's checkout fails and no commit is tagged; releases then go through `TERRAGUCCI_RELEASE_SKIP_GREEN=1` (below).
+The tick pushes its tags with the repository secret `CI_GREEN_TOKEN`, a fine-grained personal access token for this repository with Contents and Workflows read and write. GitHub refuses the Actions token a new ref to a commit that changes `.github/workflows/`, so without the secret such a commit gets no green tag, and the tick reports it. Nothing else needs the secret: CI, `diff-guard`, `ci-red` and every local run work without it. `chant ci workflow` writes the checkout with `token: ${{ secrets.CI_GREEN_TOKEN || github.token }}`, so without the secret the tick runs on the Actions token and a commit that changes `.github/workflows/` stays untagged; when no recent commit is green, releases go through `TERRAGUCCI_RELEASE_SKIP_GREEN=1` (below).
 
 ## The site
 

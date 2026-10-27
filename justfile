@@ -86,6 +86,9 @@ ci:
     npx chant build ci-red -o .github/workflows/ci-red.yml --format yaml
     npx chant build diff-guard -o .github/workflows/diff-guard.yml --format yaml
     npx chant build scale -o .github/workflows/scale.yml --format yaml
+    # Written by chant from ci.green and the workflows above. The tick runs the
+    # chant that package.json pins, so a pin bump moves it.
+    npx chant ci workflow --token-secret CI_GREEN_TOKEN
     just render-observability
     just render-images
     just render-front-door
@@ -142,6 +145,8 @@ ci-check:
       src="${pair%%:*}"
       render "$src" npx chant build "$src" -o "$out/$src.yml" --format yaml
     done
+    # The green tick, from chant.workspace.json and the committed workflows.
+    render green npx chant ci workflow --token-secret CI_GREEN_TOKEN --output "$out/chant-ci-green.yml"
     # The Dockerfiles: the docker lexicon writes them beside its (empty) compose output.
     mkdir "$out/images"
     render images npx chant build images -o "$out/images/compose.yml" --format yaml
@@ -157,6 +162,13 @@ ci-check:
       src="${pair%%:*}"; committed="${pair#*:}"
       if rendered "$src"; then same "$committed" "$out/$src.yml" "$src/pipeline.ts" || rc=1; else rc=1; fi
     done
+    if rendered green; then
+      # chant names --output in the file's first line; the committed file was written without it.
+      sed '1s# --output [^ ]*##' "$out/chant-ci-green.yml" >"$out/chant-ci-green.norm.yml"
+      same .github/workflows/chant-ci-green.yml "$out/chant-ci-green.norm.yml" chant.workspace.json || rc=1
+    else
+      rc=1
+    fi
     if rendered images; then
       for f in "$out/images"/Dockerfile.*; do
         same "images/$(basename "$f")" "$f" images/images.ts || rc=1
