@@ -1,9 +1,9 @@
 // The esbuild plugin for the Terraform lexicon subpaths src/chant-next.ts loads on first use: chant 0.124.52 and
-// earlier have none of them (terragucci#1278). One the installed chant lacks resolves to a module that
+// earlier have none of them (terragucci#1278), and `registry` (chant#4565) is newer than the 0.124.54 pin. One the installed chant lacks resolves to a module that
 // throws when it is imported, so a bundle builds on either chant, and the CLI built on 0.124.52 applies in
 // waves. scripts/cli-bundle.mjs (the shipped bundle) and test/pipeline.test.ts (the CLI its stand-in steps run)
 // both take it from here.
-const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape)$/;
+const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape|registry)$/;
 
 export const chantNext = {
   name: "chant-next",

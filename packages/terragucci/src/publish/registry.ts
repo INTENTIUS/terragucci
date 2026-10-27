@@ -9,15 +9,23 @@
  *   v1/modules/<ns>/<name>/<system>/<v>/<name>-<v>.tar.gz   with download: tarball
  *   v1/modules/<ns>/<name>/<system>/<v>/release.json        the commit and content digest
  *
- * A static server sends no X-Terraform-Get header, so the download answer is
- * the JSON body with `location`, which Terraform and OpenTofu read when the
- * header is absent. The location is a tarball beside it, the module's git tag,
- * or its OCI artifact.
+ * The stored download answer is the JSON body with `location`. OpenTofu reads
+ * that body; Terraform reads only the X-Terraform-Get header, which a static
+ * bucket or Pages site cannot send (terragucci#1287), so whatever serves the
+ * files has to add it. The location is a tarball beside it, the module's git
+ * tag, or its OCI artifact.
  *
  * A module's namespace is `registry.namespace`, or the namespace
  * `registry.namespaces` maps the longest prefix of its path (its tag prefix)
  * to, so the modules of a monorepo's parts publish under namespaces of their
  * own. Its name is the last segment of its path.
+ *
+ * The protocol code moved to chant's terraform lexicon
+ * (`@intentius/chant-lexicon-terraform/registry`, chant#4565). The writer and
+ * the reader below call it when the installed chant carries it (./chant-next)
+ * and fall back to the copies here when it does not; the copies and the pure
+ * helpers go once terragucci's chant pin carries the lexicon's, leaving this
+ * file the config mapping (registryStore, keyFor and the settings shapes).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
@@ -25,6 +33,7 @@ import { gunzipSync } from "node:zlib";
 import { ConfigError, REGISTRY_NAME, type RegistrySettings } from "../config";
 import { storeFromEnv } from "../report/bucket";
 import { StoreConflict, type ObjectStore, type StoreCondition } from "../report/object-store";
+import { chantRegistry, type ChantRegistry } from "../chant-next";
 import type { Fetch } from "./oci";
 import { compareSemver, formatSemver, parseSemver, type Semver } from "./semver";
 
@@ -129,6 +138,8 @@ export interface VersionFiles {
 }
 
 export async function writeVersion(store: RegistryStore, reg: RegistrySettings, addr: RegistryAddress, version: Semver, files: VersionFiles): Promise<void> {
+  const lexicon = await chantRegistry();
+  if (lexicon) return lexicon.writeVersion(store, addr, version, files, { prefix: reg.prefix, isConflict: (e) => e instanceof StoreConflict });
   const discovery = `${JSON.stringify({ "modules.v1": MODULES_V1 })}\n`;
   const disco = await store.read(keyFor(reg, DISCOVERY));
   if (disco.body !== discovery) await store.put(keyFor(reg, DISCOVERY), discovery, "application/json");
@@ -158,6 +169,20 @@ export function downloadDoc(location: string): string {
 export const tarballName = (addr: RegistryAddress, version: string): string => `${addr.name}-${version}.tar.gz`;
 
 // ---- reading a registry, as Terraform and OpenTofu do ------------------------
+
+const NO_LEXICON: unique symbol = Symbol("no lexicon registry");
+
+/** The lexicon's reader, its RegistryError turned into terragucci's so callers keep one class to catch. */
+async function viaLexicon<T>(call: (lexicon: ChantRegistry) => Promise<T>): Promise<T | typeof NO_LEXICON> {
+  const lexicon = await chantRegistry();
+  if (!lexicon) return NO_LEXICON;
+  try {
+    return await call(lexicon);
+  } catch (e) {
+    if (e instanceof Error && e.name === "RegistryError" && !(e instanceof RegistryError)) throw new RegistryError(e.message);
+    throw e;
+  }
+}
 
 const httpGet = async (fetchFn: Fetch, url: string): Promise<Response> => {
   try {
@@ -201,6 +226,8 @@ export class RegistryError extends Error {
 
 /** Every version a registry lists for a module. */
 export async function registryVersions(source: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<string[]> {
+  const read = await viaLexicon((lexicon) => lexicon.registryVersions(source, { fetch: fetchFn }));
+  if (read !== NO_LEXICON) return read;
   const s = parseRegistrySource(source);
   if (!s) throw new RegistryError(`${source} is not a registry source`);
   const url = `${await modulesBase(s.host, fetchFn)}${s.namespace}/${s.name}/${s.system}/versions`;
@@ -212,6 +239,8 @@ export async function registryVersions(source: string, fetchFn: Fetch = fetch as
 
 /** Where a registry says one version is: the download answer's header or JSON `location`, resolved against its URL. */
 export async function registryLocation(source: string, version: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<string> {
+  const read = await viaLexicon((lexicon) => lexicon.registryLocation(source, version, { fetch: fetchFn }));
+  if (read !== NO_LEXICON) return read;
   const s = parseRegistrySource(source);
   if (!s) throw new RegistryError(`${source} is not a registry source`);
   const url = `${await modulesBase(s.host, fetchFn)}${s.namespace}/${s.name}/${s.system}/${version}/download`;
@@ -234,6 +263,8 @@ export async function registryLocation(source: string, version: string, fetchFn:
 
 /** The module archive a tarball location holds, uncompressed: the bytes a release's digest is of. */
 export async function fetchTarball(location: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<Buffer> {
+  const read = await viaLexicon((lexicon) => lexicon.fetchTarball(location, { fetch: fetchFn }));
+  if (read !== NO_LEXICON) return read;
   const res = await httpGet(fetchFn, location);
   if (!res.ok) throw new RegistryError(`${location} answered ${res.status}`);
   const body = Buffer.from(await res.arrayBuffer());
