@@ -42,6 +42,8 @@ jobs:
         run: npm ci
       - name: Check
         run: just check-unit
+      - name: Lint docs
+        run: just lint-docs
   test:
     name: test (${{ matrix.shard }}/3)
     runs-on: ubuntu-latest

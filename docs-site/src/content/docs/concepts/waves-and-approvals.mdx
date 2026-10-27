@@ -172,7 +172,7 @@ Nothing detects one limit. A root that finds another root's resources by a looku
 
 The approval binds the composed plan's digest, joined with the digest of each file terragucci generated for it, so an approval of one composition never applies another. The wave's digest covers the composed run as one member, beside any other root of the wave that changes something. That is the digest the plan note shows and the approval names.
 
-A composed run in which a root reads another root's value that is unknown at plan time applies values nobody reviewed, as a [linked root](#linked-roots) that plans again does. So it waits for an approval under `gate: always` and `gate: on-destructive`, and the note names each value that was unknown. Under `gate: never` it applies without one. With only known reads it gates as any wave does. Under `approval: pr-review`, an approving review of the pull request approves the composed digest it saw; a plan that differs at merge has another digest and waits.
+A composed run in which a root reads another root's value that is unknown at plan time applies values nobody reviewed, as a [linked root](#linked-roots) that plans again does. So it waits for an approval under `gate: always` and `gate: on-destructive`, and the note names each value that was unknown; `gate: never` applies it with no approval. With only known reads it gates as any wave does. Under `approval: pr-review`, an approving review of the pull request approves the composed digest it saw; a plan that differs at merge has another digest and waits.
 
 ### Falling back to waves
 

@@ -5,12 +5,12 @@
  * fails when the committed file differs from what this renders, so a hand edit
  * to the YAML cannot quietly win over the declaration.
  *
- * CI runs unit tests only, in jobs that run side by side: `static` runs
- * `just check-unit` (the typecheck and the provider's gofmt, vet and tests),
- * and each `test` job runs a third of the unit tests (`just test-shard`, which
- * builds the bundle first). Lint, the docs, the tutorial, the rendered
- * workflows, the chant pipelines, the bundle's shape and the LFS check are in
- * `just check`, which a person runs before pushing. No claim runs in CI: the
+ * CI runs the unit tests and the docs lint, in jobs that run side by side:
+ * `static` runs `just check-unit` (the typecheck and the provider's gofmt, vet
+ * and tests) and `just lint-docs`, and each `test` job runs a third of the unit
+ * tests (`just test-shard`, which builds the bundle first). Lint, the tutorial,
+ * the rendered workflows, the chant pipelines, the bundle's shape and the LFS
+ * check are in `just check`, which a person runs before pushing. No claim runs in CI: the
  * validation and smoke claims hold a stack and are a person's runs
  * (`just validate-forge`, `just claims`).
  */
@@ -43,7 +43,11 @@ const SETUP = [
   installJust(),
 ];
 
-/** The typecheck and the provider's gofmt, vet and Go tests. */
+/**
+ * The typecheck and the provider's gofmt, vet and Go tests, then the docs lint.
+ * lint-docs needs Node (it imports docs-site/src/prompts.ts, so Node 24's type
+ * stripping) and the root's `sentences` dev dependency, which `npm ci` installs.
+ */
 export const staticChecks = new Job({
   name: "static",
   "runs-on": "ubuntu-latest",
@@ -53,6 +57,7 @@ export const staticChecks = new Job({
     setupGo(GO_VERSION),
     new Step({ name: "Install", run: "npm ci" }),
     new Step({ name: "Check", run: "just check-unit" }),
+    new Step({ name: "Lint docs", run: "just lint-docs" }),
   ],
 });
 

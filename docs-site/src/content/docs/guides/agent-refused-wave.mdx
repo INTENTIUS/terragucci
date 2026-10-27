@@ -146,7 +146,7 @@ One comment on what changed between the approved plan and the refused one. The a
      </TabItem>
    </Tabs>
 
-   The last step of the GitHub job records the run: `terragucci agent record` writes one `agent-run` line to `chant/lifecycle` (which is why the job has `contents: write`) and sends the same record as a span when the job sets `OTEL_EXPORTER_OTLP_ENDPOINT`. Set `TG_AGENT_ACTOR` to the agent's forge login. The record carries a cost and model only when the command leaves a `usage.json` in the directory you name with `--dir`, as [agent runs](/terragucci/guides/send-traces-and-metrics/#agent-runs) describes. Add the same step to the GitLab and Forgejo jobs the same way; it is optional, and a record that cannot be written is logged and the job goes on.
+   The last step of the GitHub job records the run: `terragucci agent record` writes one `agent-run` line to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) (which is why the job has `contents: write`) and sends the same record as a span when the job sets `OTEL_EXPORTER_OTLP_ENDPOINT`. Set `TG_AGENT_ACTOR` to the agent's forge login. The record carries a cost and model only when the command leaves a `usage.json` in the directory you name with `--dir`, as [agent runs](/terragucci/guides/send-traces-and-metrics/#agent-runs) describes. Add the same step to the GitLab and Forgejo jobs the same way; it is optional, and a record that cannot be written is logged and the job goes on.
 
    Then run `npx terragucci init` and commit the pipeline with the file. A job name `init` already gives one of its own jobs is refused.
 
