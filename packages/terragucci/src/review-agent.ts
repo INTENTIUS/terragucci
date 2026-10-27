@@ -97,7 +97,7 @@ export interface PolicyReview {
   head: string | null;
 }
 
-/** The longest diff, plan note and description the prompt carries; the rest is cut and said so. */
+/** The longest plan note and description the prompt carries (the diff's limit is chant's MAX_DIFF); the rest is cut and said so. */
 const MAX_NOTE = 40_000;
 const MAX_BODY = 10_000;
 /** The longest review the note carries. */
