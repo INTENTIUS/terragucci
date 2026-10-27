@@ -18,7 +18,7 @@ export const TOOL_VERSIONS = {
   terraform: "1.14.9",
   terragrunt: "1.2.0",
   /** A choudoufu release (INTENTIUS/choudoufu), not the OpenTofu version it is forked from. */
-  choudoufu: "0.28.0",
+  choudoufu: "0.31.0",
 } as const;
 
 export interface ImageRef {
