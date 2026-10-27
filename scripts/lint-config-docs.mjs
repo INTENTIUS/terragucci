@@ -18,7 +18,11 @@ const keys = new Set([...block[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]));
 const configPage = readFileSync(docPage("reference/config"), "utf8");
 const keysTable = configPage.split(/^## Keys$/m)[1]?.split(/^## /m)[0] ?? "";
 const rows = new Set([...keysTable.matchAll(/^\| `([a-z_]+)(?:\.[a-z_]+)?` \|/gm)].map((m) => m[1]));
-for (const k of keys) if (!rows.has(k)) problems.push(`config.ts accepts \`${k}\` and the Keys table of config.md has no row for it`);
+// `control`, the dispatch a member sends the control repo after its apply (terragucci#753), has no page
+// until its smoke claims pass (ruled on #753), so its key and the variables only it reads are held off
+// these checks. Drop both lists when the page lands.
+const UNDOCUMENTED_KEYS = new Set(["control"]);
+for (const k of keys) if (!rows.has(k) && !UNDOCUMENTED_KEYS.has(k)) problems.push(`config.ts accepts \`${k}\` and the Keys table of config.md has no row for it`);
 for (const k of rows) if (!keys.has(k)) problems.push(`the Keys table of config.md lists \`${k}\` and config.ts does not accept it`);
 
 // ── environment variables ────────────────────────────────────────────────────
@@ -27,8 +31,10 @@ for (const k of rows) if (!keys.has(k)) problems.push(`the Keys table of config.
 const NOT_VARIABLES = new Set([
   "TF_CLOUD_ORGANIZATION",
   "AWS_CLI", "AZURE_AUDIENCE", "AZURE_AUTHORITY", "AZURE_KEY_SECRET", "AZURE_VERSION", "GITHUB_CACHE_KEY", "GITHUB_COMMENT_LIMIT", "GITLAB_NOTE_LIMIT", "GITLAB_STATE", "GITLAB_GCP_TOKEN", "GITLAB_AZURE_TOKEN",
-  "RUNNER_TOKEN_VARS", "TG_CACHE_DIR",
+  "RUNNER_TOKEN_VARS", "TG_CACHE_DIR", "FORGEJO_WORKFLOW",
 ]);
+// The control dispatch's variables (see UNDOCUMENTED_KEYS above).
+const UNDOCUMENTED_VARIABLES = new Set(["TERRAGUCCI_CONTROL_TOKEN", "TG_CONTROL_TOKEN", "TERRAGUCCI_MEMBER", "TERRAGUCCI_OP", "TERRAGUCCI_SHA"]);
 const NAME = /\b(?:(?:TG|TERRAGUCCI|TOFU|TF|OTEL|AWS|ARM|AZURE|GOOGLE|GITHUB|GITLAB|FORGEJO|GITEA|CI|RUNNER|ACTIONS|ANTHROPIC)_[A-Z0-9_]*[A-Z0-9]|TRACEPARENT)\b/g;
 
 function collect(path) {
@@ -49,7 +55,7 @@ const envPage = readFileSync(docPage("reference/environment"), "utf8");
 const listed = new Set(envPage.match(NAME) ?? []);
 // The signal-specific OTLP variables and TF_CLI_ARGS_<command> are written as families on the pages.
 for (const [name, file] of [...used].sort()) {
-  if (!listed.has(name)) problems.push(`${name} is read in ${file} and is not on environment.md`);
+  if (!listed.has(name) && !UNDOCUMENTED_VARIABLES.has(name)) problems.push(`${name} is read in ${file} and is not on environment.md`);
 }
 for (const name of listed) {
   if (!used.has(name) && !/^(TF_CLI_ARGS|OTEL_EXPORTER_OTLP_(TRACES|METRICS)_HEADERS)$/.test(name) && !/^(OTEL_|AWS_ROLE|ARM_)/.test(name)) {
