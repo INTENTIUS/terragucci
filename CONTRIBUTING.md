@@ -116,7 +116,7 @@ The dashboards and rules are rendered by `just ci`, not by `init`. `scripts/rend
 
 ## CI
 
-`ci.yml` runs unit tests only, on every pull request and on each push to main, in four jobs that run side by side: `static` runs `just check-unit` (the typecheck and the provider's gofmt, vet and tests), and `test (1/3)` to `test (3/3)` each run a third of the unit tests (`just test-shard <n>`, vitest's `--shard`). Lint, the docs, the tutorial, the rendered workflows and the LFS check are in `just check`, which you run before pushing; CI does not. `diff-guard` runs by hand only. A branch with no pull request runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
+`ci.yml` runs the unit tests and the docs lint, on every pull request and on each push to main, in four jobs that run side by side: `static` runs `just check-unit` (the typecheck and the provider's gofmt, vet and tests) and then `just lint-docs`, and `test (1/3)` to `test (3/3)` each run a third of the unit tests (`just test-shard <n>`, vitest's `--shard`). Lint, the tutorial, the rendered workflows and the LFS check are in `just check`, which you run before pushing; CI does not. `diff-guard` runs by hand only. A branch with no pull request runs it by hand: `gh workflow run ci.yml --ref <branch>`. No claim runs in CI: the validation and smoke claims hold a stack, and a person runs them (`just validate-forge`, `just claims`).
 
 | Workflow | Runs | What it does |
 |---|---|---|

@@ -141,7 +141,7 @@ An unreachable collector never fails a stage, so you can turn this on before the
 
 ## Agent runs
 
-Each `agent.comment`, `agent.drift`, `review.agent` and refused-wave summary run leaves a record, whether it pushed, opened a pull request, posted, was refused, was stopped by its money limit or failed. For `agent.comment` and `agent.drift` the push job writes it; for `review.agent` the `review post` step does; for the refused-wave summary you add a `terragucci agent record` step ([the guide](/terragucci/guides/agent-refused-wave/)):
+Every run of `agent.comment`, `agent.drift`, `review.agent` or the refused-wave summary leaves a record, whatever came of it: a push or a pull request, a posted note, a refusal, a stop at its money limit, or a failure. The push job writes the record for `agent.comment` and `agent.drift`, and the `review post` step writes it for `review.agent`. The refused-wave summary needs a `terragucci agent record` step that you add ([the guide](/terragucci/guides/agent-refused-wave/)):
 
 | Field | Value |
 |---|---|
@@ -150,7 +150,7 @@ Each `agent.comment`, `agent.drift`, `review.agent` and refused-wave summary run
 | prompt digest | `sha256:` over the prompt the agent read |
 | commit | the commit it pushed, or the pull request it opened |
 
-The record is one `agent-run` line in `_gates/agent-runs.jsonl` on `chant/lifecycle`, which the [audit trail](/terragucci/reference/audit-trail/) shows as an `agent-run` entry. The push job writes it with the agent's token, so that token must be allowed to push to `chant/lifecycle`; a record that cannot be written is logged and the push stands. The review note job checks nothing out and holds no write access, so a `review.agent` record from it goes to the collector only; the GitLab review job and any job with a checkout also write the line.
+The record is one `agent-run` line in `_gates/agent-runs.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which the [audit trail](/terragucci/reference/audit-trail/) shows as an `agent-run` entry. The push job writes it with the agent's token, so that token must be allowed to push to `chant/lifecycle`; a record that cannot be written is logged and the push stands. A `review.agent` record from the review note job reaches the collector only, because that job checks nothing out and holds no write access. The GitLab review job writes the line too, as does any job with a checkout.
 
 With `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) set in the push job, the same record also goes to your collector as one span named `terragucci.agent.comment`, `terragucci.agent.drift`, `terragucci.review.agent` or `terragucci.agent.refused-wave`, with `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `terragucci.agent.cost_usd`, `terragucci.agent.actor`, `terragucci.agent.prompt_digest` and `terragucci.agent.commit`. With no endpoint set, nothing is sent.
 

@@ -318,6 +318,9 @@ The check catches a mistake: a hand edit to the workflow, a renamed job, a dropp
 |---|---|
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent's step of `agent.comment` and `agent.drift`: the prompt's path and the turn limit |
 | `TG_ISSUE` | `drift-agent-push`: the drift issue the drift job opened, which the pull request names and is linked on |
+| `TG_AGENT_MAX_COST_USD` | the agent's step, when `max_cost_usd` is set: the most the run may spend, in US dollars ([A money limit](/terragucci/guides/send-traces-and-metrics/#a-money-limit)) |
+| `TG_AGENT_USAGE` | the agent's step and the review's step: the path a command may write its `usage.json` to, with `model`, `cost_usd`, `input_tokens` and `output_tokens` |
+| `TG_AGENT_ACTOR` | a job you write with `terragucci agent record`: the agent's forge login, which the record names as its actor in place of the user `TG_TOKEN` acts as |
 
 ## Traces and metrics
 
@@ -357,6 +360,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TERRAGUCCI_CHANT` | | the chant command `terragucci control records` runs; `npx --no-install chant` by default |
 | `TERRAGUCCI_CONTROL_DIR` | | a checkout of the [control repo](/terragucci/concepts/control-repo/) that a plan reads its estate ownership records from, in place of cloning one |
 | `TERRAGUCCI_CONTROL_READ_TOKEN` | | a token that can read the control repo, so a plan clones it to resolve which project owns an estate another project reads |
+| `TG_OIDC_SUBJECT` | | the OIDC subject the change's actor records as `actor.signals.oidcSubject`, in place of GitHub's default subject for the event ([Policy](/terragucci/reference/policy/)) |
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
 | `TERRAGUCCI_TERRAMATE` | | the `terramate` executable `init` and `terragucci terramate generate` run; `terramate` on the path by default |
 | `TERRAGUCCI_ATMOS` | | the `atmos` executable `init`, `terragucci atmos write` and, with `oidc.roles`, `terragucci config check` run; `atmos` on the path by default |
@@ -395,6 +399,7 @@ Internal; a value set in `env:` is overwritten.
 | Variable | Set for |
 |---|---|
 | `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; on GitLab also the `comments` job, which starts the `mr-apply` pipeline with it; no job running pull request code has it |
+| `TERRAGUCCI_CHECK_PART` | the check job, for each root it checks at once with others: the file that root's part of the check report goes to, which the job then appends to the report and the job summary in root order |
 | `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
 | `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE`, `TERRAGUCCI_AGENT_HEAD` | GitLab, `agent.comment`: the variables the `comments` job starts the agent's pipeline with, naming the merge request, the `/terragucci agent` note and the head; `agent` and `agent-push` each read the merge request and the note again from GitLab |
 | `TERRAGUCCI_REVIEW_MR`, `TERRAGUCCI_REVIEW_HEAD` | GitLab, `review.agent`: the variables the `comments` job starts the review's pipeline with, naming the merge request and the head to review |
