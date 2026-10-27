@@ -9,7 +9,7 @@ just docs-preview  # build the docs as CI does and open that build
 
 ## The package
 
-`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, with no runtime dependencies; chant is a build dependency of this repo only. `just bundle-check`, part of `just check`, fails if the package gains a dependency, the bundle imports anything but Node's modules and the two optional packages (the TypeScript folder that a `terragucci.ts` config needs, and the HCL parser), or the build's esbuild metafile lists an input from the TypeScript compiler, chant's lint rules, codegen or CLI, a lexicon's entry point, lint rules or codegen, or the dashboards' renderers (below). The size is not budgeted: 1.25 MB is an accident ceiling (1 MB until `terragucci mcp` brought the MCP SDK in; its JSON Schema validator, Ajv, is swapped for one that refuses, since the server asks a client for no input), and every `just build-cli` prints the raw and gzipped size, the change against origin/main and the ten largest inputs without failing on growth. The origin/main baseline is built from the origin/main sources on the chant installed in node_modules, and the line names that chant build (a `chant-local` install adds several KB over the pin, so compare sizes only on one chant build). The build writes into a private stage and renames the files into dist at the end, so builds that overlap leave a whole bundle. `npm pack` in that directory builds the tarball. The publish workflow puts it on npm; see [Releasing](#releasing).
+`packages/terragucci` is `@intentius/terragucci`, the `terragucci` command. `just build-cli` bundles it into one file, `dist/terragucci.mjs`, that carries the chant code it uses. The package has one runtime dependency, `@intentius/chant` at the exact pin in `package.json`, for the chant bin that `terragucci approve` spawns. The chant lexicons it uses are devDependencies, bundled into that file. `just bundle-check`, part of `just check`, holds that pin to the root's, and fails if the package gains another dependency, the bundle imports anything but Node's modules and the two optional packages (the TypeScript folder that a `terragucci.ts` config needs, and the HCL parser), or the build's esbuild metafile lists an input from the TypeScript compiler, chant's lint rules, codegen or CLI, a lexicon's entry point, lint rules or codegen, or the dashboards' renderers (below). The size is not budgeted: 1.25 MB is an accident ceiling (1 MB until `terragucci mcp` brought the MCP SDK in; its JSON Schema validator, Ajv, is swapped for one that refuses, since the server asks a client for no input), and every `just build-cli` prints the raw and gzipped size, the change against origin/main and the ten largest inputs without failing on growth. The origin/main baseline is built from the origin/main sources on the chant installed in node_modules, and the line names that chant build (a `chant-local` install adds several KB over the pin, so compare sizes only on one chant build). The build writes into a private stage and renames the files into dist at the end, so builds that overlap leave a whole bundle. `npm pack` in that directory builds the tarball. The publish workflow puts it on npm; see [Releasing](#releasing).
 
 ## Building on a local chant
 
@@ -493,6 +493,18 @@ just scale down               # its containers, network and volumes
 `carve.py` splits the terralith and checks the carved roots declare exactly its resources. Each root gets `stack/scale/terraform.lock.hcl` as its lock file. `scale.sh` drives the phases (reconcile, create, plan, change) through Forgejo's API, fails the run on the first phase whose runs do not all succeed, and counts the resources in the state files. `summarize.py` writes the run's record to `stack/scale/.state/runs/scale-<resources>.json` and folds the records into the site's file, where a run replaces the one of its size. Job times come from each job log's first and last lines, since Forgejo's API leaves them empty.
 
 The scale workflow (`scale/pipeline.ts`) runs the 10,069-resource point on a GitHub-hosted runner when a release is published, and opens a pull request with the record. Dispatch it by hand for another scale or release.
+
+## Where a feature goes
+
+terragucci and [plywood](https://intentius.io/plywood/) are CI products on chant's runtime, and they share chant CI features as far as they can. Extending chant CI is the default. A feature goes in the first of these homes that fits it:
+
+1. chant CI core, when both products share it.
+2. chant's terraform or pulumi lexicon, when the capability belongs to one engine. Cone plans and Atmos reads belong in the terraform lexicon, and so do drift parsing, plan shape and the apply.
+3. terragucci, which holds its words and presets, its config defaults and init templates, and its docs.
+
+A feature stays inside terragucci only for a reason that belongs to its Terraform and OpenTofu audience, and never for convenience. Approvals, gate decisions, overrides and the records of applies and runs go in the chant workspace ledger, never in terragucci's own writes. Before adding storage for a record, check whether the ledger already holds it.
+
+The rule and the issues behind it are on chant's [CI products on chant](https://intentius.io/chant/concepts/ci-products/) page and in [chant#4530](https://github.com/INTENTIUS/chant/issues/4530) and [#1280](https://github.com/INTENTIUS/terragucci/issues/1280).
 
 ## Design notes
 
