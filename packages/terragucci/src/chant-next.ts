@@ -43,6 +43,15 @@
  * store in CI, which ./tips/index.ts turns on. Without the first, init prints
  * the store and checks no bucket; without the second, the tip is left out.
  *
+ * Newer than the pin too (chant#4550, terragucci#1282): the product pipeline,
+ * `@intentius/chant/ci-product`, and its words module, which imports nothing
+ * (`ci-product-words`). With them terragucci's words (./ci-words.ts) go
+ * through chant: the comment grammar (`parseProductComment`, ./comment.ts),
+ * the approve line (`approveLine`, ./report/marker.ts), the status contexts,
+ * and the pipeline's comment conditions and waves names
+ * (`productPipelineJobs`, ./render.ts). Without them terragucci's own code
+ * gives the same names.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -431,6 +440,65 @@ export interface ChantTf046 {
   checkLocalRecordStore(ctx: PostSynthContext, env: Readonly<Record<string, string | undefined>>): PostSynthDiagnostic[];
 }
 
+// ── ci-product (chant#4550) ────────────────────────────────────────────────
+
+/** A command a comment may name, as chant's words module lists them. */
+export type ChantProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent";
+
+/** A stage a product names in a status context and the note. */
+export type ChantProductStage = "plan" | "apply" | "record" | "check" | "drift" | "lock" | "approval" | "control";
+
+/** chant's words with every slot filled (`CiProductWords`), as far as terragucci reads them. */
+export interface ChantProductWords {
+  product: string;
+  stages: Record<ChantProductStage, string>;
+  noun: [string, string];
+  commands: Record<string, ChantProductCommand>;
+  aliases: { from: string; command: ChantProductCommand; when?: string }[];
+  approve: string;
+  op?: string;
+  gateName: string;
+  approval: "per-wave" | "pull-request";
+  bin?: string;
+  adoptMarkers: string[];
+}
+
+/** A comment read against a product's grammar (`ParsedProductComment`). */
+export type ChantParsedProductComment =
+  | { kind: "plan"; member?: string }
+  | { kind: "apply"; wave?: number }
+  | { kind: "lock" }
+  | { kind: "unlock" }
+  | { kind: "agent"; ask: string }
+  | { kind: "refused"; reason: string };
+
+/** chant's words module (`@intentius/chant/ci-product-words`): imports nothing, so every command may load it. */
+export interface ChantCiProductWords {
+  assertProductWords(input: object, options?: { jobs?: readonly ChantProductCommand[] }): ChantProductWords;
+  approveLine(words: ChantProductWords, input: { op: string; gate: string; digest: string; approver?: string; sign?: boolean; target?: string }): string;
+  parseProductComment(words: ChantProductWords, body: unknown, env?: Record<string, string | undefined>): ChantParsedProductComment | undefined;
+  productStatusContext(words: ChantProductWords, stage: ChantProductStage, member?: string): string;
+  commentLine(words: ChantProductWords, command: ChantProductCommand): string | undefined;
+}
+
+/** What `productPipelineJobs` gives back, as far as terragucci reads it. */
+export interface ChantProductPipelineJobs {
+  words: ChantProductWords;
+  comments: Partial<Record<ChantProductCommand, string>>;
+  waves?: { spec: { name: string; op: string; gateName?: string }; specFile: string; jobs: unknown[] };
+}
+
+/** chant's product pipeline (`@intentius/chant/ci-product`, chant#4550). */
+export interface ChantCiProduct extends ChantCiProductWords {
+  productPipelineJobs(
+    forge: "github" | "gitlab" | "forgejo",
+    env: string,
+    options: { words: object; waves?: object; applyBeforeMerge?: boolean; locks?: "plan"; agent?: boolean; member?: string },
+  ): ChantProductPipelineJobs;
+  productWavesSpec<S extends object>(spec: S, words: object): S;
+  CI_PRODUCT_FLOOR: string;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -516,6 +584,17 @@ const loaders = {
       return check?.id === "TF046" && typeof check.check === "function" && has(m, "checkLocalRecordStore") ? (m as unknown as ChantTf046) : undefined;
     },
   ),
+  ciProductWords: once<ChantCiProductWords>(
+    // @ts-ignore chant 0.124.54 has no ci-product-words module (chant#4550)
+    () => import("@intentius/chant/ci-product-words"),
+    (m) => (has(m, "assertProductWords", "approveLine", "parseProductComment", "productStatusContext", "commentLine") ? (m as unknown as ChantCiProductWords) : undefined),
+  ),
+  ciProduct: once<ChantCiProduct>(
+    // @ts-ignore chant 0.124.54 has no ci-product subpath (chant#4550)
+    () => import("@intentius/chant/ci-product"),
+    // chant#4550's own feature-detect: these three present means the rest is too.
+    (m) => (has(m, "productPipelineJobs", "approveLine", "assertProductWords") && has(m, "parseProductComment", "productStatusContext", "commentLine", "productWavesSpec") ? (m as unknown as ChantCiProduct) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -534,9 +613,20 @@ export type ChantNextPart = keyof typeof loaders;
 /** Set by a test: what each part loads to, in place of the import. `null` makes it missing. */
 const overrides = new Map<ChantNextPart, unknown>();
 
+/** What each part came to once its import settled, for the synchronous callers below. `null`: missing. */
+const settled = new Map<ChantNextPart, unknown>();
+
 async function load<K extends ChantNextPart>(part: K): Promise<Awaited<ReturnType<(typeof loaders)[K]>>> {
   if (overrides.has(part)) return (overrides.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>>;
-  return (await loaders[part]()) as Awaited<ReturnType<(typeof loaders)[K]>>;
+  const m = (await loaders[part]()) as Awaited<ReturnType<(typeof loaders)[K]>>;
+  settled.set(part, m ?? null);
+  return m;
+}
+
+/** A part as it already loaded, without waiting: undefined when it is missing or has not been asked for yet. */
+function loaded<K extends ChantNextPart>(part: K): Awaited<ReturnType<(typeof loaders)[K]>> | undefined {
+  if (overrides.has(part)) return (overrides.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>>;
+  return (settled.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>> | undefined;
 }
 
 /** chant's composition (`/compose`), or undefined when the installed chant has none. */
@@ -563,6 +653,17 @@ export const chantBucketCheck = (): Promise<ChantBucketCheck | undefined> => loa
 /** The terraform lexicon's TF046 (chant#4561), or undefined. */
 export const chantTf046 = (): Promise<ChantTf046 | undefined> => load("tf046");
 
+/** chant's words module (`@intentius/chant/ci-product-words`, chant#4550), or undefined. */
+export const chantCiProductWords = (): Promise<ChantCiProductWords | undefined> => load("ciProductWords");
+/** chant's product pipeline (`@intentius/chant/ci-product`, chant#4550), or undefined. */
+export const chantCiProduct = (): Promise<ChantCiProduct | undefined> => load("ciProduct");
+/**
+ * chant's words module as it already loaded: the synchronous parsers and
+ * line builders read it. cli.ts loads it before any command runs; a caller
+ * that never loaded it gets undefined, and terragucci's own code.
+ */
+export const chantCiProductWordsNow = (): ChantCiProductWords | undefined => loaded("ciProductWords");
+
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
  * Returns the function that puts the import back.
@@ -576,8 +677,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046 };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, ciProductWords, ciProduct] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantCiProductWords(), chantCiProduct()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

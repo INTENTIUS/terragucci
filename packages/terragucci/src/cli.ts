@@ -87,6 +87,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chantCiProductWords } from "./chant-next";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
 import { applyGroups } from "./cloud-identity";
@@ -403,6 +404,8 @@ function originForge(dir: string): ForgeName | undefined {
 }
 
 export async function main(argv: string[]): Promise<number> {
+  // chant's words module (chant#4550), loaded once so the comment grammar and the approve and status lines read it; none on a chant without it.
+  await chantCiProductWords();
   const { cmd, flags, args, repeated } = parse(argv);
   const cwd = process.cwd();
   const json = flags.json === true;
