@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RegistrySettings } from "../src/config";
 import { overrideChantNext, type ChantRegistry } from "../src/chant-next";
 import { publish } from "../src/publish";
-import { bucketOrigin, describeEdge, LAMBDA_BUNDLE, planEdge, TOKENS_VARIABLE, WORKER_BUNDLE } from "../src/publish/edge";
+import { bucketOrigin, describeEdge, LAMBDA_BUNDLE, planEdge, TOKEN_STORES_MARKER, TOKENS_VARIABLE, WORKER_BUNDLE } from "../src/publish/edge";
 import { dirStore, HEADERS_FILE } from "../src/publish/registry";
 import { git, tmp, write } from "./helpers";
 
@@ -114,6 +114,34 @@ describe("terragucci registry edge", () => {
     const on = planEdge({ ...S3, auth: "token" }, { bundleDir: dir, env: { [TOKENS_VARIABLE]: "old, new" } });
     expect(JSON.parse(String(on.files.find((f) => f.path === "registry-edge.json")!.content)).auth).toEqual({ tokens: ["old", "new"] });
     expect(() => planEdge({ ...S3, auth: "token" }, { bundleDir: dir, env: {} })).toThrow(TOKENS_VARIABLE);
+  });
+
+  it("names an SSM parameter or a secret in the options, holds no token, and drops the keep-out-of-git step", () => {
+    const dir = bundles();
+    write(dir, { [TOKEN_STORES_MARKER]: "chant#4590\n" });
+    const options = (plan: ReturnType<typeof planEdge>) => JSON.parse(String(plan.files.find((f) => f.path === "registry-edge.json")!.content));
+    const ssm = planEdge({ ...S3, auth: "token", tokens: "ssm", tokens_name: "/registry/tokens" }, { bundleDir: dir, env: { [TOKENS_VARIABLE]: "leaked" } });
+    expect(options(ssm).auth).toEqual({ source: { kind: "ssm", name: "/registry/tokens", region: "us-east-1" } });
+    expect(JSON.stringify(options(ssm))).not.toContain("leaked");
+    const text = describeEdge(ssm, "registry-edge");
+    expect(text).not.toContain("keep the directory out of git");
+    expect(text).toContain("ssm:GetParameter");
+    expect(text).toContain("kms:Decrypt");
+    const sm = planEdge({ ...S3, auth: "token", tokens: "secrets-manager", tokens_name: "registry-tokens", tokens_region: "eu-west-1" }, { bundleDir: dir });
+    expect(options(sm).auth).toEqual({ source: { kind: "secrets-manager", secretId: "registry-tokens", region: "eu-west-1" } });
+    expect(describeEdge(sm, "registry-edge")).toContain("secretsmanager:GetSecretValue");
+    // zip stays the default: tokens in the file, and the step stays.
+    const zip = planEdge({ ...S3, auth: "token" }, { bundleDir: dir, env: { [TOKENS_VARIABLE]: "t" } });
+    expect(options(zip).auth).toEqual({ tokens: ["t"] });
+    expect(describeEdge(zip, "registry-edge")).toContain("keep the directory out of git");
+  });
+
+  it("refuses a token store on a build without chant#4590, and on a Worker", () => {
+    expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: bundles() })).toThrow("chant#4590");
+    const dir = bundles();
+    write(dir, { [TOKEN_STORES_MARKER]: "x\n" });
+    expect(() => planEdge({ ...S3, bucket: "gs://m", edge: "cloudflare", auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: dir })).toThrow("Lambda@Edge");
+    expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm" }, { bundleDir: dir })).toThrow("tokens_name");
   });
 
   it("writes nothing for pages and none, and says when the build carries no function", () => {

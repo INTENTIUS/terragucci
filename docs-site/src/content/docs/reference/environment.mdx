@@ -185,7 +185,7 @@ Only the `publish` job gets these, as secrets or, on GitLab, protected masked va
 
 Git tags and the release ledger are pushed to `origin` with the job's checkout, so they need no variable.
 
-`terragucci registry edge` reads one more on your machine, never in a job: with `modules.registry.auth: token` and `edge: cloudfront`, `TERRAGUCCI_REGISTRY_TOKENS` holds the tokens the Lambda@Edge function accepts, one per line or comma separated.
+`terragucci registry edge` reads one more on your machine, never in a job: with `modules.registry.auth: token` and `edge: cloudfront`, `TERRAGUCCI_REGISTRY_TOKENS` holds the tokens the Lambda@Edge function accepts, one per line or comma separated. With `modules.registry.tokens: ssm` or `secrets-manager` it reads nothing: the tokens stay in the store.
 
 ## Cloud roles over OIDC
 

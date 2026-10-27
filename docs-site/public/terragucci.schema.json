@@ -758,6 +758,21 @@
                 "token"
               ]
             },
+            "tokens": {
+              "enum": [
+                "zip",
+                "ssm",
+                "secrets-manager"
+              ]
+            },
+            "tokens_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tokens_region": {
+              "type": "string",
+              "pattern": "^[a-z]{2}(-[a-z]+)+-\\d$"
+            },
             "providers": {
               "enum": [
                 "mirror"
@@ -2611,6 +2626,21 @@
                     "off",
                     "token"
                   ]
+                },
+                "tokens": {
+                  "enum": [
+                    "zip",
+                    "ssm",
+                    "secrets-manager"
+                  ]
+                },
+                "tokens_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tokens_region": {
+                  "type": "string",
+                  "pattern": "^[a-z]{2}(-[a-z]+)+-\\d$"
                 },
                 "providers": {
                   "enum": [
