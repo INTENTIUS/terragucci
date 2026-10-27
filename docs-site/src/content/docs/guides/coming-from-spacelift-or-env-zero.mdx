@@ -1,6 +1,6 @@
 ---
-title: Coming from Spacelift or env zero
-description: Each Spacelift and env zero concept, the terragucci key or job that does the same work, how to move managed state into your own bucket, and what has no equivalent.
+title: Use terragucci with Spacelift or env zero
+description: Plan notes and waves for Spacelift stacks and env zero environments in your own CI, each concept and the terragucci key or job for it, and an optional move of managed state into your own bucket.
 claims: [init/pass-secrets, init/runner-label, import/spacelift, import/env0]
 prompt: |
   Read https://intentius.io/terragucci/guides/coming-from-spacelift-or-env-zero/.
@@ -15,7 +15,11 @@ import { Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
 ## Result
 
-Each stack or environment becomes a root with its own state in your bucket. The jobs `init` writes run in your forge's CI; there is no account and no server, and every record lands in your git and bucket.
+Each stack or environment plans in your forge's CI as a root, with a grouped plan note and waves on the pull request. A stack or environment on your own backend keeps that backend, and nothing moves. Moving managed state into your bucket is optional.
+
+## Keep your platform
+
+Spacelift and env zero keep their UI, policies, drift detection and run history for the stacks and environments they run. terragucci adds the grouped plan note, waves and digest-bound approvals in your CI.
 
 ## Import
 
@@ -83,7 +87,7 @@ Neither import moves state; a [state move](#state-move) does, one root at a time
 
 2. Replace each output reference between stacks with a `terraform_remote_state` read of the upstream root's key, so the waves follow it.
 
-3. Move each managed state into the bucket ([state move](#state-move)), one root at a time, before its backend change merges.
+3. If a stack or environment uses managed state and you want it in your bucket, move it ([state move](#state-move)), one root at a time, before its backend change merges. One on your own backend skips this.
 
 4. Run the [import](#import) for the settings it maps, then copy what it names as not mapped: the variables ([variables](#variables)) and the policies ([policies](#policies)).
 
@@ -94,15 +98,15 @@ Neither import moves state; a [state move](#state-move) does, one root at a time
    npx terragucci init
    ```
 
-   The plan note on that pull request should show no change for each moved root.
+   The plan note on that pull request should show no change for each root.
 
-6. Disable each moved stack or environment on the platform so nothing runs against the old state.
+6. If you moved a stack's or environment's state, disable it on the platform so only one place applies it.
 
 </Steps>
 
 ## State move
 
-A [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) writes managed state to your bucket, approved by digest like any migration. For env zero it reads the environment's state over the remote backend's API: `backend: remote`, `hostname: backend.api.env0.com`, the organization ID and the workspace. For Spacelift it reads a state file you pulled, with `backend: file`. [Migration files](/terragucci/reference/migration-files/#workspaces) lists the keys. A stack or environment already on your own backend skips this.
+This step is optional, for managed state you want in your own bucket. A [backend move](/terragucci/guides/move-resources-between-roots/#move-a-state-to-a-new-backend) writes managed state to your bucket, approved by digest like any migration. For env zero it reads the environment's state over the remote backend's API: `backend: remote`, `hostname: backend.api.env0.com`, the organization ID and the workspace. For Spacelift it reads a state file you pulled, with `backend: file`. [Migration files](/terragucci/reference/migration-files/#workspaces) lists the keys. A stack or environment already on your own backend skips this.
 
 By hand, with Terraform or OpenTofu (`tofu` in place of `terraform`):
 
@@ -249,4 +253,4 @@ pass:
 
 - [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) for the forge settings.
 - [Run hooks around a stage](/terragucci/guides/run-steps/) for hooks.
-- [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/) for the workspace platforms.
+- [Use terragucci with HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/) for the workspace platforms.

@@ -4,7 +4,7 @@
 
 One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests and trace every run.
 
-CI does this: each job runs in your forge's CI and lands in your git and your bucket, with no account to create and no platform to sign in to.
+CI does this: each job runs in your forge's CI and writes to your git and your bucket.
 
 | You get | How |
 |---|---|
@@ -17,6 +17,7 @@ Works with:
 - Forges: [GitHub, GitLab and Forgejo](https://intentius.io/terragucci/guides/add-to-a-repo/#per-forge)
 - Buckets: [S3, GCS and Azure Blob](https://intentius.io/terragucci/guides/keep-reports-in-a-bucket/), reached over [OIDC with no stored keys](https://intentius.io/terragucci/reference/pipeline/#credentials)
 - Binaries: [Terraform, OpenTofu](https://intentius.io/terragucci/guides/use-a-binary/), [Terragrunt](https://intentius.io/terragucci/guides/use-terragrunt/) and [choudoufu](https://intentius.io/terragucci/guides/use-a-binary/#choudoufu)
+- Platforms: roots on [HCP Terraform workspaces with local execution](https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/) and [Spacelift stacks on your own backend](https://intentius.io/terragucci/guides/coming-from-spacelift-or-env-zero/) plan as they are
 - Also: [drift checks](https://intentius.io/terragucci/guides/turn-on-drift-checks/), [module publishing](https://intentius.io/terragucci/guides/publish-modules/) and [pinned rollouts](https://intentius.io/terragucci/guides/roll-out-a-module-version/)
 
 [Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the four opt-in agent features (agent comment, drift agent, review and refused-wave summary) run a model. Every pipeline feature on the site is proven by a smoke claim on a local Forgejo; the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).

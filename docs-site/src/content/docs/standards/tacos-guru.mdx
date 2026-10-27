@@ -1,44 +1,22 @@
 ---
-title: tacos.guru
-description: The tacos.guru evaluation of Terraform automation platforms, how its weights, 0 to 3 scores and gates work, and terragucci's answer to each of its 24 criteria, each linked to its guide and the smoke claims that prove it.
+title: Feature checklist
+description: terragucci's answer to each of the 24 tacos.guru criteria, each linked to its guide and the smoke claims that prove it.
 claims: [init/cdktn-synth, affected/cdktn, init/root-pins, init/pinned-install, boot/tofu, init/image, linked/plan, linked/states, waves/tofu, drift/tofu, drift/close, respond/drift, oidc/forgejo, report/oidc, oidc/clouds, generate/tofu, oidc/state-roles, state/export, estate/state-edges, state/versions, migrate/split, import/atlantis, comment/atlantis, steps/before-plan, steps/stop, steps/gate, modules/registry, modules/publish, cost/estimate, cost/gate, cost/policy, policy/opa, policy/hcl, policy/source, agent/review, policy/review-risk, chat/slack, chat/teams, chat/replan, comment/plan, comment/apply, security/fork, telemetry/traces, telemetry/metrics, notify/webhook, audit/tofu, estate/graph, estate/mcp, agent/drift, ephemeral/pr, ephemeral/ttl, reconcile/provider, report/gcs, report/azure]
 ---
 
 import TacosCriteria from '../../../components/TacosCriteria.astro';
 
-[tacos.guru](https://tacos.guru) holds Terraform automation platforms to one list of criteria. This page answers that list for terragucci, with each answer proven by a passing smoke claim on the [validation](/terragucci/reference/validation/) page.
+[tacos.guru](https://tacos.guru) publishes a list of 24 features for Terraform automation. This page answers that list for terragucci, with each answer proven by a passing smoke claim on the [validation](/terragucci/reference/validation/) page. It is a checklist, with no score or ranking.
 
-tacos.guru has not scored terragucci, and this page claims no score from it.
-
-Two blocks carry no claim. The dashed one, RBAC and SSO, stays with your forge, which already decides who signs in and who may approve a merge ([Access and identity](/terragucci/standards/access-and-identity/)). Pricing, outlined, has nothing to prove: terragucci is Apache-2.0 and runs in your CI. Hover or tap a block for its criterion.
+Two blocks carry no claim. The dashed one, RBAC and SSO, stays with your forge, which already decides who signs in and who may approve a merge ([Access and identity](/terragucci/standards/access-and-identity/)). Pricing, outlined, has no claim: terragucci is Apache-2.0, and you pay for your CI minutes and your bucket. Hover or tap a block for its criterion.
 
 <TacosCriteria />
 
-## Evaluation
-
-tacos.guru is an independent evaluator of TACOs (Terraform automation and collaboration software). It scores each platform from the vendor's public documentation. Its data, [`evaluation.json`](https://tacos.guru/evaluation.json), is the September 2026 dataset, and its page lets you change each weight and the pricing inputs and re-ranks the platforms as you do.
-
-| Part | Meaning |
-|---|---|
-| Criteria | 24 features, each with a short description of what it asks |
-| Category | Critical, High, Medium, Low or Nice-to-have; it sets the default weight from 5 down to 1 |
-| Weight | the default from the category; you set each from 0 to 5 |
-| Score | 0 None, 1 Limited, 2 Good, 3 Excellent, with a rationale per platform |
-| Variants | chat is scored for Slack and Teams, version control for GitHub, GitLab, Bitbucket and Azure DevOps; you pick which counts |
-| Pricing | a calculator of team size, resources, runs and states; a monthly cost up to $750 scores 3, up to $2,500 scores 2, up to $7,500 scores 1, quote-only 1, higher 0 |
-| Gates | five pass or fail checks; a platform that fails one is marked disqualified and sorts below every platform that passes |
-
-A platform's result is its weighted share of a perfect score:
-
-```text
-score = sum(score × weight) / sum(3 × weight) × 100%
-```
-
 ## Criteria
 
-A 3 below is what tacos.guru's description of the criterion asks for. The terragucci column links the page that shows it and names the claims that prove it on the [validation](/terragucci/reference/validation/) page.
+The "Asks for" column is tacos.guru's description of the criterion. The terragucci column links the page that shows it and names the claims that prove it on the [validation](/terragucci/reference/validation/) page.
 
-| # | Criterion | Weight | A 3 | terragucci |
+| # | Criterion | Weight | Asks for | terragucci |
 |---|---|---|---|---|
 | 1 | CDK Terrain workflow | 5 | synth before plan; plan only the stacks a TypeScript change reaches | [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/) runs before check and plan, and a pull request plans only the stacks it changes. `init/cdktn-synth`, `affected/cdktn` |
 | 2 | OpenTofu support | 5 | OpenTofu first-class, its version pinned per stack | OpenTofu is the default binary. A root's `.opentofu-version`, `.terraform-version` or exact `required_version` picks its version, installed in the job and checked against the release's `SHA256SUMS` ([guide](/terragucci/guides/use-a-binary/)). `init/root-pins`, `init/pinned-install` |
@@ -47,7 +25,7 @@ A 3 below is what tacos.guru's description of the criterion asks for. The terrag
 | 5 | Linked-state orchestration | 5 | linked states deployed as one unit: a DAG, real unknowns across states, ordered applies, progress and gates | waves order the applies, each behind its gate; a root plans on its upstream's planned outputs, unknown where unknown, and plans again once the upstream applies; the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view) shows each wave's state ([linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)). `linked/plan`, `linked/states`, `waves/tofu` |
 | 6 | Drift detection | 4 | scheduled, per stack, with remediation | a scheduled run per root opens and closes the drift issue, and turns drift on a literal into a pull request ([guide](/terragucci/guides/turn-on-drift-checks/)). `drift/tofu`, `drift/close`, `respond/drift` |
 | 7 | Cloud credentials (OIDC) | 4 | short-lived cloud credentials per stack, no static keys | each job trades the forge's OIDC token for a plan or apply role, per root glob with `oidc.roles`, on AWS, GCP and Azure ([credentials](/terragucci/reference/pipeline/#credentials)). `oidc/forgejo`, `report/oidc`, `oidc/clouds` |
-| 8 | Pricing suitability | 4 | a low monthly cost at the calculator's inputs | Apache-2.0, with no license fee and nothing hosted; you pay for your CI minutes and your bucket |
+| 8 | Pricing | 4 | the cost to run it | Apache-2.0, with no license fee and nothing hosted; you pay for your CI minutes and your bucket |
 | 9 | Repo scaffolding & codegen | 4 | backend, provider and workspace boilerplate from one declarative source | `terragucci generate` writes each root's backend, provider and version files from repo, glob and root settings, and `tf-check` refuses a hand edit ([guide](/terragucci/guides/generate-root-files/)). `generate/tofu` |
 | 10 | State governance & RBAC | 4 | state access isolated per environment, fine-grained roles, export, cross-state tracking | a role per environment scoped to its state keys ([guide](/terragucci/guides/scope-state-access/)), an approved and audited [export](/terragucci/guides/export-a-state-version/), [cross-state edges](/terragucci/guides/track-cross-state-edges/), [state versions](/terragucci/guides/find-a-state-version/) and [migrations](/terragucci/guides/move-resources-between-roots/). `oidc/state-roles`, `state/export`, `estate/state-edges`, `state/versions`, `migrate/split` |
 | 11 | Migration from Atlantis | 3 | a documented path, `atlantis.yaml` import or comment compatibility | `terragucci import atlantis` and `import digger` write `terragucci.yml`, and `atlantis plan` and `atlantis apply` comments work behind a setting ([guide](/terragucci/guides/coming-from-atlantis-or-opentaco/)). Teams on a hosted platform have guides too: [HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/), [Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/). `import/atlantis`, `comment/atlantis` |
@@ -66,6 +44,8 @@ A 3 below is what tacos.guru's description of the criterion asks for. The terrag
 | 24 | Multi-cloud support | 1 | clouds beyond AWS | OIDC to AWS, GCP and Azure, and reports in S3, GCS or Azure Blob Storage ([guide](/terragucci/guides/keep-reports-in-a-bucket/)). `oidc/clouds`, `report/gcs`, `report/azure` |
 
 ## Gates
+
+tacos.guru also lists five pass or fail checks.
 
 | Gate | Checks | terragucci |
 |---|---|---|

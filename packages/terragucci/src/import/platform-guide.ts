@@ -1,5 +1,5 @@
 /**
- * The concepts table of the guide "Coming from HCP Terraform, Scalr or OTF"
+ * The concepts table of the guide "Use terragucci with HCP Terraform, Scalr or OTF"
  * (docs-site/src/content/docs/guides/coming-from-hcp-terraform-scalr-or-otf.mdx),
  * cell for cell. `terragucci import hcp`, `import otf` and `import scalr`
  * name a row of it in each note they print, and a test
@@ -14,7 +14,7 @@ export const PLATFORM_GUIDE_URL = "https://intentius.io/terragucci/guides/coming
 export const CONCEPTS_TABLE = [
   ["Workspace", "a [root](/terragucci/concepts/glossary/#root): one directory, one state. terragucci runs no CLI workspaces"],
   ["Several workspaces on one working directory", "a directory per workspace, each with its backend key and `terraform.tfvars`, calling a shared module"],
-  ["Workspace state", "a key in your S3 bucket, moved by a [backend move](#state-move)"],
+  ["Workspace state", "stays in the workspace on local execution, or a key in your S3 bucket after an optional [backend move](#state-move)"],
   ["Terraform variables", "`terraform.tfvars` in the root, committed"],
   ["Environment variables, variable sets", "[`env`](/terragucci/reference/config/#keys) for values; CI secrets named under [`pass`](#variables) for the rest"],
   ["Dynamic provider credentials", "[`oidc`](/terragucci/reference/environment/#cloud-roles-over-oidc): a plan role and an apply role per cloud"],

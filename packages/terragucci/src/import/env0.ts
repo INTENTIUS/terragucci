@@ -1,6 +1,6 @@
 /**
  * `terragucci import env0 [env0-discovery.yml]`: terragucci.yml from an env
- * zero repo, by the concepts table of "Coming from Spacelift or env zero"
+ * zero repo, by the concepts table of "Use terragucci with Spacelift or env zero"
  * (./spacelift-env0-guide.ts). It reads three things, each when the repo has it:
  *
  *   env0-discovery.yml   the environments env zero creates from the repo

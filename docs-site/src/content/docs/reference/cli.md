@@ -124,7 +124,7 @@ terragucci import env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when me
 terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
 ```
 
-Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), or OpenTaco's `digger.yml` (or `digger.yaml`), and writes `terragucci.yml` by the tables of [Coming from Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/). Each setting the file carries is printed under one of four headings, quoting the guide's row:
+Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), or OpenTaco's `digger.yml` (or `digger.yaml`), and writes `terragucci.yml` by the tables of [Use terragucci with Atlantis or OpenTaco](/terragucci/guides/coming-from-atlantis-or-opentaco/). Each setting the file carries is printed under one of four headings, quoting the guide's row:
 
 | Heading | The setting |
 |---|---|
@@ -146,7 +146,7 @@ Run [`init`](#init) next to write the pipeline.
 
 `import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 2 on a repo with no Terragrunt or a legacy `config.yml`.
 
-`import spacelift` reads `.spacelift/config.yml` (or the file named) and every `spacelift_*` resource in the repo's `.tf` files; `import env0` reads `env0-discovery.yml` (or the file named), each `env0.yml` custom flow and every `env0_*` resource. Either runs on the admin code alone when the file is missing. They map by the concepts table of [Coming from Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import), keep `apply.when: merge` unless `--apply-when` says otherwise, since both platforms apply a tracked branch after a push, and name each stack or environment whose state the platform manages.
+`import spacelift` reads `.spacelift/config.yml` (or the file named) and every `spacelift_*` resource in the repo's `.tf` files; `import env0` reads `env0-discovery.yml` (or the file named), each `env0.yml` custom flow and every `env0_*` resource. Either runs on the admin code alone when the file is missing. They map by the concepts table of [Use terragucci with Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import), keep `apply.when: merge` unless `--apply-when` says otherwise, since both platforms apply a tracked branch after a push, and name each stack or environment whose state the platform manages.
 
 ### From a platform's workspaces
 
@@ -156,7 +156,7 @@ terragucci import otf --hostname <host> --organization <org> [--repo owner/name]
 terragucci import scalr --hostname <account>.scalr.io [--environment <name or ID>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
 ```
 
-Reads the workspaces over the platform's API, with the token in `TF_TOKEN_<host>` or `credentials.tfrc.json` (for Scalr, also `SCALR_TOKEN`), and writes `terragucci.yml` and a `terraform.tfvars` in each root that has none, by [Coming from HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/#import-the-workspaces). It only reads: no workspace, variable or run changes. A sensitive variable's value is never read; its name goes under `pass.secrets`.
+Reads the workspaces over the platform's API, with the token in `TF_TOKEN_<host>` or `credentials.tfrc.json` (for Scalr, also `SCALR_TOKEN`), and writes `terragucci.yml` and a `terraform.tfvars` in each root that has none, by [Use terragucci with HCP Terraform, Scalr or OTF](/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/#import-the-workspaces). It only reads: no workspace, variable or run changes. A sensitive variable's value is never read; its name goes under `pass.secrets`.
 
 | Flag | Meaning |
 |---|---|

@@ -13,7 +13,7 @@ const CRITERIA: { id: number; short: string; weight: number; kind: Kind; claims?
 	{ id: 5, short: 'Orchestration', weight: 5, kind: 'claims', claims: ['linked/plan', 'linked/states', 'waves/tofu'] , note: "waves in dependency order, downstream roots planned on real unknowns" },
 	{ id: 6, short: 'Drift', weight: 4, kind: 'claims', claims: ['drift/tofu', 'drift/close', 'respond/drift'] , note: "scheduled drift checks that open an issue, a pull request or a tip" },
 	{ id: 7, short: 'OIDC', weight: 4, kind: 'claims', claims: ['oidc/forgejo', 'report/oidc', 'oidc/clouds'] , note: "short-lived cloud credentials through OIDC, a role per environment" },
-	{ id: 8, short: 'Pricing', weight: 4, kind: 'license' , note: "Apache-2.0 and self-hosted: no plan, seat or run to pay for" },
+	{ id: 8, short: 'Pricing', weight: 4, kind: 'license' , note: "Apache-2.0. You pay for your CI minutes and your bucket." },
 	{ id: 9, short: 'Scaffolding', weight: 4, kind: 'claims', claims: ['generate/tofu'] , note: "backend, provider and version files generated from one source" },
 	{ id: 10, short: 'State', weight: 4, kind: 'claims', claims: ['oidc/state-roles', 'state/export', 'estate/state-edges', 'state/versions', 'migrate/split'] , note: "state roles per environment, gated export, versions and moves between roots" },
 	{ id: 11, short: 'Migration', weight: 3, kind: 'claims', claims: ['import/atlantis', 'comment/atlantis'] , note: "terragucci import atlantis converts atlantis.yaml and digger.yml" },
@@ -59,7 +59,7 @@ const legend = (['proven', 'forge', 'license', 'open'] as const).filter((s) => s
 		))}
 	</div>
 	<figcaption>
-		Each block is as wide as its criterion's default weight. <span class="total">{sum('proven')} of {total}</span> weight points rest on a passing smoke claim. tacos.guru scores each criterion 0 to 3 times its weight, {3 * total} in all, and has not scored terragucci.
+		Each block is as wide as its criterion's default weight. <span class="total">{sum('proven')} of {total}</span> weight points rest on a passing smoke claim.
 		<ul class="legend">
 			{legend.map((s) => <li><span class={`key s-${s}`} />{LABEL[s]} ({sum(s)})</li>)}
 		</ul>

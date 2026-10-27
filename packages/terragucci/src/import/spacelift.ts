@@ -1,7 +1,7 @@
 /**
  * `terragucci import spacelift [.spacelift/config.yml]`: terragucci.yml from
  * a Spacelift repo's runtime config and the admin stack's `spacelift_*`
- * resources, by the concepts table of "Coming from Spacelift or env zero"
+ * resources, by the concepts table of "Use terragucci with Spacelift or env zero"
  * (./spacelift-env0-guide.ts).
  *
  * A stack comes from a `spacelift_stack` resource, a `stacks` entry of
