@@ -58,7 +58,7 @@ import { settingsForRoot, withEnvironmentRoles, type RootSettings } from "./envi
 import { ConfigError, FORGES, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type EnvironmentSettings, type ForgeName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSettings, type RunnerSpec } from "./config";
 import { AZURE_AUDIENCE, gcpAudience, runnerOf, stageAudience } from "./render";
 import { applyGroups, cloudDeclaration, environmentApplyRunner, rootIdentity } from "./cloud-identity";
-import type { CloudIdentityDeclaration } from "@intentius/chant/ci-identity";
+import { CLOUDS, type Cloud, type CloudIdentityDeclaration } from "@intentius/chant/ci-identity";
 import { detectShape } from "./shape";
 import { detectTerragrunt, walkUnits } from "./terragrunt";
 
@@ -67,8 +67,7 @@ export const IDENTITIES_SCHEMA = "terragucci.identities/v1";
 
 export const IDENTITY_STAGES = ["plan", "decide", "confirm", "apply", "drift"] as const;
 export type IdentityStage = (typeof IDENTITY_STAGES)[number];
-export const CLOUDS = ["aws", "gcp", "azure"] as const;
-export type Cloud = (typeof CLOUDS)[number];
+export { CLOUDS, type Cloud };
 
 /** The name of the entry for the roots in no environment. */
 export const DEFAULT_ENTRY = "default";
