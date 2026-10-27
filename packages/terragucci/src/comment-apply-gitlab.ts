@@ -40,6 +40,7 @@ import { approverFilter, reached, type ApplyCommentDecision, type Git } from "./
 import type { WavesAfter } from "./detect";
 import type { PrApproverFilter, PrForge } from "@intentius/chant/pr-forge";
 import { unmetApplyRequires } from "./apply-requires";
+import { chantForgeReads } from "./chant-next";
 import { ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
@@ -131,15 +132,21 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
   if (unmet) return { refuse: `!${iid} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes` };
 
-  let statuses: any;
+  const reads = chantForgeReads(forge);
+  let plan: any;
   try {
-    statuses = await api("GET", `/projects/${id}/repository/commits/${sha}/statuses?per_page=100`);
+    if (reads.commitStatuses) {
+      // chant's forge client reads each context's newest status where the installed chant has the read (chant#4554).
+      const st = (await reads.commitStatuses(sha)).find((s) => s.context === PLAN_CONTEXT);
+      plan = st ? { status: st.state } : undefined;
+    } else {
+      const statuses: any = await api("GET", `/projects/${id}/repository/commits/${sha}/statuses?per_page=100`);
+      for (const st of Array.isArray(statuses) ? statuses : []) {
+        if (st?.name === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
+      }
+    }
   } catch (e) {
     return { fail: `could not read the statuses of ${short(sha)} (${(e as Error).message})` };
-  }
-  let plan: any;
-  for (const st of Array.isArray(statuses) ? statuses : []) {
-    if (st?.name === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
   }
   if (plan?.status !== "success") {
     return { refuse: `the plan of !${iid} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again` };

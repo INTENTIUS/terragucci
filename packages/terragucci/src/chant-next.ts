@@ -17,15 +17,30 @@
  * pin: until a chant release carries it, ./publish/registry.ts keeps its own
  * reader and writer as the fallback.
  *
+ * Newer than the pin too (chant#4554, terragucci#1282): chant core's object
+ * store clients (`@intentius/chant/object-store`), which ./report/bucket.ts
+ * and ./backend.ts's version list use when the installed chant has them, and
+ * the forge reads and handover parameters on modules the pin already has
+ * (`pr-forge`, `ci-handover`). Those two are told apart by what the
+ * installed functions do, not by an import: ./forge.ts, ./comment-apply.ts,
+ * ./comment-apply-gitlab.ts, ./forge-post.ts and ./handover.ts keep their
+ * own code as the fallback.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
  * in a module that throws for a subpath the installed chant lacks, so the
  * bundle builds either way.
  */
+import { checkoutScript as chantCheckoutScript, handoverTrap as chantHandoverTrap, packJs as chantPackJs, type HandoverForge } from "@intentius/chant/ci-handover";
 import type { DriverComponent } from "@intentius/chant/components";
+import type { PrForge } from "@intentius/chant/pr-forge";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
+import type { AzureBlobClient, AzureTarget } from "./report/azure-blob";
+import type { GcsClient, GcsTarget } from "./report/gcs";
+import { adoptChantStoreErrors, type ObjectStore, type StoreFetch } from "./report/object-store";
+import type { S3Client, S3Target } from "./report/s3";
 
 // ── compose ────────────────────────────────────────────────────────────────
 
@@ -270,6 +285,27 @@ export interface ChantRegistry {
   registryHandler(files: (key: string) => Promise<{ body?: string | Uint8Array }>, options?: { prefix?: string; log?: (line: string) => void }): (request: Request) => Promise<Response>;
 }
 
+// ── object-store ───────────────────────────────────────────────────────────
+
+/**
+ * chant core's object store clients (`@intentius/chant/object-store`,
+ * chant#4554), lifted from ./report/s3.ts, gcs.ts, azure-blob.ts and
+ * bucket.ts. The targets are the same shape as terragucci's, and so are the
+ * clients' methods; the product words are parameters.
+ */
+export interface ChantObjectStore {
+  storeFromEnv(
+    where: { bucket: string; endpoint?: string; role?: string; sessionName?: string; setting?: string; roleSetting?: string },
+    env?: NodeJS.ProcessEnv,
+    fetchFn?: StoreFetch,
+  ): ObjectStore;
+  S3Client: new (target: S3Target, fetchFn?: StoreFetch) => Pick<S3Client, keyof S3Client>;
+  GcsClient: new (target: GcsTarget, fetchFn?: StoreFetch) => Pick<GcsClient, keyof GcsClient>;
+  AzureBlobClient: new (target: AzureTarget, fetchFn?: StoreFetch) => Pick<AzureBlobClient, keyof AzureBlobClient>;
+  StoreError: abstract new (...args: never[]) => Error;
+  StoreConflict: abstract new (...args: never[]) => Error;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -332,6 +368,17 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "writeVersion", "registryVersions", "registryLocation", "fetchTarball", "downloadAnswer", "registryHandler") ? (m as unknown as ChantRegistry) : undefined),
   ),
+  objectStore: once<ChantObjectStore>(
+    // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
+    () => import("@intentius/chant/object-store"),
+    (m) => {
+      if (!has(m, "storeFromEnv", "S3Client", "GcsClient", "AzureBlobClient", "StoreError", "StoreConflict")) return undefined;
+      const store = m as unknown as ChantObjectStore;
+      // A chant client throws chant's errors: terragucci's StoreError and StoreConflict take them as their own.
+      adoptChantStoreErrors(store.StoreError, store.StoreConflict);
+      return store;
+    },
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -354,6 +401,8 @@ export const chantState = (): Promise<ChantState | undefined> => load("state");
 export const chantPlanShape = (): Promise<ChantPlanShape | undefined> => load("planShape");
 /** chant's module registry protocol (`/registry`, chant#4565), or undefined. */
 export const chantRegistry = (): Promise<ChantRegistry | undefined> => load("registry");
+/** chant core's object store clients (`@intentius/chant/object-store`, chant#4554), or undefined. */
+export const chantObjectStore = (): Promise<ChantObjectStore | undefined> => load("objectStore");
 
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
@@ -368,6 +417,65 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry };
+  const [compose, composeRun, state, planShape, registry, objectStore] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore };
+}
+
+// ── forge reads (chant#4554) ───────────────────────────────────────────────
+
+/** A commit status as chant's forge reads it back: each context's newest, with the forge's own state word. */
+export interface ChantReadCommitStatus {
+  context: string;
+  state: string;
+  description?: string;
+  targetUrl?: string;
+  allowFailure?: boolean;
+}
+
+/** The reads chant#4554 added to chant's forge clients, where the installed chant's client has them. */
+export interface ChantForgeReads {
+  defaultBranch?: () => Promise<string>;
+  commitStatuses?: (sha: string) => Promise<ChantReadCommitStatus[]>;
+}
+
+/** `forge`'s default-branch and status reads, each undefined when the installed chant's client lacks it. */
+export function chantForgeReads(forge: PrForge): ChantForgeReads {
+  const f = forge as PrForge & { defaultBranch?: unknown; commitStatuses?: unknown };
+  return {
+    ...(typeof f.defaultBranch === "function" ? { defaultBranch: () => (f.defaultBranch as () => Promise<string>).call(forge) } : {}),
+    ...(typeof f.commitStatuses === "function" ? { commitStatuses: (sha: string) => (f.commitStatuses as (sha: string) => Promise<ChantReadCommitStatus[]>).call(forge, sha) } : {}),
+  };
+}
+
+// ── handover parameters (chant#4554) ───────────────────────────────────────
+
+/** chant's handover scripts with a product's parameters (chant#4554). */
+export interface ChantHandover {
+  packJs(forge: HandoverForge, opts: { noteFiles?: readonly string[]; label?: string }): string;
+  handoverTrap(dir: string, forge: HandoverForge, opts: { noteFiles?: readonly string[]; label?: string; before?: string }): string[];
+  checkoutScript(history: boolean, ledger: boolean, opts: { tokenEnv?: string; refEnv?: string; headName?: string }): string;
+}
+
+let handover: ChantHandover | null | undefined;
+
+/**
+ * chant's parameterised handover scripts, or undefined when the installed
+ * chant's take no parameters. The pin's functions take fewer arguments and
+ * ignore the rest, so each is asked once with a parameter and kept only when
+ * its script carries it.
+ */
+export function chantHandover(): ChantHandover | undefined {
+  if (handover === undefined) {
+    const h = { packJs: chantPackJs, handoverTrap: chantHandoverTrap, checkoutScript: chantCheckoutScript } as unknown as ChantHandover;
+    try {
+      const ok =
+        h.packJs("github", { label: "tgprobe", noteFiles: ["tgprobe.json"] }).includes("tgprobe.json") &&
+        h.handoverTrap("tgprobe", "github", { label: "tgprobe", before: "tgprobe_before" }).some((l) => l.includes("tgprobe_before")) &&
+        h.checkoutScript(false, false, { tokenEnv: "TGPROBE_TOKEN", refEnv: "TGPROBE_REF", headName: "tgprobe-head" }).includes("TGPROBE_REF");
+      handover = ok ? h : null;
+    } catch {
+      handover = null;
+    }
+  }
+  return handover ?? undefined;
 }

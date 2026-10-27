@@ -55,6 +55,7 @@ import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
 import { agentSettingsAt, pullInvolvement, type Involved } from "./involved";
+import { chantForgeReads } from "./chant-next";
 import { poster, type Fetch } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
@@ -240,15 +241,22 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
   if (newer.status !== 0) return broke(`could not list the commits on ${base} after ${short(sha)} (${newer.stderr.trim()})`);
   const later = newer.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   if (later.length > NEWER_LIMIT) return refuse(`more than ${NEWER_LIMIT} commits reached ${base} after the merge commit ${short(sha)}; the apply of the newest one applies them, so this one is not applied`);
+  const reads = chantForgeReads(forge);
   for (const c of later) {
     if (!SHA.test(c)) return broke(`git listed ${c} as a commit`);
-    let statuses: any;
+    let applied: { target_url?: unknown } | undefined;
     try {
-      statuses = await call("GET", `repos/${repo}/commits/${c}/statuses?per_page=100&limit=50`);
+      if (reads.commitStatuses) {
+        // chant's forge client reads them where the installed chant has the read (chant#4554).
+        const st = (await reads.commitStatuses(c)).find((s) => s.context === APPLY_CONTEXT);
+        applied = st ? { target_url: st.targetUrl } : undefined;
+      } else {
+        const statuses: any = await call("GET", `repos/${repo}/commits/${c}/statuses?per_page=100&limit=50`);
+        applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.context === APPLY_CONTEXT) : undefined;
+      }
     } catch (e) {
       return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
     }
-    const applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.context === APPLY_CONTEXT) : undefined;
     if (applied) {
       const run = typeof applied.target_url === "string" && /^https?:\/\//.test(applied.target_url) ? ` (${applied.target_url})` : "";
       return refuse(`a later apply already ran on ${base} at ${short(c)}${run}, so the merge commit ${short(sha)} of pull request ${number} is not applied: comment on the pull request that commit came from, or push again`);
@@ -741,15 +749,20 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
   if (unmet) return refuse(`pull request ${number} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes`);
 
   // The plan passed on the head, whatever apply.requires says.
-  let combined: any;
+  const reads = chantForgeReads(forge);
+  let plan: any;
   try {
-    combined = await call("GET", `repos/${repoName}/commits/${sha}/status`);
+    if (reads.commitStatuses) {
+      // chant's forge client reads each context's newest status where the installed chant has the read (chant#4554).
+      plan = (await reads.commitStatuses(sha)).find((st) => st.context === PLAN_CONTEXT);
+    } else {
+      const combined: any = await call("GET", `repos/${repoName}/commits/${sha}/status`);
+      for (const st of Array.isArray(combined?.statuses) ? combined.statuses : []) {
+        if (st?.context === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
+      }
+    }
   } catch (e) {
     return broke(`could not read the statuses of ${short(sha)} (${(e as Error).message})`);
-  }
-  let plan: any;
-  for (const st of Array.isArray(combined?.statuses) ? combined.statuses : []) {
-    if (st?.context === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
   }
   if (String(plan?.state ?? plan?.status ?? "") !== "success") return refuse(`the plan of pull request ${number} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again`);
 
