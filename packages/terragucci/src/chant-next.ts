@@ -32,6 +32,13 @@
  * check job calls. Without it init writes no hook, and `terragucci
  * check-hooks` runs the preset's hook itself (./pre-commit.ts).
  *
+ * Newer than the pin too (terragucci#1285): chant core's shared bucket check
+ * (`@intentius/chant/bucket-check`, chant#4558), which `init` runs on the
+ * record store choudoufu derives for a live root, and the terraform
+ * lexicon's TF046 (`lint/post-synth/tf046`, chant#4561), the local record
+ * store in CI, which ./tips/index.ts turns on. Without the first, init prints
+ * the store and checks no bucket; without the second, the tip is left out.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -40,6 +47,7 @@
  */
 import { checkoutScript as chantCheckoutScript, handoverTrap as chantHandoverTrap, packJs as chantPackJs, type HandoverForge } from "@intentius/chant/ci-handover";
 import type { DriverComponent } from "@intentius/chant/components";
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
@@ -354,6 +362,50 @@ export interface ChantObjectStore {
   StoreConflict: abstract new (...args: never[]) => Error;
 }
 
+// ── bucket-check ───────────────────────────────────────────────────────────
+
+/** One setting's verdict in chant's bucket report (`BucketFinding`). */
+export interface ChantBucketFinding {
+  setting: string;
+  verdict: "ok" | "fail" | "unreadable";
+  found: string;
+  unwaivable: boolean;
+  fix?: string;
+}
+
+/** What chant's bucket check found (`BucketReport`). */
+export interface ChantBucketReport {
+  store: "s3" | "gcs" | "azblob";
+  bucket: string;
+  namespaces: string[];
+  correct: boolean;
+  settings: ChantBucketFinding[];
+}
+
+/** The stores chant's bucket check reads, as its targets name them. */
+export type ChantBucketTarget =
+  | { store: "s3"; bucket: string; region: string; endpoint?: string; credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string } }
+  | { store: "gcs"; bucket: string; endpoint?: string; token?: string | null }
+  | { store: "azblob"; subscriptionId: string; resourceGroup: string; account: string; container: string; endpoint?: string; token?: string };
+
+/**
+ * chant core's shared bucket check (`@intentius/chant/bucket-check`,
+ * chant#4558): the settings plunge and choudoufu refuse to open a bucket
+ * without, read with GETs only.
+ */
+export interface ChantBucketCheck {
+  checkBucket(target: ChantBucketTarget, options?: { namespaces?: readonly string[]; recoveryDays?: number }): Promise<ChantBucketReport>;
+  BucketCheckError: abstract new (...args: never[]) => Error;
+}
+
+// ── TF046 ──────────────────────────────────────────────────────────────────
+
+/** The terraform lexicon's TF046 (chant#4561): its check, and the reader that takes the environment it treats as CI. */
+export interface ChantTf046 {
+  tf046: PostSynthCheck;
+  checkLocalRecordStore(ctx: PostSynthContext, env: Readonly<Record<string, string | undefined>>): PostSynthDiagnostic[];
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -421,6 +473,19 @@ const loaders = {
     () => import("@intentius/chant/components/check-hooks"),
     (m) => (has(m, "runCheckHooks", "writeCiHook") && typeof m.CI_CHECK_HOOK_FLOOR === "string" ? (m as unknown as ChantCheckHooks) : undefined),
   ),
+  bucketCheck: once<ChantBucketCheck>(
+    // @ts-ignore chant 0.124.54 has no bucket-check subpath (chant#4558)
+    () => import("@intentius/chant/bucket-check"),
+    (m) => (has(m, "checkBucket", "BucketCheckError") ? (m as unknown as ChantBucketCheck) : undefined),
+  ),
+  tf046: once<ChantTf046>(
+    // @ts-ignore chant 0.124.54 has no TF046 (chant#4561)
+    () => import("@intentius/chant-lexicon-terraform/lint/post-synth/tf046"),
+    (m) => {
+      const check = m.tf046 as PostSynthCheck | undefined;
+      return check?.id === "TF046" && typeof check.check === "function" && has(m, "checkLocalRecordStore") ? (m as unknown as ChantTf046) : undefined;
+    },
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -460,6 +525,12 @@ export const chantObjectStore = (): Promise<ChantObjectStore | undefined> => loa
 /** chant's check moment (`/components/check-hooks`, chant#4556), or undefined. */
 export const chantCheckHooks = (): Promise<ChantCheckHooks | undefined> => load("checkHooks");
 
+/** chant core's shared bucket check (`@intentius/chant/bucket-check`, chant#4558), or undefined. */
+export const chantBucketCheck = (): Promise<ChantBucketCheck | undefined> => load("bucketCheck");
+
+/** The terraform lexicon's TF046 (chant#4561), or undefined. */
+export const chantTf046 = (): Promise<ChantTf046 | undefined> => load("tf046");
+
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
  * Returns the function that puts the import back.
@@ -473,8 +544,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, bucketCheck, tf046] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046 };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

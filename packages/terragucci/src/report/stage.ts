@@ -35,7 +35,8 @@ import { quorumRuleProgress, quorumRulesFor, trustRolesAt, type GateQuorumRule }
 import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
 import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
-import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { readLiveSetup, resolvedEstate } from "../live-setup";
+import { applyLayers, detectBinary, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { checkOwnership, controlClaims, projectKeyFromEnv } from "../estate-ownership";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
@@ -1139,8 +1140,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const estatePlans = !drift && plansOnPlannedEstates(binary);
   const estateReadsOf = new Map(estatePlans ? roots.map((r) => [r, estateOutputReads(join(repo, r))] as const) : []);
   const estateOwner = new Map<string, string>();
+  // choudoufu's resolved estate (choudoufu#2293) for each live root, where the binary prints it; else the live block's.
+  for (const r of estatePlans ? liveRoots(repo, all) : []) await readLiveSetup(join(repo, r), { binary });
   for (const r of estatePlans ? all : []) {
-    const e = estateOf(join(repo, r)).estate;
+    const e = resolvedEstate(join(repo, r));
     if (e) estateOwner.set(e, r);
   }
   const readEstates = new Set([...estateReadsOf.values()].flat().map((b) => b.estate));
