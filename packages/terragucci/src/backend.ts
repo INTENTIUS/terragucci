@@ -49,6 +49,7 @@ import { AZURE_AUTHORITY, AzureBlobClient, azureFromEnv, type AzureOidc, type Az
 import { GCS_ENDPOINT, GcsClient, gcsFromEnv, type GcsTarget } from "./report/gcs";
 import { StoreError, type ObjectVersion, type StoreFetch } from "./report/object-store";
 import { S3Client, s3FromEnv, type S3Fetch, type S3Target } from "./report/s3";
+import { chantObjectStore } from "./chant-next";
 import type { ReportStateVersion } from "./report/schema";
 import { literal, stateAddress } from "./state-address";
 
@@ -649,13 +650,20 @@ export async function listStateVersions(location: string, env: NodeJS.ProcessEnv
   if (!m) return { skipped: "terragucci lists the versions of s3, gcs and azurerm states only" };
   const [, scheme, bucket, rest] = m as unknown as [string, string, string, string];
   try {
+    // The target is terragucci's, so a missing credential reads as it does today; the client is chant core's where the installed chant has it (chant#4554).
+    const chant = await chantObjectStore();
     let versions: ObjectVersion[];
-    if (scheme === "s3") versions = await new S3Client(s3FromEnv({ bucket }, env), fetchFn).listVersions(rest);
-    else if (scheme === "gs") versions = await new GcsClient(gcsFromEnv({ bucket }, env), fetchFn).listVersions(rest);
-    else {
+    if (scheme === "s3") {
+      const t = s3FromEnv({ bucket }, env);
+      versions = await (chant ? new chant.S3Client(t, fetchFn) : new S3Client(t, fetchFn)).listVersions(rest);
+    } else if (scheme === "gs") {
+      const t = gcsFromEnv({ bucket }, env);
+      versions = await (chant ? new chant.GcsClient(t, fetchFn) : new GcsClient(t, fetchFn)).listVersions(rest);
+    } else {
       const [container, ...key] = rest.split("/");
       if (!container || key.length === 0) return { skipped: `${location} names no blob` };
-      versions = await new AzureBlobClient(azureFromEnv({ account: bucket, container }, env), fetchFn).listVersions(key.join("/"));
+      const t = azureFromEnv({ account: bucket, container }, env);
+      versions = await (chant ? new chant.AzureBlobClient(t, fetchFn) : new AzureBlobClient(t, fetchFn)).listVersions(key.join("/"));
     }
     return versions.length > 0 ? { versions } : { skipped: "the store lists no versions of the state" };
   } catch (e) {
