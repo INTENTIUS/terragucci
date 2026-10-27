@@ -1,8 +1,8 @@
 /**
  * HCL text helpers publish reads a module's declarations with: chant's
  * (`compose/hcl.ts` and `compose/root.ts` of the Terraform lexicon), kept
- * here because chant 0.124.52, the newest published, has no `/compose`
- * subpath (terragucci#1278). They were terragucci's before chant lifted them.
+ * here because chant 0.124.52 and earlier have no `/compose` subpath
+ * (terragucci#1278), and terragucci still runs on them. They were terragucci's before chant lifted them.
  */
 
 /** The text with every comment blanked to spaces, newlines kept, so offsets still match. Strings are left alone. */
