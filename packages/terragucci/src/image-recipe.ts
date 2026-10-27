@@ -15,6 +15,13 @@
  * every provider every lock file pins must be in the image's mirror for the
  * job's platform. A gap warns the first time; when the same gap was already
  * in the lock files at the commit before (the previous run), it fails.
+ *
+ * The lock walk, the grouping, the mirror modules and the mirror check are
+ * chant's terraform lexicon's (`/registry`, chant#4564), shared with the
+ * provider network mirror. The CLI hands them in from `mirrorCode()` when
+ * the installed chant has them; the copies here are the fallback until
+ * terragucci's chant pin carries them. The Dockerfile, CLI config and build
+ * script stay here, as words and templates.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -23,6 +30,7 @@ import { imageFor, imageReference, terragruntImage } from "./images";
 import { MIRROR_DIR, type Binary } from "./config";
 import { LOCK_FILE, readLock } from "./rollout/lock";
 import type { CheckResult } from "./check";
+import { chantRegistry } from "./chant-next";
 
 /** Directories a lock file is never looked for in: caches and what init or a package manager writes. */
 const SKIP = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", "cdktf.out", ".terragucci"]);
@@ -111,6 +119,8 @@ export interface MirrorCheckOptions {
   platform?: string;
   /** The lock files at the previous run's commit. Default: the commit's first parent, from git. Pass null for none. */
   previous?: PreviousLock | null;
+  /** The mirror code (`mirrorCode()`). Default: the copies here. */
+  code?: MirrorCode;
 }
 
 /**
@@ -122,15 +132,16 @@ export interface MirrorCheckOptions {
  */
 export function checkMirror(repo: string, mirror: string, options: MirrorCheckOptions = {}): CheckResult {
   const platform = options.platform ?? hostPlatform();
-  const files = lockFiles(repo);
+  const code = options.code ?? OWN_MIRROR_CODE;
+  const files = code.lockFiles(repo);
   const log: string[] = [];
   const report: string[] = [];
   if (!existsSync(mirror)) {
     const line = `FAILED image mirror: ${mirror} is not in the job's image; image.mirror names a prepared image's provider mirror. Build the image terragucci image recipe writes and name it in image.name, or remove image.mirror`;
     return { ok: false, log: [line], report: ["### Provider mirror", "", `- ${line.replace(/^FAILED /, "")}`] };
   }
-  const entries = lockEntries(repo, files);
-  const gaps = entries.filter((e) => !mirrorHas(mirror, e.address, e.version, platform));
+  const entries = code.lockEntries(repo, files);
+  const gaps = entries.filter((e) => !code.mirrorHas(mirror, e.address, e.version, platform));
   if (files.length === 0) log.push("image mirror: no lock file in the repo, so there is nothing to check");
   if (gaps.length === 0) {
     if (files.length > 0) log.push(`image mirror: ${mirror} covers every provider in ${plural(files.length, "lock file")} for ${platform}`);
@@ -162,6 +173,70 @@ export function checkMirror(repo: string, mirror: string, options: MirrorCheckOp
   return { ok: stale.length === 0, log, report };
 }
 
+/** Lock files that pin the same providers at the same versions, mirrored once. */
+export interface MirrorGroup {
+  locks: string[];
+  /** The first lock file's text, which `providers mirror` checks downloads against. */
+  text: string;
+  providers: Map<string, string>;
+}
+
+/** The repo's lock files grouped by what they pin; a lock file that pins nothing is left out. */
+function ownGroups(repo: string, locks: string[] = lockFiles(repo)): MirrorGroup[] {
+  const groups = new Map<string, MirrorGroup>();
+  for (const lock of locks) {
+    const text = readFileSync(join(repo, lock), "utf-8");
+    const providers = readLock(text);
+    if (providers.size === 0) continue;
+    const key = [...providers].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([a, v]) => `${a}=${v}`).join("\n");
+    const g = groups.get(key);
+    if (g) g.locks.push(lock);
+    else groups.set(key, { locks: [lock], text, providers });
+  }
+  return [...groups.values()];
+}
+
+/** One module per group, under `dir`: each provider at exactly its locked version, with the lock file beside it. */
+function ownModules(groups: MirrorGroup[], options: { dir?: string } = {}): { path: string; content: string }[] {
+  const files: { path: string; content: string }[] = [];
+  groups.forEach((g, i) => {
+    const dir = `${options.dir ?? "mirror"}/${String(i + 1).padStart(2, "0")}`;
+    const required = [...g.providers].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([address, version], n) => `    p${n} = { source = "${address}", version = "= ${version}" }`);
+    files.push({
+      path: `${dir}/versions.tf`,
+      content: [`# The providers ${g.locks.join(", ")} lock${g.locks.length === 1 ? "s" : ""}, each at exactly its locked version.`, "terraform {", "  required_providers {", ...required, "  }", "}", ""].join("\n"),
+    });
+    // The lock file itself, so providers mirror checks each download against its hashes.
+    files.push({ path: `${dir}/${LOCK_FILE}`, content: g.text });
+  });
+  return files;
+}
+
+/** The mirror code the recipe and the check run: chant's lexicon's (chant#4564), or the copies here. */
+export interface MirrorCode {
+  lockFiles(repo: string): string[];
+  lockEntries(repo: string, files?: string[]): LockEntry[];
+  mirrorGroups(repo: string, locks?: string[]): MirrorGroup[];
+  mirrorModules(groups: MirrorGroup[], options?: { dir?: string }): { path: string; content: string }[];
+  mirrorHas(mirror: string, address: string, version: string, platform: string): boolean;
+}
+
+/** The copies here. */
+export const OWN_MIRROR_CODE: MirrorCode = { lockFiles, lockEntries, mirrorGroups: ownGroups, mirrorModules: ownModules, mirrorHas };
+
+/** chant's mirror code when the installed chant's `/registry` has it (chant#4564), else the copies here. */
+export async function mirrorCode(): Promise<MirrorCode> {
+  const lexicon = (await chantRegistry()) as (Partial<MirrorCode> & object) | undefined;
+  const names = ["lockFiles", "lockEntries", "mirrorGroups", "mirrorModules", "mirrorHas"] as const;
+  if (!lexicon || !names.every((n) => typeof lexicon[n] === "function")) return OWN_MIRROR_CODE;
+  const chant = lexicon as MirrorCode;
+  return {
+    ...chant,
+    // terragucci's check compares lower case, as `providers mirror` writes its directories.
+    mirrorHas: (mirror, address, version, platform) => address.split("/").length === 3 && chant.mirrorHas(mirror, address.toLowerCase(), version, platform),
+  };
+}
+
 /** A file the recipe writes, relative to its output directory. */
 export interface RecipeFile {
   path: string;
@@ -180,6 +255,8 @@ export interface RecipeOptions {
   platforms?: string[];
   /** Where the mirror goes in the image. Default MIRROR_DIR. */
   mirror?: string;
+  /** The mirror code (`mirrorCode()`). Default: the copies here. */
+  code?: MirrorCode;
 }
 
 export interface Recipe {
@@ -215,30 +292,10 @@ export function planRecipe(repo: string, options: RecipeOptions = {}): Recipe {
   const bad = platforms.filter((p) => !PLATFORM.test(p));
   if (bad.length) throw new Error(`--platform ${bad.join(", ")}: name a platform as os/arch, such as linux/amd64`);
   const mirror = options.mirror ?? MIRROR_DIR;
-  const locks = lockFiles(repo);
-  const groups = new Map<string, { locks: string[]; text: string; providers: Map<string, string> }>();
-  for (const lock of locks) {
-    const text = readFileSync(join(repo, lock), "utf-8");
-    const providers = readLock(text);
-    if (providers.size === 0) continue;
-    const key = [...providers].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([a, v]) => `${a}=${v}`).join("\n");
-    const g = groups.get(key);
-    if (g) g.locks.push(lock);
-    else groups.set(key, { locks: [lock], text, providers });
-  }
-  const files: RecipeFile[] = [];
-  let n = 0;
-  for (const g of groups.values()) {
-    const dir = `mirror/${String(++n).padStart(2, "0")}`;
-    const required = [...g.providers].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([address, version], i) => `    p${i} = { source = "${address}", version = "= ${version}" }`);
-    files.push({
-      path: `${dir}/versions.tf`,
-      content: [`# The providers ${g.locks.join(", ")} lock${g.locks.length === 1 ? "s" : ""}, each at exactly its locked version.`, "terraform {", "  required_providers {", ...required, "  }", "}", ""].join("\n"),
-    });
-    // The lock file itself, so providers mirror checks each download against its hashes.
-    files.push({ path: `${dir}/${LOCK_FILE}`, content: g.text });
-  }
-  const providers = [...new Set([...groups.values()].flatMap((g) => [...g.providers].map(([a, v]) => `${a} ${v}`)))].sort();
+  const code = options.code ?? OWN_MIRROR_CODE;
+  const groups = code.mirrorGroups(repo, code.lockFiles(repo));
+  const files: RecipeFile[] = code.mirrorModules(groups, { dir: "mirror" });
+  const providers = [...new Set(groups.flatMap((g) => [...g.providers].map(([a, v]) => `${a} ${v}`)))].sort();
   files.push({
     path: "terragucci.tfrc",
     content: [
@@ -264,7 +321,7 @@ export function planRecipe(repo: string, options: RecipeOptions = {}): Recipe {
       "ARG TARGETOS=linux",
       "ARG TARGETARCH=amd64",
       "COPY mirror/ /tmp/terragucci-mirror/",
-      groups.size
+      groups.length
         ? `RUN set -eu; for d in /tmp/terragucci-mirror/*/; do ${mirrorBinary} -chdir="$d" providers mirror -platform="\${TARGETOS}_\${TARGETARCH}" ${mirror}; done; rm -rf /tmp/terragucci-mirror`
         : `RUN mkdir -p ${mirror}; rm -rf /tmp/terragucci-mirror`,
       `COPY terragucci.tfrc ${posix.dirname(mirror)}/terragucci.tfrc`,
@@ -272,7 +329,7 @@ export function planRecipe(repo: string, options: RecipeOptions = {}): Recipe {
       "",
     ].join("\n"),
   });
-  if (groups.size === 0) files.push({ path: "mirror/.keep", content: "" });
+  if (groups.length === 0) files.push({ path: "mirror/.keep", content: "" });
   files.push({
     path: "build.sh",
     mode: 0o755,
@@ -287,7 +344,7 @@ export function planRecipe(repo: string, options: RecipeOptions = {}): Recipe {
       "",
     ].join("\n"),
   });
-  return { from, locks: groups.size ? [...groups.values()].flatMap((g) => g.locks).sort() : [], providers, platforms, files };
+  return { from, locks: groups.flatMap((g) => g.locks).sort(), providers, platforms, files };
 }
 
 /** What `image recipe` wrote, for the terminal. */

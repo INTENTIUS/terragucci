@@ -9,14 +9,18 @@
  * `https://<hostname>/.well-known/terraform.json` gives the `tfe.v2` base,
  * then the workspace by organization and name, its current state version
  * and that version's download URL. The token is the one Terraform and
- * OpenTofu use for the host: `TF_TOKEN_<host>`, else
- * `~/.terraform.d/credentials.tfrc.json`. A migration holds the workspace's
+ * OpenTofu use for the host: `TF_TOKEN_<host>`, else a `credentials` block
+ * in the CLI config, else `~/.terraform.d/credentials.tfrc.json`, read by
+ * chant core's reader (`@intentius/chant/terraform/credentials`, chant#4563)
+ * when the installed chant has it and by the copy below when it does not,
+ * which skips the CLI config. A migration holds the workspace's
  * lock while it writes, as it holds an S3 state's lock file, and the
  * workspace's state is left where it was.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { chantCredentials } from "./chant-next";
 import { ConfigError } from "./config";
 import type { StoreFetch } from "./report/object-store";
 
@@ -66,19 +70,37 @@ export function externalProblems(at: string, backend: string, config: Record<str
 /** The variable Terraform and OpenTofu read a host's token from: dots to `_`, dashes to `__`. */
 export const tokenVariable = (host: string): string => `TF_TOKEN_${host.replace(/-/g, "__").replace(/\./g, "_")}`;
 
-/** The token for a host: `TF_TOKEN_<host>`, else the CLI's credentials file. */
-export function tokenFor(host: string, env: NodeJS.ProcessEnv): string | undefined {
-  const v = env[tokenVariable(host)];
-  if (v) return v;
+/** A host's token and where it was found: a variable's name or a file's path, never the value. */
+export interface HostToken {
+  token: string;
+  from: string;
+}
+
+/** The fallback for a chant without its credentials reader: `TF_TOKEN_<host>`, else the CLI's credentials file. */
+function ownToken(host: string, env: NodeJS.ProcessEnv): HostToken | undefined {
+  const variable = tokenVariable(host);
+  const v = env[variable];
+  if (v) return { token: v, from: variable };
   const file = join(env.HOME ?? homedir(), ".terraform.d", "credentials.tfrc.json");
   if (!existsSync(file)) return undefined;
   try {
     const doc = JSON.parse(readFileSync(file, "utf-8")) as { credentials?: Record<string, { token?: string }> };
-    return doc.credentials?.[host]?.token || undefined;
+    const token = doc.credentials?.[host]?.token;
+    return token ? { token, from: file } : undefined;
   } catch {
     return undefined;
   }
 }
+
+/** The token for a host, found as Terraform and OpenTofu find it: chant's reader when the installed chant has it, else the copy here. */
+export async function tokenFor(host: string, env: NodeJS.ProcessEnv): Promise<HostToken | undefined> {
+  const chant = await chantCredentials();
+  if (!chant) return ownToken(host, env);
+  return chant.terraformCredential(host, { env });
+}
+
+/** What to set for a host's token: its variable, or a credentials block for a host whose port has no variable form. */
+const tokenSetting = (host: string): string => (/:\d+$/.test(host) && !host.endsWith(":443") ? `a credentials "${host}" block in the CLI config` : tokenVariable(host.replace(/:443$/, "")));
 
 /** The source a backend move reads from, when the job reads it itself; undefined for a backend read through the root. */
 export function externalSource(repo: string, backend: string, config: Record<string, unknown>, env: NodeJS.ProcessEnv, fetchFn?: StoreFetch): ExternalSource | undefined {
@@ -130,11 +152,13 @@ export interface ApiAnswer {
 /** A client of a host that speaks the TFE API: its token, discovery and JSON:API reads. */
 export interface TfeClient {
   host: string;
-  /** The token found for the host, if any; never printed. */
-  hasToken: boolean;
+  /** Whether a token was found for the host; never printed. */
+  hasToken(): Promise<boolean>;
   call(url: string, method?: string, body?: string): Promise<ApiAnswer>;
   /** The body of a 2xx answer as JSON; a 401 or 404 says what to check, naming `what`. */
   json<T = Json>(what: string, r: ApiAnswer): T;
+  /** Where the token the calls send was found (a variable's name or a file's path), once a call has run. */
+  tokenFrom(): string | undefined;
   /** The `tfe.v2` base that discovery names, ending in `/`. */
   api(): Promise<string>;
   /** Every resource of a list, page by page (`meta.pagination.next-page`). */
@@ -149,10 +173,16 @@ export interface TfeClient {
  * error.
  */
 export function tfeClient(host: string, location: string, env: NodeJS.ProcessEnv, fetchFn: StoreFetch = fetch as unknown as StoreFetch, tokenEnv?: string): TfeClient {
-  const token = tokenFor(host, env) ?? (tokenEnv ? env[tokenEnv] || undefined : undefined);
+  let found: Promise<HostToken | undefined> | undefined;
+  /** The token, looked up once on the first call: `TF_TOKEN_<host>` or the CLI's credentials, else `tokenEnv`. */
+  const lookup = (): Promise<HostToken | undefined> =>
+    (found ??= tokenFor(host, env).then((t) => t ?? (tokenEnv && env[tokenEnv] ? { token: env[tokenEnv]!, from: tokenEnv } : undefined)));
+  let held: HostToken | undefined;
   const origin = `https://${host}`;
   let base: string | undefined;
   const call = async (url: string, method = "GET", body?: string): Promise<ApiAnswer> => {
+    held = await lookup();
+    const token = held?.token;
     // The token goes to the host and the API discovery names (Spacelift's is on another host), as the binary sends it; never to a download elsewhere.
     const sameHost = [host, base ? new URL(base).host : host].includes(new URL(url).host);
     const headers: Record<string, string> = { accept: "application/vnd.api+json", ...(body ? { "content-type": "application/vnd.api+json" } : {}), ...(token && sameHost ? { authorization: `Bearer ${token}` } : {}) };
@@ -165,7 +195,7 @@ export function tfeClient(host: string, location: string, env: NodeJS.ProcessEnv
     }
     return { status: r.status, text: await r.text() };
   };
-  const tokenHint = (): string => (token ? `the token in ${tokenVariable(host)}${tokenEnv ? ` or ${tokenEnv}` : ""} or credentials.tfrc.json may not read it` : `there is no token for ${host}: set ${tokenVariable(host)}${tokenEnv ? ` or ${tokenEnv}` : ""}`);
+  const tokenHint = (): string => (held ? `the token in ${held.from} may not read it` : `there is no token for ${host}: set ${tokenSetting(host)}${tokenEnv ? ` or ${tokenEnv}` : ""}`);
   const json = <T = Json>(what: string, r: ApiAnswer): T => {
     if (r.status === 401 || r.status === 404) throw new ConfigError(`${location}: ${what} answered ${r.status}; ${tokenHint()}`);
     if (r.status >= 300) throw new ConfigError(`${location}: ${what} answered ${r.status}: ${r.text.slice(0, 200)}`);
@@ -205,19 +235,19 @@ export function tfeClient(host: string, location: string, env: NodeJS.ProcessEnv
     }
     return { data, included };
   };
-  return { host, hasToken: token !== undefined, call, json, api, list };
+  return { host, hasToken: async () => (await lookup()) !== undefined, call, json, api, list, tokenFrom: () => held?.from };
 }
 
 /** A workspace's state over the TFE API, as the remote backend and the cloud block read it. */
 export function workspaceSource(backend: string, host: string, org: string, name: string, env: NodeJS.ProcessEnv, fetchFn: StoreFetch = fetch as unknown as StoreFetch): ExternalSource {
   const location = `${backend}://${host}/${org}/${name}`;
   const origin = `https://${host}`;
-  const { call, api } = tfeClient(host, location, env, fetchFn);
+  const { call, api, tokenFrom } = tfeClient(host, location, env, fetchFn);
   const json = (what: string, r: ApiAnswer): Json => {
     // The state read's own wording: the workspace, not "it".
     if (r.status === 401 || r.status === 404) {
-      const token = tokenFor(host, env);
-      throw new ConfigError(`${location}: ${what} answered ${r.status}; ${token ? `the token in ${tokenVariable(host)} or credentials.tfrc.json may not read the workspace` : `the job has no token for ${host}: set ${tokenVariable(host)}`}`);
+      const from = tokenFrom();
+      throw new ConfigError(`${location}: ${what} answered ${r.status}; ${from ? `the token in ${from} may not read the workspace` : `the job has no token for ${host}: set ${tokenSetting(host)}`}`);
     }
     if (r.status >= 300) throw new ConfigError(`${location}: ${what} answered ${r.status}: ${r.text.slice(0, 200)}`);
     try {

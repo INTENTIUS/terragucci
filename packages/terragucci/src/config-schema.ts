@@ -68,6 +68,7 @@ import {
   REGISTRY_EDGES,
   REGISTRY_KEYS,
   REGISTRY_NAME,
+  REGISTRY_PROVIDERS,
   REGISTRY_SYSTEM,
   RELEASE_VERSION,
   RESPONSES,
@@ -211,6 +212,7 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   download: enumOf(["tarball", "git-tags", "oci"]),
   edge: enumOf(REGISTRY_EDGES),
   auth: enumOf(REGISTRY_AUTHS),
+  providers: enumOf(REGISTRY_PROVIDERS),
 } satisfies Record<keyof RegistrySettings, JsonSchema>, {
   required: ["url", "namespace"],
   oneOf: [{ required: ["bucket"] }, { required: ["dir"] }],

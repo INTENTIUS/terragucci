@@ -757,6 +757,11 @@
                 "off",
                 "token"
               ]
+            },
+            "providers": {
+              "enum": [
+                "mirror"
+              ]
             }
           },
           "additionalProperties": false,
@@ -2605,6 +2610,11 @@
                   "enum": [
                     "off",
                     "token"
+                  ]
+                },
+                "providers": {
+                  "enum": [
+                    "mirror"
                   ]
                 }
               },

@@ -17,6 +17,10 @@
  * pin: until a chant release carries it, ./publish/registry.ts keeps its own
  * reader and writer as the fallback.
  *
+ * chant core's Terraform token reader (`@intentius/chant/terraform/credentials`,
+ * chant#4563) is newer than the pin: ./state-source.ts keeps its own lookup
+ * as the fallback.
+ *
  * Newer than the pin too (chant#4554, terragucci#1282): chant core's object
  * store clients (`@intentius/chant/object-store`), which ./report/bucket.ts
  * and ./backend.ts's version list use when the installed chant has them, and
@@ -341,6 +345,19 @@ export interface ChantCheckHooks {
   CI_CHECK_HOOK_FLOOR: string;
 }
 
+// ── terraform/credentials ──────────────────────────────────────────────────
+
+/**
+ * chant core's token reader (`@intentius/chant/terraform/credentials`,
+ * chant#4563): the token Terraform and OpenTofu send to a host, from
+ * `TF_TOKEN_<host>`, a `credentials` block in the CLI config, or
+ * credentials.tfrc.json. ./state-source.ts keeps its own copy as the fallback.
+ */
+export interface ChantCredentials {
+  terraformCredential(host: string, options?: { env?: Record<string, string | undefined> }): { token: string; from: string } | undefined;
+  tokenVariable(host: string): string | undefined;
+}
+
 // ── object-store ───────────────────────────────────────────────────────────
 
 /**
@@ -429,6 +446,11 @@ const loaders = {
     () => import("@intentius/chant/components/check-hooks"),
     (m) => (has(m, "runCheckHooks", "writeCiHook") && typeof m.CI_CHECK_HOOK_FLOOR === "string" ? (m as unknown as ChantCheckHooks) : undefined),
   ),
+  credentials: once<ChantCredentials>(
+    // @ts-ignore chant 0.124.54 has no terraform/credentials subpath (chant#4563)
+    () => import("@intentius/chant/terraform/credentials"),
+    (m) => (has(m, "terraformCredential", "tokenVariable") ? (m as unknown as ChantCredentials) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -462,6 +484,8 @@ export const chantState = (): Promise<ChantState | undefined> => load("state");
 export const chantPlanShape = (): Promise<ChantPlanShape | undefined> => load("planShape");
 /** chant's module registry protocol (`/registry`, chant#4565), or undefined. */
 export const chantRegistry = (): Promise<ChantRegistry | undefined> => load("registry");
+/** chant core's Terraform token reader (`@intentius/chant/terraform/credentials`, chant#4563), or undefined. */
+export const chantCredentials = (): Promise<ChantCredentials | undefined> => load("credentials");
 /** chant core's object store clients (`@intentius/chant/object-store`, chant#4554), or undefined. */
 export const chantObjectStore = (): Promise<ChantObjectStore | undefined> => load("objectStore");
 
@@ -481,8 +505,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────
