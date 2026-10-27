@@ -138,7 +138,7 @@ import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
 import { checkHooks } from "./pre-commit";
-import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
+import { checkMirror, describeRecipe, mirrorCode, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
 import { pinChecker } from "./publish/require";
@@ -659,7 +659,7 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const mirror = imageMirror(settings.image);
         if (!mirror) return 0;
-        const result = checkMirror(cwd, mirror, { ...(str(flags, "platform") ? { platform: str(flags, "platform") } : {}) });
+        const result = checkMirror(cwd, mirror, { ...(str(flags, "platform") ? { platform: str(flags, "platform") } : {}), code: await mirrorCode() });
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
@@ -673,7 +673,9 @@ export async function main(argv: string[]): Promise<number> {
         const out = str(flags, "out") ?? "image";
         let recipe;
         try {
+          const code = await mirrorCode();
           recipe = planRecipe(cwd, {
+            code,
             binary: binary as Binary,
             terragrunt: settings.terragrunt !== undefined || existsSync(resolve(cwd, "root.hcl")) || existsSync(resolve(cwd, "terragrunt.hcl")),
             ...(str(flags, "from") ? { from: str(flags, "from") } : {}),

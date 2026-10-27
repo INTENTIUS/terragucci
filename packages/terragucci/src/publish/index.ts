@@ -41,6 +41,7 @@ import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, 
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
 import { applyBump, bumpBetween, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "./semver";
 import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeHeadersFile, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
+import { publishProviderMirror, type ProviderMirrorRun } from "./provider-mirror";
 import { testModule, type TestBinary, type TestRunner } from "./test";
 
 export { bumpFor, parseSemver } from "./semver";
@@ -81,6 +82,8 @@ export interface PublishOptions {
   testRunner?: TestRunner;
   /** Where `modules.registry` is written, for tests; the bucket or dir it names by default. */
   registryStore?: RegistryStore;
+  /** Runs `providers mirror` for `modules.registry.providers: mirror`, for tests. */
+  mirrorRun?: ProviderMirrorRun;
 }
 
 /** What publish reads from the settings: `modules`, and the binary `modules.test` runs. */
@@ -601,6 +604,12 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
       const note = target.note?.(mod, version);
       results.push({ ...row, status: "published", version: formatSemver(version), digest, detail: `signed and recorded in the release ledger as ${attested.digest}${note ? `; ${note}` : ""}` });
     }
+  }
+  // Last, once the modules are out: the providers their lock files pin, as a network mirror beside them.
+  if (registry?.providers === "mirror") {
+    const store = opts.registryStore ?? registryStore(repo, registry, (opts.env ?? process.env) as NodeJS.ProcessEnv);
+    const mirrored = await publishProviderMirror(repo, registry, store, { binary: settings.binary, dryRun: opts.dryRun, ...(opts.mirrorRun ? { run: opts.mirrorRun } : {}) });
+    results.push({ module: "providers", target: `registry ${registry.url.replace(/\/+$/, "")}`, status: mirrored.status, detail: mirrored.detail });
   }
   return results;
 }

@@ -181,6 +181,7 @@ module "network" {
    | `download` | `tarball` | what each version's download points at: a `.tar.gz` beside it, its git tag (`git-tags`, which `publish` must list), or its OCI artifact (`oci`, which `publish` must list; OpenTofu only) |
    | `edge` | picked from `bucket`, `endpoint` or `dir` | what sends the `X-Terraform-Get` header Terraform needs: `cloudflare`, `cloudfront`, `pages` or `none`; see [Put an edge function in front of the bucket](#put-an-edge-function-in-front-of-the-bucket) |
    | `auth` | `off` | `token` has the edge function refuse a read without a bearer token, and sign tarball URLs |
+   | `providers` | none | `mirror` also serves the providers the lock files pin as a network mirror under `providers/`; see [Serve the providers from the registry too](#serve-the-providers-from-the-registry-too) |
 
    A module's address is `<host>/<namespace>/<name>/<system>`, where the name is its directory's name: `modules/network` is `modules.example.com/acme/network/generic`.
 
@@ -350,6 +351,43 @@ host "modules.example.com" {
 ```
 
 Terraform reads the block from `TF_CLI_CONFIG_FILE` or `~/.terraformrc`, OpenTofu from `TF_CLI_CONFIG_FILE` or `~/.tofurc`. A source with no host resolves to `registry.terraform.io` under Terraform and `registry.opentofu.org` under OpenTofu, so a block for one of them does nothing for the other binary. The address it names needs a certificate the binary already trusts.
+
+## Serve the providers from the registry too
+
+With `providers: mirror`, the publish job also serves every provider the repo's lock files pin as a [provider network mirror](https://opentofu.org/docs/internals/provider-network-mirror-protocol/), under `providers/` beside the modules:
+
+```yaml
+modules:
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    providers: mirror
+```
+
+After the modules publish, the job runs the binary's `providers mirror` once for each distinct lock file, with each provider at exactly its locked version, so the lock file's hashes check every download. The mirror is for `linux_amd64`. Each provider locked on `registry.terraform.io` or `registry.opentofu.org` is mirrored under the other host as well, so a source with no host resolves under both binaries. Archives go up first and each `index.json` last, so a reader never sees a version whose files are not there yet. A publish whose lock files pin nothing new mirrors nothing again.
+
+The job's output ends with the block each reader adds to its CLI config:
+
+```hcl
+provider_installation {
+  network_mirror {
+    url = "https://modules.example.com/providers/"
+    include = [
+      "registry.opentofu.org/hashicorp/aws",
+      "registry.terraform.io/hashicorp/aws",
+    ]
+  }
+  direct {
+    exclude = [
+      "registry.opentofu.org/hashicorp/aws",
+      "registry.terraform.io/hashicorp/aws",
+    ]
+  }
+}
+```
+
+`include` and `exclude` name the same providers. A mirrored provider then comes only from the mirror, and any other provider comes straight from its registry. With `auth: token`, the edge function signs each archive URL in the mirror's version files, as it does tarballs, and the index and version files need the token.
 
 ## Attest each release
 
