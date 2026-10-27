@@ -12,7 +12,7 @@
  * pull request's stored plan of the root and from the wave's plan of it now.
  *
  * The plan shape is chant's `/plan-shape`, loaded on first use: chant 0.124.52
- * has none, and with it no wave is covered, so each is held as before
+ * and earlier have none, and with it no wave is covered, so each is held as before
  * (terragucci#1278).
  */
 import type { ChangeSetDocument } from "@intentius/chant/change-set";

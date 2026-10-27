@@ -2,7 +2,7 @@
 // coveredRound decides whether the pull request's plan covers that plan (terragucci#1268): only the inputs it previewed
 // as known after apply may differ, and anything else stops for a new approval with planShapeCovers's reason.
 //
-// chant's plan shape is its `/plan-shape` subpath, which chant 0.124.52 lacks (terragucci#1278): the cases that
+// chant's plan shape is its `/plan-shape` subpath, which chant 0.124.52 and earlier lack (terragucci#1278): the cases that
 // compare shapes run when the installed chant has it, and the last block holds the wave without it.
 import { afterEach, describe, expect, it } from "vitest";
 import { chantNextParts, overrideChantNext } from "../src/chant-next";
