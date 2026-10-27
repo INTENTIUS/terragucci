@@ -63,6 +63,8 @@ import {
   OVERRIDE_ENTRY_KEYS,
   POLICY_KEYS,
   QUESTION_TYPES,
+  REGISTRY_AUTHS,
+  REGISTRY_EDGES,
   REGISTRY_KEYS,
   REGISTRY_NAME,
   REGISTRY_SYSTEM,
@@ -206,6 +208,8 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   namespaces: { type: "object", propertyNames: { pattern: "^[^/]" }, additionalProperties: pat(REGISTRY_NAME) },
   system: pat(REGISTRY_SYSTEM),
   download: enumOf(["tarball", "git-tags", "oci"]),
+  edge: enumOf(REGISTRY_EDGES),
+  auth: enumOf(REGISTRY_AUTHS),
 } satisfies Record<keyof RegistrySettings, JsonSchema>, {
   required: ["url", "namespace"],
   oneOf: [{ required: ["bucket"] }, { required: ["dir"] }],

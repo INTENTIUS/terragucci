@@ -139,7 +139,7 @@ export interface VersionFiles {
 
 export async function writeVersion(store: RegistryStore, reg: RegistrySettings, addr: RegistryAddress, version: Semver, files: VersionFiles): Promise<void> {
   const lexicon = await chantRegistry();
-  if (lexicon) return lexicon.writeVersion(store, addr, version, files, { prefix: reg.prefix, isConflict: (e) => e instanceof StoreConflict });
+  if (typeof lexicon?.writeVersion === "function") return lexicon.writeVersion(store, addr, version, files, { prefix: reg.prefix, isConflict: (e) => e instanceof StoreConflict });
   const discovery = `${JSON.stringify({ "modules.v1": MODULES_V1 })}\n`;
   const disco = await store.read(keyFor(reg, DISCOVERY));
   if (disco.body !== discovery) await store.put(keyFor(reg, DISCOVERY), discovery, "application/json");
@@ -158,6 +158,27 @@ export async function writeVersion(store: RegistryStore, reg: RegistrySettings, 
       if (!(e instanceof StoreConflict) || attempt >= 3) throw e;
     }
   }
+}
+
+/** The file Cloudflare Pages and Netlify read their response headers from, at the site's root. */
+export const HEADERS_FILE = "_headers";
+
+/**
+ * `edge: pages`: add a version's X-Terraform-Get rule to the site's
+ * `_headers` file, keeping every rule already there (chant#4566's
+ * `headersFile`). Returns a note for the publish row when the file is left
+ * out, because the installed chant has no writer, or when it holds more rules
+ * than Cloudflare Pages reads.
+ */
+export async function writeHeadersFile(store: RegistryStore, reg: Pick<RegistrySettings, "prefix">, rule: { path: string; location: string }): Promise<string | undefined> {
+  const lexicon = await chantRegistry();
+  if (!lexicon?.headersFile) return `${HEADERS_FILE} not written: the installed chant has no _headers writer, so Terraform cannot install this version from a Pages site`;
+  const key = keyFor(reg, HEADERS_FILE);
+  const text = lexicon.headersFile([{ path: `/${rule.path}`, location: rule.location }], (await store.read(key)).body);
+  await store.put(key, text, "text/plain");
+  const limit = lexicon.PAGES_HEADER_RULES ?? 100;
+  const rules = text.split("\n").filter((l) => /^\s+X-Terraform-Get:/i.test(l)).length;
+  return rules > limit ? `${HEADERS_FILE} has ${rules} download rules, and Cloudflare Pages reads only ${limit}; serve the registry through edge: cloudflare, or on Netlify` : undefined;
 }
 
 /** The location a version's download answer gives. */

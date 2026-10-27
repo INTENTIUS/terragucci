@@ -22,6 +22,7 @@
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci check-mirror [--config <file>] [--platform <os_arch>]
  *   terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
+ *   terragucci registry edge [--out <dir>] [--origin <url>] [--config <file>]
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
  *   terragucci check-pins [--config <file>] [--base <ref>]
  *   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
@@ -136,6 +137,7 @@ import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
 import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
+import { describeEdge, planEdge } from "./publish/edge";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { tradeCommand } from "./oidc-trade";
@@ -180,6 +182,7 @@ const USAGE = `usage:
   terragucci check-policy [--config <file>] [--base <ref>]
   terragucci check-mirror [--config <file>] [--platform <os_arch>]   (image.mirror: the prepared image's provider mirror covers every lock file; a gap warns once, then fails)
   terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]   (write a Dockerfile, CLI config and build script for an image FROM terragucci's with a provider mirror; you build and push it)
+  terragucci registry edge [--out <dir>] [--origin <url>] [--config <file>]   (write the edge function modules.registry.edge names, with its deploy config; you deploy it to your CDN)
   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]   (a root's module and provider sources under sources, before its init; --units: each Terragrunt unit's)
   terragucci check-pins [--config <file>] [--base <ref>]   (Terragrunt: each unit's module pin under modules.require)
   terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]   (an environment's apply job: stop unless it runs in its forge environment, on its branch and runner; run by the generated pipeline)
@@ -685,6 +688,24 @@ export async function main(argv: string[]): Promise<number> {
           if (f.mode) chmodSync(file, f.mode);
         }
         console.log(describeRecipe(recipe, relative(cwd, dir) || "."));
+        return 0;
+      }
+      case "registry": {
+        // The edge function in front of a bucket-hosted module registry (./publish/edge.ts); the user deploys it.
+        if (args[0] !== "edge") throw new ConfigError("usage: terragucci registry edge [--out <dir>] [--origin <url>] [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const reg = settings.modules?.registry;
+        if (!reg) throw new ConfigError("registry edge writes the function for modules.registry, which is not set");
+        const plan = planEdge(reg, { ...(str(flags, "origin") ? { origin: str(flags, "origin") } : {}) });
+        const out = str(flags, "out") ?? "registry-edge";
+        const dir = resolve(cwd, out);
+        for (const f of plan.files) {
+          const file = resolve(dir, f.path);
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, f.content);
+        }
+        console.log(describeEdge(plan, relative(cwd, dir) || "."));
         return 0;
       }
       case "check-policy": {

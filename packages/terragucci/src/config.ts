@@ -1396,7 +1396,34 @@ export const STEPS_MOVED =
   "steps are ci.hooks in chant.workspace.json now, each with a command list and perRun: true (before: init or drift is before.observe, after: init is before.plan, after: drift is after.plan, roots is targets, on_failure is onFailure); see https://intentius.io/terragucci/guides/run-steps/";
 
 export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
-export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
+export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth"];
+/**
+ * `modules.registry.edge`: what sends Terraform the X-Terraform-Get header a
+ * stored download answer cannot carry (terragucci#1287). `cloudflare` is a
+ * Worker, `cloudfront` a Lambda@Edge function, `pages` a `_headers` file for
+ * Cloudflare Pages or Netlify, and `none` serves the files as they are, which
+ * OpenTofu reads and Terraform does not.
+ */
+export const REGISTRY_EDGES = ["cloudflare", "cloudfront", "pages", "none"] as const;
+export type RegistryEdge = (typeof REGISTRY_EDGES)[number];
+/** `modules.registry.auth`: `token` has the edge function check each reader's bearer token. Default `off`. */
+export const REGISTRY_AUTHS = ["off", "token"] as const;
+export type RegistryAuth = (typeof REGISTRY_AUTHS)[number];
+/** The edge functions that can check a token; a `_headers` file or plain files cannot. */
+const TOKEN_EDGES: readonly RegistryEdge[] = ["cloudflare", "cloudfront"];
+
+/**
+ * The edge preset a registry gets when `edge` is unset, picked by where its
+ * files are: a dir deploys to a Pages site, so `pages`; an R2 bucket (an
+ * endpoint on r2.cloudflarestorage.com) and a GCS or Azure bucket get a
+ * Cloudflare Worker; any other S3 bucket gets CloudFront's Lambda@Edge.
+ */
+export function registryEdge(reg: Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">): RegistryEdge {
+  if (reg.edge) return reg.edge;
+  if (reg.dir !== undefined) return "pages";
+  if (reg.endpoint && /(^|\.)r2\.cloudflarestorage\.com(?::\d+)?(\/|$)/i.test(reg.endpoint.replace(/^https?:\/\//i, ""))) return "cloudflare";
+  return /^(gs|az):\/\//.test(reg.bucket ?? "") ? "cloudflare" : "cloudfront";
+}
 /** A registry namespace or module name, as the Terraform module registry protocol allows them. */
 export const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
 /** A registry module's system (its target provider): lower-case letters and digits. */
@@ -1437,6 +1464,17 @@ function checkRegistry(r: unknown, where: string, targets: unknown[], problems: 
     if (!["tarball", "git-tags", "oci"].includes(r.download as string)) problems.push(`${where}.download is ${JSON.stringify(r.download)}; use tarball, git-tags or oci`);
     else if (r.download === "git-tags" && !targets.includes("git-tags")) problems.push(`${where}.download: git-tags points each version at its git tag, so publish needs git-tags too`);
     else if (r.download === "oci" && !targets.some((t) => typeof t === "string" && t.startsWith("oci://"))) problems.push(`${where}.download: oci points each version at its OCI artifact, so publish needs an oci:// target too`);
+  }
+  if (r.edge !== undefined) {
+    if (!REGISTRY_EDGES.includes(r.edge as RegistryEdge)) problems.push(`${where}.edge is ${JSON.stringify(r.edge)}; use ${REGISTRY_EDGES.join(", ")}`);
+    else if (r.edge === "pages" && r.dir === undefined) problems.push(`${where}.edge: pages writes a _headers file beside the files a Pages site deploys, so it needs ${where}.dir`);
+  }
+  if (r.auth !== undefined) {
+    if (!REGISTRY_AUTHS.includes(r.auth as RegistryAuth)) problems.push(`${where}.auth is ${JSON.stringify(r.auth)}; use off or token`);
+    else if (r.auth === "token" && (r.edge === undefined || REGISTRY_EDGES.includes(r.edge as RegistryEdge))) {
+      const edge = registryEdge(r as Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">);
+      if (!TOKEN_EDGES.includes(edge)) problems.push(`${where}.auth: token needs an edge function to check each token, and edge ${edge} serves the files as they are; set ${where}.edge to cloudflare or cloudfront, or keep the registry on a private network`);
+    }
   }
 }
 
@@ -1539,6 +1577,10 @@ export interface RegistrySettings {
   system?: string;
   /** What a version's download points at: a tarball beside it (the default), its git tag, or its OCI artifact. */
   download?: "tarball" | "git-tags" | "oci";
+  /** What adds the X-Terraform-Get header Terraform reads: a Cloudflare Worker, CloudFront's Lambda@Edge, a Pages `_headers` file, or nothing. Default: picked from `bucket`, `endpoint` or `dir` (registryEdge). */
+  edge?: RegistryEdge;
+  /** `token`: the edge function refuses a read without one of its bearer tokens and signs tarball URLs. Default `off`. */
+  auth?: RegistryAuth;
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */

@@ -743,6 +743,20 @@
                 "git-tags",
                 "oci"
               ]
+            },
+            "edge": {
+              "enum": [
+                "cloudflare",
+                "cloudfront",
+                "pages",
+                "none"
+              ]
+            },
+            "auth": {
+              "enum": [
+                "off",
+                "token"
+              ]
             }
           },
           "additionalProperties": false,
@@ -2567,6 +2581,20 @@
                     "tarball",
                     "git-tags",
                     "oci"
+                  ]
+                },
+                "edge": {
+                  "enum": [
+                    "cloudflare",
+                    "cloudfront",
+                    "pages",
+                    "none"
+                  ]
+                },
+                "auth": {
+                  "enum": [
+                    "off",
+                    "token"
                   ]
                 }
               },

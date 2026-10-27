@@ -48,6 +48,66 @@ mkdirSync(metaDir, { recursive: true });
 writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
 
+// The registry edge function (`terragucci registry edge`, terragucci#1287): chant's
+// terraform lexicon function as a Cloudflare Worker and a Lambda@Edge handler,
+// each one file a user deploys. Built only when the installed chant has
+// registry/edge; without it the command says the build carries none.
+const edgeEntries = {
+  "registry-edge-worker.mjs": {
+    platform: "browser",
+    contents: 'export { registryWorker as default } from "@intentius/chant-lexicon-terraform/registry/edge";\n',
+  },
+  "registry-edge-lambda.mjs": {
+    platform: "node",
+    contents: [
+      'import { readFileSync } from "node:fs";',
+      'import { lambdaEdgeHandler, originFiles } from "@intentius/chant-lexicon-terraform/registry/edge";',
+      '// Lambda@Edge has no environment variables: `terragucci registry edge` writes the options beside this file.',
+      'const o = JSON.parse(readFileSync(new URL("./registry-edge.json", import.meta.url), "utf8"));',
+      'export const handler = lambdaEdgeHandler({ files: originFiles(o.origin), ...(o.prefix ? { prefix: o.prefix } : {}), ...(o.auth ? { auth: o.auth } : {}) });',
+      "",
+    ].join("\n"),
+  },
+};
+// The lexicon's registry writer imports StoreConflict from chant core's object
+// store, whose clients import node:fs and node:crypto, which a Worker without
+// nodejs_compat cannot load. The edge function never writes a store, so the
+// module is stood in for by its two error classes.
+const edgeStoreStub = {
+  name: "edge-store-stub",
+  setup(b) {
+    b.onResolve({ filter: /^@intentius\/chant\/object-store$/ }, () => ({ path: "object-store", namespace: "edge-store-stub" }));
+    b.onLoad({ filter: /.*/, namespace: "edge-store-stub" }, () => ({
+      loader: "js",
+      contents: [
+        "export class StoreError extends Error {}",
+        "export class StoreConflict extends StoreError {}",
+        'const none = () => { throw new Error("the registry edge function writes no object store"); };',
+        "export const defaultFetch = none, encodePath = none, encodeStrict = none, xmlText = none;",
+        "",
+      ].join("\n"),
+    }));
+  },
+};
+for (const [file, entry] of Object.entries(edgeEntries)) {
+  try {
+    await build({
+      stdin: { contents: entry.contents, resolveDir: pkg, loader: "js" },
+      bundle: true,
+      format: "esm",
+      platform: entry.platform,
+      target: "es2022",
+      minify: true,
+      conditions: ["import", "default"],
+      outfile: join(stage, file),
+      plugins: [edgeStoreStub],
+      logLevel: "silent",
+    });
+  } catch (e) {
+    console.log(`  ${file}: not built (${String(e.message).split("\n")[0]})`);
+  }
+}
+
 // The JSON Schemas of what terragucci writes, published so a reader can validate
 // terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1, terragucci.run/v1, terragucci.state-edges/v1, terragucci.estates/v1 and terragucci.versions/v1.
 for (const f of ["report.schema.json", "report-index.schema.json", "estate.schema.json", "audit.schema.json", "inventory.schema.json", "changes.schema.json", "history.schema.json", "dora.schema.json", "state-versions.schema.json", "run.schema.json", "state-edges.schema.json", "estates.schema.json", "versions.schema.json"]) {
