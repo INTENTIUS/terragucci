@@ -1417,7 +1417,7 @@ export const STEPS_MOVED =
   "steps are ci.hooks in chant.workspace.json now, each with a command list and perRun: true (before: init or drift is before.observe, after: init is before.plan, after: drift is after.plan, roots is targets, on_failure is onFailure); see https://intentius.io/terragucci/guides/run-steps/";
 
 export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
-export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth", "providers"];
+export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth", "tokens", "tokens_name", "tokens_region", "providers"];
 /** `modules.registry.providers`: `mirror` serves the providers the lock files pin as a network mirror under `providers/` (chant#4564). */
 export const REGISTRY_PROVIDERS = ["mirror"] as const;
 /**
@@ -1432,6 +1432,16 @@ export type RegistryEdge = (typeof REGISTRY_EDGES)[number];
 /** `modules.registry.auth`: `token` has the edge function check each reader's bearer token. Default `off`. */
 export const REGISTRY_AUTHS = ["off", "token"] as const;
 export type RegistryAuth = (typeof REGISTRY_AUTHS)[number];
+/**
+ * `modules.registry.tokens`: where Lambda@Edge reads the accepted tokens
+ * (chant#4590). `zip` builds them into the function's options file (the
+ * default); `ssm` reads an SSM parameter and `secrets-manager` a secret at run
+ * time, so rotation needs no redeploy and no token reaches `registry-edge.json`.
+ */
+export const REGISTRY_TOKENS = ["zip", "ssm", "secrets-manager"] as const;
+export type RegistryTokens = (typeof REGISTRY_TOKENS)[number];
+/** The region the token store is read from when `tokens_region` is unset: where Lambda@Edge functions are created. */
+export const REGISTRY_TOKENS_REGION = "us-east-1";
 /** The edge functions that can check a token; a `_headers` file or plain files cannot. */
 const TOKEN_EDGES: readonly RegistryEdge[] = ["cloudflare", "cloudfront"];
 
@@ -1499,6 +1509,28 @@ function checkRegistry(r: unknown, where: string, targets: unknown[], problems: 
       const edge = registryEdge(r as Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">);
       if (!TOKEN_EDGES.includes(edge)) problems.push(`${where}.auth: token needs an edge function to check each token, and edge ${edge} serves the files as they are; set ${where}.edge to cloudflare or cloudfront, or keep the registry on a private network`);
     }
+  }
+  checkRegistryTokens(r, where, problems);
+}
+
+function checkRegistryTokens(r: Record<string, unknown>, where: string, problems: string[]): void {
+  const { tokens, tokens_name: name, tokens_region: region } = r;
+  if (tokens !== undefined && !REGISTRY_TOKENS.includes(tokens as RegistryTokens)) {
+    problems.push(`${where}.tokens is ${JSON.stringify(tokens)}; use ${REGISTRY_TOKENS.join(", ")}`);
+    return;
+  }
+  const store = tokens === "ssm" || tokens === "secrets-manager";
+  if (store) {
+    if (r.auth !== "token") problems.push(`${where}.tokens: ${tokens} is where the edge function reads its tokens, so it needs ${where}.auth: token`);
+    const edge = registryEdge(r as Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">);
+    if (edge !== "cloudfront") problems.push(`${where}.tokens: ${tokens} is read by Lambda@Edge, and this registry's edge is ${edge}; set ${where}.edge to cloudfront`);
+    if (typeof name !== "string" || name === "") problems.push(`${where}.tokens_name must be ${tokens === "ssm" ? "the SSM parameter's name, such as /registry/tokens" : "the secret's name or ARN"}`);
+  } else if (name !== undefined) {
+    problems.push(`${where}.tokens_name names the token store; set ${where}.tokens to ssm or secrets-manager`);
+  }
+  if (region !== undefined) {
+    if (!store) problems.push(`${where}.tokens_region is the token store's region; set ${where}.tokens to ssm or secrets-manager`);
+    else if (typeof region !== "string" || !/^[a-z]{2}(-[a-z]+)+-\d$/.test(region)) problems.push(`${where}.tokens_region must be an AWS region, such as us-east-1`);
   }
 }
 
@@ -1605,6 +1637,12 @@ export interface RegistrySettings {
   edge?: RegistryEdge;
   /** `token`: the edge function refuses a read without one of its bearer tokens and signs tarball URLs. Default `off`. */
   auth?: RegistryAuth;
+  /** Where CloudFront's Lambda@Edge reads the accepted tokens with `auth: token`: `zip` (built into the function, the default), `ssm` or `secrets-manager`. */
+  tokens?: RegistryTokens;
+  /** The SSM parameter's name or the secret's name or ARN, for `tokens: ssm` or `secrets-manager`. */
+  tokens_name?: string;
+  /** The token store's region. Default us-east-1. */
+  tokens_region?: string;
   /** `mirror`: publish also serves every provider the lock files pin as a provider network mirror under `providers/`. */
   providers?: (typeof REGISTRY_PROVIDERS)[number];
 }

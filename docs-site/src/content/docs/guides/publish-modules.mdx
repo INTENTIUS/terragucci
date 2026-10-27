@@ -314,13 +314,54 @@ modules:
        The Worker reads its tokens from that secret, one per line or comma separated.
      </TabItem>
      <TabItem label="CloudFront">
-       Lambda@Edge has no environment variables, so the token goes into `registry-edge.json` when you write the function:
+       Lambda@Edge has no environment variables, so the function gets its tokens from the zip or from a store it reads at run time. `modules.registry.tokens` picks one:
+
+       | `tokens` | Tokens live in | Rotation |
+       |---|---|---|
+       | `zip` (default) | `registry-edge.json`, written by `terragucci registry edge` | write the function again and deploy a new version |
+       | `ssm` | an SSM Parameter Store parameter, `tokens_name` | change the parameter; every replica reads it within five minutes |
+       | `secrets-manager` | a Secrets Manager secret, `tokens_name` | change the secret; every replica reads it within five minutes |
+
+       With `zip`, the token goes into `registry-edge.json` when you write the function:
 
        ```bash
        TERRAGUCCI_REGISTRY_TOKENS=<token> npx terragucci registry edge
        ```
 
        Keep `registry-edge/` out of git, and deploy the new version.
+
+       With a store, the file names the store and holds no token, so the directory can be committed:
+
+       ```yaml
+       modules:
+         registry:
+           bucket: s3://acme-modules
+           url: https://modules.example.com
+           namespace: acme
+           edge: cloudfront
+           auth: token
+           tokens: ssm
+           tokens_name: /registry/tokens
+           tokens_region: us-east-1
+       ```
+
+       ```bash
+       aws ssm put-parameter --region us-east-1 --name /registry/tokens --type SecureString --value "<token>"
+       npx terragucci registry edge
+       ```
+
+       For `secrets-manager`, set `tokens: secrets-manager` and put the secret's name or ARN in `tokens_name`. `tokens_region` is where the store is read from and defaults to `us-east-1`, where Lambda@Edge functions are created; the replica's own region is never used.
+
+       The value is the tokens, one per line or comma separated. A JSON value, `{ "tokens": ["..."], "signingKey": "..." }`, also sets the key that signs tarball URLs.
+
+       The function's execution role needs read access to the store:
+
+       | `tokens` | Permission |
+       |---|---|
+       | `ssm` | `ssm:GetParameter` on the parameter, and `kms:Decrypt` on the key when the SecureString uses a customer-managed key |
+       | `secrets-manager` | `secretsmanager:GetSecretValue` on the secret, and `kms:Decrypt` on the key when the secret uses a customer-managed key |
+
+       If the store cannot be read, or holds no token, every request gets a 503 and nothing reaches the bucket. The function never serves an old token past the five minutes.
      </TabItem>
    </Tabs>
 

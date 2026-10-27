@@ -19,7 +19,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ConfigError, registryEdge, type RegistryEdge, type RegistrySettings } from "../config";
+import { ConfigError, REGISTRY_TOKENS_REGION, registryEdge, type RegistryEdge, type RegistrySettings } from "../config";
 import { parseReportsBucket } from "../report/object-store";
 
 export const WORKER_BUNDLE = "registry-edge-worker.mjs";
@@ -28,6 +28,13 @@ export const LAMBDA_BUNDLE = "registry-edge-lambda.mjs";
 export const LAMBDA_OPTIONS = "registry-edge.json";
 /** The tokens the Lambda@Edge options carry with `auth: token`, read when the command runs. */
 export const TOKENS_VARIABLE = "TERRAGUCCI_REGISTRY_TOKENS";
+/**
+ * Written beside the bundles by scripts/build-cli.mjs when the chant it
+ * bundled reads tokens from SSM or Secrets Manager (chant#4590). Without it
+ * the Lambda@Edge handler would take `auth.source` as unknown and check
+ * against no tokens, so the command refuses a store source instead.
+ */
+export const TOKEN_STORES_MARKER = "registry-edge-token-stores";
 
 export interface EdgeFile {
   path: string;
@@ -110,6 +117,8 @@ export function planEdge(reg: RegistrySettings, opts: EdgeOptions = {}): EdgePla
     return { edge, auth, files: [], steps: ["edge none: the files are served as they are, which OpenTofu installs from and Terraform does not"] };
   }
   const origin = opts.origin ?? bucketOrigin(reg);
+  const tokens = reg.tokens ?? "zip";
+  if (tokens !== "zip" && edge === "cloudflare") throw new ConfigError(`tokens: ${tokens} is read by Lambda@Edge; a Worker keeps its tokens in its secret (npx wrangler secret put REGISTRY_TOKENS)`);
   if (edge === "cloudflare") {
     const r2 = opts.origin ? undefined : r2Bucket(reg);
     if (!r2 && !origin) throw new ConfigError("edge cloudflare reads the registry's files from an R2 binding or the bucket's address; give --origin <url>");
@@ -155,12 +164,23 @@ export function planEdge(reg: RegistrySettings, opts: EdgeOptions = {}): EdgePla
   // cloudfront
   if (!origin) throw new ConfigError("edge cloudfront reads each download answer from the bucket's address; give --origin <url>");
   const env = opts.env ?? process.env;
-  const tokens = tokensOf(env[TOKENS_VARIABLE]);
-  if (auth && tokens.length === 0) throw new ConfigError(`auth: token on CloudFront puts the tokens in the function, which has no environment of its own; set ${TOKENS_VARIABLE} to the token (two, comma separated, while one rotates out) and run this again`);
+  const store = auth && tokens !== "zip";
+  if (store && !existsSync(join(dir, TOKEN_STORES_MARKER))) {
+    throw new ConfigError(`tokens: ${tokens} needs a chant whose registry edge function reads its tokens from a store (chant#4590), and the one this terragucci was built on does not; use tokens: zip or a newer terragucci`);
+  }
+  if (store && (!reg.tokens_name)) throw new ConfigError(`tokens: ${tokens} needs tokens_name, ${tokens === "ssm" ? "the SSM parameter's name" : "the secret's name or ARN"}`);
+  const zipped = store ? [] : tokensOf(env[TOKENS_VARIABLE]);
+  if (auth && !store && zipped.length === 0) throw new ConfigError(`auth: token on CloudFront puts the tokens in the function, which has no environment of its own; set ${TOKENS_VARIABLE} to the token (two, comma separated, while one rotates out) and run this again`);
   const options = {
     origin,
     ...(reg.prefix ? { prefix: reg.prefix.replace(/^\/+|\/+$/g, "") } : {}),
-    ...(auth ? { auth: { tokens } } : {}),
+    ...(auth
+      ? {
+          auth: store
+            ? { source: { kind: tokens, ...(tokens === "ssm" ? { name: reg.tokens_name } : { secretId: reg.tokens_name }), region: reg.tokens_region ?? REGISTRY_TOKENS_REGION } }
+            : { tokens: zipped },
+        }
+      : {}),
   };
   return {
     edge,
@@ -170,12 +190,24 @@ export function planEdge(reg: RegistrySettings, opts: EdgeOptions = {}): EdgePla
       { path: LAMBDA_OPTIONS, content: `${JSON.stringify(options, null, 2)}\n` },
     ],
     steps: [
-      ...(auth ? [`${LAMBDA_OPTIONS} holds the tokens: keep the directory out of git`] : []),
+      ...(auth && !store ? [`${LAMBDA_OPTIONS} holds the tokens: keep the directory out of git`] : []),
       "zip index.mjs and registry-edge.json, and create a Lambda function from the zip in us-east-1 on Node.js 20 or later, handler index.handler",
       "publish a version and attach it to the distribution's default behavior as an origin-request trigger",
       "give that behavior an origin request policy that passes the Authorization header and every query string to the origin",
       `the function reads each download answer from ${origin}, so that address must be readable from the function`,
-      ...(auth
+      ...(store
+        ? [
+            `${LAMBDA_OPTIONS} names the ${tokens === "ssm" ? `SSM parameter ${reg.tokens_name}` : `secret ${reg.tokens_name}`} in ${reg.tokens_region ?? REGISTRY_TOKENS_REGION} and holds no token`,
+            tokens === "ssm"
+              ? `store the tokens there, one per line or comma separated: aws ssm put-parameter --region ${reg.tokens_region ?? REGISTRY_TOKENS_REGION} --name ${reg.tokens_name} --type SecureString --overwrite --value "<token>"`
+              : `store the tokens there, one per line or comma separated: aws secretsmanager put-secret-value --region ${reg.tokens_region ?? REGISTRY_TOKENS_REGION} --secret-id ${reg.tokens_name} --secret-string "<token>"`,
+            tokens === "ssm"
+              ? "give the function's execution role ssm:GetParameter on that parameter, and kms:Decrypt on the key when the SecureString uses a customer-managed key"
+              : "give the function's execution role secretsmanager:GetSecretValue on that secret, and kms:Decrypt on the key when the secret uses a customer-managed key",
+            `each reader sets ${variable} to the token, or a credentials "${host}" block in its CLI config`,
+            "to rotate: put both tokens in the store (old,new), move every reader to the new one, then put the new one alone; the function reads the store again within five minutes, with no new version to deploy",
+          ]
+        : auth
         ? [
             `each reader sets ${variable} to the token, or a credentials "${host}" block in its CLI config`,
             `to rotate: run this again with both tokens in ${TOKENS_VARIABLE} (old,new), deploy that version, move every reader to the new token, then run it with the new one alone and deploy again`,

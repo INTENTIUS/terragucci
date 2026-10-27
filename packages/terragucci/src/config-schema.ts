@@ -65,6 +65,7 @@ import {
   POLICY_KEYS,
   QUESTION_TYPES,
   REGISTRY_AUTHS,
+  REGISTRY_TOKENS,
   REGISTRY_EDGES,
   REGISTRY_KEYS,
   REGISTRY_NAME,
@@ -212,6 +213,9 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   download: enumOf(["tarball", "git-tags", "oci"]),
   edge: enumOf(REGISTRY_EDGES),
   auth: enumOf(REGISTRY_AUTHS),
+  tokens: enumOf(REGISTRY_TOKENS),
+  tokens_name: { type: "string", minLength: 1 },
+  tokens_region: { type: "string", pattern: "^[a-z]{2}(-[a-z]+)+-\\d$" },
   providers: enumOf(REGISTRY_PROVIDERS),
 } satisfies Record<keyof RegistrySettings, JsonSchema>, {
   required: ["url", "namespace"],
