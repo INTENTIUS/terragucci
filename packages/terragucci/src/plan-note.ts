@@ -29,6 +29,7 @@
  * asks with its token and adds the line to the note when the plan job could
  * not.
  */
+import { terragucciStatus } from "./ci-words";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { poster, type Fetch } from "./forge";
@@ -190,7 +191,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
   if (status) {
     const state = status.state === "success" ? "success" : "failure";
     try {
-      await forge.setStatus(sha, { context: "terragucci/plan", state, description: status.description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });
+      await forge.setStatus(sha, { context: terragucciStatus("plan"), state, description: status.description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });
       log(`terragucci plan-note: terragucci/plan is ${state} on ${sha.slice(0, 8)}: ${status.description}`);
     } catch (e) {
       log(`terragucci: status failed: ${(e as Error).message}`);

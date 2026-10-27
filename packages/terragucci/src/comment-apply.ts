@@ -42,6 +42,7 @@
  * later apply superseded (the reply names that run), a wave the repo does not
  * have, and any other text.
  */
+import { terragucciStatus } from "./ci-words";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -75,7 +76,7 @@ export const MAY_APPLY = new Set(["admin", "owner", "maintain", "write"]);
 export const NEWER_LIMIT = 50;
 
 /** The status every apply posts on the commit it applied. */
-const APPLY_CONTEXT = "terragucci/apply";
+const APPLY_CONTEXT = (): string => terragucciStatus("apply");
 
 export type Git = (args: string[]) => { status: number | null; stdout: string; stderr: string };
 
@@ -248,11 +249,11 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
     try {
       if (reads.commitStatuses) {
         // chant's forge client reads them where the installed chant has the read (chant#4554).
-        const st = (await reads.commitStatuses(c)).find((s) => s.context === APPLY_CONTEXT);
+        const st = (await reads.commitStatuses(c)).find((s) => s.context === APPLY_CONTEXT());
         applied = st ? { target_url: st.targetUrl } : undefined;
       } else {
         const statuses: any = await call("GET", `repos/${repo}/commits/${c}/statuses?per_page=100&limit=50`);
-        applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.context === APPLY_CONTEXT) : undefined;
+        applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.context === APPLY_CONTEXT()) : undefined;
       }
     } catch (e) {
       return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
@@ -269,7 +270,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
 
 
 /** The status the plan job posts on the head it planned. */
-const PLAN_CONTEXT = "terragucci/plan";
+const PLAN_CONTEXT = (): string => terragucciStatus("plan");
 
 const validBranch = (b: unknown): b is string => typeof b === "string" && BRANCH.test(b) && !b.split("/").some((s) => s === ".." || s === "") && !b.endsWith(".lock");
 
@@ -526,7 +527,7 @@ async function decideLock(i: OpenInput): Promise<ApplyCommentDecision> {
 // ── locks: plan, the pr-lock job ─────────────────────────────────────────
 
 /** The status the pr-lock job posts on the head it locked, or could not lock. */
-export const LOCK_CONTEXT = "terragucci/lock";
+export const LOCK_CONTEXT = (): string => terragucciStatus("lock");
 
 /**
  * `terragucci pr-lock`, the decision of the `pr-lock` job under `locks:
@@ -583,9 +584,9 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   };
   const status = async (sha: string, state: "success" | "failure", description: string): Promise<void> => {
     try {
-      await forge.setStatus(sha, { state, context: LOCK_CONTEXT, description: description.length > 140 ? `${description.slice(0, 137)}...` : description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });
+      await forge.setStatus(sha, { state, context: LOCK_CONTEXT(), description: description.length > 140 ? `${description.slice(0, 137)}...` : description, ...(forge.runUrl ? { url: forge.runUrl } : {}) });
     } catch (e) {
-      console.error(`terragucci: could not post ${LOCK_CONTEXT}: ${(e as Error).message}`);
+      console.error(`terragucci: could not post ${LOCK_CONTEXT()}: ${(e as Error).message}`);
     }
   };
   const base = event.repository?.default_branch;
@@ -745,7 +746,7 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
     return approverFilter(involved);
   };
   const forge = poster(i.forge ?? "github", i.env ?? process.env, i.fetch);
-  const unmet = await unmetApplyRequires(forge, number, sha, { approvers, ignore: [APPLY_CONTEXT], ...(i.requires ? { requires: i.requires } : {}), ...(i.wait ? { wait: i.wait } : {}) });
+  const unmet = await unmetApplyRequires(forge, number, sha, { approvers, ignore: [APPLY_CONTEXT()], ...(i.requires ? { requires: i.requires } : {}), ...(i.wait ? { wait: i.wait } : {}) });
   if (unmet) return refuse(`pull request ${number} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes`);
 
   // The plan passed on the head, whatever apply.requires says.
@@ -754,11 +755,11 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
   try {
     if (reads.commitStatuses) {
       // chant's forge client reads each context's newest status where the installed chant has the read (chant#4554).
-      plan = (await reads.commitStatuses(sha)).find((st) => st.context === PLAN_CONTEXT);
+      plan = (await reads.commitStatuses(sha)).find((st) => st.context === PLAN_CONTEXT());
     } else {
       const combined: any = await call("GET", `repos/${repoName}/commits/${sha}/status`);
       for (const st of Array.isArray(combined?.statuses) ? combined.statuses : []) {
-        if (st?.context === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
+        if (st?.context === PLAN_CONTEXT() && (!plan || Number(st.id) > Number(plan.id))) plan = st;
       }
     }
   } catch (e) {

@@ -56,6 +56,7 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
+import { terragucciStatus } from "./ci-words";
 import { agentSettingsAt } from "./involved";
 import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
@@ -75,7 +76,7 @@ export const DEVELOPER = 30;
 export const NEWER_PIPELINES = 50;
 
 /** The status every apply posts on the commit it applied. */
-const APPLY_CONTEXT = "terragucci/apply";
+const APPLY_CONTEXT = (): string => terragucciStatus("apply");
 
 /** The marker a reply carries, naming the note it answers. */
 export const noteMarker = (id: number): string => `<!-- terragucci:note=${id} -->`;
@@ -369,11 +370,11 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     if (typeof c !== "string" || !SHA.test(c)) continue;
     let statuses: any;
     try {
-      statuses = await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT)}&ref=${encodeURIComponent(base)}`);
+      statuses = await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT())}&ref=${encodeURIComponent(base)}`);
     } catch (e) {
       return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
     }
-    const applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.name === APPLY_CONTEXT) : undefined;
+    const applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.name === APPLY_CONTEXT()) : undefined;
     if (applied) {
       const run = typeof applied.target_url === "string" && /^https?:\/\//.test(applied.target_url) ? ` (${applied.target_url})` : "";
       return reply(`a later apply already ran on ${base} at ${short(c)}${run}, so the merge commit ${short(sha)} of !${iid} is not applied: comment on the merge request that commit came from, or push again`);

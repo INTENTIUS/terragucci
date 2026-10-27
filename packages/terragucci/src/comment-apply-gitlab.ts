@@ -33,6 +33,7 @@
  * merge request leaves `.gitlab-ci.yml` and `.gitlab/terragucci.yml` alone,
  * and no other open merge request holds a lock on a root it reaches.
  */
+import { terragucciStatus } from "./ci-words";
 import { spawnSync } from "node:child_process";
 import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
@@ -51,9 +52,9 @@ import type { ForgeCalls } from "./review";
 const DEVELOPER = 30;
 
 /** The status the plan job posts on the head it planned. */
-const PLAN_CONTEXT = "terragucci/plan";
+const PLAN_CONTEXT = (): string => terragucciStatus("plan");
 /** The apply's own status, which never holds it back. */
-const APPLY_CONTEXT = "terragucci/apply";
+const APPLY_CONTEXT = (): string => terragucciStatus("apply");
 
 /** The files GitLab builds the default branch's pipeline from: a merge request that changes one applies after it merges. */
 export const PIPELINE_FILES_ON_GITLAB = [".gitlab-ci.yml", ".gitlab/terragucci.yml"];
@@ -129,7 +130,7 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
     return approverFilter(await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) }));
   };
   const forge = c.forge ?? poster("gitlab", c.env ?? process.env, c.fetch);
-  const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
+  const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT()], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
   if (unmet) return { refuse: `!${iid} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes` };
 
   const reads = chantForgeReads(forge);
@@ -137,12 +138,12 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   try {
     if (reads.commitStatuses) {
       // chant's forge client reads each context's newest status where the installed chant has the read (chant#4554).
-      const st = (await reads.commitStatuses(sha)).find((s) => s.context === PLAN_CONTEXT);
+      const st = (await reads.commitStatuses(sha)).find((s) => s.context === PLAN_CONTEXT());
       plan = st ? { status: st.state } : undefined;
     } else {
       const statuses: any = await api("GET", `/projects/${id}/repository/commits/${sha}/statuses?per_page=100`);
       for (const st of Array.isArray(statuses) ? statuses : []) {
-        if (st?.name === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
+        if (st?.name === PLAN_CONTEXT() && (!plan || Number(st.id) > Number(plan.id))) plan = st;
       }
     }
   } catch (e) {

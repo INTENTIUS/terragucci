@@ -30,6 +30,7 @@
  * and the description flag. A forged `applied` reply in a note the job posts
  * would otherwise read as the mr-apply job's to pr-merge.
  */
+import { terragucciStatus } from "./ci-words";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import type { Fetch } from "./forge";
 
@@ -39,7 +40,7 @@ export const PLAN_NOTE_FILE = "plan-note.md";
 export const PLAN_STATUS_FILE = "plan-status.txt";
 
 /** The status the plan note's counts go to. */
-const PLAN_CONTEXT = "terragucci/plan";
+const PLAN_CONTEXT = (): string => terragucciStatus("plan");
 /** How a plan note starts. */
 export const PLAN_MARK = "<!-- terragucci:plan";
 /** The last line of a note the comments job posted: the plan job it came from. */
@@ -160,22 +161,22 @@ export async function postPlanNote(c: PlanNoteContext, mr: any, notes: any[]): P
     try {
       // A status set again to the state it has, which a poll after a failed note does, is no error to the client.
       await c.forge.setStatus(head, {
-        context: PLAN_CONTEXT,
+        context: PLAN_CONTEXT(),
         state: status.state === "success" ? "success" : "failure",
         description: status.description,
         pipelineId: pipeline.id,
         ...(typeof job.web_url === "string" && /^https?:\/\//.test(job.web_url) ? { url: job.web_url } : {}),
       });
     } catch (e) {
-      return { ...at, posted: false, fail: true, reason: `could not post ${PLAN_CONTEXT} on ${head.slice(0, 8)} (${(e as Error).message})` };
+      return { ...at, posted: false, fail: true, reason: `could not post ${PLAN_CONTEXT()} on ${head.slice(0, 8)} (${(e as Error).message})` };
     }
   }
-  if (noteFile === undefined) return { ...at, posted: Boolean(status), reason: `plan job ${job.id} wrote no note${status ? `; ${PLAN_CONTEXT} is ${status.state}` : ""}` };
+  if (noteFile === undefined) return { ...at, posted: Boolean(status), reason: `plan job ${job.id} wrote no note${status ? `; ${PLAN_CONTEXT()} is ${status.state}` : ""}` };
   const body = planNoteBody(noteFile, job.id);
   try {
     await c.forge.upsertComment(iid, PLAN_MARK, body, { author: c.meName });
   } catch (e) {
     return { ...at, posted: Boolean(status), fail: true, reason: `could not post the plan note of plan job ${job.id} (${(e as Error).message})` };
   }
-  return { ...at, posted: true, reason: `posted the plan note of plan job ${job.id} at ${head.slice(0, 8)}${status ? `; ${PLAN_CONTEXT} is ${status.state}` : ""}` };
+  return { ...at, posted: true, reason: `posted the plan note of plan job ${job.id} at ${head.slice(0, 8)}${status ? `; ${PLAN_CONTEXT()} is ${status.state}` : ""}` };
 }

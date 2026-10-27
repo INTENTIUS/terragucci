@@ -58,7 +58,7 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { chantCheckHooks } from "./chant-next";
+import { chantCheckHooks, chantCiProduct } from "./chant-next";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 
@@ -353,8 +353,11 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const declFile = declarationFile(repo) ?? declPath;
   const declText = existsSync(declFile) ? readFileSync(declFile, "utf-8") : undefined;
   const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
+  // chant's product pipeline (chant#4550), when the installed chant has it: the pipeline takes terragucci's words through it.
+  const ciProduct = await chantCiProduct();
   const pipeline = renderPipeline({
     ...checkHooksInput,
+    ...(ciProduct ? { ciProduct } : {}),
     forge: forgeChoice.value,
     binary: binary.value,
     version: version.value,

@@ -188,6 +188,9 @@ import type { AgentCommentInput } from "./agent-comment";
 import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
+import type { ChantCiProduct, ChantProductCommand } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
+import { WAVES_OP, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
@@ -326,6 +329,14 @@ export interface PipelineInput {
   agentDrift?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
+  /**
+   * chant's product pipeline (`@intentius/chant/ci-product`, chant#4550),
+   * when the installed chant has it: the pipeline then takes terragucci's
+   * words through `productPipelineJobs`, which checks them against the jobs
+   * the pipeline has and gives the comments the jobs answer and the waves'
+   * op and gate names. init loads it (./chant-next.ts `chantCiProduct`).
+   */
+  ciProduct?: ChantCiProduct;
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
@@ -2233,6 +2244,64 @@ function text(result: string | { primary: string }): string {
   return typeof result === "string" ? result : result.primary;
 }
 
+/** The comments the pipeline's jobs answer, and the words they start with. */
+interface CommentWords {
+  prefix: string;
+  plan: string;
+  apply: string;
+  lock: string;
+  unlock: string;
+  alias: { plan: string; apply: string };
+}
+
+/**
+ * The comments the jobs answer. With chant's product pipeline (chant#4550)
+ * `productPipelineJobs` takes terragucci's words, refuses them when a command
+ * names a job this pipeline lacks, and names each comment; the waves spec it
+ * gives must keep op `tf-apply` and gates `wave-{k}`, so the approvals
+ * already on the ledger keep counting. Without it, terragucci's own words.
+ * Both give the same text.
+ */
+function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, locksPlan: boolean): CommentWords {
+  const own: CommentWords = {
+    prefix: "/terragucci",
+    plan: "/terragucci plan",
+    apply: "/terragucci apply",
+    lock: "/terragucci lock",
+    unlock: "/terragucci unlock",
+    alias: { plan: "atlantis plan", apply: "atlantis apply" },
+  };
+  const chant = input.ciProduct;
+  if (!chant) return own;
+  const count = input.terragrunt ? input.layers.length : undefined;
+  const spec = wavesSpec({ waves: count ?? input.layers, gate: "always", approval: "ledger", call: waveCallArgv, migrations: false });
+  // chant refuses a command with no job to answer it, so the words name only the commands this pipeline has jobs for.
+  const locks = locksPlan || prApply;
+  const has: ChantProductCommand[] = ["plan", "apply", ...(locks ? (["lock", "unlock"] as const) : []), ...(input.agentComment ? (["agent"] as const) : [])];
+  const words = { ...TERRAGUCCI_WORDS, commands: Object.fromEntries(Object.entries(TERRAGUCCI_WORDS.commands).filter(([, c]) => has.includes(c))) };
+  const jobs = chant.productPipelineJobs(forge, "default", {
+    words,
+    // The apply on merge runs on op waves; with apply.when: pull-request the comment applies the open pull request.
+    ...(prApply ? { applyBeforeMerge: true } : { waves: spec }),
+    ...(locks ? { locks: "plan" as const } : {}),
+    ...(input.agentComment ? { agent: true } : {}),
+  });
+  const named = jobs.waves?.spec;
+  if (named && (named.name !== WAVES_OP || (named.gateName ?? "{gate}-wave-{k}") !== "wave-{k}")) {
+    throw new RenderError(`chant names the waves ${named.name} / ${named.gateName ?? "{gate}-wave-{k}"}, and the approvals on _gates/${WAVES_OP}.jsonl are under ${WAVES_OP} / wave-{k}`);
+  }
+  const line = (c: ChantProductCommand, fallback: string): string => jobs.comments[c] ?? chant.commentLine(jobs.words, c) ?? fallback;
+  const alias = (c: ChantProductCommand, fallback: string): string => jobs.words.aliases.find((a) => a.command === c)?.from ?? fallback;
+  return {
+    prefix: `/${jobs.words.product}`,
+    plan: line("plan", own.plan),
+    apply: line("apply", own.apply),
+    lock: line("lock", own.lock),
+    unlock: line("unlock", own.unlock),
+    alias: { plan: alias("plan", own.alias.plan), apply: alias("apply", own.alias.apply) },
+  };
+}
+
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
@@ -2929,14 +2998,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A comment's first words, as the jobs' conditions test them; with atlantis_comments, `atlantis plan` and `atlantis apply` start the same jobs.
   const says = (p: string): string => `startsWith(github.event.comment.body, '${p}')`;
   const atlantis = input.atlantisComments === true;
-  const applySays = atlantis ? `${says("/terragucci apply")} || ${says("atlantis apply")}` : says("/terragucci apply");
-  const planSays = atlantis ? `(${says("/terragucci plan")} || ${says("atlantis plan")})` : says("/terragucci plan");
+  // The comments each job answers: chant's product pipeline names them from terragucci's words when the installed chant has it.
+  const comment = commentWords(input, forge, prApply, locksPlan);
+  const applySays = atlantis ? `${says(comment.apply)} || ${says(comment.alias.apply)}` : says(comment.apply);
+  const planSays = atlantis ? `(${says(comment.plan)} || ${says(comment.alias.plan)})` : says(comment.plan);
   // With apply.when: pull-request, `/terragucci lock` and `/terragucci unlock` are the apply-comment job's too: it holds the locks.
   const APPLY_COMMENT = prApply
-    ? `(${applySays} || ${says("/terragucci lock")} || ${says("/terragucci unlock")})`
+    ? `(${applySays} || ${says(comment.lock)} || ${says(comment.unlock)})`
     : atlantis ? `(${applySays})` : applySays;
   // With locks: plan and apply.when: merge, `/terragucci lock` and `/terragucci unlock` are the pr-lock job's.
-  const LOCK_COMMENT = "(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))";
+  const LOCK_COMMENT = `(${says(comment.lock)} || ${says(comment.unlock)})`;
   const lockElsewhere = locksPlan && !prApply ? ` && !${LOCK_COMMENT}` : "";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
   // never an expression in the script: the command reads it from the event file (comment.ts). The decision
@@ -2949,7 +3020,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
+    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
