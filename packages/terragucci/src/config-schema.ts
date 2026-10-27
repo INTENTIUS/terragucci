@@ -29,6 +29,7 @@ import {
   APPROVALS,
   APPROVAL_RULE_KEYS,
   ATMOS_KEYS,
+  CHECK_KEYS,
   AUDIENCE_STAGES,
   BINARIES,
   COST_KEYS,
@@ -470,6 +471,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     atmos: { ...map(ATMOS_KEYS, { version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$" } }), description: "Atmos settings." },
     policy: { ...policy, description: "Policy checks over each plan." },
     sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init." },
+    check: { ...map(CHECK_KEYS, { pre_commit: bool }), description: "What tf-check runs beyond its own checks: the repo's pre-commit hooks." },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
     respond: {
       ...map(Object.keys(RESPONSES), each(Object.keys(RESPONSES), (event) => enumOf(RESPONSES[event as keyof typeof RESPONSES]))),

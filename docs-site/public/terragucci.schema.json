@@ -1160,6 +1160,16 @@
       "minProperties": 1,
       "description": "Globs of the module sources and provider addresses a root may use, checked before init."
     },
+    "check": {
+      "type": "object",
+      "properties": {
+        "pre_commit": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "What tf-check runs beyond its own checks: the repo's pre-commit hooks."
+    },
     "atlantis_comments": {
       "type": "boolean",
       "description": "Read atlantis plan and atlantis apply comments as terragucci's."
@@ -2984,6 +2994,16 @@
           "additionalProperties": false,
           "minProperties": 1,
           "description": "Globs of the module sources and provider addresses a root may use, checked before init."
+        },
+        "check": {
+          "type": "object",
+          "properties": {
+            "pre_commit": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "description": "What tf-check runs beyond its own checks: the repo's pre-commit hooks."
         },
         "atlantis_comments": {
           "type": "boolean",

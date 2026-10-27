@@ -55,6 +55,8 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
+import { chantCheckHooks } from "./chant-next";
+import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 
 export interface InitOptions {
@@ -318,7 +320,15 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // The rollout job: when rollouts names a schedule and respond.rollout is not off.
   const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
   const control = settings.control ? resolveControl(settings.control, options.name ?? basename(resolve(repo))) : undefined;
+  // check.pre_commit: tf-check runs the repo's pre-commit hooks as a chant check hook (./pre-commit.ts). The check
+  // job also runs check-hooks when the declaration already names check hooks of its own.
+  const preCommitOn = settings.check?.pre_commit === true;
+  const chantHooks = await chantCheckHooks();
+  const declFile = declarationFile(repo) ?? declPath;
+  const declText = existsSync(declFile) ? readFileSync(declFile, "utf-8") : undefined;
+  const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
   const pipeline = renderPipeline({
+    ...checkHooksInput,
     forge: forgeChoice.value,
     binary: binary.value,
     version: version.value,
@@ -428,6 +438,22 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
   const decl = declaration(repo, tgMode || atmos || terramate ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
   if (decl) files.push(decl);
+  // The preset's hook goes into ci.hooks.check with chant's writer when the installed chant reads that moment; turned
+  // off, the hook an earlier init wrote goes. On a chant without the moment, check-hooks runs the preset itself.
+  const declSoFar = decl?.content ?? declText;
+  const hooked = preCommitOn && chantHooks
+    ? withPreCommitHook(chantHooks, basename(declFile), declSoFar ?? `${JSON.stringify({ name: workspaceName(repo, options.name), schema: 1, minReader: chantHooks.CI_CHECK_HOOK_FLOOR, members: [] }, null, 2)}\n`, binary.value)
+    : !preCommitOn && declSoFar !== undefined && !declFile.endsWith(".jsonc") ? withoutPreCommitHook(declSoFar) : undefined;
+  if (hooked !== undefined) {
+    const change = plan(declFile, hooked);
+    const at = files.findIndex((f) => f.path === declFile);
+    if (at >= 0) files[at] = change;
+    else files.push(change);
+  }
+  if (preCommitOn && !chantHooks) notes.push(`check.pre_commit is on, and the installed chant has no ci.hooks.check moment, so init writes no check hook and tf-check runs ${PRE_COMMIT_CONFIG}'s hooks itself`);
+  if (!preCommitOn && existsSync(join(repo, PRE_COMMIT_CONFIG))) {
+    notes.push(`tip: ${PRE_COMMIT_CONFIG} is here; set check.pre_commit: true in terragucci.yml and tf-check runs its hooks over each change, with PCT_TFPATH set to ${binary.value} and terraform_fmt skipped (the job's image needs pre-commit and the tools the file names)`);
+  }
   // Under sealed, the first signers line can come from the person's own git signing key.
   if (approval.value === "sealed") {
     const signersPath = join(repo, SIGNERS_PATH);

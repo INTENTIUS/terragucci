@@ -331,6 +331,18 @@ export interface TerragruntSettings {
 }
 
 /** Atmos settings. Atmos mode is detected (`atmos.yaml` at the repo root); this block only tunes it. */
+/** `check`: what tf-check runs beyond its own checks. */
+export interface CheckSettings {
+  /**
+   * Run the repo's `.pre-commit-config.yaml` in tf-check, as a chant check
+   * hook (./pre-commit.ts), with `PCT_TFPATH` set to the binary and
+   * `terraform_fmt` skipped. Off by default; init never turns it on.
+   */
+  pre_commit?: boolean;
+}
+
+export const CHECK_KEYS = ["pre_commit"] as const;
+
 export interface AtmosSettings {
   /** The Atmos release every job installs. Default: the one this terragucci release pins. */
   version?: string;
@@ -713,6 +725,8 @@ export interface ProjectSettings {
   policy?: PolicySettings;
   /** The module and provider sources a root may use, checked before init; see SourcesSettings. Off when absent. */
   sources?: SourcesSettings;
+  /** What tf-check runs beyond its own checks: the repo's pre-commit hooks; see CheckSettings. */
+  check?: CheckSettings;
   /**
    * `atlantis plan` and `atlantis apply` comments read as `/terragucci plan`
    * and `/terragucci apply`. Off by default. The alias changes the words
@@ -1103,7 +1117,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1317,6 +1331,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
   if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems, mode);
   if (s.sources !== undefined) checkSources(s.sources, `${where}.sources`, problems);
+  if (s.check !== undefined) {
+    if (!isObject(s.check)) problems.push(`${where}.check must be a map (settings: ${CHECK_KEYS.join(", ")})`);
+    else {
+      for (const k of Object.keys(s.check)) if (!(CHECK_KEYS as readonly string[]).includes(k)) problems.push(`${where}.check.${k} is not a setting (settings: ${CHECK_KEYS.join(", ")})`);
+      if (s.check.pre_commit !== undefined && typeof s.check.pre_commit !== "boolean") problems.push(`${where}.check.pre_commit must be true or false`);
+    }
+  }
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
     else {

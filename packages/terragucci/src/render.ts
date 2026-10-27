@@ -252,6 +252,11 @@ export interface PipelineInput {
   mirror?: boolean;
   /** `parallelism` from terragucci.yml: at most this many roots check at once. Unset: all of them. */
   parallelism?: number;
+  /**
+   * The check job runs `terragucci check-hooks` last: chant's `ci.hooks.check`, read at base, with the history that
+   * reads it. Set when `check.pre_commit` is on (`preCommit`, ./pre-commit.ts) or chant.workspace.json names check hooks.
+   */
+  checkHooks?: { preCommit: boolean };
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
@@ -642,6 +647,22 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
     "terragucci check-policy || failed=1",
     'exit "$failed"',
   ].join("\n");
+}
+
+/**
+ * tf-check's last step with `checkHooks` set: `terragucci check-hooks`, which
+ * runs chant's `ci.hooks.check` (or, on a chant without the moment, the
+ * pre-commit preset itself) over the roots, and fails the check when a hook
+ * fails. A Terragrunt check stops at its first failing line, so the step is
+ * its last line there; a plain check counts it with the rest.
+ */
+export function withCheckHooks(body: string, binary: Binary, roots: readonly string[], hooks: PipelineInput["checkHooks"], terragrunt: boolean): string {
+  if (!hooks) return body;
+  const line = `terragucci check-hooks --binary ${binary}${hooks.preCommit ? " --pre-commit" : ""} --targets ${sh(roots.join(","))}`;
+  if (terragrunt) return `${body}\n${line}`;
+  const lines = body.split("\n");
+  const last = lines.pop();
+  return [...lines, `${line} || failed=1`, last].join("\n");
 }
 
 /**
@@ -2277,7 +2298,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism);
+  const checkBody = withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), binary, roots, input.checkHooks, tg !== undefined);
+  // The check hooks are read from the declaration at base, so the check job takes the history, as the policy tests do.
+  const checkHistory = Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true || input.checkHooks !== undefined;
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
@@ -2474,7 +2497,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       stage: "check",
       image: jobImage,
       // The policy tests read the policy from the default branch, and check-mirror the commit before, so either takes the history.
-      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy || input.mirror || input.terragrunt?.mirror ? { GIT_DEPTH: "0" } : {}) },
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(checkHistory ? { GIT_DEPTH: "0" } : {}) },
       ...notScheduled,
       script: script(glCheckBody),
       // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
@@ -2835,7 +2858,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     outputs: handoverOutputs("check", forge),
     steps: [
       // The policy tests read the policy from the default branch, and check-mirror the commit before, so either takes the history.
-      bareCheckout(Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true),
+      bareCheckout(checkHistory),
       ...toolSteps(false, false),
       new Step({ id: "check", name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${handoverTrap(CHECK_DIR, forge).join("\n")}\n${checkBody}` }),
     ],

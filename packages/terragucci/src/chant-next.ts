@@ -26,6 +26,12 @@
  * ./comment-apply-gitlab.ts, ./forge-post.ts and ./handover.ts keep their
  * own code as the fallback.
  *
+ * Newer than the pin too (chant#4556, terragucci#1284): the check moment,
+ * `ci.hooks.check`, from `@intentius/chant/components/check-hooks`: the
+ * writer `init` adds the pre-commit preset's hook with, and the runner the
+ * check job calls. Without it init writes no hook, and `terragucci
+ * check-hooks` runs the preset's hook itself (./pre-commit.ts).
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -285,6 +291,48 @@ export interface ChantRegistry {
   registryHandler(files: (key: string) => Promise<{ body?: string | Uint8Array }>, options?: { prefix?: string; log?: (line: string) => void }): (request: Request) => Promise<Response>;
 }
 
+// ── check hooks ────────────────────────────────────────────────────────────
+
+/** A `ci.hooks.check` hook: chant's `OpWaveHook`, with no `{plan}` and `onFailure` only `fail`. */
+export interface ChantCheckHook {
+  name?: string;
+  command: string[];
+  onFailure?: "fail";
+  perRun?: boolean;
+  targets?: string[];
+}
+
+/** What chant's check hooks came to (`CheckHooksReport`). */
+export interface ChantCheckHooksReport {
+  version: 1;
+  moment: "check";
+  base: string;
+  targets: string[];
+  status: "passed" | "failed" | "none";
+  hooks: { name: string; target?: string; exit: number; outcome: "passed" | "failed" | "skipped"; reason?: string }[];
+  failed?: string;
+  note?: string;
+}
+
+/**
+ * chant's check moment (`/components/check-hooks`, chant#4556): the hooks
+ * read from the workspace declaration at base, run without forge tokens or
+ * cloud credentials, and the writer a product's init adds a hook with.
+ */
+export interface ChantCheckHooks {
+  runCheckHooks(options: {
+    base: string;
+    targets?: readonly string[];
+    cwd?: string;
+    dir?: string;
+    env?: Record<string, string>;
+    log?: (line: string) => void;
+  }): ChantCheckHooksReport;
+  writeCiHook(root: string, moment: "check", hook: ChantCheckHook, opts?: { member?: string }): { file: string; replaced: boolean };
+  /** The first chant that reads `ci.hooks.check`: a declaration that uses it sets `minReader` to it. */
+  CI_CHECK_HOOK_FLOOR: string;
+}
+
 // ── object-store ───────────────────────────────────────────────────────────
 
 /**
@@ -368,6 +416,11 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "writeVersion", "registryVersions", "registryLocation", "fetchTarball", "downloadAnswer", "registryHandler") ? (m as unknown as ChantRegistry) : undefined),
   ),
+  checkHooks: once<ChantCheckHooks>(
+    // @ts-ignore chant 0.124.54 has no components/check-hooks subpath (chant#4556)
+    () => import("@intentius/chant/components/check-hooks"),
+    (m) => (has(m, "runCheckHooks", "writeCiHook") && typeof m.CI_CHECK_HOOK_FLOOR === "string" ? (m as unknown as ChantCheckHooks) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -404,6 +457,9 @@ export const chantRegistry = (): Promise<ChantRegistry | undefined> => load("reg
 /** chant core's object store clients (`@intentius/chant/object-store`, chant#4554), or undefined. */
 export const chantObjectStore = (): Promise<ChantObjectStore | undefined> => load("objectStore");
 
+/** chant's check moment (`/components/check-hooks`, chant#4556), or undefined. */
+export const chantCheckHooks = (): Promise<ChantCheckHooks | undefined> => load("checkHooks");
+
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
  * Returns the function that puts the import back.
@@ -417,8 +473,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────
