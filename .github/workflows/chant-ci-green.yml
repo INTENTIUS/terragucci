@@ -6,6 +6,7 @@ name: chant-ci-green
 on:
   workflow_run:
     workflows:
+      - "publish"
       - "terragucci"
     types:
       - completed
@@ -29,12 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: "main"
           fetch-depth: 0
-          token: ${{ secrets.CI_GREEN_TOKEN }}
-      - uses: actions/setup-node@v6
+          token: ${{ secrets.CI_GREEN_TOKEN || github.token }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "24"
       - name: Tag the commits that turned green, revoke the ones that turned red
@@ -42,4 +43,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: npx --yes @intentius/chant@0.124.11 ci tick
+        run: npx --yes @intentius/chant@0.124.54 ci tick

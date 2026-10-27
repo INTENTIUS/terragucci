@@ -57,7 +57,7 @@ Where a wave waits for a person, per the `gate` setting: `on-destructive` (defau
 
 ### chant
 
-The record format terragucci writes to [`chant/lifecycle`](#chantlifecycle): approvals, applies and lock releases, one line each. [chant](https://intentius.io/chant/) is the toolkit terragucci is built on. Approvers' keys are in [`.chant/allowed_signers`](#chantallowed_signers).
+The toolkit terragucci is built on. [chant](https://intentius.io/chant/) owns the record format and the ledger on [`chant/lifecycle`](#chantlifecycle): approvals, applies and lock releases, one line each. terragucci switches them on and calls chant to write and read the records. Approvers' keys are in [`.chant/allowed_signers`](#chantallowed_signers).
 
 ### chant/lifecycle
 
