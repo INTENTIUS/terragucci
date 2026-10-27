@@ -82,7 +82,7 @@ On every forge, your commands run inside the job that already runs each root's `
 | plan, and a `/terragucci plan` re-plan | `before.observe`, `before.plan` and `after.plan`, for each root the change reaches |
 | `apply-wave-<k>`, and `apply-comment` with `apply.when: pull-request` | every moment, for each root of the wave |
 | drift | `before.observe`, `before.plan` and `after.plan` around the refresh-only plan |
-| check | none |
+| check | none; `check.pre_commit` runs the repo's pre-commit hooks there, see [Run your pre-commit hooks in CI](/terragucci/guides/run-pre-commit-hooks/) |
 
 Roots that plan side by side run their hooks side by side.
 

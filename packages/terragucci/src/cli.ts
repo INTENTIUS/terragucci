@@ -20,6 +20,8 @@
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+  terragucci check-hooks [--binary <b>] [--pre-commit] [--targets <a,b>] [--base <ref>]   (tf-check's last step: the ci.hooks.check hooks chant.workspace.json names at base; with --pre-commit, the check.pre_commit preset)
+ *   terragucci check-hooks [--binary <b>] [--pre-commit] [--targets <a,b>] [--base <ref>]
  *   terragucci check-mirror [--config <file>] [--platform <os_arch>]
  *   terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
  *   terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]
@@ -134,6 +136,7 @@ import { applyWave, branchRootProblems, parseBranches, parseGroups, readLedger }
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
+import { checkHooks } from "./pre-commit";
 import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { pinChecker } from "./publish/require";
@@ -293,7 +296,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -690,6 +693,19 @@ export async function main(argv: string[]): Promise<number> {
       case "check-policy": {
         // tf-check's policy step: the policy's own tests, when `policy:` is set.
         const result = await checkPolicyTests(cwd, { ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "base") ? { base: str(flags, "base") } : {}) });
+        emitCheck(cwd, result);
+        return result.ok ? 0 : 1;
+      }
+      case "check-hooks": {
+        // tf-check's last step with check.pre_commit on, or check hooks declared: chant's ci.hooks.check, read at base.
+        const binary = str(flags, "binary") ?? "tofu";
+        if (!(BINARIES as readonly string[]).includes(binary)) throw new ConfigError(`--binary must be one of ${BINARIES.join(", ")}`);
+        const result = await checkHooks(cwd, {
+          base: str(flags, "base") ?? policyBase(process.env) ?? "HEAD",
+          targets: (str(flags, "targets") ?? "").split(",").filter(Boolean),
+          binary: binary as Binary,
+          preCommit: flags["pre-commit"] === true,
+        });
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }

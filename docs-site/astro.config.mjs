@@ -191,6 +191,7 @@ export default defineConfig({
 								{ label: 'Plan CDK Terrain stacks', slug: 'guides/plan-cdk-terrain-stacks' },
 								{ label: 'Generate backend and provider files', slug: 'guides/generate-root-files' },
 								{ label: 'Run hooks around a stage', slug: 'guides/run-steps' },
+								{ label: 'Run your pre-commit hooks in CI', slug: 'guides/run-pre-commit-hooks' },
 							],
 						},
 						{
