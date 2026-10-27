@@ -22,7 +22,8 @@
  * into a root that reads it.
  */
 import { join } from "node:path";
-import { estateOf, estateOutputReads, localsText } from "../detect";
+import { estateOutputReads, localsText } from "../detect";
+import { resolvedEstate } from "../live-setup";
 import type { ReportBlastResource, ReportBlastReach } from "./schema";
 
 /** A root's plan as `show -json` prints it, as much as this reads. */
@@ -319,7 +320,7 @@ function depthsFrom(
 export function blastRootsOf(repo: string, all: readonly string[], plans: readonly { path: string; plan?: unknown }[], blocks: ReadonlyMap<string, readonly { name: string; upstream: string }[]>): BlastRoot[] {
   const owner = new Map<string, string>();
   for (const r of all) {
-    const e = estateOf(join(repo, r)).estate;
+    const e = resolvedEstate(join(repo, r));
     if (e) owner.set(e, r);
   }
   return plans

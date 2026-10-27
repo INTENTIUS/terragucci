@@ -28,6 +28,7 @@ import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041"
 import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042";
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
+import { chantTf046 } from "../chant-next";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
@@ -40,6 +41,19 @@ export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
   // unit sources, local state.
   TF041: tf041, TF042: tf042, TF043: tf043, TF044: tf044,
 };
+
+/**
+ * Chant's checks that become tips where the installed chant has them, newer
+ * than the pin (./chant-next.ts): TF046, a live root whose record store is
+ * the local directory, which is empty on every CI run (chant#4561). It is
+ * report-only in chant's catalog, so off under `recommended`; terragucci
+ * turns it on. It reads the job's environment to know it runs in CI.
+ */
+export async function codeRules(env: NodeJS.ProcessEnv = process.env): Promise<Readonly<Record<string, PostSynthCheck>>> {
+  const lib = await chantTf046();
+  if (!lib) return CODE_RULES;
+  return { ...CODE_RULES, TF046: { ...lib.tf046, check: (ctx: PostSynthContext) => lib.checkLocalRecordStore(ctx, env) } };
+}
 
 /** Where chant documents its terraform rules. */
 export const CHANT_RULES_URL = "https://intentius.io/chant/lexicons/terraform/lint-rules/";
@@ -71,7 +85,7 @@ export interface TipOptions {
   settings: Pick<ResolvedSettings, "gate" | "tips"> & { waves?: { canary?: string[] } };
   /** The HCL parser. Without it the code tips and the shared-module tip are left out. */
   parser?: Hcl2Json;
-  /** The chant rule ids to run. Default: all of `CODE_RULES`. */
+  /** The chant rule ids to run. Default: all of `codeRules()`. */
   rules?: readonly string[];
   /** Roots whose plans destroy or replace something. Known only after a plan. */
   destroying?: readonly string[];
@@ -146,7 +160,8 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
   const { parser } = options;
 
   if (parser) {
-    const checks = (options.rules ?? Object.keys(CODE_RULES)).map((id) => CODE_RULES[id]).filter((c): c is PostSynthCheck => c !== undefined);
+    const rules = await codeRules(options.env ?? process.env);
+    const checks = (options.rules ?? Object.keys(rules)).map((id) => rules[id]).filter((c): c is PostSynthCheck => c !== undefined);
     const floating = new Set<string>();
     const users = new Map<string, Set<string>>();
     for (const dir of options.configDirs ?? []) {

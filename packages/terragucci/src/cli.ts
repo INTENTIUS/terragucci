@@ -1,7 +1,7 @@
 /**
  * The terragucci command.
  *
- *   terragucci init [--forge f] [--binary b] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+ *   terragucci init [--forge f] [--binary b] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--no-bucket-check] [--force] [--dry-run]
  *   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
@@ -167,7 +167,7 @@ import { ephemeralDown, ephemeralSweep, ephemeralUp } from "./ephemeral";
 import { nodeViewDeps, publishTarget, repoRoot, view, viewProject, viewReports, viewSource } from "./view";
 
 const USAGE = `usage:
-  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--force] [--dry-run]
+  terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudoufu] [--gate never|on-destructive|always] [--approval ledger|pr-review|sealed] [--signer <principal>] [--no-bucket-check] [--force] [--dry-run]
   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge github|gitlab|forgejo] [--apply-when merge|pull-request] [--force] [--dry-run]
   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
   terragucci import hcp|otf|scalr [--hostname <host>] [--organization <org>] [--environment <env>] [--repo owner/name] [--forge github|gitlab|forgejo] [--force] [--dry-run]
@@ -421,7 +421,7 @@ export async function main(argv: string[]): Promise<number> {
         const approval = approvalFlag(str(flags, "approval"));
         const gate = gateFlag(str(flags, "gate"));
         const signer = str(flags, "signer");
-        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(gate ? { gate } : {}), ...(approval ? { approval } : {}), ...(signer ? { signer } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
+        const result = await init(cwd, { forge: forge as ForgeName, binary: binary as Binary, ...(gate ? { gate } : {}), ...(approval ? { approval } : {}), ...(signer ? { signer } : {}), ...(flags["no-bucket-check"] === true ? { bucketCheck: false } : {}), force: flags.force === true, dryRun: flags["dry-run"] === true });
         if (json) return emit(envelope("init", 0, initJson(cwd, result, flags["dry-run"] === true)));
         console.log(describeInit(cwd, result, flags["dry-run"] === true));
         if (flags["dry-run"] === true) console.log("dry run: nothing was written");

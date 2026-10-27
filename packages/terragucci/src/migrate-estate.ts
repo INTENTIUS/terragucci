@@ -10,7 +10,11 @@
  *   backends  from an s3 or local state into an estate is an adoption:
  *             `choudoufu live-import` reads the old state once and stamps
  *             the markers on every resource it verifies; the old state is
- *             left where it was
+ *             left where it was. When the state is the one the root's own
+ *             backend block names and the binary's live-import reads that
+ *             backend itself (choudoufu#2293), terragucci reads no state:
+ *             live-import gets no `-state`, and the proof binds its
+ *             ratification and the state's version id
  *
  * The proof is read-only.
  *
@@ -47,7 +51,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stateClient, stateObject, type StateObject } from "./backend";
 import { ConfigError, resolveRepo } from "./config";
-import { estateOf } from "./detect";
+import { backendBlock, estateOf } from "./detect";
+import { readLiveSetup } from "./live-setup";
 import { eachLimited } from "./each-limited";
 import {
   backendRefusal,
@@ -100,7 +105,21 @@ export interface Stamp {
 }
 
 /** What an estate migration's apply needs beyond the record. */
-export type EstatePlan = { kind: "retag"; retags: Retag[] } | { kind: "adopt"; adopts: { root: string; estate: string; state: string; source: StateObject; version?: string; digest: string }[] };
+export type EstatePlan = { kind: "retag"; retags: Retag[] } | { kind: "adopt"; adopts: Adopt[] };
+
+/**
+ * One root an adoption stamps. `state` is the copy of the old state terragucci
+ * read, handed to live-import as `-state`; absent when live-import reads the
+ * root's backend itself, and then `digest` binds the ratification.
+ */
+export interface Adopt {
+  root: string;
+  estate: string;
+  state?: string;
+  source: StateObject;
+  version?: string;
+  digest: string;
+}
 
 /**
  * How many roots of an estate migration plan at once, and how many roots take
@@ -123,10 +142,32 @@ async function initEstate(exec: BinaryExec, binary: string, root: string, place:
   if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${firstLine(init.out)}`);
 }
 
-function estateName(repo: string, root: string): string {
-  const e = estateOf(join(repo, root)).estate;
-  if (!e) throw new ConfigError(`${root} has a live block that names no estate`);
+/** A root's estate: the name choudoufu resolves (choudoufu#2293) when its live-check prints one, else the live block's own. */
+async function estateName(repo: string, root: string, place: Place, binary: string, exec: BinaryExec): Promise<string> {
+  const setup = await readLiveSetup(place.dir, { binary, exec: (file, args, cwd) => exec(file, args, cwd, place.env).then((r) => ({ status: r.code, stdout: r.stdout, stderr: r.out })) });
+  const e = setup?.estate ?? estateOf(join(repo, root)).estate;
+  if (!e) throw new ConfigError(`${root} has a live block that ${setup ? "resolves no estate (several tofu-estate values, or a name outside the marker grammar)" : "names no estate"}`);
   return e;
+}
+
+/** live-import's help line for `-state` when the command reads the backend block's state with no `-state` (choudoufu#2293). */
+const READS_BACKEND = /Defaults to the state the backend\s+block names/;
+
+const readsBackendBy = new WeakMap<BinaryExec, Map<string, Promise<boolean>>>();
+
+/** Whether the binary's live-import reads the old state from the backend block itself, from its `-help`. */
+export function liveImportReadsBackend(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  let byBinary = readsBackendBy.get(exec);
+  if (!byBinary) readsBackendBy.set(exec, (byBinary = new Map()));
+  let got = byBinary.get(binary);
+  if (!got) {
+    got = exec(binary, ["live-import", "-help"], dir, env).then(
+      (r) => READS_BACKEND.test(r.out),
+      () => false,
+    );
+    byBinary.set(binary, got);
+  }
+  return got;
 }
 
 /** `<address>: <actions>` split back into its parts. */
@@ -211,10 +252,11 @@ export function stampFailures(text: string): number | undefined {
 /** The flag that makes `live-import` write the markers. */
 const STAMP = "-approve";
 
-async function liveImport(exec: BinaryExec, binary: string, place: Place, state: string, estate: string, write: boolean, progress?: MigrationProgress): Promise<string> {
+/** live-import in a root: of the state file `state`, or with none, of the state the root's backend block names. */
+async function liveImport(exec: BinaryExec, binary: string, place: Place, state: string | undefined, estate: string, write: boolean, progress?: MigrationProgress): Promise<string> {
   const io: BinaryIo | undefined = progress && write ? { stderr: progress.take } : undefined;
-  const ran = await exec(binary, ["live-import", "-no-color", `-state=${resolve(state)}`, `-estate=${estate}`, ...(write ? [STAMP] : []), ...(io ? [PROGRESS_FLAG] : [])], place.dir, place.env, ...(io ? [io] : []));
-  if (ran.code !== 0) throw new ConfigError(`live-import ${write ? "could not stamp" : "could not verify"} ${state.replace(/^.*\//, "")}: ${firstLine(ran.out)}`);
+  const ran = await exec(binary, ["live-import", "-no-color", ...(state ? [`-state=${resolve(state)}`] : []), `-estate=${estate}`, ...(write ? [STAMP] : []), ...(io ? [PROGRESS_FLAG] : [])], place.dir, place.env, ...(io ? [io] : []));
+  if (ran.code !== 0) throw new ConfigError(`live-import ${write ? "could not stamp" : "could not verify"} ${state ? state.replace(/^.*\//, "") : "the state its backend block names"}: ${firstLine(ran.out)}`);
   return ran.stdout;
 }
 
@@ -231,8 +273,10 @@ export async function planEstateMigration(repo: string, m: Migration, options: M
   if (m.kind === "revert") throw new ConfigError(`migration ${m.name} cannot run: an estate keeps no state file to put back; move the resources back with a moves migration the other way`);
   const roots = [...new Set(m.kind === "backends" ? m.backends.map((b) => b.root) : m.moves.flatMap((x) => [x.from, x.to]))].sort();
   const places = await placesOf(repo, roots, options, env, detectShape(repo, resolveRepo({})));
-  const estates = new Map(roots.map((r) => [r, estateName(repo, r)]));
   for (const root of roots) await initEstate(exec, options.binary, root, places.get(root)!);
+  // After init, as tf-check runs live-check: the estate choudoufu resolves for each root.
+  const estates = new Map<string, string>();
+  for (const r of roots) estates.set(r, await estateName(repo, r, places.get(r)!, options.binary, exec));
   // An adopted root is not planned before its stamp: choudoufu refuses a plan while an unmarked live object sits at a resource's identity.
   if (m.kind === "backends") return planAdopt(m, estates, places, exec, options);
   // A root resources join is not planned before the retag either: their live objects carry another estate's markers until then.
@@ -348,6 +392,14 @@ async function planAdopt(m: Migration, estates: Map<string, string>, places: Map
     const source = stateObject(place.dir, place.env, { type: b.from.backend, config: b.from.config });
     const why = backendRefusal(b.root, source);
     if (why) throw new ConfigError(`migration ${m.name} cannot run: the backend it adopts from: ${why}`);
+    if (await readsOwnBackend(source, place, exec, options)) {
+      const got = await planAdoptFromBackend(b.root, estate, source, place, exec, options);
+      out.push(got.root);
+      stamps.push(...got.stamps);
+      adopts.push(got.adopt);
+      files.set(b.root, { path: "", object: { backend: "estate", unsupported: "an estate keeps no state file" }, state: { version: 4, serial: 0, lineage: "", resources: [] }, beforeCount: 0, source: { object: source, block: "", data: "" } });
+      continue;
+    }
     const read = await readSource(source, place.dir, options);
     if (!read) throw new ConfigError(`migration ${m.name}: ${locationOf(source)} holds no state of ${b.root} to adopt`);
     const path = join(options.work, `adopt-${i}.tfstate`);
@@ -374,6 +426,49 @@ async function planAdopt(m: Migration, estates: Map<string, string>, places: Map
   }
   const record = estateRecord(m, "adopt", out, { stamps, backends: m.backends.map((b) => ({ root: b.root, from: locationOf(adopts.find((a) => a.root === b.root)!.source) ?? b.from.backend })) });
   return { record, places, files, estate: { kind: "adopt", adopts } };
+}
+
+/**
+ * Whether live-import reads the adopted state itself: the migration adopts
+ * from the backend the root's own backend block names (ignored under the
+ * live block), and the binary's live-import reads that backend
+ * (choudoufu#2293). A Terragrunt unit's place is its working directory, so
+ * the backend block there is the one Terragrunt generated.
+ */
+async function readsOwnBackend(source: StateObject, place: Place, exec: BinaryExec, options: MigrateOptions): Promise<boolean> {
+  const own = backendBlock(place.dir);
+  if (!own || !("type" in own)) return false;
+  const at = locationOf(stateObject(place.dir, place.env, { type: own.type, config: own.attrs }));
+  if (at === undefined || at !== locationOf(source)) return false;
+  return liveImportReadsBackend(exec, options.binary, place.dir, place.env);
+}
+
+/** The digest an adoption read from the backend binds: the ratification's entries, each with its live id, and the state's version id. */
+const ratificationDigest = (entries: { address: string; type: string; status: string; live_id?: string }[], version?: string): string => sha(JSON.stringify({ entries, ...(version ? { version } : {}) }));
+
+/** An adoption's proof when live-import reads the old state from the backend itself: no state is read here. */
+async function planAdoptFromBackend(root: string, estate: string, source: StateObject, place: Place, exec: BinaryExec, options: MigrateOptions): Promise<{ root: MigrationRoot; stamps: Stamp[]; adopt: Adopt }> {
+  const log = options.log ?? (() => {});
+  const version = await versionOf(source, options.fetch).catch(() => undefined);
+  const report = await liveImport(exec, options.binary, place, undefined, estate, false);
+  const entries = parseRatification(report);
+  const unverified = entries.filter((e) => !ADOPTED.includes(e.status)).map((e) => `${e.address}: ${e.status.toLowerCase().replace("_", " ")}`);
+  const digest = ratificationDigest(entries, version);
+  const verified = entries.length - unverified.length;
+  log(`${root}: live-import read ${locationOf(source)} through the root's backend block; ${verified} of ${entries.length} resource instances verify against the live system${unverified.length ? `; ${unverified.length} do${unverified.length === 1 ? "es" : ""} not: ${unverified.join(", ")}` : ", so the stamp adopts each one"}`);
+  return {
+    root: {
+      root,
+      backend: "estate",
+      location: `estate ${estate}`,
+      before: { digest: sha(JSON.stringify({ estate, entries })) },
+      after: { digest: sha(JSON.stringify({ estate, changes: [] })) },
+      source: { backend: source.backend, ...(locationOf(source) ? { location: locationOf(source) } : {}), ...(version ? { version_id: version } : {}), digest },
+      proof: { changes: unverified, summary: ratificationSummary(entries) },
+    },
+    stamps: entries.map((e) => ({ root, estate, ...e })),
+    adopt: { root, estate, source, ...(version ? { version } : {}), digest },
+  };
 }
 
 /** What an adoption's proof says in place of a plan's summary: how many instances the ratification verified. */
@@ -517,7 +612,15 @@ async function writeEstate(plan: PlannedMigration, options: MigrateOptions & { n
     } else {
       const moved: string[] = [];
       for (const a of e.adopts) {
-        const now = await readSource(a.source, plan.places.get(a.root)!.dir, options);
+        const place = plan.places.get(a.root)!;
+        if (a.state === undefined) {
+          // Read through the backend by live-import: the state moved when its version or the ratification did.
+          const version = await versionOf(a.source, options.fetch).catch(() => undefined);
+          const again = parseRatification(await liveImport(exec, options.binary, place, undefined, a.estate, false));
+          if (ratificationDigest(again, version) !== a.digest) moved.push(a.root);
+          continue;
+        }
+        const now = await readSource(a.source, place.dir, options);
         if (!now || now.version !== a.version || stateDigest(now.state) !== a.digest) moved.push(a.root);
       }
       if (moved.length > 0) return { ...record, status: "refused", moved };

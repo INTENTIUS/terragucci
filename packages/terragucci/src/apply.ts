@@ -104,7 +104,7 @@ import {
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
-import { estateOf, explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
+import { explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
 import { blockedMembers, blockedWords, earlierWaveOutcomes, onlyWaiting, passesThrough, runSummary, writeWaveOutcomeFile, type WaveMemberOutcome, type WaveMemberStatus } from "@intentius/chant/wave-blocked";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
@@ -163,7 +163,8 @@ import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, re
 import type { SecretSource } from "./config";
 import type { ReportApprovalRule, ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
-import { readRecords, recordStoreOf } from "./cdf-records";
+import { readRecords } from "./cdf-records";
+import { readLiveSetup, resolvedEstate, resolvedRecordStore } from "./live-setup";
 import { recordVersions, versionsLine } from "./cdf-history";
 import { rootVersions } from "./report/versions";
 import { planAppliedChanges, readChanges } from "./report/history";
@@ -914,7 +915,7 @@ async function holdRows(
     return release().then(() => ({ code: EXIT.superseded, release: free.release }));
   };
   // shape: only a binary that applies per resource holds rows; the others rely on the backend's state lock.
-  const rows = plans.filter((p) => p.plan && applyScope(p.binary) === "resource").flatMap((p) => planRows(p.root, estateOf(join(repo, p.root)).estate, p.plan));
+  const rows = plans.filter((p) => p.plan && applyScope(p.binary) === "resource").flatMap((p) => planRows(p.root, resolvedEstate(join(repo, p.root)), p.plan));
   if (rows.length === 0) return (await standDown(free.release)) ?? free;
   // Outside a clone (no origin to hold them on) no other run can be told, so nothing is held.
   if (git(repo, ["remote", "get-url", "origin"]).status !== 0) {
@@ -1871,7 +1872,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
     }
     // Each applied root's roster, from the plan it applied (./report/roster.ts). A roster that is not written never fails the wave.
-    const rosters = waveRosters(report, new Map(w.planned.filter((p) => p.plan !== undefined).map((p) => [p.root, { plan: p.plan, estate: estateOf(join(repo, p.root)).estate }])));
+    const rosters = waveRosters(report, new Map(w.planned.filter((p) => p.plan !== undefined).map((p) => [p.root, { plan: p.plan, estate: resolvedEstate(join(repo, p.root)) }])));
     try {
       const keys = await uploadRosters(storeFromEnv(settings.reports, env), rosters, settings.reports.prefix);
       if (rosters.length > 0) console.log(`wave ${wave}: rosters of ${rosters.map((r) => `${r.roster.estate} (${r.roster.resources.length})`).join(", ")} written to ${keys[keys.length - 1]}`);
@@ -2564,11 +2565,13 @@ function finishApplied(repo: string, label: string, w: WaveRun, result: Finished
  * is a choudoufu estate that changes something.
  */
 async function watchProgress(repo: string, options: ApplyWaveOptions, w: WaveRun, label: string, planned: PlannedRoot[]): Promise<ApplyProgress | undefined> {
-  const roots = planned.flatMap((p) => {
-    if (!p.plan || !changesSomething(p.plan) || applyScope(p.bin.name ?? p.binary) !== "resource") return [];
+  const following = planned.filter((p) => p.plan && changesSomething(p.plan) && applyScope(p.bin.name ?? p.binary) === "resource");
+  // choudoufu's resolved store and estate (choudoufu#2293), where the binary prints them; else the live block's own text.
+  for (const p of following) await readLiveSetup(join(repo, p.root), { binary: p.binary });
+  const roots = following.flatMap((p) => {
     const dir = join(repo, p.root);
-    const { estate } = estateOf(dir);
-    const store = estate ? recordStoreOf(dir, estate) : undefined;
+    const estate = resolvedEstate(dir);
+    const store = estate ? resolvedRecordStore(dir, estate) : undefined;
     return store ? [{ root: p.root, plan: p.plan, store, env: p.env }] : [];
   });
   if (roots.length === 0) return undefined;
@@ -2616,7 +2619,8 @@ async function listRecordVersions(repo: string, applied: PlannedRoot[], limit: n
   await eachLimited(applied, limit, async (p) => {
     if (!p.plan || applyScope(p.bin.name ?? p.binary) !== "resource") return;
     const dir = join(repo, p.root);
-    const { estate } = estateOf(dir);
+    await readLiveSetup(dir, { binary: p.binary });
+    const estate = resolvedEstate(dir);
     if (!estate) return;
     const addresses = planAppliedChanges(p.plan).map((c) => c.address);
     if (addresses.length === 0) return;

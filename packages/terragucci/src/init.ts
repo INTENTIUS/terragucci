@@ -36,7 +36,10 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { detectBinary, detectForge, detectVersion, type RootReason } from "./detect";
+import { detectBinary, detectForge, detectVersion, estateOf, liveRoots, type RootReason } from "./detect";
+import { recordStoreOf } from "./cdf-records";
+import { bucketLines, checkStoreBucket, readLiveSetup, setupLine } from "./live-setup";
+import type { PolicyExec } from "./report/policy";
 import { BINARY, detectShape, refuseProblems } from "./shape";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
@@ -83,6 +86,23 @@ export interface InitOptions {
   terramate?: string;
   /** The repo's name, for a new chant.workspace.json. Default: the origin remote's last path segment, then the directory's name. */
   name?: string;
+  /** How `choudoufu live-check -json` runs for each live root's record store. Default: the binary on the path. */
+  liveExec?: PolicyExec;
+  /** `--no-bucket-check`: print each live root's record store, and read none of its bucket's settings. */
+  bucketCheck?: boolean;
+  /** The environment the bucket check takes its region, endpoint and keys from. Default: the process's. */
+  env?: NodeJS.ProcessEnv;
+}
+
+/** A live root's record store and estate, as choudoufu resolved them, and what chant's bucket check found. */
+export interface LiveRecords {
+  root: string;
+  /** The line init prints: where the records go and the estate. */
+  line: string;
+  /** Where the answer came from: choudoufu's live-check, or the live block's text when the installed choudoufu prints none. */
+  from: "choudoufu" | "live block";
+  /** The bucket check's lines: a correct bucket, each setting that fails with its fix, or why it was not checked. */
+  bucket: string[];
 }
 
 /** What `init` found in a Terragrunt repo. */
@@ -139,6 +159,8 @@ export interface InitResult {
   /** Roots that run a version of their own, and where each pins it. */
   pins: RootVersion[];
   forge: { value: ForgeName; reason: string };
+  /** Under choudoufu: each live root's record store and estate, and its bucket check. */
+  records: LiveRecords[];
   files: FileChange[];
   /** Settings the pipeline does not act on yet, with why. */
   notes: string[];
@@ -237,6 +259,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const roots = rootReasons.map((r) => r.root);
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu, and an Atmos instance's are its component's.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, shape.binary(roots));
+
+  // Under choudoufu each live root keeps its backend block, and choudoufu derives the record store from it (choudoufu#2293):
+  // init writes no record_store, prints what choudoufu resolved, and checks the bucket with chant's shared check.
+  const records = binary.value === "choudoufu" ? await liveRecords(repo, liveRoots(repo, roots), options) : [];
 
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || !BINARY[binary.value].releaseInRequiredVersion ? undefined : detectVersion(repo, roots);
@@ -559,7 +585,33 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, records, files, notes, configNote };
+}
+
+/**
+ * Each live root's record store and estate: what `choudoufu live-check -json`
+ * resolves, else the live block's own text, and chant's bucket check on the
+ * store (./live-setup.ts). A Terragrunt unit holds no .tf files until
+ * Terragrunt writes its working directory, so it is not among the live roots
+ * here; choudoufu prints its store at each of the unit's runs.
+ */
+async function liveRecords(repo: string, roots: string[], options: InitOptions): Promise<LiveRecords[]> {
+  const env = options.env ?? process.env;
+  const out: LiveRecords[] = [];
+  for (const root of roots) {
+    const dir = join(repo, root);
+    const setup = await readLiveSetup(dir, { ...(options.liveExec ? { exec: options.liveExec } : {}) });
+    if (!setup) {
+      const estate = estateOf(dir).estate;
+      const store = estate ? recordStoreOf(dir, estate) : undefined;
+      const where = !store ? "no record store read" : store.kind === "s3" ? `records in s3 bucket "${store.bucket}" under ${store.prefix}` : store.kind === "local" ? `records in the local directory ${relative(dir, store.dir) || "."} under ${store.prefix}` : `records in a ${store.name} store`;
+      out.push({ root, from: "live block", line: `${root}: ${where} (from its live block: choudoufu live-check printed no resolved store, from an older release or a root it could not read); ${estate ? `estate "${estate}"` : "no estate named"}`, bucket: [] });
+      continue;
+    }
+    const bucket = options.bucketCheck === false || !setup.store ? [] : bucketLines(root, await checkStoreBucket(dir, setup.store, env));
+    out.push({ root, from: "choudoufu", line: setupLine(root, setup), bucket });
+  }
+  return out;
 }
 
 /**
@@ -747,6 +799,7 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
       : `found ${plural(r.roots.length, "root")} in ${plural(r.layers.length, "layer")}, ` +
         `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
     ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${p.tool ?? r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
+    ...r.records.flatMap((x) => [`records: ${x.line}`, ...x.bucket.map((b) => `bucket: ${b}`)]),
     ...r.files.map((f) => `${verb(f.status)} ${relative(repo, f.path)}`),
     r.configNote,
     ...r.notes.map((n) => `note: ${n}`),
@@ -767,6 +820,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     version: r.version,
     ...(r.pins.length > 0 ? { pins: r.pins } : {}),
     forge: r.forge,
+    ...(r.records.length > 0 ? { records: r.records } : {}),
     image: r.image,
     files: r.files.map((f) => ({ path: relative(repo, f.path), status: f.status, content: f.content })),
     notes: r.notes,
