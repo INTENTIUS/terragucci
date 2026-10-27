@@ -13,6 +13,10 @@
  * (./covered-wave.ts). A chant that carries them, as 0.124.54 does, turns
  * the full behaviour on with no change here.
  *
+ * The module registry protocol (`registry`, chant#4565) is newer than the
+ * pin: until a chant release carries it, ./publish/registry.ts keeps its own
+ * reader and writer as the fallback.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -235,6 +239,37 @@ export interface ChantPlanShape {
   terraformPlanShape(planJson: unknown, member: string, options?: { unknownInputs?: string[] }): unknown;
 }
 
+// ── registry ───────────────────────────────────────────────────────────────
+
+/** A store the registry writer puts files to: terragucci's RegistryStore fits it. */
+export interface ChantRegistryStore {
+  put(key: string, body: string | Buffer, contentType?: string, when?: { ifMatch: string } | { ifNoneMatch: "*" }): Promise<unknown>;
+  read(key: string): Promise<{ body?: string; etag?: string }>;
+}
+
+type ChantRegistryFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * The module registry protocol chant#4565 moved into the lexicon
+ * (`/registry`): the writer, with the download answer that carries
+ * X-Terraform-Get (terragucci#1287), and the reader.
+ */
+export interface ChantRegistry {
+  writeVersion(
+    store: ChantRegistryStore,
+    addr: { namespace: string; name: string; system: string; source: string; path: string },
+    version: { major: number; minor: number; patch: number },
+    files: { tarball?: { key: string; body: Buffer }; download: { key: string; body: string }; meta: { key: string; body: string } },
+    options?: { prefix?: string; isConflict?: (e: unknown) => boolean },
+  ): Promise<void>;
+  registryVersions(source: string, options?: { fetch?: ChantRegistryFetch }): Promise<string[]>;
+  registryLocation(source: string, version: string, options?: { fetch?: ChantRegistryFetch; reads?: "terraform" | "tofu" | "either" }): Promise<string>;
+  fetchTarball(location: string, options?: { fetch?: ChantRegistryFetch }): Promise<Buffer>;
+  downloadDoc(location: string): string;
+  downloadAnswer(location: string): { status: 200; headers: Record<string, string>; body: string };
+  registryHandler(files: (key: string) => Promise<{ body?: string | Uint8Array }>, options?: { prefix?: string; log?: (line: string) => void }): (request: Request) => Promise<Response>;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -292,6 +327,11 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/plan-shape"),
     (m) => (has(m, "terraformPlanShape") ? (m as unknown as ChantPlanShape) : undefined),
   ),
+  registry: once<ChantRegistry>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565)
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) => (has(m, "writeVersion", "registryVersions", "registryLocation", "fetchTarball", "downloadAnswer", "registryHandler") ? (m as unknown as ChantRegistry) : undefined),
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -312,6 +352,8 @@ export const chantComposeRun = (): Promise<ChantComposeRun | undefined> => load(
 export const chantState = (): Promise<ChantState | undefined> => load("state");
 /** chant's plan shape (`/plan-shape`), or undefined. */
 export const chantPlanShape = (): Promise<ChantPlanShape | undefined> => load("planShape");
+/** chant's module registry protocol (`/registry`, chant#4565), or undefined. */
+export const chantRegistry = (): Promise<ChantRegistry | undefined> => load("registry");
 
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
@@ -326,6 +368,6 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape };
+  const [compose, composeRun, state, planShape, registry] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry };
 }
