@@ -23,7 +23,7 @@ Each level is opt-in:
 | Level | Config | What it adds |
 |---|---|---|
 | Publish | `modules.publish` | a git tag or OCI tag per release, pinned rollouts by pull request, and version bump jobs |
-| Registry | `modules.registry` | each release as a module registry's files in a bucket or a Pages site, so roots use registry sources and version constraints |
+| Registry | `modules.registry` | each release as a module registry's files in a bucket or a Pages site, so roots call them by registry source and version |
 | Test | `modules.test: true` | `tofu test` or `terraform test` on each module before a release of it publishes |
 | Attest | `modules.attest: true` as well | a signature, SLSA provenance and an SBOM for each release, and a record of it in the release ledger |
 
@@ -144,12 +144,12 @@ network 1.1.0: refused, not published to git-tags (modules/network has no tests 
 
 ## Serve a module registry
 
-With `modules.registry`, a bucket or a Pages site also serves each release as static files in the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/). Roots call the modules by registry address, with a `version` that can be a constraint:
+With `modules.registry`, a bucket or a Pages site also serves each release as static files in the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/). Roots call the modules by registry address, pinned to one `version`:
 
 ```hcl
 module "network" {
   source  = "modules.example.com/acme/network/generic"
-  version = "~> 1.0"
+  version = "1.0.0"
   name    = "dev"
 }
 ```
@@ -206,7 +206,7 @@ module "network" {
 
    The stored download answer is a JSON body with `location`. OpenTofu reads that body. Terraform reads only the `X-Terraform-Get` header, which a bucket or a static site cannot send on its own, so Terraform installs only through the edge function or a `_headers` file. A version is listed in `versions` only after the files it points at are written.
 
-5. Pin a root to the registry and run `init`. `~> 1.0` resolves to the newest `1.x` the registry lists.
+5. Pin a root to the registry and run `init`. It installs `1.0.0`, the version the root names. When a newer version publishes, a [rollout](/terragucci/guides/roll-out-a-module-version/) (`terragucci rollout modules/network`) moves the pin in each root that calls it.
 
 </Steps>
 
