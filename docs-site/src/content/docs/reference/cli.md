@@ -45,6 +45,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy`, `check-sources`, `check-mirror` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `image recipe` | writes a Dockerfile, CLI config and build script for an image `FROM` terragucci's that carries every provider the lock files pin; you build and push it |
+| `registry edge` | writes the edge function for `modules.registry`, with its deploy config, so Terraform installs from a bucket-hosted registry; you deploy it |
 | `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
@@ -989,6 +990,14 @@ terragucci check-mirror [--config <file>] [--platform <os_arch>]
 | `check-mirror` | with `image.mirror` set, checks the image's mirror holds every provider each lock file pins, for the job's platform (or `--platform`, such as `linux_arm64`). A gap new at this commit warns; a gap the lock file already had at the commit's first parent fails, naming the provider and the rebuild. Prints nothing without the key |
 
 The generated `tf-check` job runs `check-mirror` before any root's `init` when `image.mirror` is set.
+
+## registry edge
+
+```bash
+terragucci registry edge [--out <dir>] [--origin <url>] [--config <file>]
+```
+
+Writes, under `--out` (default `registry-edge`), the function `modules.registry.edge` names: for `cloudflare`, `worker.mjs` and a `wrangler.toml` that binds an R2 bucket or reads the bucket's address; for `cloudfront`, `index.mjs` and `registry-edge.json` for one Lambda@Edge function. `--origin` names the bucket's HTTP address in place of the one it derives from `bucket` and `endpoint`. With `auth: token` it prints the steps that make and rotate the token; on CloudFront it reads the tokens from `TERRAGUCCI_REGISTRY_TOKENS`. For `pages` and `none` it writes nothing and says why. It deploys nothing itself. See [Put an edge function in front of the bucket](/terragucci/guides/publish-modules/#put-an-edge-function-in-front-of-the-bucket).
 
 ## check-job
 

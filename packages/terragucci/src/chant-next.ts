@@ -289,6 +289,14 @@ export interface ChantRegistry {
   downloadDoc(location: string): string;
   downloadAnswer(location: string): { status: 200; headers: Record<string, string>; body: string };
   registryHandler(files: (key: string) => Promise<{ body?: string | Uint8Array }>, options?: { prefix?: string; log?: (line: string) => void }): (request: Request) => Promise<Response>;
+  /**
+   * The `_headers` file Cloudflare Pages and Netlify read (chant#4566), one
+   * X-Terraform-Get rule per download path, merged into the file there. Newer
+   * than chant#4565's `/registry`, so a caller checks it is there.
+   */
+  headersFile?(rules: { path: string; location: string }[], existing?: string): string;
+  /** The rules Cloudflare Pages reads from `_headers` (chant#4566). */
+  PAGES_HEADER_RULES?: number;
 }
 
 // ── check hooks ────────────────────────────────────────────────────────────

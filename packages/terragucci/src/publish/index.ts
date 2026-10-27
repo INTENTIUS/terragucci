@@ -31,7 +31,7 @@ import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { appendLifecycle } from "../apply";
 import { loadHclParser } from "../rollout/parser";
 import { globMatch } from "../detect";
-import { ConfigError, type RegistrySettings, type ResolvedSettings } from "../config";
+import { ConfigError, registryEdge, type RegistrySettings, type ResolvedSettings } from "../config";
 import { gunzip, gzip, moduleTar, moduleTarAt, moduleZip, sha256, tarEntries } from "./archive";
 import { commitsSince, git, hasCommit, tryGit } from "./git";
 import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
@@ -40,7 +40,7 @@ import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from
 import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
 import { applyBump, bumpBetween, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "./semver";
-import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
+import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeHeadersFile, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
 import { testModule, type TestBinary, type TestRunner } from "./test";
 
 export { bumpFor, parseSemver } from "./semver";
@@ -113,6 +113,8 @@ interface Target {
   legacy?(mod: Module): Promise<Legacy[]>;
   /** OCI: push a legacy version again under its tag, as the zip, with its own revision and content. */
   republish?(mod: Module, version: Semver, ctx: PublishContext): Promise<string>;
+  /** What else a publish of this version wrote or left out, for its row: the registry's `_headers` file. */
+  note?(mod: Module, version: Semver): string | undefined;
 }
 
 /** A version published as a tar: its tag, annotations and the tar its layer holds, or why it cannot be republished. */
@@ -341,6 +343,8 @@ function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], 
     }
   };
   const ociUrl = publishTo.find((t) => t.startsWith("oci://"));
+  const pages = registryEdge(reg) === "pages";
+  const notes = new Map<string, string>();
   /** Where the download points, once the release it points at is checked to hold this content. */
   const locate = async (mod: Module, version: Semver, ctx: PublishContext): Promise<string> => {
     const name = mod.name;
@@ -391,8 +395,14 @@ function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], 
         download: { key: keyFor(reg, `${a.path}/${v}/download`), body: downloadDoc(location) },
         meta: { key: metaKey(a, v), body: `${JSON.stringify(record, null, 2)}\n` },
       });
+      // A Pages site sends the header only from its _headers file, once the version is listed.
+      if (pages) {
+        const note = await writeHeadersFile(store, reg, { path: `${a.path}/${v}/download`, location });
+        if (note) notes.set(`${mod.rel}@${v}`, note);
+      }
       return ctx.content;
     },
+    note: (mod, version) => notes.get(`${mod.rel}@${formatSemver(version)}`),
     subject(mod, version, ctx) {
       return { ref: `${addr(mod).source} ${formatSemver(version)}`, bytes: ctx.tar };
     },
@@ -575,7 +585,8 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
       const deps = target.attests === false ? undefined : await attestDeps();
       if (!deps) {
         const digest = await target.publish(mod, version, ctx);
-        results.push({ ...row, status: "published", version: formatSemver(version), digest });
+        const note = target.note?.(mod, version);
+        results.push({ ...row, status: "published", version: formatSemver(version), digest, ...(note ? { detail: note } : {}) });
         continue;
       }
       const subject = target.subject(mod, version, ctx);
@@ -587,7 +598,8 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
         appendLifecycle(repo, LEDGER_PATH, [JSON.stringify(attested.record)], attested.files, `Release record: ${mod.rel} ${formatSemver(version)} ${attested.digest}`, refs);
       const digest = await target.publish(mod, version, ctx);
       await target.attach?.(mod, attested.digest, attested, deps.signer);
-      results.push({ ...row, status: "published", version: formatSemver(version), digest, detail: `signed and recorded in the release ledger as ${attested.digest}` });
+      const note = target.note?.(mod, version);
+      results.push({ ...row, status: "published", version: formatSemver(version), digest, detail: `signed and recorded in the release ledger as ${attested.digest}${note ? `; ${note}` : ""}` });
     }
   }
   return results;

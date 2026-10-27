@@ -179,6 +179,8 @@ module "network" {
    | `namespaces` | none | a tag prefix (a path in the repo, such as `platform/`) to the namespace its modules go under; the longest prefix wins |
    | `system` | `generic` | the third part of each address |
    | `download` | `tarball` | what each version's download points at: a `.tar.gz` beside it, its git tag (`git-tags`, which `publish` must list), or its OCI artifact (`oci`, which `publish` must list; OpenTofu only) |
+   | `edge` | picked from `bucket`, `endpoint` or `dir` | what sends the `X-Terraform-Get` header Terraform needs: `cloudflare`, `cloudfront`, `pages` or `none`; see [Put an edge function in front of the bucket](#put-an-edge-function-in-front-of-the-bucket) |
+   | `auth` | `off` | `token` has the edge function refuse a read without a bearer token, and sign tarball URLs |
 
    A module's address is `<host>/<namespace>/<name>/<system>`, where the name is its directory's name: `modules/network` is `modules.example.com/acme/network/generic`.
 
@@ -190,7 +192,7 @@ module "network" {
 
    The publish job on GitHub and Forgejo maps the bucket's key secrets as a job that [keeps reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) does: for S3 the pair `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for Azure `AZURE_STORAGE_KEY`. GitLab passes it CI/CD variables of those names.
 
-3. Serve the bucket over HTTPS at `url`: a CDN in front of it, or its own static website endpoint with a certificate. Every reader of the registry needs read access to it, and only the publish job writes it.
+3. Serve the bucket over HTTPS at `url`, through the [edge function](#put-an-edge-function-in-front-of-the-bucket) for its host. Only the publish job writes the bucket.
 
 4. After the next module change merges, the publish job writes:
 
@@ -202,7 +204,7 @@ module "network" {
    | `v1/modules/<namespace>/<name>/<system>/<version>/<name>-<version>.tar.gz` | the module, with `download: tarball` |
    | `v1/modules/<namespace>/<name>/<system>/<version>/release.json` | the commit and content digest the next publish compares against |
 
-   A static server sends no `X-Terraform-Get` header, so the download answer is a JSON body with `location`, which both binaries read. A version is listed in `versions` only after the files it points at are written.
+   The stored download answer is a JSON body with `location`. OpenTofu reads that body. Terraform reads only the `X-Terraform-Get` header, which a bucket or a static site cannot send on its own, so Terraform installs only through the edge function or a `_headers` file. A version is listed in `versions` only after the files it points at are written.
 
 5. Pin a root to the registry and run `init`. `~> 1.0` resolves to the newest `1.x` the registry lists.
 
@@ -225,6 +227,129 @@ registry:
 With `dir`, the publish job writes the files into that directory of its checkout, beside what is there. You deploy the directory to the Pages site and keep the earlier versions in it (from the site's branch, for example), since `versions` lists only what the directory holds.
 
 A [rollout](/terragucci/guides/roll-out-a-module-version/) of `modules/network` moves the `version` of each call to its registry address. A call pinned by a constraint such as `~> 1.0` has no one version to move, and the rollout refuses it.
+
+## Put an edge function in front of the bucket
+
+Terraform finds a version's location in the `X-Terraform-Get` header of the download answer and fails without it:
+
+```text
+Error: Error accessing remote module registry
+
+Failed to retrieve a download URL for modules.example.com/acme/network/generic
+1.0.0 from modules.example.com: failed to get download URL for
+"modules.example.com/acme/network/generic": 200 OK
+```
+
+An edge function on your CDN reads the stored answer and sends the same location in the header, keeping the JSON body, so both binaries install. terragucci picks the function from where the files are, and `edge` overrides the pick:
+
+| Files in | `edge` | Sends the header with |
+|---|---|---|
+| an R2 bucket (`endpoint` on `r2.cloudflarestorage.com`), a `gs://` or an `az://` bucket | `cloudflare` | a Cloudflare Worker |
+| any other `s3://` bucket | `cloudfront` | a Lambda@Edge function on CloudFront; a CloudFront Function cannot read the stored answer |
+| `dir`, deployed to Cloudflare Pages or Netlify | `pages` | a `_headers` file the publish job writes beside the files, one rule per version |
+| `dir` on GitHub Pages or GitLab Pages, or a plain bucket website | `none` | nothing: OpenTofu installs, Terraform does not |
+
+Cloudflare Pages reads at most 100 rules from `_headers`. Past that, the publish job says so on each new version; serve the files through `edge: cloudflare` or from Netlify.
+
+<Steps>
+
+1. Write the function and its deploy config.
+
+   ```bash
+   npx terragucci registry edge
+   ```
+
+   It writes `registry-edge/` and prints the steps for your CDN. For `cloudflare`, the directory holds `worker.mjs` and a `wrangler.toml` that binds the R2 bucket, or names the bucket's address in `REGISTRY_ORIGIN`, and routes `url`'s host to the Worker. For `cloudfront`, it holds `index.mjs` and `registry-edge.json`, which you zip into one Lambda function in us-east-1 on Node.js 20 or later.
+
+2. Deploy it.
+
+   <Tabs syncKey="edge">
+     <TabItem label="Cloudflare">
+       ```bash
+       cd registry-edge
+       npx wrangler deploy
+       ```
+     </TabItem>
+     <TabItem label="CloudFront">
+       Publish a version of the function and attach it to the distribution's default behavior as an origin-request trigger. Give that behavior an origin request policy that passes the `Authorization` header and every query string to the origin.
+     </TabItem>
+   </Tabs>
+
+3. Run `init` in a root that calls a module from the registry. Both binaries install.
+
+</Steps>
+
+### Require a token to read
+
+With `auth: token`, the function refuses discovery, `versions`, `download` and every other file without `Authorization: Bearer <token>`, answering 401. A tarball's download answer becomes a signed URL that opens that one file for five minutes, so the archive fetch needs no token of its own. Git and OCI locations go out as stored, and their own access rules apply.
+
+```yaml
+modules:
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    auth: token
+```
+
+`auth: token` needs `edge: cloudflare` or `edge: cloudfront`; a `_headers` file cannot check a token.
+
+<Steps>
+
+1. Make a token and keep it in your secret manager.
+
+   ```bash
+   openssl rand -hex 32
+   ```
+
+2. Give it to the function.
+
+   <Tabs syncKey="edge">
+     <TabItem label="Cloudflare">
+       ```bash
+       npx wrangler secret put REGISTRY_TOKENS
+       ```
+
+       The Worker reads its tokens from that secret, one per line or comma separated.
+     </TabItem>
+     <TabItem label="CloudFront">
+       Lambda@Edge has no environment variables, so the token goes into `registry-edge.json` when you write the function:
+
+       ```bash
+       TERRAGUCCI_REGISTRY_TOKENS=<token> npx terragucci registry edge
+       ```
+
+       Keep `registry-edge/` out of git, and deploy the new version.
+     </TabItem>
+   </Tabs>
+
+3. Give each reader the token. Both binaries send it for the registry's host from `TF_TOKEN_modules_example_com`, or from a `credentials "modules.example.com"` block in the CLI config or `credentials.tfrc.json`. The `tf-check` and rollout jobs read a registry the same way, so give them the variable too.
+
+</Steps>
+
+To rotate a token, give the function both tokens, `<old>,<new>`, and deploy. Move every reader to the new token, then give the function the new one alone and deploy again. The tarball URLs are signed with the first token, so a URL handed out before the swap stops working; each one lasts five minutes.
+
+OpenTofu 1.12 and later also read `"use_registry_credentials": true` in a download answer's body. OpenTofu then fetches the location itself and sends the registry host's token with it, which fits a server that keeps tarballs behind the same token check without signed URLs. Terraform has no such field, and terragucci's files do not set it.
+
+### Other ways to keep a registry private
+
+A registry on a private network needs no function for the token: serve it only inside a VPN, behind an IP allowlist, or behind Cloudflare Access, and use `auth: off`. Terraform still needs the header, so keep the edge function or `_headers` file for it.
+
+A team that already runs GitLab, HCP Terraform, Artifactory or Nexus can publish its modules there and read them with that registry's own credentials.
+
+### Point the binaries at the registry by CLI config
+
+A `host` block in the CLI config sends a host's module requests to another address, with no service discovery. It suits CI images and machines you set up, such as a registry reached at an internal name:
+
+```hcl
+host "modules.example.com" {
+  services = {
+    "modules.v1" = "https://modules.internal.example.com/v1/modules/"
+  }
+}
+```
+
+Terraform reads the block from `TF_CLI_CONFIG_FILE` or `~/.terraformrc`, OpenTofu from `TF_CLI_CONFIG_FILE` or `~/.tofurc`. A source with no host resolves to `registry.terraform.io` under Terraform and `registry.opentofu.org` under OpenTofu, so a block for one of them does nothing for the other binary. The address it names needs a certificate the binary already trusts.
 
 ## Attest each release
 
