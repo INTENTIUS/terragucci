@@ -638,13 +638,13 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+              "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
             },
             {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
               }
             }
           ]
@@ -2513,13 +2513,13 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                  "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
                 },
                 {
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                    "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
                   }
                 }
               ]

@@ -137,7 +137,7 @@ export function checkedSources(repo: string, governing: GoverningModules): Check
       if (t === "git-tags") {
         const origin = spawnSync("git", ["-C", repo, "remote", "get-url", "origin"], { encoding: "utf-8" });
         if (origin.status === 0 && origin.stdout.trim()) out.push({ kind: "git", match: normalizeSource(origin.stdout.trim()), key: k, keyPath: own, ledger: "origin", tags: "origin" });
-      } else {
+      } else if (t.startsWith("oci://")) {
         out.push({ kind: "oci", match: normalizeSource(t), key: k, keyPath: own, ledger: "origin" });
       }
     }

@@ -2,8 +2,9 @@
  * tf-publish: publish each module that changed since its last release.
  *
  * A module's last release is read from the target itself: the highest
- * `vX.Y.Z` git tag under `modules/<name>/`, or the highest tag in the OCI
- * repository. Each release records the commit it was cut from and a digest of
+ * `vX.Y.Z` git tag under `modules/<name>/`, the highest tag in the OCI
+ * repository, or the highest version a hosted registry lists, whose commit
+ * and content come from its release record (./hosted.ts). Each release records the commit it was cut from and a digest of
  * the module's content, so a run on a commit that changed nothing in a module
  * publishes nothing for it, and a version that exists is never written again.
  *
@@ -38,6 +39,7 @@ import { commitsSince, git, hasCommit, tryGit } from "./git";
 import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
 import { fetchLedger, recordRelease, releaseRecord } from "./ledger";
 import { publishCatalog } from "./catalog";
+import { gitlabTarget, type HostedOptions } from "./hosted";
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
@@ -86,6 +88,11 @@ export interface PublishOptions {
   registryStore?: RegistryStore;
   /** Runs `providers mirror` for `modules.registry.providers: mirror`, for tests. */
   mirrorRun?: ProviderMirrorRun;
+  /** The fetch a hosted registry's API and reads go through (`gitlab`), for tests. */
+  hostedFetch?: HostedOptions["fetch"];
+  /** How a hosted target waits between polls, and its clock, for tests. */
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
   /** Runs terraform-docs for the catalog's docs, for tests; ./catalog.ts finds the binary by default. */
   terraformDocs?: (args: { dir: string; config: string }) => Promise<string | null>;
 }
@@ -430,7 +437,17 @@ function targets(repo: string, publish: string | string[] | undefined, registry:
   const out = list.map((p) => {
     if (p === "git-tags") return gitTagTarget(repo, opts.push ?? true);
     if (p.startsWith("oci://")) return ociTarget(p, opts);
-    throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; use an oci:// registry address or git-tags`);
+    const hosted: HostedOptions = {
+      repo,
+      env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
+      ...(registry ? { registry } : {}),
+      gitTags: list.includes("git-tags"),
+      ...(opts.hostedFetch ? { fetch: opts.hostedFetch } : {}),
+      ...(opts.sleep ? { sleep: opts.sleep } : {}),
+      ...(opts.now ? { now: opts.now } : {}),
+    };
+    if (p === "gitlab" || p.startsWith("gitlab://")) return gitlabTarget(p, hosted);
+    throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; use an oci:// registry address, git-tags, gitlab or gitlab://<host>/<project path>`);
   });
   // Last, so a download that points at a git tag or an OCI artifact points at one this run has written.
   if (registry) out.push(registryTarget(repo, registry, modules, list, opts, catalog));
@@ -723,6 +740,8 @@ export async function verifyPublished(repo: string, settings: Pick<ResolvedSetti
   const env = opts.env ?? process.env;
   const out: ReleaseCheck[] = [];
   for (const target of Array.isArray(publishTo) ? publishTo : [publishTo]) {
+    // A hosted registry's copy is the archive the other targets attest; verify-release reads git and OCI tags.
+    if (target === "gitlab" || target.startsWith("gitlab://")) continue;
     const row = { module: mod.rel, target, version: formatSemver(v) };
     let subject: { ref: string; bytes?: Buffer; commit?: string };
     if (target === "git-tags") {
