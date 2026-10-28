@@ -109,7 +109,7 @@ describe("modules.publish: gitlab in the config", () => {
     expect(problems("gitlab")).toBe("");
     expect(problems(["git-tags", "gitlab://gitlab.example.com/platform/modules"])).toBe("");
     expect(problems("gitlab://gitlab.example.com/platform/infra/modules")).toBe("");
-    expect(problems("gitlab://gitlab.example.com/modules")).toContain("use an oci:// registry address, git-tags, gitlab (in GitLab CI) or gitlab://<host>/<group>/<project>");
+    expect(problems("gitlab://gitlab.example.com/modules")).toContain("use an oci:// registry address, git-tags, gitlab (in GitLab CI), gitlab://<host>/<group>/<project>, hcp://<organization> or hcp://<host>/<organization>");
     expect(problems("gitlab:platform/modules")).toContain("gitlab://<host>/<group>/<project>");
   });
 

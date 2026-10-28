@@ -87,11 +87,12 @@
  * `terragucci modules` reads it. Without them publish writes no catalog and
  * says so in its row.
  *
- * Newer than the pin too (terragucci#1300): the terraform lexicon's module
- * targets on its `registry` subpath (chant#4603), core's publish-target
+ * Newer than the pin too (terragucci#1300, #1301): the terraform lexicon's
+ * module targets on its `registry` subpath (GitLab, chant#4603; HCP Terraform,
+ * chant#4604), core's publish-target
  * contract over a module version (chant#4602). ./publish/hosted.ts wraps one
- * as a `modules.publish` target; without them `modules.publish: gitlab` is
- * refused with the chant release it needs.
+ * as a `modules.publish` target; without them `modules.publish: gitlab` or
+ * `hcp://` is refused with the chant release it needs.
  *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
@@ -950,6 +951,8 @@ export interface ChantModuleTargetDeps {
  */
 export interface ChantModuleTargets {
   gitlabModuleTarget(options: { project?: string; api?: string; tokenEnv?: string; namespace?: string }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  /** HCP Terraform or Terraform Enterprise (chant#4604); absent on a chant with GitLab alone. */
+  hcpModuleTarget?(options: { organization: string; host?: string; tokenEnv?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
   createRedactor(env?: NodeJS.ProcessEnv, names?: readonly string[]): ChantModuleVersionContext["redactor"];
   PublishTargetError: new (code: string, message: string, fix?: string) => Error & { code: string; fix?: string };
 }

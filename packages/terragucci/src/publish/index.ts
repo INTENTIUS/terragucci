@@ -39,7 +39,7 @@ import { commitsSince, git, hasCommit, tryGit } from "./git";
 import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
 import { fetchLedger, recordRelease, releaseRecord } from "./ledger";
 import { publishCatalog } from "./catalog";
-import { gitlabTarget, type HostedOptions } from "./hosted";
+import { gitlabTarget, hcpTarget, type HostedOptions } from "./hosted";
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
@@ -88,7 +88,7 @@ export interface PublishOptions {
   registryStore?: RegistryStore;
   /** Runs `providers mirror` for `modules.registry.providers: mirror`, for tests. */
   mirrorRun?: ProviderMirrorRun;
-  /** The fetch a hosted registry's API and reads go through (`gitlab`), for tests. */
+  /** The fetch a hosted registry's API and reads go through (`gitlab`, `hcp://`), for tests. */
   hostedFetch?: HostedOptions["fetch"];
   /** How a hosted target waits between polls, and its clock, for tests. */
   sleep?: (ms: number) => Promise<void>;
@@ -447,7 +447,8 @@ function targets(repo: string, publish: string | string[] | undefined, registry:
       ...(opts.now ? { now: opts.now } : {}),
     };
     if (p === "gitlab" || p.startsWith("gitlab://")) return gitlabTarget(p, hosted);
-    throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; use an oci:// registry address, git-tags, gitlab or gitlab://<host>/<project path>`);
+    if (p.startsWith("hcp://")) return hcpTarget(p, hosted);
+    throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; use an oci:// registry address, git-tags, gitlab, gitlab://<host>/<project path> or hcp://<organization>`);
   });
   // Last, so a download that points at a git tag or an OCI artifact points at one this run has written.
   if (registry) out.push(registryTarget(repo, registry, modules, list, opts, catalog));
@@ -741,7 +742,7 @@ export async function verifyPublished(repo: string, settings: Pick<ResolvedSetti
   const out: ReleaseCheck[] = [];
   for (const target of Array.isArray(publishTo) ? publishTo : [publishTo]) {
     // A hosted registry's copy is the archive the other targets attest; verify-release reads git and OCI tags.
-    if (target === "gitlab" || target.startsWith("gitlab://")) continue;
+    if (target === "gitlab" || target.startsWith("gitlab://") || target.startsWith("hcp://")) continue;
     const row = { module: mod.rel, target, version: formatSemver(v) };
     let subject: { ref: string; bytes?: Buffer; commit?: string };
     if (target === "git-tags") {

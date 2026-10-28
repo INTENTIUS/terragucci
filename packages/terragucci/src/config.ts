@@ -1543,14 +1543,16 @@ function checkRegistryTokens(r: Record<string, unknown>, where: string, problems
  */
 export const gitlabPublishForm = /^gitlab:\/\/[^/\s]+\/[^/\s?#]+\/[^\s?#]+$/;
 export const isGitlabTarget = (t: string): boolean => t === "gitlab" || gitlabPublishForm.test(t);
+/** HCP Terraform's private registry in `modules.publish` (terragucci#1301): `hcp://<org>`, or `hcp://<host>/<org>` for Terraform Enterprise. */
+export const hcpPublishForm = /^hcp:\/\/(?:[^/\s]+\.[^/\s]+\/)?[A-Za-z0-9_-]+$/;
 
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
   if (m.path !== undefined && typeof m.path !== "string") problems.push(`${where}.path must be a glob`);
   const targets = Array.isArray(m.publish) ? m.publish : m.publish === undefined ? [] : [m.publish];
   for (const t of targets) {
-    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t) || isGitlabTarget(t))) {
-      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address, git-tags, gitlab (in GitLab CI) or gitlab://<host>/<group>/<project>`);
+    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t) || isGitlabTarget(t) || hcpPublishForm.test(t))) {
+      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address, git-tags, gitlab (in GitLab CI), gitlab://<host>/<group>/<project>, hcp://<organization> or hcp://<host>/<organization>`);
     }
   }
   if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);

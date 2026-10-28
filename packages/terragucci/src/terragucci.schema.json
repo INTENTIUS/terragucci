@@ -638,13 +638,13 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
+              "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$)"
             },
             {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
+                "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$)"
               }
             }
           ]
@@ -2513,13 +2513,13 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
+                  "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$)"
                 },
                 {
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)"
+                    "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$)"
                   }
                 }
               ]
