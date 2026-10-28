@@ -744,7 +744,9 @@ export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS): Chan
 export async function mcp(o: McpOptions): Promise<void> {
   const chant = o.propose || o.tools ? undefined : await chantProductMcp();
   if (chant) {
-    const code = await chant.runChantInProcess(["serve", "mcp", "--read-only"], TERRAGUCCI_WORDS, { mcp: productHook(o) });
+    // chant's `serve mcp` loads a lexicon first and exits where it finds none (a directory that is no chant
+    // project, as a laptop's often is); terragucci's tools need none, so it names the terraform lexicon (chant#3648).
+    const code = await chant.runChantInProcess(["serve", "mcp", "--read-only", "--lexicon", "terraform"], TERRAGUCCI_WORDS, { mcp: productHook(o) });
     if (code !== 0) throw new ConfigError(`chant's MCP server ended with exit ${code}`);
     return;
   }

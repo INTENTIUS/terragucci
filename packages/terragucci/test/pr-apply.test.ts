@@ -91,6 +91,8 @@ function setup(comment: string, f: Forge, forgejo = false): { env: NodeJS.Proces
     if (path.includes("/reviews")) return answer(200, f.reviews ?? []) as never;
     if (path.includes("pulls/7/commits")) return answer(200, f.commits ?? []) as never;
     if (path.endsWith("/status")) return answer(200, { statuses: f.statuses ?? [] }) as never;
+    // A commit's statuses as a list, which chant's client reads (chant#4554); GitHub's list is newest first.
+    if (/\/commits\/[0-9a-f]+\/statuses(\?|$)/.test(path)) return answer(200, /[?&]page=([2-9]|\d\d)/.test(path) ? [] : [...(f.statuses ?? [])].reverse()) as never;
     if (path.includes("/check-runs")) return answer(200, { check_runs: f.checkRuns ?? [] }) as never;
     if (/pulls\?state=open/.test(path)) return answer(200, [f.pr]) as never;
     if (path.includes("/compare/")) return answer(200, { behind_by: f.behind ?? 0 }) as never;

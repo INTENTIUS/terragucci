@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { assertReadOnly, callTool, checkArgs, context, PROPOSE_TOOLS, PROPOSED_FOOTER, readOnlyStore, refusal, serve, TOOLS, type McpOptions, type Tool } from "../src/mcp";
+import { chantProductMcp } from "../src/chant-next";
 import type { Fetch } from "../src/forge";
 import { buildReport } from "../src/report/build";
 import { StoreError, type ObjectStore } from "../src/report/object-store";
@@ -15,6 +16,9 @@ import { RUN, smallFixture } from "./report-fixtures";
 import { backend, bareFrom, git, tmp, write } from "./helpers";
 
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
+// Where the installed chant has the product hook (chant#4555), the bundle serves chant's read-only server, with
+// terragucci's tools as `terragucci:<name>`; a tool it does not serve is unknown there.
+const CHANT_MCP = !!(await chantProductMcp());
 
 function memoryStore(objects: Map<string, string> = new Map()): ObjectStore & { objects: Map<string, string>; puts: number } {
   const s = {
@@ -386,11 +390,12 @@ describe.skipIf(!existsSync(DIST))("the bundle's terragucci mcp", () => {
     const client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain("last_apply");
+    expect(tools.map((t) => t.name)).toContain(CHANT_MCP ? "terragucci:last_apply" : "last_apply");
     expect(tools.map((t) => t.name)).not.toContain("approve");
-    const r = await client.callTool({ name: "approve", arguments: {} });
+    expect(tools.map((t) => t.name)).not.toContain("terragucci:approve");
+    const r = await client.callTool({ name: CHANT_MCP ? "terragucci:approve" : "approve", arguments: {} });
     expect(r.isError).toBe(true);
-    expect(said(r)).toContain("terragucci mcp is read-only");
+    expect(said(r)).toContain(CHANT_MCP ? "Unknown tool: terragucci:approve" : "terragucci mcp is read-only");
     await client.close();
   }, 30_000);
 

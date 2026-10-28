@@ -1476,7 +1476,7 @@ export async function main(argv: string[]): Promise<number> {
           problems = e.problems ?? [e.message];
         }
         const file = relative(cwd, resolve(path)) || path;
-        if (json) return emit(envelope("config check", problems.length ? 2 : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(tips.length && problems.length === 0 ? { tips } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
+        if (json) return emit(envelope("config check", problems.length ? USAGE_EXIT : 0, { file, ok: problems.length === 0, problems, ...(warnings.length ? { warnings } : {}), ...(tips.length && problems.length === 0 ? { tips } : {}), ...(access && problems.length === 0 ? { state_access: access.roles } : {}), ...(approval && problems.length === 0 ? { approval } : {}) }));
         if (problems.length === 0) {
           console.log(`${file}: ok`);
           if (approval) console.log(`approval: ${approval.mode} (${approval.source})${approval.note ? `\nnote: ${approval.note}` : ""}`);
@@ -1487,7 +1487,8 @@ export async function main(argv: string[]): Promise<number> {
           for (const t of tips) console.log(`tip (${t.rule}): ${t.message}`);
         } else console.error(`${file}: ${problems.length} problem(s)\n  ${problems.join("\n  ")}`);
         if (warnings.length) console.error(`${file}: ${warnings.length} warning(s)\n  ${warnings.join("\n  ")}`);
-        return problems.length ? 2 : 0;
+        // A config with problems is a config error: 1 under chant's table (chant#4553, ruling C), 2 before it.
+        return problems.length ? USAGE_EXIT : 0;
       }
       case "forge": {
         if (args[0] !== "check") throw new ConfigError("usage: terragucci forge check [--config <file>] [--json]");
