@@ -2249,13 +2249,30 @@ describe("the rollout job", () => {
     const rollout = r.extra!.find((f) => f.path === `.${forge}/workflows/terragucci-rollout.yml`)!;
     expect(r.extra!.length).toBe(1);
     const doc = body(rollout.content);
-    expect(doc.on).toEqual({ schedule: [{ cron: "*/15 * * * *" }], workflow_dispatch: {} });
+    expect(doc.on.schedule).toEqual([{ cron: "*/15 * * * *" }]);
+    expect(Object.keys(doc.on.workflow_dispatch.inputs)).toEqual(["module", "version"]);
     expect(Object.keys(doc.jobs)).toEqual(["rollout"]);
     expect(doc.jobs.rollout.env.TG_TOKEN).toBe("${{ github.token }}");
     const run = doc.jobs.rollout.steps.map((s: any) => s.run).filter(Boolean).join("\n");
     expect(run).toContain(`export ${forge === "github" ? "GITHUB_TOKEN" : "FORGEJO_TOKEN"}="$TG_TOKEN"`);
     expect(run).toContain("terragucci respond rollout --mode apply");
     expect(run).not.toContain("|| true");
+  });
+
+  it.each(["github", "forgejo"] as const)("%s: the rollout workflow's dispatch takes module and version, and starts that rollout (golden)", (forge) => {
+    const rollout = renderPipeline({ forge, ...input, rollouts: "*/15 * * * *" }).extra!.find((f) => f.path === `.${forge}/workflows/terragucci-rollout.yml`)!;
+    const doc = body(rollout.content);
+    expect(doc.name).toBe("terragucci-rollout");
+    expect(doc.on.workflow_dispatch.inputs).toEqual({
+      module: { description: expect.any(String), required: false, type: "string" },
+      version: { description: expect.any(String), required: false, type: "string" },
+    });
+    expect(doc.jobs.rollout.env).toMatchObject({ TG_MODULE: "${{ github.event.inputs.module }}", TG_VERSION: "${{ github.event.inputs.version }}" });
+    const run = doc.jobs.rollout.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    expect(run).toContain('terragucci rollout "$@" --mode apply || code=$?');
+    const path = join(__dirname, "golden", `rollout-${forge}.yml`);
+    if (process.env.UPDATE_GOLDEN || !existsSync(path)) writeFileSync(path, rollout.content);
+    expect(rollout.content).toBe(readFileSync(path, "utf-8"));
   });
 
   it("github: with token_env the job opens the wave and pushes its branch with that secret, so the wave's pull request is planned", () => {

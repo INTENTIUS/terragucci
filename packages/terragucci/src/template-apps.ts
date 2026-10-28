@@ -19,6 +19,7 @@ import { join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import type { ChantCatalogComponent, ChantCatalogVersion, ChantReleaseCatalogDoc } from "./chant-next";
 import { findComponent } from "./publish/catalog";
+import { compareSemver, parseSemver } from "./publish/semver";
 
 /** The module block an app root calls its template through (chant's `APP_MODULE_NAME`). */
 export const APP_MODULE = "app";
@@ -114,6 +115,13 @@ export interface AppRoot {
 /** An app's root path: `templates.apps` with the name in it. */
 export const appRootPath = (apps: string, name: string): string => apps.split("{name}").join(name);
 
+/** The app a root is, by `templates.apps`: `orders` for `apps/orders`; undefined for a root the pattern does not name. */
+export function appNameOf(apps: string, root: string): string | undefined {
+  const [pre, post] = apps.split("{name}") as [string, string | undefined];
+  if (post === undefined) return undefined;
+  return new RegExp(`^${escape(pre)}(${APP_NAME})${escape(post)}$`).exec(root)?.[1];
+}
+
 /**
  * Read the root at `root` as an app's: undefined when it holds no
  * `module "app"` call, so it is no app made from a template.
@@ -178,9 +186,50 @@ export function catalogVersionOf(catalog: ChantReleaseCatalogDoc | undefined, ca
   if (!catalog || !call.source) return {};
   const component = findComponent(catalog, call.source);
   if (!component) return {};
-  const v = call.version?.trim().replace(/^=\s*/, "");
+  const v = pinnedVersion(call.version);
   const version = v ? component.versions.find((x) => x.version === v) : undefined;
   return { component, ...(version ? { version } : {}) };
+}
+
+/** The version a call pins, without a leading `=`: `1.2.0` for `= 1.2.0`; null for none. */
+export function pinnedVersion(version: string | null): string | null {
+  const v = version?.trim().replace(/^=\s*/, "");
+  return v ? v : null;
+}
+
+/** The newest active version of a component above `pin`, or null: none is newer, or the pin is no plain version. */
+export function upgradeOf(component: ChantCatalogComponent | undefined, pin: string | null): string | null {
+  const at = pin ? parseSemver(pin) : undefined;
+  if (!component || !at) return null;
+  let best: { v: NonNullable<ReturnType<typeof parseSemver>>; text: string } | undefined;
+  for (const x of component.versions) {
+    const v = x.status.state === "active" && x.version ? parseSemver(x.version) : undefined;
+    if (v && compareSemver(v, at) > 0 && (!best || compareSemver(v, best.v) > 0)) best = { v, text: x.version! };
+  }
+  return best?.text ?? null;
+}
+
+/** Whether the catalog marks the version a call pins as yanked. */
+export function isYanked(version: ChantCatalogVersion | undefined): boolean {
+  return version?.status.state === "yanked";
+}
+
+/** One version's changelog entries, as the catalog keeps them. */
+export interface VersionChangelog {
+  version: string;
+  entries: ChantCatalogVersion["changelog"]["entries"];
+}
+
+/** The changelog of each version above `from` up to and including `to`, newest first. */
+export function changelogBetween(component: ChantCatalogComponent, from: string, to: string): VersionChangelog[] {
+  const lo = parseSemver(from);
+  const hi = parseSemver(to);
+  if (!lo || !hi) return [];
+  return component.versions
+    .map((x) => ({ x, v: x.version ? parseSemver(x.version) : undefined }))
+    .filter((e): e is { x: ChantCatalogVersion; v: NonNullable<ReturnType<typeof parseSemver>> } => !!e.v && compareSemver(e.v, lo) > 0 && compareSemver(e.v, hi) <= 0)
+    .sort((a, b) => compareSemver(b.v, a.v))
+    .map((e) => ({ version: e.x.version!, entries: e.x.changelog.entries }));
 }
 
 /** The names of a module version's outputs, as the catalog lists them. */
@@ -213,6 +262,10 @@ export interface AppAddonRow {
   name: string;
   template: string;
   version: string | null;
+  /** The newest active version above `version` the catalog lists, or null. */
+  upgrade: string | null;
+  /** Whether the catalog marks `version` as yanked. */
+  yanked: boolean;
 }
 
 /** One app, as `terragucci templates apps` lists it. */
@@ -221,6 +274,14 @@ export interface AppRow {
   root: string;
   template: string;
   version: string | null;
+  /**
+   * The newest active version of the template above `version`, or null: none
+   * is newer, the pin is no plain version, or the catalog cannot be read.
+   * `terragucci rollout <template> <upgrade>` moves the app to it.
+   */
+  upgrade: string | null;
+  /** Whether the catalog marks `version` as yanked. Such an app moves in the first wave after the canaries. */
+  yanked: boolean;
   addons: AppAddonRow[];
   /** The action blocks the app's module and its add-ons' declare; empty when the catalog does not say. */
   actions: AppAction[];
@@ -240,12 +301,17 @@ export function appRows(roots: readonly AppRoot[], catalog: ChantReleaseCatalogD
     for (const call of [r.call, ...r.addons]) {
       for (const a of versionActions(catalogVersionOf(catalog, call).version)) actions.push({ module: call.name, ...a, address: `module.${call.name}.action.${a.type}.${a.name}` });
     }
+    const marks = (call: ModuleCallRow) => {
+      const { component, version } = catalogVersionOf(catalog, call);
+      return { upgrade: upgradeOf(component, pinnedVersion(call.version)), yanked: isYanked(version) };
+    };
     return {
       app: r.app,
       root: r.root,
       template: templateOf(catalog, r.call),
       version: r.call.version,
-      addons: r.addons.map((a) => ({ name: a.name, template: templateOf(catalog, a), version: a.version })),
+      ...marks(r.call),
+      addons: r.addons.map((a) => ({ name: a.name, template: templateOf(catalog, a), version: a.version, ...marks(a) })),
       actions,
     };
   });
@@ -262,9 +328,10 @@ export function describeApps(rows: readonly AppRow[]): string {
   if (rows.length === 0) return "no app under templates.apps holds a module \"app\" call";
   return rows
     .map((r) => {
-      const addons = r.addons.map((a) => `\n    + ${a.name}  ${a.template} ${a.version ?? "(no version)"}`).join("");
+      const marks = (m: { upgrade: string | null; yanked: boolean }) => `${m.yanked ? " (yanked)" : ""}${m.upgrade ? `, upgrade to ${m.upgrade}` : ""}`;
+      const addons = r.addons.map((a) => `\n    + ${a.name}  ${a.template} ${a.version ?? "(no version)"}${marks(a)}`).join("");
       const actions = r.actions.length > 0 ? `\n    actions: ${r.actions.map((a) => a.address).join(", ")}` : "";
-      return `${r.app}  ${r.root}  ${r.template} ${r.version ?? "(no version)"}${addons}${actions}`;
+      return `${r.app}  ${r.root}  ${r.template} ${r.version ?? "(no version)"}${marks(r)}${addons}${actions}`;
     })
     .join("\n");
 }
