@@ -70,7 +70,13 @@ export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment
   }
   const parsed = parseProductComment(productWords(), text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
   if (parsed === undefined) return undefined;
-  if (parsed.kind === "plan") return parsed.member !== undefined ? { kind: "plan", root: parsed.member } : { kind: "plan" };
+  if (parsed.kind === "plan") {
+    // chant's grammar reads `--target`, `--refresh` and `--target-dependents` after the plan word (chant#4626, #4627, on chant
+    // main); a terragucci re-plan plans whole roots, so it refuses them by name rather than drop them.
+    const flags = parsed as { targets?: string[]; refresh?: true; targetDependents?: true };
+    if (flags.targets?.length || flags.refresh || flags.targetDependents) return { kind: "refused", reason: "`/terragucci plan` re-plans whole roots: it takes no `--target`, `--refresh` or `--target-dependents`" };
+    return parsed.member !== undefined ? { kind: "plan", root: parsed.member } : { kind: "plan" };
+  }
   return parsed;
 }
 

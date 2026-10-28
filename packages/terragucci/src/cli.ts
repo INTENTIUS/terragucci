@@ -100,7 +100,7 @@ import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
 import { applyGroups } from "./cloud-identity";
 import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
-import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
+import { runCheckJob, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
 import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
@@ -662,7 +662,8 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "runner-tags") ? { runnerTags: list(str(flags, "runner-tags")) } : {}),
           ...(flags["self-hosted"] === true ? { selfHosted: true } : {}),
         };
-        const told = describeJobCheck(expect, checkJob(expect, await jobSeen(expect)));
+        // chant core's guard when the installed chant has it (chant#4624), else terragucci's own check.
+        const told = await runCheckJob(expect);
         for (const l of told.out) console.log(l);
         for (const l of told.err) console.error(l);
         return told.ok ? 0 : 1;

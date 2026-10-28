@@ -27,7 +27,15 @@
  * label. Someone who can edit the workflow can delete it too: the forge's
  * environment and runner settings and the cloud role's trust are what keep a
  * job out.
+ *
+ * chant core carries the same check as its apply-job guard
+ * (`@intentius/chant/ci-job-guard`, chant#4624, on chant main and not yet in
+ * a release). runCheckJob runs chant's when the installed chant has it, with
+ * terragucci's words, and the copy below otherwise; the rendered line is the
+ * same either way. On chant's, the GitHub token is asked for chant's
+ * audience, `chant-check-job`.
  */
+import { chantJobGuard, type ChantJobGuard } from "./chant-next";
 import type { ForgeName } from "./config";
 
 /** The audience of the token the check requests on GitHub, which no cloud role should trust. */
@@ -191,4 +199,25 @@ export function describeJobCheck(expect: JobExpectation, result: JobCheck): { ok
     out: [`${at}: ${result.checked.length ? result.checked.join(", ") : "nothing to check"}${result.skipped.length ? `; not checked: ${result.skipped.join(", ")}` : ""}`],
     err: [],
   };
+}
+
+/** What a run of the check prints, and whether the job may go on: chant's guard when the installed chant has it (chant#4624), else the copy here. */
+export async function runCheckJob(
+  expect: JobExpectation,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchFn: typeof fetch = fetch,
+  chant: ChantJobGuard | undefined | null = undefined,
+): Promise<{ ok: boolean; out: string[]; err: string[] }> {
+  const guard = chant === null ? undefined : (chant ?? (await chantJobGuard()));
+  if (!guard) return describeJobCheck(expect, checkJob(expect, await jobSeen(expect, env, fetchFn)));
+  const spec = {
+    forge: expect.forge,
+    job: `environment ${expect.environment}`,
+    product: "terragucci",
+    branches: expect.branches,
+    ...(expect.forgeEnvironment !== undefined ? { forgeEnvironment: expect.forgeEnvironment } : {}),
+    ...(expect.runnerTags ? { runnerTags: expect.runnerTags } : {}),
+    ...(expect.selfHosted ? { selfHosted: true } : {}),
+  };
+  return guard.describeJobGuard(spec, guard.checkJob(spec, await guard.jobSeen(spec, env, fetchFn)));
 }

@@ -18,8 +18,14 @@
  * `ignore_changes`, a human edit goes to the codify pull request with the
  * actor named, and a provider default change suggests pinning or setting the
  * value. No route applies, merges or edits state.
+ *
+ * chant core carries the known-writes table and the CloudTrail reader
+ * (`@intentius/chant/ci-audit`, chant#4632, moved from this file; on chant
+ * main and not yet in a release). attribute and awsAuditLog ask chant's when
+ * the installed chant has them, and the copies here otherwise.
  */
 import { spawnSync } from "node:child_process";
+import { chantCiAudit } from "../chant-next";
 import { decide as askModel, isConfident, summarize } from "../decide";
 import { DRIFT_ACTOR } from "../decide/questions";
 import type { DecideOptions, DecideSettings } from "../decide";
@@ -189,9 +195,22 @@ export interface AwsAuditOptions {
 
 /**
  * CloudTrail's LookupEvents through the `aws` CLI when the job has installed it (the images do not carry it),
- * with the credentials it already has. Only `aws_` resources are searched.
+ * with the credentials it already has: chant's reader (chant#4632) when the installed chant has it, else
+ * ownAwsAuditLog.
  */
 export function awsAuditLog(o: AwsAuditOptions = {}): AuditLog {
+  const own = ownAwsAuditLog(o);
+  const options = { ...(o.region ? { region: o.region } : {}), ...(o.days !== undefined ? { days: o.days } : {}), ...(o.run ? { run: o.run } : {}), ...(o.now ? { now: o.now } : {}) };
+  return {
+    async lookup(q) {
+      const chant = await chantCiAudit();
+      return chant ? chant.awsAuditLog(options).lookup(q) : own.lookup(q);
+    },
+  };
+}
+
+/** The copy of the reader, for a chant without `ci-audit`. Only `aws_` resources are searched. */
+export function ownAwsAuditLog(o: AwsAuditOptions = {}): AuditLog {
   const run = o.run ?? spawnAws;
   return {
     async lookup(q) {
@@ -261,10 +280,12 @@ export async function attribute(root: string, found: Drifted[], o: AttributeOpti
   const notes: string[] = [];
   const auditCache = new Map<string, AuditAnswer>();
   let unavailable: string | undefined;
+  // chant's known-writes table (chant#4632) when the installed chant has it: terragucci's entries, with each Pulumi type beside them.
+  const known = (await chantCiAudit())?.knownWrite ?? knownWrite;
   for (const d of found) {
     for (const a of d.attributes) {
       const at = { root, address: d.address, path: a.path };
-      const hit = a.sensitive ? undefined : knownWrite(d.type, a.path, a);
+      const hit = a.sensitive ? undefined : known(d.type, a.path, a);
       if (hit) {
         attributions.push({ ...at, actor: hit.actor, source: "table", detail: hit.why });
         continue;

@@ -93,6 +93,12 @@
  * (./report/policy.ts); and the op-wave stand-down on `op` (chant#4581),
  * told apart by its exports, which ./apply.ts and the step spec use.
  *
+ * Newer than the 0.124.55 pin (chant main, chant#4624 and #4632): chant
+ * core's apply-job guard (`ci-job-guard`), which `terragucci check-job` runs
+ * (./check-job.ts), and its audit log reader and known-writes table
+ * (`ci-audit`), which drift attribution asks (./respond/attribute.ts).
+ * Without them terragucci's own check and reader run.
+ *
  * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
  * sources a root uses (`usedSources`, `lockedProviders`) and their forms
  * (`moduleSourceForms`, `providerAddressForms`), on its `registry` subpath.
@@ -860,6 +866,40 @@ export interface ChantRegistryProxies {
   fetchTarball(location: string, options?: { fetch?: ChantModuleFetch }): Promise<Uint8Array>;
 }
 
+// ── apply-job guard (chant#4624) and audit log (chant#4632) ──────────────
+
+/** What an apply job is expected to see (`JobGuardSpec` in `@intentius/chant/ci-job-guard`, chant#4624). */
+export interface ChantJobGuardSpec {
+  forge: "github" | "gitlab" | "forgejo";
+  /** The job, as the lines name it. */
+  job: string;
+  product?: string;
+  forgeEnvironment?: string;
+  branches: string[];
+  runnerTags?: string[];
+  selfHosted?: boolean;
+}
+
+/** chant core's apply-job guard (chant#4624), as far as `terragucci check-job` calls it. */
+export interface ChantJobGuard {
+  jobSeen(expect: ChantJobGuardSpec, env?: NodeJS.ProcessEnv, fetchFn?: typeof fetch): Promise<object>;
+  checkJob(expect: ChantJobGuardSpec, seen: object): { problems: string[]; checked: string[]; skipped: string[] };
+  describeJobGuard(expect: ChantJobGuardSpec, result: { problems: string[]; checked: string[]; skipped: string[] }): { ok: boolean; out: string[]; err: string[] };
+  JOB_GUARD_AUDIENCE: string;
+}
+
+/** Who last wrote an object outside the engine (`AuditAnswer` in `@intentius/chant/ci-audit`, chant#4632). */
+export type ChantAuditAnswer = { status: "found"; actor: "controller" | "human"; who: string; event: string; at: string } | { status: "silent" } | { status: "unavailable"; reason: string };
+
+/** chant core's audit log and attribution table (chant#4632), as far as ./respond/attribute.ts calls them. */
+export interface ChantCiAudit {
+  knownWrite(type: string, path: string, v: { before: unknown; live: unknown }): { actor: "controller" | "human" | "provider-default"; why: string } | undefined;
+  awsAuditLog(o?: { region?: string; days?: number; run?: (args: string[]) => { status: number | null; stdout: string; stderr: string; error?: Error }; now?: () => Date }): {
+    lookup(q: { type: string; address: string; ref: string }): Promise<ChantAuditAnswer>;
+  };
+  CI_AUDIT_FLOOR: string;
+}
+
 // ── part f: forge check, relay, estate, policy source, stand-down ─────────
 
 /** A forge check row (`CheckRow` in `@intentius/chant/forge-check`, chant#4608). */
@@ -1586,6 +1626,17 @@ const loaders = {
     () => import("@intentius/chant/lifecycle/release-ledger"),
     (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
   ),
+  jobGuard: once<ChantJobGuard>(
+    // @ts-ignore chant 0.124.55 has no ci-job-guard subpath (chant#4624)
+    () => import("@intentius/chant/ci-job-guard"),
+    (m) => (has(m, "jobSeen", "checkJob", "describeJobGuard", "jobGuardSpec") && typeof m.JOB_GUARD_AUDIENCE === "string" ? (m as unknown as ChantJobGuard) : undefined),
+  ),
+  ciAudit: once<ChantCiAudit>(
+    // @ts-ignore chant 0.124.55 has no ci-audit subpath (chant#4632)
+    () => import("@intentius/chant/ci-audit"),
+    // chant#4632's feature-detect: CI_AUDIT_FLOOR on the entry.
+    (m) => (typeof m.CI_AUDIT_FLOOR === "string" && has(m, "knownWrite", "awsAuditLog", "attributeDrift") ? (m as unknown as ChantCiAudit) : undefined),
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -1670,6 +1721,10 @@ export const chantAgentRuns = (): Promise<ChantAgentRuns | undefined> => load("a
 export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
 /** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
 export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJob");
+/** chant core's apply-job guard (chant#4624), or undefined. */
+export const chantJobGuard = (): Promise<ChantJobGuard | undefined> => load("jobGuard");
+/** chant core's audit log reader and attribution table (chant#4632), or undefined. */
+export const chantCiAudit = (): Promise<ChantCiAudit | undefined> => load("ciAudit");
 
 /**
  * Load the parts synchronous code reads, once, before a command runs. cli.ts
@@ -1732,5 +1787,6 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const holdRecord = await chantHoldRecord();
   const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof };
+  const [jobGuard, ciAudit] = [await chantJobGuard(), await chantCiAudit()];
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, jobGuard: !!jobGuard, ciAudit: !!ciAudit };
 }

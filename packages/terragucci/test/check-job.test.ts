@@ -1,7 +1,8 @@
 // An environment's apply job checks, before any token is traded, that it runs in its forge environment,
 // on a branch it applies from and on its runner, and stops naming the expected and found values (#976).
 import { describe, expect, it, vi } from "vitest";
-import { CHECK_AUDIENCE, checkJob, describeJobCheck, jobSeen, runnerTags, tokenClaims, type JobExpectation } from "../src/check-job";
+import { CHECK_AUDIENCE, checkJob, describeJobCheck, jobSeen, runCheckJob, runnerTags, tokenClaims, type JobExpectation } from "../src/check-job";
+import type { ChantJobGuard, ChantJobGuardSpec } from "../src/chant-next";
 import { main } from "../src/cli";
 
 // chant#4553: on chant's exit-code table a usage error is 1; terragucci's own table made it 2.
@@ -133,5 +134,28 @@ describe("check-job: the command", () => {
   it("decodes a token's claims without its signature", () => {
     expect(tokenClaims(jwt({ environment: "prod" }))).toEqual({ environment: "prod" });
     expect(() => tokenClaims("nope")).toThrow(/not a JWT/);
+  });
+});
+
+describe("check-job on chant's apply-job guard (chant#4624)", () => {
+  const gitlab: JobExpectation = { forge: "gitlab", environment: "prod", forgeEnvironment: "prod", branches: ["main"], runnerTags: ["prod"] };
+  const env = { CI_ENVIRONMENT_NAME: "prod", CI_COMMIT_REF_NAME: "main", CI_COMMIT_REF_PROTECTED: "true", CI_RUNNER_TAGS: "prod" };
+
+  it("hands chant's guard terragucci's expectation, named for the environment and the product", async () => {
+    const asked: ChantJobGuardSpec[] = [];
+    const guard: ChantJobGuard = {
+      JOB_GUARD_AUDIENCE: "chant-check-job",
+      jobSeen: async (spec) => (asked.push(spec), { seen: true }),
+      checkJob: () => ({ problems: [], checked: ["ref main"], skipped: [] }),
+      describeJobGuard: (spec, r) => ({ ok: true, out: [`${spec.product} check-job: ${spec.job}: ${r.checked.join(", ")}`], err: [] }),
+    };
+    expect(await runCheckJob(gitlab, env, fetch, guard)).toEqual({ ok: true, out: ["terragucci check-job: environment prod: ref main"], err: [] });
+    expect(asked).toEqual([{ forge: "gitlab", job: "environment prod", product: "terragucci", branches: ["main"], forgeEnvironment: "prod", runnerTags: ["prod"] }]);
+  });
+
+  it("runs terragucci's own check on a chant without the guard", async () => {
+    const told = await runCheckJob({ ...gitlab, forgeEnvironment: "staging" }, env, fetch, null);
+    expect(told.ok).toBe(false);
+    expect(told.err[0]).toBe("terragucci check-job: environment prod: forge environment: expected staging, found prod");
   });
 });

@@ -51,6 +51,10 @@ describe("terragucci's words", () => {
     for (const [body, atlantis, want] of COMMENTS) expect(parseComment(body, atlantis ? { atlantis: true } : {}), body).toEqual(want);
   });
 
+  it("refuse a re-plan narrowed by --target, --refresh or --target-dependents", () => {
+    for (const c of ["/terragucci plan --target aws_s3_bucket.a", "/terragucci plan envs/dev --refresh", "/terragucci plan --target a --target-dependents"]) expect(parseComment(c), c).toMatchObject({ kind: "refused" });
+  });
+
   it("keep the migration guide's reason for an atlantis form terragucci has no counterpart for", () => {
     expect(parseComment("atlantis apply -d envs/dev", { atlantis: true })).toMatchObject({ kind: "refused", reason: expect.stringContaining("applies one root") });
   });
