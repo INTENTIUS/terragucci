@@ -1030,7 +1030,7 @@ Writes, under `--out` (default `registry-edge`), the function `modules.registry.
 terragucci check-job --forge github|gitlab|forgejo --environment <name> --branches <b>[,<b>...] [--forge-environment <name>] [--runner-tags <t>[,<t>...]] [--self-hosted]
 ```
 
-The first line of each [environment's](/terragucci/reference/config/#environments) apply job, before any token is fetched or traded. `init` writes the expected values into the job: the forge environment, the branches the job applies from (the default branch from the forge, and those of `apply.branches`), GitLab's runner tags, and `--self-hosted` when the runner's labels include `self-hosted`. It prints what it checked, or one line per value that differs, naming the expected and the found value, and exits 1. What it reads on each forge: [The apply job's own check](/terragucci/reference/environment/#the-apply-jobs-own-check).
+The first line of each [environment's](/terragucci/reference/config/#environments) apply job, before any token is fetched or traded. `init` writes the expected values into the job: the forge environment, the branches the job applies from (the default branch from the forge, and those of `apply.branches`), GitLab's runner tags, and `--self-hosted` when the runner's labels include `self-hosted`. It prints what it checked, or one line per value that differs, naming the expected and the found value, and exits 9 (`misplaced`), or 1 with a chant whose exit table has no 9. The job line passes that code on (`|| exit $?`), so on GitLab, where the op-wave jobs allow exit 1 alone, a refused job fails and the waves after it stop. What it reads on each forge: [The apply job's own check](/terragucci/reference/environment/#the-apply-jobs-own-check).
 
 ## install
 
@@ -1058,6 +1058,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | 6 | `stage tf-apply --stand-down`: a newer push applies instead |
 | 7 | `stage tf-apply`: chant's policy denied the plan and no override counts |
 | 8 | `stage tf-apply`: a decision point was answered with an answer the gate does not pass on, so nothing applied |
+| 9 | `check-job`: the job runs where its environment's apply is not set to run, so it stopped before any token was fetched. Chant's table has this code from the release that carries chant#4624; with an older chant `check-job` exits 1 |
 
 | Command | 0 | 1 | 3 | 4 |
 |---|---|---|---|---|
@@ -1077,7 +1078,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `forge check` | no mismatch | a mismatch, or with `--require-clouds` a cloud not checked; no config, an unknown project, or no forge to name | | |
 | `state export` | the version written and recorded | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | |
-| `check-job` | the job runs where its environment's apply is set to run | a forge environment, ref or runner differs; a flag missing | | |
+| `check-job` | the job runs where its environment's apply is set to run | a flag missing, or on a chant with no code 9, a forge environment, ref or runner differs | | |
 | `install` | done | not a Linux host | | |
 | `estate` | page written | a project's index could not be read | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | |
