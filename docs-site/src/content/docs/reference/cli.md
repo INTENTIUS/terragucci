@@ -322,7 +322,7 @@ Run in the repo that publishes. The status record for the version goes on `chant
 terragucci modules consumers [--check] [--config <file>]
 ```
 
-Writes `consumers.json` at the repo's top: each registry module version the roots pin, and where, in chant's consumers document. A publishing repo across the control repo joins it into its catalog. `--check` writes nothing and exits 1 when the file is missing or no longer matches the roots.
+Writes `consumers.json` at the repo's top: each registry module version the roots pin, and where, in chant's consumers document. A publishing repo across the control repo joins it into its catalog. `--check` writes nothing and exits 1 when the file is missing or no longer matches the roots. The check job of a repo with `control` runs it, and it passes with a note on a chant that has no consumer scan.
 
 ## rollout
 

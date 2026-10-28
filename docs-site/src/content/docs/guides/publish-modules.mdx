@@ -390,7 +390,7 @@ modules:
     - gitlab://gitlab.example.com/platform/modules
 ```
 
-In GitLab CI, `publish: gitlab` names the job's own project and uploads with its `CI_JOB_TOKEN`. Elsewhere, write the project's address and put a token with the `api` scope in `GITLAB_TOKEN`.
+In GitLab CI, `publish: gitlab` names the job's own project and uploads with its `CI_JOB_TOKEN`. Elsewhere, write the project's address and put a token with the `api` scope in `GITLAB_TOKEN`. On GitHub and Forgejo the publish job reads it from the secret `modules.gitlab_token` names, `GITLAB_TOKEN` unless set.
 
 The upload is the archive the bucket registry serves and the attestation signs, so every target has one digest. Publish reads the release back as Terraform would before it reports it. A release already there with the same content is left alone, and one with other content is refused. The host keeps no commit for what it holds, so publish takes the commit from the release record on the ledger. Without a record, as for an upload by hand, the commit comes from the `git-tags` tag; with neither, publish stops and says what to fetch.
 
@@ -490,7 +490,7 @@ A registry with `modules.registry` also gets a release catalog under `catalog/` 
 
 A version's page shows its inputs, outputs, required providers, examples and README, read from the module at the commit the version was cut from. A module with a `.terraform-docs.yml` gets the markdown terraform-docs writes with that file instead, when `terraform-docs` is on the job's `PATH`; it runs on a scratch copy and prints to stdout, so the module's README in the repo is never rewritten. The changelog groups the conventional commits since the previous version. Under it sit the attestation with the command that checks it and the roots in this repo that pin the version.
 
-Across a [control repo](/terragucci/concepts/control-repo/), each project keeps a `consumers.json` at its top: `terragucci modules consumers` writes it from the project's roots, and `--check` fails when it no longer matches them. A publishing repo with `control` reads the control repo's projects and each one's `consumers.json`, with `TERRAGUCCI_CONTROL_READ_TOKEN`, and the catalog lists every project's roots on each version. Without the token it lists this repo's roots only.
+Across a [control repo](/terragucci/concepts/control-repo/), each project keeps a `consumers.json` at its top: `terragucci modules consumers` writes it from the project's roots, and `--check` fails when it no longer matches them. A repo with `control` runs `--check` in its check job, so a pull request that changes a pin also updates the file. A publishing repo with `control` reads the control repo's projects and each one's `consumers.json`, with `TERRAGUCCI_CONTROL_READ_TOKEN`, and the catalog lists every project's roots on each version. Without the token it lists this repo's roots only.
 
 A version keeps the page it was first written with, and a file already in the bucket with the same bytes is left alone, so a rerun that publishes nothing writes nothing. `terragucci publish --dry-run` writes no catalog. To turn the catalog off:
 

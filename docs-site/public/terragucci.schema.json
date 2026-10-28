@@ -669,6 +669,10 @@
         "require": {
           "const": "attested"
         },
+        "gitlab_token": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
         "trusted": {
           "type": "array",
           "items": {
@@ -2588,6 +2592,10 @@
             },
             "require": {
               "const": "attested"
+            },
+            "gitlab_token": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
             },
             "trusted": {
               "type": "array",

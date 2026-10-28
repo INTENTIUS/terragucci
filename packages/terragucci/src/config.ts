@@ -1418,7 +1418,7 @@ export function agentLoginWarning(agent: { token_env?: unknown; login?: unknown 
 export const STEPS_MOVED =
   "steps are ci.hooks in chant.workspace.json now, each with a command list and perRun: true (before: init or drift is before.observe, after: init is before.plan, after: drift is after.plan, roots is targets, on_failure is onFailure); see https://intentius.io/terragucci/guides/run-steps/";
 
-export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
+export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry", "gitlab_token"]);
 export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth", "tokens", "tokens_name", "tokens_region", "providers", "catalog"];
 /** `modules.registry.providers`: `mirror` serves the providers the lock files pin as a network mirror under `providers/` (chant#4564). */
 export const REGISTRY_PROVIDERS = ["mirror"] as const;
@@ -1561,6 +1561,7 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
   }
   if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
   if (m.test !== undefined && typeof m.test !== "boolean") problems.push(`${where}.test must be true or false`);
+  if (m.gitlab_token !== undefined && !(typeof m.gitlab_token === "string" && SECRET_NAME.test(m.gitlab_token))) problems.push(`${where}.gitlab_token must name the secret holding a GitLab token with the api scope, such as GITLAB_TOKEN`);
   if (m.attest !== undefined) {
     // true reads the public key at cosign.pub.
     if (isObject(m.attest)) {
@@ -1614,6 +1615,14 @@ export interface ModulesSettings {
   test?: boolean;
   /** Write each release as the Terraform module registry protocol, as static files a bucket or a Pages site serves. */
   registry?: RegistrySettings;
+  /** The secret holding a GitLab token with the api scope, which a GitHub or Forgejo publish job passes as `GITLAB_TOKEN` for a `gitlab://` target. Default `GITLAB_TOKEN`. */
+  gitlab_token?: string;
+}
+
+/** The secret a GitHub or Forgejo publish job reads the GitLab token from, when `modules.publish` names a `gitlab://` project; undefined when it names none. */
+export function gitlabPublishToken(m: ModulesSettings | undefined): string | undefined {
+  const targets = Array.isArray(m?.publish) ? m.publish : m?.publish === undefined ? [] : [m.publish];
+  return targets.some((t) => gitlabPublishForm.test(t)) ? (m?.gitlab_token ?? "GITLAB_TOKEN") : undefined;
 }
 
 /**

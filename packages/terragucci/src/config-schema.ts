@@ -234,6 +234,7 @@ const modules = map([...MODULES_KEYS] as (keyof ModulesSettings)[], {
   publish: { anyOf: [publishTarget, { type: "array", items: publishTarget }] },
   attest: { anyOf: [bool, map(["key"], { key: { type: "string", minLength: 1 } })] },
   require: { const: "attested" },
+  gitlab_token: secret,
   trusted: {
     type: "array",
     items: map(["source", "key", "ledger"], {

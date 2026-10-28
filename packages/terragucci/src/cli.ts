@@ -816,6 +816,11 @@ export async function main(argv: string[]): Promise<number> {
           const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
           const moduleDirs = settings.modules?.path ? findModules(cwd, settings.modules.path).map((m) => m.rel) : [];
           const doc = await projectConsumersDocument(cwd, { ...(settings.roots ? { roots: settings.roots } : {}), skip: moduleDirs });
+          if (!doc && flags.check === true) {
+            // The check job runs it in every repo with control: on a chant without the scan there is nothing to hold the file to.
+            console.log(`${PROJECT_CONSUMERS} is not checked: the installed chant has no consumer scan`);
+            return 0;
+          }
           if (!doc) throw new ConfigError("terragucci modules consumers writes chant's consumers document (chant#4600) from the terraform lexicon's scan (chant#4599), which the installed chant does not carry; it needs a chant release that does");
           const file = join(cwd, PROJECT_CONSUMERS);
           const held = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
