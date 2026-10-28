@@ -425,6 +425,71 @@ export const RESUME_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   forgejo: ".forgejo/workflows/terragucci-resume.yml",
 };
 
+/** The day-2 action workflow (./action.ts), beside the pipeline (GitHub and Forgejo). behold dispatches it by this name with inputs `root` and `address`. */
+export const ACTION_WORKFLOW = "terragucci-action.yml";
+export const ACTION_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: `.github/workflows/${ACTION_WORKFLOW}`,
+  forgejo: `.forgejo/workflows/${ACTION_WORKFLOW}`,
+};
+/** The action workflow's workflow_dispatch inputs. */
+export const ACTION_INPUTS = {
+  root: { description: "The root the action is in, a path from the repository root", required: true, type: "string" },
+  address: { description: "The action's address, such as module.app.action.aws_lambda_invoke.rotate", required: true, type: "string" },
+};
+
+/** The first words of an action comment, as the jobs' conditions test them. */
+const ACTION_COMMENT = "/terragucci action ";
+
+/**
+ * The action job's first step (./action.ts): `terragucci action --decide`
+ * reads the comment or the dispatch from the event file, checks who asked,
+ * the root and the address, and replies to a refusal. No credential is taken
+ * before it says go.
+ */
+export function actionDecideScript(layers: string[][], forge: Exclude<ForgeName, "gitlab">): string {
+  return [
+    "set -uo pipefail",
+    `terragucci action --decide --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-action.json || exit 1`,
+    `node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).go?0:1)' terragucci-action.json || exit 0`,
+    'echo "go=1" >>"$GITHUB_OUTPUT"',
+  ].join("\n");
+}
+
+/**
+ * The action job's second step: the apply credentials, then `terragucci
+ * action --from`, which asks for the action as the person who asked, runs
+ * it once an approval by someone else stands, and replies on the pull
+ * request. A request that waits ends the step green: the reply carries the
+ * approve line.
+ */
+export function actionRunScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcSettings | undefined): string {
+  return [
+    ...stageTokens(forge, oidc, "apply"),
+    "set -uo pipefail",
+    ...cloudScripts(forge, oidc, "apply", "terragucci-action"),
+    `terragucci action --from terragucci-action.json${forge === "forgejo" ? " --forge forgejo" : ""}`,
+    "code=$?",
+    '[ "$code" -eq 3 ] && exit 0',
+    'exit "$code"',
+  ].join("\n");
+}
+
+/**
+ * The resume job's action step: `terragucci action --resume --dry-run` lists
+ * the requests an approval now stands for, and with none the step stops
+ * before any credential; otherwise each runs as the person who asked.
+ */
+export function actionResumeScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcSettings | undefined): string {
+  return [
+    ...stageTokens(forge, oidc, "apply"),
+    "set -uo pipefail",
+    "terragucci action --resume --dry-run --out terragucci-actions.txt || exit 1",
+    "[ -s terragucci-actions.txt ] || exit 0",
+    ...cloudScripts(forge, oidc, "apply", "terragucci-action"),
+    "terragucci action --resume",
+  ].join("\n");
+}
+
 /** The ephemeral sweep's workflow file, beside the pipeline's (GitHub and Forgejo). */
 export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   github: ".github/workflows/terragucci-ephemeral.yml",
@@ -2390,6 +2455,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const rollouts = input.rollouts;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
+  // A day-2 action (./action.ts) runs from a workflow of its own, for plain roots on Terraform, which alone invokes an action block.
+  const actionFlow = forge !== "gitlab" && binary === "terraform" && !tg;
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env, ...(input.atlantisComments ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {}) };
   // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
   const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
@@ -3082,7 +3149,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
+    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}${actionFlow ? ` && !${says(ACTION_COMMENT)}` : ""}) || ${REPLAN_DISPATCH}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
@@ -3455,9 +3522,42 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ],
       } as never) as never],
     ]);
+    // A day-2 action whose approval now stands runs as the person who asked (./action.ts resumeActions), in a job of its own.
+    if (actionFlow) {
+      resume.set("action", new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        permissions: { contents: "write", ...(needsToken ? { "id-token": "write" } : {}) },
+        ...openid(needsToken),
+        concurrency: { group: "terragucci-action-${{ github.repository }}", "cancel-in-progress": false },
+        env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv },
+        steps: steps(new Step({ name: "Run each day-2 action whose approval stands", shell: "bash", run: actionResumeScript(forge, oidc) }), false, true),
+      } as never) as never);
+    }
     // The resume applies a commit the push's own pipeline left waiting: the control repo is told here, once, by a job of its own.
     if (input.control) resume.set("control", controlJob(input.control, forge, image, { needs: "resume", cond: "needs.resume.outputs.control_sha != ''", sha: "${{ needs.resume.outputs.control_sha }}" }));
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(resume) });
+  }
+  if (actionFlow) {
+    // Day-2 actions: a workflow of its own, on a `/terragucci action` comment or a dispatch with root and address (behold's button).
+    const action = new Map<string, never>([
+      ["workflow", new Workflow({ name: "terragucci action", on: { issue_comment: { types: ["created"] }, workflow_dispatch: { inputs: ACTION_INPUTS } }, env: jobEnv, permissions: { contents: "read" } }) as never],
+      ["action", new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        if: `(github.event_name == 'issue_comment' && ${says(ACTION_COMMENT)}) || github.event_name == 'workflow_dispatch'`,
+        // It pushes the request and its records to chant/lifecycle and replies on the pull request.
+        permissions: { contents: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+        ...openid(needsToken),
+        concurrency: { group: "terragucci-action-${{ github.repository }}", "cancel-in-progress": false },
+        env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv },
+        steps: [
+          ...steps(new Step({ id: "decide", name: "Read the comment or the dispatch and decide whether an action runs", shell: "bash", run: actionDecideScript(layers, forge) }), false, true),
+          new Step({ if: "steps.decide.outputs.go == '1'", name: "Ask for the action, and run it once an approval by someone else stands", shell: "bash", run: actionRunScript(forge, oidc) }),
+        ],
+      } as never) as never],
+    ]);
+    extra.push({ path: ACTION_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(action) });
   }
   if (ephemeral) {
     // ephemeral: a schedule of its own destroys the copies whose TTL passed or whose pull request closed.

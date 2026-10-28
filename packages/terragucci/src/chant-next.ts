@@ -99,6 +99,12 @@
  * ./sources.ts keeps only the lists and the refusals with them, and its own
  * reader and forms as the fallback.
  *
+ * Newer than the pin too (chant#4653, terragucci#1310): the terraform
+ * lexicon's day-2 action, `invokeAction` on its `action-ops` subpath (op
+ * `tf-action`), read into the state operations below when the installed chant
+ * has it. Without it `terragucci action` refuses, naming the chant it needs
+ * (./action.ts).
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. A `@ts-ignore` marks an
  * `import()` of a subpath the pin lacks; scripts/cli-bundle.mjs stands
@@ -466,7 +472,7 @@ export interface ChantModuleCatalog {
 // ── ci-product (chant#4550) ────────────────────────────────────────────────
 
 /** A command a comment may name, as chant's words module lists them. */
-export type ChantProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent";
+export type ChantProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action";
 
 /** A stage a product names in a status context and the note. */
 export type ChantProductStage = "plan" | "apply" | "record" | "check" | "drift" | "lock" | "approval" | "control";
@@ -1204,7 +1210,40 @@ export interface ChantStateOps {
   planCopy(r: ChantRootRun & { backendConfig: Record<string, string>; planFile: string; destroy?: boolean; lockTimeout?: string | false; init?: boolean }): Promise<{ planFile: string; json: unknown; summary: string; planDigest: string }>;
   applyPlanFile(r: ChantRootRun & { planFile: string; lockTimeout?: string | false }): Promise<void>;
   readGatedRequests(op: string, location?: { cwd?: string }): Promise<ChantGatedRequestRead[]>;
+  /** The terraform lexicon's day-2 action (`action-ops`, chant#4653); absent on a chant without it. */
+  invokeAction?: (input: ChantInvokeActionInput) => Promise<ChantInvokeActionResult>;
+  /** The action address `-invoke` takes, as the lexicon checks it. */
+  ACTION_ADDRESS?: RegExp;
 }
+
+/** What `invokeAction` takes (`InvokeActionInput`, chant#4653). */
+export interface ChantInvokeActionInput {
+  root: string;
+  dir: string;
+  binary?: string;
+  version?: string;
+  address: string;
+  requester: string;
+  rules: { mode: string; quorum?: readonly unknown[] };
+  commit?: string;
+  planFile?: string;
+  lockTimeout?: string | false;
+  env?: NodeJS.ProcessEnv;
+  exec?: ChantRootRun["exec"];
+  cwd?: string;
+  now?: string;
+  runId?: string;
+  expiry?: string;
+  anew?: boolean;
+}
+
+/** How an action call ended (`InvokeActionResult`, chant#4653). */
+export type ChantInvokeActionResult =
+  | { outcome: "refused"; code: "action-engine" | "action-address" | "unknown-action"; reason: string; exit: number }
+  | { outcome: "gated"; digest: string; subject: string; command: string; reason?: string; exit: number }
+  | { outcome: "spent"; digest: string; subject: string; exit: number }
+  | { outcome: "ok"; digest: string; subject: string; approvedBy: string; tail: string; recorded: boolean; exit: number }
+  | { outcome: "failed"; digest: string; subject: string; approvedBy: string; error: string; tail: string; recorded: boolean; exit: number };
 
 /** One row an apply holds (`LockRow`, chant#4552). */
 export interface ChantLockRow {
@@ -1551,7 +1590,17 @@ const loaders = {
     async () => {
       const ops: object = await import("@intentius/chant-lexicon-terraform/state-ops");
       const requests: object = await import("@intentius/chant/lifecycle/gated-request");
-      return { ...requests, ...ops };
+      // chant#4653: the day-2 action sits on its own subpath; a chant without it keeps the rest of the state operations.
+      const action: object = await (async () => {
+        try {
+          // @ts-ignore: the published pin has no action-ops subpath
+          const m: Record<string, unknown> = await import("@intentius/chant-lexicon-terraform/action-ops");
+          return typeof m.invokeAction === "function" ? { invokeAction: m.invokeAction, ...(m.ACTION_ADDRESS instanceof RegExp ? { ACTION_ADDRESS: m.ACTION_ADDRESS } : {}) } : {};
+        } catch {
+          return {};
+        }
+      })();
+      return { ...requests, ...ops, ...action };
     },
     (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests") ? (m as unknown as ChantStateOps) : undefined),
   ),
@@ -1697,6 +1746,11 @@ export const chantSourceFormsNow = (): ChantSourceForms | undefined => loaded("s
 export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
 /** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
 export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
+/** The terraform lexicon's day-2 action with the state operations it runs beside (chant#4653), or undefined on a chant without it. */
+export async function chantInvokeAction(): Promise<(ChantStateOps & Required<Pick<ChantStateOps, "invokeAction">>) | undefined> {
+  const ops = await chantStateOps();
+  return ops && typeof ops.invokeAction === "function" ? (ops as ChantStateOps & Required<Pick<ChantStateOps, "invokeAction">>) : undefined;
+}
 /** chant's recorded op-wave hold (chant#4623), or undefined on a chant whose hold writes no applied or finished line. */
 export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
 /** chant's reader of a gated request's stored proof (chant#4551, #4623), or undefined. */

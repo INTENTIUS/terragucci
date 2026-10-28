@@ -53,6 +53,11 @@
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's or migration's digest on chant/lifecycle, then start its apply again with your token)
  *   terragucci approve export|unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a state export request, or the release of a state lock)
  *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
+ *   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a day-2 action's request; the requester's own approval never counts)
+ *   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   (run one Terraform action block of a root under a gated request: exit 3 while it waits, 0 once it ran, 1 on a refusal or a failed run; see action.ts)
+ *   terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci action` comment or the action workflow's dispatch; run by the generated action workflow)
+ *   terragucci action --from <file> [--forge forgejo]   (run the action the decision names and reply on its pull request; run by the generated action workflow)
+ *   terragucci action --resume [--dry-run] [--out <file>]   (run each action whose approval now stands, as the person who asked; run by the resume job)
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for, or an approved apply that was killed; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
@@ -108,6 +113,8 @@ import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, che
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
+import { describeAction, noActionReply, readActionDecision, resumeActions, runAction } from "./action";
+import { poster } from "./forge";
 import { pollGitLabComments } from "./comment-gitlab";
 import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
@@ -239,10 +246,13 @@ const USAGE = `usage:
   terragucci approve export <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a state export request
   terragucci approve unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve releasing a state lock
   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a pull request's ephemeral copy
-    (export, unlock and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
+  terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a day-2 action's request
+    (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
+  terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   run one Terraform action block under a gated request (exit 3 while it waits)
+  terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo] | --from <file> [--forge forgejo] | --resume [--dry-run] [--out <file>]   (run by the generated action workflow and resume job)
   terragucci ephemeral up --pr <n> [--head <sha>] [--base <ref>] [--binary <b>] [--config <file>]   (run by the generated pipeline)
   terragucci ephemeral down --pr <n> --reason closed|expired [--base <ref>] [--binary <b>] [--config <file>]
   terragucci ephemeral sweep [--base <ref>] [--binary <b>] [--config <file>]
@@ -316,7 +326,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -397,6 +407,16 @@ async function controlRecords(cwd: string, args: string[], flags: Record<string,
   throw new ConfigError("usage: terragucci control records init|import|put <project>|defaults|retire <project>|list|migrate");
 }
 
+/** The binary terragucci.yml names, when it names one and can be read. */
+async function configBinary(cwd: string): Promise<string | undefined> {
+  try {
+    const path = findConfig(cwd);
+    return path ? resolveRepo(await loadConfig(path)).binary : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function str(flags: Record<string, string | true>, k: string): string | undefined {
   const v = flags[k];
   if (v === true) throw new ConfigError(`--${k} needs a value`);
@@ -453,7 +473,8 @@ export async function main(argv: string[]): Promise<number> {
     return e.exit;
   };
   try {
-    if (json && !ENVELOPE_COMMANDS.includes(cmd)) throw new ConfigError(`--json is not available on ${cmd || "help"}`);
+    // `action --json` prints the action's own object (action.ts ActionJson), which behold and scripts read.
+    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
@@ -1035,7 +1056,7 @@ export async function main(argv: string[]): Promise<number> {
         const prompt = str(flags, "prompt");
         if (agent === "run" ? !out || !prompt : !layers || !out) throw new ConfigError(agent === "run" ? "comment --agent run needs --out <file> and --prompt <file>" : "comment needs --layers <a,b;c> and --out <file>");
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment's --forge is github or forgejo");
-        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, agent: agent as "off" | "on" | "run" });
+        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, agent: agent as "off" | "on" | "run", noAction: noActionReply(await configBinary(cwd)) });
         writeDecision(resolve(cwd, out!), decision);
         if (decision.go && decision.ask && prompt) writePrompt(resolve(cwd, prompt), { ask: decision.ask, pr: decision.pr!, head: decision.head!, user: decision.user!, policyDir });
         if (decision.fail) {
@@ -1150,6 +1171,57 @@ export async function main(argv: string[]): Promise<number> {
       case "unlock-state": {
         if (!args[0] || args.length > 1) throw new ConfigError("unlock-state takes one root: unlock-state <root>");
         const done = await unlockState(cwd, args[0], { ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), log: (l) => console.log(`terragucci unlock-state: ${l}`) });
+        return done.code;
+      }
+      case "action": {
+        const forge = str(flags, "forge") ?? "github";
+        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("action's --forge is github or forgejo");
+        if (flags.decide === true) {
+          // The action workflow's first step: who asked and what, before any credential (comment.ts, action: "run").
+          const layers = str(flags, "layers");
+          const out = str(flags, "out");
+          if (!layers || !out) throw new ConfigError("action --decide needs --layers <a,b;c> and --out <file>");
+          const decision = await decideComment({ layers: parseLayers(layers), forge, action: "run" });
+          writeDecision(resolve(cwd, out), decision);
+          if (decision.fail) {
+            console.error(`terragucci action: failed, nothing runs: ${decision.reason}`);
+            return 1;
+          }
+          console.log(`terragucci action: ${decision.go ? "" : "nothing runs: "}${decision.reason}`);
+          return 0;
+        }
+        if (flags.resume === true) {
+          const done = await resumeActions(cwd, { dryRun: flags["dry-run"] === true, log: (l) => console.log(`terragucci action: ${l}`) });
+          const out = str(flags, "out");
+          if (out) writeFileSync(resolve(cwd, out), done.actions.map((a) => `${a.root} ${a.address}\n`).join(""));
+          return done.code;
+        }
+        const from = str(flags, "from");
+        let root = args[0];
+        let address = args[1];
+        let actor = str(flags, "actor");
+        let pr: number | undefined;
+        if (from) {
+          const d = readActionDecision(resolve(cwd, from));
+          if (!d.go || !d.root || !d.address) {
+            console.log(`terragucci action: nothing runs: ${d.reason}`);
+            return 0;
+          }
+          ({ root, address } = d);
+          actor = d.user ?? actor;
+          pr = d.pr;
+        } else if (args.length !== 2) throw new ConfigError("action takes a root and an action address: action <root> <address>");
+        const done = await runAction(cwd, { root: root!, address: address!, ...(actor ? { actor } : {}), ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}) });
+        const said = describeAction(done.json);
+        if (json) console.log(JSON.stringify(done.json));
+        else console.log(`terragucci action: ${said}`);
+        if (pr !== undefined) {
+          try {
+            await poster(forge, process.env).addComment(pr, `terragucci: ${said}`);
+          } catch (e) {
+            console.error(`terragucci action: could not reply on pull request ${pr}: ${(e as Error).message}`);
+          }
+        }
         return done.code;
       }
       case "ephemeral": {

@@ -5,9 +5,10 @@
  * scenarios/index.json saying what the driver seeds before its first step.
  *
  * terragucci's pipeline writes report.json, not chant's pr-plan.json, so a
- * terragucci scenario's steps are open, open-concurrent, merge, kill-job and
- * out-of-band, and its outcomes come from the forge (comment, issue) and from
- * out-of-band checks (stack/harness/check.sh, exit). The plan, approve and
+ * terragucci scenario's steps are open, open-concurrent, merge, kill-job,
+ * out-of-band, and chant#4650's await-pull and comment, and its outcomes come
+ * from the forge (comment, issue, pull), the gated requests on the ledger
+ * (gated) and out-of-band checks (stack/harness/check.sh, exit). The plan, approve and
  * apply steps wait for chant's pr-report, which no terragucci job writes.
  *
  * chant's lintScenario is the lint (./harness.ts lint). `localFindings` here
@@ -22,7 +23,7 @@ export const SCENARIOS_DIR = join(import.meta.dirname, "scenarios");
 export const SCENARIO_SCHEMA = "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json";
 
 /** The steps a terragucci scenario may take: the ones that need no chant pr-report. */
-export const TERRAGUCCI_STEPS = new Set(["open", "open-concurrent", "merge", "kill-job", "out-of-band"]);
+export const TERRAGUCCI_STEPS = new Set(["open", "open-concurrent", "merge", "kill-job", "out-of-band", "await-pull", "comment"]);
 
 export interface ScenarioIndexEntry {
   /** The engine binary its pipeline runs: tofu, terraform or choudoufu. */

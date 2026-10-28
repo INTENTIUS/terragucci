@@ -1,0 +1,87 @@
+---
+title: Run a day-2 action
+description: Run one Terraform action block of a root, such as a key rotation or a cache flush, from a pull request comment, a dispatch or a shell, under an approval by someone other than the person who asked.
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/run-a-day-2-action/.
+  List the action blocks the roots of this repo declare, with the address each is invoked by (module.<name>.action.<type>.<label> for one inside a module), and the binary each root runs.
+  Do not run `terragucci action`.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A Terraform `action` block does one thing when it is invoked, such as rotating a key or flushing a cache, and changes no resource. terragucci runs one of them on its own, by its address, under a gated request:
+
+| Step | What happens |
+|---|---|
+| ask | the root is planned with `-invoke=<address>`, in refresh-only mode, and the request waits on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) under `<root>:<address>`, with a digest of the action's input as the plan has it |
+| approve | someone other than the person who asked approves that digest |
+| run | the approval is spent, the saved plan is applied, and a line records how it ended |
+
+An action whose input moved after the approval (another payload, another target) plans another digest, so it waits again and runs nothing. The [audit trail](/terragucci/reference/audit-trail/) lists the request as `action-requested`, its approval as `approval`, and the run as `action`, with the root, the address, who asked, who approved, the digest and the result.
+
+## Before you start
+
+| You need | Why |
+|---|---|
+| a root whose binary is `terraform`, at 1.14 or newer | only Terraform invokes an action block on its own; the CI image carries 1.14.9 |
+| the action's address | `action.<type>.<label>` for a block in the root, `module.<name>.action.<type>.<label>` for one in a module the root calls |
+| `apply.resume` in `terragucci.yml` | the resume job runs an action once its approval stands |
+
+A root on OpenTofu or [choudoufu](/terragucci/concepts/glossary/#choudoufu) runs no action. Asking for one there is refused with the binary and the version the root runs, for example `this root runs OpenTofu (tofu 1.13.1), which has no action invocation`.
+
+## Ask from a pull request
+
+<Steps>
+
+1. On any open pull request, comment the root and the address, on one line:
+
+   ```text
+   /terragucci action apps/orders module.app.action.local_command.rotate
+   ```
+
+   The root must be one the pipeline was written with. The comment is read by the `terragucci-action.yml` workflow, which runs the default branch's code, never the pull request's, and only for someone with write access.
+
+2. The workflow plans the action and replies with the digest and the line that approves it:
+
+   ```text
+   terragucci: module.app.action.local_command.rotate on apps/orders waits for an approval of sha256:3f1c... by someone other than the person who asked. Approve it with:
+
+       terragucci approve action apps/orders --plan sha256:3f1c...
+   ```
+
+3. Someone else runs the approve line in a checkout. `--dry-run` prints the ledger line it would write and writes nothing. Run by the person who asked, it exits 1: the requester's own approval never counts.
+
+4. The resume job runs the action on its next run, as the person who asked, and records how it ended. To run it sooner, comment the same line again.
+
+</Steps>
+
+## Ask from a dispatch
+
+`terragucci-action.yml` takes a `workflow_dispatch` with two inputs:
+
+| Input | Value |
+|---|---|
+| `root` | the root's path from the repository root, such as `apps/orders` |
+| `address` | the action's address, such as `module.app.action.local_command.rotate` |
+
+The dispatch is checked as the comment is, and its answer is the run's log.
+
+## Ask from a shell
+
+In a checkout of the default branch, with the root's apply credentials:
+
+```bash
+npx terragucci action apps/orders module.app.action.local_command.rotate --json
+```
+
+| Exit | Meaning |
+|---|---|
+| 0 | the action ran |
+| 1 | the ask was refused, or the action failed |
+| 3 | the request waits for an approval |
+
+`--json` prints one object, such as `{"status":"gated","root":"apps/orders","address":"...","digest":"sha256:...","approve":"terragucci approve action apps/orders --plan sha256:..."}`. Once someone else approved it, run the same command again to run it.

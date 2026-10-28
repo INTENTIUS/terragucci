@@ -128,7 +128,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
   if (event.action !== "created") return stop("not a new comment");
   const parsed = parseComment(event.comment?.body, parseOptions(env));
   // A plan comment, or one not addressed to terragucci, belongs to the replan job.
-  if (!parsed || parsed.kind === "plan" || parsed.kind === "agent") return stop("the comment does not ask for an apply");
+  if (!parsed || parsed.kind === "plan" || parsed.kind === "agent" || parsed.kind === "action") return stop("the comment does not ask for an apply");
   const prMode = o.when === "pull-request";
   const number = event.issue?.number;
   if (!Number.isInteger(number) || number < 1) return stop("the comment has no issue number");
