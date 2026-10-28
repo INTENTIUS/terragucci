@@ -22,7 +22,7 @@
  * that ran it.
  */
 import { randomBytes } from "node:crypto";
-import { chantOtlp } from "./chant-next";
+import { sendOtlp } from "@intentius/chant/otlp";
 
 export type AttrValue = string | number | boolean;
 export type Attrs = Record<string, AttrValue | undefined>;
@@ -238,23 +238,9 @@ export function metricsBody(gauges: Gauge[], resource: Attrs, version: string, a
 
 // ── sending ──────────────────────────────────────────────────────────────────
 
-/** POST one OTLP/JSON body. Returns the problem, or undefined when it was taken. Never throws. */
+/** POST one OTLP/JSON body through chant's exporter (chant#4555); the body stays terragucci's. Returns the problem, or undefined when it was taken. Never throws. */
 export async function send(t: Target, body: unknown, fetchFn: OtlpFetch = fetch as unknown as OtlpFetch): Promise<string | undefined> {
-  // chant's exporter (chant#4555) sends the same POST with the same timeout and answers; the body stays terragucci's.
-  const chant = await chantOtlp();
-  if (chant) return chant.sendOtlp(t, body, fetchFn);
-  try {
-    const res = await fetchFn(t.url, {
-      method: "POST",
-      headers: { ...t.headers, "content-type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return `${t.url} answered ${res.status}: ${(await res.text()).slice(0, 200)}`;
-    return undefined;
-  } catch (e) {
-    return `${t.url}: ${(e as Error).message}`;
-  }
+  return sendOtlp(t, body, fetchFn);
 }
 
 /**

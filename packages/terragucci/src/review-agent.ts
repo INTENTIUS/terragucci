@@ -109,10 +109,7 @@ const DATA_TAGS = ["title", "description", "diff", "plan_note", "policy", "instr
 
 /** Text as it goes between the prompt's tags: a closing tag of ours inside it cannot end the section. */
 function quoted(text: string): string {
-  // chant's quoting takes the tag list (chant#4580); the pin's escapes chant's own tags only, so it is used once REVIEW_DATA_TAGS is exported.
-  const chant = chantReview as unknown as { quoted?: (text: string, tags?: readonly string[]) => string; REVIEW_DATA_TAGS?: readonly string[] };
-  if (typeof chant.quoted === "function" && Array.isArray(chant.REVIEW_DATA_TAGS)) return chant.quoted(text, DATA_TAGS);
-  return text.replace(new RegExp(`</(${DATA_TAGS.join("|")})>`, "gi"), "< /$1>");
+  return chantReview.quoted(text, DATA_TAGS);
 }
 
 function cut(text: string, max: number, what: string): string {

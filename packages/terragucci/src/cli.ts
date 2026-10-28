@@ -423,7 +423,7 @@ function originForge(dir: string): ForgeName | undefined {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  // chant's words module (chant#4550) and the drift rows (chant#4580), loaded once for the code that reads them synchronously; none on a chant without them.
+  // The chant parts synchronous code reads (the words module, chant#4550, and the rest preloadChantNext names), loaded once; none on a chant without them.
   await preloadChantNext();
   // A usage or config error exits 1 under chant's table (chant#4553, ruling C).
   const USAGE_EXIT = CHANT_EXIT.failed;

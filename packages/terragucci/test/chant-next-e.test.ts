@@ -1,22 +1,14 @@
 // terragucci#1282 part e: chant's exit-code table (chant#4553), and the switches onto the terraform lexicon's drift rows
-// (chant#4580), the op-wave step contract (chant#4545) and chant's OTLP exporter (chant#4555). Each case stands a
-// module in for chant's, makes it missing, or runs only when the installed chant has it.
-import { afterEach, describe, expect, it } from "vitest";
+// (chant#4580), the op-wave step contract (chant#4545) and chant's OTLP exporter (chant#4555), on the chant the tree pins.
+import { describe, expect, it } from "vitest";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { chantDriftRows, chantOpWaveStep, chantOtlp, overrideChantNext } from "../src/chant-next";
+import { chantOpWaveStep } from "../src/chant-next";
 import { waveCallArgv, waveExit, waveStepProblems, wavesStepSpec } from "../src/chant-waves";
 import { driftCount, driftNames } from "../src/report/drift";
 import { send } from "../src/telemetry";
 
-const driftRows = await chantDriftRows();
 const step = await chantOpWaveStep();
-const otlp = await chantOtlp();
 
-let restore: (() => void)[] = [];
-afterEach(() => {
-  for (const r of restore) r();
-  restore = [];
-});
 
 describe("exit codes", () => {
   it("pass chant's code through, and a code terragucci's own calls came to takes a non-zero exit", () => {
@@ -40,10 +32,9 @@ const PLAN = {
 };
 
 describe("drift rows", () => {
-  it.runIf(driftRows)("count and name the drift as terragucci's own rules do", () => {
-    const viaChant = { count: driftCount(PLAN), names: [...driftNames(PLAN)] };
-    restore.push(overrideChantNext("driftRows", null));
-    expect(viaChant).toEqual({ count: driftCount(PLAN), names: [...driftNames(PLAN)] });
+  it("count and name the drift by the terraform lexicon's rows: every resource_drift entry, named by name, id, bucket, function_name or arn", () => {
+    expect(driftCount(PLAN)).toBe(3);
+    expect([...driftNames(PLAN)]).toEqual([["aws_s3_bucket.a", "a-1"], ["aws_s3_bucket.b", "b-1"]]);
   });
 });
 
@@ -78,17 +69,8 @@ describe("the op-wave step contract", () => {
 });
 
 describe("OTLP", () => {
-  it("sends through chant's exporter when it is there", async () => {
-    const sent: string[] = [];
-    restore.push(overrideChantNext("otlp", { otlpFromEnv: () => undefined, OTLP_EXPORTER_FLOOR: "x", sendOtlp: async (t: { url: string }) => (sent.push(t.url), undefined) }));
-    expect(await send({ url: "http://127.0.0.1:1/v1/traces", headers: {} }, {})).toBeUndefined();
-    expect(sent).toEqual(["http://127.0.0.1:1/v1/traces"]);
-  });
-
-  it.runIf(otlp)("answers a refused POST as terragucci's sender did", async () => {
+  it("answers a refused POST with the collector's status, through chant's exporter", async () => {
     const fetchFn = async () => ({ ok: false, status: 503, text: async () => "busy" });
-    const viaChant = await send({ url: "http://127.0.0.1:1/v1/traces", headers: {} }, {}, fetchFn);
-    restore.push(overrideChantNext("otlp", null));
-    expect(viaChant).toBe(await send({ url: "http://127.0.0.1:1/v1/traces", headers: {} }, {}, fetchFn));
+    expect(await send({ url: "http://127.0.0.1:1/v1/traces", headers: {} }, {}, fetchFn)).toContain("503");
   });
 });

@@ -7,7 +7,7 @@
  * JSON and HTML as a plan's, and code waiting on main never shows in it.
  */
 import type { IssueResult, PrForge } from "@intentius/chant/pr-forge";
-import { chantDriftRowsNow } from "../chant-next";
+import { terraformPlanDriftCount, terraformPlanDriftNames } from "@intentius/chant-lexicon-terraform/drift-rows";
 import type { ForgeTarget } from "../forge";
 import type { ForgeName } from "../config";
 import type { Attributed } from "../respond/attribute";
@@ -57,13 +57,9 @@ export function liveDrift(plan: unknown): unknown {
   return { ...p, resource_drift };
 }
 
-/** How many resources a refresh-only plan found drifted. */
+/** How many resources a refresh-only plan found drifted: every resource_drift entry, by the terraform lexicon's drift rows (chant#4580). */
 export function driftCount(plan: unknown): number {
-  // The terraform lexicon's drift rows (chant#4580) count by this rule: every resource_drift entry.
-  const chant = chantDriftRowsNow();
-  if (chant) return chant.terraformPlanDriftCount(plan);
-  const list = plan !== null && typeof plan === "object" ? (plan as Json).resource_drift : undefined;
-  return Array.isArray(list) ? list.length : 0;
+  return terraformPlanDriftCount(plan);
 }
 
 export const DRIFT_MARKER = "<!-- terragucci:drift -->";
@@ -73,28 +69,12 @@ const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
 
 /**
  * The real name of each drifted object, by address, read from the plan's
- * `resource_drift`. A deleted object has no attributes in the report, so its
- * name has to come from here.
+ * `resource_drift` by the terraform lexicon's drift rows (chant#4580). A
+ * deleted object has no attributes in the report, so its name has to come
+ * from here.
  */
 export function driftNames(plan: unknown): Map<string, string> {
-  // The terraform lexicon's drift rows (chant#4580) name the objects by the same keys, in the same order.
-  const chant = chantDriftRowsNow();
-  if (chant) return chant.terraformPlanDriftNames(plan);
-  const out = new Map<string, string>();
-  const list = plan !== null && typeof plan === "object" ? (plan as Json).resource_drift : undefined;
-  if (!Array.isArray(list)) return out;
-  for (const r of list as Json[]) {
-    const ch = (r.change ?? {}) as Json;
-    const values = [ch.after, ch.before].filter((v): v is Json => v !== null && typeof v === "object");
-    for (const key of ["name", "id", "bucket", "function_name", "arn"]) {
-      const v = values.map((x) => x[key]).find((x) => typeof x === "string" && x !== "");
-      if (typeof v === "string") {
-        out.set(String(r.address), v);
-        break;
-      }
-    }
-  }
-  return out;
+  return terraformPlanDriftNames(plan);
 }
 
 function changeLine(c: ReportChange, name: string | undefined): string {
