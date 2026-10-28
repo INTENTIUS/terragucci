@@ -15,7 +15,9 @@
  *   terragucci plan [--root <glob>] [--project <key>] [--config <file>]
  *   terragucci publish [--dry-run] [--config <file>]
   terragucci verify-release <module> <version> [--config <file>]
+  terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]   (the modules in the registry's release catalog, read with the token Terraform would send; show: one module's versions, status and consumers)
  *   terragucci verify-release <module> <version> [--config <file>]
+ *   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
@@ -142,6 +144,7 @@ import { checkHooks } from "./pre-commit";
 import { checkMirror, describeRecipe, mirrorCode, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
+import { describeCatalog, describeComponent, findComponent, readCatalog } from "./publish/catalog";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { tradeCommand } from "./oidc-trade";
@@ -797,6 +800,25 @@ export async function main(argv: string[]): Promise<number> {
         console.log(describePublish(results));
         // A release modules.test refused fails the job, once every other module has published.
         return results.some((r) => r.status === "refused") ? 1 : 0;
+      }
+      case "modules": {
+        // The release catalog publish writes beside the registry (./publish/catalog.ts), read as a consumer reads it.
+        const [sub = "list", name] = args;
+        if (!["list", "show"].includes(sub) || (sub === "show" && !name)) throw new ConfigError("usage: terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]");
+        const registry = str(flags, "registry");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = registry ? undefined : resolveRepo(path ? await loadConfig(resolve(path)) : {}).modules?.registry;
+        const catalog = await readCatalog({ ...(registry ? { registry } : {}), ...(settings ? { settings } : {}), repo: cwd });
+        if (sub === "list") {
+          if (json) return emit(envelope("modules", 0, catalog));
+          console.log(describeCatalog(catalog));
+          return 0;
+        }
+        const component = findComponent(catalog, name!);
+        if (!component) throw new ConfigError(`the catalog lists no module ${name}; terragucci modules list names them`);
+        if (json) return emit(envelope("modules", 0, component));
+        console.log(describeComponent(component));
+        return 0;
       }
       case "verify-release": {
         const [module, version] = args;

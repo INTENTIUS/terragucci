@@ -430,6 +430,33 @@ provider_installation {
 
 `include` and `exclude` name the same providers. A mirrored provider then comes only from the mirror, and any other provider comes straight from its registry. With `auth: token`, the edge function signs each archive URL in the mirror's version files, as it does tarballs, and the index and version files need the token.
 
+## Browse the release catalog
+
+A registry with `modules.registry` also gets a release catalog under `catalog/` beside its files. Its `index.html` has a search box over `index.json` and links to a page for each module and each version; each module also gets a `consumers.json`. Every publish records its release on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) with its version, attested or not, and the catalog is built from those records and the deprecations beside them. The registry's own `versions` files are never read for it.
+
+A version's page shows its inputs, outputs, required providers, examples and README, read from the module at the commit the version was cut from. A module with a `.terraform-docs.yml` gets the markdown terraform-docs writes with that file instead, when `terraform-docs` is on the job's `PATH`; it runs on a scratch copy and prints to stdout, so the module's README in the repo is never rewritten. The changelog groups the conventional commits since the previous version. Under it sit the attestation with the command that checks it and the roots in this repo that pin the version.
+
+A version keeps the page it was first written with, and a file already in the bucket with the same bytes is left alone, so a rerun that publishes nothing writes nothing. `terragucci publish --dry-run` writes no catalog. To turn the catalog off:
+
+```yaml
+modules:
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    catalog: off
+```
+
+`terragucci modules` lists the catalog from the command line, and `terragucci modules show <module>` lists one module's versions with their status and consumers:
+
+```bash
+terragucci modules
+terragucci modules show modules/network
+terragucci modules --registry https://modules.example.com --json
+```
+
+It reads `catalog/index.json` the way Terraform reads the registry, with `TF_TOKEN_<host>` or a `credentials` block, so it works against a registry with `auth: token`. A browser sends no token, so the edge function refuses the catalog's pages to it; to browse them, serve the registry on a private network as in [Other ways to keep a registry private](#other-ways-to-keep-a-registry-private), where the pages open with no token.
+
 ## Attest each release
 
 With `modules.attest`, the publish job also signs each new release with a key you hold and records the version in the release ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), so a root's pin can be checked against all of it.

@@ -7,15 +7,17 @@
  * the module's content, so a run on a commit that changed nothing in a module
  * publishes nothing for it, and a version that exists is never written again.
  *
- * With `modules.attest`, each release is also signed, given SLSA provenance
- * and an SBOM, and recorded in chant's release ledger on chant/lifecycle
- * (./attest.ts, ./ledger.ts). The record and the tag are written together: a
- * git tag in one atomic push with the ledger commit, an OCI tag only after the
- * ledger holds its record, so no tag stands without one.
+ * Each release is recorded in chant's release ledger on chant/lifecycle with
+ * its version (./ledger.ts). With `modules.attest`, it is also signed, given
+ * SLSA provenance and an SBOM (./attest.ts), and those files sit beside the
+ * record. The record and the tag are written together: a git tag in one
+ * atomic push with the ledger commit, an OCI tag only after the ledger holds
+ * its record, so no tag stands without one.
  *
  * With `modules.registry`, each release is also written as the module
  * registry protocol's static files (./registry.ts), after the other targets,
- * so its download can point at the git tag or OCI artifact just published.
+ * so its download can point at the git tag or OCI artifact just published,
+ * and the release catalog is written beside it from the ledger (./catalog.ts).
  * With `modules.test`, a module is tested before any target writes a release
  * of it (./test.ts), and a module whose tests do not pass is refused.
  *
@@ -28,14 +30,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
-import { appendLifecycle } from "../apply";
 import { loadHclParser } from "../rollout/parser";
 import { globMatch } from "../detect";
 import { ConfigError, registryEdge, type RegistrySettings, type ResolvedSettings } from "../config";
 import { gunzip, gzip, moduleTar, moduleTarAt, moduleZip, sha256, tarEntries } from "./archive";
 import { commitsSince, git, hasCommit, tryGit } from "./git";
 import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
-import { fetchLedger, LEDGER_PATH } from "./ledger";
+import { fetchLedger, recordRelease, releaseRecord } from "./ledger";
+import { publishCatalog } from "./catalog";
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
@@ -84,10 +86,12 @@ export interface PublishOptions {
   registryStore?: RegistryStore;
   /** Runs `providers mirror` for `modules.registry.providers: mirror`, for tests. */
   mirrorRun?: ProviderMirrorRun;
+  /** Runs terraform-docs for the catalog's docs, for tests; ./catalog.ts finds the binary by default. */
+  terraformDocs?: (args: { dir: string; config: string }) => Promise<string | null>;
 }
 
-/** What publish reads from the settings: `modules`, and the binary `modules.test` runs. */
-export type PublishSettings = Pick<ResolvedSettings, "modules"> & { binary?: string };
+/** What publish reads from the settings: `modules`, the binary `modules.test` runs, and the roots whose module calls the catalog lists. */
+export type PublishSettings = Pick<ResolvedSettings, "modules"> & { binary?: string; roots?: string[] };
 
 /** What publishing one release needs from the target, past the archive. */
 interface PublishContext {
@@ -96,8 +100,8 @@ interface PublishContext {
   revision: string;
   content: string;
   tar: Buffer;
-  /** Attested: push these refs with the ledger record, in one atomic push, instead of pushing them alone. */
-  pushWithRecord?: (refs: string[]) => void;
+  /** Record the release on the ledger, pushing these refs with the record in one atomic push instead of alone. */
+  pushWithRecord?: (refs: string[]) => Promise<void>;
 }
 
 interface Target {
@@ -198,7 +202,7 @@ function gitTagTarget(repo: string, push: boolean): Target {
       git(repo, ["tag", "-a", tag, "-m", `${ctx.rel} ${formatSemver(version)}\n\ncontent: ${ctx.content}`, ctx.revision], env);
       if (ctx.pushWithRecord) {
         try {
-          ctx.pushWithRecord([`refs/tags/${tag}`]);
+          await ctx.pushWithRecord([`refs/tags/${tag}`]);
         } catch (e) {
           // The record did not land, so neither did the tag: drop it here too, and a rerun publishes the version again.
           tryGit(repo, ["tag", "-d", tag]);
@@ -290,8 +294,8 @@ function ociTarget(url: string, opts: PublishOptions): Target {
       const path = `${repo}/${name}`;
       const tag = formatSemver(version);
       if (await registry.manifest(path, tag)) throw new ConfigError(`${url}/${name}:${tag} exists already and a published version never changes`);
-      // Attested: the record goes first, so a tag never stands without one; a record whose push then fails names a tag no root can pin.
-      ctx.pushWithRecord?.([]);
+      // The record goes first, so a tag never stands without one; a record whose push then fails names a tag no root can pin.
+      await ctx.pushWithRecord?.([]);
       return registry.pushModule(path, tag, built(version, ctx).zip, annotations(version, ctx));
     },
     async republish({ name }, version, ctx) {
@@ -301,7 +305,7 @@ function ociTarget(url: string, opts: PublishOptions): Target {
       if (!found || !legacyLayer(found.manifest) || found.manifest.annotations?.[CONTENT] !== ctx.content) {
         throw new ConfigError(`${url}/${name}:${tag} changed while it was being republished; run publish again`);
       }
-      ctx.pushWithRecord?.([]);
+      await ctx.pushWithRecord?.([]);
       return registry.pushModule(path, tag, built(version, ctx).zip, annotations(version, ctx));
     },
     subject({ name }, version, ctx) {
@@ -320,7 +324,10 @@ export function sourceUrl(url: string): string {
   return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, "$1");
 }
 
-function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], publishTo: string[], opts: PublishOptions): Target {
+/** Writes the release catalog after a version is listed, and says what it wrote, or nothing when it wrote nothing. */
+type CatalogStep = (store: RegistryStore) => Promise<string | undefined>;
+
+function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], publishTo: string[], opts: PublishOptions, catalog?: CatalogStep): Target {
   const env = opts.env ?? process.env;
   const store = opts.registryStore ?? registryStore(repo, reg, env as NodeJS.ProcessEnv);
   const download = reg.download ?? "tarball";
@@ -390,8 +397,8 @@ function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], 
       const a = addr(mod);
       const v = formatSemver(version);
       const location = await locate(mod, version, ctx);
-      // Attested: the record goes first, as for an OCI tag, so no version is listed without one.
-      ctx.pushWithRecord?.([]);
+      // The record goes first, as for an OCI tag, so no version is listed without one.
+      await ctx.pushWithRecord?.([]);
       const record: ReleaseMeta = { module: ctx.rel, version: v, revision: ctx.revision, content: ctx.content, location };
       await writeVersion(store, reg, a, version, {
         ...(download === "tarball" ? { tarball: { key: keyFor(reg, `${a.path}/${v}/${tarballName(a, v)}`), body: gzip(ctx.tar) } } : {}),
@@ -399,10 +406,15 @@ function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], 
         meta: { key: metaKey(a, v), body: `${JSON.stringify(record, null, 2)}\n` },
       });
       // A Pages site sends the header only from its _headers file, once the version is listed.
+      const said: string[] = [];
       if (pages) {
         const note = await writeHeadersFile(store, reg, { path: `${a.path}/${v}/download`, location });
-        if (note) notes.set(`${mod.rel}@${v}`, note);
+        if (note) said.push(note);
       }
+      // The catalog once the version is listed, from the ledger its record is already on (./catalog.ts).
+      const cataloged = await catalog?.(store);
+      if (cataloged) said.push(cataloged);
+      if (said.length) notes.set(`${mod.rel}@${v}`, said.join("; "));
       return ctx.content;
     },
     note: (mod, version) => notes.get(`${mod.rel}@${formatSemver(version)}`),
@@ -413,7 +425,7 @@ function registryTarget(repo: string, reg: RegistrySettings, modules: Module[], 
 }
 
 /** The `modules.publish` setting as a list of targets. */
-function targets(repo: string, publish: string | string[] | undefined, registry: RegistrySettings | undefined, modules: Module[], opts: PublishOptions): Target[] {
+function targets(repo: string, publish: string | string[] | undefined, registry: RegistrySettings | undefined, modules: Module[], opts: PublishOptions, catalog?: CatalogStep): Target[] {
   const list = publish === undefined ? [] : Array.isArray(publish) ? publish : [publish];
   const out = list.map((p) => {
     if (p === "git-tags") return gitTagTarget(repo, opts.push ?? true);
@@ -421,7 +433,7 @@ function targets(repo: string, publish: string | string[] | undefined, registry:
     throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; use an oci:// registry address or git-tags`);
   });
   // Last, so a download that points at a git tag or an OCI artifact points at one this run has written.
-  if (registry) out.push(registryTarget(repo, registry, modules, list, opts));
+  if (registry) out.push(registryTarget(repo, registry, modules, list, opts, catalog));
   return out;
 }
 
@@ -433,7 +445,24 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
   const modules = findModules(repo, settings.modules?.path ?? "modules/*");
   const head = git(repo, ["rev-parse", "HEAD"]);
   const results: Published[] = [];
-  const list = targets(repo, publishTo, registry, modules, opts);
+  const keyPath = attestKey(settings.modules?.attest);
+  const env = (opts.env ?? process.env) as NodeJS.ProcessEnv;
+  const catalog: CatalogStep | undefined =
+    registry && registry.catalog !== "off"
+      ? async (store) => {
+          const written = await publishCatalog(repo, registry, store, {
+            modules,
+            ...(settings.roots ? { roots: settings.roots } : {}),
+            ...(settings.binary ? { binary: settings.binary } : {}),
+            ...(keyPath ? { attestKey: keyPath } : {}),
+            ...(opts.parser ? { parser: opts.parser } : {}),
+            ...(opts.terraformDocs ? { terraformDocs: opts.terraformDocs } : {}),
+          });
+          // On a chant without the catalog, the row reads as it did before.
+          return written.status === "skipped" ? undefined : written.detail;
+        }
+      : undefined;
+  const list = targets(repo, publishTo, registry, modules, opts, catalog);
   const testBinary: TestBinary = settings.binary === "terraform" ? "terraform" : "tofu";
   const tested = new Map<string, string | undefined>();
   /** Why a module's release is refused by modules.test, tested once a run; undefined when it passes or the setting is off. */
@@ -442,7 +471,6 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
     if (!tested.has(mod.rel)) tested.set(mod.rel, testModule(dir, mod.rel, testBinary, opts.testRunner));
     return tested.get(mod.rel);
   };
-  const keyPath = attestKey(settings.modules?.attest);
   let attesting: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string } | undefined;
   const attestDeps = async () => {
     if (!keyPath) return undefined;
@@ -468,7 +496,17 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
   const republishLegacy = async (mod: Module, target: Target, old: Legacy): Promise<{ digest: string; detail?: string }> => {
     const ctx: PublishContext = { dir: join(repo, mod.rel), rel: mod.rel, revision: old.revision, content: old.content, tar: old.tar! };
     const deps = await attestDeps();
-    if (!deps) return { digest: await target.republish!(mod, old.version, ctx) };
+    if (!deps) {
+      const digest = sha256(target.subject(mod, old.version, ctx).bytes);
+      ctx.pushWithRecord = async (refs) => {
+        await recordRelease(repo, {
+          record: { ...releaseRecord(mod.rel, digest, old.revision, env), releaseVersion: formatSemver(old.version) },
+          message: `Release record: ${mod.rel} ${formatSemver(old.version)} ${digest} (republished as archive/zip)`,
+          refs,
+        });
+      };
+      return { digest: await target.republish!(mod, old.version, ctx) };
+    }
     const dir = mkdtempSync(join(tmpdir(), "terragucci-republish-"));
     try {
       for (const e of tarEntries(old.tar!)) {
@@ -480,8 +518,14 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
         { module: mod.rel, dir, version: formatSemver(old.version), target: target.label, ref: subject.ref, bytes: subject.bytes, commit: old.revision },
         { ...deps, ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}) },
       );
-      ctx.pushWithRecord = (refs) =>
-        appendLifecycle(repo, LEDGER_PATH, [JSON.stringify(attested.record)], attested.files, `Release record: ${mod.rel} ${formatSemver(old.version)} ${attested.digest} (republished as archive/zip)`, refs);
+      ctx.pushWithRecord = async (refs) => {
+        await recordRelease(repo, {
+          record: { ...attested.record, releaseVersion: formatSemver(old.version) },
+          files: attested.files,
+          message: `Release record: ${mod.rel} ${formatSemver(old.version)} ${attested.digest} (republished as archive/zip)`,
+          refs,
+        });
+      };
       const digest = await target.republish!(mod, old.version, ctx);
       await target.attach?.(mod, attested.digest, attested, deps.signer);
       return { digest, detail: `signed and recorded in the release ledger as ${attested.digest}` };
@@ -587,6 +631,18 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
       const ctx: PublishContext = { dir, rel: mod.rel, revision: head, content, tar };
       const deps = target.attests === false ? undefined : await attestDeps();
       if (!deps) {
+        // Every release is recorded, attested or not (terragucci#1289 ruling A), with its version; a target that only points at another's release adds none.
+        if (target.attests !== false) {
+          const recorded = sha256(target.subject(mod, version, ctx).bytes);
+          ctx.pushWithRecord = async (refs) => {
+            await recordRelease(repo, {
+              record: { ...releaseRecord(mod.rel, recorded, head, env), releaseVersion: formatSemver(version) },
+              message: `Release record: ${mod.rel} ${formatSemver(version)} ${recorded}`,
+              refs,
+              local: opts.push === false,
+            });
+          };
+        }
         const digest = await target.publish(mod, version, ctx);
         const note = target.note?.(mod, version);
         results.push({ ...row, status: "published", version: formatSemver(version), digest, ...(note ? { detail: note } : {}) });
@@ -597,8 +653,14 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
         { module: mod.rel, dir, version: formatSemver(version), target: target.label, ref: subject.ref, bytes: subject.bytes, commit: head },
         { ...deps, ...(opts.env ? { env: opts.env as NodeJS.ProcessEnv } : {}) },
       );
-      ctx.pushWithRecord = (refs) =>
-        appendLifecycle(repo, LEDGER_PATH, [JSON.stringify(attested.record)], attested.files, `Release record: ${mod.rel} ${formatSemver(version)} ${attested.digest}`, refs);
+      ctx.pushWithRecord = async (refs) => {
+        await recordRelease(repo, {
+          record: { ...attested.record, releaseVersion: formatSemver(version) },
+          files: attested.files,
+          message: `Release record: ${mod.rel} ${formatSemver(version)} ${attested.digest}`,
+          refs,
+        });
+      };
       const digest = await target.publish(mod, version, ctx);
       await target.attach?.(mod, attested.digest, attested, deps.signer);
       const note = target.note?.(mod, version);

@@ -70,6 +70,7 @@ import {
   REGISTRY_KEYS,
   REGISTRY_NAME,
   REGISTRY_PROVIDERS,
+  REGISTRY_CATALOG,
   REGISTRY_SYSTEM,
   RELEASE_VERSION,
   RESPONSES,
@@ -217,6 +218,7 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   tokens_name: { type: "string", minLength: 1 },
   tokens_region: { type: "string", pattern: "^[a-z]{2}(-[a-z]+)+-\\d$" },
   providers: enumOf(REGISTRY_PROVIDERS),
+  catalog: enumOf(REGISTRY_CATALOG),
 } satisfies Record<keyof RegistrySettings, JsonSchema>, {
   required: ["url", "namespace"],
   oneOf: [{ required: ["bucket"] }, { required: ["dir"] }],
