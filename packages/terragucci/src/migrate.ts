@@ -1274,7 +1274,7 @@ export function revertMigration(name: string, done: string): { name: string; tex
       continue;
     }
   }
-  if (!line) throw new ConfigError(`chant/lifecycle records no applied migration ${name} in ${MIGRATE_DONE}`);
+  if (!line) throw new ConfigError(`chant/lifecycle records no applied migration ${name}, in ${MIGRATE_DONE} or on its gated request in ${MIGRATE_APPLIED}`);
   if (line.change === "backends") throw new ConfigError(`${name} moved states to new backends; put it back with a backend move the other way, which reads each state where it is now`);
   if (line.change === "revert") throw new ConfigError(`${name} is a revert; apply the migration it put back again with a new migration file`);
   if (line.change === "retag") throw new ConfigError(`${name} retagged resources between estates; put it back with a moves migration the other way`);
@@ -1309,8 +1309,7 @@ export function revertMigration(name: string, done: string): { name: string; tex
  */
 export function writeRevert(repo: string, name: string): string {
   readLedger(repo, MIGRATE_LEDGER);
-  const show = spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${MIGRATE_DONE}`], { cwd: repo, encoding: "utf-8" });
-  const { name: file, text } = revertMigration(name, show.status === 0 ? show.stdout : "");
+  const { name: file, text } = revertMigration(name, migrationHistory(repo));
   const path = join(repo, MIGRATIONS_DIR, `${file}.yml`);
   if (existsSync(path)) throw new ConfigError(`${MIGRATIONS_DIR}/${file}.yml is there already`);
   mkdirSync(join(repo, MIGRATIONS_DIR), { recursive: true });
@@ -1367,6 +1366,97 @@ export function doneLine(record: MigrationRecord, approvedBy: string, now: strin
   };
 }
 
+/**
+ * The flat facts a migration's `finished` line keeps on chant's gated request
+ * (chant#4551, #4618): how it ended, its file's digest, its change, and each
+ * root's location and version before and after, which `migrate revert` and
+ * the list still to apply read back (finishedMigrationLines). Never a state's
+ * contents.
+ */
+export function migrationDetail(record: MigrationRecord, m: Pick<Migration, "digest" | "kind">): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {
+    result: record.status,
+    file_digest: m.digest,
+    change: m.kind,
+    migration_change: record.change,
+    roots: record.roots.map((r) => r.root).join(","),
+    ...(record.revert ? { revert: record.revert } : {}),
+    ...(record.error ? { error: record.error.slice(0, 400) } : {}),
+  };
+  for (const r of record.roots) {
+    if (r.location) out[`${r.root}.location`] = r.location;
+    if (r.before.version_id) out[`${r.root}.before`] = r.before.version_id;
+    if (r.after.version_id) out[`${r.root}.after`] = r.after.version_id;
+    if (r.before.digest) out[`${r.root}.before_digest`] = r.before.digest;
+    if (r.after.digest) out[`${r.root}.after_digest`] = r.after.digest;
+  }
+  return out;
+}
+
+/**
+ * The `finished` lines of `_gates/tf-migrate/applied.jsonl` (chant's gated
+ * requests) as done.jsonl lines, oldest first. A line without terragucci's
+ * `result` is skipped: the migration threw before it ended, as a run that
+ * wrote no done.jsonl line before. So is a run refused under the lock, which
+ * wrote nothing.
+ */
+export function finishedMigrationLines(appliedText: string): string[] {
+  const out: string[] = [];
+  for (const l of appliedText.split("\n").map((x) => x.trim()).filter(Boolean)) {
+    let r: Record<string, unknown>;
+    try {
+      r = JSON.parse(l) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (r.version !== 1 || r.kind !== "finished" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    const d = r.detail && typeof r.detail === "object" ? (r.detail as Record<string, unknown>) : {};
+    if (typeof d.result !== "string" || d.result === "refused") continue;
+    const str = (k: string): string | null => (typeof d[k] === "string" ? (d[k] as string) : null);
+    const roots = (str("roots") ?? "").split(",").filter(Boolean).map((root) => ({
+      root,
+      location: str(`${root}.location`),
+      before: str(`${root}.before`),
+      after: str(`${root}.after`),
+      before_digest: str(`${root}.before_digest`),
+      after_digest: str(`${root}.after_digest`),
+    }));
+    out.push(JSON.stringify({
+      version: 1,
+      kind: "migration",
+      op: MIGRATE_OP,
+      gate: r.gate,
+      timestamp: r.timestamp,
+      ...(typeof r.planDigest === "string" ? { planDigest: r.planDigest } : {}),
+      ...(str("file_digest") ? { file_digest: str("file_digest") } : {}),
+      result: d.result,
+      ...(str("approved_by") ? { approvedBy: str("approved_by") } : {}),
+      change: str("migration_change") ?? str("change"),
+      ...(str("revert") ? { revert: str("revert") } : {}),
+      roots,
+      ...(str("error") ? { error: str("error") } : {}),
+      source: "finished",
+    }));
+  }
+  return out;
+}
+
+/**
+ * A repo's migration history as origin's chant/lifecycle holds it, in
+ * done.jsonl's line form: the done.jsonl lines written before chant ran the
+ * gate, and after them each `finished` line of chant's gated requests. The
+ * newest line of a migration wins (doneMigrations, revertMigration). Fetch
+ * first (readLedger); this reads the remote ref as last fetched.
+ */
+export function migrationHistory(repo: string): string {
+  const show = (path: string): string => {
+    const r = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${path}`]);
+    return r.status === 0 ? r.stdout : "";
+  };
+  const done = show(MIGRATE_DONE).split("\n").map((l) => l.trim()).filter(Boolean);
+  return [...done, ...finishedMigrationLines(show(MIGRATE_APPLIED))].join("\n") + "\n";
+}
+
 /** A root a pending estate migration plans for: the migration's name, its file's digest, and whether it adopts the root's state or retags resources into it. */
 export interface PendingEstateRoot {
   name: string;
@@ -1410,8 +1500,7 @@ export function pendingEstateMigrations(repo: string, applied: ReadonlySet<strin
   } catch {
     // The migration step reports a remote it cannot read.
   }
-  const show = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${MIGRATE_DONE}`]);
-  const done = doneMigrations(show.status === 0 ? show.stdout : "");
+  const done = doneMigrations(migrationHistory(repo));
   for (const m of migrations) {
     if (done.get(m.name)?.status === "applied") continue;
     let roots: string[];
@@ -1515,8 +1604,7 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
   let ledger: GateLedger = { pending: [], resolutions: [] };
   try {
     ledger = readLedger(repo, MIGRATE_LEDGER);
-    const show = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${MIGRATE_DONE}`]);
-    done = doneMigrations(show.status === 0 ? show.stdout : "");
+    done = doneMigrations(migrationHistory(repo));
   } catch (e) {
     if (!options.planOnly) {
       log(`migrations: ${(e as Error).message}`);
@@ -1568,10 +1656,11 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
  * request is the migration file's digest with the proof as its attachment,
  * so the digest binds the proof; the approval is spent on
  * `_gates/tf-migrate/applied.jsonl` before anything is written, and the
- * `finished` line holds each root's version before and after. The done.jsonl
- * line is still written beside it, since `migrate revert` and the list of
- * migrations still to apply read the history there. A migration inside a wave (`hold`) stays on the wave's
- * hold hook, which chant decides already.
+ * `finished` line holds what `migrate revert` and the list of migrations
+ * still to apply read (migrationDetail, migrationHistory), so nothing is
+ * written to done.jsonl. A migration inside a wave (`hold`) stays on the
+ * wave's hold hook, which chant decides already, and still writes its
+ * applied and done.jsonl lines itself.
  */
 async function runGated(
   repo: string,
@@ -1610,8 +1699,7 @@ async function runGated(
       }
       sinks?.end?.(applied.status, applied.progress, applied.error);
       applied = { ...applied, approved_by: approvedBy, finished: new Date().toISOString(), ...(o.commit ? { commit: o.commit } : {}) };
-      const versions = Object.fromEntries(applied.roots.flatMap((r) => [[`${r.root}.before`, r.before.version_id ?? ""], [`${r.root}.after`, r.after.version_id ?? ""]]).filter(([, v]) => v !== ""));
-      return { output: applied, detail: { by, approved_by: approvedBy, result: applied.status, file_digest: m.digest, change: m.kind, ...(applied.error ? { error: applied.error.slice(0, 400) } : {}), ...versions } };
+      return { output: applied, detail: { by, approved_by: approvedBy, ...migrationDetail(applied, m) } };
     },
   );
   switch (result.status) {
@@ -1621,8 +1709,7 @@ async function runGated(
         log(`${label}: under the lock, the state of ${applied.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
         return { code: EXIT.refused, record: applied };
       }
-      // The migration's history stays in done.jsonl too: `migrate revert` and the list of migrations still to apply read it there.
-      appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(applied, result.approvedBy, o.now, o.runId, o.commit))], {}, `Migration ${applied.status}: ${m.name}`);
+      // The finished line is the migration's history (migrationHistory): `migrate revert` and the list still to apply read it there.
       if (!plan.estate) for (const r of applied.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
       if (applied.status !== "applied") {
         log(`${label}: ${applied.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);

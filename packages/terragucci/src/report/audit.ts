@@ -96,8 +96,9 @@ export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
  */
 export const UNLOCK_APPLIED_FILE = "_gates/tf-unlock/applied.jsonl";
 export const EXPORT_APPLIED_FILE = "_gates/tf-state-export/applied.jsonl";
-// A migration still writes its done.jsonl line beside the finished line, and the audit reads that one alone.
-const FINISHED_KIND: Record<string, AuditKind> = { [UNLOCK_APPLIED_FILE]: "unlock", [EXPORT_APPLIED_FILE]: "state-export" };
+/** A standalone migration on chant's gated request: its finished line is the record of its writes, in place of a done.jsonl line (terragucci#1282 part i). */
+export const MIGRATE_APPLIED_FILE = "_gates/tf-migrate/applied.jsonl";
+const FINISHED_KIND: Record<string, AuditKind> = { [UNLOCK_APPLIED_FILE]: "unlock", [EXPORT_APPLIED_FILE]: "state-export", [MIGRATE_APPLIED_FILE]: "migration" };
 /** Ephemeral environments: the gate of each pull request's copy, and the record of each apply and destroy of it (../ephemeral.ts). */
 export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
 export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
@@ -294,7 +295,7 @@ function finishedEntries(project: string, path: string, lines: readonly GateLedg
     const url = commitUrl(c.commit);
     const detail = r.detail && typeof r.detail === "object" ? (r.detail as Line) : {};
     const failed = r.result === "failed";
-    const done = kind === "unlock" ? "released" : "exported";
+    const done = kind === "unlock" ? "released" : kind === "migration" ? "applied" : "exported";
     out.push({
       schema: AUDIT_SCHEMA,
       id: sha("ledger", project, path, c.text),
@@ -306,10 +307,20 @@ function finishedEntries(project: string, path: string, lines: readonly GateLedg
       digest: str(r.planDigest) ?? null,
       result: failed ? "failed" : (str(detail.result) ?? done),
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path, commit: c.commit, ...(url ? { url } : {}) },
-      detail: drop({ ...Object.fromEntries(Object.entries(detail).filter(([k]) => k !== "by" && k !== "result")), applied_at: str(r.applied) }),
+      detail: kind === "migration" ? migrationFinishedDetail(detail, str(r.applied)) : drop({ ...Object.fromEntries(Object.entries(detail).filter(([k]) => k !== "by" && k !== "result")), applied_at: str(r.applied) }),
     });
   }
   return out;
+}
+
+/**
+ * A migration's finished-line facts (../migrate.ts migrationDetail) in the
+ * shape of a done.jsonl entry's detail: `roots` as a list, each with its
+ * location and versions, which ./unrecorded.ts reads.
+ */
+function migrationFinishedDetail(detail: Line, appliedAt: string | undefined): Record<string, unknown> {
+  const roots = (str(detail.roots) ?? "").split(",").filter(Boolean).map((root) => drop({ root, location: str(detail[`${root}.location`]), before: str(detail[`${root}.before`]), after: str(detail[`${root}.after`]) }));
+  return drop({ roots, change: str(detail.migration_change) ?? str(detail.change), file_digest: str(detail.file_digest), error: str(detail.error), approved_by: str(detail.approved_by), applied_at: appliedAt });
 }
 
 /**

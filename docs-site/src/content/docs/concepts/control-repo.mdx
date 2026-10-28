@@ -93,6 +93,8 @@ The pull request carries:
 
 `unlock-state` and `ephemeral` run in a project's checkout, never in the control repo.
 
+Each plan reads the control repo's records for estate ownership. With a chant that has [chant#4619](https://github.com/INTENTIUS/chant/issues/4619), the plan job first runs chant's read step, which fetches only the control repo's `chant/lifecycle` and sets `CHANT_CONTROL_DIR`. When the entries are there, which is after `terragucci control records migrate`, the plan reads them from it and checks nothing else out. A control repo whose records are still files is checked out read-only as before, into `.terragucci-control`.
+
 ## Across projects
 
 | From the control repo | Does |

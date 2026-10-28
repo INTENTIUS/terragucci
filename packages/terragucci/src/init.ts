@@ -62,7 +62,8 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { chantCheckHooks, chantCiControl, chantCiProduct } from "./chant-next";
+import { chantAgentJob, chantCheckHooks, chantCiControl, chantCiProduct } from "./chant-next";
+import { CHANT_AGENT_PATHS } from "./render-chant-agent";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 
@@ -361,6 +362,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
   // chant's product pipeline (chant#4550), when the installed chant has it: the pipeline takes terragucci's words through it.
   const ciProduct = await chantCiProduct();
+  // chant's agent job (chant#4616): with it, agent.comment's jobs are chant's, in a workflow of their own (./render-chant-agent.ts).
+  if (agentCommentInput(settings)) await chantAgentJob();
   // terragucci#1303: a plain repo's apply on chant's terraform-apply step. Each root is a terraform.roots entry of chant.config.ts,
   // and the step's spec is written once beside the pipeline, where each wave job reads its rules at base.
   const plainRoots = !tgMode && !atmos && !terramate;
@@ -447,11 +450,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
   const ephemeralRel = forgeChoice.value === "gitlab" ? undefined : EPHEMERAL_PATHS[forgeChoice.value];
   const resumeRel = forgeChoice.value === "gitlab" ? undefined : RESUME_PATHS[forgeChoice.value];
+  const agentRel = CHANT_AGENT_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
     // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.
-    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel || f.path === agentRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
   // chant.config.ts: every root as a terraform.roots entry, so chant's step names it (terragucci#1303). A file terragucci did not write stays.
@@ -468,7 +472,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${COMPONENTS_PATH} exists and terragucci did not write it; move it aside or pass --force`);
   }
   // A rollout, review, ephemeral or resume workflow an earlier init wrote goes when the config stops asking for it.
-  for (const rel of [rolloutRel, reviewRel, ephemeralRel, resumeRel]) {
+  for (const rel of [rolloutRel, reviewRel, ephemeralRel, resumeRel, agentRel]) {
     if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
     const path = join(repo, rel);
     if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });

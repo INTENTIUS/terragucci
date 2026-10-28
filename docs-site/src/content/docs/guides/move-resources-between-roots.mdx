@@ -149,7 +149,7 @@ Once approved, wave 1 writes the tags, plans every root and requires no change. 
 terragucci migrate revert split-queues
 ```
 
-This writes `migrations/split-queues-revert.yml` from the record of `split-queues` on `chant/lifecycle`. The file names each root's version before the migration and the version it left. Open one pull request with that file and the reverted code of `split-queues`. The revert goes through the same proof and approval as any migration:
+This writes `migrations/split-queues-revert.yml` from the record of `split-queues` on `chant/lifecycle`: its `finished` line in `_gates/tf-migrate/applied.jsonl` when chant ran its gate, else its line in `_gates/tf-migrate/done.jsonl`. The file names each root's version before the migration and the version it left. Open one pull request with that file and the reverted code of `split-queues`. The revert goes through the same proof and approval as any migration:
 
 | Root | After the revert |
 |---|---|

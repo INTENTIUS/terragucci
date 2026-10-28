@@ -13,7 +13,7 @@
  *   noted as owned by nobody.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, parseProjectKey, type ControlSettings } from "./config";
@@ -23,6 +23,12 @@ import { hasControlEntries, hasControlRecords, readClaims, readClaimsAt, type Ch
 export const CONTROL_READ_TOKEN_ENV = "TERRAGUCCI_CONTROL_READ_TOKEN";
 /** A control repo checkout the plan reads, in place of cloning one. */
 export const CONTROL_DIR_ENV = "TERRAGUCCI_CONTROL_DIR";
+/**
+ * chant's read of the control repo (chant#4619 `controlNoteCheckout`): a
+ * directory holding the control repo's chant/lifecycle alone, where its
+ * entries are once it ran `terragucci control records migrate`.
+ */
+export const CHANT_CONTROL_DIR_ENV = "CHANT_CONTROL_DIR";
 
 export interface OwnershipInput {
   /** This project's key, when known. */
@@ -129,6 +135,12 @@ const gitFetchLifecycle: FetchLifecycle = (dir) => {
  * chant/lifecycle, which the pipeline's read step fetches, or, for a clone,
  * fetched here with the same token. A control repo whose records are still
  * files is read as before.
+ *
+ * Which directory: terragucci's checkout (TERRAGUCCI_CONTROL_DIR) when the
+ * plan job made one, else chant's read (CHANT_CONTROL_DIR) when its entries
+ * are there. With chant's read the plan job checks terragucci's out only
+ * for a control repo whose records are still files, so the checkout's
+ * variable can name a directory that is not there.
  */
 export async function controlClaimsAt(
   control: ControlSettings | undefined,
@@ -138,7 +150,9 @@ export async function controlClaimsAt(
   fetchLifecycle: FetchLifecycle = gitFetchLifecycle,
 ): Promise<Map<string, string[]> | undefined> {
   const dir = env[CONTROL_DIR_ENV];
-  if (dir) return readClaimsAt(dir, run);
+  const chantDir = env[CHANT_CONTROL_DIR_ENV];
+  if (dir && (existsSync(dir) || !chantDir)) return readClaimsAt(dir, run);
+  if (chantDir) return (await hasControlEntries(chantDir)) ? readClaimsAt(chantDir, run) : undefined;
   const token = env[CONTROL_READ_TOKEN_ENV];
   if (!control || !token) return undefined;
   const into = mkdtempSync(join(tmpdir(), "terragucci-control-"));
