@@ -1,7 +1,9 @@
-// The released shape (terragucci#18): dist/terragucci.mjs alone, copied where no
-// node_modules can be found, does everything the source does.
+// The released shape (terragucci#18): dist/terragucci.mjs, copied where the only
+// package beside it is its one runtime dependency, @intentius/chant (since
+// terragucci#1281 the bundle imports chant core from it), does everything the
+// source does.
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
@@ -9,10 +11,15 @@ import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
 const EXAMPLE = join(import.meta.dirname, "../../../example");
 
-/** The bundle, alone in a fresh directory: nothing to resolve a package from. */
+/** The installed @intentius/chant, as `npm i @intentius/terragucci` puts it beside the bundle. */
+const CHANT = realpathSync(join(import.meta.dirname, "../../../node_modules/@intentius/chant"));
+
+/** The bundle in a fresh directory with its one dependency: no other package resolves from it. */
 function isolated(): string {
   const dir = tmp("terragucci-bundle-");
   copyFileSync(DIST, join(dir, "terragucci.mjs"));
+  mkdirSync(join(dir, "node_modules/@intentius"), { recursive: true });
+  symlinkSync(CHANT, join(dir, "node_modules/@intentius/chant"), "dir");
   return join(dir, "terragucci.mjs");
 }
 
@@ -50,7 +57,7 @@ describe.skipIf(!existsSync(DIST))("the bundle", () => {
     const r = runIn(control, isolated(), "reconcile", "--config", "terragucci.yml");
     expect(r.status).toBe(1);
     expect(r.stdout).toContain("github.com/acme/infra: would write new .github/workflows/terragucci.yml");
-    expect(r.stdout).toContain("gitlab.example.com/platform/network: would write new .gitlab/terragucci.yml, new .gitlab-ci.yml");
+    expect(r.stdout).toContain("gitlab.example.com/platform/network: would write new .gitlab/terragucci.yml, new chant.config.ts, new .gitlab-ci.yml");
     expect(r.stdout).toContain("codeberg.org/acme/edge: would write new .forgejo/workflows/terragucci.yml");
     expect(r.stdout).toMatch(/github\.com\/acme\/missing: FAILED/);
     expect(r.stdout).toContain("dry run: 3 of 4 would change; nothing was written");
