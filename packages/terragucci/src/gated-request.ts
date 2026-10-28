@@ -13,6 +13,7 @@
  * `tf-state-export`, `tf-migrate`, gate the root or the migration), so
  * `terragucci approve unlock|export|migrate` approves either way.
  */
+import { spawnSync } from "node:child_process";
 import { chantStateOps, type ChantGatedStateOpResult, type ChantRootRun, type ChantStateOps } from "./chant-next";
 import type { ApprovalRule } from "./approval";
 
@@ -34,3 +35,17 @@ export function asyncExec(exec: (binary: string, args: string[], dir: string, en
 
 /** The last lines of a binary's output, from a lexicon operation's error. */
 export const opMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * Bring this checkout's `chant/lifecycle` up to origin's, fast-forward only,
+ * before a request that carries an attachment. chant stores the attachment
+ * on the local branch before it fetches (requestGate writes it, then
+ * evaluateGate reads the ledger), so on a branch behind origin, as it is
+ * once someone approved from another clone, the attachment's commit would
+ * sit beside origin's history and chant then refuses the ledger as
+ * diverged. A branch that is absent, ahead or diverged is left for chant to
+ * judge, as before.
+ */
+export function syncLocalLedger(repo: string): void {
+  spawnSync("git", ["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], { cwd: repo, encoding: "utf-8", stdio: "ignore" });
+}

@@ -73,7 +73,7 @@ import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
-import { chantStateOps, opMessage, requestRules } from "./gated-request";
+import { chantStateOps, opMessage, requestRules, syncLocalLedger } from "./gated-request";
 import { rootRoleEnv } from "./cloud-identity";
 import { liveRoots } from "./detect";
 import { eachLimited } from "./each-limited";
@@ -1389,6 +1389,9 @@ export function migrationDetail(record: MigrationRecord, m: Pick<Migration, "dig
     if (r.after.version_id) out[`${r.root}.after`] = r.after.version_id;
     if (r.before.digest) out[`${r.root}.before_digest`] = r.before.digest;
     if (r.after.digest) out[`${r.root}.after_digest`] = r.after.digest;
+    // A backend move's state came from another backend: where, and the version it read, as done.jsonl's line keeps them.
+    if (r.source?.location) out[`${r.root}.source`] = r.source.location;
+    if (r.source?.version_id) out[`${r.root}.source_version`] = r.source.version_id;
   }
   return out;
 }
@@ -1420,6 +1423,7 @@ export function finishedMigrationLines(appliedText: string): string[] {
       after: str(`${root}.after`),
       before_digest: str(`${root}.before_digest`),
       after_digest: str(`${root}.after_digest`),
+      ...(str(`${root}.source`) ? { source: str(`${root}.source`), source_version: str(`${root}.source_version`) } : {}),
     }));
     out.push(JSON.stringify({
       version: 1,
@@ -1683,6 +1687,8 @@ async function runGated(
   const work = o.work;
   const by = env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || git(repo, ["config", "user.name"]).stdout.trim() || env.USER || "unknown";
   const sinks = plan.estate ? o.progress?.(m.name) : undefined;
+  // The proof is the request's attachment, which chant writes to the local branch before it fetches.
+  syncLocalLedger(repo);
   const result = await chant.gatedStateOp(
     {
       op: MIGRATE_OP,
@@ -1713,7 +1719,8 @@ async function runGated(
   );
   switch (result.status) {
     case "done": {
-      const applied = result.output;
+      // The record names the request digest the approval named, as a waiting one does.
+      const applied = { ...result.output, digest: result.digest };
       if (applied.status === "refused") {
         log(`${label}: under the lock, the state of ${applied.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
         return { code: EXIT.refused, record: applied };
@@ -1729,13 +1736,13 @@ async function runGated(
     }
     case "failed":
       log(`${label}: ${opMessage(result.error)}`);
-      return { code: EXIT.failed, record: { ...record, status: "failed", error: opMessage(result.error) } };
+      return { code: EXIT.failed, record: { ...record, digest: result.digest, status: "failed", error: opMessage(result.error) } };
     case "spent":
       log(`${label}: request ${result.digest} applied already${result.finished ? ` (${result.finished.result} at ${result.finished.timestamp})` : ""}; a migration applies once`);
-      return { code: EXIT.applied, record };
+      return { code: EXIT.applied, record: { ...record, digest: result.digest } };
     case "held":
       log(`${label}: ${result.reason}`);
-      return { code: EXIT.failed, record: { ...record, status: "failed", error: result.reason } };
+      return { code: EXIT.failed, record: { ...record, digest: result.digest, status: "failed", error: result.reason } };
     case "refused":
       log(`${label}: an approval does not count: ${result.reason}`);
     // falls through: the request still waits for another approver
