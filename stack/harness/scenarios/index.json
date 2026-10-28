@@ -137,5 +137,18 @@
       "chant#4586 ruling A (estate shape in place of the terralith core-set row)",
       "plywood (the Pulumi tree, later)"
     ]
+  },
+  "tg-action-run": {
+    "binary": "terraform",
+    "needs": [
+      "image:terraform",
+      "bucket:hs-tg-action-run-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "chant#4653 (tf-action)",
+      "chant#4650 (comment step, gated outcome)",
+      "terragucci#1310"
+    ]
   }
 }

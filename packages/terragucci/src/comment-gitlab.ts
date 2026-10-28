@@ -260,6 +260,8 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
   if (typeof level !== "number" || level < DEVELOPER) return silent(`${user} is below Developer on the project, so the note is ignored`);
 
   if (parsed.kind === "refused") return reply(parsed.reason);
+  // A day-2 action runs from the action workflow on GitHub and Forgejo (./action.ts); a GitLab project runs it from a checkout.
+  if (parsed.kind === "action") return reply(`\`/terragucci action\` does not run from a merge request note: run \`terragucci action ${parsed.root} ${parsed.address}\` from a checkout of the default branch`);
   if (parsed.kind === "agent" && !ask.agent) return reply("the agent command is off in this project; `agent.comment` in terragucci.yml turns it on");
   if ((parsed.kind === "lock" || parsed.kind === "unlock") && !prMode) {
     return reply(`\`/terragucci ${parsed.kind}\` does not run here: this project applies after merge, so merge requests take no locks`);

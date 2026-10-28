@@ -1,0 +1,108 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-action-run",
+  "product": "terragucci",
+  "claim": "action/gated-invoke",
+  "title": "A day-2 action asked from a pull request comment waits for an approval by someone else, and the resume job runs it once the approval stands",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-action-run",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied the app's function",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "noop",
+      "do": "open",
+      "branch": "noop",
+      "overlay": "noop",
+      "title": "notes: a change that touches no root"
+    },
+    {
+      "id": "ask",
+      "do": "comment",
+      "pull": "noop",
+      "body": "/terragucci action apps/orders module.app.action.aws_lambda_invoke.rotate",
+      "expect": [
+        {
+          "comment": "terragucci approve action apps/orders"
+        },
+        {
+          "gated": {
+            "op": "tf-action",
+            "status": "gated",
+            "count": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "approve",
+      "do": "out-of-band",
+      "label": "the reviewer, not the person who asked, approves the action's request",
+      "command": [
+        "stack/harness/check.sh",
+        "chant-approve",
+        "tf-action",
+        "apps/orders:module.app.action.aws_lambda_invoke.rotate"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge-noop",
+      "do": "merge",
+      "pull": "noop"
+    },
+    {
+      "id": "resume",
+      "do": "out-of-band",
+      "label": "the resume job runs the approved action as the person who asked",
+      "command": [
+        "stack/harness/check.sh",
+        "rerun",
+        "terragucci-resume.yml"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "gated": {
+            "op": "tf-action",
+            "status": "ok",
+            "count": 1
+          }
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the merged pull request changes the action's payload after the approval, so the resume plans a new digest, asks anew and runs nothing"
+  }
+}

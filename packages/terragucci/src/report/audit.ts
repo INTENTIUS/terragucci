@@ -33,7 +33,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write", "agent-run"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write", "agent-run", "action-requested", "action"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, a report in the bucket, or a state's list of versions. */
@@ -98,6 +98,14 @@ export const UNLOCK_APPLIED_FILE = "_gates/tf-unlock/applied.jsonl";
 export const EXPORT_APPLIED_FILE = "_gates/tf-state-export/applied.jsonl";
 /** A standalone migration on chant's gated request: its finished line is the record of its writes, in place of a done.jsonl line (terragucci#1282 part i). */
 export const MIGRATE_APPLIED_FILE = "_gates/tf-migrate/applied.jsonl";
+/**
+ * Day-2 actions (../action.ts, chant#4653 `tf-action`): the requests and
+ * their approvals at the gate `<root>:<address>`, and the applied and finished
+ * lines of each action run beside it. A request is `action-requested`, its
+ * approval an `approval` like any gate's, and a run `action`.
+ */
+export const ACTION_LEDGER_FILE = "_gates/tf-action.jsonl";
+export const ACTION_APPLIED_FILE = "_gates/tf-action/applied.jsonl";
 const FINISHED_KIND: Record<string, AuditKind> = { [UNLOCK_APPLIED_FILE]: "unlock", [EXPORT_APPLIED_FILE]: "state-export", [MIGRATE_APPLIED_FILE]: "migration" };
 /** Ephemeral environments: the gate of each pull request's copy, and the record of each apply and destroy of it (../ephemeral.ts). */
 export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
@@ -155,7 +163,9 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
   if (path === PR_ENV_RECORDS_FILE) return prEnvEntries(project, lines, commitUrl);
   if (path === AGENT_RUNS_FILE) return agentRunEntries(project, lines, commitUrl);
   if (AGENT_RUN_LEDGERS[path]) return agentRunLedgerEntries(project, path, lines, commitUrl);
+  if (path === ACTION_APPLIED_FILE) return actionRunEntries(project, lines, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
+  const action = path === ACTION_LEDGER_FILE;
   const { entries } = deriveGateAudit({
     ledgers: [{ op: opOf(path), path, lines }],
     isOverride: () => override,
@@ -173,7 +183,19 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
     const url = commitUrl(commit);
     const evidence: AuditEvidence = { source: "ledger", branch: LEDGER_BRANCH, path, commit, ...(url ? { url } : {}) };
     const base = { schema: AUDIT_SCHEMA, id: e.id, project, at: e.at, what: e.gate, digest: e.digest ?? null, evidence } as const;
-    if (e.kind === "approval-requested" || e.kind === "override-requested") {
+    if (action && e.kind === "approval-requested") {
+      // chant's pending fact carries the request: who asked, and the address its fields bind.
+      const request = (parse(e.source.text ?? "")?.request ?? {}) as Line;
+      const fields = (request.fields && typeof request.fields === "object" ? request.fields : {}) as Line;
+      const at = actionAt(e.gate, str(fields.address));
+      out.push({
+        ...base,
+        kind: "action-requested",
+        who: str(request.by) ?? null,
+        result: "waiting",
+        detail: drop({ root: at.root, address: at.address, requester: str(request.by), expires: e.expiresAt, run_id: e.runId, description: e.description }),
+      });
+    } else if (e.kind === "approval-requested" || e.kind === "override-requested") {
       out.push({
         ...base,
         kind: e.kind,
@@ -207,6 +229,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
           relayed_by: e.relayedBy,
           committed_by: e.committedBy,
           excluded: excludedOf(e.detail.excluded),
+          ...(action ? actionAt(e.gate) : {}),
         }),
       });
     } else if (e.kind === "revoked") {
@@ -220,6 +243,72 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
     }
   }
   return out;
+}
+
+/** An action's root and address from its gate, `<root>:<address>`, the address known from the request's fields when they say it. */
+function actionAt(gate: string, address?: string): { root?: string; address?: string } {
+  if (address && gate.endsWith(`:${address}`)) return { root: gate.slice(0, -address.length - 1), address };
+  const i = gate.indexOf(":");
+  return i > 0 ? { root: gate.slice(0, i), address: gate.slice(i + 1) } : {};
+}
+
+/**
+ * The entries of `_gates/tf-action/applied.jsonl`: one `action` per finished
+ * line, with who approved it (the applied line it finished), its digest and
+ * how it ended (`detail.result`: ok or failed), the exit code and the last
+ * lines of the binary's output. `who` is the approver, as for an apply; the
+ * requester is joined from the request by {@link joinActionRequesters}.
+ */
+function actionRunEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  const applied = new Map<string, Line>();
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
+    if (!r || r.version !== 1 || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    if (r.kind === "applied") {
+      applied.set(`${r.gate}\n${str(r.planDigest) ?? ""}\n${r.timestamp}`, r);
+      continue;
+    }
+    if (r.kind !== "finished") continue;
+    const spent = applied.get(`${r.gate}\n${str(r.planDigest) ?? ""}\n${str(r.applied) ?? ""}`);
+    const detail = r.detail && typeof r.detail === "object" ? (r.detail as Line) : {};
+    const url = commitUrl(c.commit);
+    const at = actionAt(r.gate, str(detail.address));
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, ACTION_APPLIED_FILE, c.text),
+      kind: "action",
+      project,
+      at: r.timestamp,
+      who: str(spent?.approvedBy) ?? null,
+      what: r.gate,
+      digest: str(r.planDigest) ?? null,
+      result: r.result === "failed" ? "failed" : (str(detail.result) ?? "ok"),
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: ACTION_APPLIED_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({
+        root: at.root,
+        address: at.address,
+        approved_by: str(spent?.approvedBy),
+        approved_at: str(spent?.approvedAt),
+        applied_at: str(r.applied),
+        exit: typeof detail.exit === "number" ? detail.exit : undefined,
+        tail: str(detail.tail),
+        error: str(detail.error),
+        run_id: str(spent?.runId),
+      }),
+    });
+  }
+  return out;
+}
+
+/** Each action run's requester, from the request of its digest: the run's own line does not name who asked. */
+export function joinActionRequesters(entries: AuditEntry[]): AuditEntry[] {
+  const by = new Map<string, string>();
+  for (const e of entries) if (e.kind === "action-requested" && e.digest && e.who) by.set(`${e.what}\n${e.digest}`, e.who);
+  return entries.map((e) => {
+    const who = e.kind === "action" && e.digest ? by.get(`${e.what}\n${e.digest}`) : undefined;
+    return who ? { ...e, detail: { ...e.detail, requester: who } } : e;
+  });
 }
 
 /** The people an approval left out because they had a hand in the change (../involved.ts), as a ledger line or a report carries them. */

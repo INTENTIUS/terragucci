@@ -27,6 +27,11 @@
  * waiting, wave or migration, it needs no argument, and `--plan` finds a
  * migration by its digest as it finds a wave. Then it resumes wave 1.
  *
+ * `terragucci approve action <root> --plan <digest>` approves a day-2
+ * action's request (./action.ts): chant's `tf-action` gate of
+ * `<root>:<address>`, found by the root and the digest. An approval by the
+ * person who asked is refused before chant runs.
+ *
  * `terragucci approve export|unlock <root> --plan <digest>` and
  * `terragucci approve ephemeral <pr> --plan <digest>` approve the other gates
  * a person answers: a state export request (./export.ts), the release of a
@@ -62,6 +67,7 @@ import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
 import { chantHoldRecord } from "./chant-next";
 import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
+import { ACTION_LEDGER, ACTION_OP, approveActionArgs } from "./action";
 import { ephemeralOp } from "./ephemeral";
 import { PR_ENV_GATE } from "@intentius/chant/components/pr-environment";
 import { chantCommand, installedChant } from "./chant-bin";
@@ -389,12 +395,14 @@ async function approveCopy(repo: string, op: string, plan: string, o: GateApprov
 export const GATE_KEYWORDS = {
   export: { op: EXPORT_OP, ledger: EXPORT_LEDGER, what: "the state export of", next: (t: string) => `the person who asked runs terragucci state export ${t} again to download it` },
   unlock: { op: UNLOCK_OP, ledger: UNLOCK_LEDGER, what: "releasing the state lock of", next: (t: string) => `run terragucci unlock-state ${t} again to release it` },
+  // The gate is `<root>:<address>`, found by the root and the digest (./action.ts approveActionArgs).
+  action: { op: ACTION_OP, ledger: ACTION_LEDGER, what: "the action of", next: (t: string) => `the resume job runs it, or the person who asked runs terragucci action ${t} <address> again` },
   // The op and ledger are per pull request: pr-<n>, and _gates/pr-<n>.jsonl (approveCopy).
   ephemeral: { op: "pr-<n>", ledger: "_gates/pr-<n>.jsonl", what: "the ephemeral copy of", next: () => "run the pull request's ephemeral job again, or push to it" },
 } as const;
 export type GateKeyword = keyof typeof GATE_KEYWORDS;
 
-/** Whether approve's arguments are the keyword form: export, unlock or ephemeral followed by its root or pull request. */
+/** Whether approve's arguments are the keyword form: export, unlock, action or ephemeral followed by its root or pull request. */
 export const isGateKeyword = (args: string[]): args is [GateKeyword, string, ...string[]] => args.length >= 2 && Object.hasOwn(GATE_KEYWORDS, args[0]!) && args[1] !== "";
 
 export interface GateApproveOptions extends Omit<ApproveOptions, "wave" | "resume" | "fetch"> {
@@ -422,6 +430,18 @@ export async function approveGate(repo: string, o: GateApproveOptions): Promise<
   const plan = o.plan?.trim();
   if (!plan || !/^\S+$/.test(plan)) throw new ConfigError(`approve ${o.kind} needs --plan <digest>, the digest its request printed: ${usage}`);
   if (o.kind === "ephemeral") return approveCopy(repo, gate, plan, o, log);
+  if (o.kind === "action") {
+    const found = await approveActionArgs(repo, { root: o.target, plan, ...(o.sign !== undefined ? { sign: o.sign } : {}), ...(o.actor ? { actor: o.actor } : {}), ...(o.dryRun ? { dryRun: true } : {}), ...(o.env ? { env: o.env } : {}), log });
+    if (found.code !== 0 || !found.args) return { code: found.code, command: "" };
+    const command = `chant ${found.args.map(quote).join(" ")}`;
+    if (o.dryRun) {
+      log(`would run: ${command}`);
+      return { code: 0, command };
+    }
+    const code = runChant(repo, found.args, command, o, log);
+    if (code === 0) log(`approved the action ${found.gate}; ${found.next}`);
+    return { code, command };
+  }
   const ledger = readLedger(repo, g.ledger);
   // Each person's export request stands on its own, so any request for the root may be the one; a lock or a copy waits only for its newest digest.
   const requests = ledger.pending.filter((p) => p.gate === gate && p.planDigest).sort((a, b) => at(b.timestamp) - at(a.timestamp));

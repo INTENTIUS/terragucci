@@ -10,7 +10,7 @@
  *
  * chant reads these through `@intentius/chant/ci-product`.
  */
-import { assertProductWords, productStatusContext, type CiProductWords } from "@intentius/chant/ci-product-words";
+import { assertProductWords, CI_PRODUCT_COMMANDS, productStatusContext, type CiProductWords } from "@intentius/chant/ci-product-words";
 
 /** ./comment.ts ATLANTIS_COMMENTS_ENV, written out so comment.ts can import this file without a cycle. */
 const ATLANTIS_COMMENTS_ENV = "TG_ATLANTIS_COMMENTS";
@@ -43,6 +43,26 @@ let checked: CiProductWords | undefined;
 /** TERRAGUCCI_WORDS with every slot filled, as chant's `assertProductWords` checks them. */
 export function productWords(): CiProductWords {
   return (checked ??= assertProductWords(TERRAGUCCI_WORDS));
+}
+
+let withAction: CiProductWords | null | undefined;
+
+/**
+ * The words a comment is read with: TERRAGUCCI_WORDS plus `action`
+ * (`/terragucci action <root> <address>`, terragucci#1310) when the installed
+ * chant's grammar has the command (chant#4653). Null on a chant without it:
+ * ./comment.ts then reads the action form itself.
+ *
+ * The pipeline's words stay TERRAGUCCI_WORDS. chant's product pipeline
+ * refuses a word mapped onto `action` with no job for it, and the action runs
+ * in a workflow of terragucci's own (./render.ts actionWorkflow), so `action`
+ * is left out of the words the pipeline is written with.
+ */
+export function commentProductWords(): CiProductWords | null {
+  if (withAction !== undefined) return withAction;
+  const commands = CI_PRODUCT_COMMANDS as readonly string[];
+  withAction = commands.includes("action") ? assertProductWords({ ...TERRAGUCCI_WORDS, commands: { ...TERRAGUCCI_WORDS.commands, action: "action" } as never }) : null;
+  return withAction;
 }
 
 /**
