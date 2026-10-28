@@ -1078,7 +1078,8 @@ safe_run_detect() {
   fi
 }
 
-# The version the claims' binary reports, from its CI image.
+# The version the run's binary reports, from its CI image. A claim that says
+# it runs on another binary takes that binary's pinned version instead.
 engine_version() {
   docker run --rm --entrypoint "$SMOKE_BINARY" "$(image_tag "$SMOKE_BINARY")" version 2>/dev/null \
     | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1
@@ -1094,8 +1095,14 @@ harness_rows() {
   fi
   version="$(engine_version)"
   [ -n "$version" ] || { echo "smoke: no harness rows: the $SMOKE_BINARY image reported no version" >&2; return 0; }
+  # The claim table this run read, so each row takes its engine from its
+  # claim: a claim that says "with binary: choudoufu" runs its jobs in the
+  # choudoufu image in a tofu run too, and its row carries choudoufu at the
+  # version TOOL_VERSIONS builds that image with (stack/harness/rows.ts).
+  printf '%s\n' "$CLAIMS" >"$SMOKE_LOG_DIR/claims.table"
   (cd "$HERE/.." && node_modules/.bin/tsx stack/harness/harness.ts record --logs "$SMOKE_LOG_DIR" \
-    --binary "$SMOKE_BINARY" --forge "$SMOKE_FORGE" --engine-version "$version") || rc=$?
+    --binary "$SMOKE_BINARY" --forge "$SMOKE_FORGE" --engine-version "$version" \
+    --claims "$SMOKE_LOG_DIR/claims.table") || rc=$?
   case "$rc" in
     0) ;;
     3) echo "smoke: no harness rows (see the line above); smoke.json is written as before" >&2 ;;

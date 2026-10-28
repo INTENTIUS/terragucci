@@ -29,8 +29,10 @@
 #   check.sh bucket-estate <bucket> <estate>
 #                                         the SQS queue or S3 bucket in floci
 #                                         carries tofu-estate <estate>
-#   check.sh pr-run <branch> <status>     the newest pull_request run of the
-#                                         branch's head ended status
+#   check.sh pr-run <branch> <status> [workflow]
+#                                         the newest pull_request run of the
+#                                         branch's head (of that workflow file,
+#                                         when named) ended status
 #   check.sh review <branch>              the reviewer approves the open pull
 #                                         request from branch (a review on the
 #                                         forge, as a person gives it)
@@ -46,6 +48,15 @@
 #                                         terragucci approve as the reviewer
 #                                         in a clone of main, with no digest
 #                                         copied (the waiting wave's own)
+#   check.sh chant-approve <op> <gate>    chant approve <op> <gate> as the
+#                                         reviewer, in the reviewer's clone of
+#                                         main with chant/lifecycle, with the
+#                                         chant the tree pins, and the ledger
+#                                         pushed back
+#   check.sh rerun <workflow> [status]    the workflow run again on main (a
+#                                         dispatch, or an empty commit when
+#                                         Forgejo refuses one) ended status
+#                                         (default success)
 #   check.sh plan-twice <root>            a clone of main planned twice in the
 #                                         binary's CI image; both plans, shown
 #                                         as JSON in key order with their
@@ -143,8 +154,8 @@ case "${1:-}" in
     sha=""
     for _ in $(seq 1 60); do sha="$(remote_head "$REPO" "$branch")"; [ -n "$sha" ] && break; sleep 2; done
     [ -n "$sha" ] || { log "$branch has no head"; exit 1; }
-    wait_run "$REPO" "$sha" pull_request || exit 1
-    [ "$RUN_STATUS" = "$want" ] || { log "the pull_request run of $branch ended $RUN_STATUS, not $want"; exit 1; }
+    WAIT_WORKFLOW="${4:-}" wait_run "$REPO" "$sha" pull_request || exit 1
+    [ "$RUN_STATUS" = "$want" ] || { log "the pull_request run${4:+ of $4} on $branch ended $RUN_STATUS, not $want"; exit 1; }
     ;;
   review)
     branch="${2:?review <branch>}"
@@ -189,6 +200,52 @@ case "${1:-}" in
     (cd "$work/repo" && TERRAGUCCI_FORGEJO_TOKEN="$TERRAGUCCI_FORGEJO_REVIEWER_TOKEN" \
       node "$ROOT/packages/terragucci/dist/terragucci.mjs" approve ${2:+"$2"} --actor "$TERRAGUCCI_FORGEJO_REVIEWER" >&2)
     ;;
+  chant-approve)
+    op="${2:?chant-approve <op> <gate>}"; gate="${3:?chant-approve <op> <gate>}"
+    who="$TERRAGUCCI_FORGEJO_REVIEWER"
+    work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
+    git clone -q "$(remote "$who" "$TERRAGUCCI_FORGEJO_REVIEWER_TOKEN")" "$work/repo" >&2
+    git -C "$work/repo" show-ref -q --verify refs/remotes/origin/chant/lifecycle \
+      || { log "$REPO has no chant/lifecycle, so no gate is waiting"; exit 1; }
+    git -C "$work/repo" branch -q chant/lifecycle origin/chant/lifecycle
+    git -C "$work/repo" config user.name "$who"
+    git -C "$work/repo" config user.email "$who@terragucci.local"
+    # The tree's own chant, so the resolution is written as the jobs' chant reads it.
+    (cd "$work/repo" && npm ci --no-audit --no-fund >/dev/null && npx chant approve "$op" "$gate" --approver "$who") >&2 \
+      || { log "chant approve $op $gate failed"; exit 1; }
+    # chant pushes the ledger itself and lets a failed push pass; push it here too.
+    git -C "$work/repo" push -q origin chant/lifecycle >&2 || { log "the approval did not reach chant/lifecycle on $REPO"; exit 1; }
+    log "$who approved $op $gate"
+    ;;
+  rerun)
+    workflow="${2:?rerun <workflow> [status]}"; want="${3:-success}"
+    wait_settled || exit 1
+    run="$(api -H 'content-type: application/json' -X POST -d '{"ref":"main","return_run_info":true}' \
+      "$URL/api/v1/repos/$REPO/actions/workflows/$workflow/dispatches" 2>/dev/null | jq -r '.id // empty' 2>/dev/null || true)"
+    if [ -n "$run" ]; then
+      log "dispatched $workflow on main: run $run"
+      deadline=$(( $(date +%s) + TIMEOUT ))
+      while :; do
+        status="$(api "$URL/api/v1/repos/$REPO/actions/runs/$run" | jq -r '.status')"
+        case "$status" in success|failure|cancelled|skipped) break ;; esac
+        [ "$(date +%s)" -lt "$deadline" ] || { log "run $run of $workflow still $status after ${TIMEOUT}s"; exit 1; }
+        sleep 3
+      done
+    else
+      # A Forgejo that refuses the dispatch: a push to main runs the workflow again.
+      work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
+      clone_main "$work/repo"
+      git -C "$work/repo" -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false \
+        commit -q --allow-empty -m "run $workflow again"
+      git -C "$work/repo" push -q origin HEAD:main >&2 || { log "could not push to main of $REPO"; exit 1; }
+      sha="$(git -C "$work/repo" rev-parse HEAD)"
+      log "Forgejo refused a dispatch of $workflow; pushed ${sha:0:8} to main instead"
+      WAIT_WORKFLOW="$workflow" wait_run "$REPO" "$sha" push || exit 1
+      status="$RUN_STATUS"
+    fi
+    log "$workflow run again on main: $status"
+    [ "$status" = "$want" ]
+    ;;
   plan-twice)
     root="${2:?plan-twice <root>}"
     binary="$(jq -r --arg id "${TG_SCENARIO:?}" '.[$id].binary' "$HERE/scenarios/index.json")"
@@ -210,5 +267,5 @@ case "${1:-}" in
       exit 1
     fi
     ;;
-  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | plan-twice <root>" >&2; exit 2 ;;
+  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> [workflow] | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | chant-approve <op> <gate> | rerun <workflow> [status] | plan-twice <root>" >&2; exit 2 ;;
 esac

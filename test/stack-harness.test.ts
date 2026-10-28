@@ -3,11 +3,12 @@
 // chant without the harness, the gate between them, the scenarios' lint, and
 // smoke.sh's verdicts as claim rows. Nothing here starts a container.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { breakVerdict, parseSmokeLine, plainVerdict, smokeClaimRun, smokeScenario } from "../stack/harness/rows";
+import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
+import { bareVersion, breakVerdict, parseClaimsTable, parseSmokeLine, plainVerdict, rowEngine, saysBinary, smokeClaimRun, smokeRows, smokeScenario } from "../stack/harness/rows";
 import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath, SOURCE_PATTERN, TERRAGUCCI_STEPS, TREE_OVERLAY } from "../stack/harness/scenarios";
 import { forgeServices, JOB_CACHE_VOLUME, PROFILES, STACK_PORTS, type HarnessStackFn, type ServiceSpec } from "../stack/harness/stack-spec";
 
@@ -172,15 +173,51 @@ describe("the scenarios", () => {
       if (e.source.includes("@")) expect(e.source, id).toMatch(/@[0-9a-f]{40}:/);
     }
     expect(index["tg-compose-cross-estate"]?.lift).toEqual(["forgejo/.forgejo:.forgejo"]);
+    expect(index["tg-compose-ci-pipelines"]?.source).toBe("choudoufu:examples/ci-pipelines");
+    expect(index["tg-compose-ci-pipelines"]?.lift).toEqual(["forgejo/.forgejo:.forgejo"]);
+    expect(index["tg-compose-ci-pipelines"]?.recordStore).toBe("terraform/estate.chdf.hcl");
     expect(index["multi-region"]?.source).toBe("lex00/aws-bench@e8c259c23efe1a0805595ac9a340c178b427c1d3:benchmarks/arms/terraform-ec2-multiregion");
   });
 
   it("covers the example pipelines and the multi-region estate, each with a claim choudoufu can cite", () => {
-    for (const id of ["tg-compose-cross-estate", "tg-compose-terragrunt", "tg-compose-atmos", "multi-region"]) {
+    for (const id of ["tg-compose-cross-estate", "tg-compose-ci-pipelines", "tg-compose-terragrunt", "tg-compose-atmos", "multi-region"]) {
       const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { claim: string; break: { overlay?: string } };
       expect(doc.claim, id).toMatch(/^[a-z]+\/[a-z-]+$/);
       expect(doc.break.overlay, id).toBe("break");
     }
+  });
+
+  it("drives ci-pipelines through its own gate: the approval, then the run again applying once", () => {
+    const doc = JSON.parse(readFileSync(scenarioPath("tg-compose-ci-pipelines"), "utf8")) as { claim: string; steps: Array<{ id: string; command?: string[]; expect?: unknown[] }> };
+    expect(doc.claim).toBe("choudoufu/ci-pipelines");
+    const by = new Map(doc.steps.map((s) => [s.id, s]));
+    expect(by.get("checked")!.command).toEqual(["stack/harness/check.sh", "pr-run", "add-log-group", "success", "live-check.yml"]);
+    expect(by.get("planned")!.command).toEqual(["stack/harness/check.sh", "pr-run", "add-log-group", "success", "live-plan.yml"]);
+    expect(by.get("gated")!.expect).toContainEqual({ ledger: { op: "live-apply", status: "gated" } });
+    expect(by.get("approved")!.command).toEqual(["stack/harness/check.sh", "chant-approve", "live-apply", "approve-live-apply"]);
+    expect(by.get("applied")!.expect).toContainEqual({ ledger: { op: "live-apply", status: "ok", count: 1 } });
+    const ids = doc.steps.map((s) => s.id);
+    expect(ids.indexOf("approved")).toBeGreaterThan(ids.indexOf("gated"));
+    expect(ids.indexOf("applied")).toBeGreaterThan(ids.indexOf("approved"));
+    const brk = overlayFiles(scenarioPath("tg-compose-ci-pipelines"), "break");
+    expect(brk["terraform/break.tf"]).toMatch(/ignore_changes = \[tags\]/);
+  });
+
+  it("knows every check.sh command a scenario runs", () => {
+    const check = readFileSync(join(stack, "harness", "check.sh"), "utf8");
+    for (const id of scenarioIds()) {
+      const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { steps: Array<{ command?: string[] }> };
+      for (const s of doc.steps) {
+        if (s.command?.[0] !== "stack/harness/check.sh") continue;
+        expect(check, `${id} ${s.command[1]}`).toMatch(new RegExp(`^  (?:[a-z0-9-]+\\|)*${s.command[1]}(?:\\|[a-z0-9-]+)*\\)`, "m"));
+      }
+    }
+  });
+
+  it("names the choudoufu its tree's workflows download as the row's engine", () => {
+    const seed = readFileSync(join(stack, "harness", "seed.sh"), "utf8");
+    expect(seed).toContain("choudoufu/releases/download/v[0-9]+");
+    expect(seed).toContain(`jq -r '.recordStore // empty'`);
   });
 
   it("reads a tree: overlay from the seeded base, and refuses one before there is a base", () => {
@@ -253,6 +290,83 @@ describe("smoke verdicts as claim rows", () => {
     expect(smokeScenario({ binary: "tofu", forge: "forgejo" })).toBe("smoke");
     expect(smokeScenario({ binary: "choudoufu", forge: "forgejo" })).toBe("smoke-choudoufu");
     expect(smokeScenario({ binary: "tofu", forge: "gitlab" })).toBe("smoke-gitlab");
+  });
+});
+
+describe("each smoke row's engine, from its claim", () => {
+  const smoke = readFileSync(join(stack, "smoke.sh"), "utf8");
+  const table = parseClaimsTable(/\nCLAIMS='([^']*)'/.exec(smoke)![1]!);
+  // The rows choudoufu's live/smoke/claims.json cites as product-scenario proofs
+  // from terragucci's default (OpenTofu) record (choudoufu#2301).
+  const cited = ["choudoufu/rows-overlap", "choudoufu/concurrency", "choudoufu/rows-wait", "choudoufu/rows-takeover", "choudoufu/killed", "choudoufu/migrate", "choudoufu/iam", "choudoufu/shared-bucket", "choudoufu/record-versions", "drift/choudoufu"];
+
+  /** A fake --record log directory: each claim's plain and BREAK verdict files. */
+  function fakeLogs(claims: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), "tg-smoke-logs-"));
+    for (const c of claims) {
+      const base = join(dir, c.replace(/\//g, "."));
+      writeFileSync(`${base}.plain.verdict`, `SMOKE claim=${c} verdict=pass seconds=1\n`);
+      writeFileSync(`${base}.break.verdict`, `SMOKE claim=${c} verdict=caught seconds=1\n`);
+    }
+    return dir;
+  }
+
+  it("reads the claim table smoke.sh holds", () => {
+    expect(table.get("choudoufu/rows-overlap")).toMatch(/^with binary: choudoufu two pushes/);
+    expect(table.get("tips/moved")).toBeDefined();
+    expect(parseClaimsTable("a/b|says one|needs\nc/d|says two|\n\n")).toEqual(new Map([["a/b", "says one"], ["c/d", "says two"]]));
+  });
+
+  it("names the binary a claim's text says it runs on, and only a known one", () => {
+    expect(saysBinary("with binary: choudoufu a role granted one estate")).toBe("choudoufu");
+    expect(saysBinary("in a Terragrunt repo with binary: terraform the pipeline installs Terraform")).toBe("terraform");
+    expect(saysBinary("with binary: pulumi a thing")).toBeUndefined();
+    expect(saysBinary("the example boots")).toBeUndefined();
+    expect(saysBinary(undefined)).toBeUndefined();
+  });
+
+  it("gives every claim choudoufu cites choudoufu at the CI image's pinned version in a tofu record", () => {
+    const logs = fakeLogs([...cited, "tips/moved", "boot/tofu"]);
+    const rows = smokeRows(logs, { scenario: "smoke", binary: "tofu", version: "v1.13.1", claims: table, pins: TOOL_VERSIONS });
+    const by = new Map(rows.map((r) => [r.claim, r.engine]));
+    for (const c of cited) expect(by.get(c), c).toEqual({ binary: "choudoufu", version: TOOL_VERSIONS.choudoufu });
+    expect(by.get("tips/moved")).toEqual({ binary: "tofu", version: "1.13.1" });
+    expect(by.get("boot/tofu")).toEqual({ binary: "tofu", version: "1.13.1" });
+    expect(rows.map((r) => r.run.verdicts)).toEqual(rows.map(() => ({ plain: "pass", break: "caught" })));
+  });
+
+  it("reads the choudoufu version from the pin the CI image is built from", () => {
+    const dockerfile = readFileSync(join(root, "images", "Dockerfile.choudoufu"), "utf8");
+    expect(dockerfile).toContain(`choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`);
+    expect(dockerfile).toContain(`/download/v${TOOL_VERSIONS.choudoufu}/`);
+  });
+
+  it("keeps the run's binary under SMOKE_BINARY=choudoufu, and without a claim table", () => {
+    const logs = fakeLogs(["drift/tofu", "choudoufu/iam"]);
+    const cdf = smokeRows(logs, { scenario: "smoke-choudoufu", binary: "choudoufu", version: "v0.31.0", claims: table, pins: { choudoufu: "9.9.9" } });
+    expect(cdf.map((r) => r.engine)).toEqual([{ binary: "choudoufu", version: "0.31.0" }, { binary: "choudoufu", version: "0.31.0" }]);
+    const bare = smokeRows(logs, { scenario: "smoke", binary: "tofu", version: "1.13.1", pins: TOOL_VERSIONS });
+    expect(bare.map((r) => r.engine.binary)).toEqual(["tofu", "tofu"]);
+  });
+
+  it("refuses a claim whose binary has no pin, and writes a version bare", () => {
+    expect(() => rowEngine({ says: "with binary: choudoufu x", binary: "tofu", version: "1.13.1", pins: {} })).toThrow(/no pinned version for choudoufu/);
+    expect(rowEngine({ says: "with binary: terraform x", binary: "tofu", version: "1.13.1", pins: { terraform: "v1.14.9" } })).toEqual({ binary: "terraform", version: "1.14.9" });
+    expect(bareVersion("v0.18.0")).toBe("0.18.0");
+    expect(bareVersion("1.13.1")).toBe("1.13.1");
+  });
+
+  it("skips a claim with no BREAK verdict or a pending plain one", () => {
+    const logs = fakeLogs(["choudoufu/iam"]);
+    writeFileSync(join(logs, "tips.moved.plain.verdict"), "SMOKE claim=tips/moved verdict=pass\n");
+    writeFileSync(join(logs, "a.b.plain.verdict"), "SMOKE claim=a/b verdict=pending\n");
+    writeFileSync(join(logs, "a.b.break.verdict"), "SMOKE claim=a/b verdict=caught\n");
+    expect(smokeRows(logs, { scenario: "smoke", binary: "tofu", version: "1.13.1", claims: table, pins: TOOL_VERSIONS }).map((r) => r.claim)).toEqual(["choudoufu/iam"]);
+  });
+
+  it("passes the run's claim table to harness.ts record", () => {
+    expect(smoke).toContain(`printf '%s\\n' "$CLAIMS" >"$SMOKE_LOG_DIR/claims.table"`);
+    expect(smoke).toContain('--claims "$SMOKE_LOG_DIR/claims.table"');
   });
 });
 

@@ -4,7 +4,7 @@
  *   harness.ts floor               exit 0 when the installed chant has the harness, 3 when not
  *   harness.ts compose --out FILE  build floci, Forgejo and forgejo-runner (./compose/) for TG_PROJECT
  *   harness.ts lint [id...]        lint the scenarios (chant's lintScenario, and ./scenarios.ts)
- *   harness.ts record --logs DIR --binary B --forge F --engine-version V [--out FILE]
+ *   harness.ts record --logs DIR --binary B --forge F --engine-version V [--claims FILE] [--out FILE]
  *                                  smoke.sh --record's verdicts as harness rows
  *   harness.ts run <id> [--record] drive one scenario, plain then BREAK, on the running stack
  *
@@ -19,9 +19,10 @@
  * rendered from it (renderClaims). smoke.json stays the page's scoreboard.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { parseSmokeLine, smokeClaimRun, smokeScenario, type ClaimRunLike } from "./rows";
+import { TOOL_VERSIONS } from "../../packages/terragucci/src/images";
+import { bareVersion, parseClaimsTable, smokeRows, smokeScenario, type ClaimRunLike } from "./rows";
 import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath } from "./scenarios";
 
 const HERE = import.meta.dirname;
@@ -110,22 +111,13 @@ async function writeRow(h: Harness, row: unknown, run: ClaimRunLike, verdict: { 
   writeFileSync(out, `${JSON.stringify(h.renderClaims("terragucci", h.claimRowsOf(records)), null, 2)}\n`);
 }
 
-const iso = (ms: number) => new Date(ms).toISOString();
-
-/** When a log was written: its birth and its last change, as the file system has them. */
-function timesOf(file: string): { started: string; ended: string } {
-  if (!existsSync(file)) {
-    const now = iso(Date.now());
-    return { started: now, ended: now };
-  }
-  const s = statSync(file);
-  return { started: iso(s.birthtimeMs || s.ctimeMs), ended: iso(s.mtimeMs) };
-}
-
 /**
  * smoke.sh --record's verdicts as rows: one per claim that ran both ways.
  * The scan reads every log in the directory; one real-cloud line and no row
- * is written for any claim.
+ * is written for any claim. Each row carries the engine its claim ran on
+ * (rows.ts rowEngine): --claims is the claim table the run read, and a claim
+ * that says it runs on another binary than --binary carries that binary at
+ * the version its CI image is built with (TOOL_VERSIONS).
  */
 async function record(args: string[]): Promise<number> {
   const h = await needHarness("writing the harness rows of a smoke record");
@@ -141,6 +133,13 @@ async function record(args: string[]): Promise<number> {
     console.error("harness record: --engine-version is the version the claims' binary reported, and a row needs it");
     return 2;
   }
+  const claimsFile = flag(args, "claims");
+  if (claimsFile !== undefined && !existsSync(claimsFile)) {
+    console.error(`harness record: --claims names ${claimsFile}, which is not there`);
+    return 2;
+  }
+  if (claimsFile === undefined) console.error(`harness record: no --claims, so every row carries ${binary}`);
+  const claims = claimsFile === undefined ? undefined : parseClaimsTable(readFileSync(claimsFile, "utf8"));
   const out = flag(args, "out") ?? CLAIMS_JSON;
   const scratch = join(STATE, "claims-scan");
   mkdirSync(scratch, { recursive: true });
@@ -153,33 +152,20 @@ async function record(args: string[]): Promise<number> {
   }
   const scenario = smokeScenario({ binary, forge });
   const commit = productCommit();
-  let written = 0;
-  for (const f of readdirSync(logs).filter((n) => n.endsWith(".plain.verdict")).sort()) {
-    const base = f.slice(0, -".plain.verdict".length);
-    const plain = parseSmokeLine(readFileSync(join(logs, f), "utf8"));
-    if (!plain || plain.verdict === "pending") continue;
-    const brkFile = join(logs, `${base}.break.verdict`);
-    if (!existsSync(brkFile)) continue;
-    const brk = parseSmokeLine(readFileSync(brkFile, "utf8"));
-    const run = smokeClaimRun({
-      scenario,
-      claim: plain.claim,
-      plain,
-      break: brk,
-      times: { plain: timesOf(join(logs, `${base}.plain.log`)), break: timesOf(join(logs, `${base}.break.log`)) },
-    });
+  const rows = smokeRows(logs, { scenario, binary, version, claims, pins: TOOL_VERSIONS });
+  for (const r of rows) {
     const row = h.claimRow({
-      scenario: { id: scenario, product: "terragucci", claim: plain.claim },
+      scenario: { id: scenario, product: "terragucci", claim: r.claim },
       productCommit: commit,
-      engine: { binary, version },
-      verdicts: run.verdicts,
-      at: new Date(run.break.ended),
+      engine: r.engine,
+      verdicts: r.run.verdicts,
+      at: new Date(r.run.break.ended),
       chant: chantVersion(),
     });
-    await writeRow(h, row, run, verdict, out);
-    written++;
+    await writeRow(h, row, r.run, verdict, out);
   }
-  console.error(`harness record: ${written} ${scenario} row(s) on ${join(STATE, "claims-ledger")}, rendered to ${out}`);
+  const engines = [...new Set(rows.map((r) => `${r.engine.binary} ${r.engine.version}`))].join(", ");
+  console.error(`harness record: ${rows.length} ${scenario} row(s)${engines ? ` (${engines})` : ""} on ${join(STATE, "claims-ledger")}, rendered to ${out}`);
   return 0;
 }
 
@@ -342,7 +328,7 @@ async function run(args: string[]): Promise<number> {
     const row = h.claimRow({
       scenario,
       productCommit: productCommit(),
-      engine: { binary: entry.binary, version: seed.ENGINE_VERSION },
+      engine: { binary: entry.binary, version: bareVersion(seed.ENGINE_VERSION!) },
       verdicts: result.verdicts,
       at: new Date(),
       chant: chantVersion(),
@@ -373,7 +359,7 @@ async function main(argv: string[]): Promise<number> {
     case "run":
       return run(rest);
     default:
-      console.error("usage: harness.ts floor | compose --out FILE | lint [id...] | record --logs DIR --binary B --forge F --engine-version V [--out FILE] | run <id> [--record]");
+      console.error("usage: harness.ts floor | compose --out FILE | lint [id...] | record --logs DIR --binary B --forge F --engine-version V [--claims FILE] [--out FILE] | run <id> [--record]");
       return 2;
   }
 }
