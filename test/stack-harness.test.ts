@@ -285,7 +285,8 @@ describe("the terralith, for scale alone", () => {
   it("runs the scale bench only when dispatched, never on a release", () => {
     const wf = readFileSync(join(root, ".github", "workflows", "scale.yml"), "utf8");
     expect(wf).toContain("workflow_dispatch:");
-    expect(wf).not.toMatch(/^\s+release:\s*$/m);
+    // An event is a key of on:, two spaces in; the dispatch's release input is deeper.
+    expect(wf).not.toMatch(/^ {2}release:/m);
     expect(wf).not.toContain("github.event.release");
   });
 });
