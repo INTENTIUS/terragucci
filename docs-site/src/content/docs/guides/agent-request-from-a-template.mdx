@@ -1,0 +1,43 @@
+---
+title: Have an agent request an app from a template over MCP
+description: Let a coding agent list the templates and open the same pull request a form opens, through terragucci mcp --propose.
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-request-from-a-template/.
+  Tell me the command line and the environment variables to add terragucci mcp --propose to my MCP client for this repo; do not add or run it yourself, and do not create or print credentials.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+## Ask for an app
+
+With `templates` set in `terragucci.yml` ([`terragucci request`](/terragucci/reference/cli/#request)), the agent can ask for a new app, or an add-on to one, instead of writing the root itself. The `templates` tool lists each template with its versions and form fields. `request_from_template` opens the pull request a form opens:
+
+```json
+{ "template": "acme/bucket/aws", "name": "orders", "inputs": { "bucket_name": "orders-data" } }
+```
+
+```json
+{
+  "branch": "request/bucket/orders",
+  "pull_request": 8,
+  "url": "https://github.com/acme/infra/pull/8",
+  "existing": false,
+  "next": "the pipeline plans request/bucket/orders; plan_result with pull_request 8 reads its plan note and policy result, and a person reviews and merges it"
+}
+```
+
+The document in the pull request's body says `"via": "mcp"`, and the body ends with the footer a `propose` pull request has. The requester is the user the forge says the server's token acts as. `claimed_by` names the person the agent asks for, and the document carries it as `claimedBy`, which the forge does not vouch for. An add-on takes the app's name in `app`. A second call for the same branch returns the open pull request with `existing: true`. `plan_result` then reads its plan, as in [Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/).
+
+The tool needs a [chant](/terragucci/concepts/glossary/#chant) with template requests; on an older one it answers with an error naming it. Where chant has the propose tier, `--propose` runs on chant's read-only server and the tool names start with `terragucci:`.
+
+## Tool refusals
+
+| A call | The answer |
+|---|---|
+| `request_from_template` with a sensitive input, or one `terragucci request` refuses | an error with the refusal's code, such as `sensitive-input`, and nothing is pushed |
+| any tool with an argument it does not list, such as `token` | an error naming the argument: credentials come from the server's environment |
+
+## Next
+
+- [Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/) sets up the server and its forge token.
+- [Request an app from a template](/terragucci/guides/request-an-app/) covers publishing a template and the form.
