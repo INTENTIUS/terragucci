@@ -194,7 +194,12 @@ export interface Ledger {
   records: ReleaseRecord[];
   /** A file under `modules/attest/<digest>/`, or undefined. */
   file(digest: string, name: string): string | undefined;
+  /** The text of `modules/release-status.jsonl` (chant#4596), when the branch holds one. */
+  status?: string;
 }
+
+/** The status records' file beside `releases.jsonl` (chant#4596's `RELEASE_STATUS_FILE`). */
+export const STATUS_PATH = `${LEDGER_ENV}/release-status.jsonl`;
 
 function show(repo: string, ref: string, path: string): string | undefined {
   const r = spawnSync("git", ["-C", repo, "show", `${ref}:${path}`], { encoding: "utf-8", maxBuffer: 1 << 28 });
@@ -216,6 +221,10 @@ export function fetchLedger(repo: string, remote: string): Ledger | undefined {
   return {
     from: shown(remote),
     records: parseLedger(show(repo, local, LEDGER_PATH) ?? ""),
+    ...((): { status?: string } => {
+      const status = show(repo, local, STATUS_PATH);
+      return status ? { status } : {};
+    })(),
     file: (digest, name) => show(repo, local, `${attestDir(digest)}/${name}`),
   };
 }

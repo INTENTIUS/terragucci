@@ -32,7 +32,7 @@ import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041"
 import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042";
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
-import { chantModuleCatalog, chantTf046, type ChantModuleCompatibility } from "../chant-next";
+import { chantModuleCatalog, chantRegistryCatalog, chantTf046, type ChantModuleCompatibility, type ChantReleaseCatalogDoc } from "../chant-next";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
@@ -79,6 +79,11 @@ export const SECRET_IN_STATE_TIP = "terragucci-secret-in-state";
 export const CHOUDOUFU_SECRETS_TIP = "terragucci-choudoufu-secrets";
 /** A plan's tip for a choudoufu root's module pin that choudoufu's module table refuses or has no row for. */
 export const MODULE_TABLE_TIP = "terragucci-module-table";
+/** A plan's tip for a module call pinned to a version its registry's release catalog marks deprecated or yanked (terragucci#1298). */
+export const DEPRECATED_VERSION_TIP = "terragucci-deprecated-version";
+
+/** Hosts whose registries publish no release catalog, so their calls are not looked up. */
+const PUBLIC_REGISTRIES = new Set(["registry.terraform.io", "registry.opentofu.org"]);
 
 /** A local module is shared widely at this many roots. */
 export const SHARED_MODULE_ROOTS = 10;
@@ -107,6 +112,13 @@ export interface TipOptions {
   secrets?: readonly { root: string; binary: string; secrets: readonly StoredSecret[] }[];
   /** The job's environment, for CHOUDOUFU_STRICT_PIN. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The release catalogs the deprecated-version tip checks the roots' module
+   * calls against, or the registry hosts to read them from
+   * (`catalog/index.json`, with each host's token): {@link catalogHosts}.
+   * Left out: no tip.
+   */
+  releaseCatalogs?: readonly ChantReleaseCatalogDoc[] | { hosts: readonly string[] };
 }
 
 const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${rule.toLowerCase()}` });
@@ -235,6 +247,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
         }
       }
     }
+    if (options.releaseCatalogs) tips.push(...(await deprecatedVersionTips(repo, roots, parser, options.releaseCatalogs)));
     for (const [module, by] of [...users].sort(([a], [b]) => (a < b ? -1 : 1))) {
       if (by.size < SHARED_MODULE_ROOTS) continue;
       tips.push(ownTip(
@@ -288,6 +301,73 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
     ));
   }
 
+  return tips;
+}
+
+/**
+ * The registry hosts whose catalogs the deprecated-version tip reads: this
+ * repo's own `modules.registry`, and each registry host `sources.modules`
+ * allows by name (`modules.example.com/acme/*`), the registries a consuming
+ * repo has said it reads from.
+ */
+export function catalogHosts(settings: { modules?: { registry?: { url: string } }; sources?: { modules?: string[] } }): string[] {
+  const out = new Set<string>();
+  if (settings.modules?.registry?.url) {
+    try {
+      out.add(new URL(settings.modules.registry.url).host.toLowerCase());
+    } catch {
+      // config check refuses a bad url
+    }
+  }
+  for (const glob of settings.sources?.modules ?? []) {
+    const host = /^([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)\//.exec(glob)?.[1];
+    if (host) out.add(host.toLowerCase());
+  }
+  return [...out].filter((h) => !PUBLIC_REGISTRIES.has(h)).sort();
+}
+
+/**
+ * The deprecated-version tips: each call whose pin a catalog marks, worded
+ * from the lexicon's check (`deprecatedPins`, chant#4599). A tip is advice,
+ * so a catalog that cannot be read is skipped, and a chant without the check
+ * gives none.
+ */
+async function deprecatedVersionTips(repo: string, roots: readonly string[], parser: Hcl2Json, catalogs: readonly ChantReleaseCatalogDoc[] | { hosts: readonly string[] }): Promise<ReportTip[]> {
+  const tf = await chantRegistryCatalog();
+  if (!tf) return [];
+  let calls: Awaited<ReturnType<typeof tf.moduleConsumers>>;
+  try {
+    calls = await tf.moduleConsumers(repo, roots, parser);
+  } catch {
+    return [];
+  }
+  let docs: readonly ChantReleaseCatalogDoc[] = "hosts" in catalogs ? [] : catalogs;
+  if ("hosts" in catalogs) {
+    // Only the named hosts that a pinned call reaches.
+    const named = new Set(catalogs.hosts.map((h) => h.toLowerCase()));
+    const hosts = new Set<string>();
+    for (const c of calls) {
+      const host = /^([^/]+\.[^/]+)\/[^/]+\/[^/]+\/[^/]+$/.exec(c.module)?.[1]?.toLowerCase();
+      if (host && c.pin !== null && named.has(host) && !PUBLIC_REGISTRIES.has(host)) hosts.add(host);
+    }
+    const timed = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(5000) });
+    const read: ChantReleaseCatalogDoc[] = [];
+    for (const host of [...hosts].sort()) {
+      try {
+        const doc = await tf.readRegistryCatalog(host, { fetch: timed });
+        if (doc) read.push(doc);
+      } catch {
+        // No catalog, or none this job may read: no tip for that host.
+      }
+    }
+    docs = read;
+  }
+  const tips: ReportTip[] = [];
+  for (const doc of docs) {
+    const found = tf.deprecatedPins(calls, doc);
+    for (const w of found.warnings) tips.push(ownTip(DEPRECATED_VERSION_TIP, `${w.message}. It still installs; move the pin before the version is yanked.`, w.consumer.root));
+    for (const r of found.refusals) tips.push(ownTip(DEPRECATED_VERSION_TIP, `${r.message}. It still installs, and modules.require: attested refuses it; move the pin.`, r.consumer.root));
+  }
   return tips;
 }
 

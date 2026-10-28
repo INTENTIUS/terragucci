@@ -457,6 +457,18 @@ terragucci modules --registry https://modules.example.com --json
 
 It reads `catalog/index.json` the way Terraform reads the registry, with `TF_TOKEN_<host>` or a `credentials` block, so it works against a registry with `auth: token`. A browser sends no token, so the edge function refuses the catalog's pages to it; to browse them, serve the registry on a private network as in [Other ways to keep a registry private](#other-ways-to-keep-a-registry-private), where the pages open with no token.
 
+### Deprecate or yank a version
+
+A published version can be marked on the release ledger, by anyone who can publish:
+
+```bash
+terragucci modules deprecate modules/network 1.2.0 --reason "drops the old subnet layout" --use 1.3.0
+terragucci modules yank modules/network 1.1.0 --reason "opens the admin port" --use 1.3.0
+terragucci modules restore modules/network 1.1.0
+```
+
+Each writes one status record beside the version's release record, with who set it, when, the reason and the version named by `--use`, and pushes it. The catalog is then written again, so the mark reaches roots in other repos. A root that pins a deprecated version gets the `terragucci-deprecated-version` tip on its plan and still passes. A yanked version is refused by [`modules.require: attested`](#require-attested-releases), naming the version to move to. Both stay in the registry's `versions`, so an existing pin still runs `init`. `restore` clears either mark with one more record; the earlier ones stay in the ledger's history.
+
 ## Attest each release
 
 With `modules.attest`, the publish job also signs each new release with a key you hold and records the version in the release ledger on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), so a root's pin can be checked against all of it.
@@ -527,7 +539,7 @@ A tag pushed by hand has no record that matches it, and neither does one moved a
 
 ## Require attested releases
 
-With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. The check report and plan note name its module call and version and say why.
+With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. So does one pinning a release its publisher yanked, whose refusal names the version to move to. The check report and plan note name its module call and version and say why.
 
 In a Terragrunt repo the pin is each unit's `terraform { source }`, and for a unit an explicit stack generates from a remote source, its `unit` block's `source` in `terragrunt.stack.hcl`. An `oci://` source that picks a directory with `//` is checked as the release of the whole package. `tf-check` runs `terragucci check-pins` over every unit, and `tf-plan` takes a refused unit out of its wave, so it fails without planning while the rest of the wave plans.
 
