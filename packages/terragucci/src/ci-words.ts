@@ -40,6 +40,8 @@ export const TERRAGUCCI_WORDS = {
   approval: "per-wave" as const,
   adoptMarkers: ["<!-- terragucci:waves -->"],
   bin: "npx --no-install terragucci",
+  // chant#4610: the source and header prefix terragucci's webhooks have always carried, and its wave label.
+  notify: { source: "terragucci", wave: "wave {k}", headers: "x-terragucci" },
 };
 
 /**

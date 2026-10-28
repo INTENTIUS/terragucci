@@ -25,7 +25,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
 import { chantCommand } from "./chant-bin";
-import { chantExitCodesNow } from "./chant-next";
+import { chantExitCodesNow, chantOpStandDownNow } from "./chant-next";
 import { ConfigError } from "./config";
 
 /** The op, and the spec's name: the waves' gates stay `tf-apply` / `wave-<k>`. */
@@ -120,6 +120,8 @@ export interface WavesStepInput extends Omit<WavesSpecInput, "waves" | "rest"> {
   approveAbove?: number;
   /** `policy` at base is on: chant runs the workspace's ci.policy at base over each run's change set. */
   policy?: boolean;
+  /** `--stand-down`: a wave whose roots a newer push on the branch also applies stands down with 6 (chant#4581). */
+  standDown?: boolean;
 }
 
 /**
@@ -147,6 +149,8 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
     ...(input.policy || input.approveAbove !== undefined
       ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.approveAbove !== undefined ? { cost: { command: ["infracost", "breakdown", "--path", "{planJson}", "--format", "json"], approveAbove: input.approveAbove, format: "infracost" } } : {}) } }
       : {}),
+    // chant stands the wave down before it spends the approval, when the installed chant has the stand-down (chant#4581).
+    ...(input.standDown && chantOpStandDownNow() ? { standDown: true } : {}),
     // The gate's report is terragucci's; the held hook is chant's holds now.
     hooks: { after: { gate: hooks?.after?.gate } },
     waves: rest.waves.map((w) => ({ ...w, runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),

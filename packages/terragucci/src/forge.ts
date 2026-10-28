@@ -41,7 +41,7 @@ export class ForgeError extends Error {
   }
 }
 
-function apiBase(t: ForgeTarget): string {
+export function apiBase(t: ForgeTarget): string {
   if (t.api) return t.api.replace(/\/+$/, "");
   if (t.forge === "github") {
     return /^https?:\/\/github\.com$/i.test(t.origin) ? "https://api.github.com" : `${t.origin}/api/v3`;

@@ -1,11 +1,20 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { overrideChantNext } from "../src/chant-next";
 import { main } from "../src/cli";
 import type { Fetch } from "../src/forge";
 import { assertReadOnly, celNarrowerOrEqual, compareTrust, forgeCheck, readOnly, ReadOnlyError, trustJobs, type CheckRow, type ForgeCheckDeps } from "../src/forge-check";
 import { configIdentities } from "../src/identities";
 import { tmp } from "./helpers";
+
+// These cases and the provider's goldens hold terragucci's own check, the fallback on a chant without
+// `forge-check` (chant#4608); test/chant-next-f.test.ts compares it with chant's.
+let restoreForgeCheck: () => void = () => {};
+beforeAll(() => {
+  restoreForgeCheck = overrideChantNext("forgeCheck", null);
+});
+afterAll(() => restoreForgeCheck());
 
 const FIXTURES = join(__dirname, "fixtures", "identities");
 /** The provider's goldens for terragucci_forge_check, written from this file's --json runs. */
@@ -262,7 +271,7 @@ describe("forge check on GitLab and GCP", () => {
     expect(r.rows.filter((x) => x.status !== "match")).toEqual([]);
     expect(row(r.rows, "gitlab", "protected-runners", "tags docker, prod").found).toBe("1 runner(s), each ref_protected");
     expect(row(r.rows, "gitlab", "variable", "DEPLOY_KEY in production")).toMatchObject({ expected: "scoped to production, protected", status: "match" });
-    expect(r.repository.default_branch).toBe("trunk");
+    expect((r.repository as { default_branch?: string }).default_branch).toBe("trunk");
   });
 
   it("reports an unprotected environment, a runner open to any ref, and a variable scoped to every environment", async () => {
