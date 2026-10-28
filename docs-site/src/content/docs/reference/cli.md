@@ -96,6 +96,10 @@ The approval mode decides what else `init` writes.
 
 [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
 
+### chant.config.ts and the waves' spec
+
+In a repo of plain roots, `init` also writes two files for chant. `chant.config.ts` at the repo's root names each root under `terraform.roots`, keyed by its path. `.chant/op-waves/tf-apply.spec.json` holds the apply waves' rules, which each wave job reads at the commit before the one it applies. Commit both with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root.
+
 ### The components file
 
 `init` also writes `terragucci.components.json` at the repo's root, beside the pipeline. It lists the repo's roots as chant components, with their waves and the pipeline's jobs that apply them. The pipeline does not read it, and the workflow is the same with or without it. `init` writes it again on every run and replaces it only when `generated_by` names terragucci, unless you pass `--force`.

@@ -190,7 +190,7 @@ import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import type { ChantCiProduct, ChantProductCommand } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
-import { WAVES_OP, waveCallArgv, wavesSpec } from "./chant-waves";
+import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
@@ -262,6 +262,12 @@ export interface PipelineInput {
   checkHooks?: { preCommit: boolean };
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
+  /**
+   * Plain roots: the op-waves spec of the repo's apply on chant's terraform-apply step (terragucci#1303), as
+   * `.chant/op-waves/tf-apply.spec.json` holds it. Written once beside the pipeline, so a wave job reads its rules at
+   * base from the commit it applies after, and puts a commit of its own on top only when its spec differs.
+   */
+  wavesSpec?: string;
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
@@ -3371,6 +3377,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     return tagComments(text((forge === "forgejo" ? forgejoSerializer : githubSerializer).serialize(jobs)));
   };
   const extra: { path: string; content: string }[] = [];
+  if (input.wavesSpec) extra.push({ path: WAVES_SPEC, content: input.wavesSpec });
   if (input.resume) {
     // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
     const resume = new Map<string, never>([
