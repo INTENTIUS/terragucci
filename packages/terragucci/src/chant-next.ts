@@ -96,6 +96,15 @@
  * carries the registry proxies (chant#4606) that `sources.proxies` matches
  * and `require` reads through; without them a source through a proxy is
  * matched as written.
+ * Newer than the pin too (terragucci#1282 part f): chant core's forge and
+ * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
+ * check` calls (./forge-check.ts); its notify relay (`notify-relay`,
+ * chant#4611), whose signature checks and principal mapping ./relay.ts
+ * uses; its ledger estate (`ci-estate`, chant#4612), which ./estate.ts
+ * builds on once the ledger holds wave run records; its shared policy source
+ * (`policy-source`, chant#4613), which fetches `policy.source`
+ * (./report/policy.ts); and the op-wave stand-down on `op` (chant#4581),
+ * told apart by its exports, which ./apply.ts and the step spec use.
  *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
@@ -984,6 +993,209 @@ export interface ChantRegistryProxies {
   fetchTarball(location: string, options?: { fetch?: ChantModuleFetch }): Promise<Uint8Array>;
 }
 
+// ── part f: forge check, relay, estate, policy source, stand-down ─────────
+
+/** A forge check row (`CheckRow` in `@intentius/chant/forge-check`, chant#4608). */
+export interface ChantCheckRow {
+  where: "github" | "gitlab" | "forgejo" | "aws" | "gcp" | "azure" | "pulumi";
+  check: string;
+  subject: string;
+  expected: string;
+  found: string;
+  status: "match" | "mismatch" | "unknown" | "not-checked";
+}
+
+/** The repository a forge check names (`ForgeCheckRepository`). */
+export interface ChantForgeCheckRepository {
+  host: string;
+  path: string;
+  defaultBranch: string;
+  ownerId?: string;
+  repoId?: string;
+}
+
+/** A job's OIDC token, as the contract holds it (`JobToken`). */
+export interface ChantJobToken {
+  issuer: string;
+  subject: string;
+  pattern: boolean;
+  claims: Record<string, string>;
+  placeholders: string[];
+}
+
+/** One job of the contract (`ForgeCheckJob`). */
+export interface ChantForgeCheckJob {
+  name: string;
+  identity: "plan" | "apply";
+  token: ChantJobToken;
+  forgeEnvironment?: string;
+  runner?: { labels: string[]; group?: string };
+  aws?: { roles: string[]; audience: string };
+  gcp?: { provider: string; audience: string };
+  azure?: { clientIds: string[]; audience: string };
+}
+
+/** The forge check's contract (`ForgeCheckContract`). */
+export interface ChantForgeCheckContract {
+  forge: "github" | "gitlab" | "forgejo";
+  repository: ChantForgeCheckRepository;
+  jobs: ChantForgeCheckJob[];
+  protectedBranches?: string[];
+  requiredStatuses?: string[];
+  gitlabVariables?: string[];
+}
+
+/** The forge to read (`ForgeTarget` in `@intentius/chant/pr-forge`). */
+export interface ChantForgeCheckTarget {
+  kind: "github" | "gitlab" | "forgejo";
+  apiBase: string;
+  repo: string;
+  host: string;
+  token: string;
+  tokenSource: string;
+  tokenHeader?: "PRIVATE-TOKEN" | "JOB-TOKEN";
+}
+
+/** The fetch chant's forge check reads through (`ForgeFetch`). */
+export type ChantForgeFetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+
+/** The forge check's result (`ForgeCheckResult`): `<product>.forge-check/v1`. */
+export interface ChantForgeCheckResult {
+  schema: string;
+  file?: string;
+  forge: "github" | "gitlab" | "forgejo";
+  repository: ChantForgeCheckRepository;
+  rows: ChantCheckRow[];
+  counts: Record<ChantCheckRow["status"], number>;
+  ok: boolean;
+}
+
+/** chant core's forge and trust-policy check (`@intentius/chant/forge-check`, chant#4608). */
+export interface ChantForgeCheck {
+  forgeCheck(
+    input: { target: ChantForgeCheckTarget; contract: ChantForgeCheckContract | ((live: { defaultBranch?: string; path?: string; ownerId?: string; repoId?: string }) => ChantForgeCheckContract); requireClouds?: boolean; words?: object; file?: string },
+    deps: { fetch: ChantForgeFetch; env: Record<string, string | undefined>; readFile?: (path: string) => string | undefined; now?: () => Date },
+  ): Promise<ChantForgeCheckResult>;
+  readRepository(fetch: ChantForgeFetch, t: ChantForgeCheckTarget): Promise<{ ok: true; value: { defaultBranch?: string; path?: string; ownerId?: string; repoId?: string } } | { ok: false; status: number | undefined; why: string }>;
+  readOnly(fetch: ChantForgeFetch, command?: string): ChantForgeFetch;
+  describeForgeCheck(r: ChantForgeCheckResult): string;
+  forgeCheckExit(r: ChantForgeCheckResult): number;
+}
+
+/** A click read from a verified chat request (`RelayClick` in `@intentius/chant/notify-relay`). */
+export interface ChantRelayClick {
+  app: "slack" | "teams";
+  chatUser: string;
+  display: string;
+  action: "approve" | "decline";
+  token: string;
+  responseUrl?: string;
+  thread?: string;
+}
+
+/** A standing pending fact chant's relay may approve (`RelayPending`). */
+export interface ChantRelayPending {
+  op: string;
+  gate: string;
+  digest: string;
+  environment?: string;
+}
+
+/** What chant's relay reads and writes (`RelayDeps`). */
+export interface ChantRelayDeps {
+  signers(): Promise<{ signers: ReadonlyArray<{ principal: string; line: number }>; path: string }>;
+  pending(digest: string): Promise<ChantRelayPending[]>;
+  approve(input: { op: string; gate: string; digest: string; environment?: string; actor: string; relayedBy: string }): Promise<{ ok: true } | { ok: false; error: string }>;
+  principal: string;
+  words: ChantProductWords;
+  now?: () => Date;
+}
+
+/** chant core's notify relay (`@intentius/chant/notify-relay`, chant#4611). */
+export interface ChantNotifyRelay {
+  verifySlackRequest(headers: Record<string, string | undefined>, raw: string, secret: string | undefined, now?: number): string | null;
+  verifyTeamsRequest(headers: Record<string, string | undefined>, raw: string, secret: string | undefined): string | null;
+  relayPrincipalFor(signers: ReadonlyArray<{ principal: string; line: number }>, chatUser: string): string | undefined;
+  slackRelayClick(raw: string): ChantRelayClick | { error: string };
+  teamsRelayClick(raw: string): ChantRelayClick | { error: string };
+  decideRelayClick(click: ChantRelayClick, settings: { key?: string; maxAgeSeconds?: number }, deps: ChantRelayDeps): Promise<{ ok: boolean; outcome: string; text: string; op?: string; gate?: string; principal?: string }>;
+  RELAY_ENV: { key: string; maxAge: string };
+}
+
+/** The delivery metrics, as chant's `buildDelivery` writes `dora.json` (terragucci's shape, plus `source`). */
+export interface ChantDora {
+  schema: string;
+  generated: string;
+  audit: boolean;
+  source: "ledger";
+  estate: { deployments: number } & Record<string, unknown>;
+  projects: ({ project: string } & Record<string, unknown>)[];
+}
+
+/** A member's section of chant's ledger estate (`EstateProject` in `@intentius/chant/ci-estate`). */
+export interface ChantEstateProject {
+  project: string;
+  status: "ok" | "no-index";
+  drift?: object;
+  apply?: { commit: string; waves: object[] };
+  waiting: { project: string; wave: number; commit: string; since: string; age_seconds: number; gate?: string }[];
+  drifted: number;
+  failed: number;
+  overdue?: object[];
+  ephemeral?: object[];
+}
+
+/** chant's ledger estate (`LedgerEstate`): the page, its delivery metrics and the overdue checks. */
+export interface ChantLedgerEstate {
+  estate: { schema: string; generated: string; source: "ledger"; totals: { overdue: number } & Record<string, number | undefined>; projects: ChantEstateProject[]; recent: object[] };
+  dora: ChantDora;
+  overdue: object[];
+}
+
+/** chant core's estate page, overdue checks and delivery metrics (`@intentius/chant/ci-estate`, chant#4612). */
+export interface ChantCiEstate {
+  buildLedgerEstate(input: { load: unknown; words?: object; now?: Date; members?: readonly string[]; project?: string; schedules?: readonly { op: string; cron: string; members?: string[] }[] }): ChantLedgerEstate;
+  readEstateLedger(cwd: string, members?: readonly string[]): Promise<unknown>;
+  deliveryGauges(dora: ChantDora, words?: object): { name: string; unit: string; description: string; value: number; attributes: Record<string, string> }[];
+  CI_ESTATE_FLOOR: string;
+}
+
+/** `ci.policy.source` (`GatePolicySource` in `@intentius/chant/policy-source`). */
+export interface ChantGatePolicySource {
+  repo: string;
+  ref: string;
+  path?: string;
+}
+
+/** A tree chant read at a commit (`WorkspaceTree`). */
+export interface ChantWorkspaceTree {
+  stat(path: string): "file" | "dir" | undefined;
+  list(path: string): { name: string; type: "file" | "dir" }[] | undefined;
+  read(path: string): string;
+  bytes?(path: string): Uint8Array;
+}
+
+/** chant core's shared policy source (`@intentius/chant/policy-source`, chant#4613). */
+export interface ChantPolicySource {
+  assertGatePolicySource(where: string, raw: unknown): void;
+  fetchGatePolicySource(source: ChantGatePolicySource, opts?: { tmp?: string }): { source: { repo: string; ref: string; commit: string; path: string }; tree: ChantWorkspaceTree; cleanup: () => void } | { error: string };
+  CI_POLICY_SOURCE_FLOOR: string;
+}
+
+/** A newer commit on the run's branch (`OpWaveNewerCommit`). */
+export interface ChantNewerCommit {
+  branch: string;
+  head: string;
+  tip: string;
+}
+
+/** chant's op-wave stand-down (`newerCommitOnBranch` in `@intentius/chant/op`, chant#4581). */
+export interface ChantOpStandDown {
+  newerCommitOnBranch(cwd: string, env?: NodeJS.ProcessEnv, head?: string): Promise<ChantNewerCommit | undefined>;
+  tipAppliesTargets(atTip: unknown, branch: string, waveName: string, targets: readonly string[]): boolean;
+  OP_WAVE_STAND_DOWN_FLOOR: string;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -1198,6 +1410,32 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
   ),
+  forgeCheck: once<ChantForgeCheck>(
+    // @ts-ignore chant 0.124.54 has no forge-check subpath (chant#4608)
+    () => import("@intentius/chant/forge-check"),
+    (m) => (has(m, "forgeCheck", "readRepository", "readOnly", "describeForgeCheck", "forgeCheckExit") ? (m as unknown as ChantForgeCheck) : undefined),
+  ),
+  notifyRelay: once<ChantNotifyRelay>(
+    // @ts-ignore chant 0.124.54 has no notify-relay subpath (chant#4611)
+    () => import("@intentius/chant/notify-relay"),
+    (m) => (has(m, "verifySlackRequest", "verifyTeamsRequest", "relayPrincipalFor", "slackRelayClick", "teamsRelayClick", "decideRelayClick") && typeof m.RELAY_ENV === "object" ? (m as unknown as ChantNotifyRelay) : undefined),
+  ),
+  ciEstate: once<ChantCiEstate>(
+    // @ts-ignore chant 0.124.54 has no ci-estate subpath (chant#4612)
+    () => import("@intentius/chant/ci-estate"),
+    // chant#4612's own feature-detect: buildLedgerEstate present means the rest is too.
+    (m) => (has(m, "buildLedgerEstate", "readEstateLedger", "deliveryGauges") && typeof m.CI_ESTATE_FLOOR === "string" ? (m as unknown as ChantCiEstate) : undefined),
+  ),
+  policySource: once<ChantPolicySource>(
+    // @ts-ignore chant 0.124.54 has no policy-source subpath (chant#4613)
+    () => import("@intentius/chant/policy-source"),
+    (m) => (has(m, "assertGatePolicySource", "fetchGatePolicySource") && typeof m.CI_POLICY_SOURCE_FLOOR === "string" ? (m as unknown as ChantPolicySource) : undefined),
+  ),
+  opStandDown: once<ChantOpStandDown>(
+    // `op` is on the pin; the stand-down (chant#4581) is told apart by its exports.
+    () => import("@intentius/chant/op"),
+    (m) => (has(m, "newerCommitOnBranch", "tipAppliesTargets") && typeof m.OP_WAVE_STAND_DOWN_FLOOR === "string" ? (m as unknown as ChantOpStandDown) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -1305,7 +1543,26 @@ export async function preloadChantNext(): Promise<void> {
   await chantCiProductWords();
   await chantExitCodes();
   await chantDriftRows();
+  await chantPolicySource();
+  await chantOpStandDown();
 }
+
+/** chant core's forge and trust-policy check (chant#4608), or undefined. */
+export const chantForgeCheck = (): Promise<ChantForgeCheck | undefined> => load("forgeCheck");
+/** The forge check as it already loaded, for `describeForgeCheck`. */
+export const chantForgeCheckNow = (): ChantForgeCheck | undefined => loaded("forgeCheck");
+/** chant core's notify relay (chant#4611), or undefined. */
+export const chantNotifyRelay = (): Promise<ChantNotifyRelay | undefined> => load("notifyRelay");
+/** chant core's ledger estate and delivery metrics (chant#4612), or undefined. */
+export const chantCiEstate = (): Promise<ChantCiEstate | undefined> => load("ciEstate");
+/** chant core's shared policy source (chant#4613), or undefined. */
+export const chantPolicySource = (): Promise<ChantPolicySource | undefined> => load("policySource");
+/** The policy source as it already loaded, for the synchronous fetch in ./report/policy.ts. cli.ts loads it first. */
+export const chantPolicySourceNow = (): ChantPolicySource | undefined => loaded("policySource");
+/** chant's op-wave stand-down (chant#4581), or undefined. */
+export const chantOpStandDown = (): Promise<ChantOpStandDown | undefined> => load("opStandDown");
+/** The stand-down as it already loaded, for the synchronous spec builder in ./chant-waves.ts. cli.ts loads it first. */
+export const chantOpStandDownNow = (): ChantOpStandDown | undefined => loaded("opStandDown");
 
 /** chant core's control repo (`@intentius/chant/ci-control`, chant#4568), or undefined. */
 export const chantCiControl = (): Promise<ChantCiControl | undefined> => load("ciControl");
@@ -1332,7 +1589,8 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
   const [releaseCatalog, registryCatalog, afterPlan, moduleTargets] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan(), await chantModuleTargets()];
   const registryProxies = await chantRegistryProxies();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies };
+  const [forgeCheck, notifyRelay, ciEstate, policySource, opStandDown] = [await chantForgeCheck(), await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

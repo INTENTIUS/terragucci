@@ -33,8 +33,8 @@ const NOT_VARIABLES = new Set([
   "AWS_CLI", "AZURE_AUDIENCE", "AZURE_AUTHORITY", "AZURE_KEY_SECRET", "AZURE_VERSION", "GITHUB_CACHE_KEY", "GITHUB_COMMENT_LIMIT", "GITLAB_NOTE_LIMIT", "GITLAB_STATE", "GITLAB_GCP_TOKEN", "GITLAB_AZURE_TOKEN",
   "RUNNER_TOKEN_VARS", "TG_CACHE_DIR", "FORGEJO_WORKFLOW",
   "CI_CHECK_HOOK_FLOOR",
-  // chant's floors for the product pipeline and the control repo (chant#4550, chant#4568), and terragucci's words for them.
-  "CI_PRODUCT_FLOOR", "CI_CONTROL_FLOOR", "TERRAGUCCI_WORDS",
+  // chant's floors for the product pipeline, the control repo, the estate, the policy source and the stand-down (chant#4550, #4568, #4612, #4613, #4581), and terragucci's words for them.
+  "CI_PRODUCT_FLOOR", "CI_CONTROL_FLOOR", "TERRAGUCCI_WORDS", "CI_ESTATE_FLOOR", "CI_POLICY_SOURCE_FLOOR", "OP_WAVE_STAND_DOWN_FLOOR",
 ]);
 // The control dispatch's variables (see UNDOCUMENTED_KEYS above).
 const UNDOCUMENTED_VARIABLES = new Set(["TERRAGUCCI_CONTROL_TOKEN", "TG_CONTROL_TOKEN", "TG_CONTROL_READ", "TERRAGUCCI_MEMBER", "TERRAGUCCI_OP", "TERRAGUCCI_SHA"]);

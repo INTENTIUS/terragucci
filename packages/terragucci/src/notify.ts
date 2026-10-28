@@ -33,6 +33,7 @@ import { ciRun, makeNotifyEvent, sendNotify, type NotifyConfig, type NotifyDeliv
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { OUTCOME_SCHEMA, type WaveOutcome } from "./apply";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 
 /** What the wave did. */
 export const NOTIFY_EVENTS = ["waiting", "refused", "failed"] as const;
@@ -232,10 +233,10 @@ export function teamsMessage(n: WaveNotice): Record<string, unknown> {
   };
 }
 
-/** The product name chant's event carries as its `source`. */
-export const NOTIFY_SOURCE = "terragucci";
+/** The product name chant's event carries as its `source`: the words' notify slot (./ci-words.ts, chant#4610). */
+export const NOTIFY_SOURCE = TERRAGUCCI_WORDS.notify.source;
 /** The webhook headers' prefix: `x-terragucci-signature`, `-timestamp`, `-event` and `-delivery`. */
-export const HEADER_PREFIX = "x-terragucci";
+export const HEADER_PREFIX = TERRAGUCCI_WORDS.notify.headers;
 
 /**
  * The generic webhook's event, chant's `chant.notify/v1`, for a notice: the

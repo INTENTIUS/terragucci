@@ -183,6 +183,8 @@ export interface EstateProject {
   run_view?: { commit: string; updated: string; page?: string };
   /** The waves of that run view still applying that follow their resources (a choudoufu wave): how many are done, in flight and waiting at the last read. */
   applying?: { wave: number; read: string; total: number; done: number; in_flight: number; waiting: number }[];
+  /** Its scheduled drift checks that are overdue, from the ledger (chant#4612). Absent when none is, or the ledger was not read. */
+  overdue?: object[];
   /** The live ephemeral environments, from its ephemeral.json: each pull request's copy and when it expires. Absent when none is live. */
   ephemeral?: EphemeralRow[];  /** The secrets its states hold and its choudoufu estates' settings, from one run's index row. Absent until a run records them. */
   secrets?: EstateSecrets;
@@ -219,8 +221,10 @@ export interface EstateGraph {
 export interface Estate {
   schema: typeof ESTATE_SCHEMA;
   generated: string;
+  /** `ledger` when the waves, the drift checks and the delivery metrics came from the workspace ledger through chant (chant#4612, ../estate.ts). Absent when they came from the bucket. */
+  source?: "ledger";
   /** `overridden_roots` only when a policy override let a root through; `resources` only when a project has an inventory. */
-  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number; resources?: number; ephemeral?: number };
+  totals: { projects: number; waiting: number; drifted_projects: number; drifted_roots: number; failed_roots: number; unreadable: number; overridden_roots?: number; resources?: number; ephemeral?: number; overdue?: number };
   projects: EstateProject[];
   /** The newest runs across every project, newest first. */
   recent: EstateRun[];

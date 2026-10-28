@@ -86,7 +86,7 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
-import { chantAfterPlan, chantPrEnvLedger, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
+import { chantAfterPlan, chantOpStandDown, chantPrEnvLedger, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
 import { declaredTerraformRoots } from "./chant-config";
 import type { RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
@@ -881,11 +881,19 @@ export function firstError(out: string): string {
   return line.slice(0, 300);
 }
 
-/** The tip of the branch a push's wave applies, when a newer push moved it past the commit the wave runs. */
-function newerPush(repo: string, env: NodeJS.ProcessEnv): string | undefined {
+/**
+ * The tip of the branch a push's wave applies, when a newer push moved it
+ * past the commit the wave runs. With chant's stand-down (chant#4581) it is
+ * chant's `newerCommitOnBranch`, which fetches the branch and counts a tip
+ * only when it contains this commit, so a force-push that dropped it does
+ * not stand the wave down; without it, any other tip counts.
+ */
+async function newerPush(repo: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
   const branch = env.GITHUB_REF_NAME || env.CI_COMMIT_BRANCH;
   const sha = env.GITHUB_SHA || env.CI_COMMIT_SHA;
   if (!branch || !sha) return undefined;
+  const chant = await chantOpStandDown();
+  if (chant) return (await chant.newerCommitOnBranch(repo, env, sha))?.tip;
   const r = git(repo, ["ls-remote", "origin", `refs/heads/${branch}`]);
   const tip = r.status === 0 ? r.stdout.split(/\s/)[0]?.trim() : "";
   return tip && tip !== sha ? tip : undefined;
@@ -910,8 +918,8 @@ async function holdRows(
 ): Promise<{ code?: number; release: () => Promise<void> }> {
   const env = options.env ?? process.env;
   const free = { release: async () => {} };
-  const standDown = (release: () => Promise<void>): Promise<{ code: number; release: () => Promise<void> }> | undefined => {
-    const tip = options.standDown ? newerPush(repo, env) : undefined;
+  const standDown = async (release: () => Promise<void>): Promise<{ code: number; release: () => Promise<void> } | undefined> => {
+    const tip = options.standDown ? await newerPush(repo, env) : undefined;
     if (!tip) return undefined;
     console.log(`${label}: a newer push to ${env.GITHUB_REF_NAME || env.CI_COMMIT_BRANCH} (${tip.slice(0, 8)}) applies everything; standing down`);
     w.refused = { reason: "superseded", roots: w.changedRoots ?? [] };
@@ -1548,6 +1556,8 @@ async function runStepWave(
     call: waveCallArgv,
     migrations: existsSync(join(repo, MIGRATIONS_DIR)),
     ...(at.point ? { point: at.point } : {}),
+    // On the step chant applies, so chant stands the wave down for a newer push (chant#4581), before the approval is spent.
+    ...(options.standDown ? { standDown: true } : {}),
   });
   const text = writeSpec(repo, spec);
   let base = at.base;

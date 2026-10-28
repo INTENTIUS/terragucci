@@ -30,7 +30,14 @@
  * into a temporary directory for each run (`fetchPolicySource`), and `path`
  * is the directory inside that repo. The key itself is still read at the
  * base, so a pull request cannot point it at another repo or ref.
+ *
+ * With chant core's shared policy source installed
+ * (`@intentius/chant/policy-source`, chant#4613), `policy.source` and
+ * `policy.path` map onto chant's `ci.policy.source` (`ciPolicySource`) and
+ * chant fetches it. Without it, or for a source chant's settings check
+ * refuses, terragucci fetches it itself.
  */
+import { chantPolicySourceNow, type ChantGatePolicySource, type ChantPolicySource, type ChantWorkspaceTree } from "../chant-next";
 import type { PolicyReview } from "../review-agent";
 import type { Actor } from "../actor";
 import { spawn, spawnSync } from "node:child_process";
@@ -653,6 +660,9 @@ export function fetchPolicySource(policy: PolicySettings, from: TrustedPolicy["f
   const own: TrustedPolicy = { policy, from, cleanup: () => {} };
   if (!source) return { ...own, error: `policy.source ${policy.source} is not git+https://<host>/<path>@<ref>` };
   const shown = `${shownUrl(source.url)}@${source.ref}`;
+  const chant = chantPolicySourceNow();
+  const viaChant = chant ? fetchThroughChant(chant, policy, from, shown) : undefined;
+  if (viaChant) return viaChant;
   const dest = mkdtempSync(join(tmpdir(), "terragucci-policysource-"));
   const cleanup = () => rmSync(dest, { recursive: true, force: true });
   const fail = (why: string): TrustedPolicy => {
@@ -675,6 +685,62 @@ export function fetchPolicySource(policy: PolicySettings, from: TrustedPolicy["f
   const dir = join(dest, path);
   if (!existsSync(dir) || !statSync(dir).isDirectory()) return fail(`the policy directory ${policy.path ?? "policy"} does not exist at ${source.ref}`);
   return { policy: { ...policy, path: dir }, from, sourceCommit: commit, cleanup };
+}
+
+/**
+ * terragucci's `policy.source` and `policy.path` as chant's `ci.policy.source`
+ * (chant#4613): `git+https://host/path@ref` is `{ repo: "https://host/path",
+ * ref, path }`. Undefined when `policy.source` is unset or not that shape.
+ */
+export function ciPolicySource(policy: Pick<PolicySettings, "source" | "path">): ChantGatePolicySource | undefined {
+  const source = parsePolicySource(policy.source ?? "");
+  return source ? { repo: source.url, ref: source.ref, path: (policy.path ?? "policy").replace(/^\.\//, "").replace(/\/+$/, "") } : undefined;
+}
+
+/** Copy the tree under `dir` into `dest`; the file count. */
+function copyTree(tree: ChantWorkspaceTree, dir: string, dest: string): number {
+  let count = 0;
+  for (const e of tree.list(dir) ?? []) {
+    const at = `${dir}/${e.name}`;
+    if (e.type === "dir") count += copyTree(tree, at, join(dest, e.name));
+    else {
+      mkdirSync(dest, { recursive: true });
+      writeFileSync(join(dest, e.name), tree.bytes ? tree.bytes(at) : tree.read(at));
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * `policy.source` fetched by chant (chant#4613), its Rego directory copied
+ * into a temporary directory as terragucci's own fetch leaves it. Undefined
+ * when chant's settings check refuses the source, so terragucci's own fetch
+ * runs instead.
+ */
+function fetchThroughChant(chant: ChantPolicySource, policy: PolicySettings, from: TrustedPolicy["from"], shown: string): TrustedPolicy | undefined {
+  const ci = ciPolicySource(policy);
+  if (!ci) return undefined;
+  try {
+    chant.assertGatePolicySource("policy.source", ci);
+  } catch {
+    return undefined;
+  }
+  const own: TrustedPolicy = { policy, from, cleanup: () => {} };
+  const got = chant.fetchGatePolicySource(ci);
+  if ("error" in got) return { ...own, error: `could not read the policy from ${shown}: ${got.error.replace(/^ci\.policy\.source: could not read \S+: /, "")}` };
+  const path = ci.path ?? "policy";
+  if (got.tree.stat(path) !== "dir") {
+    got.cleanup();
+    return { ...own, error: `could not read the policy from ${shown}: the policy directory ${policy.path ?? "policy"} does not exist at ${ci.ref}` };
+  }
+  const dest = mkdtempSync(join(tmpdir(), "terragucci-policysource-"));
+  try {
+    copyTree(got.tree, path, join(dest, path));
+  } finally {
+    got.cleanup();
+  }
+  return { policy: { ...policy, path: join(dest, path) }, from, sourceCommit: got.source.commit, cleanup: () => rmSync(dest, { recursive: true, force: true }) };
 }
 
 function gitOut(repo: string, args: string[]): { status: number | null; stdout: string; stderr: string } {

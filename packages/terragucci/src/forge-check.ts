@@ -27,6 +27,13 @@
  *
  * Every call goes through readOnly(): GET and HEAD, and to AWS a POST of
  * GetRole and no other Query action. Nothing here can write to a forge or a cloud.
+ *
+ * With chant core's check installed (`@intentius/chant/forge-check`,
+ * chant#4608, ./chant-next.ts) the command builds the same contract from the
+ * identities (forgeCheckContract) and chant reads the forge and the clouds.
+ * GitLab and Forgejo then also get a protected-branch row for the default
+ * branch and each `apply.branches` branch. The code below is the fallback on
+ * a chant without it.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -34,7 +41,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { COST_KEY_SECRET, loadConfig, resolveProject, resolveRepo, type ForgeName, type ProjectSettings } from "./config";
 import { globMatch } from "./detect";
-import { call, DEFAULT_TOKEN_ENV, ForgeError, type Fetch, type ForgeTarget } from "./forge";
+import { chantCiProductWordsNow, chantForgeCheck, chantForgeCheckNow, type ChantForgeCheck, type ChantForgeCheckContract, type ChantForgeCheckJob, type ChantForgeCheckResult, type ChantForgeCheckTarget } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
+import { apiBase, call, DEFAULT_TOKEN_ENV, ForgeError, type Fetch, type ForgeTarget } from "./forge";
 import { configIdentities, IDENTITY_STAGES, type ConfigIdentitiesFlags, type Identities, type StageIdentities } from "./identities";
 import { encodeStrict, xmlText } from "./report/object-store";
 import { sign } from "./report/s3";
@@ -44,7 +53,8 @@ export const FORGE_CHECK_SCHEMA = "terragucci.forge-check/v1";
 
 export const CHECK_STATUSES = ["match", "mismatch", "unknown", "not-checked"] as const;
 export type CheckStatus = (typeof CHECK_STATUSES)[number];
-export type CheckWhere = ForgeName | "aws" | "gcp" | "azure";
+/** `pulumi` comes only from chant's check (chant#4608), for a Pulumi Cloud identity terragucci never names. */
+export type CheckWhere = ForgeName | "aws" | "gcp" | "azure" | "pulumi";
 
 export interface CheckRow {
   where: CheckWhere;
@@ -778,7 +788,73 @@ export function countRows(rows: readonly CheckRow[]): Record<CheckStatus, number
  * default branch (and on Forgejo the numeric ids the token's subject holds),
  * next to what the forge and each configured cloud answer.
  */
-export async function forgeCheck(path: string, file: string, flags: ForgeCheckFlags, deps: ForgeCheckDeps): Promise<ForgeCheck> {
+export async function forgeCheck(path: string, file: string, flags: ForgeCheckFlags, deps: ForgeCheckDeps): Promise<ForgeCheckResult> {
+  const chant = await chantForgeCheck();
+  if (chant) return chantForgeCheckOf(chant, path, file, flags, deps);
+  return ownForgeCheck(path, file, flags, deps);
+}
+
+/**
+ * The contract chant's check reads (chant#4608), from terragucci's
+ * identities: a job per stage present in each entry, with its token, forge
+ * environment, runner and identities per cloud. Only the apply stage counts
+ * as an apply job, as terragucci's own rows read it. On GitHub
+ * `protectedBranches: []` keeps today's rows; elsewhere the default branch
+ * and each `apply.branches` branch are the branches to protect.
+ */
+export function forgeCheckContract(c: Identities, s: ProjectSettings): ChantForgeCheckContract {
+  const jobs: ChantForgeCheckJob[] = stagesOf(c).map(({ entry, stage, st }) => {
+    const aws = st.aws ? unique([st.aws.role, ...Object.values(st.aws.root_roles)].filter((r): r is string => !!r)) : [];
+    const azure = st.azure ? unique([st.azure.client_id, ...Object.values(st.azure.root_client_ids)]) : [];
+    return {
+      name: `${entry} ${stage}`,
+      identity: stage === "apply" ? "apply" : "plan",
+      token: { issuer: st.token.issuer, subject: st.token.subject, pattern: st.token.subject_pattern, claims: st.token.claims, placeholders: st.token.placeholders },
+      ...(st.forge_environment ? { forgeEnvironment: st.forge_environment } : {}),
+      ...(st.runner ? { runner: { labels: st.runner.labels, ...(st.runner.group ? { group: st.runner.group } : {}) } } : {}),
+      ...(st.aws && aws.length ? { aws: { roles: aws, audience: st.aws.audience } } : {}),
+      ...(st.gcp ? { gcp: { provider: st.gcp.workload_identity_provider, audience: st.gcp.audience } } : {}),
+      ...(st.azure ? { azure: { clientIds: azure, audience: st.azure.audiences[0] ?? "api://AzureADTokenExchange" } } : {}),
+    };
+  });
+  const r = c.repository;
+  return {
+    forge: c.forge,
+    repository: { host: r.host, path: r.path, defaultBranch: r.default_branch, ...(r.owner_id ? { ownerId: r.owner_id } : {}), ...(r.repo_id ? { repoId: r.repo_id } : {}) },
+    jobs,
+    protectedBranches: c.forge === "github" ? [] : unique([r.default_branch, ...Object.keys(s.apply?.branches ?? {})]),
+    ...(c.forge === "gitlab" ? { gitlabVariables: applyVariables(s) } : {}),
+  };
+}
+
+/** `forge check` through chant core's check: the same contract, read with chant's forge and cloud reads. */
+async function chantForgeCheckOf(chant: ChantForgeCheck, path: string, file: string, flags: ForgeCheckFlags, deps: ForgeCheckDeps): Promise<ChantForgeCheckResult> {
+  const { requireClouds, ...idFlags } = flags;
+  const first = await configIdentities(path, file, idFlags);
+  const config = await loadConfig(path);
+  const settings: ProjectSettings = config.projects ? resolveProject(config, idFlags.project!) : resolveRepo(config);
+  const forge = first.forge;
+  const tokenSource = settings.token_env ?? DEFAULT_TOKEN_ENV[forge];
+  const own: ForgeTarget = { forge, origin: originOf(settings, first.repository.host), path: first.repository.path, token: deps.env[tokenSource] ?? "" };
+  const target: ChantForgeCheckTarget = { kind: forge, apiBase: apiBase(own), repo: own.path, host: first.repository.host, token: own.token, tokenSource, ...(forge === "gitlab" ? { tokenHeader: "PRIVATE-TOKEN" as const } : {}) };
+  // The subjects hold the live default branch and Forgejo's ids, so the repository is read before the contract is built.
+  const repo = await chant.readRepository(chant.readOnly(deps.fetch, "terragucci forge check"), target);
+  const live = repo.ok ? repo.value : {};
+  const contract = await configIdentities(path, file, {
+    ...idFlags,
+    ...(idFlags.defaultBranch ?? live.defaultBranch ? { defaultBranch: idFlags.defaultBranch ?? live.defaultBranch } : {}),
+    ...(idFlags.ownerId ?? live.ownerId ? { ownerId: idFlags.ownerId ?? live.ownerId } : {}),
+    ...(idFlags.repoId ?? live.repoId ? { repoId: idFlags.repoId ?? live.repoId } : {}),
+  });
+  const words = chantCiProductWordsNow()?.assertProductWords(TERRAGUCCI_WORDS) ?? TERRAGUCCI_WORDS;
+  return chant.forgeCheck(
+    { target, contract: forgeCheckContract(contract, settings), words, file: contract.file, ...(requireClouds ? { requireClouds: true } : {}) },
+    { fetch: deps.fetch, env: deps.env, ...(deps.readFile ? { readFile: deps.readFile } : {}), ...(deps.now ? { now: deps.now } : {}) },
+  );
+}
+
+/** terragucci's own check: the fallback on a chant without `forge-check`. */
+async function ownForgeCheck(path: string, file: string, flags: ForgeCheckFlags, deps: ForgeCheckDeps): Promise<ForgeCheck> {
   const fetch = readOnly(deps.fetch);
   const d: ForgeCheckDeps = { ...deps, fetch };
   const { requireClouds, ...idFlags } = flags;
@@ -808,13 +884,31 @@ export async function forgeCheck(path: string, file: string, flags: ForgeCheckFl
   return { schema: FORGE_CHECK_SCHEMA, file: contract.file, forge, repository: contract.repository, rows, counts, ok: counts.mismatch === 0 && !(requireClouds && unchecked) };
 }
 
-/** The exit code: 1 on a mismatch, or a cloud left unchecked with --require-clouds; 0 otherwise. */
-export const forgeCheckExit = (r: ForgeCheck): number => (r.ok ? 0 : 1);
+/**
+ * What `forge check` returns: terragucci's own result, or chant's
+ * (`terragucci.forge-check/v1` either way). chant's names the default branch
+ * `repository.defaultBranch` where terragucci's has `default_branch`.
+ */
+export type ForgeCheckResult = ForgeCheck | ChantForgeCheckResult;
+
+const fromChant = (r: ForgeCheckResult): r is ChantForgeCheckResult => "defaultBranch" in r.repository;
+
+/** The exit code: 1 on a mismatch, or a cloud left unchecked with --require-clouds; 0 otherwise. chant's `failed` and `done` are the same numbers. */
+export const forgeCheckExit = (r: ForgeCheckResult): number => (r.ok ? 0 : 1);
 
 const MATCH_WORD: Record<CheckStatus, string> = { match: "yes", mismatch: "no", unknown: "unknown", "not-checked": "not checked" };
 
 /** The table `forge check` prints without --json, and a line of counts. */
-export function describeForgeCheck(r: ForgeCheck): string {
+export function describeForgeCheck(r: ForgeCheckResult): string {
+  if (fromChant(r)) {
+    const chant = chantForgeCheckNow();
+    if (chant) return chant.describeForgeCheck(r);
+    return describeOwn({ ...r, file: r.file ?? "", schema: FORGE_CHECK_SCHEMA, repository: { host: r.repository.host, path: r.repository.path, default_branch: r.repository.defaultBranch }, rows: r.rows });
+  }
+  return describeOwn(r);
+}
+
+function describeOwn(r: ForgeCheck): string {
   const head = ["WHERE", "CHECK", "SUBJECT", "EXPECTED", "FOUND", "MATCH"];
   const body = r.rows.map((x) => [x.where, x.check, x.subject, x.expected, x.found, MATCH_WORD[x.status]]);
   const widths = head.map((h, i) => Math.max(h.length, ...body.map((b) => b[i]!.length)));
