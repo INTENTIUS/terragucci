@@ -86,7 +86,7 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
-import { chantAfterPlan, chantGateWriters, chantOpStandDown, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
+import { chantGateWriters, chantOpStandDown, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
 import { declaredTerraformRoots } from "./chant-config";
 import type { RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
@@ -1469,17 +1469,18 @@ interface StepWave {
 }
 
 /**
- * Whether this job's wave runs on chant's terraform-apply step (terragucci#1303):
- * undefined when the installed chant has no after-plan hook (chant#4614), so
- * the wave keeps the calls back without a word; else each reason it keeps
+ * Whether this job's wave runs on chant's terraform-apply step (terragucci#1303),
+ * with chant's after-plan hook (chant#4614): undefined when the terraform
+ * lexicon gives no `terraform-apply` capability or the settings do not read,
+ * so the wave keeps the calls back without a word; else each reason it keeps
  * them, empty when it can move. The step plans each root itself, so a
  * feature that runs inside terragucci's own plan keeps the calls back until
  * it moves onto chant too.
  */
 async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: WavesContext, specWaves: string[][], unattended: boolean): Promise<StepWave | undefined> {
-  const chant = await chantAfterPlan();
   const caps = await chantWaveCapabilities();
-  if (!chant || !caps) return undefined;
+  if (!caps) return undefined;
+  const chant = (await import("@intentius/chant/op")) as unknown as ChantAfterPlan;
   const read = await waveSettings(repo, options, ctx.configPath);
   if ("error" in read) return undefined;
   const settings = read.settings;

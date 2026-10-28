@@ -1,11 +1,12 @@
 // terragucci#31: drift attribution. The order is the point: the known-writes
 // table and the audit log answer first and are tested first, and the model
 // is asked only about drift neither answers, on a fixture with one of each.
-import { afterEach, describe, expect, it } from "vitest";
-import { overrideChantNext, type ChantCiAudit } from "../src/chant-next";
+// The known-writes table and the CloudTrail reader are chant's (chant#4632), tested there;
+// these tests read them through terragucci's attribution and its `aws` CLI wiring.
+import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import type { DecideFetch, DecideSettings } from "../src/decide";
-import { attribute, awsAuditLog, classifyEvent, knownWrite, newestActor, onlyServiceTags, route, shown, withoutLeft, type AuditLog, type AuditQuery } from "../src/respond/attribute";
+import { attribute, awsAuditLog, route, shown, withoutLeft, type AuditLog, type AuditQuery } from "../src/respond/attribute";
 import { driftOf } from "../src/respond/drift";
 
 const entry = (type: string, name: string, before: Record<string, unknown>, after: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
@@ -50,54 +51,7 @@ function model(choice: string, p: number) {
   return { fetch, calls };
 }
 
-describe("the known-writes table", () => {
-  it("answers for a controller's write, by type and attribute", () => {
-    expect(knownWrite("aws_ecs_service", "desired_count", { before: 2, live: 6 })).toMatchObject({ actor: "controller" });
-    expect(knownWrite("aws_autoscaling_group", "desired_capacity", { before: 2, live: 4 })).toMatchObject({ actor: "controller" });
-    expect(knownWrite("aws_eks_node_group", "scaling_config", { before: [{ desired_size: 2, min_size: 1 }], live: [{ desired_size: 5, min_size: 1 }] })).toBeDefined();
-  });
-
-  it("is silent for another attribute of the same type, or for a change the writer does not make", () => {
-    expect(knownWrite("aws_ecs_service", "task_definition", { before: "a", live: "b" })).toBeUndefined();
-    expect(knownWrite("aws_eks_node_group", "scaling_config", { before: [{ desired_size: 2, min_size: 1 }], live: [{ desired_size: 5, min_size: 3 }] })).toBeUndefined();
-    expect(knownWrite("aws_sqs_queue", "visibility_timeout_seconds", { before: 30, live: 90 })).toBeUndefined();
-  });
-
-  it("takes tags only when every changed key is one a service writes", () => {
-    expect(onlyServiceTags({ before: { team: "a" }, live: { team: "a", "aws:autoscaling:groupName": "web" } })).toBe(true);
-    expect(onlyServiceTags({ before: { team: "a" }, live: { team: "b", "aws:cloudformation:stack-name": "x" } })).toBe(false);
-    expect(onlyServiceTags({ before: { team: "a" }, live: { team: "a" } })).toBe(false);
-    expect(knownWrite("aws_s3_bucket", "tags_all", { before: {}, live: { "aws:createdBy": "x" } })).toMatchObject({ actor: "controller" });
-  });
-});
-
 describe("the audit log", () => {
-  const trail = (identity: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ eventName: "UpdateService", eventTime: "2026-10-04T10:00:00Z", userIdentity: identity, ...extra });
-
-  it("reads a service principal as a controller and a user, root or SSO session as a person", () => {
-    expect(classifyEvent(trail({ type: "AWSService", invokedBy: "application-autoscaling.amazonaws.com" }))).toEqual({ actor: "controller", who: "application-autoscaling.amazonaws.com" });
-    expect(classifyEvent(trail({ type: "AssumedRole", arn: "arn:aws:sts::1:assumed-role/svc/x", invokedBy: "ecs.amazonaws.com" }))).toMatchObject({ actor: "controller" });
-    expect(classifyEvent(trail({ type: "IAMUser", userName: "dana" }))).toEqual({ actor: "human", who: "dana" });
-    expect(classifyEvent(trail({ type: "Root" }))).toMatchObject({ actor: "human" });
-    expect(classifyEvent(trail({ type: "AssumedRole", arn: "arn:aws:sts::1:assumed-role/AWSReservedSSO_Admin_abc/dana@acme.test", sessionContext: { sessionIssuer: { userName: "AWSReservedSSO_Admin_abc" } } }))).toEqual({ actor: "human", who: "dana@acme.test" });
-  });
-
-  it("says nothing for a role session with a machine name", () => {
-    expect(classifyEvent(trail({ type: "AssumedRole", arn: "arn:aws:sts::1:assumed-role/ci-apply/run-1234" }))).toBeUndefined();
-  });
-
-  it("skips reads and Terraform's own writes, and the newest remaining write decides", () => {
-    const events = [
-      trail({ type: "IAMUser", userName: "old" }, { eventTime: "2026-10-01T00:00:00Z" }),
-      trail({ type: "IAMUser", userName: "dana" }, { eventTime: "2026-10-03T00:00:00Z" }),
-      trail({ type: "AssumedRole", arn: "arn:aws:sts::1:assumed-role/ci/x" }, { eventTime: "2026-10-04T00:00:00Z", userAgent: "APN/1.0 HashiCorp/1.0 Terraform/1.9.0" }),
-      trail({ type: "IAMUser", userName: "reader" }, { eventTime: "2026-10-05T00:00:00Z", readOnly: true }),
-    ];
-    expect(newestActor(events)).toMatchObject({ status: "found", actor: "human", who: "dana" });
-    expect(newestActor([trail({ type: "AssumedRole", arn: "arn:aws:sts::1:assumed-role/ci/x" })])).toEqual({ status: "silent" });
-    expect(newestActor([])).toEqual({ status: "silent" });
-  });
-
   const lookup = (stdout: string, status = 0, stderr = "") => {
     const calls: string[][] = [];
     const log = awsAuditLog({ run: (a) => (calls.push(a), { status, stdout, stderr }), now: () => new Date("2026-10-05T00:00:00Z") });
@@ -121,7 +75,6 @@ describe("the audit log", () => {
     const denied = lookup("", 254, "An error occurred (AccessDeniedException) when calling the LookupEvents operation\nmore");
     expect(await denied.log.lookup({ type: "aws_sqs_queue", address: "a", ref: "jobs" })).toEqual({ status: "unavailable", reason: "An error occurred (AccessDeniedException) when calling the LookupEvents operation" });
     expect(await lookup("not json").log.lookup({ type: "aws_sqs_queue", address: "a", ref: "jobs" })).toMatchObject({ status: "unavailable" });
-    // terragucci's copy says "no audit log reader for", chant's (chant#4632) "CloudTrail holds no writes of".
     expect(await lookup("{}").log.lookup({ type: "azurerm_storage_account", address: "a", ref: "x" })).toMatchObject({ status: "unavailable", reason: expect.stringContaining("azurerm_storage_account") });
     expect(await lookup("{}").log.lookup({ type: "aws_sqs_queue", address: "a", ref: "jobs" })).toEqual({ status: "silent" });
   });
@@ -215,34 +168,5 @@ describe("audit_region", () => {
   it("is validated as a region", () => {
     expect(validateConfig({ audit_region: "eu-west-2" }, "t").audit_region).toBe("eu-west-2");
     expect(() => validateConfig({ audit_region: "europe" }, "t")).toThrow(/audit_region/);
-  });
-});
-
-describe("attribution on chant's audit log and table (chant#4632)", () => {
-  const restores: (() => void)[] = [];
-  afterEach(() => {
-    while (restores.length) restores.pop()!();
-  });
-
-  it("asks chant's known-writes table and CloudTrail reader when the installed chant has them", async () => {
-    const asked: string[] = [];
-    const stub: ChantCiAudit = {
-      CI_AUDIT_FLOOR: "0.0.0",
-      knownWrite: (type, path) => (asked.push(`table ${type} ${path}`), type === "aws_sqs_queue" ? { actor: "controller", why: "chant's table" } : undefined),
-      awsAuditLog: (o) => ({ lookup: async (q) => (asked.push(`log ${q.ref} ${o?.region ?? ""}`), { status: "silent" }) }),
-    };
-    restores.push(overrideChantNext("ciAudit", stub));
-    const r = await attribute("r", FIXTURE.slice(0, 2), { audit: awsAuditLog({ region: "eu-west-2" }) });
-    expect(r.attributions.map((a) => [a.address, a.source, a.detail])).toEqual([
-      ["aws_ecs_service.api", "unattributed", "neither the known-writes table nor the audit log answered"],
-      ["aws_sqs_queue.jobs", "table", "chant's table"],
-    ]);
-    expect(asked).toEqual(["table aws_ecs_service desired_count", "log api eu-west-2", "table aws_sqs_queue visibility_timeout_seconds"]);
-  });
-
-  it("uses terragucci's copies on a chant without ci-audit", async () => {
-    restores.push(overrideChantNext("ciAudit", null));
-    const r = await attribute("r", FIXTURE.slice(0, 1));
-    expect(r.attributions[0]).toMatchObject({ source: "table", actor: "controller" });
   });
 });

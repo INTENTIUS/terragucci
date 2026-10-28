@@ -37,8 +37,6 @@ const NOT_VARIABLES = new Set([
   "CI_PRODUCT_FLOOR", "CI_CONTROL_FLOOR", "TERRAGUCCI_WORDS", "CI_ESTATE_FLOOR", "CI_POLICY_SOURCE_FLOOR", "OP_WAVE_STAND_DOWN_FLOOR",
   // chant's floor for the agent job (chant#4616).
   "CI_AGENT_FLOOR",
-  // chant's floor for the audit log and attribution in core (chant#4632).
-  "CI_AUDIT_FLOOR",
 ]);
 // The control dispatch's variables (see UNDOCUMENTED_KEYS above).
 const UNDOCUMENTED_VARIABLES = new Set(["TERRAGUCCI_CONTROL_TOKEN", "TG_CONTROL_TOKEN", "TG_CONTROL_READ", "TERRAGUCCI_MEMBER", "TERRAGUCCI_OP", "TERRAGUCCI_SHA"]);

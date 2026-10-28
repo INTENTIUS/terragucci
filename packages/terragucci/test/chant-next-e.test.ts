@@ -18,8 +18,8 @@ describe("exit codes", () => {
     expect(waveExit(4, 1)).toBe(1);
   });
 
-  it("are chant's table: 0 done, 1 failed, 2 drift, 3 waiting, 4 moved, 5 held, 6 superseded, 7 denied, 8 declined", () => {
-    expect(CHANT_EXIT).toEqual({ done: 0, failed: 1, drift: 2, waiting: 3, moved: 4, held: 5, superseded: 6, denied: 7, declined: 8 });
+  it("are chant's table: 0 done, 1 failed, 2 drift, 3 waiting, 4 moved, 5 held, 6 superseded, 7 denied, 8 declined, 9 misplaced", () => {
+    expect(CHANT_EXIT).toEqual({ done: 0, failed: 1, drift: 2, waiting: 3, moved: 4, held: 5, superseded: 6, denied: 7, declined: 8, misplaced: 9 });
   });
 });
 

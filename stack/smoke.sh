@@ -1066,7 +1066,7 @@ run_queue() {
 # as before, and no harness row is written: a line says which chant it needs.
 # SMOKE_AWS=1, the real-AWS pilot, never goes through it: it records nothing.
 SMOKE_SAFE_RUN=()
-SMOKE_SAFE_RUN_NEEDS="chant e2e safe-run (chant#4587 C1, in the chant release after 0.124.55)"
+SMOKE_SAFE_RUN_NEEDS="chant e2e safe-run (chant#4587 C1, in chant 0.124.56 and later)"
 safe_run_detect() {
   SMOKE_SAFE_RUN=()
   [ -z "${SMOKE_AWS:-}" ] || return 0

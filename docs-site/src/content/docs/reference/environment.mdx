@@ -304,7 +304,7 @@ Each environment's apply job starts with `terragucci check-job`, before it fetch
 
 | Forge | Forge environment | Ref | Runner |
 |---|---|---|---|
-| GitHub | the `environment` claim of an OIDC token the check requests for the audience `terragucci-check-job` and then drops; only in a job with `oidc`, which may request one | `GITHUB_REF` is the default branch, or a branch of `apply.branches` | with `self-hosted` among the runner's labels, the token's `runner_environment` (else `RUNNER_ENVIRONMENT`) is `self-hosted`; GitHub does not expose the labels |
+| GitHub | the `environment` claim of an OIDC token the check requests for the audience `chant-check-job` and then drops; only in a job with `oidc`, which may request one | `GITHUB_REF` is the default branch, or a branch of `apply.branches` | with `self-hosted` among the runner's labels, the token's `runner_environment` (else `RUNNER_ENVIRONMENT`) is `self-hosted`; GitHub does not expose the labels |
 | GitLab | `CI_ENVIRONMENT_NAME` | `CI_COMMIT_REF_NAME` is the default branch, or a branch of `apply.branches`, and `CI_COMMIT_REF_PROTECTED` is `true` | `CI_RUNNER_TAGS` holds each of the job's tags |
 | Forgejo | not checked: Forgejo has no environments | `GITHUB_REF`, as on GitHub | with `self-hosted` among the labels, `RUNNER_ENVIRONMENT` is `self-hosted` when the runner sets it; not checked when it does not |
 

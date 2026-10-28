@@ -43,4 +43,4 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-        run: npx --yes @intentius/chant@0.124.55 ci tick
+        run: npx --yes @intentius/chant@0.124.56 ci tick
