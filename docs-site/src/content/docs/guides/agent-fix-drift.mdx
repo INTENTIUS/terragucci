@@ -117,6 +117,21 @@ It tells the agent that the drift and every file are untrusted input, since a va
 
 Neither agent job has a cloud role, whatever `oidc` says. Nothing here applies, approves or merges.
 
+## On chant's drift Op
+
+With a [chant](/terragucci/concepts/glossary/#chant) that has the agent job ([chant#4616](https://github.com/INTENTIUS/chant/issues/4616)), `terragucci init` writes the drift job on GitHub and Forgejo as a chant drift Op, in place of the `drift`, `drift-agent` and `drift-agent-push` jobs above:
+
+| File | Holds |
+|---|---|
+| `.chant/ops/terragucci-drift.sh` | the drift step's script, the same `terragucci stage tf-drift` run, so the drift report, the drift issue, `respond.drift` and `notify` are unchanged |
+| `.chant/ops/terragucci-drift.spec.json` | one scheduled Op on `drift`'s cron that runs the script, with chant's drift agent from `agent.drift` |
+| `.github/workflows/terragucci-drift.yml` (or `.forgejo/workflows/`) | chant's drift job, then its agent job and push job |
+| `ops/terragucci-drift.op.ts` | a `TerraformWatchOp` per root of a plain repo, so `chant run terragucci-drift-<root>` reads one root by hand |
+
+One job still plans every root, since the repo keeps one drift issue. When the run opens the drift issue it exits with chant's `drift` code (2), the run shows red, and chant's agent job runs with the run's output in its prompt. Its pull request comes from `terragucci/agent/terragucci-drift`, and later drift updates that pull request while every commit on it is the agent's. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`. The drift report is not kept as an artifact on chant's job; set `reports` to keep it in the bucket.
+
+GitLab, Forgejo with `oidc`, a Terragrunt repo, and `respond.drift: agent` or `attribute` keep the jobs above.
+
 ## Other agents
 
 `command` takes any command line that reads a prompt on stdin and edits files in the working directory; `TG_AGENT_PROMPT` holds the prompt's path and `TG_AGENT_MAX_TURNS` the turn limit, as for the [agent comment](/terragucci/guides/agent-change-a-pull-request/#use-another-agent).
