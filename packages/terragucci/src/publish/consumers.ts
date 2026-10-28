@@ -22,7 +22,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
-import { chantCiControl, chantRegistryCatalog, type ChantModuleConsumer } from "../chant-next";
+import { registryCatalog as tf } from "../chant-catalog";
+import { chantCiControl, type ChantModuleConsumer } from "../chant-next";
 import { CONTROL_READ_TOKEN_ENV, ConfigError, parseProjectKey, type ControlSettings } from "../config";
 import { readEntriesAt } from "../control-records";
 import { findRoots } from "../detect";
@@ -57,10 +58,9 @@ export function consumersOf(calls: readonly ChantModuleConsumer[]): VersionConsu
 
 /** This repo's `consumers.json` text, from its roots (module directories left out), or undefined on a chant without the scan or the document. */
 export async function projectConsumersDocument(repo: string, o: { roots?: string[]; skip?: string[]; parser?: Hcl2Json }): Promise<{ text: string; consumers: VersionConsumers[] } | undefined> {
-  const tf = await chantRegistryCatalog();
   const control = await chantCiControl();
   const write = control as unknown as { consumersDocument?: (c: readonly VersionConsumers[]) => string } | undefined;
-  if (!tf || typeof write?.consumersDocument !== "function") return undefined;
+  if (typeof write?.consumersDocument !== "function") return undefined;
   const skip = o.skip ?? [];
   const roots = findRoots(repo, o.roots).filter((r) => !skip.some((m) => r === m || r.startsWith(`${m}/`)));
   const consumers = consumersOf(await tf.moduleConsumers(repo, roots, o.parser));

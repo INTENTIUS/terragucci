@@ -1,14 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { RegistrySettings } from "../src/config";
-import { chantNextParts, chantReleaseCatalog, type ChantReleaseCatalogDoc } from "../src/chant-next";
+import type { ChantReleaseCatalogDoc } from "../src/chant-next";
 import { publish } from "../src/publish";
 import { CATALOG_DIR, describeCatalog, describeComponent, findComponent, publishCatalog, readCatalog } from "../src/publish/catalog";
 import type { RegistryStore } from "../src/publish/registry";
 import { git, tmp, write } from "./helpers";
-
-const parts = await chantNextParts();
-const withCatalog = parts.releaseCatalog && parts.registryCatalog;
 
 function commit(dir: string, message: string): void {
   git(dir, "add", "-A");
@@ -80,7 +77,7 @@ describe("every publish writes a release record (terragucci#1289 ruling A)", () 
   });
 });
 
-describe.skipIf(!withCatalog)("the release catalog beside the registry", () => {
+describe("the release catalog beside the registry", () => {
   const settings = { modules: { registry: REG } };
   const docsRuns: string[] = [];
   const terraformDocs = async ({ config }: { dir: string; config: string }) => {
@@ -212,10 +209,5 @@ describe("terragucci modules over a catalog", () => {
     expect(text).toContain("modules/net (modules.test/acme/net/generic), latest 1.1.0");
     expect(text).toContain("1.0.0  deprecated: drops the old subnet layout; move to 1.1.0  2026-10-27  0123456789ab  unsigned, 1 consumer");
     expect(text).toContain("0.9.0  yanked: leaks the admin role");
-  });
-
-  it("reads a catalog only on a chant that carries the reader", async () => {
-    if (await chantReleaseCatalog()) return;
-    await expect(readCatalog({ registry: "https://modules.test" })).rejects.toThrow("the installed chant has no release catalog reader");
   });
 });
