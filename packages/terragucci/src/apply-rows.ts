@@ -21,11 +21,21 @@
  * A row is keyed by the estate and the resource's address, its previous
  * address for a moved instance, and the live object's identity for an
  * update or a delete, so two estates that meet on one object meet on its row.
+ *
+ * With a chant that has row leases (chant#4552, #4594), the rows are chant's:
+ * the keys come from the terraform lexicon's `terraformLockRows`, the same
+ * keys as planRows, and the take, release and read go through chant's
+ * `lifecycle/resource-lock`, in `_locks/rows/pr-apply.json`, the file chant's
+ * own applies hold rows in (a pull request's apply, a fan-out, a promote, an
+ * op wave). A terragucci wave and a chant apply that change one resource then
+ * meet on one row. Without it, terragucci's own code below writes
+ * `_locks/apply-rows.json` as before ({@link chantRows}).
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { chantLockRows, type ChantLockRows } from "./chant-next";
 import { ConfigError, type Binary } from "./config";
 import { BINARY } from "./shape";
 
@@ -302,4 +312,39 @@ export function describeHeld(held: readonly HeldRow[], rows: readonly ApplyRow[]
   return [...byRun.values()]
     .map(({ holder, addresses }) => `run ${holder.run}${holder.url ? ` (${holder.url})` : ""} is applying ${[...addresses].sort().join(", ")}`)
     .join("; ");
+}
+
+// ── chant's row leases (chant#4552, #4594) ─────────────────────────────────
+
+/** The gate whose rows file chant's applies hold rows in: the pull-request loop's (`PR_APPLY_GATE`). */
+export const CHANT_ROWS_GATE = "pr-apply";
+
+/** chant's row leases when the installed chant has them; undefined runs terragucci's own. */
+export const chantRows = (): Promise<ChantLockRows | undefined> => chantLockRows();
+
+/** The rows a plan's changes key: the terraform lexicon's when chant has it, else planRows. The keys are the same. */
+export async function planRowsVia(root: string, estate: string | undefined, plan: unknown): Promise<ApplyRow[]> {
+  const chant = await chantRows();
+  if (!chant) return planRows(root, estate, plan);
+  return chant.terraformLockRows(root, estate, plan).map((r) => ({ key: r.key, root: r.target, address: r.address }));
+}
+
+/** takeRows through chant when it has row leases; a held row names the row this take wanted. */
+export async function takeRowsVia(repo: string, rows: readonly ApplyRow[], me: RowHolder, alive: Liveness): Promise<TakeResult> {
+  const chant = await chantRows();
+  if (!chant) return takeRows(repo, rows, me, alive);
+  const taken = await chant.takeLockRows(CHANT_ROWS_GATE, rows.map((r) => ({ key: r.key, target: r.root, address: r.address })), me, { cwd: repo, alive });
+  return taken.ok ? { ok: true, tookOver: taken.tookOver } : { ok: false, held: taken.held.map((h) => ({ key: h.wanted, holder: h.holder })) };
+}
+
+/** releaseRows through chant when it has row leases. Never throws. */
+export async function releaseRowsVia(repo: string, keys: readonly string[], me: string): Promise<boolean> {
+  const chant = await chantRows().catch(() => undefined);
+  return chant ? chant.releaseLockRows(CHANT_ROWS_GATE, keys, me, { cwd: repo }) : releaseRows(repo, keys, me);
+}
+
+/** The rows as origin holds them now: chant's file when it has row leases, else terragucci's. */
+export async function readRowsVia(repo: string): Promise<RowsFile> {
+  const chant = await chantRows();
+  return chant ? parseRows(JSON.stringify(await chant.readLockRows(CHANT_ROWS_GATE, { cwd: repo }))) : readRows(repo);
 }

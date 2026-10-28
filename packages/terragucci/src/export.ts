@@ -33,6 +33,14 @@
  * it. It refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
  * migration prepares one (unitPlace): Terragrunt inits it, and the backend is
  * the one that init recorded in the directory Terragrunt ran the binary in.
+ *
+ * With a chant that has the terraform lexicon's state operations
+ * (chant#4618), the request is chant's gated request (chant#4551,
+ * ./gated-request.ts) at the same gate: chant computes its digest over the
+ * root, the location, the version, the requester and the time it was first
+ * asked, spends the approval on `_gates/tf-state-export/applied.jsonl` before
+ * the download, and the `finished` line holds the version id and the digest
+ * of the bytes written in place of the done.jsonl line.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -49,6 +57,7 @@ import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } f
 import { currentSerial, hasVersion, readVersion } from "./gitlab-state";
 import type { StoreFetch } from "./report/object-store";
 import { sealRefusal } from "./seal";
+import { chantStateOps, opMessage, requestRules } from "./gated-request";
 
 export const EXPORT_OP = "tf-state-export";
 export const EXPORT_LEDGER = `_gates/${EXPORT_OP}.jsonl`;
@@ -236,6 +245,56 @@ export async function exportState(repo: string, options: ExportOptions): Promise
       throw new ConfigError(`state export: ${location} has no version ${version}; a lifecycle rule may have expired it`);
     }
     download = (v) => store.readVersion(v);
+  }
+
+  const chant = await chantStateOps();
+  if (chant) {
+    const rule = await approvalRule(repo, { at: "HEAD", ...(configPath ? { config: configPath } : {}) });
+    const sealed = rule.mode === "sealed";
+    const versionId = version;
+    const result = await chant.gatedStateOp(
+      {
+        op: EXPORT_OP,
+        request: { kind: "state-export", subject: root, by, fields: { location, version_id: versionId } },
+        rules: requestRules(rule),
+        description: `state export: ${root} version ${versionId}, for ${by}`,
+        expiry: `${REQUEST_HOURS}h`,
+        base: rule.base,
+        cwd: repo,
+        now,
+      },
+      async ({ approvedBy }) => {
+        const file = outPath(repo, options.out, root, versionId);
+        const body = await download(versionId);
+        if (body === undefined) throw new ConfigError(`state export: ${location} has no version ${versionId}; it was deleted since the request`);
+        writeFileSync(file, body, { mode: 0o600, flag: "wx" });
+        return { output: { file, approvedBy }, detail: { by, location, version_id: versionId, content_digest: sha(body), approved_by: approvedBy } };
+      },
+    );
+    const command = exportApproveCommand(root, result.digest, sealed);
+    switch (result.status) {
+      case "done":
+        log(`state export: wrote ${result.output.file}: ${root}'s state, ${location} version ${versionId}, approved by ${result.output.approvedBy}`);
+        log(`state export: recorded on chant/lifecycle in _gates/${EXPORT_OP}/applied.jsonl; delete the file when you are done with it`);
+        return { code: 0, digest: result.digest, file: result.output.file };
+      case "failed":
+        throw result.error instanceof ConfigError ? result.error : new ConfigError(`state export: ${opMessage(result.error)}`);
+      case "spent":
+        log(`state export: request ${result.digest} for ${root} version ${versionId} was exported already; an export asks again once the request expires`);
+        return { code: 1, digest: result.digest };
+      case "held":
+        log(`state export: ${result.reason}`);
+        return { code: 1, digest: result.digest };
+      case "refused":
+        log(`state export: an approval does not count: ${result.reason}`);
+      // falls through: the request still waits for another approver
+      case "waiting":
+        log(`state export: ${by} asks for ${root}'s state, ${location} version ${versionId}; request ${result.digest}`);
+        log("someone other than you approves it with:");
+        log(`  ${command}`);
+        log("then run this command again to download it.");
+        return { code: 3, digest: result.digest, command };
+    }
   }
 
   const ledger = readLedger(repo, EXPORT_LEDGER);

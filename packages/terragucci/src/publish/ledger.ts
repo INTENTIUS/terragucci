@@ -21,6 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { ReleaseRecord, RunOrigin } from "@intentius/chant/lifecycle/release-ledger";
+import { chantReleaseReadNow } from "../chant-next";
 import { ConfigError } from "../config";
 
 export const LIFECYCLE = "chant/lifecycle";
@@ -206,10 +207,29 @@ function show(repo: string, ref: string, path: string): string | undefined {
   return r.status === 0 ? r.stdout : undefined;
 }
 
+/** The ledger prefixes on `ref` that hold a module release ledger: `""` for the flat layout, `_members/<m>/` (nested too) for each workspace member. */
+export function ledgerPrefixes(paths: readonly string[]): string[] {
+  const re = new RegExp(`^((?:_members/[^/]+/)*)${LEDGER_PATH.replace(/[.]/g, "\\.")}$`);
+  return [...new Set(paths.map((p) => re.exec(p)?.[1]).filter((p): p is string => p !== undefined))].sort();
+}
+
+/** The records of one ledger file's text: chant's reader when the installed chant has it, else {@link parseLedger}. */
+function recordsOf(text: string): ReleaseRecord[] {
+  const chant = chantReleaseReadNow();
+  return chant ? (chant.parseReleaseLedger(chant.releaseLedgerLines(text)).records as ReleaseRecord[]) : parseLedger(text);
+}
+
 /**
  * Fetch `chant/lifecycle` from `remote` (a remote name or a URL) into a ref
  * of its own and read the ledger there. Undefined when the remote has no such
  * branch; throws when the remote cannot be read.
+ *
+ * A workspace member's releases are under its prefix, `_members/<member>/`
+ * (chant's `resolveMemberLedger`), and the remote's own workspace is not
+ * known here, so every module ledger on the branch is read: the flat one and
+ * each member's. The records are read with chant's reader when it has one
+ * (`parseReleaseLedger`), and an attestation file and the status lines are
+ * read under the prefix of the ledger that holds them.
  */
 export function fetchLedger(repo: string, remote: string): Ledger | undefined {
   const local = `refs/terragucci/ledger/${createHash("sha256").update(remote).digest("hex").slice(0, 16)}`;
@@ -218,14 +238,21 @@ export function fetchLedger(repo: string, remote: string): Ledger | undefined {
   if (!heads.stdout.trim()) return undefined;
   const f = spawnSync("git", ["-C", repo, "fetch", "-q", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${LIFECYCLE}:${local}`], { encoding: "utf-8" });
   if (f.status !== 0) throw new Error(`cannot fetch ${LIFECYCLE} from ${shown(remote)}: ${(f.stderr || "").trim().split("\n")[0]}`);
+  const tree = spawnSync("git", ["-C", repo, "ls-tree", "-r", "--name-only", local], { encoding: "utf-8", maxBuffer: 1 << 28 });
+  const prefixes = tree.status === 0 ? ledgerPrefixes(tree.stdout.split("\n")) : [""];
+  const records = prefixes.flatMap((p) => recordsOf(show(repo, local, `${p}${LEDGER_PATH}`) ?? ""));
+  const status = prefixes.map((p) => show(repo, local, `${p}${STATUS_PATH}`)).filter((t): t is string => !!t).map((t) => t.replace(/\n?$/, "\n")).join("");
   return {
     from: shown(remote),
-    records: parseLedger(show(repo, local, LEDGER_PATH) ?? ""),
-    ...((): { status?: string } => {
-      const status = show(repo, local, STATUS_PATH);
-      return status ? { status } : {};
-    })(),
-    file: (digest, name) => show(repo, local, `${attestDir(digest)}/${name}`),
+    records,
+    ...(status ? { status } : {}),
+    file: (digest, name) => {
+      for (const p of prefixes) {
+        const text = show(repo, local, `${p}${attestDir(digest)}/${name}`);
+        if (text !== undefined) return text;
+      }
+      return undefined;
+    },
   };
 }
 

@@ -89,6 +89,15 @@ export const UNLOCK_DONE_FILE = "_gates/tf-unlock/done.jsonl";
 /** State exports: the requests and their approvals, and the record of each export written (../export.ts). */
 export const EXPORT_LEDGER_FILE = "_gates/tf-state-export.jsonl";
 export const EXPORT_DONE_FILE = "_gates/tf-state-export/done.jsonl";
+/**
+ * Since chant runs them as gated requests (chant#4551, #4618): the applied and
+ * finished lines of each lock release and export, beside its gate. The
+ * `done.jsonl` files above are still read, for the history before.
+ */
+export const UNLOCK_APPLIED_FILE = "_gates/tf-unlock/applied.jsonl";
+export const EXPORT_APPLIED_FILE = "_gates/tf-state-export/applied.jsonl";
+// A migration still writes its done.jsonl line beside the finished line, and the audit reads that one alone.
+const FINISHED_KIND: Record<string, AuditKind> = { [UNLOCK_APPLIED_FILE]: "unlock", [EXPORT_APPLIED_FILE]: "state-export" };
 /** Ephemeral environments: the gate of each pull request's copy, and the record of each apply and destroy of it (../ephemeral.ts). */
 export const EPHEMERAL_LEDGER_FILE = "_gates/tf-ephemeral.jsonl";
 export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
@@ -129,6 +138,7 @@ const membersOf = (e: GateAuditEntry): { member?: string; planDigest?: string }[
  */
 export function ledgerEntries(project: string, path: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined = () => undefined): AuditEntry[] {
   if (path === MIGRATE_DONE_FILE) return migrationEntries(project, lines, commitUrl);
+  if (FINISHED_KIND[path]) return finishedEntries(project, path, lines, commitUrl);
   if (path === UNLOCK_DONE_FILE) return unlockEntries(project, lines, commitUrl);
   if (path === EXPORT_DONE_FILE) return exportEntries(project, lines, commitUrl);
   if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, lines, commitUrl);
@@ -255,6 +265,40 @@ function migrationEntries(project: string, lines: readonly GateLedgerLine[], com
       result: str(r.result) ?? "applied",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: MIGRATE_DONE_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ roots: Array.isArray(r.roots) ? r.roots : undefined, change: str(r.change), retags: Array.isArray(r.retags) ? r.retags : undefined, file_digest: str(r.file_digest), error: str(r.error), commit: str(r.commit), run_id: str(r.runId) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of a gated request's `applied.jsonl` (chant#4551): one per
+ * `finished` line, the end of a lock release or an export that chant spent
+ * an approval for. `who` is the person who ran it and the facts are the
+ * line's `detail`, which terragucci fills with flat facts only, never a
+ * state's contents.
+ */
+function finishedEntries(project: string, path: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  const kind = FINISHED_KIND[path]!;
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
+    if (!r || r.version !== 1 || r.kind !== "finished" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
+    const url = commitUrl(c.commit);
+    const detail = r.detail && typeof r.detail === "object" ? (r.detail as Line) : {};
+    const failed = r.result === "failed";
+    const done = kind === "unlock" ? "released" : "exported";
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, path, c.text),
+      kind,
+      project,
+      at: r.timestamp,
+      who: str(detail.by) ?? null,
+      what: r.gate,
+      digest: str(r.planDigest) ?? null,
+      result: failed ? "failed" : (str(detail.result) ?? done),
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({ ...Object.fromEntries(Object.entries(detail).filter(([k]) => k !== "by" && k !== "result")), applied_at: str(r.applied) }),
     });
   }
   return out;

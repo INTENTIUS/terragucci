@@ -51,7 +51,7 @@ A Terragrunt unit exports the same way: name the unit, such as `terragucci state
 
 2. Someone else approves the request with the command it printed. Under `approval: sealed` the approval needs a seal (`--sign`) from a key the signers file lists.
 
-3. Run the same command again. It downloads the version and records the export in `_gates/tf-state-export/done.jsonl`. Only then does it write the file:
+3. Run the same command again. It downloads the version and records the export in `_gates/tf-state-export/done.jsonl`, or with a chant that has gated requests spends the approval in `_gates/tf-state-export/applied.jsonl`. Only then does it write the file:
 
    ```text
    state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY.tfstate: envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY, approved by bob
