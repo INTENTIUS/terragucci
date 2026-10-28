@@ -17,13 +17,21 @@ on:
         required: false
         type: string
       name:
-        description: 'The app''s name: a lowercase letter, then lowercase letters, digits and -'
+        description: 'The app''s name, or with app the add-on''s: a lowercase letter, then lowercase letters, digits and -'
         required: true
         type: string
       inputs:
         description: The template's inputs as one JSON object, by name
         required: false
         default: '{}'
+        type: string
+      app:
+        description: 'For an add-on template: the existing app it goes into; empty for a new app'
+        required: false
+        type: string
+      claimed_by:
+        description: Who the client says asked; shown as claimed, next to the run's actor
+        required: false
         type: string
 
 permissions:
@@ -34,7 +42,7 @@ env:
   TF_INPUT: '0'
 
 concurrency:
-  group: terragucci-request-${{ github.repository }}-${{ github.event.inputs.name }}
+  group: terragucci-request-${{ github.repository }}-${{ github.event.inputs.app }}-${{ github.event.inputs.name }}
   cancel-in-progress: false
 
 jobs:
@@ -51,12 +59,14 @@ jobs:
       TG_VERSION: '${{ github.event.inputs.version }}'
       TG_NAME: '${{ github.event.inputs.name }}'
       TG_INPUTS: '${{ github.event.inputs.inputs }}'
+      TG_APP: '${{ github.event.inputs.app }}'
       TG_REQUESTED_BY: '${{ github.triggering_actor || github.actor }}'
+      TG_CLAIMED_BY: '${{ github.event.inputs.claimed_by }}'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - name: Open the pull request that adds the app's root from the template
+      - name: Open the pull request that adds the app's root or the add-on from the template
         shell: bash
         run: |
           set -eu
@@ -65,4 +75,6 @@ jobs:
           [ -s "$inputs" ] || printf '{}' > "$inputs"
           set -- "$TG_TEMPLATE" --name "$TG_NAME" --inputs-file "$inputs" --via form --requested-by "$TG_REQUESTED_BY"
           [ -z "${TG_VERSION:-}" ] || set -- "$@" --version "$TG_VERSION"
+          [ -z "${TG_APP:-}" ] || set -- "$@" --app "$TG_APP"
+          [ -z "${TG_CLAIMED_BY:-}" ] || set -- "$@" --claimed-by "$TG_CLAIMED_BY"
           terragucci request "$@"

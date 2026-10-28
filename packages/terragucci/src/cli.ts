@@ -23,7 +23,8 @@
  *   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
  *   terragucci modules consumers [--check] [--config <file>]
  *   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   (the templates in the release catalog: each with the versions a request may name, their attestation, kind and form fields; read only)
- *   terragucci request <template> --name <app> [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   (open a pull request that adds an app's root from a template)
+ *   terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   (the apps under templates.apps: each with its template, version, add-ons and the action blocks its modules declare; read only)
+ *   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   (open a pull request that adds an app's root from a template, or with --app one add-on's module call to that app's root)
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
@@ -161,6 +162,8 @@ import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
 import { describeCatalog, describeComponent, findComponent, readCatalog } from "./publish/catalog";
 import { describeTemplate, describeTemplates, findTemplate, listTemplates, readTemplatesCatalog, request as requestApp, REQUEST_VIA, templatesSettings, type RequestVia } from "./templates";
+import { loadHclParser } from "./rollout/parser";
+import { appRows, checkoutFiles, commitFiles, describeApps, findApps, onTemplate } from "./template-apps";
 import { describeStatus, setReleaseStatus, STATUS_WORDS, type StatusWord } from "./publish/status";
 import { PROJECT_CONSUMERS, projectConsumersDocument } from "./publish/consumers";
 import { pinChecker } from "./publish/require";
@@ -202,7 +205,8 @@ const USAGE = `usage:
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   the templates in the release catalog, with the versions a request may name and their form fields; read only
-  terragucci request <template> --name <app> [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template
+  terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   the apps made from templates, with their versions, add-ons and actions; read only
+  terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
@@ -447,6 +451,15 @@ function gitUser(dir: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/** The commit a ref names in the checkout, or undefined. */
+function gitRevParse(dir: string, ref: string): string | undefined {
+  try {
+    return execFileSync("git", ["-C", dir, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The forge the repo's origin remote is on, when its host says. */
@@ -906,10 +919,32 @@ export async function main(argv: string[]): Promise<number> {
       case "templates": {
         // The templates in the release catalog (./templates.ts): read only, and on any chant.
         const [sub = "list", name] = args;
-        if (!["list", "show"].includes(sub) || (sub === "show" && !name)) throw new ConfigError("usage: terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]");
+        if (!["list", "show", "apps"].includes(sub) || (sub === "show" && !name) || (sub === "apps" && name)) throw new ConfigError("usage: terragucci templates [list | show <template> | apps [--template <t>] [--ref <ref>]] [--registry <url>] [--json] [--config <file>]");
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const registry = str(flags, "registry");
+        if (sub === "apps") {
+          // The apps' roots (./template-apps.ts): the checkout's, or one commit's with --ref. The catalog names templates and actions when it can be read.
+          const ref = str(flags, "ref");
+          let tree = checkoutFiles(cwd);
+          if (ref) {
+            const commit = gitRevParse(cwd, ref);
+            if (!commit) throw new ConfigError(`--ref ${ref} names no commit in this repository`);
+            tree = commitFiles(cwd, commit);
+          }
+          const roots = await findApps(tree, templatesSettings(settings).apps, await loadHclParser("terragucci templates apps reads the apps' roots"));
+          let catalog;
+          try {
+            catalog = await readTemplatesCatalog(cwd, settings, registry ? { registry } : {});
+          } catch (e) {
+            console.error(`terragucci: the release catalog could not be read (${(e as Error).message.split("\n", 1)[0]}), so templates are named by source and no actions are listed`);
+          }
+          const filter = str(flags, "template");
+          const rows = appRows(roots, catalog).filter((r) => !filter || onTemplate(r, filter));
+          if (json) return emit(envelope("templates", 0, rows));
+          console.log(describeApps(rows));
+          return 0;
+        }
         const rows = listTemplates(await readTemplatesCatalog(cwd, settings, registry ? { registry } : {}), templatesSettings(settings).require);
         if (sub === "list") {
           if (json) return emit(envelope("templates", 0, rows));
@@ -926,7 +961,10 @@ export async function main(argv: string[]): Promise<number> {
         // An app's root from a template, as a pull request (./templates.ts); a refusal exits 1 and pushes nothing.
         const [template] = args;
         const name = str(flags, "name");
-        if (!template || !name || args.length > 1) throw new ConfigError("usage: terragucci request <template> --name <app> [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--dry-run] [--json] [--config <file>]");
+        if (!template || !name || args.length > 1) throw new ConfigError("usage: terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--dry-run] [--json] [--config <file>]");
+        const app = str(flags, "app");
+        if (flags.app === true || app === "") throw new ConfigError("--app needs the name of the app the add-on goes into");
+        const claimedBy = str(flags, "claimed-by");
         const via = (str(flags, "via") ?? "cli") as RequestVia;
         if (!(REQUEST_VIA as readonly string[]).includes(via)) throw new ConfigError(`--via must be one of ${REQUEST_VIA.join(", ")}`);
         const rawInputs: Record<string, string> = {};
@@ -953,7 +991,7 @@ export async function main(argv: string[]): Promise<number> {
         const requestedBy = str(flags, "requested-by") || process.env.GITHUB_TRIGGERING_ACTOR || process.env.GITHUB_ACTOR || gitUser(cwd) || process.env.USER || "unknown";
         const version = str(flags, "version");
         const registry = str(flags, "registry");
-        const r = await requestApp({ cwd, settings, template, name, ...(version ? { version } : {}), ...(inputs ? { inputs } : {}), rawInputs, via, requestedBy, dryRun: flags["dry-run"] === true, ...(registry ? { registry } : {}) });
+        const r = await requestApp({ cwd, settings, template, name, ...(app ? { app } : {}), ...(claimedBy ? { claimedBy } : {}), ...(version ? { version } : {}), ...(inputs ? { inputs } : {}), rawInputs, via, requestedBy, dryRun: flags["dry-run"] === true, ...(registry ? { registry } : {}) });
         if (!r.ok) {
           if (json) return emit(envelope("request", 1, { code: r.code, refusals: r.refusals }, r.refusals.map((x) => x.reason).join("; ")));
           for (const x of r.refusals) console.error(`terragucci: refused (${x.code}): ${x.reason}`);

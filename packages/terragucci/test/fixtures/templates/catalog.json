@@ -79,6 +79,11 @@
                   "name": "bucket_arn",
                   "description": "The bucket's ARN.",
                   "sensitive": false
+                },
+                {
+                  "name": "private_subnets",
+                  "description": "The app's private subnet IDs.",
+                  "sensitive": false
                 }
               ],
               "template": {
@@ -112,7 +117,13 @@
                     "description": "The key the app signs uploads with."
                   }
                 ]
-              }
+              },
+              "actions": [
+                {
+                  "type": "aws_lambda_invoke",
+                  "name": "rotate"
+                }
+              ]
             }
           }
         },
@@ -316,6 +327,98 @@
                     "kind": "string",
                     "sensitive": true,
                     "description": "The key the app signs uploads with."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "modules/cache",
+      "latest": "0.3.0",
+      "fields": {
+        "terraform": {
+          "address": "modules.test/acme/cache/aws"
+        }
+      },
+      "versions": [
+        {
+          "version": "0.3.0",
+          "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "commit": "4444444444444444444444444444444444444444",
+          "time": "2026-10-01T00:00:00Z",
+          "actor": "publisher",
+          "envs": [
+            "modules"
+          ],
+          "status": {
+            "state": "active",
+            "reason": null,
+            "replacement": null,
+            "actor": null,
+            "time": null
+          },
+          "changelog": {
+            "bump": null,
+            "entries": []
+          },
+          "attestation": {
+            "state": "signed",
+            "verify": null,
+            "identity": null
+          },
+          "consumers": [],
+          "fields": {
+            "terraform": {
+              "address": "modules.test/acme/cache/aws",
+              "inputs": [
+                {
+                  "name": "node_type",
+                  "type": "string",
+                  "required": false,
+                  "default": "cache.t4g.micro",
+                  "description": null,
+                  "sensitive": false
+                },
+                {
+                  "name": "subnet_ids",
+                  "type": "list(string)",
+                  "required": true,
+                  "description": "The subnets the cache runs in.",
+                  "sensitive": false
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "endpoint",
+                  "description": "The cache's endpoint.",
+                  "sensitive": false
+                }
+              ],
+              "actions": [
+                {
+                  "type": "aws_lambda_invoke",
+                  "name": "flush"
+                }
+              ],
+              "template": {
+                "contract": 1,
+                "kind": "addon",
+                "description": "A cache beside an app, in the app's own subnets.",
+                "inputs": [
+                  {
+                    "name": "subnet_ids",
+                    "kind": "list",
+                    "of": "string",
+                    "label": "Subnets",
+                    "description": "The subnets the cache runs in."
+                  },
+                  {
+                    "name": "node_type",
+                    "kind": "string",
+                    "default": "cache.t4g.micro"
                   }
                 ]
               }

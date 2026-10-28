@@ -22,7 +22,7 @@
  * under `catalog/`, clear of `_headers` and `providers/`.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
@@ -39,6 +39,7 @@ import {
 } from "../chant-next";
 import { chantTemplateRequests } from "../chant-next";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
+import { loadHclParser } from "../rollout/parser";
 import { moduleTarAt, tarEntries } from "./archive";
 import { tryGit, hasCommit } from "./git";
 import { attestDir, ATTEST_FILES, readModuleLedger, type VersionedReleaseRecord } from "./ledger";
@@ -116,6 +117,29 @@ async function templateField(dir: string): Promise<{ spec?: unknown; note?: stri
   } catch (e) {
     return { note: `${TEMPLATE_FILE} left out of the catalog: ${(e as Error).message.split("\n", 1)[0]}` };
   }
+}
+
+/**
+ * The `action` blocks a module declares in its own `.tf` files, as
+ * `{type, name}` in file order: the day-2 actions an app calling it can run,
+ * as `module.<call>.action.<type>.<name>`. Empty without an HCL parser or
+ * when a file does not parse.
+ */
+async function moduleActions(dir: string, parser: Hcl2Json | undefined): Promise<{ type: string; name: string }[]> {
+  const files = readdirSync(dir).filter((f) => f.endsWith(".tf")).sort();
+  if (files.length === 0) return [];
+  const p = parser ?? (await loadHclParser().catch(() => undefined));
+  if (!p) return [];
+  const out: { type: string; name: string }[] = [];
+  for (const f of files) {
+    try {
+      const tree = (await p.parse(f, readFileSync(join(dir, f), "utf-8"))) as { action?: Record<string, Record<string, unknown>> };
+      for (const [type, byName] of Object.entries(tree.action ?? {})) for (const name of Object.keys(byName)) out.push({ type, name });
+    } catch {
+      // A file the parser refuses names no action here; the docs note says why it did not parse.
+    }
+  }
+  return out;
 }
 
 /** The module's files at `commit`, in a scratch directory the caller removes; undefined when the checkout lacks the commit. */
@@ -222,7 +246,8 @@ export async function publishCatalog(repo: string, reg: RegistrySettings, store:
         if (docs.note) notes.push(`${mod.rel} ${r.releaseVersion ?? ""}: ${docs.note}`.replace(/ :/, ":"));
         const template = await templateField(dir);
         if (template.note) notes.push(`${mod.rel} ${r.releaseVersion ?? r.digest}: ${template.note}`);
-        fields.push({ component: mod.rel, ...at, engine: "terraform", fields: { ...tf.terraformCatalogFields(docs, addr.source), ...(template.spec ? { template: template.spec } : {}) } });
+        const actions = await moduleActions(dir, o.parser);
+        fields.push({ component: mod.rel, ...at, engine: "terraform", fields: { ...tf.terraformCatalogFields(docs, addr.source), ...(template.spec ? { template: template.spec } : {}), ...(actions.length > 0 ? { actions } : {}) } });
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
