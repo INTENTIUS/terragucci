@@ -783,7 +783,7 @@ jobs:
       - name: Apply group prod of wave 1
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=github
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -929,7 +929,7 @@ jobs:
       - name: Apply group dev of wave 1
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=github
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -1380,7 +1380,7 @@ jobs:
       - name: Apply group prod of wave 2
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=github
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -1532,7 +1532,7 @@ jobs:
       - name: Apply group dev of wave 2
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=github
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";

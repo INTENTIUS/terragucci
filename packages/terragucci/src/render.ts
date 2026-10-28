@@ -1632,7 +1632,9 @@ export function groupedCommentScript(layers: string[][], forge: Exclude<ForgeNam
  * the forge environment is read from an OIDC token's claims, so it is checked
  * only in a job that may request one. On GitHub and Forgejo the step restarts
  * once its tokens are fetched (stageTokens), and the check runs before that,
- * once.
+ * once. The line exits with check-job's own code, so a refusal that exits 9
+ * (chant's `misplaced`) is not turned back into 1: GitLab's op-wave jobs allow
+ * exit 1 alone, and a refused job must fail and stop the waves.
  */
 export function checkJobLine(forge: ForgeName, group: ApplyGroup, runner: RunnerSpec | undefined, branches: readonly string[], tokens: boolean): string {
   const labels = runner === undefined ? [] : typeof runner === "string" ? [runner] : Array.isArray(runner) ? runner : (runner.labels ?? []);
@@ -1644,7 +1646,7 @@ export function checkJobLine(forge: ForgeName, group: ApplyGroup, runner: Runner
     ...(forge === "gitlab" && labels.length > 0 ? ["--runner-tags", sh(labels.join(","))] : []),
     ...(forge !== "gitlab" && labels.includes("self-hosted") ? ["--self-hosted"] : []),
   ];
-  const line = `terragucci check-job ${args.join(" ")} || exit 1`;
+  const line = `terragucci check-job ${args.join(" ")} || exit $?`;
   return forge === "gitlab" ? line : `if [ -z "\${${OIDC_RESTART}:-}" ]; then ${line}; fi`;
 }
 

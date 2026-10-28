@@ -300,7 +300,7 @@ apply-wave-1-prod:
   script:
     - |
       bash <<'APPLY' || exit $?
-      terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit 1
+      terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit $?
       set +e -uo pipefail
       export TG_FORGE=gitlab
       tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -414,7 +414,7 @@ apply-wave-1-dev:
   script:
     - |
       bash <<'APPLY' || exit $?
-      terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit 1
+      terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit $?
       set +e -uo pipefail
       export TG_FORGE=gitlab
       tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -743,7 +743,7 @@ apply-wave-2-prod:
   script:
     - |
       bash <<'APPLY' || exit $?
-      terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit 1
+      terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit $?
       set +e -uo pipefail
       export TG_FORGE=gitlab
       tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -857,7 +857,7 @@ apply-wave-2-dev:
   script:
     - |
       bash <<'APPLY' || exit $?
-      terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit 1
+      terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit $?
       set +e -uo pipefail
       export TG_FORGE=gitlab
       tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";

@@ -30,7 +30,7 @@ With `--json`, these commands print only one JSON object on stdout.
 | `results` | What the command found or did, as below. `null` when the command could not run. |
 | `error` | Present when `results` is `null`: why it could not run. |
 
-`--json` leaves the [exit codes](/terragucci/reference/cli/#exit-codes) as they are. `stage tf-apply` refuses `--json` and writes [its outcome](#the-apply-outcome) to a file instead, so no envelope carries code 4.
+`--json` leaves the [exit codes](/terragucci/reference/cli/#exit-codes) as they are, code 9 (`check-job` refused) included; `check-job` takes no `--json`. `stage tf-apply` refuses `--json` and writes [its outcome](#the-apply-outcome) to a file instead, so no envelope carries code 4.
 
 ## init
 
