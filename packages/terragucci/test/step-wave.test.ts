@@ -1,33 +1,38 @@
 // terragucci#1303: a plain repo's wave on chant's terraform-apply step, run in terragucci's process with chant's
 // after-plan hook (chant#4614). A stand-in for chant's op entry plans each root the way the step writes its plan
-// file, calls the hook once per root, and applies; the wave's report comes from those plans.
+// file, calls the hook once per root, and applies; the wave's report comes from those plans. The op entry is
+// imported directly on the 0.124.56 pin (terragucci#1304 row 2), so the stand-in replaces its runOpWave.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
-import { chantAfterPlan, chantNextParts, overrideChantNext, type ChantAfterPlanRun } from "../src/chant-next";
+import { overrideChantNext, type ChantAfterPlanRun } from "../src/chant-next";
 import { CHANT_CONFIG, CHANT_CONFIG_MARKER, chantConfigRoots, chantConfigText, chantConfigWrittenByTerragucci, declaredTerraformRoots } from "../src/chant-config";
 import { committedSpecAt, waveCallArgv, WAVES_SPEC, wavesSpecText, wavesStepSpec } from "../src/chant-waves";
 import { renderPipeline } from "../src/render";
 import { git, tmp, write } from "./helpers";
 import { setup } from "./apply-helpers";
 
+const op = vi.hoisted(() => ({ fake: undefined as { runOpWave(o: unknown): Promise<unknown> } | undefined }));
+vi.mock("@intentius/chant/op", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, runOpWave: (o: unknown) => (op.fake ? op.fake.runOpWave(o) : (m.runOpWave as (o: unknown) => Promise<unknown>)(o)) };
+});
+
 let restore: (() => void)[] = [];
 afterEach(() => {
   for (const r of restore) r();
   restore = [];
+  op.fake = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
 const PLAN = { resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: "1" }, after_unknown: {} } }] };
 
-/** A stand-in for chant's op entry: the step's plan files, the after-plan hook per root, then the apply. */
+/** A stand-in for chant's runOpWave: the step's plan files, the after-plan hook per root, then the apply. */
 function fakeChant(work: string, seen: ChantAfterPlanRun[], specs: object[]) {
   return {
-    OP_WAVE_AFTER_PLAN_FLOOR: "0.0.0-next",
-    opWavePlanPath: (spec: { name: string }, k: number, target: string) => `.chant/op-waves/${spec.name}/wave-${k}/${target.replaceAll("/", "__")}.plan.json`,
-    spawnExecAsync: async () => 0,
     async runOpWave(o: { spec: { name: string; step?: unknown; waves: { runs: { target: string }[] }[] }; wave: number; afterPlan?: { run(r: ChantAfterPlanRun): unknown } }) {
       specs.push(o.spec);
       const runs = o.spec.waves[o.wave - 1]!.runs;
@@ -84,17 +89,11 @@ describe("the spec, written once (terragucci#1303)", () => {
 });
 
 describe("a wave on chant's step (terragucci#1303)", () => {
-  it("is missing on a chant without the after-plan hook", async () => {
-    restore.push(overrideChantNext("afterPlan", null));
-    expect(await chantAfterPlan()).toBeUndefined();
-    expect((await chantNextParts()).afterPlan).toBe(false);
-  });
-
   it("plans through the step and builds the wave's report from chant's plans, once per root, in order", async () => {
     const { work, bin } = setup({ [CHANT_CONFIG]: chantConfigText(["a"]) });
     const seen: ChantAfterPlanRun[] = [];
     const specs: object[] = [];
-    restore.push(overrideChantNext("afterPlan", fakeChant(work, seen, specs)));
+    op.fake = fakeChant(work, seen, specs) as typeof op.fake;
     restore.push(overrideChantNext("waveCapabilities", { registry: { has: () => true } }));
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
@@ -110,7 +109,7 @@ describe("a wave on chant's step (terragucci#1303)", () => {
   it("keeps terragucci's calls, and says why, when chant.config.ts names no root", async () => {
     const { work, bin } = setup();
     const seen: ChantAfterPlanRun[] = [];
-    restore.push(overrideChantNext("afterPlan", fakeChant(work, seen, [])));
+    op.fake = fakeChant(work, seen, []) as typeof op.fake;
     restore.push(overrideChantNext("waveCapabilities", { registry: { has: () => true } }));
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));

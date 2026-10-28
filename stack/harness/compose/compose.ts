@@ -14,7 +14,6 @@
  * the services as terragucci ran them before the harness, stands in.
  */
 import { Network, Service, Volume, composeKey } from "@intentius/chant-lexicon-docker";
-// @ts-ignore chant 0.124.55 has no e2e-harness subpath; harness.ts builds this project only on a chant that has it (terragucci#1295)
 import { harnessStack } from "@intentius/chant/e2e-harness";
 import { forgeServices } from "../stack-spec";
 

@@ -8,12 +8,12 @@
  * runs (./respond/attribute.ts) filters the group for writes of the state's
  * key around the version's time, and the write whose `x-amz-version-id` is
  * the version's names the principal, read as drift attribution reads one
- * (classifyEvent), else by its ARN. CloudTrail's event history, which drift
+ * (chant's classifyEvent, `@intentius/chant/ci-audit`), else by its ARN. CloudTrail's event history, which drift
  * attribution reads, keeps no object writes, so without a log group there
  * is nothing to read. terragucci reads no log of a gcs or azurerm state's
  * writes. Every answer that names nobody says why.
  */
-import { classifyEvent, spawnAws, type AwsRun, type TrailEvent } from "./respond/attribute";
+import { classifyEvent, spawnAws, type AwsRun, type TrailEvent } from "@intentius/chant/ci-audit";
 
 /** What the log says of one version's writer: who and how that was found, or why nobody is named. */
 export type WriterAnswer = { status: "found"; who: string; how: string } | { status: "none"; why: string };

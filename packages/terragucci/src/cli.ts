@@ -662,12 +662,12 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "runner-tags") ? { runnerTags: list(str(flags, "runner-tags")) } : {}),
           ...(flags["self-hosted"] === true ? { selfHosted: true } : {}),
         };
-        // chant core's guard when the installed chant has it (chant#4624), else terragucci's own check.
+        // chant core's apply-job guard (chant#4624).
         const told = await runCheckJob(expect);
         for (const l of told.out) console.log(l);
         for (const l of told.err) console.error(l);
-        // A refusal exits 9 (`misplaced`) when the installed chant's table has it (chant#4624), else 1.
-        return told.ok ? 0 : (CHANT_EXIT as Record<string, number>).misplaced ?? CHANT_EXIT.failed;
+        // A refusal exits 9 (`misplaced`, chant#4624).
+        return told.ok ? 0 : CHANT_EXIT.misplaced;
       }
       case "check-pins": {
         // tf-check's pin step in a Terragrunt repo: each unit's terraform source, as check-root checks a root's module calls.

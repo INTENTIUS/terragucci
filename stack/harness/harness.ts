@@ -30,8 +30,8 @@ const ROOT = resolve(HERE, "..", "..");
 const STATE = process.env.TG_STATE || join(ROOT, "stack", ".state");
 const CLAIMS_JSON = join(ROOT, "docs-site", "src", "data", "e2e-claims.json");
 
-/** What the stack needs of chant: the harness subpath, first in the release after 0.124.55. */
-export const HARNESS_NEEDS = "a chant with @intentius/chant/e2e-harness (chant#4587; the release after 0.124.55)";
+/** What the stack needs of chant: the harness subpath, first in 0.124.56. */
+export const HARNESS_NEEDS = "a chant with @intentius/chant/e2e-harness (chant#4587; 0.124.56 or later)";
 /** The exit code for a chant without the harness: the caller falls back. */
 export const EXIT_NO_HARNESS = 3;
 /** The exit code when the no-real-cloud scan found a public cloud answering: nothing is recorded. */
@@ -62,7 +62,6 @@ interface Harness {
 /** The harness, or undefined on a chant without it. */
 export async function loadHarness(): Promise<Harness | undefined> {
   try {
-    // @ts-ignore chant 0.124.55 has no e2e-harness subpath (terragucci#1295)
     const m = (await import("@intentius/chant/e2e-harness")) as Record<string, unknown>;
     const fns = ["harnessStack", "lintScenario", "runClaim", "claimRow", "recordClaimRow", "renderClaims", "SafeRun", "ForgejoForge"];
     return typeof m.E2E_HARNESS_FLOOR === "string" && fns.every((f) => typeof m[f] === "function") ? (m as unknown as Harness) : undefined;
