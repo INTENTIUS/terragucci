@@ -5,6 +5,18 @@
 // both take it from here.
 const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape|registry|lint\/post-synth\/tf046|module-catalog|drift-rows|state-ops|lock-rows)$|^@intentius\/chant\/(object-store|components\/check-hooks|terraform\/credentials|bucket-check|ci-product|ci-product-words|ci-control|exit-codes|components\/pr-env-ledger|op\/op-waves-capability|otlp|lifecycle\/release-catalog|lifecycle\/release-catalog-site|lifecycle\/release-status|lifecycle\/release-changelog|lifecycle\/gated-request|lifecycle\/resource-lock|ci-agent|forge-check|notify-relay|ci-estate|policy-source)$|^@intentius\/chant-lexicon-(github|gitlab|forgejo)\/components\/control-pipeline$/;
 
+// Two subpaths the pin has are imported only by parts whose own floor is newer
+// than the pin: `op` (the after-plan hook, chant#4614, and the stand-down,
+// chant#4581) and `lifecycle/release-publish` (the module targets, chant#4603,
+// which load the registry subpath first). On a chant that serves them as
+// TypeScript, bundling them brings chant's whole op barrel with its lint rules,
+// codegen, CLI and a static import of the TypeScript compiler, about 1.1 MB,
+// and those parts would still report missing. So when one resolves to a .ts
+// file it takes the same stand-in as a missing subpath. A chant that serves
+// them as compiled JS keeps them external (scripts/chant-external.mjs) and
+// never reaches this.
+const PIN_TS_ONLY_NEWER = /^@intentius\/chant\/(op|lifecycle\/release-publish)$/;
+
 export const chantNext = {
   name: "chant-next",
   setup(b) {
@@ -12,6 +24,11 @@ export const chantNext = {
       if (args.pluginData?.chantNext) return undefined;
       const r = await b.resolve(args.path, { kind: args.kind, importer: args.importer, resolveDir: args.resolveDir, pluginData: { chantNext: true } });
       return r.errors.length === 0 ? undefined : { path: args.path, namespace: "chant-next-missing" };
+    });
+    b.onResolve({ filter: PIN_TS_ONLY_NEWER }, async (args) => {
+      if (args.pluginData?.chantNext || !/[\\/]packages[\\/]terragucci[\\/]src[\\/]chant-next\.ts$/.test(args.importer)) return undefined;
+      const r = await b.resolve(args.path, { kind: args.kind, importer: args.importer, resolveDir: args.resolveDir, pluginData: { chantNext: true } });
+      return r.errors.length === 0 && !/\.ts$/.test(r.path) ? undefined : { path: args.path, namespace: "chant-next-missing" };
     });
     b.onLoad({ filter: /.*/, namespace: "chant-next-missing" }, (args) => ({
       loader: "js",
