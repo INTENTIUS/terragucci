@@ -706,6 +706,51 @@ export interface ChantWaveCapabilities {
   registry: { has(kind: string): boolean; kinds?(): string[] };
 }
 
+/** One planned run, as chant's after-plan hook in the wave's process hands it (chant#4614). */
+export interface ChantAfterPlanRun {
+  wave: number;
+  waveName: string;
+  job: "wave" | "decide" | "share" | "group";
+  target: string;
+  planDigest: string;
+  /** The run's plan file, relative to the job's directory. */
+  plan: string;
+  /** The engine's plan document (`show -json`), when the plan names one. */
+  planJson?: string;
+  empty: boolean;
+  destructive: boolean;
+  changeSet?: { entries: { action: string }[] };
+}
+
+/** A policy row on chant's run record (chant#4614). */
+export interface ChantPolicyRow {
+  source: string;
+  result: "passed" | "warned" | "denied" | "held";
+  rules: string[];
+  reason?: string;
+}
+
+/** chant's op-wave job run in this process with after-plan hooks (`@intentius/chant/op`, chant#4614). */
+export interface ChantAfterPlan {
+  OP_WAVE_AFTER_PLAN_FLOOR: string;
+  runOpWave(options: {
+    spec: object;
+    specFile: string;
+    wave: number;
+    decide?: boolean;
+    share?: number;
+    group?: string;
+    base?: string;
+    cwd?: string;
+    log?: (line: string) => void;
+    capabilities?: unknown;
+    hookExec?: (argv: string[], cwd: string, env?: Record<string, string>) => Promise<number>;
+    afterPlan?: { name: string; onFailure?: "fail" | "approve"; run(r: ChantAfterPlanRun): Promise<{ policy?: ChantPolicyRow[]; files?: string[] } | void> | { policy?: ChantPolicyRow[]; files?: string[] } | void };
+  }): Promise<import("@intentius/chant/op").RunOpWaveResult>;
+  opWavePlanPath(spec: { name: string }, wave: number, target: string): string;
+  spawnExecAsync(argv: string[], cwd: string, env?: Record<string, string>): Promise<number>;
+}
+
 /** chant's OTLP exporter (`@intentius/chant/otlp`, chant#4555). */
 export interface ChantOtlp {
   otlpFromEnv(env?: NodeJS.ProcessEnv, opts?: { prefix?: string }): { prefix: string } | undefined;
@@ -1007,6 +1052,11 @@ const loaders = {
     },
     (m) => (m.registry ? (m as unknown as ChantWaveCapabilities) : undefined),
   ),
+  afterPlan: once<ChantAfterPlan>(
+    // chant 0.124.54's op entry has runOpWave and no after-plan hook: OP_WAVE_AFTER_PLAN_FLOOR present means it has the hook and hookExec (chant#4614).
+    () => import("@intentius/chant/op"),
+    (m) => (has(m, "runOpWave", "opWavePlanPath", "spawnExecAsync") && typeof m.OP_WAVE_AFTER_PLAN_FLOOR === "string" ? (m as unknown as ChantAfterPlan) : undefined),
+  ),
   otlp: once<ChantOtlp>(
     // @ts-ignore chant 0.124.54 has no otlp subpath (chant#4555)
     () => import("@intentius/chant/otlp"),
@@ -1124,6 +1174,8 @@ export const chantPrEnvLedger = (): Promise<(ChantPrEnvLedger & ChantLifecycleGi
 export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load("opWaveStep");
 /** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C), or undefined. */
 export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
+/** chant's wave job with after-plan hooks in this process (chant#4614), or undefined. */
+export const chantAfterPlan = (): Promise<ChantAfterPlan | undefined> => load("afterPlan");
 /** chant's OTLP exporter (chant#4555), or undefined. */
 export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
 /** chant core's release catalog, status records and changelog (chant#4595, #4596, #4597), or undefined. */
@@ -1164,8 +1216,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
   const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
-  const [releaseCatalog, registryCatalog] = [await chantReleaseCatalog(), await chantRegistryCatalog()];
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog };
+  const [releaseCatalog, registryCatalog, afterPlan] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan()];
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

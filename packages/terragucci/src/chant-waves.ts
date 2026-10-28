@@ -356,9 +356,24 @@ export function runChantWave(
   });
 }
 
+/** The spec's text, as writeSpec writes it and init commits it. */
+export const wavesSpecText = (spec: OpWavesSpec): string => JSON.stringify(spec, null, 2) + "\n";
+
+/**
+ * The spec committed at `base` (terragucci init writes it once, terragucci#1303), or
+ * undefined when that commit has none. A job whose own spec reads the same
+ * hands chant `base` as it is; one whose spec differs (a gate per
+ * environment, a share count, a config changed since init) still gets a
+ * commit with its own spec on top (specAtBase).
+ */
+export function committedSpecAt(repo: string, base: string): string | undefined {
+  const r = spawnSync("git", ["show", `${base}:${WAVES_SPEC}`], { cwd: repo, encoding: "utf-8" });
+  return r.status === 0 ? r.stdout : undefined;
+}
+
 /** Write the spec to the checkout, where chant reads its commands. */
 export function writeSpec(repo: string, spec: OpWavesSpec): string {
-  const text = JSON.stringify(spec, null, 2) + "\n";
+  const text = wavesSpecText(spec);
   const path = join(repo, WAVES_SPEC);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);

@@ -10,6 +10,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
+import { CHANT_CONFIG, chantConfigText, chantConfigWrittenByTerragucci } from "./chant-config";
+import { waveCallArgv, wavesSpecText, wavesStepSpec } from "./chant-waves";
+import { MIGRATIONS_DIR } from "./migrate";
 import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
 import {
@@ -357,8 +360,22 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
   // chant's product pipeline (chant#4550), when the installed chant has it: the pipeline takes terragucci's words through it.
   const ciProduct = await chantCiProduct();
+  // terragucci#1303: a plain repo's apply on chant's terraform-apply step. Each root is a terraform.roots entry of chant.config.ts,
+  // and the step's spec is written once beside the pipeline, where each wave job reads its rules at base.
+  const plainRoots = !tgMode && !atmos && !terramate;
+  const stepSpec = plainRoots
+    ? wavesSpecText(wavesStepSpec({
+        waves: applyWaves(layers, settings.waves?.canary),
+        gate: normalizeGate(settings.gate) ?? "on-destructive",
+        approval: approval.value === "sealed" ? "sealed" : "ledger",
+        call: waveCallArgv,
+        migrations: existsSync(join(repo, MIGRATIONS_DIR)),
+        ...(settings.apply?.point ? { point: settings.apply.point } : {}),
+      }))
+    : undefined;
   const pipeline = renderPipeline({
     ...checkHooksInput,
+    ...(stepSpec ? { wavesSpec: stepSpec } : {}),
     ...(ciProduct ? { ciProduct } : {}),
     forge: forgeChoice.value,
     binary: binary.value,
@@ -435,6 +452,13 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.
     if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
+  }
+  // chant.config.ts: every root as a terraform.roots entry, so chant's step names it (terragucci#1303). A file terragucci did not write stays.
+  if (plainRoots) {
+    const configFile = join(repo, CHANT_CONFIG);
+    const mine = !existsSync(configFile) || chantConfigWrittenByTerragucci(readFileSync(configFile, "utf-8"));
+    if (mine) files.push(plan(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined)));
+    else notes.push(`${CHANT_CONFIG} is the repo's own, so terragucci left it; a wave applies through chant's terraform-apply step once it names every root under terraform.roots`);
   }
   // terragucci.components.json at the repo's root: the roots as chant components by wave, under the jobs that apply them, for behold.
   // Its waves are the pipeline's: a plain repo's cut by waves.canary, a Terragrunt, Atmos or Terramate repo's layers as the shape cut them.

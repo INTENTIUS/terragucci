@@ -86,7 +86,9 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
-import { chantPrEnvLedger } from "./chant-next";
+import { chantAfterPlan, chantPrEnvLedger, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
+import { declaredTerraformRoots } from "./chant-config";
+import type { RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
 import { detectActor } from "./actor";
 import { spawn, spawnSync } from "node:child_process";
@@ -174,7 +176,7 @@ import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./cloud-identity";
-import { readCallFile, runChantWave, serveWave, specAtBase, stateCode, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
+import { committedSpecAt, WAVES_SPEC, readCallFile, runChantWave, serveWave, specAtBase, stateCode, waveCallArgv, waveExit, waveRecordPath, wavesSpec, wavesSpecText, wavesStepSpec, waveStepProblems, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
 import { groupOf } from "./cloud-identity";
 import type { WaveComposedInput } from "./report/build";
@@ -1257,9 +1259,15 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     const unattended = rule?.policyOutcomes?.includes("allow_unattended") === true;
     if (unattended) console.log(`wave ${options.wave}: policy.outcomes at base names allow_unattended, so the wave's gate (${options.gate}) is decided once the policy reads its plans, and holds the wave through its held hook`);
     const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned, ...(unattended ? { unattended } : {}), migrated: new Set() };
+    // terragucci#1303: a repo that qualifies plans and applies the wave through chant's terraform-apply step, in this process.
+    const stepWave = typeof specWaves === "number" || grouped ? undefined : await stepWaveReasons(repo, options, ctx, specWaves, unattended);
+    if (stepWave && stepWave.reasons.length > 0) console.log(`wave ${options.wave}: plans and applies through terragucci's own calls, not chant's terraform-apply step: ${stepWave.reasons.join("; ")}`);
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
+      if (stepWave && stepWave.reasons.length === 0 && typeof specWaves !== "number") {
+        ran = await runStepWave(repo, options, ctx, jobOf, { chant: stepWave.chant, registry: stepWave.registry, settings: stepWave.settings, specWaves, base, gates, approval: rule?.mode ?? "ledger", ...(rule?.point ? { point: rule.point } : {}) });
+      } else {
       const spec = wavesSpec({
         waves: specWaves,
         ...(options.rest ? { rest: true } : {}),
@@ -1290,6 +1298,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
         env: { ...process.env, ...env },
         ...(options.chant ? { chant: options.chant } : {}),
       });
+      }
     } finally {
       await server.close();
     }
@@ -1369,6 +1378,213 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     }
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+/** What a wave on chant's step needs from the installed chant, and why the repo keeps the calls back when it cannot (terragucci#1303). */
+interface StepWave {
+  reasons: string[];
+  chant: ChantAfterPlan;
+  registry: unknown;
+  settings: ResolvedSettings;
+}
+
+/**
+ * Whether this job's wave runs on chant's terraform-apply step (terragucci#1303):
+ * undefined when the installed chant has no after-plan hook (chant#4614), so
+ * the wave keeps the calls back without a word; else each reason it keeps
+ * them, empty when it can move. The step plans each root itself, so a
+ * feature that runs inside terragucci's own plan keeps the calls back until
+ * it moves onto chant too.
+ */
+async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: WavesContext, specWaves: string[][], unattended: boolean): Promise<StepWave | undefined> {
+  const chant = await chantAfterPlan();
+  const caps = await chantWaveCapabilities();
+  if (!chant || !caps) return undefined;
+  const read = await waveSettings(repo, options, ctx.configPath);
+  if ("error" in read) return undefined;
+  const settings = read.settings;
+  const roots = specWaves[options.wave - 1] ?? [];
+  const declared = declaredTerraformRoots(repo);
+  const reasons = waveStepProblems({ ...(options.terragrunt ? { terragrunt: true } : {}), ...(options.composition ? { composed: true } : {}), ...("roots" in declared ? { declaredRoots: declared.roots } : {}), roots });
+  if ("why" in declared) reasons.splice(0, reasons.length, ...reasons.filter((r) => !r.startsWith("chant.config.ts declares")), declared.why);
+  const rule = ctx.rule;
+  if (rule?.mode === "pr-review") reasons.push("approval pr-review records the review's approval in terragucci's plan call");
+  if (rule?.approvalRules?.length) reasons.push("approval_rules counts approvers in terragucci's plan call");
+  if (unattended || rule?.policyOutcomes?.some((o) => o !== "deny")) reasons.push("policy.outcomes holds or lets a wave through in terragucci's plan call");
+  if (rule?.overriders?.length || rule?.overrideEntries?.length) reasons.push("policy.override names who may override, which chant's step does not take yet");
+  if (settings.cost) reasons.push("cost prices the wave through terragucci's estimator");
+  if (settings.sources) reasons.push("sources checks each root before init");
+  if (settings.secrets?.length) reasons.push("secrets fills each root's values when it plans");
+  if (settings.oidc?.roles && Object.keys(settings.oidc.roles).length) reasons.push("oidc.roles gives each root its own role");
+  if (options.binary === "choudoufu") reasons.push("a choudoufu root plans its cone through terragucci");
+  const steps = waveSteps(repo, options);
+  if ("error" in steps || (steps.ws && hookCount(steps.ws.hooks) > 0)) reasons.push("ci.hooks runs around each root's plan in terragucci");
+  if (pendingEstateMigrations(repo, ctx.migrated).size > 0) reasons.push("an estate migration plans some of its roots");
+  const waves = applyWaves(options.layers, options.canary);
+  if (waveReads(repo, waves, roots, options.wave).reads.size > 0) reasons.push("a root reads another root's state, which terragucci holds on when the value was unknown at review");
+  return { reasons, chant, registry: caps.registry, settings };
+}
+
+/** The summary line terraform prints, from a plan's change-set entries. */
+function stepSummary(entries: readonly { action: string }[]): string {
+  const n = (a: string) => entries.filter((e) => e.action === a).length;
+  const add = n("create") + n("replace");
+  const change = n("update");
+  const destroy = n("delete") + n("replace");
+  return add + change + destroy === 0 ? "No changes." : `Plan: ${add} to add, ${change} to change, ${destroy} to destroy.`;
+}
+
+/** A root's plan as terragucci's report reads it, from the plan file chant's step wrote and its `show -json` (terragucci#1303). */
+function stepPlannedRoot(repo: string, options: ApplyWaveOptions, w: WaveRun, run: { target: string; planDigest: string; plan: string; planJson?: string }): PlannedRoot {
+  const timing = w.observer.root(run.target);
+  w.observer.endRoot(timing);
+  let file: { artifact?: { planFile?: string }; changeSet?: { entries?: { action: string }[] } } = {};
+  try {
+    file = JSON.parse(readFileSync(join(repo, run.plan), "utf-8")) as typeof file;
+  } catch {
+    // The report then counts no changes for it.
+  }
+  let plan: unknown;
+  try {
+    plan = run.planJson ? JSON.parse(readFileSync(run.planJson, "utf-8")) : undefined;
+  } catch {
+    plan = undefined;
+  }
+  const entries = file.changeSet?.entries ?? [];
+  const changed = entries.filter((e) => e.action !== "no-op" && e.action !== "read");
+  const base = { root: run.target, timing, planFile: file.artifact?.planFile ?? "", env: options.env ?? process.env, binary: options.binary, bin: { name: options.binary }, steps: [] as ReportStep[], holds: [] as string[] };
+  if (plan === undefined) return { ...base, changes: 0, destroys: 0, summary: "", error: "chant's step wrote no plan document to read" };
+  return {
+    ...base,
+    member: { member: run.target, planDigest: run.planDigest },
+    plan,
+    changes: changed.length,
+    destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
+    summary: stepSummary(entries),
+  };
+}
+
+/**
+ * The after-plan hook of a wave on chant's step (chant#4614, terragucci#1303),
+ * called once per planned root. The deciding job's first call reads every
+ * root's plan file, which chant wrote before it called, and builds the
+ * wave's report rows from them; it runs the policy over them and keeps the
+ * stored report the gate's call writes beside a pending fact. Each call
+ * gives chant its root's policy row: a denied root is a denial chant settles
+ * with an override. A policy that refuses the wave outright fails the hook,
+ * so the wave stops before its gate.
+ */
+async function stepAfterPlan(repo: string, options: ApplyWaveOptions, ctx: WavesContext, j: WaveJob, settings: ResolvedSettings, spec: { name: string; waves: { runs: { target: string }[] }[] }, chant: ChantAfterPlan, r: ChantAfterPlanRun): Promise<{ policy?: ChantPolicyRow[] }> {
+  const { w, facts } = j;
+  const waves = applyWaves(options.layers, options.canary);
+  const deciding = r.job === "wave" || r.job === "decide";
+  if (!w.planned) {
+    j.label = deciding ? `wave ${r.wave} of ${waves.length}` : `wave ${r.wave} of ${waves.length}${options.group !== undefined ? `, group ${options.group}` : ""}${options.share !== undefined ? `, share ${options.share}` : ""}`;
+    if (ctx.part !== undefined) w.share = ctx.part;
+    else if (options.share !== undefined) w.share = options.share;
+    w.settings = settings;
+    w.started ??= new Date().toISOString();
+    const targets = deciding ? (spec.waves[r.wave - 1]?.runs ?? []).map((x) => x.target) : [r.target];
+    const planned = targets.map((target) => {
+      if (target === r.target) return stepPlannedRoot(repo, options, w, r);
+      const plan = chant.opWavePlanPath(spec, r.wave, target);
+      let file: { planDigest?: string; artifact?: { planJson?: string } } = {};
+      try {
+        file = JSON.parse(readFileSync(join(repo, plan), "utf-8")) as typeof file;
+      } catch {
+        // stepPlannedRoot says it has no plan document.
+      }
+      const planJson = file.artifact?.planJson ? (file.artifact.planJson.startsWith("/") ? file.artifact.planJson : join(repo, file.artifact.planJson)) : undefined;
+      return stepPlannedRoot(repo, options, w, { target, planDigest: file.planDigest ?? "", plan, ...(planJson ? { planJson } : {}) });
+    });
+    w.planned = planned;
+    w.roots = targets;
+    w.plannedAt = new Date().toISOString();
+    facts.roots = targets;
+    for (const p of planned) console.log(p.error ? `FAILED ${p.root}: ${p.error}` : `${p.root}: ${p.summary}`);
+    w.changedRoots = planned.filter((p) => changesSomething(p.plan)).map((p) => p.root).sort();
+    if (planned.every((p) => p.changes === 0)) facts.nothing = true;
+    if (deciding) {
+      const checked = await policyCheck(repo, options, ctx, { label: j.label, settings }, planned, j);
+      if (typeof checked === "number") {
+        j.code = checked;
+        throw new Error(`the policy refused ${w.refused?.roots?.join(", ") ?? "a root"}`);
+      }
+      // The gate's call keeps this report beside the pending fact, under the digest chant decided.
+      j.stored = () => storedWaveReport(repo, options, r.wave, w.digest ?? "", targets, planned);
+    }
+  } else if (!w.planned.some((p) => p.root === r.target)) {
+    w.planned.push(stepPlannedRoot(repo, options, w, r));
+    w.roots = [...(w.roots ?? []), r.target];
+  }
+  const p = w.planned.find((x) => x.root === r.target);
+  if (!p?.policy) return {};
+  const denied = j.denials?.has(r.target) === true;
+  const rules = p.policy.rules ?? [];
+  return { policy: [{ source: "terragucci", result: denied && rules.length ? "denied" : "passed", rules: denied ? rules : [], ...(denied && j.denials?.get(r.target) ? { reason: j.denials.get(r.target)!.split("\n")[0]! } : {}) }] };
+}
+
+/**
+ * Run wave `options.wave` through chant's terraform-apply step in this
+ * process (terragucci#1303): `runOpWave` with the lexicon's capability, the
+ * after-plan hook building terragucci's report from chant's plans, and the
+ * migration and gate hooks calling back into this process as before. The
+ * spec init committed is chant's rules at base when it reads the same as the
+ * job's; otherwise the job's spec goes on a commit on top of base.
+ */
+async function runStepWave(
+  repo: string,
+  options: ApplyWaveOptions,
+  ctx: WavesContext,
+  jobOf: (k: number) => WaveJob,
+  at: { chant: ChantAfterPlan; registry: unknown; settings: ResolvedSettings; specWaves: string[][]; base: string; gates: Gate[]; approval: Approval; point?: string },
+): Promise<{ code: number; result?: RunOpWaveResult }> {
+  const spec = wavesStepSpec({
+    waves: at.specWaves,
+    gate: options.gate,
+    ...(at.gates.some((g) => g !== options.gate) ? { gates: at.gates } : {}),
+    approval: at.approval,
+    ...(options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
+    call: waveCallArgv,
+    migrations: existsSync(join(repo, MIGRATIONS_DIR)),
+    ...(at.point ? { point: at.point } : {}),
+  });
+  const text = writeSpec(repo, spec);
+  let base = at.base;
+  if (committedSpecAt(repo, at.base) !== text) {
+    console.log(`wave ${options.wave}: the spec at ${at.base.slice(0, 12)} is not this job's (terragucci init writes it), so its rules are read from a commit on top of base`);
+    base = specAtBase(repo, at.base, text);
+  } else {
+    console.log(`wave ${options.wave}: plans and applies through chant's terraform-apply step`);
+  }
+  if (options.share !== undefined) {
+    const file = options.decided ?? join(repo, decidedPath(options.wave));
+    if (!existsSync(file)) throw new ConfigError(`the wave's decision ${file} cannot be read; the wave's own job writes it before its shares run`);
+    mkdirSync(dirname(join(repo, waveRecordPath(options.wave))), { recursive: true });
+    copyFileSync(file, join(repo, waveRecordPath(options.wave)));
+  }
+  const result = await at.chant.runOpWave({
+    spec,
+    specFile: WAVES_SPEC,
+    wave: options.wave,
+    base,
+    cwd: repo,
+    ...(options.shares !== undefined && options.share === undefined ? { decide: true } : {}),
+    ...(options.share !== undefined ? { share: options.share } : {}),
+    capabilities: at.registry,
+    // The migration and gate hooks call back into this process: the job waits for them without blocking it.
+    hookExec: at.chant.spawnExecAsync,
+    afterPlan: { name: "terragucci", run: (r) => stepAfterPlan(repo, options, ctx, jobOf(r.wave), at.settings, spec as unknown as { name: string; waves: { runs: { target: string }[] }[] }, at.chant, r) },
+    log: (line) => console.log(line),
+  });
+  const j = jobOf(options.wave);
+  if (result.applied.length > 0) {
+    j.w.applyStarted ??= j.w.plannedAt;
+    j.w.applied = new Set(result.applied);
+  }
+  if (result.failed.length > 0) j.w.failed = [...result.failed];
+  if (result.decision?.digest) j.w.digest ??= result.decision.digest;
+  return { code: result.exitCode, result };
 }
 
 /**
