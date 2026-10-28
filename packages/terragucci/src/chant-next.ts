@@ -87,12 +87,15 @@
  * `terragucci modules` reads it. Without them publish writes no catalog and
  * says so in its row.
  *
- * Newer than the pin too (terragucci#1300, #1301): the terraform lexicon's
- * module targets on its `registry` subpath (GitLab, chant#4603; HCP Terraform,
- * chant#4604), core's publish-target
- * contract over a module version (chant#4602). ./publish/hosted.ts wraps one
- * as a `modules.publish` target; without them `modules.publish: gitlab` or
- * `hcp://` is refused with the chant release it needs.
+ * Newer than the pin too (terragucci#1300, #1301, #1302): the terraform
+ * lexicon's module targets on its `registry` subpath (GitLab, chant#4603; HCP
+ * Terraform, chant#4604; Artifactory and Nexus, chant#4605), on core's
+ * publish-target contract over a module version (chant#4602).
+ * ./publish/hosted.ts wraps one as a `modules.publish` target; without them a
+ * hosted target is refused with the chant release it needs. The same subpath
+ * carries the registry proxies (chant#4606) that `sources.proxies` matches
+ * and `require` reads through; without them a source through a proxy is
+ * matched as written.
  *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
@@ -953,8 +956,32 @@ export interface ChantModuleTargets {
   gitlabModuleTarget(options: { project?: string; api?: string; tokenEnv?: string; namespace?: string }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
   /** HCP Terraform or Terraform Enterprise (chant#4604); absent on a chant with GitLab alone. */
   hcpModuleTarget?(options: { organization: string; host?: string; tokenEnv?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  /** JFrog Artifactory and Sonatype Nexus hosted repositories (chant#4605); absent before it. */
+  artifactoryModuleTarget?(options: { url: string; repo: string; tokenEnv?: string; userEnv?: string; user?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  nexusModuleTarget?(options: { url: string; repo: string; host?: string; tokenEnv?: string; userEnv?: string; user?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
   createRedactor(env?: NodeJS.ProcessEnv, names?: readonly string[]): ChantModuleVersionContext["redactor"];
   PublishTargetError: new (code: string, message: string, fix?: string) => Error & { code: string; fix?: string };
+}
+
+// ── registry proxies (terragucci#1302, chant#4606) ────────────────────────
+
+/** A registry proxy (`RegistryProxy`, chant#4606): an Artifactory remote repository or a Nexus proxy in front of an upstream. */
+export interface ChantRegistryProxy {
+  host: string;
+  repo?: string;
+  upstream?: string;
+  modules?: string;
+  providers?: string;
+}
+
+/** The terraform lexicon's proxy forms and the reads that go through them (`registry/proxies`, chant#4606). */
+export interface ChantRegistryProxies {
+  artifactoryProxy(host: string, repo: string, upstream?: string): ChantRegistryProxy;
+  nexusProxy(o: { url: string; repo: string; upstream?: string; host?: string }): ChantRegistryProxy;
+  moduleThroughProxy(source: string, proxies?: readonly ChantRegistryProxy[]): { proxy: ChantRegistryProxy; upstream: string } | undefined;
+  providerThroughProxy(source: string, proxies?: readonly ChantRegistryProxy[]): { proxy: ChantRegistryProxy; upstream: string } | undefined;
+  registryLocation(source: string, version: string, options?: { fetch?: ChantModuleFetch; proxies?: readonly ChantRegistryProxy[] }): Promise<string>;
+  fetchTarball(location: string, options?: { fetch?: ChantModuleFetch }): Promise<Uint8Array>;
 }
 
 // ── loading ────────────────────────────────────────────────────────────────
@@ -1166,6 +1193,11 @@ const loaders = {
     },
     (m) => (has(m, "gitlabModuleTarget", "createRedactor", "PublishTargetError") ? (m as unknown as ChantModuleTargets) : undefined),
   ),
+  registryProxies: once<ChantRegistryProxies>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); the proxies are chant#4606
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -1256,6 +1288,8 @@ export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefin
 export const chantAfterPlan = (): Promise<ChantAfterPlan | undefined> => load("afterPlan");
 /** chant's OTLP exporter (chant#4555), or undefined. */
 export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
+/** The terraform lexicon's registry proxies (chant#4606), or undefined. */
+export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
 /** The terraform lexicon's module targets (chant#4603), with core's redactor and error class, or undefined. */
 export const chantModuleTargets = (): Promise<ChantModuleTargets | undefined> => load("moduleTargets");
 /** chant core's release catalog, status records and changelog (chant#4595, #4596, #4597), or undefined. */
@@ -1297,7 +1331,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
   const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
   const [releaseCatalog, registryCatalog, afterPlan, moduleTargets] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan(), await chantModuleTargets()];
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets };
+  const registryProxies = await chantRegistryProxies();
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

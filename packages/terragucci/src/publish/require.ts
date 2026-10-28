@@ -25,7 +25,8 @@ import { join, posix } from "node:path";
 import type { KeyObject } from "node:crypto";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { isTerragruntFile, readModulePin } from "@intentius/chant-lexicon-terraform/pin";
-import { ConfigError, resolveProject, resolveRepo, type ModulesSettings } from "../config";
+import { ConfigError, resolveProject, resolveRepo, type ModulesSettings, type SourceProxy } from "../config";
+import { registryProxies } from "../sources";
 import { loadHclParser } from "../rollout/parser";
 import { stackUnitSource } from "../tg-stacks";
 import { configAtBase, type TrustedOptions } from "../report/policy";
@@ -200,6 +201,8 @@ export interface RequireOptions {
   env?: NodeJS.ProcessEnv;
   /** Ledgers already read in this run, by where they were read. */
   ledgers?: Map<string, Ledger | undefined>;
+  /** `sources.proxies`: a pin written through one is checked as its upstream, and read through the proxy (terragucci#1302). */
+  proxies?: readonly SourceProxy[];
 }
 
 function fetchTag(repo: string, remote: string, tag: string): string | undefined {
@@ -247,13 +250,16 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
   const ledgers = options.ledgers ?? new Map<string, Ledger | undefined>();
   const out: PinCheck = { refused: [], verified: [] };
   if (sources.length === 0) return out;
+  // A proxy stands a source in for its upstream: the pin is checked as the upstream's, and read through the proxy.
+  const proxied = await registryProxies(options.proxies);
   const ledgerAt = (where: string): Ledger | undefined => {
     if (!ledgers.has(where)) ledgers.set(where, fetchLedger(repo, where));
     return ledgers.get(where);
   };
   for (const c of await rootCalls(repo, root, parser)) {
     const pin = readModulePin(c.source, c.version);
-    const base = pin.module.split("?")[0]!;
+    const written = pin.module.split("?")[0]!;
+    const base = (proxied && proxied.lib.moduleThroughProxy(written, proxied.list)?.upstream) ?? written;
     let source: CheckedSource | undefined;
     let module = "";
     let git: { url: string; subdir: string } | undefined;
@@ -333,7 +339,9 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
     try {
       if (reg) {
         // Where the registry says the version is, checked as that kind of source.
-        const location = await registryLocation(base, pin.pin, options.fetch);
+        const location = proxied
+          ? await proxied.lib.registryLocation(base, pin.pin, { proxies: proxied.list, ...(options.fetch ? { fetch: options.fetch as never } : {}) })
+          : await registryLocation(base, pin.pin, options.fetch);
         const query = new URLSearchParams(location.split("?")[1] ?? "");
         if (location.startsWith("oci://")) {
           const tag = query.get("tag");
@@ -345,13 +353,14 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
           if (!at || !ref) throw new AttestationError(`the registry points ${pin.pin} at ${location}, which names no tag`);
           verifyGit(at.url, at.subdir, ref);
         } else {
-          verifyRelease({ module, version: pin.pin, bytes: await fetchTarball(location, options.fetch), byName: true }, ledger, source.key);
+          const bytes = proxied ? Buffer.from(await proxied.lib.fetchTarball(location, options.fetch ? { fetch: options.fetch as never } : {})) : await fetchTarball(location, options.fetch);
+          verifyRelease({ module, version: pin.pin, bytes, byName: true }, ledger, source.key);
         }
       } else if (git) verifyGit(git.url, module, pin.pin);
       else await verifyOci(oci!, pin.pin);
       out.verified.push(`${c.call} ${pin.module} ${pin.pin}`);
     } catch (e) {
-      if (!(e instanceof AttestationError) && !(e instanceof RegistryError) && !(e instanceof Error && e.name === "OciError")) throw e;
+      if (!(e instanceof AttestationError) && !(e instanceof RegistryError) && !(e instanceof Error && (e.name === "OciError" || e.name === "RegistryError"))) throw e;
       refuse(pin.pin, e.message);
     }
   }

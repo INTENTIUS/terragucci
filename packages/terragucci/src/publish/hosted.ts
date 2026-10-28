@@ -1,6 +1,7 @@
 /**
  * A hosted module registry as a `modules.publish` target (terragucci#1300 for
- * GitLab, #1301 for HCP Terraform, bundle C of terragucci#1290): the terraform lexicon's module target
+ * GitLab, #1301 for HCP Terraform, #1302 for Artifactory and Nexus, bundle C
+ * of terragucci#1290): the terraform lexicon's module target
  * (`registry/targets`, chant#4603) wrapped as publish's own `Target`.
  *
  * The lexicon holds the host's calls, the token order and the masking; this
@@ -53,12 +54,17 @@ export interface HostedOptions {
 /** A hosted target the installed chant can make, given the lexicon's factories. */
 export type HostedFactory = (lib: ChantModuleTargets, deps: { fetch?: ChantModuleFetch; registryFetch?: ChantModuleFetch; sleep?: (ms: number) => Promise<void>; now?: () => number }) => ChantModuleTarget;
 
-/** The address a module goes under on a host: the registry's name and system when `modules.registry` is set, else the directory's name and `generic`. */
-export function hostedAddress(reg: RegistrySettings | undefined, mod: { name: string; rel: string }, namespace: string): ChantModuleAddress {
+/**
+ * The address a module goes under on a host: the registry's name and system
+ * when `modules.registry` is set, else the directory's name and `generic`.
+ * A host whose target names no namespace takes the registry's for the module.
+ */
+export function hostedAddress(reg: RegistrySettings | undefined, mod: { name: string; rel: string }, namespace: string | undefined): ChantModuleAddress {
   if (reg) {
     const a = registryAddress(reg, mod.rel);
-    return { namespace, name: a.name, system: a.system };
+    return { namespace: namespace ?? a.namespace, name: a.name, system: a.system };
   }
+  if (!namespace) throw new ConfigError(`${mod.rel}: this modules.publish target names no namespace and there is no modules.registry to take one from; add the namespace to the target's address`);
   return { namespace, name: mod.name, system: DEFAULT_SYSTEM };
 }
 
@@ -67,7 +73,7 @@ export function hostedAddress(reg: RegistrySettings | undefined, mod: { name: st
  * chant is loaded; `namespace` is the namespace the host's sources name, and
  * `source` how a row names a version.
  */
-export function hostedTarget(label: string, make: HostedFactory, namespace: string, source: (a: ChantModuleAddress) => string, o: HostedOptions): HostedTarget {
+export function hostedTarget(label: string, make: HostedFactory, namespace: string | undefined, source: (a: ChantModuleAddress) => string, o: HostedOptions): HostedTarget {
   let made: { lib: ChantModuleTargets; target: ChantModuleTarget } | undefined;
   const target = async () => {
     if (!made) {
@@ -206,6 +212,41 @@ export function hcpTarget(p: string, o: HostedOptions): HostedTarget {
     },
     place.organization,
     (a) => `${place.host}/${place.organization}/${a.name}/${a.system}`,
+    o,
+  );
+}
+
+/**
+ * `artifactory://<host>/<repo>[/<namespace>]` or `nexus://<host>/<repo>[/<namespace>]`:
+ * the host, the hosted repository, and the namespace, which defaults to
+ * `modules.registry`'s for each module.
+ */
+export function repositoryPlace(p: string): { kind: "artifactory" | "nexus"; host: string; repo: string; namespace?: string } {
+  const m = /^(artifactory|nexus):\/\/([^/\s]+)\/([A-Za-z0-9._-]+)(?:\/([A-Za-z0-9_-]+))?\/*$/.exec(p);
+  if (!m) throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; write artifactory://<host>/<repository>[/<namespace>] or nexus://<host>/<repository>[/<namespace>]`);
+  return { kind: m[1] as "artifactory" | "nexus", host: m[2].toLowerCase(), repo: m[3], ...(m[4] ? { namespace: m[4] } : {}) };
+}
+
+/**
+ * A JFrog Artifactory local Terraform repository, or a Sonatype Nexus hosted
+ * Terraform repository (3.89 and later), as a publish target (terragucci#1302,
+ * chant#4605). Artifactory sources join the repository and namespace with
+ * `__`; Nexus sources start with the label of the consumers' CLI `host`
+ * block, the repository's name in lower case.
+ */
+export function repositoryTarget(p: string, o: HostedOptions): HostedTarget {
+  const place = repositoryPlace(p);
+  const url = `https://${place.host}`;
+  const label = place.repo.toLowerCase();
+  return hostedTarget(
+    p,
+    (lib, deps) => {
+      const make = place.kind === "artifactory" ? lib.artifactoryModuleTarget : lib.nexusModuleTarget;
+      if (!make) throw new ConfigError(`modules.publish: ${p} publishes through the terraform lexicon's ${place.kind === "artifactory" ? "Artifactory" : "Nexus"} target (chant#4605), which the installed chant does not carry; it needs a chant release that does`);
+      return make({ url, repo: place.repo }, deps);
+    },
+    place.namespace,
+    (a) => (place.kind === "artifactory" ? `${place.host}/${place.repo}__${a.namespace}/${a.name}/${a.system}` : `${label}/${a.namespace}/${a.name}/${a.system}`),
     o,
   );
 }

@@ -42,6 +42,12 @@
  * checkout's in force, so a pull request may turn the check on; a base whose
  * config cannot be read fails the run when the checkout sets the key.
  *
+ * With `proxies`, a source written through an Artifactory remote repository
+ * (`<host>/<repo>__<ns>/<name>/<system>`) or a Nexus proxy's host block label
+ * also matches as the upstream source it stands for, so one glob such as
+ * `registry.terraform.io/terraform-aws-modules/*` covers both. The proxy forms
+ * are the terraform lexicon's (chant#4606).
+ *
  * Reading and normalising sources is generic Terraform work; chant#3924 asks
  * the terraform lexicon for it, and this file keeps only the list and the
  * refusal once it lands.
@@ -50,7 +56,8 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { dataDir } from "./backend";
-import { ConfigError, resolveProject, resolveRepo, type SourcesSettings } from "./config";
+import { ConfigError, resolveProject, resolveRepo, type SourceProxy, type SourcesSettings } from "./config";
+import { chantRegistryProxies, type ChantRegistryProxies, type ChantRegistryProxy } from "./chant-next";
 import { configAtBase, type TrustedOptions } from "./report/policy";
 import { loadHclParser } from "./rollout/parser";
 import { baseCommit } from "./seal";
@@ -128,9 +135,13 @@ export function providerForms(address: string): string[] {
   return hostless && hostless.split("/").length === 2 ? [a, hostless, ...DEFAULT_REGISTRIES.map((h) => `${h}/${hostless}`).filter((f) => f !== a)] : [a];
 }
 
-/** Whether any glob of a list matches any form of a source. */
-export function sourceAllowed(kind: UsedSource["kind"], source: string, list: readonly string[]): boolean {
-  const forms = kind === "module" ? moduleForms(source) : providerForms(source);
+/** The upstream a source written through a proxy stands for, or undefined (./sources.ts proxyUpstream). */
+export type ThroughProxy = (kind: UsedSource["kind"], source: string) => string | undefined;
+
+/** Whether any glob of a list matches any form of a source, or of the upstream source a proxy stands it in for. */
+export function sourceAllowed(kind: UsedSource["kind"], source: string, list: readonly string[], through?: ThroughProxy): boolean {
+  const upstream = through?.(kind, source);
+  const forms = [source, ...(upstream ? [upstream] : [])].flatMap((s) => (kind === "module" ? moduleForms(s) : providerForms(s)));
   return list.some((g) => {
     const re = sourceGlob(kind === "provider" ? g.toLowerCase() : g);
     return forms.some((f) => re.test(f));
@@ -259,19 +270,42 @@ export async function rootSources(repo: string, root: string, parser: Hcl2Json):
 }
 
 /** The sources the lists refuse: each one of a kind whose list is set and whose globs match none of its forms. */
-function refusals(used: readonly UsedSource[], lists: SourcesSettings): SourceRefusal[] {
+function refusals(used: readonly UsedSource[], lists: SourcesSettings, through?: ThroughProxy): SourceRefusal[] {
   const out: SourceRefusal[] = [];
   for (const u of used) {
     const list = u.kind === "module" ? lists.modules : lists.providers;
-    if (list && !sourceAllowed(u.kind, u.source, list)) out.push({ ...u, list });
+    if (list && !sourceAllowed(u.kind, u.source, list, through)) out.push({ ...u, list });
   }
   return out;
+}
+
+/** `sources.proxies` as the terraform lexicon's proxy entries (chant#4606), or none on a chant without them. */
+export async function registryProxies(proxies: readonly SourceProxy[] | undefined): Promise<{ lib: ChantRegistryProxies; list: ChantRegistryProxy[] } | undefined> {
+  if (!proxies?.length) return undefined;
+  const lib = await chantRegistryProxies();
+  if (!lib) return undefined;
+  const list = proxies.map((p) =>
+    p.artifactory ? lib.artifactoryProxy(p.artifactory, p.repo, p.upstream) : lib.nexusProxy({ url: p.nexus!, repo: p.repo, ...(p.upstream ? { upstream: p.upstream } : {}), ...(p.host ? { host: p.host } : {}) }),
+  );
+  return { lib, list };
+}
+
+/**
+ * How `sources.proxies` stands a source in for its upstream: a module source
+ * or provider address written through an Artifactory or Nexus proxy matches
+ * the lists as the upstream source too. Without chant's proxies (chant#4606)
+ * a source is matched as written only.
+ */
+export async function proxyUpstream(proxies: readonly SourceProxy[] | undefined): Promise<ThroughProxy | undefined> {
+  const p = await registryProxies(proxies);
+  if (!p) return undefined;
+  return (kind, source) => (kind === "module" ? p.lib.moduleThroughProxy(source, p.list) : p.lib.providerThroughProxy(source, p.list))?.upstream;
 }
 
 /** Check one root's sources against the lists: what they refuse. */
 export async function checkRootSources(repo: string, root: string, lists: SourcesSettings, parser: Hcl2Json): Promise<SourceRefusal[]> {
   const { used, unread } = await rootSources(repo, root, parser);
-  const out = refusals(used, lists);
+  const out = refusals(used, lists, await proxyUpstream(lists.proxies));
   if (lists.modules) for (const u of unread) out.push({ kind: "module", ...u, list: lists.modules });
   return out;
 }
@@ -362,7 +396,7 @@ export async function lockedSources(repo: string, root: string, parser: Hcl2Json
 
 /** Check what one root's `init` fetched and installed against the lists: what they refuse. */
 export async function checkLockedSources(repo: string, root: string, lists: SourcesSettings, parser: Hcl2Json, env: NodeJS.ProcessEnv = {}): Promise<SourceRefusal[]> {
-  return refusals(await lockedSources(repo, root, parser, env), lists);
+  return refusals(await lockedSources(repo, root, parser, env), lists, await proxyUpstream(lists.proxies));
 }
 
 /** One line per refusal, naming the root, the block, the file, the source and the list it was checked against. */

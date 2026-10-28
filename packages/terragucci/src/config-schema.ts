@@ -79,6 +79,7 @@ import {
   SECRET_NAME,
   SOURCE_GLOB,
   SOURCES_KEYS,
+  SOURCE_PROXY_KEYS,
   TELEMETRY_KEYS,
   TERRAGRUNT_KEYS,
   TRUST_ROLE,
@@ -91,6 +92,7 @@ import {
   type ProjectSettings,
   type RegistrySettings,
   type SourcesSettings,
+  type SourceProxy,
   type TerragruntSettings,
 } from "./config";
 import { IDENT, LEVEL_KEYS, PROVIDER_KEY, TOP_KEYS } from "./generate-config";
@@ -225,7 +227,7 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   dependentRequired: { endpoint: ["bucket"] },
 });
 
-const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$)" };
+const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$|(?:artifactory|nexus)://[^/\\s]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9_-]+)?$)" };
 
 const modules = map([...MODULES_KEYS] as (keyof ModulesSettings)[], {
   path: str,
@@ -271,7 +273,15 @@ const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
 const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };
-const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
+const hostName = { type: "string", pattern: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$" } satisfies JsonSchema;
+const sourceProxy = map(SOURCE_PROXY_KEYS as (keyof SourceProxy)[], {
+  artifactory: hostName,
+  nexus: { type: "string", pattern: "^https?://[^/\\s]+/?$" },
+  repo: { type: "string", pattern: "^[A-Za-z0-9._-]+$" },
+  upstream: hostName,
+  host: hostName,
+} satisfies Record<keyof SourceProxy, JsonSchema>, { required: ["repo"], oneOf: [{ required: ["artifactory"] }, { required: ["nexus"] }] });
+const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs, proxies: { type: "array", minItems: 1, items: sourceProxy } } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
 
 const oidc = map(OIDC_KEYS, {
   plan_role: { type: "string", minLength: 1 },
