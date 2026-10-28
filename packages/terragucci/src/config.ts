@@ -1386,7 +1386,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
 export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes", "agents"];
-export const SOURCES_KEYS = ["modules", "providers"];
+export const SOURCES_KEYS = ["modules", "providers", "proxies"];
+/** The settings of one `sources.proxies` entry. */
+export const SOURCE_PROXY_KEYS = ["artifactory", "nexus", "repo", "upstream", "host"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
 export const OIDC_KEYS = ["plan_role", "apply_role", "audience", "roles", "gcp", "azure"];
@@ -1545,14 +1547,16 @@ export const gitlabPublishForm = /^gitlab:\/\/[^/\s]+\/[^/\s?#]+\/[^\s?#]+$/;
 export const isGitlabTarget = (t: string): boolean => t === "gitlab" || gitlabPublishForm.test(t);
 /** HCP Terraform's private registry in `modules.publish` (terragucci#1301): `hcp://<org>`, or `hcp://<host>/<org>` for Terraform Enterprise. */
 export const hcpPublishForm = /^hcp:\/\/(?:[^/\s]+\.[^/\s]+\/)?[A-Za-z0-9_-]+$/;
+/** An Artifactory or Nexus hosted repository in `modules.publish` (terragucci#1302): `<kind>://<host>/<repository>[/<namespace>]`. */
+export const repositoryPublishForm = /^(artifactory|nexus):\/\/[^/\s]+\/[A-Za-z0-9._-]+(\/[A-Za-z0-9_-]+)?$/;
 
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
   if (m.path !== undefined && typeof m.path !== "string") problems.push(`${where}.path must be a glob`);
   const targets = Array.isArray(m.publish) ? m.publish : m.publish === undefined ? [] : [m.publish];
   for (const t of targets) {
-    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t) || isGitlabTarget(t) || hcpPublishForm.test(t))) {
-      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address, git-tags, gitlab (in GitLab CI), gitlab://<host>/<group>/<project>, hcp://<organization> or hcp://<host>/<organization>`);
+    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t) || isGitlabTarget(t) || hcpPublishForm.test(t) || repositoryPublishForm.test(t))) {
+      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address, git-tags, gitlab (in GitLab CI), gitlab://<host>/<group>/<project>, hcp://<organization> or hcp://<host>/<organization>, artifactory://<host>/<repository>[/<namespace>] or nexus://<host>/<repository>[/<namespace>]`);
     }
   }
   if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
@@ -1623,6 +1627,25 @@ export interface SourcesSettings {
   modules?: string[];
   /** Globs of provider addresses, such as `hashicorp/*` or `registry.example.com/acme/*`. */
   providers?: string[];
+  /** Registry proxies a source may be written through, each standing for its upstream (terragucci#1302). */
+  proxies?: SourceProxy[];
+}
+
+/**
+ * One `sources.proxies` entry: an Artifactory remote or virtual Terraform
+ * repository (`artifactory: <host>`), or a Nexus proxy or group Terraform
+ * repository (`nexus: <https url>`), each with its repository and the
+ * upstream it stands for. A source written through one matches the globs as
+ * its upstream form, and `modules.require` reads through it.
+ */
+export interface SourceProxy {
+  artifactory?: string;
+  nexus?: string;
+  repo: string;
+  /** The registry host the proxy stands for. Default registry.terraform.io. */
+  upstream?: string;
+  /** Nexus: the label of the consumers' CLI `host` block. Default the upstream. */
+  host?: string;
 }
 
 /** `modules.registry`: the module registry protocol as static files. */
@@ -1920,13 +1943,31 @@ function checkSources(v: unknown, where: string, problems: string[]): void {
   }
   for (const k of Object.keys(v)) if (!SOURCES_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${SOURCES_KEYS.join(", ")})`);
   const glob = new RegExp(SOURCE_GLOB);
-  for (const k of SOURCES_KEYS) {
+  if (v.proxies !== undefined) checkSourceProxies(v.proxies, `${where}.proxies`, problems);
+  for (const k of ["modules", "providers"]) {
     const list = v[k];
     if (list === undefined) continue;
     if (!(Array.isArray(list) && list.length > 0 && list.every((g) => typeof g === "string" && glob.test(g)))) {
       problems.push(`${where}.${k} must be a list of source globs, such as ${k === "modules" ? '["./**", "registry.example.com/acme/*/*"]' : '["hashicorp/*", "registry.example.com/acme/*"]'}`);
     }
   }
+}
+
+const HOST_NAME = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:\d+)?$/;
+
+function checkSourceProxies(v: unknown, where: string, problems: string[]): void {
+  if (!Array.isArray(v) || v.length === 0) return void problems.push(`${where} must be a list of proxies, each with artifactory: <host> or nexus: <https url>, and repo`);
+  v.forEach((p, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(p)) return void problems.push(`${at} must be a map with artifactory or nexus, and repo`);
+    for (const k of Object.keys(p)) if (!SOURCE_PROXY_KEYS.includes(k)) problems.push(`${at}.${k} is not a setting; use ${SOURCE_PROXY_KEYS.join(", ")}`);
+    if ((p.artifactory === undefined) === (p.nexus === undefined)) problems.push(`${at} names one proxy: set artifactory: <host> or nexus: <https url>`);
+    if (p.artifactory !== undefined && (typeof p.artifactory !== "string" || !HOST_NAME.test(p.artifactory))) problems.push(`${at}.artifactory must be the Artifactory host sources name, such as acme.jfrog.io`);
+    if (p.nexus !== undefined && (typeof p.nexus !== "string" || !/^https?:\/\/[^/\s]+\/?$/.test(p.nexus))) problems.push(`${at}.nexus must be the Nexus base URL with no path, such as https://nexus.example.com`);
+    if (typeof p.repo !== "string" || !/^[A-Za-z0-9._-]+$/.test(p.repo)) problems.push(`${at}.repo must be the repository's key or name`);
+    if (p.upstream !== undefined && (typeof p.upstream !== "string" || !HOST_NAME.test(p.upstream))) problems.push(`${at}.upstream must be the registry host the proxy stands for, such as registry.terraform.io`);
+    if (p.host !== undefined && (p.nexus === undefined || typeof p.host !== "string" || !HOST_NAME.test(p.host))) problems.push(`${at}.host is the label of a Nexus CLI host block; it needs nexus and must be a host name`);
+  });
 }
 
 /** Where a shared policy is fetched from: the git URL and the ref. */

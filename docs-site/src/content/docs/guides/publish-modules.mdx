@@ -420,6 +420,19 @@ The publish job reads its token from `TFE_TOKEN`, else from `TF_TOKEN_app_terraf
 
 Publish creates the module when HCP lacks it and then the version with its commit, and uploads the same archive as the other targets. It waits for HCP to finish reading the archive, and a release still being read when the wait ends is reported without failing. A 429 is retried after `Retry-After`. Roots call `app.terraform.io/acme/network/generic`, with the system from `modules.registry.system` when it is set. HCP has no deprecated flag either.
 
+### Publish to Artifactory or Nexus
+
+A JFrog Artifactory local Terraform repository and a Sonatype Nexus hosted Terraform repository (Nexus 3.89 and later) take releases too:
+
+```yaml
+modules:
+  publish:
+    - artifactory://acme.jfrog.io/terraform-local
+    - nexus://nexus.example.com/terraform-hosted/platform
+```
+
+Each uploads the zip of the attested archive with basic credentials: `JFROG_USER` and `JFROG_ACCESS_TOKEN` for Artifactory, `NEXUS_USER` and `NEXUS_TOKEN` for Nexus. The last part of the address is the namespace; left out, it is `modules.registry`'s for each module. Artifactory sources join the repository and namespace with `__`, as in `acme.jfrog.io/terraform-local__acme/network/generic`. A Nexus source starts with the label of the readers' CLI `host` block, the repository's name in lower case, as in `terraform-hosted/platform/network/generic`. Sonatype's docs disagree on whether a hosted repository needs a signing key for modules, so set one when you create it.
+
 ### Point the binaries at the registry by CLI config
 
 A `host` block in the CLI config sends a host's module requests to another address, with no service discovery. It suits CI images and machines you set up, such as a registry reached at an internal name:

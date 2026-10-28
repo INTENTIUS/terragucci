@@ -158,6 +158,23 @@ The list is read at base, as `policy` is. A pull request that adds an entry, or 
 
 terragucci's CI images carry the HCL parser the check reads with; elsewhere, `npm i -D @cdktn/hcl2json`.
 
+### Sources through a registry proxy
+
+A team that reads the public registry through Artifactory or Nexus names the proxy under `proxies`. A source written through it then matches the entries as the upstream source it stands for, so one entry covers both forms:
+
+```yaml
+sources:
+  modules:
+    - "registry.terraform.io/terraform-aws-modules/*/*"
+  proxies:
+    - artifactory: acme.jfrog.io        # acme.jfrog.io/tf-remote__terraform-aws-modules/vpc/aws
+      repo: tf-remote
+    - nexus: https://nexus.example.com  # behind a CLI host "registry.terraform.io" block
+      repo: terraform-proxy
+```
+
+`upstream` names another upstream host than `registry.terraform.io`, and a Nexus entry's `host` names the label of its CLI `host` block when it is not the upstream. Under `modules.require: attested`, a pin written through a proxy is checked as the upstream's release and read through the proxy, with the token Terraform would send the proxy's host.
+
 ## Next
 
 - [Policy](/terragucci/reference/policy/) has a shared policy source, `opa`, HCP Terraform policy sets, cost and review input.
