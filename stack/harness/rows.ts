@@ -13,6 +13,8 @@
  * BREAK that was never made (`break=setup-failed`), none of which proves
  * either way.
  */
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 export type PlainVerdict = "pass" | "fail";
 export type BreakVerdict = "caught" | "missed" | "stalled";
@@ -67,6 +69,98 @@ export function smokeScenario(o: { binary?: string; forge?: string }): string {
   if (o.forge && o.forge !== "forgejo") parts.push(o.forge);
   if (o.binary && o.binary !== "tofu") parts.push(o.binary);
   return parts.join("-");
+}
+
+/** The engines a smoke claim can run on, the binaries SMOKE_BINARY takes. */
+export const ENGINES = ["tofu", "terraform", "choudoufu"] as const;
+export type Engine = (typeof ENGINES)[number];
+
+/** A version as a release names it: `v0.31.0` and `0.31.0` are both 0.31.0. */
+export const bareVersion = (v: string): string => v.trim().replace(/^v(?=\d)/, "");
+
+/**
+ * smoke.sh's claim table (CLAIMS, `<name>|<says>|<needs>` a line) as claim
+ * name to what its row says.
+ */
+export function parseClaimsTable(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    const bar = line.indexOf("|");
+    if (bar <= 0) continue;
+    const says = line.slice(bar + 1);
+    const end = says.lastIndexOf("|");
+    out.set(line.slice(0, bar), end >= 0 ? says.slice(0, end) : says);
+  }
+  return out;
+}
+
+/** The binary a claim's text names (`with binary: choudoufu ...`), when it names one. */
+export function saysBinary(says: string | undefined): Engine | undefined {
+  const m = /\bwith binary: ([a-z]+)/.exec(says ?? "");
+  return m && (ENGINES as readonly string[]).includes(m[1]!) ? (m[1] as Engine) : undefined;
+}
+
+/**
+ * The engine a smoke row ran on. A run under SMOKE_BINARY=terraform or
+ * choudoufu runs every claim on that binary. The default run is OpenTofu's,
+ * but a claim whose text says `with binary: <b>` runs its jobs in b's CI
+ * image, so its row carries b at the version that image is built with
+ * (`pins`, packages/terragucci/src/images.ts's TOOL_VERSIONS). Every other
+ * claim carries the run's binary at the version its image reported.
+ */
+export function rowEngine(o: { says?: string; binary: string; version: string; pins: Readonly<Record<string, string>> }): { binary: string; version: string } {
+  const named = o.binary === "tofu" ? saysBinary(o.says) : undefined;
+  if (!named || named === o.binary) return { binary: o.binary, version: bareVersion(o.version) };
+  const pinned = o.pins[named];
+  if (!pinned) throw new Error(`no pinned version for ${named}, which a claim says it runs on`);
+  return { binary: named, version: bareVersion(pinned) };
+}
+
+/** When a log was written: its birth and its last change, as the file system has them. */
+export function timesOf(file: string): { started: string; ended: string } {
+  const iso = (ms: number) => new Date(ms).toISOString();
+  if (!existsSync(file)) {
+    const now = iso(Date.now());
+    return { started: now, ended: now };
+  }
+  const s = statSync(file);
+  return { started: iso(s.birthtimeMs || s.ctimeMs), ended: iso(s.mtimeMs) };
+}
+
+export interface SmokeRow {
+  claim: string;
+  run: ClaimRunLike;
+  engine: { binary: string; version: string };
+}
+
+/**
+ * smoke.sh --record's log directory as rows: one per claim whose plain run
+ * has a verdict and whose BREAK run has a verdict file, in name order, each
+ * with the engine its claim ran on (rowEngine). `claims` is the claim table
+ * the run read; a claim missing from it carries the run's binary.
+ */
+export function smokeRows(
+  logs: string,
+  o: { scenario: string; binary: string; version: string; claims?: Map<string, string>; pins: Readonly<Record<string, string>> },
+): SmokeRow[] {
+  const rows: SmokeRow[] = [];
+  for (const f of readdirSync(logs).filter((n) => n.endsWith(".plain.verdict")).sort()) {
+    const base = f.slice(0, -".plain.verdict".length);
+    const plain = parseSmokeLine(readFileSync(join(logs, f), "utf8"));
+    if (!plain || plain.verdict === "pending") continue;
+    const brkFile = join(logs, `${base}.break.verdict`);
+    if (!existsSync(brkFile)) continue;
+    const brk = parseSmokeLine(readFileSync(brkFile, "utf8"));
+    const run = smokeClaimRun({
+      scenario: o.scenario,
+      claim: plain.claim,
+      plain,
+      break: brk,
+      times: { plain: timesOf(join(logs, `${base}.plain.log`)), break: timesOf(join(logs, `${base}.break.log`)) },
+    });
+    rows.push({ claim: plain.claim, run, engine: rowEngine({ says: o.claims?.get(plain.claim), binary: o.binary, version: o.version, pins: o.pins }) });
+  }
+  return rows;
 }
 
 /** The two arms of one smoke claim as a claim run, from its two SMOKE lines and when each log was written. */
