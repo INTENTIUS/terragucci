@@ -93,7 +93,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chantExitCodesNow, preloadChantNext } from "./chant-next";
+import { chantAgentJob, chantExitCodesNow, chantProductMcp, preloadChantNext } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
 import { applyGroups } from "./cloud-identity";
@@ -898,7 +899,7 @@ export async function main(argv: string[]): Promise<number> {
         const forge = str(flags, "forge") ?? "github";
         const agent = str(flags, "agent") ?? "off";
         const policyDir = str(flags, "policy-dir") ?? "policy";
-        if (!["off", "on", "run", "push"].includes(agent)) throw new ConfigError("comment's --agent is off, on, run or push");
+        if (!["off", "on", "chant", "run", "push"].includes(agent)) throw new ConfigError("comment's --agent is off, on, chant, run or push");
         // GitLab's agent pipeline: the agent job reads the ask, and agent-push lands the change (gitlab-agent.ts).
         if (forge === "gitlab" && agent === "run" && flags.poll !== true) {
           const out = str(flags, "out");
@@ -929,8 +930,8 @@ export async function main(argv: string[]): Promise<number> {
           const when = str(flags, "when") ?? "merge";
           if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment's --when is merge or pull-request");
           const requires = requiresOf(str(flags, "requires"), "comment");
-          if (agent !== "off" && agent !== "on") throw new ConfigError("comment --forge gitlab --poll's --agent is off or on");
-          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(flags["plan-notes"] === true ? { planNotes: true } : {}), ...(agent === "on" ? { agent: true } : {}), ...(flags.review === true ? { review: true } : {}) });
+          if (agent !== "off" && agent !== "on" && agent !== "chant") throw new ConfigError("comment --forge gitlab --poll's --agent is off, on or chant");
+          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(flags["plan-notes"] === true ? { planNotes: true } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
           for (const p of poll.plans ?? []) console.log(`terragucci comment: !${p.mr} plan: ${p.reason}`);
           for (const r of poll.reviews ?? []) console.log(`terragucci comment: !${r.mr} review: ${r.reason}`);
           for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
@@ -1238,6 +1239,12 @@ export async function main(argv: string[]): Promise<number> {
       case "agent": {
         const sub = args[0];
         const dir = str(flags, "dir");
+        // chant's agent job (chant#4616): its generated jobs run `terragucci agent prepare|run|land`, which chant answers in terragucci's words.
+        if (sub === "prepare" || sub === "run" || sub === "land") {
+          const chant = await chantProductMcp();
+          if (!chant || !(await chantAgentJob())) throw new ConfigError(`agent ${sub} is chant's agent job (chant#4616), and the installed chant has none; run terragucci init again to write terragucci's own agent jobs`);
+          return chant.runChantInProcess(["agent", ...argv.slice(argv.indexOf("agent") + 1)], TERRAGUCCI_WORDS);
+        }
         if (sub === "check-cost") {
           if (!dir) throw new ConfigError("agent check-cost needs --dir <dir>");
           const limit = Number(process.env.TG_AGENT_MAX_COST_USD);

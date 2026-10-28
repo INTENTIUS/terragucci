@@ -673,6 +673,8 @@ export interface ChantCiControl {
     opts: ChantControlWriteOptions,
   ): Promise<(ChantControlPut & { entry: string })[]>;
   estateClaims(entries: readonly ChantControlEntry[]): Map<string, string[]>;
+  /** The note job's read of the control repo's chant/lifecycle (chant#4619), which sets CHANT_CONTROL_DIR. Absent before #4619. */
+  controlNoteCheckout?(memberForge: "github" | "gitlab" | "forgejo", target: ChantControlTarget, words?: object): { stepName: string; env: Record<string, string>; script: string };
   reconcileProjects(
     projects: readonly { key: string; settings: Record<string, unknown>; forge?: "github" | "gitlab" | "forgejo"; url?: string; tokenEnv?: string; apiBase?: string }[],
     options: {
@@ -1381,6 +1383,38 @@ export interface ChantAgentRuns {
   pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }>;
 }
 
+/** A scheduled Op spec as chant's Op generator takes it (`ScheduledOpSpec`), as far as terragucci writes one. */
+export type ChantScheduledOpSpec = { name: string; trigger?: object; agent?: object; runner?: unknown; findingMode?: string; [k: string]: unknown };
+
+/** One file chant's Op generator writes (`OpPipelineResult.files`). */
+export interface ChantOpPipelineFile {
+  name: string;
+  yaml: string;
+}
+
+/** A forge lexicon's Op generator (`components/generate-op-pipeline`), with the options terragucci passes. */
+export type ChantOpGenerator = (ops: ChantScheduledOpSpec[], options?: { image?: string; beforeScript?: string[]; runCommand?: string[]; opsStage?: string; opsFileName?: string; variables?: Record<string, string> }) => { files: ChantOpPipelineFile[] };
+
+/**
+ * chant's agent job (chant#4616, #4619): the agent's Op spec from
+ * `productPipelineJobs(..., { agent })`, the drift agent of a scheduled drift
+ * Op (`productDriftAgent`), and each forge lexicon's Op generator, which
+ * writes the agent's jobs in the words that are active
+ * (`setActiveProductWords`). `CI_AGENT_FLOOR` on the ci-product entry is the
+ * feature-detect.
+ */
+export interface ChantAgentJob {
+  CI_AGENT_FLOOR: string;
+  productPipelineJobs(
+    forge: "github" | "gitlab" | "forgejo",
+    env: string,
+    options: { words: object; agent?: boolean | Record<string, unknown>; [k: string]: unknown },
+  ): { agent?: { comment: string; name: string; spec: ChantScheduledOpSpec } };
+  productDriftAgent(words: object, op: string, options?: Record<string, unknown>): Record<string, unknown>;
+  setActiveProductWords(words: object | undefined): unknown;
+  generate: Record<"github" | "gitlab" | "forgejo", ChantOpGenerator>;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -1678,6 +1712,29 @@ const loaders = {
     // chant#4616's agent module: agentRunRecordInput and landAgentChange present means the job is there.
     (m) => (has(m, "agentRunRecordInput", "landAgentChange", "appendRunRecord", "pushLifecycleReport") ? (m as unknown as ChantAgentRuns) : undefined),
   ),
+  agentJob: once<ChantAgentJob>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no ci-product subpath (chant#4550); the agent job is chant#4616
+      const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
+      // @ts-ignore chant 0.124.54 has no ci-product-words module (chant#4550)
+      const words: Record<string, unknown> = await import("@intentius/chant/ci-product-words");
+      const github: Record<string, unknown> = await import("@intentius/chant-lexicon-github/components/generate-op-pipeline");
+      const gitlab: Record<string, unknown> = await import("@intentius/chant-lexicon-gitlab/components/generate-op-pipeline");
+      const forgejo: Record<string, unknown> = await import("@intentius/chant-lexicon-forgejo/components/generate-op-pipeline");
+      return {
+        CI_AGENT_FLOOR: product.CI_AGENT_FLOOR,
+        productPipelineJobs: product.productPipelineJobs,
+        productDriftAgent: product.productDriftAgent,
+        setActiveProductWords: words.setActiveProductWords,
+        generate: { github: github.generateGithubOpPipeline, gitlab: gitlab.generateGitlabOpPipeline, forgejo: forgejo.generateForgejoOpPipeline },
+      };
+    },
+    // chant#4616's feature-detect: CI_AGENT_FLOOR on the ci-product entry, with the generators that read a spec's `agent`.
+    (m) => {
+      const g = m.generate as Record<string, unknown> | undefined;
+      return typeof m.CI_AGENT_FLOOR === "string" && has(m, "productPipelineJobs", "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
+    },
+  ),
   releaseRead: once<ChantReleaseRead>(
     () => import("@intentius/chant/lifecycle/release-ledger"),
     (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
@@ -1785,6 +1842,10 @@ export const chantChangelogNow = (): ChantChangelog | undefined => loaded("chang
 export const chantReleaseReadNow = (): ChantReleaseRead | undefined => loaded("releaseRead");
 /** chant's agent run record and run ledger (chant#4616), or undefined. */
 export const chantAgentRuns = (): Promise<ChantAgentRuns | undefined> => load("agentRuns");
+/** chant's agent job (chant#4616), or undefined. init loads it before it renders the pipeline. */
+export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
+/** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
+export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJob");
 
 /**
  * Load the parts synchronous code reads, once, before a command runs: the
@@ -1846,7 +1907,8 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [forgeCheck, notifyRelay, ciEstate, policySource, opStandDown] = [await chantForgeCheck(), await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
   const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns };
+  const agentJob = await chantAgentJob();
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

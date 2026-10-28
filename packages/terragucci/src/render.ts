@@ -180,11 +180,12 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { controlCheckoutStep, controlCloneScript, controlDirEnv, controlLifecycleStep, dispatchScript, type ResolvedControl } from "./control-repo";
+import { controlCloneScript, controlDirEnv, controlReadSteps, dispatchScript, type ResolvedControl } from "./control-repo";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
+import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
@@ -2098,9 +2099,9 @@ export const MERGE_ENVIRONMENT = "terragucci-merge";
  * jobs' reports. It runs nothing itself: no plan, no apply and no cloud
  * credentials.
  */
-export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean; review?: boolean } = {}): string {
+export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean | "chant"; review?: boolean } = {}): string {
   const requires = prApply?.requires && !APPLY_REQUIRES.every((r) => prApply.requires!.includes(r)) ? ` --requires ${prApply.requires.length ? prApply.requires.join(",") : "none"}` : "";
-  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent === "chant" ? " --agent chant" : start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
 }
 
 /**
@@ -2533,6 +2534,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
+  // agent.comment on chant's agent job (chant#4616), when the installed chant has it: its own workflow, and terragucci's agent jobs are left out.
+  const chantAgent = input.agentComment && !(forge === "gitlab" && !input.comments) ? chantAgentFiles(forge, image, input.agentComment, MARKER) : undefined;
   if (forge === "gitlab") {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
@@ -2568,7 +2571,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
     // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them.
-    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
+    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [chantAgent ? CHANT_AGENT_PR_VAR : AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
     const notMrApply = startedBy.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
@@ -2783,10 +2786,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: Boolean(input.agentComment), review: Boolean(input.review) }))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: chantAgent ? "chant" : Boolean(input.agentComment), review: Boolean(input.review) }))],
       } as never) as never);
     }
-    if (input.agentComment) {
+    if (input.agentComment && !chantAgent) {
       // `/terragucci agent <ask>`: the comments job starts a pipeline of the default branch for it. The agent runs in
       // one job with the model's key alone (its environment cleared), and a fresh job pushes its change with the agent's token.
       const agent = input.agentComment;
@@ -2871,7 +2874,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
-    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs };
+    // The agent's jobs on chant's job are in a file of their own, included here; they share the comments stage.
+    const agentInclude = chantAgent ? `include:\n  - local: ${CHANT_AGENT_PATHS.gitlab}\n` : "";
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + agentInclude + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs, ...(chantAgent ? { extra: chantAgent.files } : {}) };
   }
 
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
@@ -2994,7 +2999,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     steps: [
       new Step({ name: "Say on the head that the plan started", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: [forgeApi(forge), 'tg status terragucci/plan pending "planning"'].join("\n") }),
       bareCheckout(true),
-      ...(input.control ? [controlCheckoutStep(input.control), ...[controlLifecycleStep(input.control)].filter((x) => x !== undefined)] : []),
+      ...(input.control ? controlReadSteps(input.control, forge) : []),
       ...toolSteps(true, true, undefined, true),
       new Step({ id: "plan", name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
     ],
@@ -3059,7 +3064,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       // The head comes from the pull request, by number; the base branch comes with the history, for the range.
       bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go, "Check out the pull request's head"),
-      ...(input.control ? [controlCheckoutStep(input.control, go), ...[controlLifecycleStep(input.control, go)].filter((x) => x !== undefined)] : []),
+      ...(input.control ? controlReadSteps(input.control, forge, go) : []),
       ...toolSteps(true, true, go, true),
       new Step({
         if: go,
@@ -3176,7 +3181,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [new Step({ name: "Say on the head whether its waiting waves are approved", shell: "bash", run: `terragucci approval-status --forge ${forge}${agentLogin ? ` --agent-login ${agentLogin}` : ""}` })],
     } as never) as never);
   }
-  if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
+  if (input.agentComment && !chantAgent) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
   if (locksPlan) {
     // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
     // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may
@@ -3396,6 +3401,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   };
   const extra: { path: string; content: string }[] = [];
   if (input.wavesSpec) extra.push({ path: WAVES_SPEC, content: input.wavesSpec });
+  if (chantAgent) extra.push(...chantAgent.files);
   if (input.resume) {
     // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
     const resume = new Map<string, never>([

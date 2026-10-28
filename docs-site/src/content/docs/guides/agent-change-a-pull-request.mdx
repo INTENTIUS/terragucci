@@ -130,6 +130,20 @@ npx -y @anthropic-ai/claude-code@2.1.290 -p --output-format json --max-turns "$T
 
 The flags are in the [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
 
+## On chant's agent job
+
+With a chant that has the agent job ([chant#4616](https://github.com/INTENTIUS/chant/issues/4616)), `terragucci init` writes the comment agent's jobs from chant in place of the `agent` and `agent-push` jobs above. The spec goes to `.chant/ops/terragucci-agent.spec.json` and the jobs to `.github/workflows/terragucci-agent.yml` (`.forgejo/workflows/` on Forgejo, `.gitlab/terragucci-agent.yml` on GitLab, which the pipeline's file includes). The jobs run `terragucci agent prepare`, `run` and `land`, which terragucci hands to chant. A chant without the job keeps the jobs above.
+
+| Key | chant's setting |
+|---|---|
+| `key_secret` | `keyEnv`, the model's key |
+| `max_turns` | `maxTurns`, read by the default command from `CHANT_AGENT_MAX_TURNS` |
+| `timeout` | `timeout`, the minutes the command may run |
+| `max_cost_usd` | `maxCostUsd`, the most the agent's runs may cost in a day, summed from the run records on the ledger. The default command also passes `--max-budget-usd` with the same figure, so one run stops there too |
+| `agent.token_env` | `tokenEnv`, the push token |
+
+Each run leaves a run record under op `terragucci-agent`, which `terragucci audit` lists. On GitLab the `comments` job starts the agent's pipeline with `CHANT_AGENT_PR` and `CHANT_AGENT_ASK`, and chant names the person who started that pipeline as the one who asked. Scope the push token to environment `terragucci-agent-push`. A command of your own reads the prompt on stdin and sees only the model's key, `CHANT_AGENT_MAX_TURNS` and `CHANT_AGENT_USAGE`, so it gets no budget flag from terragucci.
+
 ## Use another agent
 
 `command` takes any command line that reads a prompt on stdin and edits files in the working directory.

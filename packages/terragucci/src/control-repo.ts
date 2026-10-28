@@ -123,8 +123,60 @@ export function controlLifecycleStep(c: ResolvedControl, cond?: string): Instanc
   } as never);
 }
 
+/**
+ * chant's read of the control repo (chant#4619, terragucci#1282 part i):
+ * `controlNoteCheckout` fetches the control repo's `chant/lifecycle` alone
+ * into a directory outside the checkout and sets CHANT_CONTROL_DIR to it.
+ * Undefined on a chant without it, and then the steps below read the
+ * control repo as before.
+ */
+export function chantNoteCheckout(c: ResolvedControl, memberForge: ForgeName): { stepName: string; env: Record<string, string>; script: string } | undefined {
+  const chant = chantCiControlNow();
+  if (!chant || typeof chant.controlNoteCheckout !== "function") return undefined;
+  return chant.controlNoteCheckout(memberForge, chantControlTarget(chant, c), TERRAGUCCI_WORDS);
+}
+
+/** Where chant's control entries are on the control repo's chant/lifecycle (./control-records.ts LEDGER_PATH). */
+const ENTRIES_ON_LEDGER = 'git -C "$CHANT_CONTROL_DIR" cat-file -e "refs/heads/chant/lifecycle:_control/entries.jsonl" 2>/dev/null';
+
+/**
+ * GitHub and Forgejo: the plan job's read of the control repo. With chant's
+ * read (chant#4619): chant's step, then a step that says whether the
+ * control repo's entries are on its chant/lifecycle, and terragucci's
+ * checkout only when they are not, for a control repo whose records are
+ * still files (it has not run `terragucci control records migrate`). Estate
+ * ownership reads whichever one is there (./estate-ownership.ts). Without
+ * chant's read: terragucci's checkout and the lifecycle fetch, as before.
+ */
+export function controlReadSteps(c: ResolvedControl, memberForge: Exclude<ForgeName, "gitlab">, cond?: string): InstanceType<typeof Step>[] {
+  const note = chantNoteCheckout(c, memberForge);
+  if (!note) return [controlCheckoutStep(c, cond), ...[controlLifecycleStep(c, cond)].filter((x) => x !== undefined)];
+  const files = `${cond ? `(${cond}) && ` : ""}steps.control-store.outputs.files == '1'`;
+  return [
+    new Step({ ...(cond ? { if: cond } : {}), name: note.stepName, shell: "bash", env: note.env, run: note.script } as never),
+    new Step({
+      ...(cond ? { if: cond } : {}),
+      id: "control-store",
+      name: "Say whether the control repo's entries are on its chant/lifecycle",
+      shell: "bash",
+      run: `if [ -n "\${CHANT_CONTROL_DIR:-}" ] && ${ENTRIES_ON_LEDGER}; then echo "files=0"; else echo "files=1"; echo "terragucci: the control repo's entries are not on its chant/lifecycle, so its record files are read" >&2; fi >>"$GITHUB_OUTPUT"`,
+    } as never),
+    controlCheckoutStep(c, files),
+  ];
+}
+
 /** GitLab: the lines that clone the control repo, read-only, with the read variable when it is set and the job token when not. */
 export function controlCloneScript(c: ResolvedControl): string {
+  const note = chantNoteCheckout(c, "gitlab");
+  if (note) {
+    // chant's read first; the clone only for a control repo whose entries are not on its chant/lifecycle.
+    return [note.script, `if [ -n "\${CHANT_CONTROL_DIR:-}" ] && ${ENTRIES_ON_LEDGER}; then`, `  echo "terragucci: read the control repo's entries from its chant/lifecycle"`, "else", ...ownCloneScript(c).split("\n").map((l) => `  ${l}`), "fi"].join("\n");
+  }
+  return ownCloneScript(c);
+}
+
+/** terragucci's own clone of the control repo, for GitLab. */
+function ownCloneScript(c: ResolvedControl): string {
   const url = `${c.host}/${c.path}.git`;
   return [
     `rm -rf ${CONTROL_CHECKOUT_DIR}`,
