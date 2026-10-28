@@ -87,7 +87,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chantCiProductWords } from "./chant-next";
+import { chantExitCodesNow, preloadChantNext } from "./chant-next";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
 import { applyGroups } from "./cloud-identity";
@@ -412,8 +412,10 @@ function originForge(dir: string): ForgeName | undefined {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  // chant's words module (chant#4550), loaded once so the comment grammar and the approve and status lines read it; none on a chant without it.
-  await chantCiProductWords();
+  // chant's words module (chant#4550), its exit-code table (chant#4553) and the drift rows (chant#4580), loaded once for the code that reads them synchronously; none on a chant without them.
+  await preloadChantNext();
+  // A usage or config error exits 1 under chant's table (chant#4553, ruling C), 2 before it.
+  const USAGE_EXIT = chantExitCodesNow()?.CHANT_EXIT.failed ?? 2;
   const { cmd, flags, args, repeated } = parse(argv);
   const cwd = process.cwd();
   const json = flags.json === true;
@@ -1444,16 +1446,16 @@ export async function main(argv: string[]): Promise<number> {
       case "help":
       case "--help":
         console.log(USAGE);
-        return cmd === "" ? 2 : 0;
+        return cmd === "" ? USAGE_EXIT : 0;
       default:
         console.error(`unknown command "${cmd}"\n\n${USAGE}`);
-        return 2;
+        return USAGE_EXIT;
     }
   } catch (e) {
     if (e instanceof ConfigError || e instanceof RenderError || e instanceof StoreError) {
-      if (json) return emit(envelope(cmd === "config" ? (args[0] === "identities" ? "config identities" : "config check") : cmd === "forge" ? "forge check" : cmd, 2, null, e.message));
+      if (json) return emit(envelope(cmd === "config" ? (args[0] === "identities" ? "config identities" : "config check") : cmd === "forge" ? "forge check" : cmd, USAGE_EXIT, null, e.message));
       console.error(`terragucci: ${e.message}`);
-      return 2;
+      return USAGE_EXIT;
     }
     throw e;
   }

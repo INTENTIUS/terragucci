@@ -51,6 +51,7 @@ import { poster, type Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
 import { planNoteBodyOf } from "./plan-note";
 import type { ForgeCalls, ReviewedPull } from "./review";
+import * as chantReview from "@intentius/chant/op/activities/review-agent";
 import { MAX_DIFF, REVIEW_COMMAND, REVIEW_RISKS as RISKS, riskOf, type ReviewRisk as Risk } from "@intentius/chant/op/activities/review-agent";
 
 /** Where the review instructions live on the default branch unless `review.instructions` names another file. */
@@ -108,6 +109,9 @@ const DATA_TAGS = ["title", "description", "diff", "plan_note", "policy", "instr
 
 /** Text as it goes between the prompt's tags: a closing tag of ours inside it cannot end the section. */
 function quoted(text: string): string {
+  // chant's quoting takes the tag list (chant#4580); the pin's escapes chant's own tags only, so it is used once REVIEW_DATA_TAGS is exported.
+  const chant = chantReview as unknown as { quoted?: (text: string, tags?: readonly string[]) => string; REVIEW_DATA_TAGS?: readonly string[] };
+  if (typeof chant.quoted === "function" && Array.isArray(chant.REVIEW_DATA_TAGS)) return chant.quoted(text, DATA_TAGS);
   return text.replace(new RegExp(`</(${DATA_TAGS.join("|")})>`, "gi"), "< /$1>");
 }
 

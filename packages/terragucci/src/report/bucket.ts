@@ -44,6 +44,8 @@ export function storeFromEnv(reports: { bucket: string; endpoint?: string; role?
               sessionName: SESSION_NAME,
               setting: "reports.bucket",
               roleSetting: "reports.role",
+              // chant#4584: the setup errors name terragucci's keys, as terragucci's own messages do.
+              hints: { oidc: "oidc", gcp: "oidc.gcp", azure: "oidc.azure" },
             },
             env,
             fetchFn,
