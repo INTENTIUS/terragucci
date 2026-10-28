@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendLifecycle, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
 import {
   addressMatches,
@@ -29,6 +29,18 @@ import {
 import { ledgerEntries, MIGRATE_DONE_FILE, MIGRATE_LEDGER_FILE } from "../src/report/audit";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import { tmp, write } from "./helpers";
+import { overrideChantNext } from "../src/chant-next";
+import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
+
+// With chant's state operations a standalone migration is chant's gated request: chant's digest, its pending
+// fact, the proof as the request's attachment, and a finished line read back in done.jsonl's form.
+const chantOps = await chantGated();
+
+// A test that pins the in-wave hold path to terragucci's own ledger writes, or to chant's recorded hold (chant#4623), restores it here.
+const restoreChant: Array<() => void> = [];
+afterEach(() => {
+  while (restoreChant.length) restoreChant.pop()!();
+});
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
@@ -229,28 +241,32 @@ describe("running a migration from wave 1", () => {
     expect(names(work, "one")).toEqual(["a", "b"]);
     const pending = ledger(origin).pending;
     expect(pending).toHaveLength(1);
-    expect(pending[0]).toMatchObject({ op: "tf-migrate", gate: "split-b", planDigest: digest, neverOverMcp: true });
-    expect(pending[0].members?.map((m) => m.member)).toEqual(["one", "two"]);
-    // The plan record kept beside the ledger holds digests, never a state's contents.
-    const kept = git(origin, "show", `chant/lifecycle:_gates/tf-migrate/split-b/${digest.replace(":", "_")}.json`);
+    expect(pending[0]).toMatchObject({ op: "tf-migrate", gate: "split-b", planDigest: digest });
+    if (chantOps) {
+      expect((pending[0] as { request?: unknown }).request).toMatchObject({ kind: "migrate", subject: "split-b", fields: { file: "migrations/split-b.yml", roots: "one,two" } });
+    } else {
+      expect(pending[0]).toMatchObject({ neverOverMcp: true });
+      expect(pending[0].members?.map((m) => m.member)).toEqual(["one", "two"]);
+    }
+    // The plan record kept beside the ledger holds digests, never a state's contents: on chant's gate it is the request's attachment.
+    const kept = git(origin, "show", `chant/lifecycle:${chantOps ? `_gates/tf-migrate/requests/${digest.replace(/:/g, "_")}.json` : `_gates/tf-migrate/split-b/${digest.replace(":", "_")}.json`}`);
     expect(kept).not.toContain("secret-");
-    // A pull request's plan job proves the same digest, read only.
+    // A pull request's plan job proves the same proof, read only: on chant's gate the request binds that proof, under a digest of chant's.
     const planned = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, planOnly: true, log });
     expect(planned.code).toBe(0);
-    expect(planned.records[0]).toMatchObject({ status: "planned", digest });
+    expect(planned.records[0]).toMatchObject({ status: "planned", digest: chantOps ? JSON.parse(kept).digest : digest });
 
     approve(work, "split-b", digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log });
     expect(second.code).toBe(0);
-    expect(second.records[0]).toMatchObject({ status: "applied", approved_by: "alice" });
+    expect(second.records[0]).toMatchObject({ status: "applied", approved_by: "alice", digest });
     expect(names(work, "one")).toEqual(["a"]);
     expect(names(work, "two")).toEqual(["c", "b"]);
     expect(second.records[0].roots.map((r) => r.verify?.changes)).toEqual([[], []]);
-    const done = doneMigrations(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`));
-    expect(done.get("split-b")?.status).toBe("applied");
-    const line = git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`);
-    expect(line).not.toContain("secret-");
-    expect(JSON.parse(line).roots.map((r: { root: string; before_digest: string; after_digest: string }) => [r.root, r.before_digest !== r.after_digest])).toEqual([["one", true], ["two", true]]);
+    const { line, text } = migrationRecord(work, "split-b");
+    expect(doneMigrations(text).get("split-b")?.status).toBe("applied");
+    expect(git(origin, "show", `chant/lifecycle:${chantOps ? appliedFile("tf-migrate") : MIGRATE_DONE}`)).not.toContain("secret-");
+    expect((line.roots as { root: string; before_digest: string; after_digest: string }[]).map((r) => [r.root, r.before_digest !== r.after_digest])).toEqual([["one", true], ["two", true]]);
     const record = JSON.parse(readFileSync(join(work, "terragucci-report", "migrations", "split-b.json"), "utf-8"));
     expect(record.status).toBe("applied");
     expect(JSON.stringify(record)).not.toContain("secret-");
@@ -264,6 +280,8 @@ describe("running a migration from wave 1", () => {
   });
 
   it("under chant run wave, proves the migration, holds wave 1 on its gate through CHANT_HOLD, and applies once chant hands it the approval", async () => {
+    // A chant before chant#4623: the hold path writes the proof, the applied line and done.jsonl itself.
+    restoreChant.push(overrideChantNext("holdRecord", null));
     const { work, origin } = repo();
     const lines: string[] = [];
     const log = (l: string) => void lines.push(l);
@@ -289,6 +307,32 @@ describe("running a migration from wave 1", () => {
     // Once applied it never runs again, as when chant plans the wave again in the same job.
     const other = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { ...approved, digest: "sha256:other" } }, log });
     expect(other).toEqual({ code: 0, records: [] });
+  });
+
+  it("under chant run wave on a chant that records the hold (chant#4623), hands chant the proof and writes how it ended to CHANT_HOLD_FINISHED, with no ledger line of its own", async () => {
+    restoreChant.push(overrideChantNext("holdRecord", { OP_WAVE_HOLD_RECORD_FLOOR: "0.125.0", gatedRequestAttachmentPath: (op: string, d: string) => ({ dir: `_gates/${op}/requests`, file: `${d.replace(/:/g, "_")}.json` }) }));
+    const { work, origin } = repo();
+    const log = () => {};
+    const file = join(tmp(), "hold.json");
+    const held = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file }, log });
+    expect(held.code).toBe(3);
+    const asked = JSON.parse(readFileSync(file, "utf-8")) as { op: string; gate: string; digest: string; record?: boolean; attachment?: string };
+    expect(asked).toMatchObject({ op: "tf-migrate", gate: "split-b", record: true });
+    expect(JSON.parse(asked.attachment!)).toMatchObject({ name: "split-b", digest: asked.digest });
+    expect(asked.attachment).not.toContain("secret-");
+    // chant keeps the proof beside its pending fact, so this run wrote nothing to chant/lifecycle.
+    expect(() => git(origin, "show", `chant/lifecycle:_gates/tf-migrate/split-b/${asked.digest.replace(":", "_")}.json`)).toThrow();
+    // chant spent the approval, and hands the re-run CHANT_HOLD_FINISHED.
+    const finished = join(tmp(), "hold-finished.json");
+    const approved = { op: "tf-migrate", gate: "split-b", digest: asked.digest, approvedBy: "alice", approvedAt: T(2) };
+    const applied = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved, finished }, now: T(3), log });
+    expect(applied.code).toBe(0);
+    expect(names(work, "two")).toEqual(["c", "b"]);
+    const wrote = JSON.parse(readFileSync(finished, "utf-8")) as { result: string; detail: Record<string, unknown> };
+    expect(wrote).toMatchObject({ result: "applied", detail: { result: "applied", approved_by: "alice", roots: expect.stringContaining("one") } });
+    expect(JSON.stringify(wrote)).not.toContain("secret-");
+    expect(() => git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`)).toThrow();
+    expect(() => git(origin, "show", "chant/lifecycle:_gates/tf-migrate/applied.jsonl")).toThrow();
   });
 
   it("under chant run wave, the approved run of the first of two migrations applies it and holds wave 1 on the second's gate", async () => {
@@ -332,10 +376,16 @@ describe("running a migration from wave 1", () => {
     // Someone wrote one's state since: the same resources, a new serial.
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     const again = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log: (l) => void lines.push(l) });
-    expect(again.code).toBe(4);
-    expect(again.records[0]).toMatchObject({ status: "refused", moved: ["one"] });
+    if (chantOps) {
+      // On chant's gate the proof is the request's attachment: a state written since is a new request, which waits for its own approval.
+      expect(again.code).toBe(3);
+      expect(again.records[0].digest).not.toBe(first.records[0].digest);
+    } else {
+      expect(again.code).toBe(4);
+      expect(again.records[0]).toMatchObject({ status: "refused", moved: ["one"] });
+      expect(lines.join("\n")).toContain("the states moved since: one");
+    }
     expect(names(work, "two")).toEqual(["c"]);
-    expect(lines.join("\n")).toContain("the states moved since: one");
   });
 
   it("under chant run wave, names the roots whose state moved since the approved digest's pending fact", () => {
@@ -361,8 +411,11 @@ describe("running a migration from wave 1", () => {
   it("under chant run wave, wave 1 refused for a state written after the approval names the root", async () => {
     const { work } = repo();
     const log = () => {};
-    // The approved digest's pending fact, with its members, as the ledger keeps it.
+    // The approved digest's pending fact, with its members, as the ledger keeps it. terragucci's own gate writes that
+    // fact; chant's gated request keeps no members, and under chant run wave chant writes them from the hold file.
+    const restore = overrideChantNext("stateOps", null);
     const first = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(1), log });
+    restore();
     approve(work, "split-b", first.records[0].digest, T(2));
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     // chant finds no approval of the new digest, only alice's of the old one: the hook holds on the new digest.

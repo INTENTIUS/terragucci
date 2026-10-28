@@ -28,6 +28,16 @@
  *   bucket's client reads, the forge token `token_env` names, and git's own
  *   for the repo), never from a tool's arguments: a tool takes only the
  *   arguments it lists, and refuses any other.
+ *
+ * With a chant that has the product tool hook (chant#4555), `terragucci mcp`
+ * is chant's own read-only server (`serve mcp --read-only`, chant#4543) run in
+ * process with terragucci's words, and terragucci's tools are added to it
+ * through the hook as `terragucci:<name>`, each declared read-only
+ * ({@link productHook}). The server then also serves chant's read tools (the
+ * ledger, the workspace graph), and chant makes the checks above: it refuses
+ * to start with a tool named as a write, and serves no run tool. `--propose`,
+ * whose tools write to the forge, keeps terragucci's own server below, since
+ * a read-only server serves no tool that writes.
  */
 import { execFileSync } from "node:child_process";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -49,6 +59,8 @@ import { statesKey, type IndexEntry } from "./report/store";
 import { readLedger } from "./apply";
 import { waitingWaves } from "./approve";
 import { loadMcpSdk } from "./mcp-sdk";
+import { chantProductMcp, type ChantProductMcpHook } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 import { version as VERSION } from "../package.json";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
@@ -678,6 +690,8 @@ export function context(o: McpOptions): Context {
   };
 }
 
+const READ_ONLY_INSTRUCTIONS = "terragucci's estate, reports, state versions, audit trail and DORA figures, read-only. Nothing here approves, applies, overrides or writes; a person does that at a shell.";
+
 /** The server, on any transport: the tools listed, each call answered or refused. */
 export async function serve(o: McpOptions, transport: Transport): Promise<Server> {
   const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
@@ -690,7 +704,7 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
       capabilities: { tools: {} },
       instructions: o.propose
         ? "terragucci's estate, reports, state versions, audit trail and DORA figures, and a way to propose a change: commit it to a local branch, call propose to push it and open a pull request, then plan_result to read its plan note and policy result. Nothing here approves, applies, overrides or merges; a person does that."
-        : "terragucci's estate, reports, state versions, audit trail and DORA figures, read-only. Nothing here approves, applies, overrides or writes; a person does that at a shell.",
+        : READ_ONLY_INSTRUCTIONS,
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -701,8 +715,41 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
   return server;
 }
 
+/**
+ * terragucci's tools as chant's product tool hook (chant#4555): each reads
+ * through the same context, with the bucket's client wrapped so a write
+ * throws, checks its arguments as terragucci's server does, and is declared
+ * read-only. A refusal or a missing object is thrown, and chant answers it as
+ * an error result.
+ */
+export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS): ChantProductMcpHook {
+  assertReadOnly(tools);
+  const ctx = context(o);
+  return {
+    product: "terragucci",
+    readOnly: true,
+    instructions: READ_ONLY_INSTRUCTIONS,
+    tools: () =>
+      tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: { type: "object" as const, properties: t.inputSchema.properties, ...(t.inputSchema.required ? { required: t.inputSchema.required } : {}) },
+        readOnly: true,
+        handler: async (params: Record<string, unknown>) => t.run(checkArgs(t, params), ctx),
+      })),
+  };
+}
+
 /** `terragucci mcp`: serve on stdin and stdout until the client closes them. */
 export async function mcp(o: McpOptions): Promise<void> {
+  const chant = o.propose || o.tools ? undefined : await chantProductMcp();
+  if (chant) {
+    // chant's `serve mcp` loads a lexicon first and exits where it finds none (a directory that is no chant
+    // project, as a laptop's often is); terragucci's tools need none, so it names the terraform lexicon (chant#3648).
+    const code = await chant.runChantInProcess(["serve", "mcp", "--read-only", "--lexicon", "terraform"], TERRAGUCCI_WORDS, { mcp: productHook(o) });
+    if (code !== 0) throw new ConfigError(`chant's MCP server ended with exit ${code}`);
+    return;
+  }
   const { StdioServerTransport } = await loadMcpSdk();
   const server = await serve(o, new StdioServerTransport());
   await new Promise<void>((resolve) => {

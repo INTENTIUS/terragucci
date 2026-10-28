@@ -331,6 +331,18 @@ export interface TerragruntSettings {
 }
 
 /** Atmos settings. Atmos mode is detected (`atmos.yaml` at the repo root); this block only tunes it. */
+/** `check`: what tf-check runs beyond its own checks. */
+export interface CheckSettings {
+  /**
+   * Run the repo's `.pre-commit-config.yaml` in tf-check, as a chant check
+   * hook (./pre-commit.ts), with `PCT_TFPATH` set to the binary and
+   * `terraform_fmt` skipped. Off by default; init never turns it on.
+   */
+  pre_commit?: boolean;
+}
+
+export const CHECK_KEYS = ["pre_commit"] as const;
+
 export interface AtmosSettings {
   /** The Atmos release every job installs. Default: the one this terragucci release pins. */
   version?: string;
@@ -713,6 +725,8 @@ export interface ProjectSettings {
   policy?: PolicySettings;
   /** The module and provider sources a root may use, checked before init; see SourcesSettings. Off when absent. */
   sources?: SourcesSettings;
+  /** What tf-check runs beyond its own checks: the repo's pre-commit hooks; see CheckSettings. */
+  check?: CheckSettings;
   /**
    * `atlantis plan` and `atlantis apply` comments read as `/terragucci plan`
    * and `/terragucci apply`. Off by default. The alias changes the words
@@ -1103,7 +1117,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1317,6 +1331,13 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.atmos !== undefined && s.terragrunt !== undefined) problems.push(`${where}.atmos: ${ATMOS_NOT_TERRAGRUNT}`);
   if (s.policy !== undefined) checkPolicy(s.policy, `${where}.policy`, problems, mode);
   if (s.sources !== undefined) checkSources(s.sources, `${where}.sources`, problems);
+  if (s.check !== undefined) {
+    if (!isObject(s.check)) problems.push(`${where}.check must be a map (settings: ${CHECK_KEYS.join(", ")})`);
+    else {
+      for (const k of Object.keys(s.check)) if (!(CHECK_KEYS as readonly string[]).includes(k)) problems.push(`${where}.check.${k} is not a setting (settings: ${CHECK_KEYS.join(", ")})`);
+      if (s.check.pre_commit !== undefined && typeof s.check.pre_commit !== "boolean") problems.push(`${where}.check.pre_commit must be true or false`);
+    }
+  }
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
     else {
@@ -1365,7 +1386,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
 export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
 export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes", "agents"];
-export const SOURCES_KEYS = ["modules", "providers"];
+export const SOURCES_KEYS = ["modules", "providers", "proxies"];
+/** The settings of one `sources.proxies` entry. */
+export const SOURCE_PROXY_KEYS = ["artifactory", "nexus", "repo", "upstream", "host"];
 /** One `sources` entry: a glob with no whitespace, commas, semicolons or quotes. */
 export const SOURCE_GLOB = "^[^\\s,;'\"]+$";
 export const OIDC_KEYS = ["plan_role", "apply_role", "audience", "roles", "gcp", "azure"];
@@ -1395,8 +1418,49 @@ export function agentLoginWarning(agent: { token_env?: unknown; login?: unknown 
 export const STEPS_MOVED =
   "steps are ci.hooks in chant.workspace.json now, each with a command list and perRun: true (before: init or drift is before.observe, after: init is before.plan, after: drift is after.plan, roots is targets, on_failure is onFailure); see https://intentius.io/terragucci/guides/run-steps/";
 
-export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
-export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download"];
+export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry", "gitlab_token"]);
+export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth", "tokens", "tokens_name", "tokens_region", "providers", "catalog"];
+/** `modules.registry.providers`: `mirror` serves the providers the lock files pin as a network mirror under `providers/` (chant#4564). */
+export const REGISTRY_PROVIDERS = ["mirror"] as const;
+/** `modules.registry.catalog`: the release catalog under `catalog/` beside the registry's files (terragucci#1297). `on` by default; `off` writes none. */
+export const REGISTRY_CATALOG = ["on", "off"] as const;
+/**
+ * `modules.registry.edge`: what sends Terraform the X-Terraform-Get header a
+ * stored download answer cannot carry (terragucci#1287). `cloudflare` is a
+ * Worker, `cloudfront` a Lambda@Edge function, `pages` a `_headers` file for
+ * Cloudflare Pages or Netlify, and `none` serves the files as they are, which
+ * OpenTofu reads and Terraform does not.
+ */
+export const REGISTRY_EDGES = ["cloudflare", "cloudfront", "pages", "none"] as const;
+export type RegistryEdge = (typeof REGISTRY_EDGES)[number];
+/** `modules.registry.auth`: `token` has the edge function check each reader's bearer token. Default `off`. */
+export const REGISTRY_AUTHS = ["off", "token"] as const;
+export type RegistryAuth = (typeof REGISTRY_AUTHS)[number];
+/**
+ * `modules.registry.tokens`: where Lambda@Edge reads the accepted tokens
+ * (chant#4590). `zip` builds them into the function's options file (the
+ * default); `ssm` reads an SSM parameter and `secrets-manager` a secret at run
+ * time, so rotation needs no redeploy and no token reaches `registry-edge.json`.
+ */
+export const REGISTRY_TOKENS = ["zip", "ssm", "secrets-manager"] as const;
+export type RegistryTokens = (typeof REGISTRY_TOKENS)[number];
+/** The region the token store is read from when `tokens_region` is unset: where Lambda@Edge functions are created. */
+export const REGISTRY_TOKENS_REGION = "us-east-1";
+/** The edge functions that can check a token; a `_headers` file or plain files cannot. */
+const TOKEN_EDGES: readonly RegistryEdge[] = ["cloudflare", "cloudfront"];
+
+/**
+ * The edge preset a registry gets when `edge` is unset, picked by where its
+ * files are: a dir deploys to a Pages site, so `pages`; an R2 bucket (an
+ * endpoint on r2.cloudflarestorage.com) and a GCS or Azure bucket get a
+ * Cloudflare Worker; any other S3 bucket gets CloudFront's Lambda@Edge.
+ */
+export function registryEdge(reg: Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">): RegistryEdge {
+  if (reg.edge) return reg.edge;
+  if (reg.dir !== undefined) return "pages";
+  if (reg.endpoint && /(^|\.)r2\.cloudflarestorage\.com(?::\d+)?(\/|$)/i.test(reg.endpoint.replace(/^https?:\/\//i, ""))) return "cloudflare";
+  return /^(gs|az):\/\//.test(reg.bucket ?? "") ? "cloudflare" : "cloudfront";
+}
 /** A registry namespace or module name, as the Terraform module registry protocol allows them. */
 export const REGISTRY_NAME = /^[0-9A-Za-z](?:[0-9A-Za-z_-]{0,62}[0-9A-Za-z])?$/;
 /** A registry module's system (its target provider): lower-case letters and digits. */
@@ -1438,19 +1502,66 @@ function checkRegistry(r: unknown, where: string, targets: unknown[], problems: 
     else if (r.download === "git-tags" && !targets.includes("git-tags")) problems.push(`${where}.download: git-tags points each version at its git tag, so publish needs git-tags too`);
     else if (r.download === "oci" && !targets.some((t) => typeof t === "string" && t.startsWith("oci://"))) problems.push(`${where}.download: oci points each version at its OCI artifact, so publish needs an oci:// target too`);
   }
+  if (r.edge !== undefined) {
+    if (!REGISTRY_EDGES.includes(r.edge as RegistryEdge)) problems.push(`${where}.edge is ${JSON.stringify(r.edge)}; use ${REGISTRY_EDGES.join(", ")}`);
+    else if (r.edge === "pages" && r.dir === undefined) problems.push(`${where}.edge: pages writes a _headers file beside the files a Pages site deploys, so it needs ${where}.dir`);
+  }
+  if (r.providers !== undefined && !REGISTRY_PROVIDERS.includes(r.providers as (typeof REGISTRY_PROVIDERS)[number])) problems.push(`${where}.providers is ${JSON.stringify(r.providers)}; the one setting is mirror`);
+  if (r.catalog !== undefined && !REGISTRY_CATALOG.includes(r.catalog as (typeof REGISTRY_CATALOG)[number])) problems.push(`${where}.catalog is ${JSON.stringify(r.catalog)}; use on or off`);
+  if (r.auth !== undefined) {
+    if (!REGISTRY_AUTHS.includes(r.auth as RegistryAuth)) problems.push(`${where}.auth is ${JSON.stringify(r.auth)}; use off or token`);
+    else if (r.auth === "token" && (r.edge === undefined || REGISTRY_EDGES.includes(r.edge as RegistryEdge))) {
+      const edge = registryEdge(r as Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">);
+      if (!TOKEN_EDGES.includes(edge)) problems.push(`${where}.auth: token needs an edge function to check each token, and edge ${edge} serves the files as they are; set ${where}.edge to cloudflare or cloudfront, or keep the registry on a private network`);
+    }
+  }
+  checkRegistryTokens(r, where, problems);
 }
+
+function checkRegistryTokens(r: Record<string, unknown>, where: string, problems: string[]): void {
+  const { tokens, tokens_name: name, tokens_region: region } = r;
+  if (tokens !== undefined && !REGISTRY_TOKENS.includes(tokens as RegistryTokens)) {
+    problems.push(`${where}.tokens is ${JSON.stringify(tokens)}; use ${REGISTRY_TOKENS.join(", ")}`);
+    return;
+  }
+  const store = tokens === "ssm" || tokens === "secrets-manager";
+  if (store) {
+    if (r.auth !== "token") problems.push(`${where}.tokens: ${tokens} is where the edge function reads its tokens, so it needs ${where}.auth: token`);
+    const edge = registryEdge(r as Pick<RegistrySettings, "edge" | "dir" | "bucket" | "endpoint">);
+    if (edge !== "cloudfront") problems.push(`${where}.tokens: ${tokens} is read by Lambda@Edge, and this registry's edge is ${edge}; set ${where}.edge to cloudfront`);
+    if (typeof name !== "string" || name === "") problems.push(`${where}.tokens_name must be ${tokens === "ssm" ? "the SSM parameter's name, such as /registry/tokens" : "the secret's name or ARN"}`);
+  } else if (name !== undefined) {
+    problems.push(`${where}.tokens_name names the token store; set ${where}.tokens to ssm or secrets-manager`);
+  }
+  if (region !== undefined) {
+    if (!store) problems.push(`${where}.tokens_region is the token store's region; set ${where}.tokens to ssm or secrets-manager`);
+    else if (typeof region !== "string" || !/^[a-z]{2}(-[a-z]+)+-\d$/.test(region)) problems.push(`${where}.tokens_region must be an AWS region, such as us-east-1`);
+  }
+}
+
+/**
+ * A GitLab module registry in `modules.publish` (terragucci#1300): `gitlab`,
+ * the project a GitLab CI job runs in, or `gitlab://<host>/<project path>`.
+ */
+export const gitlabPublishForm = /^gitlab:\/\/[^/\s]+\/[^/\s?#]+\/[^\s?#]+$/;
+export const isGitlabTarget = (t: string): boolean => t === "gitlab" || gitlabPublishForm.test(t);
+/** HCP Terraform's private registry in `modules.publish` (terragucci#1301): `hcp://<org>`, or `hcp://<host>/<org>` for Terraform Enterprise. */
+export const hcpPublishForm = /^hcp:\/\/(?:[^/\s]+\.[^/\s]+\/)?[A-Za-z0-9_-]+$/;
+/** An Artifactory or Nexus hosted repository in `modules.publish` (terragucci#1302): `<kind>://<host>/<repository>[/<namespace>]`. */
+export const repositoryPublishForm = /^(artifactory|nexus):\/\/[^/\s]+\/[A-Za-z0-9._-]+(\/[A-Za-z0-9_-]+)?$/;
 
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
   if (m.path !== undefined && typeof m.path !== "string") problems.push(`${where}.path must be a glob`);
   const targets = Array.isArray(m.publish) ? m.publish : m.publish === undefined ? [] : [m.publish];
   for (const t of targets) {
-    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
-      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
+    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t) || isGitlabTarget(t) || hcpPublishForm.test(t) || repositoryPublishForm.test(t))) {
+      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address, git-tags, gitlab (in GitLab CI), gitlab://<host>/<group>/<project>, hcp://<organization> or hcp://<host>/<organization>, artifactory://<host>/<repository>[/<namespace>] or nexus://<host>/<repository>[/<namespace>]`);
     }
   }
   if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
   if (m.test !== undefined && typeof m.test !== "boolean") problems.push(`${where}.test must be true or false`);
+  if (m.gitlab_token !== undefined && !(typeof m.gitlab_token === "string" && SECRET_NAME.test(m.gitlab_token))) problems.push(`${where}.gitlab_token must name the secret holding a GitLab token with the api scope, such as GITLAB_TOKEN`);
   if (m.attest !== undefined) {
     // true reads the public key at cosign.pub.
     if (isObject(m.attest)) {
@@ -1504,6 +1615,14 @@ export interface ModulesSettings {
   test?: boolean;
   /** Write each release as the Terraform module registry protocol, as static files a bucket or a Pages site serves. */
   registry?: RegistrySettings;
+  /** The secret holding a GitLab token with the api scope, which a GitHub or Forgejo publish job passes as `GITLAB_TOKEN` for a `gitlab://` target. Default `GITLAB_TOKEN`. */
+  gitlab_token?: string;
+}
+
+/** The secret a GitHub or Forgejo publish job reads the GitLab token from, when `modules.publish` names a `gitlab://` project; undefined when it names none. */
+export function gitlabPublishToken(m: ModulesSettings | undefined): string | undefined {
+  const targets = Array.isArray(m?.publish) ? m.publish : m?.publish === undefined ? [] : [m.publish];
+  return targets.some((t) => gitlabPublishForm.test(t)) ? (m?.gitlab_token ?? "GITLAB_TOKEN") : undefined;
 }
 
 /**
@@ -1517,6 +1636,25 @@ export interface SourcesSettings {
   modules?: string[];
   /** Globs of provider addresses, such as `hashicorp/*` or `registry.example.com/acme/*`. */
   providers?: string[];
+  /** Registry proxies a source may be written through, each standing for its upstream (terragucci#1302). */
+  proxies?: SourceProxy[];
+}
+
+/**
+ * One `sources.proxies` entry: an Artifactory remote or virtual Terraform
+ * repository (`artifactory: <host>`), or a Nexus proxy or group Terraform
+ * repository (`nexus: <https url>`), each with its repository and the
+ * upstream it stands for. A source written through one matches the globs as
+ * its upstream form, and `modules.require` reads through it.
+ */
+export interface SourceProxy {
+  artifactory?: string;
+  nexus?: string;
+  repo: string;
+  /** The registry host the proxy stands for. Default registry.terraform.io. */
+  upstream?: string;
+  /** Nexus: the label of the consumers' CLI `host` block. Default the upstream. */
+  host?: string;
 }
 
 /** `modules.registry`: the module registry protocol as static files. */
@@ -1539,6 +1677,20 @@ export interface RegistrySettings {
   system?: string;
   /** What a version's download points at: a tarball beside it (the default), its git tag, or its OCI artifact. */
   download?: "tarball" | "git-tags" | "oci";
+  /** What adds the X-Terraform-Get header Terraform reads: a Cloudflare Worker, CloudFront's Lambda@Edge, a Pages `_headers` file, or nothing. Default: picked from `bucket`, `endpoint` or `dir` (registryEdge). */
+  edge?: RegistryEdge;
+  /** `token`: the edge function refuses a read without one of its bearer tokens and signs tarball URLs. Default `off`. */
+  auth?: RegistryAuth;
+  /** Where CloudFront's Lambda@Edge reads the accepted tokens with `auth: token`: `zip` (built into the function, the default), `ssm` or `secrets-manager`. */
+  tokens?: RegistryTokens;
+  /** The SSM parameter's name or the secret's name or ARN, for `tokens: ssm` or `secrets-manager`. */
+  tokens_name?: string;
+  /** The token store's region. Default us-east-1. */
+  tokens_region?: string;
+  /** `mirror`: publish also serves every provider the lock files pin as a provider network mirror under `providers/`. */
+  providers?: (typeof REGISTRY_PROVIDERS)[number];
+  /** `off`: publish writes no release catalog under `catalog/`. Default `on`. */
+  catalog?: (typeof REGISTRY_CATALOG)[number];
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
@@ -1800,13 +1952,31 @@ function checkSources(v: unknown, where: string, problems: string[]): void {
   }
   for (const k of Object.keys(v)) if (!SOURCES_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${SOURCES_KEYS.join(", ")})`);
   const glob = new RegExp(SOURCE_GLOB);
-  for (const k of SOURCES_KEYS) {
+  if (v.proxies !== undefined) checkSourceProxies(v.proxies, `${where}.proxies`, problems);
+  for (const k of ["modules", "providers"]) {
     const list = v[k];
     if (list === undefined) continue;
     if (!(Array.isArray(list) && list.length > 0 && list.every((g) => typeof g === "string" && glob.test(g)))) {
       problems.push(`${where}.${k} must be a list of source globs, such as ${k === "modules" ? '["./**", "registry.example.com/acme/*/*"]' : '["hashicorp/*", "registry.example.com/acme/*"]'}`);
     }
   }
+}
+
+const HOST_NAME = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:\d+)?$/;
+
+function checkSourceProxies(v: unknown, where: string, problems: string[]): void {
+  if (!Array.isArray(v) || v.length === 0) return void problems.push(`${where} must be a list of proxies, each with artifactory: <host> or nexus: <https url>, and repo`);
+  v.forEach((p, i) => {
+    const at = `${where}[${i}]`;
+    if (!isObject(p)) return void problems.push(`${at} must be a map with artifactory or nexus, and repo`);
+    for (const k of Object.keys(p)) if (!SOURCE_PROXY_KEYS.includes(k)) problems.push(`${at}.${k} is not a setting; use ${SOURCE_PROXY_KEYS.join(", ")}`);
+    if ((p.artifactory === undefined) === (p.nexus === undefined)) problems.push(`${at} names one proxy: set artifactory: <host> or nexus: <https url>`);
+    if (p.artifactory !== undefined && (typeof p.artifactory !== "string" || !HOST_NAME.test(p.artifactory))) problems.push(`${at}.artifactory must be the Artifactory host sources name, such as acme.jfrog.io`);
+    if (p.nexus !== undefined && (typeof p.nexus !== "string" || !/^https?:\/\/[^/\s]+\/?$/.test(p.nexus))) problems.push(`${at}.nexus must be the Nexus base URL with no path, such as https://nexus.example.com`);
+    if (typeof p.repo !== "string" || !/^[A-Za-z0-9._-]+$/.test(p.repo)) problems.push(`${at}.repo must be the repository's key or name`);
+    if (p.upstream !== undefined && (typeof p.upstream !== "string" || !HOST_NAME.test(p.upstream))) problems.push(`${at}.upstream must be the registry host the proxy stands for, such as registry.terraform.io`);
+    if (p.host !== undefined && (p.nexus === undefined || typeof p.host !== "string" || !HOST_NAME.test(p.host))) problems.push(`${at}.host is the label of a Nexus CLI host block; it needs nexus and must be a host name`);
+  });
 }
 
 /** Where a shared policy is fetched from: the git URL and the ref. */

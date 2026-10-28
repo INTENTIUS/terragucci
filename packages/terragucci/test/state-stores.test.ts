@@ -4,12 +4,16 @@ import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendLifecycle } from "../src/apply";
 import { stateObject, stateStore, stateVersion, type StoredState } from "../src/backend";
-import { EXPORT_DONE, EXPORT_LEDGER, exportState } from "../src/export";
+import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
-import { MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
+import { MIGRATE_LEDGER, OVERRIDE_FILE, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import type { StoreFetch } from "../src/report/object-store";
-import { lockDigest, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { lockDigest, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { chantGated, exportRecords, exportRequest, migrationRecord, unlockRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";
+
+// With chant's state operations an export, a release and a migration are chant's gated requests (chant's digest, finished lines in place of done.jsonl).
+const chantOps = await chantGated();
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
@@ -272,7 +276,7 @@ describe("terragucci state export of a gcs or azurerm state", () => {
     const got = await exportState(r.work, { ...opts, now: T(2), out: join(r.out, "app.tfstate") });
     expect(got.code).toBe(0);
     expect(JSON.parse(readFileSync(join(r.out, "app.tfstate"), "utf-8")).serial).toBe(1);
-    expect(JSON.parse(show(r.origin, EXPORT_DONE))).toMatchObject({ location: "gs://acme-state/envs/dev/app/default.tfstate", version_id: v1, exportedBy: "alice", approvedBy: "bob" });
+    expect(exportRecords(chantOps, (path) => show(r.origin, path))).toEqual([expect.objectContaining({ location: "gs://acme-state/envs/dev/app/default.tfstate", version_id: v1, exportedBy: "alice", approvedBy: "bob" })]);
   });
 
   it("names an azurerm state with no blob versions by a snapshot it takes, and refuses one that keeps neither", async () => {
@@ -283,7 +287,7 @@ describe("terragucci state export of a gcs or azurerm state", () => {
     const ask = await exportState(r.work, { root: "app", actor: "alice", env: {}, exec, fetch: s.fetch, log: () => {}, now: T(0) });
     expect(ask.code).toBe(3);
     const snap = s.blobs.get("tfstate/app.tfstate")!.snapshots[0]!.id;
-    expect(JSON.parse(show(r.origin, EXPORT_LEDGER).trim())).toMatchObject({ request: { location: "az://acme/tfstate/app.tfstate", version_id: snap } });
+    expect(exportRequest(JSON.parse(show(r.origin, EXPORT_LEDGER).trim()))).toMatchObject({ location: "az://acme/tfstate/app.tfstate", version_id: snap });
     const plain = repo({ type: "azurerm", config: AZ });
     const exec2: BinaryExec = async (_b, args, d, env) => (args[0] === "init" ? (plain.init(d, env), { code: 0, stdout: "", out: "" }) : { code: 1, stdout: "", out: "" });
     await expect(exportState(plain.work, { root: "app", actor: "alice", env: {}, exec: exec2, fetch: s.fetch, log: () => {}, now: T(0) })).rejects.toThrow(/keeps no versions, so there is no version id to export: blob versioning is off for acme/);
@@ -312,12 +316,14 @@ describe("unlock-state on a gcs or azurerm state", () => {
     const opts = { env: { FORGEJO_TOKEN: "tok" }, exec, s3Fetch: g.fetch, fetch: quiet, log: () => {}, actor: "dana" };
     const wait = await unlockState(r.work, "app", { ...opts, now: T(20) });
     expect(wait).toMatchObject({ code: 3, location: "gs://acme-state/envs/dev/app/default.tflock", lock: { ID: gen, Who: "runner@job-1" } });
-    expect(wait.digest).toBe(lockDigest("app", "gs://acme-state/envs/dev/app/default.tflock", gen));
+    // chant's digest is over its request; terragucci's own binds the root, the lock's location and its ID (the generation).
+    if (chantOps) expect(JSON.parse(show(r.origin, UNLOCK_LEDGER).trim())).toMatchObject({ planDigest: wait.digest, request: { fields: { location: "gs://acme-state/envs/dev/app/default.tflock", id: gen } } });
+    else expect(wait.digest).toBe(lockDigest("app", "gs://acme-state/envs/dev/app/default.tflock", gen));
     appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
     const done = await unlockState(r.work, "app", { ...opts, now: T(22) });
     expect(done.code).toBe(0);
     expect(unlocked).toEqual([gen]);
-    expect(JSON.parse(show(r.origin, UNLOCK_DONE))).toMatchObject({ gate: "app", lock: { ID: gen }, approvedBy: "lee", releasedBy: "dana" });
+    expect(unlockRecords(chantOps, (path) => show(r.origin, path))).toEqual([expect.objectContaining({ root: "app", lockId: gen, approvedBy: "lee", releasedBy: "dana" })]);
   });
 
   it("reads an azurerm lock from the blob's lease and metadata, and checks the lease is gone after force-unlock", async () => {
@@ -338,7 +344,14 @@ describe("unlock-state on a gcs or azurerm state", () => {
     release = false;
     await expect(unlockState(r.work, "app", { ...opts, now: T(22) })).rejects.toThrow(/force-unlock ran, and az:\/\/acme\/tfstate\/app.tfstate is still locked/);
     release = true;
-    expect((await unlockState(r.work, "app", { ...opts, now: T(23) })).code).toBe(0);
+    if (chantOps) {
+      // chant spent the approval on the release that failed, and a request applies once: the next run asks again, for an approval of its own.
+      const again = await unlockState(r.work, "app", { ...opts, now: T(23) });
+      expect(again.code).toBe(3);
+      expect(again.digest).not.toBe(wait.digest);
+      appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(24), planDigest: again.digest })], {}, "approve");
+    }
+    expect((await unlockState(r.work, "app", { ...opts, now: T(25) })).code).toBe(0);
   });
 });
 
@@ -415,7 +428,7 @@ describe("a migration between a gcs root and an azurerm root", () => {
     const w = world();
     const before = w.g.put("acme-state/one/default.tfstate", JSON.stringify(state("L1", 4, ["a", "b"])));
     w.a.write("tfstate/two.tfstate", JSON.stringify(state("L2", 1, [])));
-    const { work, origin } = migrationRepo();
+    const { work } = migrationRepo();
     const opts = { binary: "tofu", exec: w.exec, fetch: w.fetch, env: {}, log: () => {} };
     const first = await runMigrations(work, { ...opts, now: T(1) });
     expect(first.code).toBe(3);
@@ -434,13 +447,13 @@ describe("a migration between a gcs root and an azurerm root", () => {
     expect(two.lease).toBeUndefined();
     expect(two.meta.terraformlockid).toBeUndefined();
     // The azurerm state's versions are its snapshots: the one before the write, and one of what it wrote.
-    const line = JSON.parse(show(origin, MIGRATE_DONE));
+    const { line, text } = migrationRecord(work, "split-b");
     const rows = Object.fromEntries((line.roots as { root: string; before: string | null; after: string | null }[]).map((r) => [r.root, r]));
     expect(rows.one).toMatchObject({ before, after: w.g.latest("acme-state/one/default.tfstate")!.generation });
     expect(two.snapshots.map((s) => s.id)).toContain(rows.two!.before);
     expect(two.snapshots.find((s) => s.id === rows.two!.after)!.body).toBe(two.body);
     // And it can be put back, both states by the versions it recorded.
-    expect(revertMigration("split-b", JSON.stringify(line)).text).toContain("location: az://acme/tfstate/two.tfstate");
+    expect(revertMigration("split-b", text).text).toContain("location: az://acme/tfstate/two.tfstate");
   });
 
   it("refuses when the gcs state's lock is held, and writes nothing", async () => {

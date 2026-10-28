@@ -13,15 +13,121 @@
  * (./covered-wave.ts). A chant that carries them, as 0.124.54 does, turns
  * the full behaviour on with no change here.
  *
+ * The module registry protocol (`registry`, chant#4565) is newer than the
+ * pin: until a chant release carries it, ./publish/registry.ts keeps its own
+ * reader and writer as the fallback.
+ *
+ * chant core's Terraform token reader (`@intentius/chant/terraform/credentials`,
+ * chant#4563) is newer than the pin: ./state-source.ts keeps its own lookup
+ * as the fallback.
+ *
+ * Newer than the pin too (chant#4554, terragucci#1282): chant core's object
+ * store clients (`@intentius/chant/object-store`), which ./report/bucket.ts
+ * and ./backend.ts's version list use when the installed chant has them, and
+ * the forge reads and handover parameters on modules the pin already has
+ * (`pr-forge`, `ci-handover`). Those two are told apart by what the
+ * installed functions do, not by an import: ./forge.ts, ./comment-apply.ts,
+ * ./comment-apply-gitlab.ts, ./forge-post.ts and ./handover.ts keep their
+ * own code as the fallback.
+ *
+ * Newer than the pin too (chant#4556, terragucci#1284): the check moment,
+ * `ci.hooks.check`, from `@intentius/chant/components/check-hooks`: the
+ * writer `init` adds the pre-commit preset's hook with, and the runner the
+ * check job calls. Without it init writes no hook, and `terragucci
+ * check-hooks` runs the preset's hook itself (./pre-commit.ts).
+ *
+ * Newer than the pin too (terragucci#1285): chant core's shared bucket check
+ * (`@intentius/chant/bucket-check`, chant#4558), which `init` runs on the
+ * record store choudoufu derives for a live root, and the terraform
+ * lexicon's TF046 (`lint/post-synth/tf046`, chant#4561), the local record
+ * store in CI, which ./tips/index.ts turns on. Without the first, init prints
+ * the store and checks no bucket; without the second, the tip is left out.
+ *
+ * Newer than the pin too (chant#4550, terragucci#1282): the product pipeline,
+ * `@intentius/chant/ci-product`, and its words module, which imports nothing
+ * (`ci-product-words`). With them terragucci's words (./ci-words.ts) go
+ * through chant: the comment grammar (`parseProductComment`, ./comment.ts),
+ * the approve line (`approveLine`, ./report/marker.ts), the status contexts,
+ * and the pipeline's comment conditions and waves names
+ * (`productPipelineJobs`, ./render.ts). Without them terragucci's own code
+ * gives the same names.
+ *
+ * Newer than the pin too (chant#4568, terragucci#1282): the control repo in
+ * chant core, `@intentius/chant/ci-control`, and each forge lexicon's
+ * `components/control-pipeline`. With them the member's dispatch, the control
+ * repo's pipeline, its entries on the ledger and reconcile are chant's
+ * (./control-repo.ts, ./control-records.ts, ./reconcile.ts). Without them
+ * terragucci's own code runs, with its record files.
+ *
+ * Newer than the pin too (terragucci#1282 part e): chant's exit-code table
+ * (`exit-codes`, chant#4553), which terragucci passes through; the
+ * terraform lexicon's drift rows (`drift-rows`, chant#4580), which count and
+ * name the drift report's objects; chant's pull request environment ledger
+ * (`components/pr-env-ledger`, chant#4551); the op-wave step contract
+ * (`op/op-waves-capability`, chant#4545) with the terraform lexicon's
+ * `terraform-apply` capability passed in process; and chant's OTLP exporter
+ * (`otlp`, chant#4555). The review agent's tag list (chant#4580) and the
+ * object store's setting hints (chant#4584) are told apart by what the
+ * installed module exports, on subpaths the pin already has.
+ *
+ * Newer than the pin too (chant#4560, terragucci#1286): the terraform
+ * lexicon's known-module catalog (`module-catalog`), the static tier of
+ * choudoufu's module compatibility table. ./report/estate.ts puts its answer
+ * beside each module version on the estate page and ./tips/index.ts words a
+ * tip from it for a choudoufu project. Without it the column and the tip are
+ * left out.
+ *
+ * Newer than the pin too (terragucci#1297, #1298): chant core's release
+ * catalog (`lifecycle/release-catalog` and `lifecycle/release-catalog-site`,
+ * chant#4595), its status records (`lifecycle/release-status`, chant#4596)
+ * and its changelog (`lifecycle/release-changelog`, chant#4597), with the
+ * terraform lexicon's docs extractor, consumer scan, catalog reader and
+ * deprecated-version check on its `registry` subpath (chant#4598, #4599).
+ * ./publish/catalog.ts writes the catalog beside the registry with them, and
+ * `terragucci modules` reads it. Without them publish writes no catalog and
+ * says so in its row.
+ *
+ * Newer than the pin too (terragucci#1300, #1301, #1302): the terraform
+ * lexicon's module targets on its `registry` subpath (GitLab, chant#4603; HCP
+ * Terraform, chant#4604; Artifactory and Nexus, chant#4605), on core's
+ * publish-target contract over a module version (chant#4602).
+ * ./publish/hosted.ts wraps one as a `modules.publish` target; without them a
+ * hosted target is refused with the chant release it needs. The same subpath
+ * carries the registry proxies (chant#4606) that `sources.proxies` matches
+ * and `require` reads through; without them a source through a proxy is
+ * matched as written.
+ * Newer than the pin too (terragucci#1282 part f): chant core's forge and
+ * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
+ * check` calls (./forge-check.ts); its notify relay (`notify-relay`,
+ * chant#4611), whose signature checks and principal mapping ./relay.ts
+ * uses; its ledger estate (`ci-estate`, chant#4612), which ./estate.ts
+ * builds on once the ledger holds wave run records; its shared policy source
+ * (`policy-source`, chant#4613), which fetches `policy.source`
+ * (./report/policy.ts); and the op-wave stand-down on `op` (chant#4581),
+ * told apart by its exports, which ./apply.ts and the step spec use.
+ *
+ * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
+ * sources a root uses (`usedSources`, `lockedProviders`) and their forms
+ * (`moduleSourceForms`, `providerAddressForms`), on its `registry` subpath.
+ * ./sources.ts keeps only the lists and the refusals with them, and its own
+ * reader and forms as the fallback.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
  * in a module that throws for a subpath the installed chant lacks, so the
  * bundle builds either way.
  */
+import { checkoutScript as chantCheckoutScript, handoverTrap as chantHandoverTrap, packJs as chantPackJs, type HandoverForge } from "@intentius/chant/ci-handover";
 import type { DriverComponent } from "@intentius/chant/components";
+import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
+import type { PrForge } from "@intentius/chant/pr-forge";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
+import type { AzureBlobClient, AzureTarget } from "./report/azure-blob";
+import type { GcsClient, GcsTarget } from "./report/gcs";
+import { adoptChantStoreErrors, type ObjectStore, type StoreFetch } from "./report/object-store";
+import type { S3Client, S3Target } from "./report/s3";
 
 // ── compose ────────────────────────────────────────────────────────────────
 
@@ -235,6 +341,1124 @@ export interface ChantPlanShape {
   terraformPlanShape(planJson: unknown, member: string, options?: { unknownInputs?: string[] }): unknown;
 }
 
+// ── registry ───────────────────────────────────────────────────────────────
+
+/** A store the registry writer puts files to: terragucci's RegistryStore fits it. */
+export interface ChantRegistryStore {
+  put(key: string, body: string | Buffer, contentType?: string, when?: { ifMatch: string } | { ifNoneMatch: "*" }): Promise<unknown>;
+  read(key: string): Promise<{ body?: string; etag?: string }>;
+}
+
+type ChantRegistryFetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * The module registry protocol chant#4565 moved into the lexicon
+ * (`/registry`): the writer, with the download answer that carries
+ * X-Terraform-Get (terragucci#1287), and the reader.
+ */
+export interface ChantRegistry {
+  writeVersion(
+    store: ChantRegistryStore,
+    addr: { namespace: string; name: string; system: string; source: string; path: string },
+    version: { major: number; minor: number; patch: number },
+    files: { tarball?: { key: string; body: Buffer }; download: { key: string; body: string }; meta: { key: string; body: string } },
+    options?: { prefix?: string; isConflict?: (e: unknown) => boolean },
+  ): Promise<void>;
+  registryVersions(source: string, options?: { fetch?: ChantRegistryFetch }): Promise<string[]>;
+  registryLocation(source: string, version: string, options?: { fetch?: ChantRegistryFetch; reads?: "terraform" | "tofu" | "either" }): Promise<string>;
+  fetchTarball(location: string, options?: { fetch?: ChantRegistryFetch }): Promise<Buffer>;
+  downloadDoc(location: string): string;
+  downloadAnswer(location: string): { status: 200; headers: Record<string, string>; body: string };
+  registryHandler(files: (key: string) => Promise<{ body?: string | Uint8Array }>, options?: { prefix?: string; log?: (line: string) => void }): (request: Request) => Promise<Response>;
+  /**
+   * The `_headers` file Cloudflare Pages and Netlify read (chant#4566), one
+   * X-Terraform-Get rule per download path, merged into the file there. Newer
+   * than chant#4565's `/registry`, so a caller checks it is there.
+   */
+  headersFile?(rules: { path: string; location: string }[], existing?: string): string;
+  /** The rules Cloudflare Pages reads from `_headers` (chant#4566). */
+  PAGES_HEADER_RULES?: number;
+}
+
+// ── check hooks ────────────────────────────────────────────────────────────
+
+/** A `ci.hooks.check` hook: chant's `OpWaveHook`, with no `{plan}` and `onFailure` only `fail`. */
+export interface ChantCheckHook {
+  name?: string;
+  command: string[];
+  onFailure?: "fail";
+  perRun?: boolean;
+  targets?: string[];
+}
+
+/** What chant's check hooks came to (`CheckHooksReport`). */
+export interface ChantCheckHooksReport {
+  version: 1;
+  moment: "check";
+  base: string;
+  targets: string[];
+  status: "passed" | "failed" | "none";
+  hooks: { name: string; target?: string; exit: number; outcome: "passed" | "failed" | "skipped"; reason?: string }[];
+  failed?: string;
+  note?: string;
+}
+
+/**
+ * chant's check moment (`/components/check-hooks`, chant#4556): the hooks
+ * read from the workspace declaration at base, run without forge tokens or
+ * cloud credentials, and the writer a product's init adds a hook with.
+ */
+export interface ChantCheckHooks {
+  runCheckHooks(options: {
+    base: string;
+    targets?: readonly string[];
+    cwd?: string;
+    dir?: string;
+    env?: Record<string, string>;
+    log?: (line: string) => void;
+  }): ChantCheckHooksReport;
+  writeCiHook(root: string, moment: "check", hook: ChantCheckHook, opts?: { member?: string }): { file: string; replaced: boolean };
+  /** The first chant that reads `ci.hooks.check`: a declaration that uses it sets `minReader` to it. */
+  CI_CHECK_HOOK_FLOOR: string;
+}
+
+// ── terraform/credentials ──────────────────────────────────────────────────
+
+/**
+ * chant core's token reader (`@intentius/chant/terraform/credentials`,
+ * chant#4563): the token Terraform and OpenTofu send to a host, from
+ * `TF_TOKEN_<host>`, a `credentials` block in the CLI config, or
+ * credentials.tfrc.json. ./state-source.ts keeps its own copy as the fallback.
+ */
+export interface ChantCredentials {
+  terraformCredential(host: string, options?: { env?: Record<string, string | undefined> }): { token: string; from: string } | undefined;
+  tokenVariable(host: string): string | undefined;
+}
+
+// ── object-store ───────────────────────────────────────────────────────────
+
+/**
+ * chant core's object store clients (`@intentius/chant/object-store`,
+ * chant#4554), lifted from ./report/s3.ts, gcs.ts, azure-blob.ts and
+ * bucket.ts. The targets are the same shape as terragucci's, and so are the
+ * clients' methods; the product words are parameters.
+ */
+export interface ChantObjectStore {
+  storeFromEnv(
+    where: { bucket: string; endpoint?: string; role?: string; sessionName?: string; setting?: string; roleSetting?: string; hints?: { oidc?: string; gcp?: string; azure?: string } },
+    env?: NodeJS.ProcessEnv,
+    fetchFn?: StoreFetch,
+  ): ObjectStore;
+  S3Client: new (target: S3Target, fetchFn?: StoreFetch) => Pick<S3Client, keyof S3Client>;
+  GcsClient: new (target: GcsTarget, fetchFn?: StoreFetch) => Pick<GcsClient, keyof GcsClient>;
+  AzureBlobClient: new (target: AzureTarget, fetchFn?: StoreFetch) => Pick<AzureBlobClient, keyof AzureBlobClient>;
+  StoreError: abstract new (...args: never[]) => Error;
+  StoreConflict: abstract new (...args: never[]) => Error;
+}
+
+// ── bucket-check ───────────────────────────────────────────────────────────
+
+/** One setting's verdict in chant's bucket report (`BucketFinding`). */
+export interface ChantBucketFinding {
+  setting: string;
+  verdict: "ok" | "fail" | "unreadable";
+  found: string;
+  unwaivable: boolean;
+  fix?: string;
+}
+
+/** What chant's bucket check found (`BucketReport`). */
+export interface ChantBucketReport {
+  store: "s3" | "gcs" | "azblob";
+  bucket: string;
+  namespaces: string[];
+  correct: boolean;
+  settings: ChantBucketFinding[];
+}
+
+/** The stores chant's bucket check reads, as its targets name them. */
+export type ChantBucketTarget =
+  | { store: "s3"; bucket: string; region: string; endpoint?: string; credentials?: { accessKeyId: string; secretAccessKey: string; sessionToken?: string } }
+  | { store: "gcs"; bucket: string; endpoint?: string; token?: string | null }
+  | { store: "azblob"; subscriptionId: string; resourceGroup: string; account: string; container: string; endpoint?: string; token?: string };
+
+/**
+ * chant core's shared bucket check (`@intentius/chant/bucket-check`,
+ * chant#4558): the settings plunge and choudoufu refuse to open a bucket
+ * without, read with GETs only.
+ */
+export interface ChantBucketCheck {
+  checkBucket(target: ChantBucketTarget, options?: { namespaces?: readonly string[]; recoveryDays?: number }): Promise<ChantBucketReport>;
+  BucketCheckError: abstract new (...args: never[]) => Error;
+}
+
+// ── TF046 ──────────────────────────────────────────────────────────────────
+
+/** The terraform lexicon's TF046 (chant#4561): its check, and the reader that takes the environment it treats as CI. */
+export interface ChantTf046 {
+  tf046: PostSynthCheck;
+  checkLocalRecordStore(ctx: PostSynthContext, env: Readonly<Record<string, string | undefined>>): PostSynthDiagnostic[];
+}
+
+// ── module catalog (chant#4560) ────────────────────────────────────────────
+
+/** One refusal ID at a module version, across the examples that carry it. */
+export interface ChantModuleRefusal {
+  id: string;
+  sites: number;
+  docsUrl: string;
+  examples: string[];
+}
+
+/** The catalog's answer for one pinned module version. Every figure is from the one tier it names. */
+export interface ChantModuleCompatibility {
+  module: string;
+  version: string;
+  tier: string;
+  status: "unknown-module" | "unknown-version" | "clear" | "refused";
+  examples: number;
+  clearExamples: number;
+  refusedExamples: number;
+  refusals: ChantModuleRefusal[];
+  measuredVersions: string[];
+}
+
+/** The terraform lexicon's known-module catalog (`module-catalog`, chant#4560). */
+export interface ChantModuleCatalog {
+  moduleCompatibility(source: string, version: string): ChantModuleCompatibility | undefined;
+  MODULE_COMPATIBILITY_PAGE: string;
+  MODULE_CATALOG_SOURCE: { date: string; awsProvider: string; commit: string };
+}
+
+// ── ci-product (chant#4550) ────────────────────────────────────────────────
+
+/** A command a comment may name, as chant's words module lists them. */
+export type ChantProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent";
+
+/** A stage a product names in a status context and the note. */
+export type ChantProductStage = "plan" | "apply" | "record" | "check" | "drift" | "lock" | "approval" | "control";
+
+/** chant's words with every slot filled (`CiProductWords`), as far as terragucci reads them. */
+export interface ChantProductWords {
+  product: string;
+  stages: Record<ChantProductStage, string>;
+  noun: [string, string];
+  commands: Record<string, ChantProductCommand>;
+  aliases: { from: string; command: ChantProductCommand; when?: string }[];
+  approve: string;
+  op?: string;
+  gateName: string;
+  approval: "per-wave" | "pull-request";
+  bin?: string;
+  adoptMarkers: string[];
+}
+
+/** A comment read against a product's grammar (`ParsedProductComment`). */
+export type ChantParsedProductComment =
+  | { kind: "plan"; member?: string }
+  | { kind: "apply"; wave?: number }
+  | { kind: "lock" }
+  | { kind: "unlock" }
+  | { kind: "agent"; ask: string }
+  | { kind: "refused"; reason: string };
+
+/** chant's words module (`@intentius/chant/ci-product-words`): imports nothing, so every command may load it. */
+export interface ChantCiProductWords {
+  assertProductWords(input: object, options?: { jobs?: readonly ChantProductCommand[] }): ChantProductWords;
+  approveLine(words: ChantProductWords, input: { op: string; gate: string; digest: string; approver?: string; sign?: boolean; target?: string }): string;
+  parseProductComment(words: ChantProductWords, body: unknown, env?: Record<string, string | undefined>): ChantParsedProductComment | undefined;
+  productStatusContext(words: ChantProductWords, stage: ChantProductStage, member?: string): string;
+  commentLine(words: ChantProductWords, command: ChantProductCommand): string | undefined;
+}
+
+/** What `productPipelineJobs` gives back, as far as terragucci reads it. */
+export interface ChantProductPipelineJobs {
+  words: ChantProductWords;
+  comments: Partial<Record<ChantProductCommand, string>>;
+  waves?: { spec: { name: string; op: string; gateName?: string }; specFile: string; jobs: unknown[] };
+}
+
+/** chant's product pipeline (`@intentius/chant/ci-product`, chant#4550). */
+export interface ChantCiProduct extends ChantCiProductWords {
+  productPipelineJobs(
+    forge: "github" | "gitlab" | "forgejo",
+    env: string,
+    options: { words: object; waves?: object; applyBeforeMerge?: boolean; locks?: "plan"; agent?: boolean; member?: string },
+  ): ChantProductPipelineJobs;
+  productWavesSpec<S extends object>(spec: S, words: object): S;
+  CI_PRODUCT_FLOOR: string;
+}
+
+// ── ci-control (chant#4568) ────────────────────────────────────────────────
+
+/** chant's control settings with the defaults filled in (`ControlTarget`). */
+export interface ChantControlTarget {
+  repo: string;
+  host: string;
+  path: string;
+  forge: "github" | "gitlab" | "forgejo";
+  apiBase: string;
+  op: string;
+  member: string;
+  ref: string;
+  tokenSecret: string;
+  readTokenSecret: string;
+}
+
+export type ChantControlEntryKind = "project" | "defaults";
+
+/** An entry's current version on the control repo's ledger (`ControlEntry`). */
+export interface ChantControlEntry {
+  id: string;
+  entry: ChantControlEntryKind;
+  project?: string;
+  settings: Record<string, unknown>;
+  estates: string[];
+  digest: string;
+  at: string;
+  by?: string;
+}
+
+/** Where the entries are read and appended (`ControlLedgerPort`). */
+export interface ChantControlLedgerPort {
+  read(): Promise<string | null>;
+  append(line: string, message: string): Promise<string>;
+}
+
+export type ChantControlValidator = (entry: ChantControlEntryKind, project: string | undefined, settings: Record<string, unknown>) => string[];
+
+export interface ChantControlWriteOptions {
+  product: string;
+  by?: string;
+  validate?: ChantControlValidator;
+  expect?: string;
+  dryRun?: boolean;
+}
+
+export interface ChantControlPut {
+  id: string;
+  status: "created" | "updated" | "unchanged" | "retired";
+  commit?: string;
+}
+
+/** A file reconcile's generator wrote, relative to the project's root. */
+export interface ChantControlFileChange {
+  path: string;
+  status: "created" | "updated" | "unchanged" | "removed";
+}
+
+export interface ChantReconcileOutcome {
+  key: string;
+  status: "unchanged" | "would-change" | "pull-request" | "failed";
+  changes: ChantControlFileChange[];
+  pullRequest?: string;
+  error?: string;
+}
+
+/** chant core's control repo (`@intentius/chant/ci-control`, chant#4568). */
+export interface ChantCiControl {
+  resolveControlTarget(
+    input: { repo: string; forge?: "github" | "gitlab" | "forgejo"; op: string; member?: string; tokenSecret?: string; readTokenSecret?: string; ref?: string; apiBase?: string },
+    fallbackMember: string,
+  ): ChantControlTarget;
+  controlDispatchScript(target: ChantControlTarget, opts?: { words?: object; sentCheck?: string; markSent?: string }): string;
+  controlStatusContext(words?: object): string;
+  gitControlLedger(opts?: { cwd?: string }): ChantControlLedgerPort;
+  readControlEntries(port: ChantControlLedgerPort, opts?: { validate?: ChantControlValidator; lenient?: boolean }): Promise<ChantControlEntry[]>;
+  putControlEntry(port: ChantControlLedgerPort, want: { entry: ChantControlEntryKind; project?: string; settings: Record<string, unknown>; estates?: string[] }, opts: ChantControlWriteOptions): Promise<ChantControlPut>;
+  retireControlEntry(port: ChantControlLedgerPort, project: string, opts: ChantControlWriteOptions): Promise<ChantControlPut>;
+  importControlConfig(
+    port: ChantControlLedgerPort,
+    config: { defaults?: Record<string, unknown>; projects: Record<string, Record<string, unknown>>; estates?: Record<string, string[]> },
+    opts: ChantControlWriteOptions,
+  ): Promise<(ChantControlPut & { entry: string })[]>;
+  estateClaims(entries: readonly ChantControlEntry[]): Map<string, string[]>;
+  /** The note job's read of the control repo's chant/lifecycle (chant#4619), which sets CHANT_CONTROL_DIR. Absent before #4619. */
+  controlNoteCheckout?(memberForge: "github" | "gitlab" | "forgejo", target: ChantControlTarget, words?: object): { stepName: string; env: Record<string, string>; script: string };
+  reconcileProjects(
+    projects: readonly { key: string; settings: Record<string, unknown>; forge?: "github" | "gitlab" | "forgejo"; url?: string; tokenEnv?: string; apiBase?: string }[],
+    options: {
+      mode: "dry-run" | "apply";
+      project?: string;
+      words?: object;
+      generate: (dir: string, target: { key: string; name: string; forge: "github" | "gitlab" | "forgejo"; settings: Record<string, unknown>; dryRun: boolean }) => Promise<ChantControlFileChange[]>;
+      env?: Record<string, string | undefined>;
+      fetch?: (url: string, init?: RequestInit) => Promise<Response>;
+    },
+  ): Promise<ChantReconcileOutcome[]>;
+  CI_CONTROL_FLOOR: string;
+}
+
+/** A forge lexicon's control repo pipeline (`components/control-pipeline`, chant#4568). */
+export interface ChantControlPipeline {
+  generateControlPipeline(options?: { words?: object; image?: string; command?: string }): { path: string; content: string; notes: string[] };
+}
+
+// ── part e: exit codes, drift rows, pr-env ledger, wave step, otlp ─────────
+
+/** chant's exit-code table (`@intentius/chant/exit-codes`, chant#4553). */
+export interface ChantExitCodes {
+  CHANT_EXIT: { done: 0; failed: 1; drift: 2; waiting: 3; moved: 4; held: 5; superseded: 6; denied: 7; declined: 8 };
+  chantExitName(code: number): string | undefined;
+}
+
+/** The terraform lexicon's drift rows (`drift-rows`, chant#4580), with terragucci's counting rules. */
+export interface ChantDriftRows {
+  terraformPlanDriftRows(plan: unknown, options?: { live?: boolean }): { address: string; action: string; type?: string; name?: string }[];
+  terraformPlanDriftCount(plan: unknown, options?: { live?: boolean }): number;
+  terraformPlanDriftNames(plan: unknown, options?: { live?: boolean }): Map<string, string>;
+}
+
+/** chant's `_pr-envs/records.jsonl` writer (`components/pr-env-ledger`, chant#4551). */
+export interface ChantPrEnvLedger {
+  appendPrEnvRecord(record: unknown, opts?: { cwd?: string }): Promise<{ commit: string }>;
+  PR_ENV_APPEND_FLOOR: string;
+}
+
+/** The part of chant's `lifecycle/git` the pr-env writer needs after it appends. */
+export interface ChantLifecycleGit {
+  pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }>;
+}
+
+/** chant's op-wave step contract (`op/op-waves-capability`, chant#4545). */
+export interface ChantOpWaveStep {
+  opWaveStepProblems(spec: object): string[];
+  opWaveHoldsProblems(holds: unknown): string[];
+  planOpWaveStep: (...args: never[]) => unknown;
+  applyOpWaveStep: (...args: never[]) => unknown;
+}
+
+/** A capability registry with the terraform lexicon's `terraform-apply`, for a wave run in terragucci's process (ruling C). */
+export interface ChantWaveCapabilities {
+  registry: { has(kind: string): boolean; kinds?(): string[] };
+}
+
+/** One planned run, as chant's after-plan hook in the wave's process hands it (chant#4614). */
+export interface ChantAfterPlanRun {
+  wave: number;
+  waveName: string;
+  job: "wave" | "decide" | "share" | "group";
+  target: string;
+  planDigest: string;
+  /** The run's plan file, relative to the job's directory. */
+  plan: string;
+  /** The engine's plan document (`show -json`), when the plan names one. */
+  planJson?: string;
+  empty: boolean;
+  destructive: boolean;
+  changeSet?: { entries: { action: string }[] };
+}
+
+/** A policy row on chant's run record (chant#4614). */
+export interface ChantPolicyRow {
+  source: string;
+  result: "passed" | "warned" | "denied" | "held";
+  rules: string[];
+  reason?: string;
+}
+
+/** chant's op-wave job run in this process with after-plan hooks (`@intentius/chant/op`, chant#4614). */
+export interface ChantAfterPlan {
+  OP_WAVE_AFTER_PLAN_FLOOR: string;
+  runOpWave(options: {
+    spec: object;
+    specFile: string;
+    wave: number;
+    decide?: boolean;
+    share?: number;
+    group?: string;
+    base?: string;
+    cwd?: string;
+    log?: (line: string) => void;
+    capabilities?: unknown;
+    hookExec?: (argv: string[], cwd: string, env?: Record<string, string>) => Promise<number>;
+    afterPlan?: { name: string; onFailure?: "fail" | "approve"; run(r: ChantAfterPlanRun): Promise<{ policy?: ChantPolicyRow[]; files?: string[] } | void> | { policy?: ChantPolicyRow[]; files?: string[] } | void };
+  }): Promise<import("@intentius/chant/op").RunOpWaveResult>;
+  opWavePlanPath(spec: { name: string }, wave: number, target: string): string;
+  spawnExecAsync(argv: string[], cwd: string, env?: Record<string, string>): Promise<number>;
+}
+
+/** chant's OTLP exporter (`@intentius/chant/otlp`, chant#4555). */
+export interface ChantOtlp {
+  otlpFromEnv(env?: NodeJS.ProcessEnv, opts?: { prefix?: string }): { prefix: string } | undefined;
+  OTLP_EXPORTER_FLOOR: string;
+  configureOtlp?(opts: { prefix?: string }): unknown;
+  /** One OTLP/JSON POST: the problem, or undefined when the collector took it. Never throws. */
+  sendOtlp(
+    target: { url: string; headers: Record<string, string> },
+    body: unknown,
+    fetchFn?: (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
+  ): Promise<string | undefined>;
+}
+
+// ── release catalog (terragucci#1297, chant#4595-#4599) ───────────────────
+
+/** A version's status in the catalog. */
+export type ChantReleaseState = "active" | "deprecated" | "yanked";
+
+/** One version in chant's release catalog (`CatalogVersion`, chant#4595). */
+export interface ChantCatalogVersion {
+  version: string | null;
+  digest: string;
+  commit: string;
+  time: string;
+  actor: string;
+  envs: string[];
+  status: { state: ChantReleaseState; reason: string | null; replacement: string | null; actor: string | null; time: string | null };
+  changelog: { bump: "major" | "minor" | "patch" | null; entries: { kind: string; sha: string; subject: string; scope?: string }[] };
+  attestation: { state: "verified" | "signed" | "unsigned"; verify: string | null; identity: string | null };
+  consumers: { repo?: string; root: string; file?: string; address?: string }[];
+  fields: Record<string, Record<string, unknown>>;
+}
+
+/** One component in the catalog. */
+export interface ChantCatalogComponent {
+  name: string;
+  latest: string | null;
+  fields: Record<string, Record<string, unknown>>;
+  versions: ChantCatalogVersion[];
+}
+
+/** chant's release catalog document (`ReleaseCatalog`, chant#4595). */
+export interface ChantReleaseCatalogDoc {
+  $schema: string;
+  contract: 1;
+  chant: string;
+  generatedAt: string;
+  components: ChantCatalogComponent[];
+}
+
+/** A status record (`ReleaseStatusRecord`, chant#4596). */
+export interface ChantReleaseStatusRecord {
+  version: 1;
+  component: string;
+  env: string;
+  digest: string;
+  releaseVersion?: string;
+  status: ChantReleaseState;
+  reason?: string;
+  replacement?: string;
+  actor: string;
+  timestamp: string;
+}
+
+/** The site's engine sections (`CatalogSiteSections`), passed through untouched. */
+export type ChantCatalogSections = object;
+
+/**
+ * chant core's release catalog: the model (`lifecycle/release-catalog`,
+ * chant#4595), its static site (`lifecycle/release-catalog-site`), the status
+ * records (`lifecycle/release-status`, chant#4596) and the changelog
+ * (`lifecycle/release-changelog`, chant#4597).
+ */
+export interface ChantReleaseCatalog {
+  buildReleaseCatalog(
+    input: {
+      releases: readonly unknown[];
+      statuses?: readonly unknown[];
+      changelogs?: readonly { component: string; version?: string; digest?: string; entries: unknown[]; bump?: string }[];
+      consumers?: readonly { component: string; version?: string; digest?: string; consumers: unknown[] }[];
+      attestations?: readonly { component: string; digest: string; state: string; verify?: string; identity?: string }[];
+      fields?: readonly { component: string; version?: string; digest?: string; engine: string; fields: Record<string, unknown> }[];
+    },
+    opts: { generatedAt: string; chant?: string },
+  ): ChantReleaseCatalogDoc;
+  parseReleaseCatalog(text: string | unknown): ChantReleaseCatalogDoc;
+  renderCatalogSite(catalog: ChantReleaseCatalogDoc, sections?: ChantCatalogSections, opts?: { title?: string }): { path: string; contentType: string; bytes: Uint8Array }[];
+  versionPath(component: string, key: string): string;
+  componentPath(component: string): string;
+  parseReleaseStatus(text: string | null): { records: ChantReleaseStatusRecord[]; malformed: number };
+  catalogStatusInputs(records: readonly ChantReleaseStatusRecord[]): unknown[];
+  statusOf(records: readonly ChantReleaseStatusRecord[], component: string, digest: string): { status: ChantReleaseState; record?: ChantReleaseStatusRecord };
+  appendReleaseStatus(input: Omit<ChantReleaseStatusRecord, "version">, opts?: { cwd?: string }): Promise<{ commit: string; record: ChantReleaseStatusRecord }>;
+  releaseChangelog(commits: readonly { sha: string; message: string }[]): { bump: "major" | "minor" | "patch"; entries: { kind: string; sha: string; subject: string; scope?: string }[] };
+  RELEASE_STATUS_FILE: string;
+  RELEASE_CATALOG_FLOOR: string;
+}
+
+/** A module call the terraform lexicon's scan found (`ModuleConsumer`, chant#4599). */
+export interface ChantModuleConsumer {
+  root: string;
+  file: string;
+  address: string;
+  kind: "terraform" | "terragrunt";
+  source: string;
+  module: string;
+  pin: string | null;
+}
+
+/** One finding of the deprecated-version check (`DeprecatedPin`, chant#4599). */
+export interface ChantDeprecatedPin {
+  consumer: ChantModuleConsumer;
+  component: string;
+  version: string;
+  status: "deprecated" | "yanked";
+  reason: string | null;
+  replacement: string | null;
+  message: string;
+}
+
+/** The terraform-docs runner the lexicon's extractor takes (`TerraformDocsRunner`, chant#4598). */
+export type ChantTerraformDocsRunner = (args: { dir: string; config: string }) => Promise<string | null>;
+
+/**
+ * The terraform lexicon's catalog parts, on its `registry` subpath: the docs
+ * extractor and catalog fields (chant#4598), the consumer scan, the catalog
+ * reader and the deprecated-version check (chant#4599).
+ */
+export interface ChantRegistryCatalog {
+  moduleDocs(dir: string, options?: { parser?: unknown; terraformDocs?: ChantTerraformDocsRunner; binary?: string }): Promise<{ docsFrom: "terraform-docs" | "hcl"; note: string | null } & Record<string, unknown>>;
+  terraformCatalogFields(docs: unknown, address: string): Record<string, unknown>;
+  terraformCatalogSections(): ChantCatalogSections;
+  moduleConsumers(repo: string, roots: readonly string[], parser?: unknown): Promise<ChantModuleConsumer[]>;
+  normalizeModuleSource(module: string): string;
+  readRegistryCatalog(registry: string, options?: { fetch?: (url: string, init?: RequestInit) => Promise<Response>; scheme?: "https" | "http"; token?: string | false }): Promise<ChantReleaseCatalogDoc | null>;
+  deprecatedPins(consumers: readonly ChantModuleConsumer[], catalog: ChantReleaseCatalogDoc): { warnings: ChantDeprecatedPin[]; refusals: ChantDeprecatedPin[] };
+  CATALOG_PATH: string;
+}
+
+// ── module targets (terragucci#1300, chant#4602-#4604) ───────────────────
+
+/** A module in a hosted registry, without the host (`ModuleAddress`, chant#4603). */
+export interface ChantModuleAddress {
+  namespace: string;
+  name: string;
+  system: string;
+}
+
+/** What a module target is given (`ModuleVersionContext`, chant#4603), on core's publish context (chant#4602). */
+export interface ChantModuleVersionContext {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  redactor: { add(value: string | undefined | null): void; redact(text: string): string };
+  log(line: string): void;
+  provenance: { oidc: boolean; ci: "github" | "gitlab" | null; reason: string };
+  tag: string | null;
+  address: ChantModuleAddress;
+  version: string;
+  archive: Uint8Array;
+  revision: string;
+  content: string;
+}
+
+/** A module publish target (`ModulePublishTarget`, chant#4603): core's contract plus its two reads. */
+export interface ChantModuleTarget {
+  kind: string;
+  name: string;
+  credentialEnv: string[];
+  versions(address: ChantModuleAddress, ctx: Pick<ChantModuleVersionContext, "env" | "redactor">): Promise<string[]>;
+  held(address: ChantModuleAddress, version: string, ctx: Pick<ChantModuleVersionContext, "env" | "redactor">): Promise<{ content: string; revision?: string; status?: string } | undefined>;
+  plan(ctx: ChantModuleVersionContext): Promise<unknown[]>;
+  stage(ctx: ChantModuleVersionContext): Promise<{ target: string; destination: string }>;
+  reveal(ctx: ChantModuleVersionContext, staged: { target: string; destination: string }): Promise<unknown>;
+}
+
+/** The fetch a module target and its registry reads take. */
+export type ChantModuleFetch = (url: string, init?: { method?: string; headers?: unknown; body?: unknown; redirect?: "follow" | "manual" }) => Promise<Response>;
+
+/** What a module target's factory is given (`ModuleTargetDeps`). */
+export interface ChantModuleTargetDeps {
+  fetch?: ChantModuleFetch;
+  registryFetch?: ChantModuleFetch;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/**
+ * The terraform lexicon's module targets (`registry/targets`, chant#4603),
+ * with core's redactor and error class from the publish-target contract
+ * (`lifecycle/publish-credentials`, `lifecycle/release-publish`, on the pin).
+ */
+export interface ChantModuleTargets {
+  gitlabModuleTarget(options: { project?: string; api?: string; tokenEnv?: string; namespace?: string }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  /** HCP Terraform or Terraform Enterprise (chant#4604); absent on a chant with GitLab alone. */
+  hcpModuleTarget?(options: { organization: string; host?: string; tokenEnv?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  /** JFrog Artifactory and Sonatype Nexus hosted repositories (chant#4605); absent before it. */
+  artifactoryModuleTarget?(options: { url: string; repo: string; tokenEnv?: string; userEnv?: string; user?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  nexusModuleTarget?(options: { url: string; repo: string; host?: string; tokenEnv?: string; userEnv?: string; user?: string; waitMs?: number; pollMs?: number }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  createRedactor(env?: NodeJS.ProcessEnv, names?: readonly string[]): ChantModuleVersionContext["redactor"];
+  PublishTargetError: new (code: string, message: string, fix?: string) => Error & { code: string; fix?: string };
+}
+
+// ── registry proxies (terragucci#1302, chant#4606) ────────────────────────
+
+/** A registry proxy (`RegistryProxy`, chant#4606): an Artifactory remote repository or a Nexus proxy in front of an upstream. */
+export interface ChantRegistryProxy {
+  host: string;
+  repo?: string;
+  upstream?: string;
+  modules?: string;
+  providers?: string;
+}
+
+/** The terraform lexicon's proxy forms and the reads that go through them (`registry/proxies`, chant#4606). */
+export interface ChantRegistryProxies {
+  artifactoryProxy(host: string, repo: string, upstream?: string): ChantRegistryProxy;
+  nexusProxy(o: { url: string; repo: string; upstream?: string; host?: string }): ChantRegistryProxy;
+  moduleThroughProxy(source: string, proxies?: readonly ChantRegistryProxy[]): { proxy: ChantRegistryProxy; upstream: string } | undefined;
+  providerThroughProxy(source: string, proxies?: readonly ChantRegistryProxy[]): { proxy: ChantRegistryProxy; upstream: string } | undefined;
+  registryLocation(source: string, version: string, options?: { fetch?: ChantModuleFetch; proxies?: readonly ChantRegistryProxy[] }): Promise<string>;
+  fetchTarball(location: string, options?: { fetch?: ChantModuleFetch }): Promise<Uint8Array>;
+}
+
+// ── part f: forge check, relay, estate, policy source, stand-down ─────────
+
+/** A forge check row (`CheckRow` in `@intentius/chant/forge-check`, chant#4608). */
+export interface ChantCheckRow {
+  where: "github" | "gitlab" | "forgejo" | "aws" | "gcp" | "azure" | "pulumi";
+  check: string;
+  subject: string;
+  expected: string;
+  found: string;
+  status: "match" | "mismatch" | "unknown" | "not-checked";
+}
+
+/** The repository a forge check names (`ForgeCheckRepository`). */
+export interface ChantForgeCheckRepository {
+  host: string;
+  path: string;
+  defaultBranch: string;
+  ownerId?: string;
+  repoId?: string;
+}
+
+/** A job's OIDC token, as the contract holds it (`JobToken`). */
+export interface ChantJobToken {
+  issuer: string;
+  subject: string;
+  pattern: boolean;
+  claims: Record<string, string>;
+  placeholders: string[];
+}
+
+/** One job of the contract (`ForgeCheckJob`). */
+export interface ChantForgeCheckJob {
+  name: string;
+  identity: "plan" | "apply";
+  token: ChantJobToken;
+  forgeEnvironment?: string;
+  runner?: { labels: string[]; group?: string };
+  aws?: { roles: string[]; audience: string };
+  gcp?: { provider: string; audience: string };
+  azure?: { clientIds: string[]; audience: string };
+}
+
+/** The forge check's contract (`ForgeCheckContract`). */
+export interface ChantForgeCheckContract {
+  forge: "github" | "gitlab" | "forgejo";
+  repository: ChantForgeCheckRepository;
+  jobs: ChantForgeCheckJob[];
+  protectedBranches?: string[];
+  requiredStatuses?: string[];
+  gitlabVariables?: string[];
+}
+
+/** The forge to read (`ForgeTarget` in `@intentius/chant/pr-forge`). */
+export interface ChantForgeCheckTarget {
+  kind: "github" | "gitlab" | "forgejo";
+  apiBase: string;
+  repo: string;
+  host: string;
+  token: string;
+  tokenSource: string;
+  tokenHeader?: "PRIVATE-TOKEN" | "JOB-TOKEN";
+}
+
+/** The fetch chant's forge check reads through (`ForgeFetch`). */
+export type ChantForgeFetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+
+/** The forge check's result (`ForgeCheckResult`): `<product>.forge-check/v1`. */
+export interface ChantForgeCheckResult {
+  schema: string;
+  file?: string;
+  forge: "github" | "gitlab" | "forgejo";
+  repository: ChantForgeCheckRepository;
+  rows: ChantCheckRow[];
+  counts: Record<ChantCheckRow["status"], number>;
+  ok: boolean;
+}
+
+/** chant core's forge and trust-policy check (`@intentius/chant/forge-check`, chant#4608). */
+export interface ChantForgeCheck {
+  forgeCheck(
+    input: { target: ChantForgeCheckTarget; contract: ChantForgeCheckContract | ((live: { defaultBranch?: string; path?: string; ownerId?: string; repoId?: string }) => ChantForgeCheckContract); requireClouds?: boolean; words?: object; file?: string },
+    deps: { fetch: ChantForgeFetch; env: Record<string, string | undefined>; readFile?: (path: string) => string | undefined; now?: () => Date },
+  ): Promise<ChantForgeCheckResult>;
+  readRepository(fetch: ChantForgeFetch, t: ChantForgeCheckTarget): Promise<{ ok: true; value: { defaultBranch?: string; path?: string; ownerId?: string; repoId?: string } } | { ok: false; status: number | undefined; why: string }>;
+  readOnly(fetch: ChantForgeFetch, command?: string): ChantForgeFetch;
+  describeForgeCheck(r: ChantForgeCheckResult): string;
+  forgeCheckExit(r: ChantForgeCheckResult): number;
+}
+
+/** A click read from a verified chat request (`RelayClick` in `@intentius/chant/notify-relay`). */
+export interface ChantRelayClick {
+  app: "slack" | "teams";
+  chatUser: string;
+  display: string;
+  action: "approve" | "decline";
+  token: string;
+  responseUrl?: string;
+  thread?: string;
+}
+
+/** A standing pending fact chant's relay may approve (`RelayPending`). */
+export interface ChantRelayPending {
+  op: string;
+  gate: string;
+  digest: string;
+  environment?: string;
+}
+
+/** What chant's relay reads and writes (`RelayDeps`). */
+export interface ChantRelayDeps {
+  signers(): Promise<{ signers: ReadonlyArray<{ principal: string; line: number }>; path: string }>;
+  pending(digest: string): Promise<ChantRelayPending[]>;
+  approve(input: { op: string; gate: string; digest: string; environment?: string; actor: string; relayedBy: string }): Promise<{ ok: true } | { ok: false; error: string }>;
+  principal: string;
+  words: ChantProductWords;
+  now?: () => Date;
+}
+
+/** chant core's notify relay (`@intentius/chant/notify-relay`, chant#4611). */
+export interface ChantNotifyRelay {
+  verifySlackRequest(headers: Record<string, string | undefined>, raw: string, secret: string | undefined, now?: number): string | null;
+  verifyTeamsRequest(headers: Record<string, string | undefined>, raw: string, secret: string | undefined): string | null;
+  relayPrincipalFor(signers: ReadonlyArray<{ principal: string; line: number }>, chatUser: string): string | undefined;
+  slackRelayClick(raw: string): ChantRelayClick | { error: string };
+  teamsRelayClick(raw: string): ChantRelayClick | { error: string };
+  decideRelayClick(click: ChantRelayClick, settings: { key?: string; maxAgeSeconds?: number }, deps: ChantRelayDeps): Promise<{ ok: boolean; outcome: string; text: string; op?: string; gate?: string; principal?: string }>;
+  RELAY_ENV: { key: string; maxAge: string };
+}
+
+/** The delivery metrics, as chant's `buildDelivery` writes `dora.json` (terragucci's shape, plus `source`). */
+export interface ChantDora {
+  schema: string;
+  generated: string;
+  audit: boolean;
+  source: "ledger";
+  estate: { deployments: number } & Record<string, unknown>;
+  projects: ({ project: string } & Record<string, unknown>)[];
+}
+
+/** A member's section of chant's ledger estate (`EstateProject` in `@intentius/chant/ci-estate`). */
+export interface ChantEstateProject {
+  project: string;
+  status: "ok" | "no-index";
+  drift?: object;
+  apply?: { commit: string; waves: object[] };
+  waiting: { project: string; wave: number; commit: string; since: string; age_seconds: number; gate?: string }[];
+  drifted: number;
+  failed: number;
+  overdue?: object[];
+  ephemeral?: object[];
+}
+
+/** chant's ledger estate (`LedgerEstate`): the page, its delivery metrics and the overdue checks. */
+export interface ChantLedgerEstate {
+  estate: { schema: string; generated: string; source: "ledger"; totals: { overdue: number } & Record<string, number | undefined>; projects: ChantEstateProject[]; recent: object[] };
+  dora: ChantDora;
+  overdue: object[];
+}
+
+/** chant core's estate page, overdue checks and delivery metrics (`@intentius/chant/ci-estate`, chant#4612). */
+export interface ChantCiEstate {
+  buildLedgerEstate(input: { load: unknown; words?: object; now?: Date; members?: readonly string[]; project?: string; schedules?: readonly { op: string; cron: string; members?: string[] }[] }): ChantLedgerEstate;
+  readEstateLedger(cwd: string, members?: readonly string[]): Promise<unknown>;
+  deliveryGauges(dora: ChantDora, words?: object): { name: string; unit: string; description: string; value: number; attributes: Record<string, string> }[];
+  CI_ESTATE_FLOOR: string;
+}
+
+/** `ci.policy.source` (`GatePolicySource` in `@intentius/chant/policy-source`). */
+export interface ChantGatePolicySource {
+  repo: string;
+  ref: string;
+  path?: string;
+}
+
+/** A tree chant read at a commit (`WorkspaceTree`). */
+export interface ChantWorkspaceTree {
+  stat(path: string): "file" | "dir" | undefined;
+  list(path: string): { name: string; type: "file" | "dir" }[] | undefined;
+  read(path: string): string;
+  bytes?(path: string): Uint8Array;
+}
+
+/** chant core's shared policy source (`@intentius/chant/policy-source`, chant#4613). */
+export interface ChantPolicySource {
+  assertGatePolicySource(where: string, raw: unknown): void;
+  fetchGatePolicySource(source: ChantGatePolicySource, opts?: { tmp?: string }): { source: { repo: string; ref: string; commit: string; path: string }; tree: ChantWorkspaceTree; cleanup: () => void } | { error: string };
+  CI_POLICY_SOURCE_FLOOR: string;
+}
+
+/** A newer commit on the run's branch (`OpWaveNewerCommit`). */
+export interface ChantNewerCommit {
+  branch: string;
+  head: string;
+  tip: string;
+}
+
+/** chant's op-wave stand-down (`newerCommitOnBranch` in `@intentius/chant/op`, chant#4581). */
+export interface ChantOpStandDown {
+  newerCommitOnBranch(cwd: string, env?: NodeJS.ProcessEnv, head?: string): Promise<ChantNewerCommit | undefined>;
+  tipAppliesTargets(atTip: unknown, branch: string, waveName: string, targets: readonly string[]): boolean;
+  OP_WAVE_STAND_DOWN_FLOOR: string;
+}
+
+// ── used sources (chant#3924) ─────────────────────────────────────────────
+
+/** A source a root uses, as the terraform lexicon reads it (`UsedSource`, chant#3924). */
+export interface ChantUsedSource {
+  kind: "module" | "provider";
+  file: string;
+  block: string;
+  source: string;
+  normal: string;
+  implied?: string;
+}
+
+/** The terraform lexicon's source reading and forms (`used-sources`, `registry/source-forms`, chant#3924), on its `registry` subpath. */
+export interface ChantSourceForms {
+  moduleSourceForms(source: string, options?: { proxies?: readonly ChantRegistryProxy[] }): string[];
+  providerAddressForms(source: string, options?: { proxies?: readonly ChantRegistryProxy[] }): string[];
+  usedSources(
+    dir: string,
+    options?: { followLocal?: boolean; project?: string; parser?: unknown; proxies?: readonly ChantRegistryProxy[] },
+  ): Promise<{ used: ChantUsedSource[]; unread: { file: string; block: string; source: string; why: string }[] }>;
+  lockedProviders(lockText: string): string[];
+}
+
+// ── state operations, lock rows, product tools, changelog, release reads ───
+
+/** A gated request (`GatedRequest`, chant#4551). */
+export interface ChantGatedRequest {
+  kind: string;
+  subject: string;
+  by: string;
+  at: string;
+  fields: Record<string, string>;
+}
+
+/** How a gated operation ended (`GatedStateOpResult`, chant#4618). */
+export type ChantGatedStateOpResult<T> =
+  | { status: "waiting"; digest: string; request: ChantGatedRequest; command: string }
+  | { status: "refused"; digest: string; request: ChantGatedRequest; by: string; reason: string; command: string }
+  | { status: "spent"; digest: string; request: ChantGatedRequest; finished?: { result: string; timestamp: string; detail?: Record<string, unknown> } }
+  | { status: "held"; digest: string; request: ChantGatedRequest; reason: string }
+  | { status: "done"; digest: string; request: ChantGatedRequest; approvedBy: string; output: T; recorded: boolean }
+  | { status: "failed"; digest: string; request: ChantGatedRequest; approvedBy: string; error: Error; recorded: boolean };
+
+export interface ChantGatedStateOpInput {
+  op: string;
+  request: Omit<ChantGatedRequest, "at"> & { at?: string };
+  rules: { mode: string; quorum?: readonly unknown[] };
+  description?: string;
+  expiry?: string;
+  base?: string;
+  attachment?: string;
+  cwd?: string;
+  now?: string;
+  runId?: string;
+  commit?: string;
+  beforeSpend?: () => Promise<string | undefined>;
+}
+
+/** How the binary runs for one root, as the terraform lexicon's state operations take it. */
+export interface ChantRootRun {
+  root: string;
+  binary: string;
+  dir: string;
+  env?: NodeJS.ProcessEnv;
+  exec?: (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => Promise<{ code: number; stdout: string; out: string }>;
+}
+
+/** One gated request as the ledger holds it (`GatedRequestRead`). */
+export interface ChantGatedRequestRead {
+  op: string;
+  gate: string;
+  digest: string;
+  request: ChantGatedRequest;
+  pending: { timestamp: string; expiresAt?: string };
+  approvals: { resolvedBy: string; timestamp: string }[];
+  applied?: { timestamp: string; approvedBy?: string; approvedAt?: string };
+  finished?: { result: string; timestamp: string; detail?: Record<string, string | number | boolean> };
+}
+
+/**
+ * chant's recorded op-wave hold (chant#4623): a hold file with `record: true`
+ * has chant write the held gate's applied line before the approved re-run
+ * and its finished line after, from what the re-run writes to
+ * `CHANT_HOLD_FINISHED`, and store the hold's `attachment` at
+ * {@link ChantHoldRecord.gatedRequestAttachmentPath}.
+ */
+export interface ChantHoldRecord {
+  OP_WAVE_HOLD_RECORD_FLOOR: string;
+  gatedRequestAttachmentPath(op: string, digest: string): { dir: string; file: string };
+}
+
+/** What chant's gate ledger writers answer: whether the line reached the remote. */
+export interface ChantLedgerPush {
+  pushed: boolean;
+  pushWarning?: string;
+}
+
+/** chant's gate ledger port (`op/gate` `gitGateLedgerPort`): the writers of `_gates/<op>.jsonl` and `_gates/<op>/applied.jsonl`. */
+export interface ChantGateLedgerPort {
+  appendPending(input: Record<string, unknown>): Promise<ChantLedgerPush>;
+  appendResolution?(input: Record<string, unknown>): Promise<ChantLedgerPush>;
+  appendApplied?(record: Record<string, unknown>): Promise<ChantLedgerPush>;
+  /** chant#4623; on a chant without it a finished line goes through appendApplied, which appends any line to the same file. */
+  appendFinished?(record: Record<string, unknown>): Promise<ChantLedgerPush>;
+}
+
+/**
+ * chant's ledger writers for the records a tf-apply wave writes on chant's
+ * path (terragucci#1282 part j): the gate port, a file beside a pending fact,
+ * and the push. Loaded only from a chant with the recorded hold
+ * (`OP_WAVE_HOLD_RECORD_FLOOR`, chant#4623), so the published pin keeps
+ * terragucci's own writer.
+ */
+export interface ChantGateWriters {
+  OP_WAVE_HOLD_RECORD_FLOOR: string;
+  gitGateLedgerPort(opts?: { cwd?: string }): ChantGateLedgerPort;
+  writeBlobToPath(dir: string, file: string, content: string, message: string, opts?: { cwd?: string }): Promise<string>;
+  pushLifecycleReport(opts?: { cwd?: string }): Promise<ChantLedgerPush>;
+  /** Fetch chant/lifecycle into the checkout's branch, refusing a fork (#2303); every chant has it. */
+  requireLifecycleLedger(opts?: { cwd?: string }): Promise<void>;
+  isLifecycleLocalNote(warning: string | undefined): boolean;
+}
+
+/** The terraform lexicon's state operations (`state-ops`, chant#4618) with chant's gated-request reader (chant#4551). */
+export interface ChantStateOps {
+  gatedStateOp<T>(input: ChantGatedStateOpInput, act: (approved: { digest: string; request: ChantGatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean> }>): Promise<ChantGatedStateOpResult<T>>;
+  forceUnlockState(r: ChantRootRun & { id: string }): Promise<void>;
+  pushStateFile(r: ChantRootRun & { file: string; lock?: boolean; force?: boolean }): Promise<void>;
+  planStateCheck(r: ChantRootRun & { planFile: string; lock?: boolean }): Promise<{ planFile: string; json: unknown; summary: string }>;
+  planCopy(r: ChantRootRun & { backendConfig: Record<string, string>; planFile: string; destroy?: boolean; lockTimeout?: string | false; init?: boolean }): Promise<{ planFile: string; json: unknown; summary: string; planDigest: string }>;
+  applyPlanFile(r: ChantRootRun & { planFile: string; lockTimeout?: string | false }): Promise<void>;
+  readGatedRequests(op: string, location?: { cwd?: string }): Promise<ChantGatedRequestRead[]>;
+}
+
+/** One row an apply holds (`LockRow`, chant#4552). */
+export interface ChantLockRow {
+  key: string;
+  target: string;
+  address: string;
+}
+
+export interface ChantLockRowHolder {
+  run: string;
+  at: string;
+  url?: string;
+  sha?: string;
+}
+
+export interface ChantHeldLockRow {
+  key: string;
+  wanted: string;
+  holder: ChantLockRowHolder;
+}
+
+export interface ChantLockRowsFile {
+  version: 1;
+  holders: Record<string, ChantLockRowHolder>;
+  rows: Record<string, string>;
+}
+
+/** chant core's row leases (`lifecycle/resource-lock`, chant#4552, #4594) and the terraform lexicon's rows (`lock-rows`). */
+export interface ChantLockRows {
+  terraformLockRows(root: string, estate: string | undefined, plan: unknown): ChantLockRow[];
+  takeLockRows(gate: string, rows: readonly ChantLockRow[], me: ChantLockRowHolder, opts?: { cwd?: string; alive?: (h: ChantLockRowHolder) => Promise<"alive" | "dead"> }): Promise<{ ok: true; tookOver: ChantLockRowHolder[]; pushed: boolean } | { ok: false; held: ChantHeldLockRow[] }>;
+  releaseLockRows(gate: string, keys: readonly string[], me: string, opts?: { cwd?: string }): Promise<boolean>;
+  readLockRows(gate: string, opts?: { cwd?: string }): Promise<ChantLockRowsFile>;
+  lockRowsPath(gate: string): string;
+}
+
+/** A tool on chant's MCP server (`McpToolContribution`). */
+export interface ChantMcpTool {
+  name: string;
+  description: string;
+  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+  handler: (params: Record<string, unknown>) => Promise<unknown>;
+  readOnly?: boolean;
+}
+
+/** chant's product tool hook (`ProductMcpHook`, chant#4555). */
+export interface ChantProductMcpHook {
+  product: string;
+  tools(ctx: { cwd: string; readOnly: boolean }): ChantMcpTool[];
+  reportUrl?: string;
+  readOnly?: boolean;
+  instructions?: string;
+}
+
+/** chant's in-process CLI with the product tool hook (`@intentius/chant/ci-product`, chant#4555). */
+export interface ChantProductMcp {
+  runChantInProcess(argv: string[], words: object, options?: { mcp?: ChantProductMcpHook }): Promise<number>;
+  PRODUCT_MCP_HOOK_FLOOR: string;
+}
+
+/** chant core's changelog bump (`lifecycle/release-changelog`, chant#4597): pure, so the synchronous callers read it. */
+export interface ChantChangelog {
+  changelogBump(messages: readonly string[]): "major" | "minor" | "patch";
+}
+
+/** chant core's release record reader (`lifecycle/release-ledger`'s `parseReleaseLedger`), for a ledger read from another remote. */
+export interface ChantReleaseRead {
+  releaseLedgerLines(text: string | null): string[];
+  parseReleaseLedger(lines: readonly string[]): { records: unknown[]; malformed: number };
+}
+
+/** chant's agent run record (`agentRunRecordInput`, `@intentius/chant/ci-agent`, chant#4616) and the run ledger's writer (`appendRunRecord`). */
+export interface ChantAgentRuns {
+  agentRunRecordInput(o: {
+    settings: { name: string; on: string; env: string };
+    started: string;
+    ended: string;
+    result: "pushed" | "opened" | "updated" | "refused" | "stopped" | "failed";
+    reason: string;
+    requestedBy?: string;
+    commit?: string;
+    pullRequest?: string;
+    promptDigest?: string;
+    usage?: { model?: string; usd?: number; inputTokens?: number; outputTokens?: number };
+    gitSha?: string;
+  }): object;
+  appendRunRecord(input: object, opts?: { cwd?: string }): Promise<{ commit: string }>;
+  pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }>;
+}
+
+/** A scheduled Op spec as chant's Op generator takes it (`ScheduledOpSpec`), as far as terragucci writes one. */
+export type ChantScheduledOpSpec = { name: string; trigger?: object; agent?: object; runner?: unknown; findingMode?: string; [k: string]: unknown };
+
+/** One file chant's Op generator writes (`OpPipelineResult.files`). */
+export interface ChantOpPipelineFile {
+  name: string;
+  yaml: string;
+}
+
+/** A forge lexicon's Op generator (`components/generate-op-pipeline`), with the options terragucci passes. */
+export type ChantOpGenerator = (ops: ChantScheduledOpSpec[], options?: { image?: string; beforeScript?: string[]; runCommand?: string[]; opsStage?: string; opsFileName?: string; variables?: Record<string, string> }) => { files: ChantOpPipelineFile[] };
+
+/**
+ * chant's agent job (chant#4616, #4619): the agent's Op spec from
+ * `productPipelineJobs(..., { agent })`, the drift agent of a scheduled drift
+ * Op (`productDriftAgent`), and each forge lexicon's Op generator, which
+ * writes the agent's jobs in the words that are active
+ * (`setActiveProductWords`). `CI_AGENT_FLOOR` on the ci-product entry is the
+ * feature-detect.
+ */
+export interface ChantAgentJob {
+  CI_AGENT_FLOOR: string;
+  productPipelineJobs(
+    forge: "github" | "gitlab" | "forgejo",
+    env: string,
+    options: { words: object; agent?: boolean | Record<string, unknown>; [k: string]: unknown },
+  ): { agent?: { comment: string; name: string; spec: ChantScheduledOpSpec } };
+  productDriftAgent(words: object, op: string, options?: Record<string, unknown>): Record<string, unknown>;
+  setActiveProductWords(words: object | undefined): unknown;
+  generate: Record<"github" | "gitlab" | "forgejo", ChantOpGenerator>;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -292,6 +1516,290 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/plan-shape"),
     (m) => (has(m, "terraformPlanShape") ? (m as unknown as ChantPlanShape) : undefined),
   ),
+  registry: once<ChantRegistry>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565)
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) => (has(m, "writeVersion", "registryVersions", "registryLocation", "fetchTarball", "downloadAnswer", "registryHandler") ? (m as unknown as ChantRegistry) : undefined),
+  ),
+  checkHooks: once<ChantCheckHooks>(
+    // @ts-ignore chant 0.124.54 has no components/check-hooks subpath (chant#4556)
+    () => import("@intentius/chant/components/check-hooks"),
+    (m) => (has(m, "runCheckHooks", "writeCiHook") && typeof m.CI_CHECK_HOOK_FLOOR === "string" ? (m as unknown as ChantCheckHooks) : undefined),
+  ),
+  credentials: once<ChantCredentials>(
+    // @ts-ignore chant 0.124.54 has no terraform/credentials subpath (chant#4563)
+    () => import("@intentius/chant/terraform/credentials"),
+    (m) => (has(m, "terraformCredential", "tokenVariable") ? (m as unknown as ChantCredentials) : undefined),
+  ),
+  bucketCheck: once<ChantBucketCheck>(
+    // @ts-ignore chant 0.124.54 has no bucket-check subpath (chant#4558)
+    () => import("@intentius/chant/bucket-check"),
+    (m) => (has(m, "checkBucket", "BucketCheckError") ? (m as unknown as ChantBucketCheck) : undefined),
+  ),
+  tf046: once<ChantTf046>(
+    // @ts-ignore chant 0.124.54 has no TF046 (chant#4561)
+    () => import("@intentius/chant-lexicon-terraform/lint/post-synth/tf046"),
+    (m) => {
+      const check = m.tf046 as PostSynthCheck | undefined;
+      return check?.id === "TF046" && typeof check.check === "function" && has(m, "checkLocalRecordStore") ? (m as unknown as ChantTf046) : undefined;
+    },
+  ),
+  moduleCatalog: once<ChantModuleCatalog>(
+    // @ts-ignore chant 0.124.54 has no module-catalog subpath (chant#4560)
+    () => import("@intentius/chant-lexicon-terraform/module-catalog"),
+    (m) => (has(m, "moduleCompatibility") && typeof m.MODULE_COMPATIBILITY_PAGE === "string" && typeof m.MODULE_CATALOG_SOURCE === "object" ? (m as unknown as ChantModuleCatalog) : undefined),
+  ),
+  ciProductWords: once<ChantCiProductWords>(
+    // @ts-ignore chant 0.124.54 has no ci-product-words module (chant#4550)
+    () => import("@intentius/chant/ci-product-words"),
+    (m) => (has(m, "assertProductWords", "approveLine", "parseProductComment", "productStatusContext", "commentLine") ? (m as unknown as ChantCiProductWords) : undefined),
+  ),
+  ciProduct: once<ChantCiProduct>(
+    // @ts-ignore chant 0.124.54 has no ci-product subpath (chant#4550)
+    () => import("@intentius/chant/ci-product"),
+    // chant#4550's own feature-detect: these three present means the rest is too.
+    (m) => (has(m, "productPipelineJobs", "approveLine", "assertProductWords") && has(m, "parseProductComment", "productStatusContext", "commentLine", "productWavesSpec") ? (m as unknown as ChantCiProduct) : undefined),
+  ),
+  ciControl: once<ChantCiControl>(
+    // @ts-ignore chant 0.124.54 has no ci-control subpath (chant#4568)
+    () => import("@intentius/chant/ci-control"),
+    // chant#4568's own feature-detect: these three present means the rest is too.
+    (m) => (has(m, "controlDispatchRequest", "putControlEntry", "reconcileProjects") && has(m, "resolveControlTarget", "controlDispatchScript", "gitControlLedger", "readControlEntries", "retireControlEntry", "importControlConfig", "estateClaims") ? (m as unknown as ChantCiControl) : undefined),
+  ),
+  controlPipelineGithub: once<ChantControlPipeline>(
+    // @ts-ignore chant 0.124.54 has no components/control-pipeline in the github lexicon (chant#4568)
+    () => import("@intentius/chant-lexicon-github/components/control-pipeline"),
+    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
+  ),
+  controlPipelineGitlab: once<ChantControlPipeline>(
+    // @ts-ignore chant 0.124.54 has no components/control-pipeline in the gitlab lexicon (chant#4568)
+    () => import("@intentius/chant-lexicon-gitlab/components/control-pipeline"),
+    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
+  ),
+  controlPipelineForgejo: once<ChantControlPipeline>(
+    // @ts-ignore chant 0.124.54 has no components/control-pipeline in the forgejo lexicon (chant#4568)
+    () => import("@intentius/chant-lexicon-forgejo/components/control-pipeline"),
+    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
+  ),
+  exitCodes: once<ChantExitCodes>(
+    // @ts-ignore chant 0.124.54 has no exit-codes subpath (chant#4553)
+    () => import("@intentius/chant/exit-codes"),
+    (m) => {
+      const t = m.CHANT_EXIT as Record<string, unknown> | undefined;
+      return t && t.moved === 4 && t.denied === 7 && has(m, "chantExitName") ? (m as unknown as ChantExitCodes) : undefined;
+    },
+  ),
+  driftRows: once<ChantDriftRows>(
+    // @ts-ignore chant 0.124.54 has no drift-rows subpath (chant#4580)
+    () => import("@intentius/chant-lexicon-terraform/drift-rows"),
+    (m) => (has(m, "terraformPlanDriftRows", "terraformPlanDriftCount", "terraformPlanDriftNames") ? (m as unknown as ChantDriftRows) : undefined),
+  ),
+  prEnvLedger: once<ChantPrEnvLedger & ChantLifecycleGit>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no components/pr-env-ledger subpath (chant#4551)
+      const ledger: object = await import("@intentius/chant/components/pr-env-ledger");
+      const git: object = await import("@intentius/chant/lifecycle/git");
+      return { ...git, ...ledger };
+    },
+    (m) => (has(m, "appendPrEnvRecord", "pushLifecycleReport") ? (m as unknown as ChantPrEnvLedger & ChantLifecycleGit) : undefined),
+  ),
+  opWaveStep: once<ChantOpWaveStep>(
+    // @ts-ignore chant 0.124.54 has no op/op-waves-capability subpath (chant#4545)
+    () => import("@intentius/chant/op/op-waves-capability"),
+    (m) => (has(m, "opWaveStepProblems", "opWaveHoldsProblems", "planOpWaveStep", "applyOpWaveStep") ? (m as unknown as ChantOpWaveStep) : undefined),
+  ),
+  waveCapabilities: once<ChantWaveCapabilities>(
+    async () => {
+      const core: Record<string, unknown> = await import("@intentius/chant/components/capability");
+      const lexicon: Record<string, unknown> = await import("@intentius/chant-lexicon-terraform/components/capability-plugin");
+      const Registry = core.CapabilityRegistry as (new () => { register(c: unknown): unknown; has(kind: string): boolean }) | undefined;
+      const capability = lexicon.terraformApplyCapability as { kind?: string } | undefined;
+      if (!Registry || capability?.kind !== "terraform-apply") return {};
+      const registry = new Registry();
+      registry.register(capability);
+      return { registry };
+    },
+    (m) => (m.registry ? (m as unknown as ChantWaveCapabilities) : undefined),
+  ),
+  afterPlan: once<ChantAfterPlan>(
+    // chant 0.124.54's op entry has runOpWave and no after-plan hook: OP_WAVE_AFTER_PLAN_FLOOR present means it has the hook and hookExec (chant#4614).
+    () => import("@intentius/chant/op"),
+    (m) => (has(m, "runOpWave", "opWavePlanPath", "spawnExecAsync") && typeof m.OP_WAVE_AFTER_PLAN_FLOOR === "string" ? (m as unknown as ChantAfterPlan) : undefined),
+  ),
+  otlp: once<ChantOtlp>(
+    // @ts-ignore chant 0.124.54 has no otlp subpath (chant#4555)
+    () => import("@intentius/chant/otlp"),
+    (m) => (has(m, "otlpFromEnv", "sendOtlp") && typeof m.OTLP_EXPORTER_FLOOR === "string" ? (m as unknown as ChantOtlp) : undefined),
+  ),
+  releaseCatalog: once<ChantReleaseCatalog>(
+    // One subpath at a time, for the reason inTurn gives.
+    async () => {
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-catalog (chant#4595)
+      const model: object = await import("@intentius/chant/lifecycle/release-catalog");
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-catalog-site (chant#4595)
+      const site: object = await import("@intentius/chant/lifecycle/release-catalog-site");
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-status (chant#4596)
+      const status: object = await import("@intentius/chant/lifecycle/release-status");
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-changelog (chant#4597)
+      const changelog: object = await import("@intentius/chant/lifecycle/release-changelog");
+      return { ...changelog, ...status, ...site, ...model };
+    },
+    (m) =>
+      has(m, "buildReleaseCatalog", "parseReleaseCatalog", "renderCatalogSite", "versionPath", "componentPath") && has(m, "parseReleaseStatus", "catalogStatusInputs", "statusOf", "appendReleaseStatus", "releaseChangelog") && typeof m.RELEASE_STATUS_FILE === "string"
+        ? (m as unknown as ChantReleaseCatalog)
+        : undefined,
+  ),
+  registryCatalog: once<ChantRegistryCatalog>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); the catalog parts are chant#4598 and #4599
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) =>
+      has(m, "moduleDocs", "terraformCatalogFields", "terraformCatalogSections", "moduleConsumers", "normalizeModuleSource", "readRegistryCatalog", "deprecatedPins") && typeof m.CATALOG_PATH === "string"
+        ? (m as unknown as ChantRegistryCatalog)
+        : undefined,
+  ),
+  moduleTargets: once<ChantModuleTargets>(
+    // One subpath at a time, for the reason inTurn gives.
+    async () => {
+      // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); its targets are chant#4603
+      const targets: object = await import("@intentius/chant-lexicon-terraform/registry");
+      const credentials: object = await import("@intentius/chant/lifecycle/publish-credentials");
+      const contract: object = await import("@intentius/chant/lifecycle/release-publish");
+      return { ...contract, ...credentials, ...targets };
+    },
+    (m) => (has(m, "gitlabModuleTarget", "createRedactor", "PublishTargetError") ? (m as unknown as ChantModuleTargets) : undefined),
+  ),
+  registryProxies: once<ChantRegistryProxies>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); the proxies are chant#4606
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
+  ),
+  forgeCheck: once<ChantForgeCheck>(
+    // @ts-ignore chant 0.124.54 has no forge-check subpath (chant#4608)
+    () => import("@intentius/chant/forge-check"),
+    (m) => (has(m, "forgeCheck", "readRepository", "readOnly", "describeForgeCheck", "forgeCheckExit") ? (m as unknown as ChantForgeCheck) : undefined),
+  ),
+  notifyRelay: once<ChantNotifyRelay>(
+    // @ts-ignore chant 0.124.54 has no notify-relay subpath (chant#4611)
+    () => import("@intentius/chant/notify-relay"),
+    (m) => (has(m, "verifySlackRequest", "verifyTeamsRequest", "relayPrincipalFor", "slackRelayClick", "teamsRelayClick", "decideRelayClick") && typeof m.RELAY_ENV === "object" ? (m as unknown as ChantNotifyRelay) : undefined),
+  ),
+  ciEstate: once<ChantCiEstate>(
+    // @ts-ignore chant 0.124.54 has no ci-estate subpath (chant#4612)
+    () => import("@intentius/chant/ci-estate"),
+    // chant#4612's own feature-detect: buildLedgerEstate present means the rest is too.
+    (m) => (has(m, "buildLedgerEstate", "readEstateLedger", "deliveryGauges") && typeof m.CI_ESTATE_FLOOR === "string" ? (m as unknown as ChantCiEstate) : undefined),
+  ),
+  policySource: once<ChantPolicySource>(
+    // @ts-ignore chant 0.124.54 has no policy-source subpath (chant#4613)
+    () => import("@intentius/chant/policy-source"),
+    (m) => (has(m, "assertGatePolicySource", "fetchGatePolicySource") && typeof m.CI_POLICY_SOURCE_FLOOR === "string" ? (m as unknown as ChantPolicySource) : undefined),
+  ),
+  opStandDown: once<ChantOpStandDown>(
+    // `op` is on the pin; the stand-down (chant#4581) is told apart by its exports.
+    () => import("@intentius/chant/op"),
+    (m) => (has(m, "newerCommitOnBranch", "tipAppliesTargets") && typeof m.OP_WAVE_STAND_DOWN_FLOOR === "string" ? (m as unknown as ChantOpStandDown) : undefined),
+  ),
+  sourceForms: once<ChantSourceForms>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); the source forms are chant#3924
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) => (has(m, "moduleSourceForms", "providerAddressForms", "usedSources", "lockedProviders") ? (m as unknown as ChantSourceForms) : undefined),
+  ),
+  objectStore: once<ChantObjectStore>(
+    // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
+    () => import("@intentius/chant/object-store"),
+    (m) => {
+      if (!has(m, "storeFromEnv", "S3Client", "GcsClient", "AzureBlobClient", "StoreError", "StoreConflict")) return undefined;
+      const store = m as unknown as ChantObjectStore;
+      // A chant client throws chant's errors: terragucci's StoreError and StoreConflict take them as their own.
+      adoptChantStoreErrors(store.StoreError, store.StoreConflict);
+      return store;
+    },
+  ),
+  stateOps: once<ChantStateOps>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no state-ops subpath (chant#4618)
+      const ops: object = await import("@intentius/chant-lexicon-terraform/state-ops");
+      // @ts-ignore chant 0.124.54 has no lifecycle/gated-request subpath (chant#4551)
+      const requests: object = await import("@intentius/chant/lifecycle/gated-request");
+      return { ...requests, ...ops };
+    },
+    (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests") ? (m as unknown as ChantStateOps) : undefined),
+  ),
+  lockRows: once<ChantLockRows>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no lifecycle/resource-lock subpath (chant#4552)
+      const leases: object = await import("@intentius/chant/lifecycle/resource-lock");
+      // @ts-ignore chant 0.124.54 has no lock-rows subpath in the terraform lexicon (chant#4552)
+      const rows: object = await import("@intentius/chant-lexicon-terraform/lock-rows");
+      return { ...leases, ...rows };
+    },
+    (m) => (has(m, "terraformLockRows", "takeLockRows", "releaseLockRows", "readLockRows", "lockRowsPath") ? (m as unknown as ChantLockRows) : undefined),
+  ),
+  productMcp: once<ChantProductMcp>(
+    // @ts-ignore chant 0.124.54 has no ci-product subpath (chant#4550); the hook is chant#4555
+    () => import("@intentius/chant/ci-product"),
+    (m) => (has(m, "runChantInProcess") && typeof m.PRODUCT_MCP_HOOK_FLOOR === "string" ? (m as unknown as ChantProductMcp) : undefined),
+  ),
+  changelog: once<ChantChangelog>(
+    // @ts-ignore chant 0.124.54 has no lifecycle/release-changelog (chant#4597)
+    () => import("@intentius/chant/lifecycle/release-changelog"),
+    (m) => (has(m, "changelogBump") ? (m as unknown as ChantChangelog) : undefined),
+  ),
+  agentRuns: once<ChantAgentRuns>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no ci-agent subpath (chant#4616)
+      const agent: object = await import("@intentius/chant/ci-agent");
+      const runs: object = await import("@intentius/chant/lifecycle/run-ledger");
+      const git: object = await import("@intentius/chant/lifecycle/git");
+      return { ...git, ...runs, ...agent };
+    },
+    // chant#4616's agent module: agentRunRecordInput and landAgentChange present means the job is there.
+    (m) => (has(m, "agentRunRecordInput", "landAgentChange", "appendRunRecord", "pushLifecycleReport") ? (m as unknown as ChantAgentRuns) : undefined),
+  ),
+  agentJob: once<ChantAgentJob>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no ci-product subpath (chant#4550); the agent job is chant#4616
+      const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
+      // @ts-ignore chant 0.124.54 has no ci-product-words module (chant#4550)
+      const words: Record<string, unknown> = await import("@intentius/chant/ci-product-words");
+      const github: Record<string, unknown> = await import("@intentius/chant-lexicon-github/components/generate-op-pipeline");
+      const gitlab: Record<string, unknown> = await import("@intentius/chant-lexicon-gitlab/components/generate-op-pipeline");
+      const forgejo: Record<string, unknown> = await import("@intentius/chant-lexicon-forgejo/components/generate-op-pipeline");
+      return {
+        CI_AGENT_FLOOR: product.CI_AGENT_FLOOR,
+        productPipelineJobs: product.productPipelineJobs,
+        productDriftAgent: product.productDriftAgent,
+        setActiveProductWords: words.setActiveProductWords,
+        generate: { github: github.generateGithubOpPipeline, gitlab: gitlab.generateGitlabOpPipeline, forgejo: forgejo.generateForgejoOpPipeline },
+      };
+    },
+    // chant#4616's feature-detect: CI_AGENT_FLOOR on the ci-product entry, with the generators that read a spec's `agent`.
+    (m) => {
+      const g = m.generate as Record<string, unknown> | undefined;
+      return typeof m.CI_AGENT_FLOOR === "string" && has(m, "productPipelineJobs", "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
+    },
+  ),
+  holdRecord: once<ChantHoldRecord>(
+    // @ts-ignore chant 0.124.54 has no lifecycle/gated-request subpath (chant#4551); the recorded hold is chant#4623
+    () => import("@intentius/chant/lifecycle/gated-request"),
+    // chant#4623's feature-detect: an op-wave hold with `record: true` gets chant's applied and finished lines and keeps its attachment.
+    (m) => (typeof m.OP_WAVE_HOLD_RECORD_FLOOR === "string" && has(m, "gatedRequestAttachmentPath") ? (m as unknown as ChantHoldRecord) : undefined),
+  ),
+  gateWriters: once<ChantGateWriters>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no lifecycle/gated-request subpath (chant#4551); the floor is chant#4623
+      const requests: Record<string, unknown> = await import("@intentius/chant/lifecycle/gated-request");
+      const gate: Record<string, unknown> = await import("@intentius/chant/op/gate");
+      const git: Record<string, unknown> = await import("@intentius/chant/lifecycle/git");
+      const note: Record<string, unknown> = await import("@intentius/chant/lifecycle/local-note");
+      return { OP_WAVE_HOLD_RECORD_FLOOR: requests.OP_WAVE_HOLD_RECORD_FLOOR, gitGateLedgerPort: gate.gitGateLedgerPort, writeBlobToPath: git.writeBlobToPath, pushLifecycleReport: git.pushLifecycleReport, requireLifecycleLedger: git.requireLifecycleLedger, isLifecycleLocalNote: note.isLifecycleLocalNote };
+    },
+    (m) => (typeof m.OP_WAVE_HOLD_RECORD_FLOOR === "string" && has(m, "gitGateLedgerPort", "writeBlobToPath", "pushLifecycleReport", "requireLifecycleLedger", "isLifecycleLocalNote") ? (m as unknown as ChantGateWriters) : undefined),
+  ),
+  releaseRead: once<ChantReleaseRead>(
+    () => import("@intentius/chant/lifecycle/release-ledger"),
+    (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -299,9 +1807,20 @@ export type ChantNextPart = keyof typeof loaders;
 /** Set by a test: what each part loads to, in place of the import. `null` makes it missing. */
 const overrides = new Map<ChantNextPart, unknown>();
 
+/** What each part came to once its import settled, for the synchronous callers below. `null`: missing. */
+const settled = new Map<ChantNextPart, unknown>();
+
 async function load<K extends ChantNextPart>(part: K): Promise<Awaited<ReturnType<(typeof loaders)[K]>>> {
   if (overrides.has(part)) return (overrides.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>>;
-  return (await loaders[part]()) as Awaited<ReturnType<(typeof loaders)[K]>>;
+  const m = (await loaders[part]()) as Awaited<ReturnType<(typeof loaders)[K]>>;
+  settled.set(part, m ?? null);
+  return m;
+}
+
+/** A part as it already loaded, without waiting: undefined when it is missing or has not been asked for yet. */
+function loaded<K extends ChantNextPart>(part: K): Awaited<ReturnType<(typeof loaders)[K]>> | undefined {
+  if (overrides.has(part)) return (overrides.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>>;
+  return (settled.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>> | undefined;
 }
 
 /** chant's composition (`/compose`), or undefined when the installed chant has none. */
@@ -312,6 +1831,126 @@ export const chantComposeRun = (): Promise<ChantComposeRun | undefined> => load(
 export const chantState = (): Promise<ChantState | undefined> => load("state");
 /** chant's plan shape (`/plan-shape`), or undefined. */
 export const chantPlanShape = (): Promise<ChantPlanShape | undefined> => load("planShape");
+/** chant's module registry protocol (`/registry`, chant#4565), or undefined. */
+export const chantRegistry = (): Promise<ChantRegistry | undefined> => load("registry");
+/** chant core's Terraform token reader (`@intentius/chant/terraform/credentials`, chant#4563), or undefined. */
+export const chantCredentials = (): Promise<ChantCredentials | undefined> => load("credentials");
+/** chant core's object store clients (`@intentius/chant/object-store`, chant#4554), or undefined. */
+export const chantObjectStore = (): Promise<ChantObjectStore | undefined> => load("objectStore");
+
+/** chant's check moment (`/components/check-hooks`, chant#4556), or undefined. */
+export const chantCheckHooks = (): Promise<ChantCheckHooks | undefined> => load("checkHooks");
+
+/** chant core's shared bucket check (`@intentius/chant/bucket-check`, chant#4558), or undefined. */
+export const chantBucketCheck = (): Promise<ChantBucketCheck | undefined> => load("bucketCheck");
+
+/** The terraform lexicon's TF046 (chant#4561), or undefined. */
+export const chantTf046 = (): Promise<ChantTf046 | undefined> => load("tf046");
+
+/** The terraform lexicon's known-module catalog (`module-catalog`, chant#4560), or undefined. */
+export const chantModuleCatalog = (): Promise<ChantModuleCatalog | undefined> => load("moduleCatalog");
+
+/** chant's words module (`@intentius/chant/ci-product-words`, chant#4550), or undefined. */
+export const chantCiProductWords = (): Promise<ChantCiProductWords | undefined> => load("ciProductWords");
+/** chant's product pipeline (`@intentius/chant/ci-product`, chant#4550), or undefined. */
+export const chantCiProduct = (): Promise<ChantCiProduct | undefined> => load("ciProduct");
+/**
+ * chant's words module as it already loaded: the synchronous parsers and
+ * line builders read it. cli.ts loads it before any command runs; a caller
+ * that never loaded it gets undefined, and terragucci's own code.
+ */
+export const chantCiProductWordsNow = (): ChantCiProductWords | undefined => loaded("ciProductWords");
+
+/** chant's exit-code table (chant#4553), or undefined. */
+export const chantExitCodes = (): Promise<ChantExitCodes | undefined> => load("exitCodes");
+/** chant's exit-code table as it already loaded, for the synchronous exit paths. cli.ts loads it first. */
+export const chantExitCodesNow = (): ChantExitCodes | undefined => loaded("exitCodes");
+/** The terraform lexicon's drift rows (chant#4580), or undefined. */
+export const chantDriftRows = (): Promise<ChantDriftRows | undefined> => load("driftRows");
+/** The drift rows as they already loaded, for the synchronous report code. cli.ts loads them first. */
+export const chantDriftRowsNow = (): ChantDriftRows | undefined => loaded("driftRows");
+/** chant's pull request environment ledger writer (chant#4551), or undefined. */
+export const chantPrEnvLedger = (): Promise<(ChantPrEnvLedger & ChantLifecycleGit) | undefined> => load("prEnvLedger");
+/** chant's op-wave step contract (chant#4545), or undefined. */
+export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load("opWaveStep");
+/** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C), or undefined. */
+export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
+/** chant's wave job with after-plan hooks in this process (chant#4614), or undefined. */
+export const chantAfterPlan = (): Promise<ChantAfterPlan | undefined> => load("afterPlan");
+/** chant's OTLP exporter (chant#4555), or undefined. */
+export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
+/** The terraform lexicon's source reading and forms (chant#3924), or undefined. */
+export const chantSourceForms = (): Promise<ChantSourceForms | undefined> => load("sourceForms");
+/** The source forms as they already loaded, for the synchronous matchers in ./sources.ts. */
+export const chantSourceFormsNow = (): ChantSourceForms | undefined => loaded("sourceForms");
+/** The terraform lexicon's registry proxies (chant#4606), or undefined. */
+export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
+/** The terraform lexicon's module targets (chant#4603), with core's redactor and error class, or undefined. */
+export const chantModuleTargets = (): Promise<ChantModuleTargets | undefined> => load("moduleTargets");
+/** chant core's release catalog, status records and changelog (chant#4595, #4596, #4597), or undefined. */
+export const chantReleaseCatalog = (): Promise<ChantReleaseCatalog | undefined> => load("releaseCatalog");
+/** The terraform lexicon's docs extractor, consumer scan, catalog reader and deprecated-version check (chant#4598, #4599), or undefined. */
+export const chantRegistryCatalog = (): Promise<ChantRegistryCatalog | undefined> => load("registryCatalog");
+/** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
+export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
+/** chant's recorded op-wave hold (chant#4623), or undefined on a chant whose hold writes no applied or finished line. */
+export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
+/** chant's gate ledger writers (terragucci#1282 part j), or undefined on a chant before chant#4623, where terragucci writes its own lines. */
+export const chantGateWriters = (): Promise<ChantGateWriters | undefined> => load("gateWriters");
+/** chant's row leases and the lexicon's rows (chant#4552, #4594), or undefined. */
+export const chantLockRows = (): Promise<ChantLockRows | undefined> => load("lockRows");
+/** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
+export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load("productMcp");
+/** chant's changelog bump (chant#4597) as it already loaded, for the synchronous `bumpFor`. preloadChantNext loads it. */
+export const chantChangelogNow = (): ChantChangelog | undefined => loaded("changelog");
+/** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */
+export const chantReleaseReadNow = (): ChantReleaseRead | undefined => loaded("releaseRead");
+/** chant's agent run record and run ledger (chant#4616), or undefined. */
+export const chantAgentRuns = (): Promise<ChantAgentRuns | undefined> => load("agentRuns");
+/** chant's agent job (chant#4616), or undefined. init loads it before it renders the pipeline. */
+export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
+/** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
+export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJob");
+
+/**
+ * Load the parts synchronous code reads, once, before a command runs: the
+ * words module, the exit-code table and the drift rows. cli.ts calls it.
+ */
+export async function preloadChantNext(): Promise<void> {
+  await chantCiProductWords();
+  await chantExitCodes();
+  await chantDriftRows();
+  await chantPolicySource();
+  await chantOpStandDown();
+  await load("changelog");
+  await load("releaseRead");
+}
+
+/** chant core's forge and trust-policy check (chant#4608), or undefined. */
+export const chantForgeCheck = (): Promise<ChantForgeCheck | undefined> => load("forgeCheck");
+/** The forge check as it already loaded, for `describeForgeCheck`. */
+export const chantForgeCheckNow = (): ChantForgeCheck | undefined => loaded("forgeCheck");
+/** chant core's notify relay (chant#4611), or undefined. */
+export const chantNotifyRelay = (): Promise<ChantNotifyRelay | undefined> => load("notifyRelay");
+/** chant core's ledger estate and delivery metrics (chant#4612), or undefined. */
+export const chantCiEstate = (): Promise<ChantCiEstate | undefined> => load("ciEstate");
+/** chant core's shared policy source (chant#4613), or undefined. */
+export const chantPolicySource = (): Promise<ChantPolicySource | undefined> => load("policySource");
+/** The policy source as it already loaded, for the synchronous fetch in ./report/policy.ts. cli.ts loads it first. */
+export const chantPolicySourceNow = (): ChantPolicySource | undefined => loaded("policySource");
+/** chant's op-wave stand-down (chant#4581), or undefined. */
+export const chantOpStandDown = (): Promise<ChantOpStandDown | undefined> => load("opStandDown");
+/** The stand-down as it already loaded, for the synchronous spec builder in ./chant-waves.ts. cli.ts loads it first. */
+export const chantOpStandDownNow = (): ChantOpStandDown | undefined => loaded("opStandDown");
+
+/** chant core's control repo (`@intentius/chant/ci-control`, chant#4568), or undefined. */
+export const chantCiControl = (): Promise<ChantCiControl | undefined> => load("ciControl");
+/** chant's control repo as it already loaded, for the synchronous script builders (./control-repo.ts). init loads it first. */
+export const chantCiControlNow = (): ChantCiControl | undefined => loaded("ciControl");
+/** The forge lexicon's control repo pipeline (chant#4568), or undefined. */
+export function chantControlPipeline(forge: "github" | "gitlab" | "forgejo"): Promise<ChantControlPipeline | undefined> {
+  return load(forge === "github" ? "controlPipelineGithub" : forge === "gitlab" ? "controlPipelineGitlab" : "controlPipelineForgejo");
+}
 
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
@@ -326,6 +1965,80 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
+  const [releaseCatalog, registryCatalog, afterPlan, moduleTargets] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan(), await chantModuleTargets()];
+  const registryProxies = await chantRegistryProxies();
+  const sourceForms = await chantSourceForms();
+  const [forgeCheck, notifyRelay, ciEstate, policySource, opStandDown] = [await chantForgeCheck(), await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
+  const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
+  const agentRuns = await chantAgentRuns();
+  const agentJob = await chantAgentJob();
+  const holdRecord = await chantHoldRecord();
+  const gateWriters = await chantGateWriters();
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters };
+}
+
+// ── forge reads (chant#4554) ───────────────────────────────────────────────
+
+/** A commit status as chant's forge reads it back: each context's newest, with the forge's own state word. */
+export interface ChantReadCommitStatus {
+  context: string;
+  state: string;
+  description?: string;
+  targetUrl?: string;
+  allowFailure?: boolean;
+}
+
+/** The reads chant#4554 added to chant's forge clients, where the installed chant's client has them. */
+export interface ChantForgeReads {
+  defaultBranch?: () => Promise<string>;
+  commitStatuses?: (sha: string) => Promise<ChantReadCommitStatus[]>;
+  /** chant#4584: the statuses read filtered by ref, where the installed client takes one (GitLab filters; GitHub and Forgejo ignore it). */
+  commitStatusesAt?: (sha: string, ref: string) => Promise<ChantReadCommitStatus[]>;
+}
+
+/** `forge`'s default-branch and status reads, each undefined when the installed chant's client lacks it. */
+export function chantForgeReads(forge: PrForge): ChantForgeReads {
+  const f = forge as PrForge & { defaultBranch?: unknown; commitStatuses?: unknown };
+  return {
+    ...(typeof f.defaultBranch === "function" ? { defaultBranch: () => (f.defaultBranch as () => Promise<string>).call(forge) } : {}),
+    ...(typeof f.commitStatuses === "function" ? { commitStatuses: (sha: string) => (f.commitStatuses as (sha: string) => Promise<ChantReadCommitStatus[]>).call(forge, sha) } : {}),
+    // A client whose read takes the ref (chant#4584) declares two parameters; the pin's takes one and would drop the filter.
+    ...(typeof f.commitStatuses === "function" && (f.commitStatuses as (...a: unknown[]) => unknown).length >= 2
+      ? { commitStatusesAt: (sha: string, ref: string) => (f.commitStatuses as (sha: string, ref: string) => Promise<ChantReadCommitStatus[]>).call(forge, sha, ref) }
+      : {}),
+  };
+}
+
+// ── handover parameters (chant#4554) ───────────────────────────────────────
+
+/** chant's handover scripts with a product's parameters (chant#4554). */
+export interface ChantHandover {
+  packJs(forge: HandoverForge, opts: { noteFiles?: readonly string[]; label?: string }): string;
+  handoverTrap(dir: string, forge: HandoverForge, opts: { noteFiles?: readonly string[]; label?: string; before?: string }): string[];
+  checkoutScript(history: boolean, ledger: boolean, opts: { tokenEnv?: string; refEnv?: string; headName?: string }): string;
+}
+
+let handover: ChantHandover | null | undefined;
+
+/**
+ * chant's parameterised handover scripts, or undefined when the installed
+ * chant's take no parameters. The pin's functions take fewer arguments and
+ * ignore the rest, so each is asked once with a parameter and kept only when
+ * its script carries it.
+ */
+export function chantHandover(): ChantHandover | undefined {
+  if (handover === undefined) {
+    const h = { packJs: chantPackJs, handoverTrap: chantHandoverTrap, checkoutScript: chantCheckoutScript } as unknown as ChantHandover;
+    try {
+      const ok =
+        h.packJs("github", { label: "tgprobe", noteFiles: ["tgprobe.json"] }).includes("tgprobe.json") &&
+        h.handoverTrap("tgprobe", "github", { label: "tgprobe", before: "tgprobe_before" }).some((l) => l.includes("tgprobe_before")) &&
+        h.checkoutScript(false, false, { tokenEnv: "TGPROBE_TOKEN", refEnv: "TGPROBE_REF", headName: "tgprobe-head" }).includes("TGPROBE_REF");
+      handover = ok ? h : null;
+    } catch {
+      handover = null;
+    }
+  }
+  return handover ?? undefined;
 }

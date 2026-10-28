@@ -523,9 +523,9 @@ describe("a wave behind its gate", () => {
     // Nothing applied yet: spendStanding spends the standing approval, once.
     const fresh = setup();
     git(fresh.work, "remote", "set-url", "origin", origin);
-    expect(spendStanding(fresh.work, "wave-1", digest, T(3), {})).toMatchObject({ kind: "applied", gate: "wave-1", planDigest: digest, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) });
-    expect(spendStanding(fresh.work, "wave-1", digest, T(3), {})).toBeUndefined();
-    expect(spendStanding(fresh.work, "wave-1", "jcs1-sha256:other", T(3), {})).toBeUndefined();
+    expect(await spendStanding(fresh.work, "wave-1", digest, T(3), {})).toMatchObject({ kind: "applied", gate: "wave-1", planDigest: digest, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) });
+    expect(await spendStanding(fresh.work, "wave-1", digest, T(3), {})).toBeUndefined();
+    expect(await spendStanding(fresh.work, "wave-1", "jcs1-sha256:other", T(3), {})).toBeUndefined();
     expect(appliedLines(origin)).toHaveLength(1);
     // A second approval of the same plans, applied through the gate: chant spends it, and the wave writes no second line for it.
     approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "bob", timestamp: T(4), planDigest: digest });

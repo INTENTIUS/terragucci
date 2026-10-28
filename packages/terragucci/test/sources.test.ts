@@ -6,6 +6,7 @@ import { ConfigError, validateConfig } from "../src/config";
 import { runStage } from "../src/report/stage";
 import { loadHclParser } from "../src/rollout/parser";
 import { checkSourcesResult } from "../src/check";
+import { chantExitCodes, chantSourceForms } from "../src/chant-next";
 import { main } from "../src/cli";
 import { init } from "../src/init";
 import { checkScript } from "../src/render";
@@ -13,6 +14,10 @@ import { checkLockedSources, checkRootSources, governingSources, lockedSources, 
 import { git, tmp, write } from "./helpers";
 
 const parser = await loadHclParser();
+// A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
+// chant's used-sources read (chant#3924) says "project" where terragucci's own says "repo".
+const OUTSIDE = (await chantSourceForms()) ? "outside the project" : "outside the repo";
 
 const problems = (raw: unknown): string[] => {
   try {
@@ -155,7 +160,7 @@ resource "random_id" "r" {}
     const repo = write(tmp("tg-sources-out-"), { "app/main.tf": 'module "x" {\n  source = "../../elsewhere"\n}\n' });
     const refused = await checkRootSources(repo, "app", { modules: ["./**", "../**"] }, parser);
     expect(refused).toHaveLength(1);
-    expect(refused[0]!.why).toContain("outside the repo");
+    expect(refused[0]!.why).toContain(OUTSIDE);
   });
 });
 
@@ -594,7 +599,7 @@ describe("tf-check with sources", () => {
     try {
       process.chdir(repo);
       expect(await main(["check-sources", "app", "--base", baseSha])).toBe(1);
-      expect(await main(["check-sources"])).toBe(2);
+      expect(await main(["check-sources"])).toBe(USAGE);
     } finally {
       process.chdir(cwd);
     }

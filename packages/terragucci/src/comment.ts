@@ -28,6 +28,8 @@
  * refused with the migration guide's reason.
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { chantCiProductWordsNow } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 import { ConfigError } from "./config";
 import { poster, type Fetch } from "./forge";
 import { commentCell, leftOut } from "./import/guide";
@@ -65,6 +67,8 @@ export type ParsedComment =
 export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment | undefined {
   if (typeof body !== "string") return undefined;
   const text = body.trim();
+  const chant = chantCiProductWordsNow();
+  if (chant) return parseWithChant(chant, text, o);
   if (o.atlantis) {
     const alias = fromAtlantis(text);
     if (alias !== undefined) return typeof alias === "string" ? parseComment(alias) : alias;
@@ -97,6 +101,24 @@ export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment
   if (root === undefined) return { kind: "plan" };
   if (!ROOT.test(root) || root.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: "the root is a path from the repository root, like `envs/dev/orders`" };
   return { kind: "plan", root };
+}
+
+/**
+ * The same grammar through chant's `parseProductComment` (chant#4550), with
+ * terragucci's words. An `atlantis` form terragucci has no counterpart for
+ * keeps the migration guide's reason, which is terragucci's text; every
+ * other comment, the aliases included, is chant's to read.
+ */
+function parseWithChant(chant: NonNullable<ReturnType<typeof chantCiProductWordsNow>>, text: string, o: ParseOptions): ParsedComment | undefined {
+  if (o.atlantis) {
+    const alias = fromAtlantis(text);
+    if (alias !== undefined && typeof alias !== "string") return alias;
+  }
+  const words = chant.assertProductWords(TERRAGUCCI_WORDS);
+  const parsed = chant.parseProductComment(words, text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
+  if (parsed === undefined) return undefined;
+  if (parsed.kind === "plan") return parsed.member !== undefined ? { kind: "plan", root: parsed.member } : { kind: "plan" };
+  return parsed;
 }
 
 /** The variable the generated pipeline sets to 1 on every job when `atlantis_comments` is on. */

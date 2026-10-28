@@ -35,8 +35,9 @@ import { quorumRuleProgress, quorumRulesFor, trustRolesAt, type GateQuorumRule }
 import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
 import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
-import { applyLayers, detectBinary, estateOf, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
-import { checkOwnership, controlClaims, projectKeyFromEnv } from "../estate-ownership";
+import { readLiveSetup, resolvedEstate } from "../live-setup";
+import { applyLayers, detectBinary, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { checkOwnership, controlClaimsAt, projectKeyFromEnv } from "../estate-ownership";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";
 import { pendingEstateMigrations, pendingWhy, type PendingEstateRoot } from "../migrate";
@@ -55,7 +56,7 @@ import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
 import { sourceChecker, type SourceChecker } from "../sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "../sources-terragrunt";
-import { describeTips, repoTips } from "../tips";
+import { catalogHosts, describeTips, repoTips } from "../tips";
 import { renamesIn } from "../tips/moved";
 import { liveEstate, rootSecrets } from "../tips/secrets";
 import type { DecideOptions } from "../decide";
@@ -1097,7 +1098,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // modules.require: attested, checked for every root before any plans, one at a time, since each check fetches into the checkout.
   const pinRefusals = new Map<string, string[]>();
   if (!drift && roots.length > 0) {
-    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env });
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env, ...(settings.sources?.proxies ? { proxies: settings.sources.proxies } : {}) });
     for (const root of pins ? roots : []) {
       const r = await pins!(root);
       if (r.refused.length) pinRefusals.set(root, r.refused);
@@ -1139,14 +1140,16 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const estatePlans = !drift && plansOnPlannedEstates(binary);
   const estateReadsOf = new Map(estatePlans ? roots.map((r) => [r, estateOutputReads(join(repo, r))] as const) : []);
   const estateOwner = new Map<string, string>();
+  // choudoufu's resolved estate (choudoufu#2293) for each live root, where the binary prints it; else the live block's.
+  for (const r of estatePlans ? liveRoots(repo, all) : []) await readLiveSetup(join(repo, r), { binary });
   for (const r of estatePlans ? all : []) {
-    const e = estateOf(join(repo, r)).estate;
+    const e = resolvedEstate(join(repo, r));
     if (e) estateOwner.set(e, r);
   }
   const readEstates = new Set([...estateReadsOf.values()].flat().map((b) => b.estate));
   // The control repo's records say which project owns each estate; read now, at this plan, never kept (terragucci#753).
   if (estatePlans && (estateOwner.size > 0 || [...estateReadsOf.values()].some((r) => r.length > 0))) {
-    const claims = options.controlClaims ? options.controlClaims() : controlClaims(settings.control, env);
+    const claims = options.controlClaims ? options.controlClaims() : await controlClaimsAt(settings.control, env);
     if (claims) {
       const found = checkOwnership({ self: options.project ?? projectKeyFromEnv(env), local: new Map([...estateOwner]), reads: estateReadsOf, claims });
       for (const n of found.notes) log(n);
@@ -1714,7 +1717,7 @@ async function runTerragruntStage(
   // modules.require: attested, checked for every unit before any wave plans, as for plain roots: a refused unit fails and does not plan.
   const refusedUnits: RootInput[] = [];
   if (!drift) {
-    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env });
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env, ...(settings.sources?.proxies ? { proxies: settings.sources.proxies } : {}) });
     for (const unit of pins ? waves.flat() : []) {
       const r = await pins!(unit);
       if (r.refused.length) {
@@ -2235,7 +2238,7 @@ async function finish(
     try {
       const renames = inputs.flatMap((i) => (i.plan && !i.error ? renamesIn(i.path, i.plan) : []));
       const secrets = inputs.flatMap((i) => (i.secrets?.length ? [{ root: i.path, binary: `${i.binary?.name ?? binary}${i.binary?.version ? ` ${i.binary.version}` : ""}`, secrets: i.secrets }] : []));
-      report.tips = await repoTips(repo, all, { settings, ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}), ...(secrets.length ? { secrets } : {}), env });
+      report.tips = await repoTips(repo, all, { settings, choudoufuRoots: inputs.filter((i) => basename(i.binary?.name ?? binary) === "choudoufu").map((i) => i.path), ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}), ...(secrets.length ? { secrets } : {}), ...(catalogHosts(settings).length ? { releaseCatalogs: { hosts: catalogHosts(settings) } } : {}), env });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];

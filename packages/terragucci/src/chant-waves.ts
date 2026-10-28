@@ -15,7 +15,8 @@
  * chant's exit codes map onto terragucci's (waveExit): an approval of other
  * plans leaves chant waiting where terragucci refuses (4), chant's policy
  * refusal (7) is terragucci's 1, or 4 when an override stands for an earlier
- * plan, and a decision point's refusing answer (8) is 4.
+ * plan, and a decision point's refusing answer (8) is 4. With chant's one
+ * exit-code table (chant#4553) loaded, chant's code passes through as it is.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -24,6 +25,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
 import { chantCommand } from "./chant-bin";
+import { chantExitCodesNow, chantOpStandDownNow } from "./chant-next";
 import { ConfigError } from "./config";
 
 /** The op, and the spec's name: the waves' gates stay `tf-apply` / `wave-<k>`. */
@@ -104,6 +106,73 @@ export function wavesSpec(input: WavesSpecInput): OpWavesSpec {
   } as OpWavesSpec;
 }
 
+/** What a wave spec on chant's step contract adds to {@link WavesSpecInput} (chant#4545). */
+export interface WavesStepInput extends Omit<WavesSpecInput, "waves" | "rest"> {
+  /** Each wave's roots. A Terragrunt repo's discovered waves have no step: chant plans the runs a spec lists. */
+  waves: string[][];
+  /** Vars each root reads from another root's outputs (Atmos's `!terraform.state`), as the terraform lexicon's `reads`. */
+  reads?: Record<string, { var: string; root: string; output: string[] }[]>;
+  /** A pull request's base, for a choudoufu live root's cone plan. */
+  cone?: string;
+  /** How long a plan or an apply waits for a state lock. Default: the lexicon's 5m. */
+  lockTimeout?: string | false;
+  /** `cost.approve_above` at base, as chant's cost hold (the terraform lexicon's infracost preset reads the plan JSON). */
+  approveAbove?: number;
+  /** `policy` at base is on: chant runs the workspace's ci.policy at base over each run's change set. */
+  policy?: boolean;
+  /** `--stand-down`: a wave whose roots a newer push on the branch also applies stands down with 6 (chant#4581). */
+  standDown?: boolean;
+}
+
+/**
+ * The op-waves spec of a repo's apply on chant's step contract (chant#4545):
+ * each run plans and applies through the terraform lexicon's
+ * `terraform-apply` capability, with no `plan` or `apply` call back into
+ * terragucci. The holds terragucci's `held` hook served become chant's
+ * `holds` (policy and cost, read at base). A state migration and the gate's
+ * report stay hooks that call back into the wave's process, as #4545's
+ * comment rules. The op, the gate names and the approval stay
+ * `tf-apply` / `wave-<k>`, so the approvals on the ledger keep counting.
+ */
+export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
+  const own = wavesSpec(input) as OpWavesSpec & { planWave?: unknown; applyWave?: unknown; hooks?: { after?: { plan?: unknown; gate?: unknown } } };
+  const { planWave: _p, applyWave: _a, hooks, ...rest } = own;
+  const runInput = (root: string): Record<string, unknown> | undefined => (input.reads?.[root]?.length ? { reads: input.reads[root] } : undefined);
+  return {
+    ...rest,
+    step: {
+      kind: "terraform-apply",
+      root: "{target}",
+      ...(input.lockTimeout !== undefined ? { lockTimeout: input.lockTimeout } : {}),
+      ...(input.cone ? { cone: input.cone } : {}),
+    },
+    ...(input.policy || input.approveAbove !== undefined
+      ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.approveAbove !== undefined ? { cost: { command: ["infracost", "breakdown", "--path", "{planJson}", "--format", "json"], approveAbove: input.approveAbove, format: "infracost" } } : {}) } }
+      : {}),
+    // chant stands the wave down before it spends the approval, when the installed chant has the stand-down (chant#4581).
+    ...(input.standDown && chantOpStandDownNow() ? { standDown: true } : {}),
+    // The gate's report is terragucci's; the held hook is chant's holds now.
+    hooks: { after: { gate: hooks?.after?.gate } },
+    waves: rest.waves.map((w) => ({ ...w, runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
+  } as OpWavesSpec;
+}
+
+/**
+ * Why a repo's apply cannot run on chant's step contract yet, one reason
+ * each; empty when it can. The step needs each root in chant.config.ts's
+ * `terraform.roots` (the capability's `root` is that key), and plans the runs
+ * a spec lists, so a Terragrunt repo's discovered waves and a composed run
+ * keep the call back.
+ */
+export function waveStepProblems(o: { terragrunt?: boolean; composed?: boolean; declaredRoots?: ReadonlySet<string>; roots: readonly string[] }): string[] {
+  const out: string[] = [];
+  if (o.terragrunt) out.push("a Terragrunt repo finds its units when it plans, and a step plans the runs the spec lists");
+  if (o.composed) out.push("waves.compose plans the wave's roots as one run, which the step does not");
+  const missing = o.roots.filter((r) => !o.declaredRoots?.has(r));
+  if (missing.length) out.push(`chant.config.ts declares no terraform.roots entry for ${missing.join(", ")}, and the step names a root by that key`);
+  return out;
+}
+
 const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
 
 /**
@@ -147,10 +216,21 @@ export function readWaveRecord(repo: string, k: number): OpWaveDecision | undefi
 export function waveExit(chant: number, own?: number): number {
   if (chant === 0) return 0;
   if (own !== undefined && own !== 0) return own;
+  // chant's one table (chant#4553): terragucci passes chant's code through, so a denial stays 7 and a declined point 8.
+  if (chantExitCodesNow()) return chant;
   if (chant === 7) return 1;
   // A decision point answered otherwise (chant#3836): the wave applies nothing, as terragucci's refusals do.
   if (chant === 8) return 4;
   return chant;
+}
+
+/**
+ * The code terragucci's own wave states read a wave's end by: chant's denial
+ * (7) as a failure and a declined decision point (8) as a refusal, as
+ * waveExit gave them before chant's table passed through.
+ */
+export function stateCode(code: number): number {
+  return code === 7 ? 1 : code === 8 ? 4 : code;
 }
 
 /**
@@ -280,9 +360,24 @@ export function runChantWave(
   });
 }
 
+/** The spec's text, as writeSpec writes it and init commits it. */
+export const wavesSpecText = (spec: OpWavesSpec): string => JSON.stringify(spec, null, 2) + "\n";
+
+/**
+ * The spec committed at `base` (terragucci init writes it once, terragucci#1303), or
+ * undefined when that commit has none. A job whose own spec reads the same
+ * hands chant `base` as it is; one whose spec differs (a gate per
+ * environment, a share count, a config changed since init) still gets a
+ * commit with its own spec on top (specAtBase).
+ */
+export function committedSpecAt(repo: string, base: string): string | undefined {
+  const r = spawnSync("git", ["show", `${base}:${WAVES_SPEC}`], { cwd: repo, encoding: "utf-8" });
+  return r.status === 0 ? r.stdout : undefined;
+}
+
 /** Write the spec to the checkout, where chant reads its commands. */
 export function writeSpec(repo: string, spec: OpWavesSpec): string {
-  const text = JSON.stringify(spec, null, 2) + "\n";
+  const text = wavesSpecText(spec);
   const path = join(repo, WAVES_SPEC);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);

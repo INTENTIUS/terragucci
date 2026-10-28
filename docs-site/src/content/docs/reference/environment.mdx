@@ -185,6 +185,8 @@ Only the `publish` job gets these, as secrets or, on GitLab, protected masked va
 
 Git tags and the release ledger are pushed to `origin` with the job's checkout, so they need no variable.
 
+`terragucci registry edge` reads one more on your machine, never in a job: with `modules.registry.auth: token` and `edge: cloudfront`, `TERRAGUCCI_REGISTRY_TOKENS` holds the tokens the Lambda@Edge function accepts, one per line or comma separated. With `modules.registry.tokens: ssm` or `secrets-manager` it reads nothing: the tokens stay in the store.
+
 ## Cloud roles over OIDC
 
 With `oidc`, jobs trade the forge's token for cloud roles.
@@ -359,6 +361,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
 | `TERRAGUCCI_CHANT` | | the chant command `terragucci control records` runs; `npx --no-install chant` by default |
 | `TERRAGUCCI_CONTROL_DIR` | | a checkout of the [control repo](/terragucci/concepts/control-repo/) that a plan reads its estate ownership records from, in place of cloning one |
+| `CHANT_CONTROL_DIR` | | the control repo's `chant/lifecycle`, fetched by chant's read step in the plan job ([chant#4619](https://github.com/INTENTIUS/chant/issues/4619)); a plan reads its estate ownership entries there when `TERRAGUCCI_CONTROL_DIR` names no checkout |
 | `TERRAGUCCI_CONTROL_READ_TOKEN` | | a token that can read the control repo, so a plan clones it to resolve which project owns an estate another project reads |
 | `TG_OIDC_SUBJECT` | | the OIDC subject the change's actor records as `actor.signals.oidcSubject`, in place of GitHub's default subject for the event ([Policy](/terragucci/reference/policy/)) |
 | `TERRAGUCCI_TERRAGRUNT` | | the `terragrunt` executable to run; `terragrunt` on the path by default |
@@ -390,7 +393,7 @@ A local run needs none of these.
 | GitHub and Forgejo | `GITHUB_ACTIONS`, `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_HEAD_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | An environment's apply job ([its check](#the-apply-jobs-own-check)) | GitHub and Forgejo: `GITHUB_REF`, `RUNNER_ENVIRONMENT`; GitLab: `CI_ENVIRONMENT_NAME`, `CI_COMMIT_REF_NAME`, `CI_COMMIT_REF_PROTECTED`, `CI_RUNNER_TAGS` |
-| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_NAME`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ROOT_NAMESPACE`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_NAME`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_NAME`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Generated job variables
 

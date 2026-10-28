@@ -12,6 +12,16 @@ import { git, tmp, write } from "./helpers";
 import { signerLine, sshsig, sshKey } from "./sshsig";
 import { T, setup, approve } from "./apply-helpers";
 
+/**
+ * The gate facts on origin's ledger. On chant's wave writers the branch also
+ * carries the wave's run record and the change set its plans make, which are
+ * no gate fact; on a chant without them the branch is not there at all.
+ */
+const gateFacts = (origin: string): string[] =>
+  git(origin, "branch", "--list", "chant/lifecycle").trim() === ""
+    ? []
+    : git(origin, "ls-tree", "-r", "--name-only", "chant/lifecycle").split("\n").filter((f) => f.startsWith("_gates/") || f.includes(OVERRIDE_OP));
+
 describe("a wave behind its gate", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -55,7 +65,7 @@ describe("a wave behind its gate", () => {
         approve(origin, approveAs(second, 5));
         expect(await applyWave(work, { ...opts(bin), now: T(6) })).toBe(0);
         expect(appliedOf(origin).map((a) => a.planDigest)).toEqual([first, second]);
-      }, 20_000);
+      }, 60_000); // four waves: about 8s alone, past 20s under a full parallel run
 
       it(`under ${mode}, an approval of plans that never applied is stale: the moved plans are refused`, async () => {
         const lines: string[] = [];
@@ -232,7 +242,7 @@ describe("a wave behind its gate", () => {
       git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-am", "add alice");
       expect(await applyWave(work, { ...opts(bin), now: T(1) })).toBe(1);
       expect(existsSync(log)).toBe(false);
-      expect(git(origin, "branch", "--list", "chant/lifecycle").trim()).toBe("");
+      expect(gateFacts(origin)).toEqual([]);
     });
 
     it("under approval: sealed only an override sealed by a key the signers file at base lists for its approver counts", async () => {
@@ -254,6 +264,6 @@ describe("a wave behind its gate", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never" })).toBe(0);
     expect(existsSync(log)).toBe(true);
-    expect(git(origin, "branch", "--list", "chant/lifecycle").trim()).toBe("");
+    expect(gateFacts(origin)).toEqual([]);
   });
 });

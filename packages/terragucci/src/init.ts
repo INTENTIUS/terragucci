@@ -10,6 +10,9 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
+import { CHANT_CONFIG, chantConfigText, chantConfigWrittenByTerragucci } from "./chant-config";
+import { waveCallArgv, wavesSpecText, wavesStepSpec } from "./chant-waves";
+import { MIGRATIONS_DIR } from "./migrate";
 import { declaredGates } from "./approval";
 import { SIGNERS_PATH } from "./seal";
 import {
@@ -20,6 +23,7 @@ import {
   FORGE_ENVIRONMENT_NOT_FORGEJO,
   normalizeGate,
   gitlabPrApplyProblems,
+  gitlabPublishToken,
   findConfig,
   ownJobsProblems,
   loadConfig,
@@ -36,7 +40,10 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { detectBinary, detectForge, detectVersion, type RootReason } from "./detect";
+import { detectBinary, detectForge, detectVersion, estateOf, liveRoots, type RootReason } from "./detect";
+import { recordStoreOf } from "./cdf-records";
+import { bucketLines, checkStoreBucket, readLiveSetup, setupLine } from "./live-setup";
+import type { PolicyExec } from "./report/policy";
 import { BINARY, detectShape, refuseProblems } from "./shape";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";
 import { dashboardFiles } from "./dashboards/files";
@@ -55,6 +62,10 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
+import { chantAgentJob, chantCheckHooks, chantCiControl, chantCiProduct } from "./chant-next";
+import { CHANT_AGENT_PATHS } from "./render-chant-agent";
+import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
+import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 
 export interface InitOptions {
@@ -81,6 +92,23 @@ export interface InitOptions {
   terramate?: string;
   /** The repo's name, for a new chant.workspace.json. Default: the origin remote's last path segment, then the directory's name. */
   name?: string;
+  /** How `choudoufu live-check -json` runs for each live root's record store. Default: the binary on the path. */
+  liveExec?: PolicyExec;
+  /** `--no-bucket-check`: print each live root's record store, and read none of its bucket's settings. */
+  bucketCheck?: boolean;
+  /** The environment the bucket check takes its region, endpoint and keys from. Default: the process's. */
+  env?: NodeJS.ProcessEnv;
+}
+
+/** A live root's record store and estate, as choudoufu resolved them, and what chant's bucket check found. */
+export interface LiveRecords {
+  root: string;
+  /** The line init prints: where the records go and the estate. */
+  line: string;
+  /** Where the answer came from: choudoufu's live-check, or the live block's text when the installed choudoufu prints none. */
+  from: "choudoufu" | "live block";
+  /** The bucket check's lines: a correct bucket, each setting that fails with its fix, or why it was not checked. */
+  bucket: string[];
 }
 
 /** What `init` found in a Terragrunt repo. */
@@ -137,6 +165,8 @@ export interface InitResult {
   /** Roots that run a version of their own, and where each pins it. */
   pins: RootVersion[];
   forge: { value: ForgeName; reason: string };
+  /** Under choudoufu: each live root's record store and estate, and its bucket check. */
+  records: LiveRecords[];
   files: FileChange[];
   /** Settings the pipeline does not act on yet, with why. */
   notes: string[];
@@ -236,6 +266,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // detectBinary looked at no roots above; a plain repo's .tofu files still say tofu, and an Atmos instance's are its component's.
   if (!tgMode && !settings.binary && !options.binary) Object.assign(binary, shape.binary(roots));
 
+  // Under choudoufu each live root keeps its backend block, and choudoufu derives the record store from it (choudoufu#2293):
+  // init writes no record_store, prints what choudoufu resolved, and checks the bucket with chant's shared check.
+  const records = binary.value === "choudoufu" ? await liveRecords(repo, liveRoots(repo, roots), options) : [];
+
   // A choudoufu root's required_version pins the OpenTofu language it forks, not a choudoufu release.
   const pinned = tgMode || !BINARY[binary.value].releaseInRequiredVersion ? undefined : detectVersion(repo, roots);
   // The repo's own .opentofu-version or .terraform-version, for the binary it names.
@@ -317,8 +351,38 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   // The rollout job: when rollouts names a schedule and respond.rollout is not off.
   const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
+  // chant's control repo (chant#4568), loaded before the control settings are resolved, so the dispatch step and the read checkout are chant's when it is there.
+  if (settings.control) await chantCiControl();
   const control = settings.control ? resolveControl(settings.control, options.name ?? basename(resolve(repo))) : undefined;
+  // check.pre_commit: tf-check runs the repo's pre-commit hooks as a chant check hook (./pre-commit.ts). The check
+  // job also runs check-hooks when the declaration already names check hooks of its own.
+  const preCommitOn = settings.check?.pre_commit === true;
+  const chantHooks = await chantCheckHooks();
+  const declFile = declarationFile(repo) ?? declPath;
+  const declText = existsSync(declFile) ? readFileSync(declFile, "utf-8") : undefined;
+  const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
+  // chant's product pipeline (chant#4550), when the installed chant has it: the pipeline takes terragucci's words through it.
+  const ciProduct = await chantCiProduct();
+  // chant's agent job (chant#4616): with it, agent.comment's jobs are chant's, in a workflow of their own (./render-chant-agent.ts).
+  // terragucci#1305: with it, agent.drift's drift job is a chant drift Op (./render-chant-drift.ts).
+  if (agentCommentInput(settings) || (settings.drift && agentDriftInput(settings))) await chantAgentJob();
+  // terragucci#1303: a plain repo's apply on chant's terraform-apply step. Each root is a terraform.roots entry of chant.config.ts,
+  // and the step's spec is written once beside the pipeline, where each wave job reads its rules at base.
+  const plainRoots = !tgMode && !atmos && !terramate;
+  const stepSpec = plainRoots
+    ? wavesSpecText(wavesStepSpec({
+        waves: applyWaves(layers, settings.waves?.canary),
+        gate: normalizeGate(settings.gate) ?? "on-destructive",
+        approval: approval.value === "sealed" ? "sealed" : "ledger",
+        call: waveCallArgv,
+        migrations: existsSync(join(repo, MIGRATIONS_DIR)),
+        ...(settings.apply?.point ? { point: settings.apply.point } : {}),
+      }))
+    : undefined;
   const pipeline = renderPipeline({
+    ...checkHooksInput,
+    ...(stepSpec ? { wavesSpec: stepSpec } : {}),
+    ...(ciProduct ? { ciProduct } : {}),
     forge: forgeChoice.value,
     binary: binary.value,
     version: version.value,
@@ -343,7 +407,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
     ...(settings.modules?.publish || settings.modules?.registry
-      ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}) }
+      ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}), ...(gitlabPublishToken(settings.modules) ? { publishGitlabToken: gitlabPublishToken(settings.modules)! } : {}) }
       : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
@@ -388,12 +452,21 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
   const ephemeralRel = forgeChoice.value === "gitlab" ? undefined : EPHEMERAL_PATHS[forgeChoice.value];
   const resumeRel = forgeChoice.value === "gitlab" ? undefined : RESUME_PATHS[forgeChoice.value];
+  const agentRel = CHANT_AGENT_PATHS[forgeChoice.value];
+  const driftRel = forgeChoice.value === "gitlab" ? undefined : CHANT_DRIFT_PATHS[forgeChoice.value];
   const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
     // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.
-    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel || f.path === agentRel || f.path === driftRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
+  }
+  // chant.config.ts: every root as a terraform.roots entry, so chant's step names it (terragucci#1303). A file terragucci did not write stays.
+  if (plainRoots) {
+    const configFile = join(repo, CHANT_CONFIG);
+    const mine = !existsSync(configFile) || chantConfigWrittenByTerragucci(readFileSync(configFile, "utf-8"));
+    if (mine) files.push(plan(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined)));
+    else notes.push(`${CHANT_CONFIG} is the repo's own, so terragucci left it; a wave applies through chant's terraform-apply step once it names every root under terraform.roots`);
   }
   // terragucci.components.json at the repo's root: the roots as chant components by wave, under the jobs that apply them, for behold.
   // Its waves are the pipeline's: a plain repo's cut by waves.canary, a Terragrunt, Atmos or Terramate repo's layers as the shape cut them.
@@ -402,7 +475,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${COMPONENTS_PATH} exists and terragucci did not write it; move it aside or pass --force`);
   }
   // A rollout, review, ephemeral or resume workflow an earlier init wrote goes when the config stops asking for it.
-  for (const rel of [rolloutRel, reviewRel, ephemeralRel, resumeRel]) {
+  for (const rel of [rolloutRel, reviewRel, ephemeralRel, resumeRel, agentRel, driftRel]) {
     if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
     const path = join(repo, rel);
     if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });
@@ -428,6 +501,22 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
   const decl = declaration(repo, tgMode || atmos || terramate ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
   if (decl) files.push(decl);
+  // The preset's hook goes into ci.hooks.check with chant's writer when the installed chant reads that moment; turned
+  // off, the hook an earlier init wrote goes. On a chant without the moment, check-hooks runs the preset itself.
+  const declSoFar = decl?.content ?? declText;
+  const hooked = preCommitOn && chantHooks
+    ? withPreCommitHook(chantHooks, basename(declFile), declSoFar ?? `${JSON.stringify({ name: workspaceName(repo, options.name), schema: 1, minReader: chantHooks.CI_CHECK_HOOK_FLOOR, members: [] }, null, 2)}\n`, binary.value)
+    : !preCommitOn && declSoFar !== undefined && !declFile.endsWith(".jsonc") ? withoutPreCommitHook(declSoFar) : undefined;
+  if (hooked !== undefined) {
+    const change = plan(declFile, hooked);
+    const at = files.findIndex((f) => f.path === declFile);
+    if (at >= 0) files[at] = change;
+    else files.push(change);
+  }
+  if (preCommitOn && !chantHooks) notes.push(`check.pre_commit is on, and the installed chant has no ci.hooks.check moment, so init writes no check hook and tf-check runs ${PRE_COMMIT_CONFIG}'s hooks itself`);
+  if (!preCommitOn && existsSync(join(repo, PRE_COMMIT_CONFIG))) {
+    notes.push(`tip: ${PRE_COMMIT_CONFIG} is here; set check.pre_commit: true in terragucci.yml and tf-check runs its hooks over each change, with PCT_TFPATH set to ${binary.value} and terraform_fmt skipped (the job's image needs pre-commit and the tools the file names)`);
+  }
   // Under sealed, the first signers line can come from the person's own git signing key.
   if (approval.value === "sealed") {
     const signersPath = join(repo, SIGNERS_PATH);
@@ -533,7 +622,33 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       writeFileSync(f.path, f.content);
     }
   }
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, records, files, notes, configNote };
+}
+
+/**
+ * Each live root's record store and estate: what `choudoufu live-check -json`
+ * resolves, else the live block's own text, and chant's bucket check on the
+ * store (./live-setup.ts). A Terragrunt unit holds no .tf files until
+ * Terragrunt writes its working directory, so it is not among the live roots
+ * here; choudoufu prints its store at each of the unit's runs.
+ */
+async function liveRecords(repo: string, roots: string[], options: InitOptions): Promise<LiveRecords[]> {
+  const env = options.env ?? process.env;
+  const out: LiveRecords[] = [];
+  for (const root of roots) {
+    const dir = join(repo, root);
+    const setup = await readLiveSetup(dir, { ...(options.liveExec ? { exec: options.liveExec } : {}) });
+    if (!setup) {
+      const estate = estateOf(dir).estate;
+      const store = estate ? recordStoreOf(dir, estate) : undefined;
+      const where = !store ? "no record store read" : store.kind === "s3" ? `records in s3 bucket "${store.bucket}" under ${store.prefix}` : store.kind === "local" ? `records in the local directory ${relative(dir, store.dir) || "."} under ${store.prefix}` : `records in a ${store.name} store`;
+      out.push({ root, from: "live block", line: `${root}: ${where} (from its live block: choudoufu live-check printed no resolved store, from an older release or a root it could not read); ${estate ? `estate "${estate}"` : "no estate named"}`, bucket: [] });
+      continue;
+    }
+    const bucket = options.bucketCheck === false || !setup.store ? [] : bucketLines(root, await checkStoreBucket(dir, setup.store, env));
+    out.push({ root, from: "choudoufu", line: setupLine(root, setup), bucket });
+  }
+  return out;
 }
 
 /**
@@ -721,6 +836,7 @@ export function describeInit(repo: string, r: InitResult, dryRun = false): strin
       : `found ${plural(r.roots.length, "root")} in ${plural(r.layers.length, "layer")}, ` +
         `${r.binary.value} ${r.version.value} (${r.binary.reason}), forge ${r.forge.value} (${r.forge.reason})`,
     ...(r.pins.length > 0 ? [`${plural(r.pins.length, "root")} ${r.pins.length === 1 ? "pins its" : "pin their"} own version: ${r.pins.map((p) => `${p.root} ${p.tool ?? r.binary.value} ${p.version} (${p.source})`).join(", ")}`] : []),
+    ...r.records.flatMap((x) => [`records: ${x.line}`, ...x.bucket.map((b) => `bucket: ${b}`)]),
     ...r.files.map((f) => `${verb(f.status)} ${relative(repo, f.path)}`),
     r.configNote,
     ...r.notes.map((n) => `note: ${n}`),
@@ -741,6 +857,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     version: r.version,
     ...(r.pins.length > 0 ? { pins: r.pins } : {}),
     forge: r.forge,
+    ...(r.records.length > 0 ? { records: r.records } : {}),
     image: r.image,
     files: r.files.map((f) => ({ path: relative(repo, f.path), status: f.status, content: f.content })),
     notes: r.notes,

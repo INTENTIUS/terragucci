@@ -1377,12 +1377,17 @@ beforeAll(async () => {
 async function terragucciBin(bin: string): Promise<void> {
   if (!CLI) {
     const { build } = await import("esbuild");
-    // The shipped bundle's stand-in for a chant subpath the installed chant lacks (terragucci#1278).
+    // The shipped bundle's stand-in for a chant subpath the installed chant lacks (terragucci#1278), and its
+    // external chant core where the installed chant serves compiled JS (terragucci#1281).
     const { chantNext } = await import("../../../scripts/chant-next-plugin.mjs");
-    CLI = join(tmp("tg-cli-"), "terragucci.mjs");
+    const { chantExternal } = await import("../../../scripts/chant-external.mjs");
+    // Beside the root's node_modules, so the external chant core resolves as it does for the installed package.
+    const cache = join(import.meta.dirname, "../../../node_modules/.cache/terragucci");
+    mkdirSync(cache, { recursive: true });
+    CLI = join(cache, `pipeline-cli-${process.pid}.mjs`);
     await build({
       entryPoints: [join(import.meta.dirname, "../src/cli.ts")], outfile: CLI, bundle: true, platform: "node", format: "esm", target: "node22",
-      external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"], logLevel: "silent", plugins: [chantNext],
+      external: ["@intentius/tsad-reference", "@cdktn/hcl2json", "typescript"], logLevel: "silent", plugins: [chantExternal(join(import.meta.dirname, "..")), chantNext],
       banner: { js: "import { createRequire as __r } from 'node:module';\nconst require = __r(import.meta.url);" },
     });
   }

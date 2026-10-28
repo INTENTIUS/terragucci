@@ -26,6 +26,9 @@ function recordingFetch(existing: Record<string, boolean> = {}): { fetch: Fetch;
     if (call.method === "GET" && url.includes("/pulls")) return json(has ? [{ html_url: "https://x/pull/1", number: 1, head: { ref: BRANCH } }] : []);
     if (call.method === "POST" && url.includes("merge_requests")) return json({ web_url: "https://gl/mr/7", iid: 7 });
     if (call.method === "POST" && url.includes("/pulls")) return json({ html_url: "https://x/pull/7", number: 7 });
+    // chant's reconcile (chant#4568) writes the open request's title and body again.
+    if (call.method === "PUT" && /merge_requests\/\d+$/.test(url)) return json({ web_url: "https://gl/mr/1", iid: 1 });
+    if (call.method === "PATCH" && /\/pulls\/\d+$/.test(url)) return json({ html_url: "https://x/pull/1", number: 1 });
     return { ok: false, status: 404, json: async () => ({}), text: async () => "not found" };
   };
   return { fetch, calls };
@@ -59,9 +62,9 @@ describe("reconcile", () => {
     const { fetch, calls } = recordingFetch();
     const out = await reconcile(config, { mode: "dry-run", fetch, env: {} });
     expect(out.map((o) => [o.key, o.status, o.changes.map((c) => c.path)])).toEqual([
-      ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml", "terragucci.components.json"]],
-      ["gitlab.example.com/platform/network", "would-change", [".gitlab/terragucci.yml", ".gitlab-ci.yml", "terragucci.components.json"]],
-      ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml", "terragucci.components.json"]],
+      ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml", ".chant/op-waves/tf-apply.spec.json", "chant.config.ts", "terragucci.components.json"]],
+      ["gitlab.example.com/platform/network", "would-change", [".gitlab/terragucci.yml", "chant.config.ts", ".gitlab-ci.yml", "terragucci.components.json"]],
+      ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml", ".chant/op-waves/tf-apply.spec.json", "chant.config.ts", "terragucci.components.json"]],
     ]);
     expect(calls).toEqual([]);
     expect(() => git(bares.github, "rev-parse", "--verify", BRANCH)).toThrow();
@@ -130,7 +133,7 @@ describe("reconcile", () => {
     const bare = bareFrom(write(twoRootRepo(), { ".gitlab-ci.yml": own }));
     const config = validateConfig({ defaults: { binary: "tofu" }, projects: { "gitlab.example.com/platform/network": { url: bare } } }, "t");
     const out = await reconcile(config, { mode: "apply", fetch: recordingFetch().fetch, env });
-    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"], ["terragucci.components.json", "created"]]);
+    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], ["chant.config.ts", "created"], [".gitlab-ci.yml", "updated"], ["terragucci.components.json", "created"]]);
     expect(git(bare, "show", `${BRANCH}:.gitlab-ci.yml`)).toBe(`include:\n  - local: .gitlab/terragucci.yml\n\n${own}`);
     git(bare, "update-ref", "refs/heads/main", `refs/heads/${BRANCH}`);
     const again = recordingFetch();

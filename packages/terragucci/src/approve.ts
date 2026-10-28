@@ -59,6 +59,7 @@ import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { originOf, resumeAfterApproval } from "./resume";
 import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
+import { chantHoldRecord } from "./chant-next";
 import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { ephemeralOp } from "./ephemeral";
@@ -269,7 +270,14 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
   const config = configPath ? await loadConfig(configPath) : {};
   const mode: Approval = checkoutApproval(repo, config)?.mode ?? "ledger";
   log(`migration ${m.migration} waits for an approval of ${m.digest}${m.description ? ` (${m.description})` : ""}, since ${m.since}`);
-  const kept = spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${keptPath(m.migration, m.digest)}`], { cwd: repo, encoding: "utf-8" });
+  const show = (path: string) => spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${path}`], { cwd: repo, encoding: "utf-8" });
+  let kept = show(keptPath(m.migration, m.digest));
+  // chant keeps the proof as the request's attachment (chant#4551, #4623) when it records the gate.
+  const held = kept.status === 0 ? undefined : await chantHoldRecord();
+  if (held) {
+    const at = held.gatedRequestAttachmentPath(MIGRATE_OP, m.digest);
+    kept = show(`${at.dir}/${at.file}`);
+  }
   for (const l of describeMigration(kept.status === 0 ? kept.stdout : undefined)) log(l);
   if (at(m.expiresAt) < Date.now()) log(`  its pending fact expired at ${m.expiresAt}; the approval still counts if wave 1 proves the same digest`);
   const sign = o.sign ?? (mode === "sealed" ? true : undefined);

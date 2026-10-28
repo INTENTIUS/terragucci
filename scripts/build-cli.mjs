@@ -1,12 +1,14 @@
 // Builds @intentius/terragucci for release: the CLI as one bundled file that
-// imports no package, and the config types for a terragucci.ts.
+// imports Node's own modules and the installed @intentius/chant, and the
+// config types for a terragucci.ts.
 //   node scripts/build-cli.mjs
-// The bundle carries the chant code it uses; the package depends on
-// @intentius/chant only for the bin `terragucci approve` runs (bundle-check
-// holds that pin to the root's). The TypeScript folder that a .ts config
-// needs, and the HCL parser a module rollout needs, stay external and optional.
+// The package depends on @intentius/chant at an exact pin (bundle-check holds
+// it to the root's). The bundle imports chant core from it wherever that chant
+// serves compiled JS (scripts/chant-external.mjs, chant#4591) and carries the
+// lexicon code it uses. The TypeScript folder that a .ts config needs, and the
+// HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
 import { dirname, join } from "node:path";
@@ -47,6 +49,76 @@ const metaDir = join(root, "node_modules/.cache/terragucci");
 mkdirSync(metaDir, { recursive: true });
 writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
+
+// The registry edge function (`terragucci registry edge`, terragucci#1287): chant's
+// terraform lexicon function as a Cloudflare Worker and a Lambda@Edge handler,
+// each one file a user deploys. Built only when the installed chant has
+// registry/edge; without it the command says the build carries none.
+const edgeEntries = {
+  "registry-edge-worker.mjs": {
+    platform: "browser",
+    contents: 'export { registryWorker as default } from "@intentius/chant-lexicon-terraform/registry/edge";\n',
+  },
+  "registry-edge-lambda.mjs": {
+    platform: "node",
+    contents: [
+      'import { readFileSync } from "node:fs";',
+      'import { lambdaEdgeHandler, originFiles } from "@intentius/chant-lexicon-terraform/registry/edge";',
+      '// Lambda@Edge has no environment variables: `terragucci registry edge` writes the options beside this file.',
+      'const o = JSON.parse(readFileSync(new URL("./registry-edge.json", import.meta.url), "utf8"));',
+      'export const handler = lambdaEdgeHandler({ files: originFiles(o.origin), ...(o.prefix ? { prefix: o.prefix } : {}), ...(o.auth ? { auth: o.auth } : {}) });',
+      "",
+    ].join("\n"),
+  },
+};
+// chant#4589 moved the store error classes to @intentius/chant/object-store/errors,
+// which imports no Node built-in, so a chant that has it needs no stand-in.
+// The bundle resolves from the package first (a nested copy), then the root.
+const chantFile = (pkgName, rel) => [pkg, root].some((base) => [".js", ".ts"].some((ext) => existsSync(join(base, "node_modules", pkgName, rel + ext))));
+const chantHasEdgeErrors = ["src", "dist"].some((d) => chantFile("@intentius/chant", `${d}/object-store/errors`));
+// chant#4590: the Lambda@Edge handler reads its tokens from SSM or Secrets Manager.
+const chantReadsTokenStores = ["src", "dist"].some((d) => chantFile("@intentius/chant-lexicon-terraform", `${d}/registry/edge/token-source`));
+// Fallback for the published chant pin: the lexicon's registry writer there imports
+// StoreConflict from chant core's object store, whose clients import node:fs and
+// node:crypto, which a Worker without nodejs_compat cannot load. The edge function
+// never writes a store, so the module is stood in for by its two error classes.
+const edgeStoreStub = {
+  name: "edge-store-stub",
+  setup(b) {
+    b.onResolve({ filter: /^@intentius\/chant\/object-store$/ }, () => ({ path: "object-store", namespace: "edge-store-stub" }));
+    b.onLoad({ filter: /.*/, namespace: "edge-store-stub" }, () => ({
+      loader: "js",
+      contents: [
+        "export class StoreError extends Error {}",
+        "export class StoreConflict extends StoreError {}",
+        'const none = () => { throw new Error("the registry edge function writes no object store"); };',
+        "export const defaultFetch = none, encodePath = none, encodeStrict = none, xmlText = none;",
+        "",
+      ].join("\n"),
+    }));
+  },
+};
+for (const [file, entry] of Object.entries(edgeEntries)) {
+  try {
+    await build({
+      stdin: { contents: entry.contents, resolveDir: pkg, loader: "js" },
+      bundle: true,
+      format: "esm",
+      platform: entry.platform,
+      target: "es2022",
+      minify: true,
+      conditions: ["import", "default"],
+      outfile: join(stage, file),
+      plugins: chantHasEdgeErrors ? [] : [edgeStoreStub],
+      logLevel: "silent",
+    });
+  } catch (e) {
+    console.log(`  ${file}: not built (${String(e.message).split("\n")[0]})`);
+  }
+}
+
+// Tells `terragucci registry edge` the Lambda@Edge bundle can read tokens from a store.
+if (chantReadsTokenStores) writeFileSync(join(stage, "registry-edge-token-stores"), "chant#4590\n");
 
 // The JSON Schemas of what terragucci writes, published so a reader can validate
 // terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1, terragucci.run/v1, terragucci.state-edges/v1, terragucci.estates/v1 and terragucci.versions/v1.

@@ -25,14 +25,16 @@ import { join, posix } from "node:path";
 import type { KeyObject } from "node:crypto";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { isTerragruntFile, readModulePin } from "@intentius/chant-lexicon-terraform/pin";
-import { ConfigError, resolveProject, resolveRepo, type ModulesSettings } from "../config";
+import { ConfigError, resolveProject, resolveRepo, type ModulesSettings, type SourceProxy } from "../config";
+import { registryProxies } from "../sources";
 import { loadHclParser } from "../rollout/parser";
 import { stackUnitSource } from "../tg-stacks";
 import { configAtBase, type TrustedOptions } from "../report/policy";
 import { pinFiles, pinVersion } from "../rollout/pins";
 import { moduleTarAt } from "./archive";
 import { attestKey } from "./attest";
-import { fetchLedger, shown, type Ledger } from "./ledger";
+import { fetchLedger, shown, type Ledger, type VersionedReleaseRecord } from "./ledger";
+import { chantReleaseCatalog, type ChantReleaseCatalog } from "../chant-next";
 import { Registry, installable, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 
 const DIGEST = /^[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-fA-F]{32,}$/;
@@ -136,7 +138,7 @@ export function checkedSources(repo: string, governing: GoverningModules): Check
       if (t === "git-tags") {
         const origin = spawnSync("git", ["-C", repo, "remote", "get-url", "origin"], { encoding: "utf-8" });
         if (origin.status === 0 && origin.stdout.trim()) out.push({ kind: "git", match: normalizeSource(origin.stdout.trim()), key: k, keyPath: own, ledger: "origin", tags: "origin" });
-      } else {
+      } else if (t.startsWith("oci://")) {
         out.push({ kind: "oci", match: normalizeSource(t), key: k, keyPath: own, ledger: "origin" });
       }
     }
@@ -199,6 +201,8 @@ export interface RequireOptions {
   env?: NodeJS.ProcessEnv;
   /** Ledgers already read in this run, by where they were read. */
   ledgers?: Map<string, Ledger | undefined>;
+  /** `sources.proxies`: a pin written through one is checked as its upstream, and read through the proxy (terragucci#1302). */
+  proxies?: readonly SourceProxy[];
 }
 
 function fetchTag(repo: string, remote: string, tag: string): string | undefined {
@@ -209,19 +213,53 @@ function fetchTag(repo: string, remote: string, tag: string): string | undefined
   return c.status === 0 ? c.stdout.trim() : undefined;
 }
 
+const bareVersion = (v: string): string => v.replace(/^v(?=\d)/, "");
+
+/**
+ * Why a pin is refused because its release is yanked (terragucci#1298), or
+ * undefined: the publisher's latest status record for the release the pin
+ * names, matched by the version its release record carries. The version to
+ * move to is the record's replacement, else the newest recorded version that
+ * is not yanked.
+ */
+export function yankedPin(ledger: Ledger, module: string, pin: string, core: Pick<ChantReleaseCatalog, "parseReleaseStatus" | "statusOf">): string | undefined {
+  if (!ledger.status) return undefined;
+  const statuses = core.parseReleaseStatus(ledger.status).records;
+  const names = (component: string): boolean => component === module || posix.basename(component) === module;
+  const releases = (ledger.records as VersionedReleaseRecord[]).filter((r) => r.releaseVersion && names(r.component));
+  for (const r of releases.filter((x) => bareVersion(x.releaseVersion!) === bareVersion(pin))) {
+    const { status, record } = core.statusOf(statuses, r.component, r.digest);
+    if (status !== "yanked") continue;
+    const open = releases
+      .filter((x) => x.component === r.component && core.statusOf(statuses, x.component, x.digest).status !== "yanked")
+      .map((x) => x.releaseVersion!)
+      .sort((a, b) => {
+        const pa = a.split(".").map(Number);
+        const pb = b.split(".").map(Number);
+        return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+      });
+    const to = record?.replacement ?? open.at(-1);
+    return `${r.component} ${r.releaseVersion} is yanked${record?.reason ? ` (${record.reason})` : ""}${record?.actor ? ` by ${record.actor}` : ""}; ${to ? `move the pin to ${to}` : "no other version of it is open to move to"}`;
+  }
+  return undefined;
+}
+
 /** Check every call of one root against the checked sources. */
 export async function checkRootPins(repo: string, root: string, sources: CheckedSource[], parser: Hcl2Json, options: RequireOptions = {}): Promise<PinCheck> {
   const env = options.env ?? process.env;
   const ledgers = options.ledgers ?? new Map<string, Ledger | undefined>();
   const out: PinCheck = { refused: [], verified: [] };
   if (sources.length === 0) return out;
+  // A proxy stands a source in for its upstream: the pin is checked as the upstream's, and read through the proxy.
+  const proxied = await registryProxies(options.proxies);
   const ledgerAt = (where: string): Ledger | undefined => {
     if (!ledgers.has(where)) ledgers.set(where, fetchLedger(repo, where));
     return ledgers.get(where);
   };
   for (const c of await rootCalls(repo, root, parser)) {
     const pin = readModulePin(c.source, c.version);
-    const base = pin.module.split("?")[0]!;
+    const written = pin.module.split("?")[0]!;
+    const base = (proxied && proxied.lib.moduleThroughProxy(written, proxied.list)?.upstream) ?? written;
     let source: CheckedSource | undefined;
     let module = "";
     let git: { url: string; subdir: string } | undefined;
@@ -259,6 +297,13 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
       refuse(pin.pin, `${shown(source.ledger)} has no chant/lifecycle branch, so no release is recorded`);
       continue;
     }
+    // A yanked release is refused before anything is fetched; it stays in the registry, so the refusal is the only stop.
+    const core = ledger.status ? await chantReleaseCatalog() : undefined;
+    const yanked = core && yankedPin(ledger, module, pin.pin, core);
+    if (yanked) {
+      refuse(pin.pin, yanked);
+      continue;
+    }
     const verifyGit = (url: string, subdir: string, tag: string): void => {
       if (!subdir) throw new AttestationError("the source names no module directory (//<path>)");
       const commit = fetchTag(repo, source!.tags ?? url, tag);
@@ -294,7 +339,9 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
     try {
       if (reg) {
         // Where the registry says the version is, checked as that kind of source.
-        const location = await registryLocation(base, pin.pin, options.fetch);
+        const location = proxied
+          ? await proxied.lib.registryLocation(base, pin.pin, { proxies: proxied.list, ...(options.fetch ? { fetch: options.fetch as never } : {}) })
+          : await registryLocation(base, pin.pin, options.fetch);
         const query = new URLSearchParams(location.split("?")[1] ?? "");
         if (location.startsWith("oci://")) {
           const tag = query.get("tag");
@@ -306,13 +353,14 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
           if (!at || !ref) throw new AttestationError(`the registry points ${pin.pin} at ${location}, which names no tag`);
           verifyGit(at.url, at.subdir, ref);
         } else {
-          verifyRelease({ module, version: pin.pin, bytes: await fetchTarball(location, options.fetch), byName: true }, ledger, source.key);
+          const bytes = proxied ? Buffer.from(await proxied.lib.fetchTarball(location, options.fetch ? { fetch: options.fetch as never } : {})) : await fetchTarball(location, options.fetch);
+          verifyRelease({ module, version: pin.pin, bytes, byName: true }, ledger, source.key);
         }
       } else if (git) verifyGit(git.url, module, pin.pin);
       else await verifyOci(oci!, pin.pin);
       out.verified.push(`${c.call} ${pin.module} ${pin.pin}`);
     } catch (e) {
-      if (!(e instanceof AttestationError) && !(e instanceof RegistryError) && !(e instanceof Error && e.name === "OciError")) throw e;
+      if (!(e instanceof AttestationError) && !(e instanceof RegistryError) && !(e instanceof Error && (e.name === "OciError" || e.name === "RegistryError"))) throw e;
       refuse(pin.pin, e.message);
     }
   }

@@ -638,13 +638,13 @@
           "anyOf": [
             {
               "type": "string",
-              "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+              "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$|(?:artifactory|nexus)://[^/\\s]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9_-]+)?$)"
             },
             {
               "type": "array",
               "items": {
                 "type": "string",
-                "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$|(?:artifactory|nexus)://[^/\\s]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9_-]+)?$)"
               }
             }
           ]
@@ -668,6 +668,10 @@
         },
         "require": {
           "const": "attested"
+        },
+        "gitlab_token": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         },
         "trusted": {
           "type": "array",
@@ -742,6 +746,46 @@
                 "tarball",
                 "git-tags",
                 "oci"
+              ]
+            },
+            "edge": {
+              "enum": [
+                "cloudflare",
+                "cloudfront",
+                "pages",
+                "none"
+              ]
+            },
+            "auth": {
+              "enum": [
+                "off",
+                "token"
+              ]
+            },
+            "tokens": {
+              "enum": [
+                "zip",
+                "ssm",
+                "secrets-manager"
+              ]
+            },
+            "tokens_name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tokens_region": {
+              "type": "string",
+              "pattern": "^[a-z]{2}(-[a-z]+)+-\\d$"
+            },
+            "providers": {
+              "enum": [
+                "mirror"
+              ]
+            },
+            "catalog": {
+              "enum": [
+                "on",
+                "off"
               ]
             }
           },
@@ -1154,11 +1198,66 @@
             "type": "string",
             "pattern": "^[^\\s,;'\"]+$"
           }
+        },
+        "proxies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "artifactory": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$"
+              },
+              "nexus": {
+                "type": "string",
+                "pattern": "^https?://[^/\\s]+/?$"
+              },
+              "repo": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9._-]+$"
+              },
+              "upstream": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$"
+              },
+              "host": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$"
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "repo"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "artifactory"
+                ]
+              },
+              {
+                "required": [
+                  "nexus"
+                ]
+              }
+            ]
+          }
         }
       },
       "additionalProperties": false,
       "minProperties": 1,
       "description": "Globs of the module sources and provider addresses a root may use, checked before init."
+    },
+    "check": {
+      "type": "object",
+      "properties": {
+        "pre_commit": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "description": "What tf-check runs beyond its own checks: the repo's pre-commit hooks."
     },
     "atlantis_comments": {
       "type": "boolean",
@@ -2463,13 +2562,13 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                  "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$|(?:artifactory|nexus)://[^/\\s]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9_-]+)?$)"
                 },
                 {
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(?:git-tags$|oci://[^/]+/.)"
+                    "pattern": "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$|(?:artifactory|nexus)://[^/\\s]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9_-]+)?$)"
                   }
                 }
               ]
@@ -2493,6 +2592,10 @@
             },
             "require": {
               "const": "attested"
+            },
+            "gitlab_token": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
             },
             "trusted": {
               "type": "array",
@@ -2567,6 +2670,46 @@
                     "tarball",
                     "git-tags",
                     "oci"
+                  ]
+                },
+                "edge": {
+                  "enum": [
+                    "cloudflare",
+                    "cloudfront",
+                    "pages",
+                    "none"
+                  ]
+                },
+                "auth": {
+                  "enum": [
+                    "off",
+                    "token"
+                  ]
+                },
+                "tokens": {
+                  "enum": [
+                    "zip",
+                    "ssm",
+                    "secrets-manager"
+                  ]
+                },
+                "tokens_name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tokens_region": {
+                  "type": "string",
+                  "pattern": "^[a-z]{2}(-[a-z]+)+-\\d$"
+                },
+                "providers": {
+                  "enum": [
+                    "mirror"
+                  ]
+                },
+                "catalog": {
+                  "enum": [
+                    "on",
+                    "off"
                   ]
                 }
               },
@@ -2979,11 +3122,66 @@
                 "type": "string",
                 "pattern": "^[^\\s,;'\"]+$"
               }
+            },
+            "proxies": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "artifactory": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$"
+                  },
+                  "nexus": {
+                    "type": "string",
+                    "pattern": "^https?://[^/\\s]+/?$"
+                  },
+                  "repo": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  },
+                  "upstream": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$"
+                  },
+                  "host": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "repo"
+                ],
+                "oneOf": [
+                  {
+                    "required": [
+                      "artifactory"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "nexus"
+                    ]
+                  }
+                ]
+              }
             }
           },
           "additionalProperties": false,
           "minProperties": 1,
           "description": "Globs of the module sources and provider addresses a root may use, checked before init."
+        },
+        "check": {
+          "type": "object",
+          "properties": {
+            "pre_commit": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "description": "What tf-check runs beyond its own checks: the repo's pre-commit hooks."
         },
         "atlantis_comments": {
           "type": "boolean",

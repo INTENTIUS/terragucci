@@ -29,6 +29,7 @@ import {
   APPROVALS,
   APPROVAL_RULE_KEYS,
   ATMOS_KEYS,
+  CHECK_KEYS,
   AUDIENCE_STAGES,
   BINARIES,
   COST_KEYS,
@@ -63,8 +64,13 @@ import {
   OVERRIDE_ENTRY_KEYS,
   POLICY_KEYS,
   QUESTION_TYPES,
+  REGISTRY_AUTHS,
+  REGISTRY_TOKENS,
+  REGISTRY_EDGES,
   REGISTRY_KEYS,
   REGISTRY_NAME,
+  REGISTRY_PROVIDERS,
+  REGISTRY_CATALOG,
   REGISTRY_SYSTEM,
   RELEASE_VERSION,
   RESPONSES,
@@ -73,6 +79,7 @@ import {
   SECRET_NAME,
   SOURCE_GLOB,
   SOURCES_KEYS,
+  SOURCE_PROXY_KEYS,
   TELEMETRY_KEYS,
   TERRAGRUNT_KEYS,
   TRUST_ROLE,
@@ -85,6 +92,7 @@ import {
   type ProjectSettings,
   type RegistrySettings,
   type SourcesSettings,
+  type SourceProxy,
   type TerragruntSettings,
 } from "./config";
 import { IDENT, LEVEL_KEYS, PROVIDER_KEY, TOP_KEYS } from "./generate-config";
@@ -206,19 +214,27 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   namespaces: { type: "object", propertyNames: { pattern: "^[^/]" }, additionalProperties: pat(REGISTRY_NAME) },
   system: pat(REGISTRY_SYSTEM),
   download: enumOf(["tarball", "git-tags", "oci"]),
+  edge: enumOf(REGISTRY_EDGES),
+  auth: enumOf(REGISTRY_AUTHS),
+  tokens: enumOf(REGISTRY_TOKENS),
+  tokens_name: { type: "string", minLength: 1 },
+  tokens_region: { type: "string", pattern: "^[a-z]{2}(-[a-z]+)+-\\d$" },
+  providers: enumOf(REGISTRY_PROVIDERS),
+  catalog: enumOf(REGISTRY_CATALOG),
 } satisfies Record<keyof RegistrySettings, JsonSchema>, {
   required: ["url", "namespace"],
   oneOf: [{ required: ["bucket"] }, { required: ["dir"] }],
   dependentRequired: { endpoint: ["bucket"] },
 });
 
-const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci://[^/]+/.)" };
+const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$|hcp://(?:[^/\\s]+\\.[^/\\s]+/)?[A-Za-z0-9_-]+$|(?:artifactory|nexus)://[^/\\s]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9_-]+)?$)" };
 
 const modules = map([...MODULES_KEYS] as (keyof ModulesSettings)[], {
   path: str,
   publish: { anyOf: [publishTarget, { type: "array", items: publishTarget }] },
   attest: { anyOf: [bool, map(["key"], { key: { type: "string", minLength: 1 } })] },
   require: { const: "attested" },
+  gitlab_token: secret,
   trusted: {
     type: "array",
     items: map(["source", "key", "ledger"], {
@@ -258,7 +274,15 @@ const policy = map(POLICY_KEYS as (keyof PolicySettings)[], {
 } satisfies Record<keyof PolicySettings, JsonSchema>);
 
 const sourceGlobs: JsonSchema = { type: "array", minItems: 1, items: { type: "string", pattern: SOURCE_GLOB } };
-const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
+const hostName = { type: "string", pattern: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:\\d+)?$" } satisfies JsonSchema;
+const sourceProxy = map(SOURCE_PROXY_KEYS as (keyof SourceProxy)[], {
+  artifactory: hostName,
+  nexus: { type: "string", pattern: "^https?://[^/\\s]+/?$" },
+  repo: { type: "string", pattern: "^[A-Za-z0-9._-]+$" },
+  upstream: hostName,
+  host: hostName,
+} satisfies Record<keyof SourceProxy, JsonSchema>, { required: ["repo"], oneOf: [{ required: ["artifactory"] }, { required: ["nexus"] }] });
+const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs, proxies: { type: "array", minItems: 1, items: sourceProxy } } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
 
 const oidc = map(OIDC_KEYS, {
   plan_role: { type: "string", minLength: 1 },
@@ -470,6 +494,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     atmos: { ...map(ATMOS_KEYS, { version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$" } }), description: "Atmos settings." },
     policy: { ...policy, description: "Policy checks over each plan." },
     sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init." },
+    check: { ...map(CHECK_KEYS, { pre_commit: bool }), description: "What tf-check runs beyond its own checks: the repo's pre-commit hooks." },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
     respond: {
       ...map(Object.keys(RESPONSES), each(Object.keys(RESPONSES), (event) => enumOf(RESPONSES[event as keyof typeof RESPONSES]))),

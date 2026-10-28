@@ -33,6 +33,7 @@
  * merge request leaves `.gitlab-ci.yml` and `.gitlab/terragucci.yml` alone,
  * and no other open merge request holds a lock on a root it reaches.
  */
+import { terragucciStatus } from "./ci-words";
 import { spawnSync } from "node:child_process";
 import { applyWaves } from "./apply";
 import { LOGIN, parseComment, parseOptions, SHA } from "./comment";
@@ -40,6 +41,7 @@ import { approverFilter, reached, type ApplyCommentDecision, type Git } from "./
 import type { WavesAfter } from "./detect";
 import type { PrApproverFilter, PrForge } from "@intentius/chant/pr-forge";
 import { unmetApplyRequires } from "./apply-requires";
+import { chantForgeReads } from "./chant-next";
 import { ConfigError, type ApplyRequire } from "./config";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
@@ -50,9 +52,9 @@ import type { ForgeCalls } from "./review";
 const DEVELOPER = 30;
 
 /** The status the plan job posts on the head it planned. */
-const PLAN_CONTEXT = "terragucci/plan";
+const PLAN_CONTEXT = (): string => terragucciStatus("plan");
 /** The apply's own status, which never holds it back. */
-const APPLY_CONTEXT = "terragucci/apply";
+const APPLY_CONTEXT = (): string => terragucciStatus("apply");
 
 /** The files GitLab builds the default branch's pipeline from: a merge request that changes one applies after it merges. */
 export const PIPELINE_FILES_ON_GITLAB = [".gitlab-ci.yml", ".gitlab/terragucci.yml"];
@@ -128,18 +130,24 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
     return approverFilter(await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) }));
   };
   const forge = c.forge ?? poster("gitlab", c.env ?? process.env, c.fetch);
-  const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
+  const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT()], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
   if (unmet) return { refuse: `!${iid} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes` };
 
-  let statuses: any;
+  const reads = chantForgeReads(forge);
+  let plan: any;
   try {
-    statuses = await api("GET", `/projects/${id}/repository/commits/${sha}/statuses?per_page=100`);
+    if (reads.commitStatuses) {
+      // chant's forge client reads each context's newest status where the installed chant has the read (chant#4554).
+      const st = (await reads.commitStatuses(sha)).find((s) => s.context === PLAN_CONTEXT());
+      plan = st ? { status: st.state } : undefined;
+    } else {
+      const statuses: any = await api("GET", `/projects/${id}/repository/commits/${sha}/statuses?per_page=100`);
+      for (const st of Array.isArray(statuses) ? statuses : []) {
+        if (st?.name === PLAN_CONTEXT() && (!plan || Number(st.id) > Number(plan.id))) plan = st;
+      }
+    }
   } catch (e) {
     return { fail: `could not read the statuses of ${short(sha)} (${(e as Error).message})` };
-  }
-  let plan: any;
-  for (const st of Array.isArray(statuses) ? statuses : []) {
-    if (st?.name === PLAN_CONTEXT && (!plan || Number(st.id) > Number(plan.id))) plan = st;
   }
   if (plan?.status !== "success") {
     return { refuse: `the plan of !${iid} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again` };

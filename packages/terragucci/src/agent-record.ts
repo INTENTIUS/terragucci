@@ -3,8 +3,13 @@
  * it cost and the commit it made. `agent.comment` and `agent.drift` write one
  * when their push job finishes, whatever the outcome.
  *
- * It goes two places. Always, one line in `_gates/agent-runs.jsonl` on
- * chant/lifecycle, which the audit trail reads as an `agent-run` entry. And,
+ * It goes two places. Always, one run record on chant/lifecycle, which the
+ * audit trail reads as an `agent-run` entry: with a chant that has the agent
+ * job (chant#4616), chant's run record (`agentRunRecordInput`) appended with
+ * chant's run ledger writer to `local/runs__<op>.jsonl` under the member's
+ * prefix, op {@link AGENT_OPS} of the feature, the cost in
+ * `outcomes.agent.usage.usd`, where chant's `maxCostUsd` sums it; else one
+ * line in `_gates/agent-runs.jsonl`, as before. And,
  * when the job's environment names an OTLP traces endpoint (the variables in
  * ./telemetry.ts), one span to the customer's collector, which a Langfuse
  * instance can be. A record that cannot be written is logged and never fails
@@ -25,10 +30,47 @@ import type { Actor } from "./actor";
 import { AGENT_RUNS_FILE } from "./report/audit";
 import type { Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
+import { chantAgentRuns } from "./chant-next";
 
 export { AGENT_RUNS_FILE };
 export const AGENT_FEATURES = ["agent.comment", "agent.drift", "review.agent", "agent.refused-wave"] as const;
 export type AgentFeature = (typeof AGENT_FEATURES)[number];
+
+/** The op each feature's runs are recorded under on chant's run ledger (chant#4616): `local/runs__<op>.jsonl`. */
+export const AGENT_OPS: Readonly<Record<AgentFeature, string>> = {
+  "agent.comment": "terragucci-agent",
+  "agent.drift": "terragucci-drift-agent",
+  "review.agent": "terragucci-review",
+  "agent.refused-wave": "terragucci-refused-wave",
+};
+
+/** What chant's run record names the trigger: `comment` and `drift` as chant's agent job does, the feature's own word for the rest. */
+const AGENT_TRIGGER: Readonly<Record<AgentFeature, string>> = { "agent.comment": "comment", "agent.drift": "drift", "review.agent": "review", "agent.refused-wave": "refused-wave" };
+
+/**
+ * terragucci's record as chant's run record input (`agentRunRecordInput`):
+ * chant's results are its push job's, so a review's `posted` and a refused
+ * wave's `summarized`, which push nothing, are recorded as `opened`, with
+ * the word kept in `reason`.
+ */
+export function chantAgentRunInput(r: AgentRunRecord, started: string, gitSha?: string): Parameters<NonNullable<Awaited<ReturnType<typeof chantAgentRuns>>>["agentRunRecordInput"]>[0] {
+  const result = r.result === "posted" || r.result === "summarized" ? "opened" : r.result;
+  return {
+    settings: { name: AGENT_OPS[r.feature], on: AGENT_TRIGGER[r.feature], env: "local" },
+    started,
+    ended: r.timestamp,
+    result,
+    reason: result === r.result ? r.reason : `${r.result}: ${r.reason}`,
+    ...(r.requestedBy ? { requestedBy: r.requestedBy } : {}),
+    ...(r.commit ? { commit: r.commit } : {}),
+    ...(r.pullRequest ? { pullRequest: r.pullRequest } : {}),
+    ...(r.promptDigest ? { promptDigest: r.promptDigest } : {}),
+    ...(r.model || r.cost
+      ? { usage: { ...(r.model ? { model: r.model } : {}), ...(r.cost?.usd !== undefined ? { usd: r.cost.usd } : {}), ...(r.cost?.input_tokens !== undefined ? { inputTokens: r.cost.input_tokens } : {}), ...(r.cost?.output_tokens !== undefined ? { outputTokens: r.cost.output_tokens } : {}) } }
+      : {}),
+    ...(gitSha ? { gitSha } : {}),
+  };
+}
 
 /** The files the agent job leaves beside `rc` and `change.patch`. */
 export const AGENT_OUTPUT_FILE = "agent-output.json";
@@ -142,6 +184,8 @@ export interface RecordAgentRunInput {
   commit?: string;
   pullRequest?: string;
   env: NodeJS.ProcessEnv;
+  /** When the run started, for chant's run record. Default the time it is recorded. */
+  started?: string;
 }
 
 /** The record for one run. */
@@ -211,9 +255,18 @@ export async function recordAgentRun(repo: string, o: RecordAgentRunInput, deps:
   const log = deps.log ?? ((l: string) => console.log(l));
   if (deps.ledger === false) log(`terragucci: no checkout in this job, so the ${record.feature} run is not written to ${AGENT_RUNS_FILE}`);
   else try {
-    const append = deps.append ?? (async (line: string, message: string): Promise<void> => (await import("./apply")).appendLifecycle(repo, AGENT_RUNS_FILE, [line], {}, message));
-    await append(JSON.stringify(record), `Agent run ${record.feature}: ${record.result}`);
-    log(`terragucci: recorded the ${record.feature} run in ${AGENT_RUNS_FILE} on chant/lifecycle`);
+    const chant = deps.append ? undefined : await chantAgentRuns();
+    if (chant) {
+      // chant#4616: chant's run record on chant's run ledger, under the member's prefix, pushed after.
+      const sha = o.env.TG_SHA || o.env.GITHUB_SHA || o.env.CI_COMMIT_SHA;
+      await chant.appendRunRecord(chant.agentRunRecordInput(chantAgentRunInput(record, o.started ?? record.timestamp, sha)), { cwd: repo });
+      const pushed = await chant.pushLifecycleReport({ cwd: repo });
+      log(`terragucci: recorded the ${record.feature} run in local/runs__${AGENT_OPS[record.feature]}.jsonl on chant/lifecycle${pushed.pushed ? "" : ` (not pushed: ${pushed.pushWarning ?? "no remote"})`}`);
+    } else {
+      const append = deps.append ?? (async (line: string, message: string): Promise<void> => (await import("./apply")).appendLifecycle(repo, AGENT_RUNS_FILE, [line], {}, message));
+      await append(JSON.stringify(record), `Agent run ${record.feature}: ${record.result}`);
+      log(`terragucci: recorded the ${record.feature} run in ${AGENT_RUNS_FILE} on chant/lifecycle`);
+    }
   } catch (e) {
     log(`terragucci: could not record the agent run (${(e as Error).message})`);
   }

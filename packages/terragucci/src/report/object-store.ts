@@ -14,7 +14,27 @@ export type StoreFetch = (url: string, init: { method: string; headers: Record<s
   headers?: { get(name: string): string | null };
 }>;
 
-export class StoreError extends Error {}
+/** chant's classes for terragucci's, once chant's object store is loaded (../chant-next.ts). */
+const chantErrors = new Map<Function, Function>();
+
+/**
+ * Where the installed chant carries the object store clients (chant#4554),
+ * they throw chant's StoreError and StoreConflict. From here on, terragucci's
+ * StoreError and StoreConflict take those as their own in `instanceof`, so
+ * every catch reads them as it reads terragucci's.
+ */
+export function adoptChantStoreErrors(storeError: Function, storeConflict: Function): void {
+  chantErrors.set(StoreError, storeError);
+  chantErrors.set(StoreConflict, storeConflict);
+}
+
+export class StoreError extends Error {
+  static [Symbol.hasInstance](v: unknown): boolean {
+    if (Function.prototype[Symbol.hasInstance].call(this, v)) return true;
+    const chant = chantErrors.get(this);
+    return chant !== undefined && v instanceof chant;
+  }
+}
 
 /** A conditional write that lost: the object changed (412) or another write to it was in flight (409). */
 export class StoreConflict extends StoreError {}

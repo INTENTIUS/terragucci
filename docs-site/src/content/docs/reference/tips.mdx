@@ -38,6 +38,14 @@ A module call is pinned to a range such as `~> 1.4`, which a rollout cannot move
 
 It also covers a provider range in `required_providers`, which `tf-rollout --provider` cannot cross. When TF038 or TF039 names the call, only that tip is given.
 
+### terragucci-module-table
+
+A [choudoufu](/terragucci/concepts/glossary/#choudoufu) root's registry module pin is refused in some examples of choudoufu's [module table](https://intentius.io/choudoufu/aws/compatibility/#modules), or the table has no row for it. The tip gives the tier the table measured, and for a refused version each refusal ID with its sites. Run `choudoufu live-check` on the root to see each site, or pin a version whose examples plan. terragucci reads the table from chant's terraform lexicon, and a chant release without it gives no tip.
+
+### terragucci-deprecated-version
+
+A root's module call pins a version its registry's [release catalog](/terragucci/guides/publish-modules/#browse-the-release-catalog) marks deprecated or yanked. The tip names the call and gives the publisher's reason with the version to move to. A deprecated version still installs and passes; a yanked one still installs too, and `modules.require: attested` refuses it. The plan reads the catalog of this repo's own `modules.registry` and of each registry host `sources.modules` names, such as `modules.example.com/acme/*`, with the token Terraform would send that host. A catalog it cannot read gives no tip, and a chant release without the check gives none.
+
 ### terragucci-no-canary
 
 A project has more than five roots and no `waves.canary`.

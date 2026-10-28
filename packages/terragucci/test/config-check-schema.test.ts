@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
+import { chantExitCodes } from "../src/chant-next";
 import { tmp, write } from "./helpers";
+
+// A config error exits 1 under chant's exit-code table (chant#4553, ruling C), 2 before it.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
 
 // A schema that refuses what config.ts accepts: config check must say so.
 vi.mock("../src/config-schema", async (actual) => ({
@@ -26,7 +30,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("config check", () => {
   it("validates against terragucci.schema.json too, and lists what the schema refuses", async () => {
     const refused = await check(write(tmp(), { "terragucci.yml": "binary: tofu\n" }));
-    expect(refused.code).toBe(2);
+    expect(refused.code).toBe(USAGE);
     expect(JSON.parse(refused.out).results.problems).toEqual(["config.binary: must be one of terraform (terragucci.schema.json)"]);
     const ok = await check(write(tmp(), { "terragucci.yml": "binary: terraform\n" }));
     expect(JSON.parse(ok.out).results.ok).toBe(true);
@@ -42,7 +46,7 @@ describe("config check", () => {
 
   it("refuses a terragucci.yml that is a list, instead of checking it as the empty config (#803)", async () => {
     const refused = await check(write(tmp(), { "terragucci.yml": "- binary: terraform\n" }));
-    expect(refused.code).toBe(2);
+    expect(refused.code).toBe(USAGE);
     const { results } = JSON.parse(refused.out);
     expect(results.ok).toBe(false);
     expect(results.problems.join("\n")).toMatch(/the config must be a mapping .* holds a list/);

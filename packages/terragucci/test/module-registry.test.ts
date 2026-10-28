@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { validateConfig, type RegistrySettings } from "../src/config";
+import { registryEdge, validateConfig, type RegistrySettings } from "../src/config";
 import { describePublish, publish, sourceUrl } from "../src/publish";
 import { moduleTar } from "../src/publish/archive";
 import type { Fetch } from "../src/publish/oci";
@@ -109,6 +109,33 @@ describe("modules.registry config", () => {
     expect(problems({ publish: "git-tags", registry: { ...REG, download: "oci" } })).toContain("an oci:// target too");
     expect(problems({ registry: { ...REG, download: "zip" } })).toContain("use tarball, git-tags or oci");
   });
+  it("picks the edge preset by host, and takes auth: token only where a function checks it", () => {
+    expect(registryEdge(REG)).toBe("cloudfront");
+    expect(registryEdge({ ...REG, endpoint: "https://acct.r2.cloudflarestorage.com" })).toBe("cloudflare");
+    expect(registryEdge({ ...REG, bucket: "gs://modules" })).toBe("cloudflare");
+    expect(registryEdge({ ...REG, bucket: "az://acct/modules" })).toBe("cloudflare");
+    expect(registryEdge({ dir: "public" })).toBe("pages");
+    expect(registryEdge({ ...REG, edge: "none" })).toBe("none");
+    expect(problems({ registry: { ...REG, auth: "token" } })).toBe("");
+    expect(problems({ registry: { ...REG, edge: "cloudflare", auth: "token" } })).toBe("");
+    expect(problems({ registry: { dir: "public", url: "https://acme.test", namespace: "acme", auth: "token" } })).toContain("auth: token needs an edge function");
+    expect(problems({ registry: { ...REG, edge: "none", auth: "token" } })).toContain("auth: token needs an edge function");
+    expect(problems({ registry: { ...REG, edge: "pages" } })).toContain("edge: pages writes a _headers file");
+    expect(problems({ registry: { ...REG, edge: "fastly" } })).toContain("use cloudflare, cloudfront, pages, none");
+    expect(problems({ registry: { ...REG, auth: "basic" } })).toContain("use off or token");
+  });
+  it("takes tokens from a store only for auth: token on CloudFront, with a name and an AWS region", () => {
+    const ssm = { ...REG, auth: "token", tokens: "ssm", tokens_name: "/registry/tokens" };
+    expect(problems({ registry: ssm })).toBe("");
+    expect(problems({ registry: { ...ssm, tokens: "secrets-manager", tokens_name: "registry-tokens", tokens_region: "eu-west-1" } })).toBe("");
+    expect(problems({ registry: { ...REG, auth: "token", tokens: "zip" } })).toBe("");
+    expect(problems({ registry: { ...ssm, tokens: "vault" } })).toContain("use zip, ssm, secrets-manager");
+    expect(problems({ registry: { ...ssm, auth: undefined } })).toContain("needs config.modules.registry.auth: token");
+    expect(problems({ registry: { ...ssm, edge: "cloudflare" } })).toContain("read by Lambda@Edge");
+    expect(problems({ registry: { ...ssm, tokens_name: undefined } })).toContain("tokens_name must be the SSM parameter's name");
+    expect(problems({ registry: { ...REG, tokens_name: "/x" } })).toContain("set config.modules.registry.tokens to ssm or secrets-manager");
+    expect(problems({ registry: { ...ssm, tokens_region: "useast1" } })).toContain("must be an AWS region");
+  });
   it("lets attest sign what the registry writes, and test is a boolean the binary must support", () => {
     expect(problems({ registry: REG, attest: true })).toBe("");
     expect(problems({ attest: true })).toContain("set config.modules.publish or config.modules.registry too");
@@ -184,7 +211,7 @@ describe("publish to a module registry", () => {
     expect(mem.json("v1/modules/acme/net/generic/versions")).toEqual({ modules: [{ versions: [{ version: "0.1.0" }, { version: "0.2.0" }] }] });
   });
 
-  it("is read back as Terraform reads it: discovery, versions, then the download's location", async () => {
+  it("is read back as OpenTofu reads it, from the stored files: discovery, versions, then the download body's location", async () => {
     const repo = repoWithModules();
     const mem = memoryStore();
     await publish(repo, { modules: { registry: REG } }, { registryStore: mem.store });

@@ -29,8 +29,14 @@
  * limits and names, the job outputs, and the note job's take-over. What stays
  * here is terragucci's own: the files a cut report keeps, the re-plan's sweep
  * before the handover, and a checkout of a ref the step names (`TG_REF`).
+ *
+ * Where the installed chant's handover takes those as parameters (chant#4554,
+ * ../chant-next.ts), packJs, handoverTrap and checkoutScript are chant's with
+ * terragucci's words passed in. The scripts below stay as the fallback for a
+ * chant without them (the 0.124.54 pin).
  */
 import { HANDOVER_LIMITS, handoverKeys, handoverOutputs, takeOverScript as chantTakeOverScript, UNPACK_JS, type HandoverForge } from "@intentius/chant/ci-handover";
+import { chantHandover } from "./chant-next";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 
 export { HANDOVER_LIMITS, handoverKeys, handoverOutputs, UNPACK_JS, type HandoverForge };
@@ -47,6 +53,8 @@ function noteFiles(): string[] {
  * large; the log says which.
  */
 export function packJs(forge: HandoverForge): string {
+  const chant = chantHandover();
+  if (chant) return chant.packJs(forge, { noteFiles: noteFiles(), label: "terragucci" });
   const { chunk, parts } = HANDOVER_LIMITS[forge];
   return [
     'const fs=require("fs"),p=require("path"),z=require("zlib");',
@@ -72,6 +80,8 @@ export function packJs(forge: HandoverForge): string {
  * started are killed first.
  */
 export function handoverTrap(dir: string, forge: HandoverForge, sweep = false): string[] {
+  const chant = chantHandover();
+  if (chant) return chant.handoverTrap(dir, forge, { noteFiles: noteFiles(), label: "terragucci", ...(sweep ? { before: "tg_sweep" } : {}) });
   return [
     `tg_handover() { node -e '${packJs(forge)}' ${dir} "\${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }`,
     sweep ? "trap 'tg_sweep; tg_handover' EXIT" : "trap tg_handover EXIT",
@@ -96,6 +106,8 @@ export function takeOverScript(job: string, dir: string, forge: HandoverForge): 
  * workspace already checked out is cleaned first, as actions/checkout does.
  */
 export function checkoutScript(history: boolean): string {
+  const chant = chantHandover();
+  if (chant) return chant.checkoutScript(history, false, { tokenEnv: "TG_TOKEN", refEnv: "TG_REF", headName: "terragucci-head" });
   const fetch = history
     ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"`
     : 'git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"';

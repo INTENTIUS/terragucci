@@ -8,6 +8,7 @@
  * prForgeOf, for a target built here. What they say stays with terragucci.
  */
 import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge } from "@intentius/chant/pr-forge";
+import { chantForgeReads } from "./chant-next";
 import { ConfigError, type ForgeName } from "./config";
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
@@ -40,7 +41,7 @@ export class ForgeError extends Error {
   }
 }
 
-function apiBase(t: ForgeTarget): string {
+export function apiBase(t: ForgeTarget): string {
   if (t.api) return t.api.replace(/\/+$/, "");
   if (t.forge === "github") {
     return /^https?:\/\/github\.com$/i.test(t.origin) ? "https://api.github.com" : `${t.origin}/api/v3`;
@@ -66,8 +67,10 @@ export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: s
   return res.json();
 }
 
-/** The repo's default branch. */
+/** The repo's default branch: chant's forge client reads it where the installed chant has the read (chant#4554). */
 export async function defaultBranch(fetch: Fetch, t: ForgeTarget): Promise<string> {
+  const read = chantForgeReads(prForgeOf(t, fetch)).defaultBranch;
+  if (read) return read();
   if (t.forge === "gitlab") {
     const p = (await call(fetch, t, "GET", `/projects/${encodeURIComponent(t.path)}`)) as { default_branch?: string };
     return p.default_branch ?? "main";

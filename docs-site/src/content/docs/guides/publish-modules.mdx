@@ -23,7 +23,7 @@ Each level is opt-in:
 | Level | Config | What it adds |
 |---|---|---|
 | Publish | `modules.publish` | a git tag or OCI tag per release, pinned rollouts by pull request, and version bump jobs |
-| Registry | `modules.registry` | each release as a module registry's files in a bucket or a Pages site, so roots use registry sources and version constraints |
+| Registry | `modules.registry` | each release as a module registry's files in a bucket or a Pages site, so roots call them by registry source and version |
 | Test | `modules.test: true` | `tofu test` or `terraform test` on each module before a release of it publishes |
 | Attest | `modules.attest: true` as well | a signature, SLSA provenance and an SBOM for each release, and a record of it in the release ledger |
 
@@ -144,12 +144,12 @@ network 1.1.0: refused, not published to git-tags (modules/network has no tests 
 
 ## Serve a module registry
 
-With `modules.registry`, a bucket or a Pages site also serves each release as static files in the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/). Roots call the modules by registry address, with a `version` that can be a constraint:
+With `modules.registry`, a bucket or a Pages site also serves each release as static files in the [module registry protocol](https://opentofu.org/docs/internals/module-registry-protocol/). Roots call the modules by registry address, pinned to one `version`:
 
 ```hcl
 module "network" {
   source  = "modules.example.com/acme/network/generic"
-  version = "~> 1.0"
+  version = "1.0.0"
   name    = "dev"
 }
 ```
@@ -179,6 +179,9 @@ module "network" {
    | `namespaces` | none | a tag prefix (a path in the repo, such as `platform/`) to the namespace its modules go under; the longest prefix wins |
    | `system` | `generic` | the third part of each address |
    | `download` | `tarball` | what each version's download points at: a `.tar.gz` beside it, its git tag (`git-tags`, which `publish` must list), or its OCI artifact (`oci`, which `publish` must list; OpenTofu only) |
+   | `edge` | picked from `bucket`, `endpoint` or `dir` | what sends the `X-Terraform-Get` header Terraform needs: `cloudflare`, `cloudfront`, `pages` or `none`; see [Put an edge function in front of the bucket](#put-an-edge-function-in-front-of-the-bucket) |
+   | `auth` | `off` | `token` has the edge function refuse a read without a bearer token, and sign tarball URLs |
+   | `providers` | none | `mirror` also serves the providers the lock files pin as a network mirror under `providers/`; see [Serve the providers from the registry too](#serve-the-providers-from-the-registry-too) |
 
    A module's address is `<host>/<namespace>/<name>/<system>`, where the name is its directory's name: `modules/network` is `modules.example.com/acme/network/generic`.
 
@@ -190,7 +193,7 @@ module "network" {
 
    The publish job on GitHub and Forgejo maps the bucket's key secrets as a job that [keeps reports in a bucket](/terragucci/guides/keep-reports-in-a-bucket/) does: for S3 the pair `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, for Azure `AZURE_STORAGE_KEY`. GitLab passes it CI/CD variables of those names.
 
-3. Serve the bucket over HTTPS at `url`: a CDN in front of it, or its own static website endpoint with a certificate. Every reader of the registry needs read access to it, and only the publish job writes it.
+3. Serve the bucket over HTTPS at `url`, through the [edge function](#put-an-edge-function-in-front-of-the-bucket) for its host. Only the publish job writes the bucket.
 
 4. After the next module change merges, the publish job writes:
 
@@ -202,9 +205,9 @@ module "network" {
    | `v1/modules/<namespace>/<name>/<system>/<version>/<name>-<version>.tar.gz` | the module, with `download: tarball` |
    | `v1/modules/<namespace>/<name>/<system>/<version>/release.json` | the commit and content digest the next publish compares against |
 
-   A static server sends no `X-Terraform-Get` header, so the download answer is a JSON body with `location`, which both binaries read. A version is listed in `versions` only after the files it points at are written.
+   The stored download answer is a JSON body with `location`. OpenTofu reads that body. Terraform reads only the `X-Terraform-Get` header, which a bucket or a static site cannot send on its own, so Terraform installs only through the edge function or a `_headers` file. A version is listed in `versions` only after the files it points at are written.
 
-5. Pin a root to the registry and run `init`. `~> 1.0` resolves to the newest `1.x` the registry lists.
+5. Pin a root to the registry and run `init`. It installs `1.0.0`, the version the root names. When a newer version publishes, a [rollout](/terragucci/guides/roll-out-a-module-version/) (`terragucci rollout modules/network`) moves the pin in each root that calls it.
 
 </Steps>
 
@@ -225,6 +228,302 @@ registry:
 With `dir`, the publish job writes the files into that directory of its checkout, beside what is there. You deploy the directory to the Pages site and keep the earlier versions in it (from the site's branch, for example), since `versions` lists only what the directory holds.
 
 A [rollout](/terragucci/guides/roll-out-a-module-version/) of `modules/network` moves the `version` of each call to its registry address. A call pinned by a constraint such as `~> 1.0` has no one version to move, and the rollout refuses it.
+
+## Put an edge function in front of the bucket
+
+Terraform finds a version's location in the `X-Terraform-Get` header of the download answer and fails without it:
+
+```text
+Error: Error accessing remote module registry
+
+Failed to retrieve a download URL for modules.example.com/acme/network/generic
+1.0.0 from modules.example.com: failed to get download URL for
+"modules.example.com/acme/network/generic": 200 OK
+```
+
+An edge function on your CDN reads the stored answer and sends the same location in the header, keeping the JSON body, so both binaries install. terragucci picks the function from where the files are, and `edge` overrides the pick:
+
+| Files in | `edge` | Sends the header with |
+|---|---|---|
+| an R2 bucket (`endpoint` on `r2.cloudflarestorage.com`), a `gs://` or an `az://` bucket | `cloudflare` | a Cloudflare Worker |
+| any other `s3://` bucket | `cloudfront` | a Lambda@Edge function on CloudFront; a CloudFront Function cannot read the stored answer |
+| `dir`, deployed to Cloudflare Pages or Netlify | `pages` | a `_headers` file the publish job writes beside the files, one rule per version |
+| `dir` on GitHub Pages or GitLab Pages, or a plain bucket website | `none` | nothing: OpenTofu installs, Terraform does not |
+
+Cloudflare Pages reads at most 100 rules from `_headers`. Past that, the publish job says so on each new version; serve the files through `edge: cloudflare` or from Netlify.
+
+<Steps>
+
+1. Write the function and its deploy config.
+
+   ```bash
+   npx terragucci registry edge
+   ```
+
+   It writes `registry-edge/` and prints the steps for your CDN. For `cloudflare`, the directory holds `worker.mjs` and a `wrangler.toml` that binds the R2 bucket, or names the bucket's address in `REGISTRY_ORIGIN`, and routes `url`'s host to the Worker. For `cloudfront`, it holds `index.mjs` and `registry-edge.json`, which you zip into one Lambda function in us-east-1 on Node.js 20 or later.
+
+2. Deploy it.
+
+   <Tabs syncKey="edge">
+     <TabItem label="Cloudflare">
+       ```bash
+       cd registry-edge
+       npx wrangler deploy
+       ```
+     </TabItem>
+     <TabItem label="CloudFront">
+       Publish a version of the function and attach it to the distribution's default behavior as an origin-request trigger. Give that behavior an origin request policy that passes the `Authorization` header and every query string to the origin.
+     </TabItem>
+   </Tabs>
+
+3. Run `init` in a root that calls a module from the registry. Both binaries install.
+
+</Steps>
+
+### Require a token to read
+
+With `auth: token`, the function refuses discovery, `versions`, `download` and every other file without `Authorization: Bearer <token>`, answering 401. A tarball's download answer becomes a signed URL that opens that one file for five minutes, so the archive fetch needs no token of its own. Git and OCI locations go out as stored, and their own access rules apply.
+
+```yaml
+modules:
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    auth: token
+```
+
+`auth: token` needs `edge: cloudflare` or `edge: cloudfront`; a `_headers` file cannot check a token.
+
+<Steps>
+
+1. Make a token and keep it in your secret manager.
+
+   ```bash
+   openssl rand -hex 32
+   ```
+
+2. Give it to the function.
+
+   <Tabs syncKey="edge">
+     <TabItem label="Cloudflare">
+       ```bash
+       npx wrangler secret put REGISTRY_TOKENS
+       ```
+
+       The Worker reads its tokens from that secret, one per line or comma separated.
+     </TabItem>
+     <TabItem label="CloudFront">
+       Lambda@Edge has no environment variables, so the function gets its tokens from the zip or from a store it reads at run time. `modules.registry.tokens` picks one:
+
+       | `tokens` | Tokens live in | Rotation |
+       |---|---|---|
+       | `zip` (default) | `registry-edge.json`, written by `terragucci registry edge` | write the function again and deploy a new version |
+       | `ssm` | an SSM Parameter Store parameter, `tokens_name` | change the parameter; every replica reads it within five minutes |
+       | `secrets-manager` | a Secrets Manager secret, `tokens_name` | change the secret; every replica reads it within five minutes |
+
+       With `zip`, the token goes into `registry-edge.json` when you write the function:
+
+       ```bash
+       TERRAGUCCI_REGISTRY_TOKENS=<token> npx terragucci registry edge
+       ```
+
+       Keep `registry-edge/` out of git, and deploy the new version.
+
+       With a store, the file names the store and holds no token, so the directory can be committed:
+
+       ```yaml
+       modules:
+         registry:
+           bucket: s3://acme-modules
+           url: https://modules.example.com
+           namespace: acme
+           edge: cloudfront
+           auth: token
+           tokens: ssm
+           tokens_name: /registry/tokens
+           tokens_region: us-east-1
+       ```
+
+       ```bash
+       aws ssm put-parameter --region us-east-1 --name /registry/tokens --type SecureString --value "<token>"
+       npx terragucci registry edge
+       ```
+
+       For `secrets-manager`, set `tokens: secrets-manager` and put the secret's name or ARN in `tokens_name`. `tokens_region` is where the store is read from and defaults to `us-east-1`, where Lambda@Edge functions are created; the replica's own region is never used.
+
+       The value is the tokens, one per line or comma separated. A JSON value, `{ "tokens": ["..."], "signingKey": "..." }`, also sets the key that signs tarball URLs.
+
+       The function's execution role needs read access to the store:
+
+       | `tokens` | Permission |
+       |---|---|
+       | `ssm` | `ssm:GetParameter` on the parameter, and `kms:Decrypt` on the key when the SecureString uses a customer-managed key |
+       | `secrets-manager` | `secretsmanager:GetSecretValue` on the secret, and `kms:Decrypt` on the key when the secret uses a customer-managed key |
+
+       If the store cannot be read, or holds no token, every request gets a 503 and nothing reaches the bucket. The function never serves an old token past the five minutes.
+     </TabItem>
+   </Tabs>
+
+3. Give each reader the token. Both binaries send it for the registry's host from `TF_TOKEN_modules_example_com`, or from a `credentials "modules.example.com"` block in the CLI config or `credentials.tfrc.json`. The `tf-check` and rollout jobs read a registry the same way, so give them the variable too.
+
+</Steps>
+
+To rotate a token, give the function both tokens, `<old>,<new>`, and deploy. Move every reader to the new token, then give the function the new one alone and deploy again. The tarball URLs are signed with the first token, so a URL handed out before the swap stops working; each one lasts five minutes.
+
+OpenTofu 1.12 and later also read `"use_registry_credentials": true` in a download answer's body. OpenTofu then fetches the location itself and sends the registry host's token with it, which fits a server that keeps tarballs behind the same token check without signed URLs. Terraform has no such field, and terragucci's files do not set it.
+
+### Other ways to keep a registry private
+
+A registry on a private network needs no function for the token: serve it only inside a VPN or behind an IP allowlist or Cloudflare Access, and use `auth: off`. Terraform still needs the header, so keep the edge function or `_headers` file for it.
+
+A team that already runs GitLab, HCP Terraform, Artifactory or Nexus can publish its modules there and read them with that registry's own credentials.
+
+### Publish to GitLab's module registry
+
+A GitLab project's Terraform module registry can take each release too:
+
+```yaml
+modules:
+  publish:
+    - git-tags
+    - gitlab://gitlab.example.com/platform/modules
+```
+
+In GitLab CI, `publish: gitlab` names the job's own project and uploads with its `CI_JOB_TOKEN`. Elsewhere, write the project's address and put a token with the `api` scope in `GITLAB_TOKEN`. On GitHub and Forgejo the publish job reads it from the secret `modules.gitlab_token` names, `GITLAB_TOKEN` unless set.
+
+The upload is the archive the bucket registry serves and the attestation signs, so every target has one digest. Publish reads the release back as Terraform would before it reports it. A release already there with the same content is left alone, and one with other content is refused. The host keeps no commit for what it holds, so publish takes the commit from the release record on the ledger. Without a record, as for an upload by hand, the commit comes from the `git-tags` tag; with neither, publish stops and says what to fetch.
+
+Roots call the module under the project's top-level group:
+
+```hcl
+module "network" {
+  source  = "gitlab.example.com/platform/network/generic"
+  version = "1.3.0"
+}
+```
+
+The system is `modules.registry.system` when the repo also serves a bucket registry, else `generic`. To read a private project, Terraform and OpenTofu take `TF_TOKEN_gitlab_example_com` with the `read_api` scope, or a `credentials` block. GitLab has no deprecated flag, so a deprecation shows only in the bucket's catalog and in the tip.
+
+### Publish to HCP Terraform
+
+HCP Terraform's private registry takes releases through its API, on every tier and with no VCS connection:
+
+```yaml
+modules:
+  publish:
+    - git-tags
+    - hcp://acme                     # or hcp://tfe.example.com/acme for Terraform Enterprise
+```
+
+The publish job reads its token from `TFE_TOKEN`, else from `TF_TOKEN_app_terraform_io` or a `credentials` block for the host. The token's team needs the Manage modules permission. A 404 from HCP means the team lacks it or the organization has no private registry, and the publish error says both.
+
+Publish creates the module when HCP lacks it and then the version with its commit, and uploads the same archive as the other targets. It waits for HCP to finish reading the archive, and a release still being read when the wait ends is reported without failing. A 429 is retried after `Retry-After`. Roots call `app.terraform.io/acme/network/generic`, with the system from `modules.registry.system` when it is set. HCP has no deprecated flag either.
+
+### Publish to Artifactory or Nexus
+
+A JFrog Artifactory local Terraform repository and a Sonatype Nexus hosted Terraform repository (Nexus 3.89 and later) take releases too:
+
+```yaml
+modules:
+  publish:
+    - artifactory://acme.jfrog.io/terraform-local
+    - nexus://nexus.example.com/terraform-hosted/platform
+```
+
+Each uploads the zip of the attested archive with basic credentials: `JFROG_USER` and `JFROG_ACCESS_TOKEN` for Artifactory, `NEXUS_USER` and `NEXUS_TOKEN` for Nexus. The last part of the address is the namespace; left out, it is `modules.registry`'s for each module. Artifactory sources join the repository and namespace with `__`, as in `acme.jfrog.io/terraform-local__acme/network/generic`. A Nexus source starts with the label of the readers' CLI `host` block, the repository's name in lower case, as in `terraform-hosted/platform/network/generic`. Sonatype's docs disagree on whether a hosted repository needs a signing key for modules, so set one when you create it.
+
+### Point the binaries at the registry by CLI config
+
+A `host` block in the CLI config sends a host's module requests to another address, with no service discovery. It suits CI images and machines you set up, such as a registry reached at an internal name:
+
+```hcl
+host "modules.example.com" {
+  services = {
+    "modules.v1" = "https://modules.internal.example.com/v1/modules/"
+  }
+}
+```
+
+Terraform reads the block from `TF_CLI_CONFIG_FILE` or `~/.terraformrc`, OpenTofu from `TF_CLI_CONFIG_FILE` or `~/.tofurc`. A source with no host resolves to `registry.terraform.io` under Terraform and `registry.opentofu.org` under OpenTofu, so a block for one of them does nothing for the other binary. The address it names needs a certificate the binary already trusts.
+
+## Serve the providers from the registry too
+
+With `providers: mirror`, the publish job also serves every provider the repo's lock files pin as a [provider network mirror](https://opentofu.org/docs/internals/provider-network-mirror-protocol/), under `providers/` beside the modules:
+
+```yaml
+modules:
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    providers: mirror
+```
+
+After the modules publish, the job runs the binary's `providers mirror` once for each distinct lock file, with each provider at exactly its locked version, so the lock file's hashes check every download. The mirror is for `linux_amd64`. Each provider locked on `registry.terraform.io` or `registry.opentofu.org` is mirrored under the other host as well, so a source with no host resolves under both binaries. Archives go up first and each `index.json` last, so a reader never sees a version whose files are not there yet. A publish whose lock files pin nothing new mirrors nothing again.
+
+The job's output ends with the block each reader adds to its CLI config:
+
+```hcl
+provider_installation {
+  network_mirror {
+    url = "https://modules.example.com/providers/"
+    include = [
+      "registry.opentofu.org/hashicorp/aws",
+      "registry.terraform.io/hashicorp/aws",
+    ]
+  }
+  direct {
+    exclude = [
+      "registry.opentofu.org/hashicorp/aws",
+      "registry.terraform.io/hashicorp/aws",
+    ]
+  }
+}
+```
+
+`include` and `exclude` name the same providers. A mirrored provider then comes only from the mirror, and any other provider comes straight from its registry. With `auth: token` the index and version files need the token. The edge function signs each archive URL in the version files, as it signs tarballs.
+
+## Browse the release catalog
+
+A registry with `modules.registry` also gets a release catalog under `catalog/` beside its files. Its `index.html` has a search box over `index.json` and links to a page for each module and each version; each module also gets a `consumers.json`. Every publish records its release on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) with its version, attested or not, and the catalog is built from those records and the deprecations beside them. The registry's own `versions` files are never read for it.
+
+A version's page shows its inputs, outputs, required providers, examples and README, read from the module at the commit the version was cut from. A module with a `.terraform-docs.yml` gets the markdown terraform-docs writes with that file instead, when `terraform-docs` is on the job's `PATH`; it runs on a scratch copy and prints to stdout, so the module's README in the repo is never rewritten. The changelog groups the conventional commits since the previous version. Under it sit the attestation with the command that checks it and the roots in this repo that pin the version.
+
+Across a [control repo](/terragucci/concepts/control-repo/), each project keeps a `consumers.json` at its top: `terragucci modules consumers` writes it from the project's roots, and `--check` fails when it no longer matches them. A repo with `control` runs `--check` in its check job, so a pull request that changes a pin also updates the file. A publishing repo with `control` reads the control repo's projects and each one's `consumers.json`, with `TERRAGUCCI_CONTROL_READ_TOKEN`, and the catalog lists every project's roots on each version. Without the token it lists this repo's roots only.
+
+A version keeps the page it was first written with, and a file already in the bucket with the same bytes is left alone, so a rerun that publishes nothing writes nothing. `terragucci publish --dry-run` writes no catalog. To turn the catalog off:
+
+```yaml
+modules:
+  registry:
+    bucket: s3://acme-modules
+    url: https://modules.example.com
+    namespace: acme
+    catalog: off
+```
+
+`terragucci modules` lists the catalog from the command line, and `terragucci modules show <module>` lists one module's versions with their status and consumers:
+
+```bash
+terragucci modules
+terragucci modules show modules/network
+terragucci modules --registry https://modules.example.com --json
+```
+
+It reads `catalog/index.json` the way Terraform reads the registry, with `TF_TOKEN_<host>` or a `credentials` block, so it works against a registry with `auth: token`. A browser sends no token, so the edge function refuses the catalog's pages to it; to browse them, serve the registry on a private network as in [Other ways to keep a registry private](#other-ways-to-keep-a-registry-private), where the pages open with no token.
+
+### Deprecate or yank a version
+
+Anyone who can publish marks a version on the release ledger:
+
+```bash
+terragucci modules deprecate modules/network 1.2.0 --reason "drops the old subnet layout" --use 1.3.0
+terragucci modules yank modules/network 1.1.0 --reason "opens the admin port" --use 1.3.0
+terragucci modules restore modules/network 1.1.0
+```
+
+Each pushes one status record beside the release record. The record keeps who set it and when, with the reason and the `--use` version. The catalog is then written again, so the mark reaches roots in other repos. A root that pins a deprecated version gets the `terragucci-deprecated-version` tip on its plan and still passes. A yanked version is refused by [`modules.require: attested`](#require-attested-releases), naming the version to move to. Both stay in the registry's `versions`, so an existing pin still runs `init`. `restore` clears either mark with one more record; the earlier ones stay in the ledger's history.
 
 ## Attest each release
 
@@ -296,7 +595,7 @@ A tag pushed by hand has no record that matches it, and neither does one moved a
 
 ## Require attested releases
 
-With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. The check report and plan note name its module call and version and say why.
+With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. So does one pinning a release its publisher yanked, whose refusal names the version to move to. The check report and plan note name its module call and version and say why.
 
 In a Terragrunt repo the pin is each unit's `terraform { source }`, and for a unit an explicit stack generates from a remote source, its `unit` block's `source` in `terragrunt.stack.hcl`. An `oci://` source that picks a directory with `//` is checked as the release of the whole package. `tf-check` runs `terragucci check-pins` over every unit, and `tf-plan` takes a refused unit out of its wave, so it fails without planning while the rest of the wave plans.
 

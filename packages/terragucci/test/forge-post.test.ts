@@ -2,11 +2,14 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Fetch } from "../src/forge";
+import { chantForgeReads } from "../src/chant-next";
+import { poster, type Fetch } from "../src/forge";
 import { forgePost, staleNote, statusSent } from "../src/forge-post";
 
 const SHA = "a".repeat(40);
 const GH = { TG_TOKEN: "t", TG_SHA: SHA, TG_PR: "7", GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "http://api", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "5" };
+/** Whether the installed chant's client reads statuses (chant#4554): its read pages, terragucci's asks once. */
+const CHANT_READ = !!chantForgeReads(poster("github", GH)).commitStatuses;
 const GL = { TG_TOKEN: "t", TG_SHA: SHA, TG_PR: "3", CI_API_V4_URL: "http://gl/api/v4", CI_PROJECT_ID: "9", CI_SERVER_URL: "http://gl", CI_PIPELINE_URL: "http://gl/p/1", CI_COMMIT_SHA: SHA, CI_PIPELINE_ID: "61" };
 
 /** A forge that records each call and answers from `answer`. */
@@ -89,7 +92,7 @@ describe("terragucci post sent", () => {
   it("is true when the commit carries a successful status of that context, and false otherwise or when the read fails", async () => {
     const f = forge(() => [{ context: "terragucci/control", state: "success" }]);
     expect(await statusSent("terragucci/control", { forge: "github", env: GH, fetch: f.fetch })).toBe(true);
-    expect(f.calls[0].url).toBe(`http://api/repos/o/r/commits/${SHA}/statuses?per_page=100`);
+    expect(f.calls[0].url).toBe(`http://api/repos/o/r/commits/${SHA}/statuses?per_page=100${CHANT_READ ? "&page=1" : ""}`);
     const pending = forge(() => [{ context: "terragucci/control", state: "pending" }, { context: "other", state: "success" }]);
     expect(await statusSent("terragucci/control", { forge: "github", env: GH, fetch: pending.fetch })).toBe(false);
     const broken: Fetch = async () => {

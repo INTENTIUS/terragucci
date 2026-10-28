@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { findConfig, loadConfig, resolveRepo } from "./config";
 import { CHOUDOUFU_SECRETS_TIP, TIPS_URL } from "./tips";
 import { choudoufuSecretsMessage, REFUSE_BLOCK } from "./tips/secrets";
+import { onLocalStore, parseLiveSetup, rememberLiveSetup, setupLine } from "./live-setup";
 import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, shownUrl, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
 
 /** Where the check report is written, relative to the checkout. */
@@ -194,6 +195,21 @@ export async function checkRoot(binary: string, dir: string, repo: string, optio
   if (binary === "choudoufu") {
     const c = await exec(binary, ["live-check", "-json", dir], repo);
     const live = parseLiveCheck(c.stdout);
+    // A choudoufu with choudoufu#2293 says where the root's records go and which estate it is; an older one says neither.
+    const setup = parseLiveSetup(c.stdout);
+    if (setup) {
+      rememberLiveSetup(join(repo, dir), setup);
+      const line = setupLine(dir, setup);
+      log.push(`setup: ${line}`);
+      report.push(`- setup: ${line.replace(`${dir}: `, "")}`);
+      // An emulator or test lane keeps the local store on purpose with chant's TF046 opt-out.
+      const allowLocal = (options.env ?? process.env).CHANT_ALLOW_LOCAL_RECORD_STORE;
+      if (onLocalStore(setup) && !(allowLocal && allowLocal !== "0" && allowLocal.toLowerCase() !== "false")) {
+        const warn = `the records are in a local directory, which is empty on every CI run, so a record-backed resource is planned for create again; keep the backend block (choudoufu derives the store from it) or declare a record_store`;
+        log.push(`warning: ${dir}: ${warn}`);
+        report.push(`- warning: ${warn}`);
+      }
+    }
     // A refusal the JSON does not list is named only by the text output.
     const textRefusals = async (): Promise<void> => {
       const t = await exec(binary, ["live-check", dir], repo);

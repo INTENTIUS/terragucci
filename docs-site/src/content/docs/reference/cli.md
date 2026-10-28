@@ -21,6 +21,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
 | `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
+| `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers; `deprecate`, `yank` and `restore` mark a version on the release ledger |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
@@ -45,6 +46,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `state export` | asks for one version of a root's state and, once someone else approved the request, downloads it to your machine and records who exported what on `chant/lifecycle`; a person runs it |
 | `check-root`, `check-pins`, `check-policy`, `check-sources`, `check-mirror` | the steps of `tf-check` beyond the format check; the generated pipeline runs them |
 | `image recipe` | writes a Dockerfile, CLI config and build script for an image `FROM` terragucci's that carries every provider the lock files pin; you build and push it |
+| `registry edge` | writes the edge function for `modules.registry`, with its deploy config, so Terraform installs from a bucket-hosted registry; you deploy it |
 | `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
 | `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
@@ -94,6 +96,10 @@ The approval mode decides what else `init` writes.
 | `sealed` | writes [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) with each wave's gate (`wave-1`, `wave-2`) under `identity.gates`, so a wave counts only an approval sealed with `terragucci approve --sign`; an existing file gains missing gates |
 
 [Approve a waiting wave](/terragucci/guides/approve-a-wave/) sets up the signers file.
+
+### chant.config.ts and the waves' spec
+
+In a repo of plain roots, `init` also writes two files for chant. `chant.config.ts` at the repo's root names each root under `terraform.roots`, keyed by its path. `.chant/op-waves/tf-apply.spec.json` holds the apply waves' rules, which each wave job reads at the commit before the one it applies. Commit both with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root.
 
 ### The components file
 
@@ -297,6 +303,26 @@ terragucci verify-release <module> <version> [--config <file>]
 ```
 
 Run in the repo that publishes, with `modules.attest` set. For each target in `modules.publish` it reads the tag as it stands now and checks that the release ledger on `origin` records those bytes from the tag's commit. The public key must verify the release's signature, provenance and SBOM. It prints one line per target and exits 1 when any is refused.
+
+## modules
+
+```bash
+terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
+```
+
+Reads the release catalog `publish` writes under `catalog/` beside `modules.registry`, or with `--registry` another registry's. A registry in a `dir` is read from the directory; any other through its URL, with the token Terraform would send the host (`TF_TOKEN_<host>` or a `credentials` block), so a registry behind `auth: token` answers. `list`, the default, prints one line per module: its address and newest active version, then a count of its deprecated and yanked versions. `show <module>` takes the module's path, its last path segment or its registry address, and prints each version newest first with its status and reason, date, commit, attestation and consumers. `--json` prints the catalog, or the one module, as the envelope's `results`.
+
+```bash
+terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
+```
+
+Run in the repo that publishes. The status record for the version goes on `chant/lifecycle`, and the release catalog is written again after the push. `deprecate` and `yank` need `--reason`; `--use` names a recorded version to move to. Roots on a deprecated version get a tip. `modules.require: attested` refuses a yanked one, though it stays installable until `restore` clears the mark. See [Deprecate or yank a version](/terragucci/guides/publish-modules/#deprecate-or-yank-a-version).
+
+```bash
+terragucci modules consumers [--check] [--config <file>]
+```
+
+Writes `consumers.json` at the repo's top: each registry module version the roots pin, and where, in chant's consumers document. A publishing repo across the control repo joins it into its catalog. `--check` writes nothing and exits 1 when the file is missing or no longer matches the roots. The check job of a repo with `control` runs it, and it passes with a note on a chant that has no consumer scan.
 
 ## rollout
 
@@ -864,7 +890,7 @@ Run it twice in a checkout whose `origin` you can push to, signed in to the clou
 | Run | Does | Exits |
 |---|---|---|
 | first | reads the version's metadata, records a request on `chant/lifecycle` and prints `terragucci approve export <root> --plan <digest>` for someone else to run | 3 |
-| second, once that approval stands | downloads the version, records the export in `_gates/tf-state-export/done.jsonl`, then writes the file, readable by you alone | 0 |
+| second, once that approval stands | downloads the version, records the export in `_gates/tf-state-export/done.jsonl`, then writes the file, readable by you alone. With a chant that has gated requests, the approval is spent in `_gates/tf-state-export/applied.jsonl` before the download and the `finished` line after it names the digest of the bytes written | 0 |
 
 ```text
 state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY.tfstate: envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY, approved by bob
@@ -889,7 +915,7 @@ Releases the state lock a job killed mid-apply left on `<root>`: the lock file a
 | read the lock | inits the root and reads the lock file, the gcs lock object or the azurerm lease and metadata, or asks GitLab's lock endpoint: its ID, who took it and when |
 | check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
 | wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `terragucci approve unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
-| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
+| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads. With a chant that has gated requests, the approval is spent in `_gates/tf-unlock/applied.jsonl` first and the release is its `finished` line |
 
 | Flag | Meaning |
 |---|---|
@@ -990,6 +1016,14 @@ terragucci check-mirror [--config <file>] [--platform <os_arch>]
 
 The generated `tf-check` job runs `check-mirror` before any root's `init` when `image.mirror` is set.
 
+## registry edge
+
+```bash
+terragucci registry edge [--out <dir>] [--origin <url>] [--config <file>]
+```
+
+Writes, under `--out` (default `registry-edge`), the function `modules.registry.edge` names: for `cloudflare`, `worker.mjs` and a `wrangler.toml` that binds an R2 bucket or reads the bucket's address; for `cloudfront`, `index.mjs` and `registry-edge.json` for one Lambda@Edge function. `--origin` names the bucket's HTTP address in place of the one it derives from `bucket` and `endpoint`. With `auth: token` it prints the steps that make and rotate the token; on CloudFront it reads the tokens from `TERRAGUCCI_REGISTRY_TOKENS`. For `pages` and `none` it writes nothing and says why. It deploys nothing itself. See [Put an edge function in front of the bucket](/terragucci/guides/publish-modules/#put-an-edge-function-in-front-of-the-bucket).
+
 ## check-job
 
 ```bash
@@ -1008,7 +1042,7 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check` and `query` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check`, `query` and `modules` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -1045,6 +1079,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
+| `modules` | printed, the status recorded, or `consumers.json` written or matching | the catalog could not be read, the token was refused, the status record could not be pushed, or with `consumers --check` the file is out of line | no catalog yet, no registry to read, a module the catalog does not list, a version with no release record, or no `--reason` | | |
 | `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
 | `approve`, `override` | approved | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |

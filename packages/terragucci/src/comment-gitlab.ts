@@ -56,12 +56,15 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
+import { chantForgeReads } from "./chant-next";
+import { terragucciStatus } from "./ci-words";
 import { agentSettingsAt } from "./involved";
 import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
+import { CHANT_AGENT_ASK_VAR, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, startDefaultPipeline, startReview, type ReviewStart } from "./gitlab-agent";
 import { postPlanNote, type PlanNoteOutcome } from "./plan-note-gitlab";
 
@@ -75,7 +78,7 @@ export const DEVELOPER = 30;
 export const NEWER_PIPELINES = 50;
 
 /** The status every apply posts on the commit it applied. */
-const APPLY_CONTEXT = "terragucci/apply";
+const APPLY_CONTEXT = (): string => terragucciStatus("apply");
 
 /** The marker a reply carries, naming the note it answers. */
 export const noteMarker = (id: number): string => `<!-- terragucci:note=${id} -->`;
@@ -111,8 +114,12 @@ export interface GitLabPollOptions {
   planNotes?: boolean;
   /** The directory the plan job keeps its report in. Default terragucci-report. */
   reportDir?: string;
-  /** `agent.comment`: a `/terragucci agent <ask>` note starts the agent's pipeline. */
-  agent?: boolean;
+  /**
+   * `agent.comment`: a `/terragucci agent <ask>` note starts the agent's
+   * pipeline. `"chant"`: the agent's jobs are chant's (chant#4616), and the
+   * pipeline is started with CHANT_AGENT_PR and CHANT_AGENT_ASK.
+   */
+  agent?: boolean | "chant";
   /** `review.agent`: start the review of each open merge request's head once its plan ended. */
   review?: boolean;
 }
@@ -190,7 +197,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
       .filter((n) => typeof n.created_at === "string" && n.created_at >= since)
       .filter((n) => parseComment(n.body, parseOptions(env)) !== undefined)
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id));
-    for (const note of asks) outcomes.push(await answer({ api, forge, meName, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: true } : {}) }));
+    for (const note of asks) outcomes.push(await answer({ api, forge, meName, id, base, layers: o.layers, mr, note, env, fetch: doFetch, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: o.agent } : {}) }));
     if (o.review) {
       const started = await startReview({ api, id, me, meName, base, env, fetch: doFetch }, mr, notes);
       if (started) reviews.push(started);
@@ -217,8 +224,8 @@ interface Ask {
   when?: ApplyWhen;
   requires?: readonly ApplyRequire[];
   wait?: (ms: number) => Promise<void>;
-  /** `agent.comment` is set. */
-  agent?: boolean;
+  /** `agent.comment` is set; `"chant"` on chant's agent job. */
+  agent?: boolean | "chant";
 }
 
 async function answer(ask: Ask): Promise<NoteOutcome> {
@@ -270,7 +277,9 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     if (typeof sha !== "string" || !SHA.test(sha)) return broke(`!${iid}'s head is not a commit`);
     let pipeline: { web_url?: string };
     try {
-      pipeline = await startDefaultPipeline(ask.env, ask.fetch, { [AGENT_MR_VAR]: String(iid), [AGENT_NOTE_VAR]: String(note.id), [AGENT_HEAD_VAR]: sha });
+      // chant's agent job reads the merge request and the ask from these two, and the head again itself.
+      const vars: Record<string, string> = ask.agent === "chant" ? { [CHANT_AGENT_PR_VAR]: String(iid), [CHANT_AGENT_ASK_VAR]: parsed.ask } : { [AGENT_MR_VAR]: String(iid), [AGENT_NOTE_VAR]: String(note.id), [AGENT_HEAD_VAR]: sha };
+      pipeline = await startDefaultPipeline(ask.env, ask.fetch, vars);
     } catch (e) {
       return broke(`could not start the agent's pipeline on ${base} for !${iid} (${(e as Error).message})`);
     }
@@ -369,11 +378,15 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     if (typeof c !== "string" || !SHA.test(c)) continue;
     let statuses: any;
     try {
-      statuses = await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT)}&ref=${encodeURIComponent(base)}`);
+      // chant's statuses read with the ref filter (chant#4584), where the installed client has it; the same answer, read through chant.
+      const at = chantForgeReads(ask.forge).commitStatusesAt;
+      statuses = at
+        ? (await at(c, base)).filter((s) => s.context === APPLY_CONTEXT()).map((s) => ({ name: s.context, status: s.state, ...(s.targetUrl ? { target_url: s.targetUrl } : {}) }))
+        : await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT())}&ref=${encodeURIComponent(base)}`);
     } catch (e) {
       return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
     }
-    const applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.name === APPLY_CONTEXT) : undefined;
+    const applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.name === APPLY_CONTEXT()) : undefined;
     if (applied) {
       const run = typeof applied.target_url === "string" && /^https?:\/\//.test(applied.target_url) ? ` (${applied.target_url})` : "";
       return reply(`a later apply already ran on ${base} at ${short(c)}${run}, so the merge commit ${short(sha)} of !${iid} is not applied: comment on the merge request that commit came from, or push again`);

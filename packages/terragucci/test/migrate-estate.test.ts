@@ -7,8 +7,12 @@ import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, 
 import { ESTATE_PARALLELISM, isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
 import { runStage } from "../src/report/stage";
 import { renderNote } from "../src/report/views";
+import { chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, validate, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
+
+// With chant's state operations a migration is chant's gated request: its record is a finished line, read back in done.jsonl's form, and its proof is the request's attachment.
+const chantOps = await chantGated();
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
@@ -260,9 +264,17 @@ describe("a move between two estates", () => {
     expect(second.records[0]).toMatchObject({ status: "applied", approved_by: "alice" });
     expect(second.records[0]!.roots.map((r) => r.verify?.changes)).toEqual([[], []]);
     expect(liveOf(work).find((l) => l.id === "q-jobs")?.estate).toBe("team");
-    const done = JSON.parse(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`).trim());
-    expect(done).toMatchObject({ gate: "carve-jobs", result: "applied", change: "retag", retags: [{ address: "aws_sqs_queue.jobs", from_estate: "mono", to_estate: "team", live_id: "q-jobs" }] });
-    expect(() => revertMigration("carve-jobs", JSON.stringify(done))).toThrow(/moves migration the other way/);
+    const { line: done, text } = migrationRecord(work, "carve-jobs");
+    expect(done).toMatchObject({ gate: "carve-jobs", result: "applied", change: "retag" });
+    const retags = [{ address: "aws_sqs_queue.jobs", from_estate: "mono", to_estate: "team", live_id: "q-jobs" }];
+    if (chantOps) {
+      // chant's finished line keeps flat facts; the retags are in the proof the approval bound, stored as the request's attachment.
+      const proof = JSON.parse(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${rec.digest.replace(/:/g, "_")}.json`));
+      expect(proof).toMatchObject({ name: "carve-jobs", change: "retag", retags });
+    } else {
+      expect(done).toMatchObject({ retags });
+    }
+    expect(() => revertMigration("carve-jobs", text)).toThrow(/moves migration the other way/);
   });
 
   it("is refused after the approval when the resource the markers are on changed, and retags nothing", async () => {
@@ -274,7 +286,9 @@ describe("a move between two estates", () => {
     // Another queue now carries the markers: the digest names q-jobs.
     setLive(work, [{ id: "q-other", estate: "mono", address: "aws_sqs_queue.jobs" }, { id: "q-keep", estate: "mono", address: "aws_sqs_queue.keep" }]);
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
-    expect(again.code).toBe(4);
+    // terragucci's own gate refuses the approved digest; on chant's gate the new proof is a new request, which waits for its own approval.
+    expect(again.code).toBe(chantOps ? 3 : 4);
+    if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(liveOf(work).find((l) => l.id === "q-other")?.estate).toBe("mono");
   });
 
@@ -449,7 +463,9 @@ describe("adopting a state into an estate", () => {
     const path = join(work, "app", "old.tfstate");
     writeFileSync(path, readFileSync(path, "utf-8").replace('"serial":3', '"serial":4'));
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} });
-    expect(again.code).toBe(4);
+    // terragucci's own gate refuses the approved digest; on chant's gate the new proof is a new request, which waits for its own approval.
+    expect(again.code).toBe(chantOps ? 3 : 4);
+    if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(liveOf(work).every((l) => l.estate === undefined)).toBe(true);
   });
 

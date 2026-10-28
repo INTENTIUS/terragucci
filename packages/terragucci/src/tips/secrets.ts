@@ -28,8 +28,8 @@
  * "store", records them as a state file would.
  */
 import { join } from "node:path";
-import { recordStoreOf } from "../cdf-records";
-import { blockBody, estateOf, liveBody } from "../detect";
+import { blockBody, liveBody } from "../detect";
+import { knownLiveSetup, resolvedEstate, resolvedRecordStore } from "../live-setup";
 import { isObject } from "../report/redact";
 
 /** One secret in a root's state: the resource, the attribute, and what could keep it out. */
@@ -213,10 +213,12 @@ export function choudoufuSecretsMessage(repo: string, root: string, env: NodeJS.
 /** A choudoufu root's estate as the report names it: the estate, where its record store is, and its `secrets` setting. Undefined for a root with no live block. */
 export function liveEstate(dir: string): { estate: string; record_store: string; secrets: string } | undefined {
   const s = liveSecrets(dir);
-  const { estate } = estateOf(dir);
+  const estate = resolvedEstate(dir);
   if (!s || !estate) return undefined;
-  const store = recordStoreOf(dir, estate);
-  const where = !store ? "local" : store.kind === "s3" ? `s3://${store.bucket}/${store.prefix}` : store.kind === "local" ? "local" : store.name;
+  // choudoufu's resolved store (choudoufu#2293) when this job read it, else the live block's record_store.
+  const derived = knownLiveSetup(dir)?.store;
+  const store = resolvedRecordStore(dir, estate);
+  const where = derived?.kind === "gcs" ? `gs://${derived.bucket}/${derived.prefix}` : !store ? "local" : store.kind === "s3" ? `s3://${store.bucket}/${store.prefix}` : store.kind === "local" ? "local" : store.name;
   return { estate, record_store: where, secrets: s.setting };
 }
 

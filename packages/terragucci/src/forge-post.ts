@@ -20,6 +20,7 @@
  */
 import { readFileSync } from "node:fs";
 import { forgeTargetFromEnv, type PrForge } from "@intentius/chant/pr-forge";
+import { chantForgeReads } from "./chant-next";
 import { gitlabApi } from "./comment-apply-gitlab";
 import { ConfigError, type ForgeName } from "./config";
 import { call, poster, type Fetch } from "./forge";
@@ -38,6 +39,9 @@ export async function statusSent(context: string, o: PostOptions): Promise<boole
   const sha = (env.TG_SHA ?? "").trim();
   if (!env.TG_TOKEN || !/^[0-9a-f]{7,64}$/.test(sha) || o.forge === "gitlab") return false;
   try {
+    // chant's forge client reads each context's newest status where the installed chant has the read (chant#4554).
+    const read = chantForgeReads(poster(o.forge, env, o.fetch)).commitStatuses;
+    if (read) return (await read(sha)).some((s) => s.context === context && s.state === "success");
     const t = forgeTargetFromEnv(env, { kind: o.forge, tokenEnv: "TG_TOKEN" });
     const list = await call(o.fetch ?? (globalThis.fetch as unknown as Fetch), { forge: o.forge, origin: `https://${t.host}`, path: t.repo, token: t.token, api: t.apiBase }, "GET", `/repos/${t.repo}/commits/${sha}/statuses?per_page=100`);
     return (Array.isArray(list) ? list : []).some((s: any) => s?.context === context && s?.state === "success");

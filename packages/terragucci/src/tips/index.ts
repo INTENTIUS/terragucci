@@ -10,6 +10,10 @@
  * Rollout tips are terragucci's own and read the repo's shape: how many roots
  * share a local module, whether there is a canary wave, whether a gate is off
  * where plans destroy.
+ *
+ * The module table tip words what chant's known-module catalog says about a
+ * choudoufu root's pinned module (chant#4560, through ../chant-next.ts): the
+ * status and its figures are the catalog's, and only the words are here.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -28,6 +32,7 @@ import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041"
 import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042";
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
+import { chantModuleCatalog, chantRegistryCatalog, chantTf046, type ChantModuleCompatibility, type ChantReleaseCatalogDoc } from "../chant-next";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
@@ -40,6 +45,19 @@ export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
   // unit sources, local state.
   TF041: tf041, TF042: tf042, TF043: tf043, TF044: tf044,
 };
+
+/**
+ * Chant's checks that become tips where the installed chant has them, newer
+ * than the pin (./chant-next.ts): TF046, a live root whose record store is
+ * the local directory, which is empty on every CI run (chant#4561). It is
+ * report-only in chant's catalog, so off under `recommended`; terragucci
+ * turns it on. It reads the job's environment to know it runs in CI.
+ */
+export async function codeRules(env: NodeJS.ProcessEnv = process.env): Promise<Readonly<Record<string, PostSynthCheck>>> {
+  const lib = await chantTf046();
+  if (!lib) return CODE_RULES;
+  return { ...CODE_RULES, TF046: { ...lib.tf046, check: (ctx: PostSynthContext) => lib.checkLocalRecordStore(ctx, env) } };
+}
 
 /** Where chant documents its terraform rules. */
 export const CHANT_RULES_URL = "https://intentius.io/chant/lexicons/terraform/lint-rules/";
@@ -59,6 +77,13 @@ export const SHARED_AUDIENCE_TIP = "terragucci-gitlab-audience";
 export const SECRET_IN_STATE_TIP = "terragucci-secret-in-state";
 /** tf-check's and tf-plan's tip for a choudoufu root whose live block does not refuse secrets (./secrets.ts). */
 export const CHOUDOUFU_SECRETS_TIP = "terragucci-choudoufu-secrets";
+/** A plan's tip for a choudoufu root's module pin that choudoufu's module table refuses or has no row for. */
+export const MODULE_TABLE_TIP = "terragucci-module-table";
+/** A plan's tip for a module call pinned to a version its registry's release catalog marks deprecated or yanked (terragucci#1298). */
+export const DEPRECATED_VERSION_TIP = "terragucci-deprecated-version";
+
+/** Hosts whose registries publish no release catalog, so their calls are not looked up. */
+const PUBLIC_REGISTRIES = new Set(["registry.terraform.io", "registry.opentofu.org"]);
 
 /** A local module is shared widely at this many roots. */
 export const SHARED_MODULE_ROOTS = 10;
@@ -68,10 +93,12 @@ export const FEW_ROOTS = 5;
 export const HUNDREDS_OF_ROOTS = 100;
 
 export interface TipOptions {
-  settings: Pick<ResolvedSettings, "gate" | "tips"> & { waves?: { canary?: string[] } };
+  settings: Pick<ResolvedSettings, "gate" | "tips"> & { waves?: { canary?: string[] }; binary?: string };
+  /** The roots that run choudoufu. Default: every root when `settings.binary` is choudoufu, else none. */
+  choudoufuRoots?: readonly string[];
   /** The HCL parser. Without it the code tips and the shared-module tip are left out. */
   parser?: Hcl2Json;
-  /** The chant rule ids to run. Default: all of `CODE_RULES`. */
+  /** The chant rule ids to run. Default: all of `codeRules()`. */
   rules?: readonly string[];
   /** Roots whose plans destroy or replace something. Known only after a plan. */
   destroying?: readonly string[];
@@ -85,6 +112,13 @@ export interface TipOptions {
   secrets?: readonly { root: string; binary: string; secrets: readonly StoredSecret[] }[];
   /** The job's environment, for CHOUDOUFU_STRICT_PIN. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * The release catalogs the deprecated-version tip checks the roots' module
+   * calls against, or the registry hosts to read them from
+   * (`catalog/index.json`, with each host's token): {@link catalogHosts}.
+   * Left out: no tip.
+   */
+  releaseCatalogs?: readonly ChantReleaseCatalogDoc[] | { hosts: readonly string[] };
 }
 
 const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${rule.toLowerCase()}` });
@@ -105,6 +139,26 @@ async function callsIn(repo: string, dir: string, parser: Hcl2Json): Promise<Cal
     }
   }
   return out;
+}
+
+/**
+ * The module table tip's words for the catalog's answer, or undefined when
+ * the version plans in every example the table measured.
+ */
+export function moduleTableMessage(c: ChantModuleCompatibility): string | undefined {
+  const table = `choudoufu's module table (${c.tier} tier)`;
+  switch (c.status) {
+    case "clear":
+      return undefined;
+    case "refused": {
+      const ids = c.refusals.map((r) => `${r.id} (${r.sites === 1 ? "1 site" : `${r.sites} sites`})`).join(", ");
+      return `${c.module} ${c.version} is refused in ${c.refusedExamples} of ${c.examples} examples in ${table}: ${ids}. A call that uses the same features is refused the same way. Run choudoufu live-check on this root to see each site, or pin a version whose examples plan.`;
+    }
+    case "unknown-version":
+      return `${table} has no row for ${c.module} ${c.version}${c.measuredVersions.length ? `; it measured ${c.measuredVersions.join(", ")}` : ""}. Run choudoufu live-check on this root before the pin merges, or pin a measured version.`;
+    case "unknown-module":
+      return `${table} has no row for ${c.module}. Run choudoufu live-check on this root to see whether its calls plan.`;
+  }
 }
 
 /** The providers a root constrains to a range, as `name` and `version`. */
@@ -146,9 +200,12 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
   const { parser } = options;
 
   if (parser) {
-    const checks = (options.rules ?? Object.keys(CODE_RULES)).map((id) => CODE_RULES[id]).filter((c): c is PostSynthCheck => c !== undefined);
+    const rules = await codeRules(options.env ?? process.env);
+    const checks = (options.rules ?? Object.keys(rules)).map((id) => rules[id]).filter((c): c is PostSynthCheck => c !== undefined);
     const floating = new Set<string>();
     const users = new Map<string, Set<string>>();
+    const choudoufu = new Set(options.choudoufuRoots ?? (options.settings.binary === "choudoufu" ? roots : []));
+    const catalog = choudoufu.size > 0 ? await chantModuleCatalog() : undefined;
     for (const dir of options.configDirs ?? []) {
       const entities = await parseTerraformRootDir(join(repo, dir), dir, parser);
       const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;
@@ -164,6 +221,13 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
         }
       }
       for (const m of await localModules(repo, root, parser)) users.set(m, (users.get(m) ?? new Set()).add(root));
+      if (catalog && choudoufu.has(root)) {
+        for (const { source, version } of await callsIn(repo, root, parser)) {
+          const c = version === undefined ? undefined : catalog.moduleCompatibility(source, version);
+          const message = c && moduleTableMessage(c);
+          if (message) tips.push(ownTip(MODULE_TABLE_TIP, message, root));
+        }
+      }
       // Chant's own range tips name the call already; this one says what the range costs a rollout.
       for (const { name, version } of await providerRanges(repo, root, parser)) {
         tips.push(ownTip(
@@ -183,6 +247,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
         }
       }
     }
+    if (options.releaseCatalogs) tips.push(...(await deprecatedVersionTips(repo, roots, parser, options.releaseCatalogs)));
     for (const [module, by] of [...users].sort(([a], [b]) => (a < b ? -1 : 1))) {
       if (by.size < SHARED_MODULE_ROOTS) continue;
       tips.push(ownTip(
@@ -236,6 +301,73 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
     ));
   }
 
+  return tips;
+}
+
+/**
+ * The registry hosts whose catalogs the deprecated-version tip reads: this
+ * repo's own `modules.registry`, and each registry host `sources.modules`
+ * allows by name (`modules.example.com/acme/*`), the registries a consuming
+ * repo has said it reads from.
+ */
+export function catalogHosts(settings: { modules?: { registry?: { url: string } }; sources?: { modules?: string[] } }): string[] {
+  const out = new Set<string>();
+  if (settings.modules?.registry?.url) {
+    try {
+      out.add(new URL(settings.modules.registry.url).host.toLowerCase());
+    } catch {
+      // config check refuses a bad url
+    }
+  }
+  for (const glob of settings.sources?.modules ?? []) {
+    const host = /^([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)\//.exec(glob)?.[1];
+    if (host) out.add(host.toLowerCase());
+  }
+  return [...out].filter((h) => !PUBLIC_REGISTRIES.has(h)).sort();
+}
+
+/**
+ * The deprecated-version tips: each call whose pin a catalog marks, worded
+ * from the lexicon's check (`deprecatedPins`, chant#4599). A tip is advice,
+ * so a catalog that cannot be read is skipped, and a chant without the check
+ * gives none.
+ */
+async function deprecatedVersionTips(repo: string, roots: readonly string[], parser: Hcl2Json, catalogs: readonly ChantReleaseCatalogDoc[] | { hosts: readonly string[] }): Promise<ReportTip[]> {
+  const tf = await chantRegistryCatalog();
+  if (!tf) return [];
+  let calls: Awaited<ReturnType<typeof tf.moduleConsumers>>;
+  try {
+    calls = await tf.moduleConsumers(repo, roots, parser);
+  } catch {
+    return [];
+  }
+  let docs: readonly ChantReleaseCatalogDoc[] = "hosts" in catalogs ? [] : catalogs;
+  if ("hosts" in catalogs) {
+    // Only the named hosts that a pinned call reaches.
+    const named = new Set(catalogs.hosts.map((h) => h.toLowerCase()));
+    const hosts = new Set<string>();
+    for (const c of calls) {
+      const host = /^([^/]+\.[^/]+)\/[^/]+\/[^/]+\/[^/]+$/.exec(c.module)?.[1]?.toLowerCase();
+      if (host && c.pin !== null && named.has(host) && !PUBLIC_REGISTRIES.has(host)) hosts.add(host);
+    }
+    const timed = (url: string, init?: RequestInit) => fetch(url, { ...init, signal: AbortSignal.timeout(5000) });
+    const read: ChantReleaseCatalogDoc[] = [];
+    for (const host of [...hosts].sort()) {
+      try {
+        const doc = await tf.readRegistryCatalog(host, { fetch: timed });
+        if (doc) read.push(doc);
+      } catch {
+        // No catalog, or none this job may read: no tip for that host.
+      }
+    }
+    docs = read;
+  }
+  const tips: ReportTip[] = [];
+  for (const doc of docs) {
+    const found = tf.deprecatedPins(calls, doc);
+    for (const w of found.warnings) tips.push(ownTip(DEPRECATED_VERSION_TIP, `${w.message}. It still installs; move the pin before the version is yanked.`, w.consumer.root));
+    for (const r of found.refusals) tips.push(ownTip(DEPRECATED_VERSION_TIP, `${r.message}. It still installs, and modules.require: attested refuses it; move the pin.`, r.consumer.root));
+  }
   return tips;
 }
 

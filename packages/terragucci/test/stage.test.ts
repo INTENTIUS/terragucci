@@ -4,11 +4,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { chantExitCodes } from "../src/chant-next";
 import { main } from "../src/cli";
 import { readInlineReport } from "../src/report/html";
 import { affectedRoots, eachLimited, emptyStateText, providerDownloads, rootsParallelism, runStage } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
+
+// A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
 
@@ -76,7 +80,7 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan", () => {
     try {
       process.chdir(repo);
       expect(await main(["stage", "tf-plan", "--json", "--out", "r"])).toBe(0);
-      expect(await main(["stage", "tf-nope", "--json"])).toBe(2);
+      expect(await main(["stage", "tf-nope", "--json"])).toBe(USAGE);
     } finally {
       console.log = log;
       process.chdir(cwd);
@@ -84,7 +88,7 @@ describe.skipIf(!TOFU)("terragucci stage tf-plan", () => {
     const ok = JSON.parse(out[0]);
     expect(ok).toMatchObject({ schema: 1, command: "stage", exit: 0, status: "ok", results: { stage: "tf-plan", uploaded: null } });
     expect(existsSync(ok.results.files.html)).toBe(true);
-    expect(JSON.parse(out[1])).toMatchObject({ command: "stage", exit: 2, status: "usage" });
+    expect(JSON.parse(out[1])).toMatchObject({ command: "stage", exit: USAGE, status: USAGE === 1 ? "failed" : "usage" });
   });
 });
 
@@ -345,7 +349,7 @@ describe("roots of a layer plan at once", () => {
     const err = console.error;
     console.error = () => {};
     try {
-      expect(await main(["stage", "tf-plan", "--parallelism", "0"])).toBe(2);
+      expect(await main(["stage", "tf-plan", "--parallelism", "0"])).toBe(USAGE);
     } finally {
       console.error = err;
     }

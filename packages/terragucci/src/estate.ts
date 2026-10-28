@@ -23,11 +23,24 @@
  * is set, gauges beside the stages' metrics. The record and the drift rows
  * also give the policy metrics (report/policy-metrics.ts):
  * `policy-metrics.json` beside the page, and a section on it.
+ *
+ * With chant core's estate installed (`@intentius/chant/ci-estate`,
+ * chant#4612) and a single repo whose ledger holds op wave run records,
+ * `buildLedgerEstate` reads the waves, their gates, the drift checks and the
+ * pull request environments from the ledger. Its sections go onto the same
+ * project objects (the apply waves and what waits, the overdue drift
+ * checks), `dora.json` and its gauges come from chant's `buildDelivery`, and
+ * the bucket sections stay terragucci's (inventory, versions, states, edges,
+ * secrets, graph, history, ephemeral environments), so `terragucci.estate/v1`
+ * keeps every field. Without the module, or with no wave records on the
+ * ledger yet, report/dora.ts and the bucket give the whole page.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { chantCiEstate, chantCiProductWords, chantCiProductWordsNow, chantModuleCatalog, type ChantCiEstate, type ChantLedgerEstate } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from "./config";
-import { age, buildEstate, linkUnrecorded, renderEstateHtml, type Estate, type ProjectIndex } from "./report/estate";
+import { age, buildEstate, linkUnrecorded, renderEstateHtml, type Estate, type EstateRun, type ProjectIndex } from "./report/estate";
 import { storeFromEnv } from "./report/bucket";
 import { bucketUrl, parseReportsBucket, PRESIGN_MAX_SECONDS, StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
 import { AUDIT_FILES, readRecord, type AuditEntry } from "./report/audit";
@@ -303,6 +316,58 @@ function linkHistory(page: Estate, history: History): void {
   }
 }
 
+/**
+ * chant's ledger estate for a single repo's project, when the installed chant
+ * has it and the ledger holds op wave run records (`dora.audit`); undefined
+ * otherwise. A control repo's projects keep their ledgers in their own repos,
+ * so it reads none here.
+ */
+export async function ledgerEstate(cwd: string, projects: readonly string[], now: Date, chant?: ChantCiEstate): Promise<{ chant: ChantCiEstate; ledger: ChantLedgerEstate; words: object } | undefined> {
+  const ci = chant ?? (await chantCiEstate());
+  if (!ci || projects.length !== 1) return undefined;
+  const wordsModule = chantCiProductWordsNow() ?? (await chantCiProductWords());
+  if (!wordsModule) return undefined;
+  const words = wordsModule.assertProductWords(TERRAGUCCI_WORDS);
+  try {
+    const load = await ci.readEstateLedger(cwd);
+    const ledger = ci.buildLedgerEstate({ load, words, now, project: projects[0]!, members: projects });
+    return ledger.dora.audit ? { chant: ci, ledger, words } : undefined;
+  } catch {
+    // A checkout with no ledger to read keeps the bucket's page.
+    return undefined;
+  }
+}
+
+/** A ledger run as the page's EstateRun: the bucket's run of the same commit and wave gives its totals and report link. */
+function ledgerRun(r: Record<string, unknown>, bucket: readonly EstateRun[]): EstateRun {
+  const same = bucket.find((b) => b.commit === r.commit && b.wave === r.wave && b.share === r.share);
+  const { run: _run, status: _status, ...rest } = r;
+  return { ...(same ?? {}), ...(rest as unknown as EstateRun), totals: same?.totals ?? { create: 0, update: 0, replace: 0, delete: 0 }, destroys: same?.destroys ?? 0 };
+}
+
+/** Put the ledger's sections onto the bucket's project objects, and its totals beside them. */
+export function mergeLedgerEstate(page: Estate, ledger: ChantLedgerEstate): void {
+  page.source = "ledger";
+  for (const p of page.projects) {
+    const m = ledger.estate.projects.find((x) => x.project === p.project);
+    if (!m) continue;
+    if (m.apply) p.apply = { commit: m.apply.commit, waves: m.apply.waves.map((w) => ledgerRun(w as Record<string, unknown>, p.apply?.waves ?? [])) };
+    p.waiting = m.waiting.map((w) => ({ project: w.project, wave: w.wave, commit: w.commit, since: w.since, age_seconds: w.age_seconds, ...(p.waiting.find((b) => b.wave === w.wave && b.commit === w.commit)?.report ? { report: p.waiting.find((b) => b.wave === w.wave && b.commit === w.commit)!.report } : {}) }));
+    if (m.apply) p.failed = m.failed;
+    if (m.drift) {
+      p.drift = ledgerRun(m.drift as Record<string, unknown>, p.drift ? [p.drift] : []);
+      p.drifted = m.drifted;
+    }
+    if (m.overdue?.length) p.overdue = m.overdue;
+  }
+  const t = page.totals;
+  t.waiting = page.projects.reduce((n, p) => n + p.waiting.length, 0);
+  t.drifted_projects = page.projects.filter((p) => p.drifted > 0).length;
+  t.drifted_roots = page.projects.reduce((n, p) => n + p.drifted, 0);
+  t.failed_roots = page.projects.reduce((n, p) => n + p.failed, 0);
+  t.overdue = ledger.estate.totals.overdue;
+}
+
 export async function estate(cwd: string, config: TerragucciConfig, options: EstateOptions = {}): Promise<EstateResult> {
   const env = options.env ?? process.env;
   const now = options.now ?? new Date();
@@ -312,7 +377,8 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   const { projects, out } = await sources(config, options, client);
   const indexes: ProjectIndex[] = [];
   for (const p of projects) indexes.push(await readProject(p.project, p.reports, out, client));
-  const page = buildEstate(indexes, now);
+  // The known-module catalog beside each module version a choudoufu root runs, when the installed chant has it (chant#4560).
+  const page = buildEstate(indexes, now, await chantModuleCatalog());
   if (out?.bucket) {
     const trail = await auditTrail(client(out), out.prefix ?? "");
     if (trail) page.audit = trail;
@@ -320,8 +386,11 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   const audit = out?.bucket ? await auditEntries(client(out), out.prefix ?? "") : undefined;
   // The state versions no wave or migration recorded, beside each root's.
   if (audit) linkUnrecorded(page, audit);
-  // The DORA metrics from the audit trail and the index rows.
-  const dora = buildDora(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
+  // The waves, their gates and the drift checks from the ledger, when chant reads it and it holds wave records (chant#4612).
+  const fromLedger = await ledgerEstate(cwd, projects.map((p) => p.project), now);
+  if (fromLedger) mergeLedgerEstate(page, fromLedger.ledger);
+  // The DORA metrics from the ledger through chant's buildDelivery, else from the audit trail and the index rows.
+  const dora = fromLedger ? (fromLedger.ledger.dora as unknown as Dora) : buildDora(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
   page.dora = { file: DORA_FILE, generated: dora.generated, deployments: dora.estate.deployments };
   // The policy metrics from the audit trail, with the drift the same rows found.
   const policy = buildPolicyMetrics(indexes.map((p) => ({ project: p.project, rows: p.reports ?? [] })), audit, now);
@@ -340,7 +409,7 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   const result: EstateResult = { estate: page, files: Object.keys(files).map((f) => join(dir, f)), unreadable: indexes.filter((i) => i.error !== undefined).map((i) => i.project), dora, policy };
   const tel = telemetryFromEnv(env);
   if (tel?.metrics) {
-    const gauges = doraGauges(dora);
+    const gauges = fromLedger ? fromLedger.chant.deliveryGauges(fromLedger.ledger.dora, fromLedger.words) : doraGauges(dora);
     const problem = await send(tel.metrics, metricsBody(gauges, { ...tel.resource, "service.version": VERSION }, VERSION), options.otlpFetch);
     result.metrics = problem ? { problem } : { sent: gauges.length };
   }

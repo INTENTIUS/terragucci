@@ -180,14 +180,19 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { controlCheckoutStep, controlCloneScript, controlDirEnv, dispatchScript, type ResolvedControl } from "./control-repo";
+import { controlCloneScript, controlDirEnv, controlReadSteps, dispatchScript, type ResolvedControl } from "./control-repo";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
+import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
+import { chantDriftExitLines, chantDriftFiles } from "./render-chant-drift";
 import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
+import type { ChantCiProduct, ChantProductCommand } from "./chant-next";
+import { TERRAGUCCI_WORDS } from "./ci-words";
+import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
@@ -252,8 +257,19 @@ export interface PipelineInput {
   mirror?: boolean;
   /** `parallelism` from terragucci.yml: at most this many roots check at once. Unset: all of them. */
   parallelism?: number;
+  /**
+   * The check job runs `terragucci check-hooks` last: chant's `ci.hooks.check`, read at base, with the history that
+   * reads it. Set when `check.pre_commit` is on (`preCommit`, ./pre-commit.ts) or chant.workspace.json names check hooks.
+   */
+  checkHooks?: { preCommit: boolean };
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
+  /**
+   * Plain roots: the op-waves spec of the repo's apply on chant's terraform-apply step (terragucci#1303), as
+   * `.chant/op-waves/tf-apply.spec.json` holds it. Written once beside the pipeline, so a wave job reads its rules at
+   * base from the commit it applies after, and puts a commit of its own on top only when its spec differs.
+   */
+  wavesSpec?: string;
   /** Set for a Terragrunt repo: the jobs run Terragrunt over its units. */
   terragrunt?: TerragruntPipelineInput & { installs: { tool: Tool; version: string }[] };
   /** `synth`: the command that writes the roots (CDK Terrain's `npx cdktn synth`), run in every job that reads them. */
@@ -283,6 +299,8 @@ export interface PipelineInput {
   publishBucket?: string;
   /** Set when `modules.attest` is: the publish job gets the signing key's two secrets (GitHub and Forgejo; GitLab's CI variables are already there). */
   attest?: boolean;
+  /** Set when `modules.publish` names a `gitlab://` project: the secret the publish job passes as `GITLAB_TOKEN` (`modules.gitlab_token`, GitHub and Forgejo; GitLab's CI variables are already there). */
+  publishGitlabToken?: string;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
   /** `rollouts:`, when `respond.rollout` is not off: the cron of the job that continues every rollout in flight. */
@@ -321,6 +339,14 @@ export interface PipelineInput {
   agentDrift?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
+  /**
+   * chant's product pipeline (`@intentius/chant/ci-product`, chant#4550),
+   * when the installed chant has it: the pipeline then takes terragucci's
+   * words through `productPipelineJobs`, which checks them against the jobs
+   * the pipeline has and gives the comments the jobs answer and the waves'
+   * op and gate names. init loads it (./chant-next.ts `chantCiProduct`).
+   */
+  ciProduct?: ChantCiProduct;
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
@@ -642,6 +668,37 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
     "terragucci check-policy || failed=1",
     'exit "$failed"',
   ].join("\n");
+}
+
+/**
+ * tf-check's last step with `checkHooks` set: `terragucci check-hooks`, which
+ * runs chant's `ci.hooks.check` (or, on a chant without the moment, the
+ * pre-commit preset itself) over the roots, and fails the check when a hook
+ * fails. A Terragrunt check stops at its first failing line, so the step is
+ * its last line there; a plain check counts it with the rest.
+ */
+/**
+ * With `control` set, the check job holds the project's consumers.json to its
+ * roots' module pins (`terragucci modules consumers --check`, terragucci#1289),
+ * so a publisher's catalog joins what the roots pin. On a chant without the
+ * consumer scan the command says so and passes.
+ */
+export function withConsumersCheck(body: string, control: boolean, terragrunt: boolean): string {
+  if (!control) return body;
+  const line = "terragucci modules consumers --check";
+  if (terragrunt) return `${body}\n${line}`;
+  const lines = body.split("\n");
+  const last = lines.pop();
+  return [...lines, `${line} || failed=1`, last].join("\n");
+}
+
+export function withCheckHooks(body: string, binary: Binary, roots: readonly string[], hooks: PipelineInput["checkHooks"], terragrunt: boolean): string {
+  if (!hooks) return body;
+  const line = `terragucci check-hooks --binary ${binary}${hooks.preCommit ? " --pre-commit" : ""} --targets ${sh(roots.join(","))}`;
+  if (terragrunt) return `${body}\n${line}`;
+  const lines = body.split("\n");
+  const last = lines.pop();
+  return [...lines, `${line} || failed=1`, last].join("\n");
 }
 
 /**
@@ -2043,9 +2100,9 @@ export const MERGE_ENVIRONMENT = "terragucci-merge";
  * jobs' reports. It runs nothing itself: no plan, no apply and no cloud
  * credentials.
  */
-export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean; review?: boolean } = {}): string {
+export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean | "chant"; review?: boolean } = {}): string {
   const requires = prApply?.requires && !APPLY_REQUIRES.every((r) => prApply.requires!.includes(r)) ? ` --requires ${prApply.requires.length ? prApply.requires.join(",") : "none"}` : "";
-  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent === "chant" ? " --agent chant" : start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
 }
 
 /**
@@ -2071,7 +2128,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent = false): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent: boolean | "chant" = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -2094,7 +2151,8 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     `terragucci stage tf-drift ${args.join(" ")}`,
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
     // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
-    ...(agent ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : []),
+    // On chant's drift Op (terragucci#1305) the run exits with chant's drift code instead, which starts chant's agent jobs.
+    ...(agent === true ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : agent === "chant" ? chantDriftExitLines(DRIFT_ISSUE_JS, `${REPORT_DIR}/${DRIFT_ISSUE_FILE}`) : []),
     ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${report.synth === ATMOS_WRITE ? ATMOS_DRIFT_PR_SHORT : SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
@@ -2212,6 +2270,67 @@ function text(result: string | { primary: string }): string {
   return typeof result === "string" ? result : result.primary;
 }
 
+/** The comments the pipeline's jobs answer, and the words they start with. */
+interface CommentWords {
+  prefix: string;
+  plan: string;
+  apply: string;
+  lock: string;
+  unlock: string;
+  alias: { plan: string; apply: string };
+}
+
+/**
+ * The comments the jobs answer. With chant's product pipeline (chant#4550)
+ * `productPipelineJobs` takes terragucci's words, refuses them when a command
+ * names a job this pipeline lacks, and names each comment; the waves spec it
+ * gives must keep op `tf-apply` and gates `wave-{k}`, so the approvals
+ * already on the ledger keep counting. Without it, terragucci's own words.
+ * Both give the same text.
+ */
+function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, locksPlan: boolean): CommentWords {
+  const own: CommentWords = {
+    prefix: "/terragucci",
+    plan: "/terragucci plan",
+    apply: "/terragucci apply",
+    lock: "/terragucci lock",
+    unlock: "/terragucci unlock",
+    alias: { plan: "atlantis plan", apply: "atlantis apply" },
+  };
+  const chant = input.ciProduct;
+  if (!chant) return own;
+  const count = input.terragrunt ? input.layers.length : undefined;
+  const spec = wavesSpec({ waves: count ?? input.layers, gate: "always", approval: "ledger", call: waveCallArgv, migrations: false });
+  // chant refuses a command with no job to answer it, so the words name only the commands this pipeline has jobs for.
+  const locks = locksPlan || prApply;
+  const has: ChantProductCommand[] = ["plan", "apply", ...(locks ? (["lock", "unlock"] as const) : []), ...(input.agentComment ? (["agent"] as const) : [])];
+  const words = { ...TERRAGUCCI_WORDS, commands: Object.fromEntries(Object.entries(TERRAGUCCI_WORDS.commands).filter(([, c]) => has.includes(c))) };
+  const jobs = chant.productPipelineJobs(forge, "default", {
+    words,
+    // The apply on merge runs on op waves; with apply.when: pull-request the comment applies the open pull request.
+    ...(prApply ? { applyBeforeMerge: true } : { waves: spec }),
+    ...(locks ? { locks: "plan" as const } : {}),
+    ...(input.agentComment ? { agent: true } : {}),
+  });
+  const named = jobs.waves?.spec;
+  if (named && (named.name !== WAVES_OP || (named.gateName ?? "{gate}-wave-{k}") !== "wave-{k}")) {
+    throw new RenderError(`chant names the waves ${named.name} / ${named.gateName ?? "{gate}-wave-{k}"}, and the approvals on _gates/${WAVES_OP}.jsonl are under ${WAVES_OP} / wave-{k}`);
+  }
+  const line = (c: ChantProductCommand, fallback: string): string => jobs.comments[c] ?? chant.commentLine(jobs.words, c) ?? fallback;
+  const alias = (c: ChantProductCommand, fallback: string): string => jobs.words.aliases.find((a) => a.command === c)?.from ?? fallback;
+  return {
+    prefix: `/${jobs.words.product}`,
+    plan: line("plan", own.plan),
+    apply: line("apply", own.apply),
+    lock: line("lock", own.lock),
+    unlock: line("unlock", own.unlock),
+    alias: { plan: alias("plan", own.alias.plan), apply: alias("apply", own.alias.apply) },
+  };
+}
+
+/** An environment with the unset entries left out. */
+const definedEnv = (env: Record<string, string | undefined>): Record<string, string> => Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined));
+
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
@@ -2277,7 +2396,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const checkBody = tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism);
+  const checkBody = withConsumersCheck(withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), binary, roots, input.checkHooks, tg !== undefined), input.control !== undefined, tg !== undefined);
+  // The check hooks are read from the declaration at base, so the check job takes the history, as the policy tests do.
+  const checkHistory = Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true || input.checkHooks !== undefined;
   const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
@@ -2418,6 +2539,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
+  // agent.comment on chant's agent job (chant#4616), when the installed chant has it: its own workflow, and terragucci's agent jobs are left out.
+  const chantAgent = input.agentComment && !(forge === "gitlab" && !input.comments) ? chantAgentFiles(forge, image, input.agentComment, MARKER) : undefined;
   if (forge === "gitlab") {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
@@ -2453,7 +2576,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
     // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them.
-    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
+    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [chantAgent ? CHANT_AGENT_PR_VAR : AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
     const notMrApply = startedBy.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
@@ -2474,7 +2597,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       stage: "check",
       image: jobImage,
       // The policy tests read the policy from the default branch, and check-mirror the commit before, so either takes the history.
-      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(input.policy || input.mirror || input.terragrunt?.mirror ? { GIT_DEPTH: "0" } : {}) },
+      variables: { ...jobEnv, TG_BRANCH: gitlabEnv.TG_BRANCH, ...(checkHistory ? { GIT_DEPTH: "0" } : {}) },
       ...notScheduled,
       script: script(glCheckBody),
       // The check report (validate's diagnostics, live-check's refusals, the policy tests) stays with the job.
@@ -2668,10 +2791,10 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: Boolean(input.agentComment), review: Boolean(input.review) }))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: chantAgent ? "chant" : Boolean(input.agentComment), review: Boolean(input.review) }))],
       } as never) as never);
     }
-    if (input.agentComment) {
+    if (input.agentComment && !chantAgent) {
       // `/terragucci agent <ask>`: the comments job starts a pipeline of the default branch for it. The agent runs in
       // one job with the model's key alone (its environment cleared), and a fresh job pushes its change with the agent's token.
       const agent = input.agentComment;
@@ -2756,9 +2879,29 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
-    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs };
+    // The agent's jobs on chant's job are in a file of their own, included here; they share the comments stage.
+    const agentInclude = chantAgent ? `include:\n  - local: ${CHANT_AGENT_PATHS.gitlab}\n` : "";
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + agentInclude + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs, ...(chantAgent ? { extra: chantAgent.files } : {}) };
   }
 
+  // terragucci#1305: with agent.drift and chant's agent job, the drift job is a chant drift Op in a workflow of its own.
+  // GitLab, Forgejo with oidc, a Terragrunt repo (its cache step) and respond.drift agent or attribute keep terragucci's job.
+  const chantDrift = drift && input.agentDrift && !tg && !agentDrift && !awsStep && !(forge === "forgejo" && oidc)
+    ? chantDriftFiles({
+        forge,
+        image,
+        schedule: drift,
+        script: [...(installStep ? [installStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, "chant")].join("\n"),
+        workflowEnv: jobEnv,
+        jobEnv: definedEnv({ ...passed, TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv, ...driftDecideEnv, ...reportKeyEnv(forge, input.reports), ...driftNotifyEnv }),
+        pullRequest: Boolean(driftPr),
+        oidc: Boolean(oidc),
+        agent: input.agentDrift,
+        ...(!input.atmos && !input.terramate ? { roots: layers.flat() } : {}),
+        marker: MARKER,
+        ...(input.runner !== undefined ? { runner: input.runner } : {}),
+      })
+    : undefined;
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
   const isFork = "github.event.pull_request.head.repo.full_name != github.repository";
   // Forgejo (15 and later, with runner 12.5 or later) serves a job an OIDC token
@@ -2776,7 +2919,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // locks: plan: the pr-lock job, from the default branch's workflow, locks a pull request's roots and releases them when it closes.
       // ephemeral: the same events apply a pull request's copy of the ephemeral roots and destroy it on close.
       ...(locksPlan || ephemeral ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
-      ...(drift ? { schedule: [{ cron: drift }] } : {}),
+      ...(drift && !chantDrift ? { schedule: [{ cron: drift }] } : {}),
       // A dispatch with pr re-plans that pull request as `/terragucci plan [root]` does (comment.ts); with drift set, one without pr runs the drift job.
       workflow_dispatch: { inputs: REPLAN_INPUTS },
     },
@@ -2835,7 +2978,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     outputs: handoverOutputs("check", forge),
     steps: [
       // The policy tests read the policy from the default branch, and check-mirror the commit before, so either takes the history.
-      bareCheckout(Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true),
+      bareCheckout(checkHistory),
       ...toolSteps(false, false),
       new Step({ id: "check", name: `Format check and validate, every ${what}`, run: `${dropForgeTokens("sh")}\n${handoverTrap(CHECK_DIR, forge).join("\n")}\n${checkBody}` }),
     ],
@@ -2879,7 +3022,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     steps: [
       new Step({ name: "Say on the head that the plan started", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: [forgeApi(forge), 'tg status terragucci/plan pending "planning"'].join("\n") }),
       bareCheckout(true),
-      ...(input.control ? [controlCheckoutStep(input.control)] : []),
+      ...(input.control ? controlReadSteps(input.control, forge) : []),
       ...toolSteps(true, true, undefined, true),
       new Step({ id: "plan", name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
     ],
@@ -2906,14 +3049,16 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A comment's first words, as the jobs' conditions test them; with atlantis_comments, `atlantis plan` and `atlantis apply` start the same jobs.
   const says = (p: string): string => `startsWith(github.event.comment.body, '${p}')`;
   const atlantis = input.atlantisComments === true;
-  const applySays = atlantis ? `${says("/terragucci apply")} || ${says("atlantis apply")}` : says("/terragucci apply");
-  const planSays = atlantis ? `(${says("/terragucci plan")} || ${says("atlantis plan")})` : says("/terragucci plan");
+  // The comments each job answers: chant's product pipeline names them from terragucci's words when the installed chant has it.
+  const comment = commentWords(input, forge, prApply, locksPlan);
+  const applySays = atlantis ? `${says(comment.apply)} || ${says(comment.alias.apply)}` : says(comment.apply);
+  const planSays = atlantis ? `(${says(comment.plan)} || ${says(comment.alias.plan)})` : says(comment.plan);
   // With apply.when: pull-request, `/terragucci lock` and `/terragucci unlock` are the apply-comment job's too: it holds the locks.
   const APPLY_COMMENT = prApply
-    ? `(${applySays} || ${says("/terragucci lock")} || ${says("/terragucci unlock")})`
+    ? `(${applySays} || ${says(comment.lock)} || ${says(comment.unlock)})`
     : atlantis ? `(${applySays})` : applySays;
   // With locks: plan and apply.when: merge, `/terragucci lock` and `/terragucci unlock` are the pr-lock job's.
-  const LOCK_COMMENT = "(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))";
+  const LOCK_COMMENT = `(${says(comment.lock)} || ${says(comment.unlock)})`;
   const lockElsewhere = locksPlan && !prApply ? ` && !${LOCK_COMMENT}` : "";
   // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
   // never an expression in the script: the command reads it from the event file (comment.ts). The decision
@@ -2926,7 +3071,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says("/terragucci")} || ${says("atlantis plan")})` : says("/terragucci")} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
+    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
@@ -2942,7 +3087,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
       // The head comes from the pull request, by number; the base branch comes with the history, for the range.
       bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go, "Check out the pull request's head"),
-      ...(input.control ? [controlCheckoutStep(input.control, go)] : []),
+      ...(input.control ? controlReadSteps(input.control, forge, go) : []),
       ...toolSteps(true, true, go, true),
       new Step({
         if: go,
@@ -3059,7 +3204,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [new Step({ name: "Say on the head whether its waiting waves are approved", shell: "bash", run: `terragucci approval-status --forge ${forge}${agentLogin ? ` --agent-login ${agentLogin}` : ""}` })],
     } as never) as never);
   }
-  if (input.agentComment) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
+  if (input.agentComment && !chantAgent) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
   if (locksPlan) {
     // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
     // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may
@@ -3227,6 +3372,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TERRAGUCCI_REGISTRY_INSECURE: "${{ secrets.TERRAGUCCI_REGISTRY_INSECURE }}",
         ...(input.attest ? { COSIGN_PRIVATE_KEY: "${{ secrets.COSIGN_PRIVATE_KEY }}", COSIGN_PASSWORD: "${{ secrets.COSIGN_PASSWORD }}" } : {}),
         ...(input.publishBucket ? reportKeyEnv(forge, { bucket: input.publishBucket }) : {}),
+        ...(input.publishGitlabToken ? { GITLAB_TOKEN: `\${{ secrets.${input.publishGitlabToken} }}` } : {}),
       },
       steps: [
         new Step({ uses: CHECKOUT, with: { "fetch-depth": 0 } }),
@@ -3236,7 +3382,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  if (drift) {
+  if (drift && !chantDrift) {
     // Reads every root, so it takes the plan job's read-only role, and writes only the issue.
     entities.set("drift", new Job({
       "runs-on": "ubuntu-latest",
@@ -3268,7 +3414,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  if (drift && input.agentDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
+  if (drift && input.agentDrift && !chantDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
   if (forge === "forgejo") deferDeepSkips(entities);
   // Every workflow file goes through here, so its jobs run where runner places them.
   const serialize = (jobs: Map<string, never>): string => {
@@ -3277,6 +3423,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     return tagComments(text((forge === "forgejo" ? forgejoSerializer : githubSerializer).serialize(jobs)));
   };
   const extra: { path: string; content: string }[] = [];
+  if (input.wavesSpec) extra.push({ path: WAVES_SPEC, content: input.wavesSpec });
+  if (chantAgent) extra.push(...chantAgent.files);
+  if (chantDrift) extra.push(...chantDrift);
   if (input.resume) {
     // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
     const resume = new Map<string, never>([

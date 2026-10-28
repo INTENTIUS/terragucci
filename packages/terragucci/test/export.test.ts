@@ -3,14 +3,19 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { appendLifecycle } from "../src/apply";
-import { doneExports, EXPORT_DONE, EXPORT_LEDGER, exportState, requestDigest } from "../src/export";
+import { EXPORT_DONE, EXPORT_LEDGER, exportState, requestDigest } from "../src/export";
 import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import type { BinaryExec } from "../src/migrate";
 import type { S3Fetch } from "../src/report/s3";
 import { main } from "../src/cli";
+import { chantExitCodes } from "../src/chant-next";
+import { appliedFile, chantGated, chantRequestDigest, exportRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";
+
+// With chant's state operations an export is chant's gated request: chant's digest, its request shape, and a finished line in place of done.jsonl.
+const chantOps = await chantGated();
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: "us-east-1", AWS_ENDPOINT_URL: "http://s3.test" };
@@ -61,6 +66,12 @@ function repo(files: Record<string, string> = {}) {
 const approve = (work: string, digest: string, by: string, at: string) =>
   appendLifecycle(work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
 
+/** The exports recorded, from whichever file the path records them in. */
+const exportsDone = (work: string) => exportRecords(chantOps, (path) => show(work, path));
+
+/** The file whose history holds the export records. */
+const recordFile = chantOps ? appliedFile("tf-state-export") : EXPORT_DONE_FILE;
+
 const show = (work: string, path: string): string => {
   git(work, "fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle");
   return git(work, "show", `refs/remotes/origin/chant/lifecycle:${path}`);
@@ -73,11 +84,12 @@ describe("terragucci state export", () => {
     const lines: string[] = [];
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: (l) => lines.push(l) });
     expect(r.code).toBe(3);
-    expect(r.digest).toBe(requestDigest({ root: "app", location: "s3://state/app.tfstate", version_id: "v1", by: "alice", at: T(0) }));
+    const location = "s3://state/app.tfstate";
+    expect(r.digest).toBe(chantOps ? await chantRequestDigest("tf-state-export", { kind: "state-export", subject: "app", by: "alice", at: T(0), fields: { location, version_id: "v1" } }) : requestDigest({ root: "app", location, version_id: "v1", by: "alice", at: T(0) }));
     expect(r.command).toBe(`terragucci approve export app --plan ${r.digest}`);
     expect(w.seen.every((s) => s.method === "HEAD")).toBe(true);
     const pending = JSON.parse(show(work, EXPORT_LEDGER).trim());
-    expect(pending).toMatchObject({ kind: "pending", op: "tf-state-export", gate: "app", planDigest: r.digest, request: { root: "app", version_id: "v1", by: "alice" } });
+    expect(pending).toMatchObject({ kind: "pending", op: "tf-state-export", gate: "app", planDigest: r.digest, request: chantOps ? { kind: "state-export", subject: "app", by: "alice", fields: { version_id: "v1" } } : { root: "app", version_id: "v1", by: "alice" } });
     expect(lines.join("\n")).toContain("someone other than you approves it");
     // Asked again before an approval: the same request waits, and no second one is written.
     const again = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(1), log: () => {} });
@@ -96,10 +108,10 @@ describe("terragucci state export", () => {
     expect(r).toMatchObject({ code: 0, file });
     expect(readFileSync(file, "utf-8")).toBe(V1);
     expect(statSync(file).mode & 0o777).toBe(0o600);
-    const done = [...doneExports(show(work, EXPORT_DONE)).values()];
+    const done = exportsDone(work);
     expect(done).toEqual([expect.objectContaining({ kind: "state-export", root: "app", version_id: "v1", location: "s3://state/app.tfstate", exportedBy: "alice", approvedBy: "bob", planDigest: first.digest })]);
     expect(done[0]!.content_digest).toMatch(/^sha256:/);
-    expect(show(work, EXPORT_DONE)).not.toContain("secret-1");
+    expect(show(work, chantOps ? appliedFile("tf-state-export") : EXPORT_DONE)).not.toContain("secret-1");
     // The request exported once: running again asks anew.
     const next = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(3), log: () => {} });
     expect(next.code).toBe(3);
@@ -114,7 +126,8 @@ describe("terragucci state export", () => {
     const lines: string[] = [];
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: (l) => lines.push(l) });
     expect(r.code).toBe(3);
-    expect(lines.join("\n")).toContain("an approval by alice does not count");
+    // chant's gate words the refusal its own way: the requester's own approval never counts.
+    expect(lines.join("\n")).toMatch(chantOps ? /alice made the request, and a requester's own approval does not count/ : /an approval by alice does not count/);
     expect(w.seen.some((s) => s.method === "GET")).toBe(false);
   });
 
@@ -122,7 +135,8 @@ describe("terragucci state export", () => {
     const { work } = repo();
     const w = world();
     const r = await exportState(work, { root: "app", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
-    expect(JSON.parse(show(work, EXPORT_LEDGER).trim()).request.version_id).toBe("v2");
+    const request = JSON.parse(show(work, EXPORT_LEDGER).trim()).request;
+    expect(chantOps ? request.fields.version_id : request.version_id).toBe("v2");
     expect(r.code).toBe(3);
     await expect(exportState(work, { root: "app", version: "nope", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} })).rejects.toThrow(/has no version nope/);
   });
@@ -162,7 +176,7 @@ describe("terragucci state export", () => {
     const r = await exportState(work, { ...opts, out: file, now: T(2), log: () => {} });
     expect(r.code).toBe(0);
     expect(readFileSync(file, "utf-8")).toBe(V1);
-    const done = [...doneExports(show(work, EXPORT_DONE)).values()];
+    const done = exportsDone(work);
     expect(done).toEqual([expect.objectContaining({ root: "live/app", location: "s3://state/app.tfstate", version_id: "v1", exportedBy: "alice", approvedBy: "bob" })]);
     // The unit's own directory gets no .terraform: Terragrunt ran the binary in its cache.
     expect(existsSync(join(work, "live/app/.terraform"))).toBe(false);
@@ -184,7 +198,7 @@ describe("terragucci state export", () => {
     const out = join(tmp(), "x.tfstate");
     await exportState(work, { root: "app", version: "v1", actor: "alice", out, env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} });
     const log = (path: string) => gateLedgerLinesFromLog(git(work, "log", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", "refs/remotes/origin/chant/lifecycle", "--", path));
-    const exported = ledgerEntries("p", EXPORT_DONE_FILE, log(EXPORT_DONE_FILE));
+    const exported = ledgerEntries("p", recordFile, log(recordFile));
     expect(exported).toEqual([expect.objectContaining({ kind: "state-export", who: "alice", what: "app", digest: first.digest, result: "exported", detail: expect.objectContaining({ version_id: "v1", approved_by: "bob", location: "s3://state/app.tfstate" }) })]);
     const asked = ledgerEntries("p", EXPORT_LEDGER_FILE, log(EXPORT_LEDGER_FILE));
     expect(asked.map((e) => [e.kind, e.who, e.what])).toEqual([["approval-requested", null, "app"], ["approval", "bob", "app"]]);
@@ -195,8 +209,10 @@ describe("terragucci state export", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      expect(await main(["state"])).toBe(2);
-      expect(await main(["state", "export"])).toBe(2);
+      // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
+      const usage = (await chantExitCodes())?.CHANT_EXIT.failed ?? 2;
+      expect(await main(["state"])).toBe(usage);
+      expect(await main(["state", "export"])).toBe(usage);
     } finally {
       process.chdir(cwd);
       log.mockRestore();

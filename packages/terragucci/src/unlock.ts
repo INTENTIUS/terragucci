@@ -29,6 +29,15 @@
  *
  * A comment never runs it (comment.ts refuses `unlock-state`): a person runs
  * it at a shell, with the forge token in the variable `token_env` names.
+ *
+ * With a chant that has the terraform lexicon's state operations
+ * (chant#4618), steps 3 and 4 are chant's gated request (chant#4551,
+ * ./gated-request.ts): the request binds the root, the lock's location and
+ * its ID, the approval is spent on `_gates/tf-unlock/applied.jsonl` before
+ * the release, the check for a live run runs again just before the spend,
+ * the binary's `force-unlock` is the lexicon's, and a `finished` line with
+ * who released which lock replaces the done.jsonl line. The person who asks
+ * for the release does not approve it.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
@@ -46,6 +55,7 @@ import { call, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
 import type { StoreFetch } from "./report/object-store";
 import { forgeOf } from "./respond/change";
 import { sealRefusal } from "./seal";
+import { asyncExec, chantStateOps, opMessage, requestRules, type ChantStateOps } from "./gated-request";
 
 export const UNLOCK_OP = "tf-unlock";
 export const UNLOCK_LEDGER = `_gates/${UNLOCK_OP}.jsonl`;
@@ -232,7 +242,7 @@ interface HeldLock {
  * by its ID on the unlock address, which GitLab refuses when another lock
  * holds the state.
  */
-async function heldLock(rel: string, object: ReturnType<typeof lockedObject>, binary: string, dir: string, env: NodeJS.ProcessEnv, exec: NonNullable<UnlockOptions["exec"]>, options: UnlockOptions): Promise<HeldLock> {
+async function heldLock(rel: string, object: ReturnType<typeof lockedObject>, binary: string, dir: string, env: NodeJS.ProcessEnv, exec: NonNullable<UnlockOptions["exec"]>, options: UnlockOptions, chant?: ChantStateOps): Promise<HeldLock> {
   if ("gitlab" in object) {
     const gl = object.gitlab;
     const fetchFn = (options.s3Fetch ?? globalThis.fetch) as unknown as GitLabFetch;
@@ -266,8 +276,17 @@ async function heldLock(rel: string, object: ReturnType<typeof lockedObject>, bi
       return held === undefined ? undefined : { text: held.info, ...(held.id ? { id: held.id } : {}) };
     },
     release: async (id) => {
-      const unlock = exec(binary, ["force-unlock", "-force", "-no-color", id], dir, env);
-      if (unlock.status !== 0) throw new ConfigError(`${rel}: ${binary} force-unlock ${id} failed:\n${tail(unlock.out)}`);
+      if (chant) {
+        // chant#4618: the lexicon's fixed `force-unlock -force -no-color <id>`.
+        try {
+          await chant.forceUnlockState({ root: rel, binary, dir, env, exec: asyncExec(exec), id });
+        } catch (e) {
+          throw new ConfigError(`${rel}: ${opMessage(e)}`);
+        }
+      } else {
+        const unlock = exec(binary, ["force-unlock", "-force", "-no-color", id], dir, env);
+        if (unlock.status !== 0) throw new ConfigError(`${rel}: ${binary} force-unlock ${id} failed:\n${tail(unlock.out)}`);
+      }
       if (await store.heldLock()) throw new ConfigError(`${rel}: ${binary} force-unlock ran, and ${location} is still locked`);
     },
   };
@@ -303,7 +322,8 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
   if (init.status !== 0) throw new ConfigError(`${rel}: ${binary} init failed:\n${tail(init.out)}`);
   const object = lockedObject(rel, stateObject(dir, shape.rootEnv(rel, env)));
-  const held = await heldLock(rel, object, binary, dir, env, exec, options);
+  const chant = await chantStateOps();
+  const held = await heldLock(rel, object, binary, dir, env, exec, options, chant);
   const location = held.location;
   const found = await held.read();
   if (found === undefined) {
@@ -345,6 +365,53 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const now = options.now ?? new Date().toISOString();
   const rule = await approvalRule(repo, { at: "HEAD", ...(configPath ? { config: configPath } : {}) });
   const sealed = rule.mode === "sealed";
+  const actor = options.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
+  if (chant) {
+    const commitSha = gitOut(repo, ["rev-parse", "HEAD"]);
+    const result = await chant.gatedStateOp(
+      {
+        op: UNLOCK_OP,
+        request: { kind: "unlock", subject: rel, by: actor, fields: { location, id: lock.ID } },
+        rules: requestRules(rule),
+        description: `release ${describeLock(lock)} on ${location}`,
+        base: rule.base,
+        cwd: repo,
+        now,
+        ...(commitSha ? { commit: commitSha } : {}),
+        // The approval may be hours old: ask again just before the spend, so a run that came back keeps its lock and the approval stands.
+        beforeSpend: async () => {
+          const still = await holders();
+          return still.length > 0 ? `a run that began before the lock is alive again (${still.map(describeRun).join("; ")}), so the lock is not released` : undefined;
+        },
+      },
+      async ({ approvedBy }) => {
+        await held.release(lock.ID);
+        return { output: approvedBy, detail: { by: actor, location, lock_id: lock.ID, ...(lock.Operation ? { operation: lock.Operation } : {}), ...(lock.Who ? { locked_by: lock.Who } : {}), ...(lock.Created ? { locked_at: lock.Created } : {}), approved_by: approvedBy, live_runs: live } };
+      },
+    );
+    const command = unlockApproveCommand(rel, result.digest, sealed);
+    switch (result.status) {
+      case "done":
+        log(`${rel}: released ${describeLock(lock)}, approved by ${result.approvedBy}; recorded in _gates/${UNLOCK_OP}/applied.jsonl on chant/lifecycle${result.recorded ? "" : " (the finished line was not pushed; the applied line was)"}`);
+        return { code: UNLOCK_EXIT.released, lock, location, digest: result.digest };
+      case "failed":
+        throw result.error instanceof ConfigError ? result.error : new ConfigError(`${rel}: ${opMessage(result.error)}`);
+      case "held":
+        log(`${rel}: ${result.reason}`);
+        return { code: UNLOCK_EXIT.refused, lock, location, digest: result.digest };
+      case "spent":
+        log(`${rel}: the release of ${describeLock(lock)} under request ${result.digest} ran already${result.finished ? ` (${result.finished.result} at ${result.finished.timestamp})` : ""}; a request releases once`);
+        return { code: UNLOCK_EXIT.other, lock, location, digest: result.digest };
+      case "refused":
+        log(`${rel}: an approval does not count: ${result.reason}`);
+      // falls through: the request still waits for another approver
+      case "waiting":
+        log(`${rel}: releasing ${describeLock(lock)} waits for an approval of digest ${result.digest} by someone other than ${actor}. Approve it with:`);
+        log(`  ${command}`);
+        log("Then run this again.");
+        return { code: UNLOCK_EXIT.waiting, lock, location, digest: result.digest, command };
+    }
+  }
   let ledger: GateLedger = readLedger(repo, UNLOCK_LEDGER);
   if (sealed) {
     ledger = {
@@ -397,7 +464,6 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
     return { code: UNLOCK_EXIT.refused, lock, location, digest, alive: still };
   }
   await held.release(lock.ID);
-  const actor = options.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
   const record: UnlockRecord = {
     version: 1,
     kind: "unlock",

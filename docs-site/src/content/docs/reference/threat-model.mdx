@@ -251,7 +251,7 @@ The runners and secrets each environment's jobs reach are the forge's settings: 
 |---|---|---|
 | a request on `chant/lifecycle`, and an approval of its digest by someone other than the requester | an export nobody else agreed to, through terragucci | someone whose own identity reads the bucket downloading the object with the cloud's CLI; scope who holds such an identity |
 | under `approval: sealed`, the approval's seal | a forged approval line | a listed approver's stolen key |
-| the record in `_gates/tf-state-export/done.jsonl`, written before the file | an export the audit trail does not name | a requester name chosen by the person running it: under `ledger` it is git's `user.name` or `--actor` |
+| the record in `_gates/tf-state-export/done.jsonl` (with a chant that has gated requests, the spent approval in `_gates/tf-state-export/applied.jsonl`), written before the file | an export the audit trail does not name | a requester name chosen by the person running it: under `ledger` it is git's `user.name` or `--actor` |
 | no job artifact, no bucket copy | the state reaching everyone with read access to the repo, or the bucket's readers | the requester's own copy once written |
 
 ## Token audiences per stage
