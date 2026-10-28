@@ -1286,15 +1286,20 @@ export interface ChantMcpTool {
   description: string;
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   handler: (params: Record<string, unknown>) => Promise<unknown>;
-  readOnly?: boolean;
+  /** A tool that reads (chant#4555). */
+  readOnly?: true;
+  /** A tool that opens pull requests and comments, served only on the `--propose` tier (chant#4655). */
+  forgeWrite?: true;
 }
 
 /** chant's product tool hook (`ProductMcpHook`, chant#4555). */
 export interface ChantProductMcpHook {
   product: string;
-  tools(ctx: { cwd: string; readOnly: boolean }): ChantMcpTool[];
+  tools(ctx: { cwd: string; readOnly: boolean; propose?: boolean }): ChantMcpTool[];
   reportUrl?: string;
   readOnly?: boolean;
+  /** Serve the `forgeWrite` tools on the read-only server, as `--propose` does (chant#4655). */
+  propose?: boolean;
   instructions?: string;
 }
 
@@ -1302,6 +1307,10 @@ export interface ChantProductMcpHook {
 export interface ChantProductMcp {
   runChantInProcess(argv: string[], words: object, options?: { mcp?: ChantProductMcpHook }): Promise<number>;
   PRODUCT_MCP_HOOK_FLOOR: string;
+  /** Present on a chant whose `serve mcp --read-only --propose` serves `forgeWrite` product tools (chant#4655). */
+  PRODUCT_MCP_PROPOSE_FLOOR?: string;
+  /** The write words a `forgeWrite` tool's name may hold on that tier (chant#4655). */
+  PRODUCT_TOOL_PROPOSE_WORDS?: readonly string[];
 }
 
 /** chant core's changelog bump (`lifecycle/release-changelog`, chant#4597): pure, so the synchronous callers read it. */
@@ -1770,6 +1779,16 @@ export const chantGateWriters = (): Promise<ChantGateWriters | undefined> => loa
 export const chantLockRows = (): Promise<ChantLockRows | undefined> => load("lockRows");
 /** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
 export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load("productMcp");
+
+/**
+ * chant's product tool hook when its read-only server has the `--propose`
+ * tier (chant#4655), told by the `PRODUCT_MCP_PROPOSE_FLOOR` export; else
+ * undefined, and `terragucci mcp --propose` serves on terragucci's own server.
+ */
+export async function chantProposeMcp(): Promise<ChantProductMcp | undefined> {
+  const m = await chantProductMcp();
+  return m && typeof m.PRODUCT_MCP_PROPOSE_FLOOR === "string" ? m : undefined;
+}
 /** chant's changelog bump (chant#4597) as it already loaded, for the synchronous `bumpFor`. preloadChantNext loads it. */
 export const chantChangelogNow = (): ChantChangelog | undefined => loaded("changelog");
 /** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */

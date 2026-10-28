@@ -37,7 +37,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `query` | runs one SQL statement over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
-| `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request and reads its plan |
+| `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request, requests an app from a template and reads the plan |
 | `guard` | writes wrappers for the binaries and a Claude Code hook that refuse an apply in a root of the pipeline, for a coding agent's shell |
 | `view` | runs [behold](https://intentius.io/behold/using/terragucci/) on your machine over the repo and its reports bucket: the roots as one graph, each resource marked with what the newest runs found; `--export` writes a static copy |
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
@@ -625,14 +625,18 @@ Serves the Model Context Protocol on stdin and stdout until the client closes th
 | `audit` | the audit trail, `audit.jsonl`, newest first, with `audit.json` | `project`, `kind`, `limit` |
 | `dora` | `dora.json` | none |
 | `waiting` | the waves waiting on `chant/lifecycle` in the repo it runs in, each with the `terragucci approve` command a person runs | none |
+| `templates` | the templates in the release catalog, as `templates list --json` prints them: each one's kind, the versions a request may name and the newest one's form fields | `template` |
 
-With `--propose` it serves three tools more, for an agent that gets a change planned without leaving its client ([Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/)). They use the forge token in the variable `token_env` names (by default `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`) and git's own credentials, from the server's environment. A control repo has none of them.
+With `--propose` it serves four tools more, for an agent that gets a change planned without leaving its client ([Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/)). They use the forge token in the variable `token_env` names (by default `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`) and git's own credentials, from the server's environment. A control repo has none of them.
 
 | Tool | Does | Arguments |
 |---|---|---|
 | `propose` | pushes a local branch to `origin` without force and opens a pull request from it, or returns the one already open; refuses the default branch, `chant/lifecycle` and every `apply.branches` branch | `branch`, `title`, `body`, `base` |
 | `request_plan` | comments `/terragucci plan [root]` on an open pull request | `pull_request`, `root` |
 | `plan_result` | the pull request's head and plan note, and the `tf-plan` report of that head from the bucket: each root's status and policy verdict, the policy check, and whether each wave's gate will hold it; waits up to `wait` seconds (default 120, at most 600) for the head's plan | `pull_request`, `wait`, `project` |
+| `request_from_template` | runs [`request`](#request) with `--via mcp`: the same request, branch and pull request, with the propose footer after the request; returns `branch`, `pull_request`, `url`, `existing` and `next`. The requester is the user the forge says the token acts as, and `claimed_by` goes in the request as `claimedBy`. A sensitive input is refused, and so is every refusal of `request`, with nothing pushed | `template`, `name`, `version`, `app`, `inputs`, `claimed_by` |
+
+With a chant that has the propose tier, `--propose` runs on chant's read-only server too, and these four tools are named `terragucci:propose` and so on beside the read tools. With an older chant, terragucci serves them itself.
 
 Every other tool is marked read-only, and the server refuses these calls.
 
@@ -642,7 +646,7 @@ Every other tool is marked read-only, and the server refuses these calls.
 | with an argument the tool does not list | an error naming the argument; one named like a credential (`token`, `secret`, `key`) says credentials come from the server's environment |
 | with a `path` outside the reports prefix | an error |
 
-Without `--propose` the server writes nothing, and with it only the branch, the pull request and the comment above. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
+Without `--propose` the server writes nothing, and with it only the branches, the pull requests and the comment above, and a request's line on `chant/lifecycle`. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
 
 ## guard
 

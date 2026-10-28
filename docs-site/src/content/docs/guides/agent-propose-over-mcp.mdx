@@ -86,6 +86,26 @@ The agent's `plan_result` call on the pull request it opened:
 
 </Steps>
 
+## Request an app from a template
+
+With `templates` set in `terragucci.yml` ([`terragucci request`](/terragucci/reference/cli/#request)), the agent can ask for a new app, or an add-on to one, instead of writing the root itself. `templates` lists each template, its versions and its form fields, and `request_from_template` opens the same pull request `terragucci request` and the request form open:
+
+```json
+{ "template": "acme/bucket/aws", "name": "orders", "inputs": { "bucket_name": "orders-data" } }
+```
+
+```json
+{
+  "branch": "request/bucket/orders",
+  "pull_request": 8,
+  "url": "https://github.com/acme/infra/pull/8",
+  "existing": false,
+  "next": "the pipeline plans request/bucket/orders; plan_result with pull_request 8 reads its plan note and policy result, and a person reviews and merges it"
+}
+```
+
+The request in the pull request's body says `"via": "mcp"`, and the body ends with the same footer as a `propose` pull request. The requester is the user the forge says the server's token acts as. `claimed_by` names the person the agent asks for, and the request carries it as `claimedBy`, which the forge does not vouch for. For an add-on, `app` names the app and `name` the add-on. A second call for the same branch returns the open pull request with `existing: true`. Then `plan_result` reads its plan as above. The tool needs a chant with template requests; on an older one it answers with an error naming it.
+
 ## Tool refusals
 
 | A call | The answer |
@@ -94,6 +114,8 @@ The agent's `plan_result` call on the pull request it opened:
 | `propose` of a branch with no local commit | an error |
 | `propose` of a branch origin has moved past | git's refusal: the push is never forced |
 | `propose` with the token's variable unset | an error naming the variable |
+| `request_from_template` with a sensitive input, or one `terragucci request` refuses | an error with the refusal's code, such as `sensitive-input`, and nothing is pushed |
+| any tool with an argument it does not list, such as `token` | an error naming the argument: credentials come from the server's environment |
 | `approve`, `apply`, `override`, `merge`, or any tool not listed | an error: these belong to a person |
 
 ## Guard refusals
