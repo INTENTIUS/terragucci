@@ -163,7 +163,7 @@ import { sourceChecker, waveSourcesBase, type SourceChecker } from "./sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "./sources-terragrunt";
 import { hookCount, hooksUsed, readHooks, runHooks, runUnitHooks, type HookMoment, type StageHooks } from "./hooks";
 import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedChange, type RootPlan } from "./remainder";
-import { applyScope, describeHeld, forgeLiveness, heldBy, planRows, readRows, releaseRows, rowHolder, takeRows, type Liveness } from "./apply-rows";
+import { applyScope, describeHeld, forgeLiveness, heldBy, planRowsVia, readRowsVia, releaseRowsVia, rowHolder, takeRowsVia, type Liveness } from "./apply-rows";
 import type { SecretSource } from "./config";
 import type { ReportApprovalRule, ReportStep } from "./report/schema";
 import { ApplyProgress, progressInterval, progressLine } from "./apply-progress";
@@ -927,7 +927,7 @@ async function holdRows(
     return release().then(() => ({ code: EXIT.superseded, release: free.release }));
   };
   // shape: only a binary that applies per resource holds rows; the others rely on the backend's state lock.
-  const rows = plans.filter((p) => p.plan && applyScope(p.binary) === "resource").flatMap((p) => planRows(p.root, resolvedEstate(join(repo, p.root)), p.plan));
+  const rows = (await Promise.all(plans.filter((p) => p.plan && applyScope(p.binary) === "resource").map((p) => planRowsVia(p.root, resolvedEstate(join(repo, p.root)), p.plan)))).flat();
   if (rows.length === 0) return (await standDown(free.release)) ?? free;
   // Outside a clone (no origin to hold them on) no other run can be told, so nothing is held.
   if (git(repo, ["remote", "get-url", "origin"]).status !== 0) {
@@ -940,13 +940,13 @@ async function holdRows(
   const poll = (Number(env.TG_LOCK_POLL) > 0 ? Number(env.TG_LOCK_POLL) : 10) * 1000;
   let waited = false;
   for (let tries = 0; ; tries++) {
-    const r = await takeRows(repo, rows, me, alive);
+    const r = await takeRowsVia(repo, rows, me, alive);
     if (r.ok) {
       for (const h of r.tookOver) console.log(`${label}: run ${h.run} held resources and is gone; this wave takes them over, and each apply re-reads what that run left`);
       const n = new Set(rows.map((x) => `${x.root} ${x.address}`)).size;
       console.log(`${label}: holding ${n === 1 ? "the resource" : `the ${n} resources`} its plans change, as run ${me.run}`);
       const release = async () => {
-        if (await releaseRows(repo, keys, me.run)) console.log(`${label}: let go of the resources it held`);
+        if (await releaseRowsVia(repo, keys, me.run)) console.log(`${label}: let go of the resources it held`);
         else console.log(`${label}: could not let go of the resources it held; the next apply takes them over once this run is gone`);
       };
       return (await standDown(release)) ?? { release };
@@ -968,7 +968,7 @@ async function holdRows(
     }
     await sleep(poll);
     // A run that let go may have changed what these plans were made against: plan again. One that is gone is taken over on the next try.
-    const now = await heldBy(readRows(repo), keys, me.run, alive);
+    const now = await heldBy(await readRowsVia(repo), keys, me.run, alive);
     if (now.live.length === 0 && now.gone.length === 0) return { code: REPLAN, release: free.release };
   }
 }

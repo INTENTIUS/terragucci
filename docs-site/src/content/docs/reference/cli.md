@@ -890,7 +890,7 @@ Run it twice in a checkout whose `origin` you can push to, signed in to the clou
 | Run | Does | Exits |
 |---|---|---|
 | first | reads the version's metadata, records a request on `chant/lifecycle` and prints `terragucci approve export <root> --plan <digest>` for someone else to run | 3 |
-| second, once that approval stands | downloads the version, records the export in `_gates/tf-state-export/done.jsonl`, then writes the file, readable by you alone | 0 |
+| second, once that approval stands | downloads the version, records the export in `_gates/tf-state-export/done.jsonl`, then writes the file, readable by you alone. With a chant that has gated requests, the approval is spent in `_gates/tf-state-export/applied.jsonl` before the download and the `finished` line after it names the digest of the bytes written | 0 |
 
 ```text
 state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY.tfstate: envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY, approved by bob
@@ -915,7 +915,7 @@ Releases the state lock a job killed mid-apply left on `<root>`: the lock file a
 | read the lock | inits the root and reads the lock file, the gcs lock object or the azurerm lease and metadata, or asks GitLab's lock endpoint: its ID, who took it and when |
 | check no holder is alive | reads the forge's runs still running or waiting; while one that began before the lock was taken is alive, it may hold the lock, so nothing is released and it exits 1 naming the runs. A forge it cannot read is a refusal too |
 | wait at the gate | records a pending fact for gate `<root>` of op `tf-unlock` on `chant/lifecycle`, bound to a digest of the root, the lock's location and its ID, prints `terragucci approve unlock <root> --plan <digest>` and exits 3. Under `approval: sealed`, only a sealed approval counts |
-| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads |
+| release | approved, it checks the runs again, runs the binary's `force-unlock` of that ID (on GitLab, a `DELETE` of that ID on the lock endpoint), and appends who released which lock, and under whose approval, to `_gates/tf-unlock/done.jsonl`, which the [audit trail](/terragucci/reference/audit-trail/) reads. With a chant that has gated requests, the approval is spent in `_gates/tf-unlock/applied.jsonl` first and the release is its `finished` line |
 
 | Flag | Meaning |
 |---|---|

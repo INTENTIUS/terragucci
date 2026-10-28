@@ -1225,6 +1225,143 @@ export interface ChantSourceForms {
   lockedProviders(lockText: string): string[];
 }
 
+// ── state operations, lock rows, product tools, changelog, release reads ───
+
+/** A gated request (`GatedRequest`, chant#4551). */
+export interface ChantGatedRequest {
+  kind: string;
+  subject: string;
+  by: string;
+  at: string;
+  fields: Record<string, string>;
+}
+
+/** How a gated operation ended (`GatedStateOpResult`, chant#4618). */
+export type ChantGatedStateOpResult<T> =
+  | { status: "waiting"; digest: string; request: ChantGatedRequest; command: string }
+  | { status: "refused"; digest: string; request: ChantGatedRequest; by: string; reason: string; command: string }
+  | { status: "spent"; digest: string; request: ChantGatedRequest; finished?: { result: string; timestamp: string; detail?: Record<string, unknown> } }
+  | { status: "held"; digest: string; request: ChantGatedRequest; reason: string }
+  | { status: "done"; digest: string; request: ChantGatedRequest; approvedBy: string; output: T; recorded: boolean }
+  | { status: "failed"; digest: string; request: ChantGatedRequest; approvedBy: string; error: Error; recorded: boolean };
+
+export interface ChantGatedStateOpInput {
+  op: string;
+  request: Omit<ChantGatedRequest, "at"> & { at?: string };
+  rules: { mode: string; quorum?: readonly unknown[] };
+  description?: string;
+  expiry?: string;
+  base?: string;
+  attachment?: string;
+  cwd?: string;
+  now?: string;
+  runId?: string;
+  commit?: string;
+  beforeSpend?: () => Promise<string | undefined>;
+}
+
+/** How the binary runs for one root, as the terraform lexicon's state operations take it. */
+export interface ChantRootRun {
+  root: string;
+  binary: string;
+  dir: string;
+  env?: NodeJS.ProcessEnv;
+  exec?: (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => Promise<{ code: number; stdout: string; out: string }>;
+}
+
+/** One gated request as the ledger holds it (`GatedRequestRead`). */
+export interface ChantGatedRequestRead {
+  op: string;
+  gate: string;
+  digest: string;
+  request: ChantGatedRequest;
+  pending: { timestamp: string; expiresAt?: string };
+  approvals: { resolvedBy: string; timestamp: string }[];
+  applied?: { timestamp: string; approvedBy?: string; approvedAt?: string };
+  finished?: { result: string; timestamp: string; detail?: Record<string, string | number | boolean> };
+}
+
+/** The terraform lexicon's state operations (`state-ops`, chant#4618) with chant's gated-request reader (chant#4551). */
+export interface ChantStateOps {
+  gatedStateOp<T>(input: ChantGatedStateOpInput, act: (approved: { digest: string; request: ChantGatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean> }>): Promise<ChantGatedStateOpResult<T>>;
+  forceUnlockState(r: ChantRootRun & { id: string }): Promise<void>;
+  pushStateFile(r: ChantRootRun & { file: string; lock?: boolean; force?: boolean }): Promise<void>;
+  planStateCheck(r: ChantRootRun & { planFile: string; lock?: boolean }): Promise<{ planFile: string; json: unknown; summary: string }>;
+  planCopy(r: ChantRootRun & { backendConfig: Record<string, string>; planFile: string; destroy?: boolean; lockTimeout?: string | false; init?: boolean }): Promise<{ planFile: string; json: unknown; summary: string; planDigest: string }>;
+  applyPlanFile(r: ChantRootRun & { planFile: string; lockTimeout?: string | false }): Promise<void>;
+  readGatedRequests(op: string, location?: { cwd?: string }): Promise<ChantGatedRequestRead[]>;
+}
+
+/** One row an apply holds (`LockRow`, chant#4552). */
+export interface ChantLockRow {
+  key: string;
+  target: string;
+  address: string;
+}
+
+export interface ChantLockRowHolder {
+  run: string;
+  at: string;
+  url?: string;
+  sha?: string;
+}
+
+export interface ChantHeldLockRow {
+  key: string;
+  wanted: string;
+  holder: ChantLockRowHolder;
+}
+
+export interface ChantLockRowsFile {
+  version: 1;
+  holders: Record<string, ChantLockRowHolder>;
+  rows: Record<string, string>;
+}
+
+/** chant core's row leases (`lifecycle/resource-lock`, chant#4552, #4594) and the terraform lexicon's rows (`lock-rows`). */
+export interface ChantLockRows {
+  terraformLockRows(root: string, estate: string | undefined, plan: unknown): ChantLockRow[];
+  takeLockRows(gate: string, rows: readonly ChantLockRow[], me: ChantLockRowHolder, opts?: { cwd?: string; alive?: (h: ChantLockRowHolder) => Promise<"alive" | "dead"> }): Promise<{ ok: true; tookOver: ChantLockRowHolder[]; pushed: boolean } | { ok: false; held: ChantHeldLockRow[] }>;
+  releaseLockRows(gate: string, keys: readonly string[], me: string, opts?: { cwd?: string }): Promise<boolean>;
+  readLockRows(gate: string, opts?: { cwd?: string }): Promise<ChantLockRowsFile>;
+  lockRowsPath(gate: string): string;
+}
+
+/** A tool on chant's MCP server (`McpToolContribution`). */
+export interface ChantMcpTool {
+  name: string;
+  description: string;
+  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+  handler: (params: Record<string, unknown>) => Promise<unknown>;
+  readOnly?: boolean;
+}
+
+/** chant's product tool hook (`ProductMcpHook`, chant#4555). */
+export interface ChantProductMcpHook {
+  product: string;
+  tools(ctx: { cwd: string; readOnly: boolean }): ChantMcpTool[];
+  reportUrl?: string;
+  readOnly?: boolean;
+  instructions?: string;
+}
+
+/** chant's in-process CLI with the product tool hook (`@intentius/chant/ci-product`, chant#4555). */
+export interface ChantProductMcp {
+  runChantInProcess(argv: string[], words: object, options?: { mcp?: ChantProductMcpHook }): Promise<number>;
+  PRODUCT_MCP_HOOK_FLOOR: string;
+}
+
+/** chant core's changelog bump (`lifecycle/release-changelog`, chant#4597): pure, so the synchronous callers read it. */
+export interface ChantChangelog {
+  changelogBump(messages: readonly string[]): "major" | "minor" | "patch";
+}
+
+/** chant core's release record reader (`lifecycle/release-ledger`'s `parseReleaseLedger`), for a ledger read from another remote. */
+export interface ChantReleaseRead {
+  releaseLedgerLines(text: string | null): string[];
+  parseReleaseLedger(lines: readonly string[]): { records: unknown[]; malformed: number };
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -1481,6 +1618,40 @@ const loaders = {
       return store;
     },
   ),
+  stateOps: once<ChantStateOps>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no state-ops subpath (chant#4618)
+      const ops: object = await import("@intentius/chant-lexicon-terraform/state-ops");
+      // @ts-ignore chant 0.124.54 has no lifecycle/gated-request subpath (chant#4551)
+      const requests: object = await import("@intentius/chant/lifecycle/gated-request");
+      return { ...requests, ...ops };
+    },
+    (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests") ? (m as unknown as ChantStateOps) : undefined),
+  ),
+  lockRows: once<ChantLockRows>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no lifecycle/resource-lock subpath (chant#4552)
+      const leases: object = await import("@intentius/chant/lifecycle/resource-lock");
+      // @ts-ignore chant 0.124.54 has no lock-rows subpath in the terraform lexicon (chant#4552)
+      const rows: object = await import("@intentius/chant-lexicon-terraform/lock-rows");
+      return { ...leases, ...rows };
+    },
+    (m) => (has(m, "terraformLockRows", "takeLockRows", "releaseLockRows", "readLockRows", "lockRowsPath") ? (m as unknown as ChantLockRows) : undefined),
+  ),
+  productMcp: once<ChantProductMcp>(
+    // @ts-ignore chant 0.124.54 has no ci-product subpath (chant#4550); the hook is chant#4555
+    () => import("@intentius/chant/ci-product"),
+    (m) => (has(m, "runChantInProcess") && typeof m.PRODUCT_MCP_HOOK_FLOOR === "string" ? (m as unknown as ChantProductMcp) : undefined),
+  ),
+  changelog: once<ChantChangelog>(
+    // @ts-ignore chant 0.124.54 has no lifecycle/release-changelog (chant#4597)
+    () => import("@intentius/chant/lifecycle/release-changelog"),
+    (m) => (has(m, "changelogBump") ? (m as unknown as ChantChangelog) : undefined),
+  ),
+  releaseRead: once<ChantReleaseRead>(
+    () => import("@intentius/chant/lifecycle/release-ledger"),
+    (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -1572,6 +1743,16 @@ export const chantModuleTargets = (): Promise<ChantModuleTargets | undefined> =>
 export const chantReleaseCatalog = (): Promise<ChantReleaseCatalog | undefined> => load("releaseCatalog");
 /** The terraform lexicon's docs extractor, consumer scan, catalog reader and deprecated-version check (chant#4598, #4599), or undefined. */
 export const chantRegistryCatalog = (): Promise<ChantRegistryCatalog | undefined> => load("registryCatalog");
+/** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
+export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
+/** chant's row leases and the lexicon's rows (chant#4552, #4594), or undefined. */
+export const chantLockRows = (): Promise<ChantLockRows | undefined> => load("lockRows");
+/** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
+export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load("productMcp");
+/** chant's changelog bump (chant#4597) as it already loaded, for the synchronous `bumpFor`. preloadChantNext loads it. */
+export const chantChangelogNow = (): ChantChangelog | undefined => loaded("changelog");
+/** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */
+export const chantReleaseReadNow = (): ChantReleaseRead | undefined => loaded("releaseRead");
 
 /**
  * Load the parts synchronous code reads, once, before a command runs: the
@@ -1583,6 +1764,8 @@ export async function preloadChantNext(): Promise<void> {
   await chantDriftRows();
   await chantPolicySource();
   await chantOpStandDown();
+  await load("changelog");
+  await load("releaseRead");
 }
 
 /** chant core's forge and trust-policy check (chant#4608), or undefined. */
@@ -1629,7 +1812,8 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [forgeCheck, notifyRelay, ciEstate, policySource, opStandDown] = [await chantForgeCheck(), await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms };
+  const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

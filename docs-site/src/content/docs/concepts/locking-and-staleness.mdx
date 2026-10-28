@@ -65,7 +65,7 @@ Once the gate lets a wave through, and before its apply re-reads the live system
 
 | | How |
 |---|---|
-| Where the wave keeps them | one file on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), `_locks/apply-rows.json`, taken in one commit: all of the wave's resources or none |
+| Where the wave keeps them | one file on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), taken in one commit: all of the wave's resources or none. With a chant that has row leases it is `_locks/rows/pr-apply.json`, the file chant's own applies hold rows in, so a wave and a chant apply that change one resource wait for each other; with an older chant it is `_locks/apply-rows.json` |
 | When it lets go | when the wave ends, applied or not |
 | A run that is gone | its forge says the run ended, or its entry is two hours old (`TG_LOCK_STALE`): the next wave takes everything that run held over in the same commit |
 | Plans | hold nothing, so every pull request plans at once |

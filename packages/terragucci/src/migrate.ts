@@ -73,6 +73,7 @@ import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "./report/s3";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
+import { chantStateOps, opMessage, requestRules } from "./gated-request";
 import { rootRoleEnv } from "./cloud-identity";
 import { liveRoots } from "./detect";
 import { eachLimited } from "./each-limited";
@@ -609,6 +610,18 @@ export const firstLine = (s: string, n = 4): string => s.trim().split("\n").slic
 /** Plan a root and read its resource changes; with `-lock=false` when the job holds the lock itself. */
 export async function planChanges(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv, work: string, tag: string, lock: boolean, keep?: (plan: unknown) => void): Promise<{ changes: string[]; summary: string }> {
   const planFile = join(work, `${tag}.tfplan`);
+  const chant = await chantStateOps();
+  if (chant) {
+    // chant#4618: the lexicon's fixed `plan [-lock=false] -out` and `show -json`.
+    let read: { json: unknown; summary: string };
+    try {
+      read = await chant.planStateCheck({ root: tag, binary, dir, env, exec, planFile, ...(lock ? {} : { lock: false }) });
+    } catch (e) {
+      throw new ConfigError(`the plan of ${tag} failed: ${firstLine(opMessage(e))}`);
+    }
+    keep?.(read.json);
+    return { changes: resourceChanges(read.json), summary: read.summary };
+  }
   const plan = await exec(binary, ["plan", "-input=false", "-no-color", ...(lock ? [] : ["-lock=false"]), `-out=${planFile}`], dir, env);
   if (plan.code !== 0) throw new ConfigError(`the plan of ${tag} failed: ${firstLine(plan.out)}`);
   const show = await exec(binary, ["show", "-json", planFile], dir, env);
@@ -1177,8 +1190,18 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
       // Over the empty state a backend wrote at init, of another lineage, the push is forced; the digest check above found it still empty.
       const lockArgs = isStored(f.object) ? ["-lock=false"] : f.replacesEmpty ? ["-force"] : [];
       const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
-      const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
-      if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
+      const chant = await chantStateOps();
+      if (chant) {
+        // chant#4618: the lexicon's fixed `state push [-lock=false] [-force] <file>`.
+        try {
+          await chant.pushStateFile({ root: r.root, binary: options.binary, dir: at.dir, env: at.env, exec, file: f.path, ...(isStored(f.object) ? { lock: false } : f.replacesEmpty ? { force: true } : {}) });
+        } catch (e) {
+          return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(opMessage(e))}` };
+        }
+      } else {
+        const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
+        if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
+      }
       log(`${r.root}: wrote its new state`);
     }
     // Every root plans against its new state, ESTATE_PARALLELISM at once (each root its own backend); the record and log keep the roots' order.
@@ -1540,6 +1563,96 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
   return { code: EXIT.applied, records };
 }
 
+/**
+ * A standalone migration as chant's gated request (chant#4551, #4618): the
+ * request is the migration file's digest with the proof as its attachment,
+ * so the digest binds the proof; the approval is spent on
+ * `_gates/tf-migrate/applied.jsonl` before anything is written, and the
+ * `finished` line holds each root's version before and after. The done.jsonl
+ * line is still written beside it, since `migrate revert` and the list of
+ * migrations still to apply read the history there. A migration inside a wave (`hold`) stays on the wave's
+ * hold hook, which chant decides already.
+ */
+async function runGated(
+  repo: string,
+  m: Migration,
+  plan: PlannedMigration,
+  record: MigrationRecord,
+  chant: NonNullable<Awaited<ReturnType<typeof chantStateOps>>>,
+  o: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void; now: string; rule: Awaited<ReturnType<typeof approvalRule>>; label: string; proved: string; command: string; commit: string; runId: string | undefined; work: string },
+): Promise<{ code: number; record: MigrationRecord; command?: string }> {
+  const { log, env, label } = o;
+  const work = o.work;
+  const by = env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || git(repo, ["config", "user.name"]).stdout.trim() || env.USER || "unknown";
+  const sinks = plan.estate ? o.progress?.(m.name) : undefined;
+  const result = await chant.gatedStateOp(
+    {
+      op: MIGRATE_OP,
+      request: { kind: "migrate", subject: m.name, by, fields: { file: m.file, file_digest: m.digest, change: m.kind, roots: record.roots.map((r) => r.root).join(",") } },
+      rules: requestRules(o.rule),
+      description: `${label}: ${record.roots.map((r) => r.root).join(", ")}`,
+      expiry: "48h",
+      base: o.rule.base,
+      attachment: JSON.stringify(record, null, 2) + "\n",
+      cwd: repo,
+      now: o.now,
+      ...(o.runId ? { runId: o.runId } : {}),
+      ...(o.commit ? { commit: o.commit } : {}),
+    },
+    async ({ approvedBy }) => {
+      log(`${label}: approved by ${approvedBy} for this digest`);
+      let applied: MigrationRecord;
+      try {
+        applied = await applyMigration(repo, plan, { binary: o.binary, env, work, log, now: o.now, ...(o.roster ? { roster: o.roster } : {}), ...(sinks ? { progress: sinks } : {}), ...(o.exec ? { exec: o.exec } : {}), ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.terragrunt ? { terragrunt: o.terragrunt } : {}) });
+      } catch (e) {
+        sinks?.end?.("failed", undefined, (e as Error).message);
+        throw e;
+      }
+      sinks?.end?.(applied.status, applied.progress, applied.error);
+      applied = { ...applied, approved_by: approvedBy, finished: new Date().toISOString(), ...(o.commit ? { commit: o.commit } : {}) };
+      const versions = Object.fromEntries(applied.roots.flatMap((r) => [[`${r.root}.before`, r.before.version_id ?? ""], [`${r.root}.after`, r.after.version_id ?? ""]]).filter(([, v]) => v !== ""));
+      return { output: applied, detail: { by, approved_by: approvedBy, result: applied.status, file_digest: m.digest, change: m.kind, ...(applied.error ? { error: applied.error.slice(0, 400) } : {}), ...versions } };
+    },
+  );
+  switch (result.status) {
+    case "done": {
+      const applied = result.output;
+      if (applied.status === "refused") {
+        log(`${label}: under the lock, the state of ${applied.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
+        return { code: EXIT.refused, record: applied };
+      }
+      // The migration's history stays in done.jsonl too: `migrate revert` and the list of migrations still to apply read it there.
+      appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(applied, result.approvedBy, o.now, o.runId, o.commit))], {}, `Migration ${applied.status}: ${m.name}`);
+      if (!plan.estate) for (const r of applied.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
+      if (applied.status !== "applied") {
+        log(`${label}: ${applied.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);
+        return { code: EXIT.failed, record: applied };
+      }
+      log(`${label} applied; recorded in _gates/${MIGRATE_OP}/applied.jsonl on chant/lifecycle`);
+      return { code: EXIT.applied, record: applied };
+    }
+    case "failed":
+      log(`${label}: ${opMessage(result.error)}`);
+      return { code: EXIT.failed, record: { ...record, status: "failed", error: opMessage(result.error) } };
+    case "spent":
+      log(`${label}: request ${result.digest} applied already${result.finished ? ` (${result.finished.result} at ${result.finished.timestamp})` : ""}; a migration applies once`);
+      return { code: EXIT.applied, record };
+    case "held":
+      log(`${label}: ${result.reason}`);
+      return { code: EXIT.failed, record: { ...record, status: "failed", error: result.reason } };
+    case "refused":
+      log(`${label}: an approval does not count: ${result.reason}`);
+    // falls through: the request still waits for another approver
+    case "waiting": {
+      const command = migrateApproveCommand(m.name, result.digest, o.rule.mode === "sealed");
+      log(`${label} waits for an approval of digest ${result.digest} by someone other than ${by}. Read the proof above, then approve it with:`);
+      log(`  ${command}`);
+      log("Then run this job again.");
+      return { code: EXIT.waiting, record: { ...record, status: "waiting" }, command };
+    }
+  }
+}
+
 async function runOne(repo: string, m: Migration, ledger: GateLedger, options: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void }, work: string): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env } = options;
   const label = `migration ${m.name}`;
@@ -1606,6 +1719,8 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     }
     decision = { status: "approved", by: a.approvedBy, at: a.approvedAt };
   }
+  const chant = options.hold ? undefined : await chantStateOps();
+  if (chant) return runGated(repo, m, plan, record, chant, { ...options, now, rule, label, proved, command, commit, runId, work });
   if (!decision) throw new ConfigError(`${label}: the gate was not decided`);
   if (decision.status !== "approved") {
     if (!decision.standing) {

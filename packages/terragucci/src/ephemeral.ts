@@ -112,6 +112,25 @@ import { updateJson } from "./report/store";
 import { rootRoleEnv } from "./cloud-identity";
 import { sealRefusal } from "./seal";
 import { discoverUnits, generateStacks, unitWaves } from "./terragrunt";
+import { asyncExec, chantStateOps, opMessage } from "./gated-request";
+
+/**
+ * Apply a copy's saved plan: the terraform lexicon's fixed `apply <plan>`
+ * (chant#4618) when the installed chant has it, else the binary run here.
+ */
+async function applyCopy(exec: EphemeralExec, binary: string, root: string, dir: string, env: NodeJS.ProcessEnv, planFile: string): Promise<{ ok: boolean; out: string }> {
+  const chant = await chantStateOps();
+  if (chant) {
+    try {
+      await chant.applyPlanFile({ root, binary, dir, env, exec: asyncExec(exec), planFile });
+      return { ok: true, out: "" };
+    } catch (e) {
+      return { ok: false, out: opMessage(e) };
+    }
+  }
+  const a = exec(binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", env), planFile], dir, env);
+  return { ok: a.status === 0, out: a.out };
+}
 
 /** chant's records of the copies, on chant/lifecycle. */
 export const EPHEMERAL_RECORDS = `${PR_ENV_LEDGER_DIR}/${PR_ENV_LEDGER_FILE}`;
@@ -399,11 +418,33 @@ async function planCopy(code: string, root: string, suffix: string, binaries: Ro
   } else {
     const backend = copyBackend(dir, root, suffix, rootEnv);
     location = backend.location;
-    const configs = Object.entries({ [backend.attribute]: backend.key, ...backend.extra }).map(([k, v]) => `-backend-config=${k}=${v}`);
+    const backendConfig = { [backend.attribute]: backend.key, ...backend.extra };
+    const chant = await chantStateOps();
+    if (chant) {
+      // chant#4618: the lexicon's fixed init under the copy's key, plan and show -json.
+      const base = { root, binary, env: rootEnv, dir, location, planFile, ...NO_CHANGES };
+      try {
+        const read = await chant.planCopy({ root, binary, dir, env: rootEnv, exec: asyncExec(exec), backendConfig, planFile, ...(destroy ? { destroy: true } : {}) });
+        return copyPlanned(base, read.json);
+      } catch (e) {
+        return { ...base, error: tail(opMessage(e)) };
+      }
+    }
+    const configs = Object.entries(backendConfig).map(([k, v]) => `-backend-config=${k}=${v}`);
     const init = exec(binary, ["init", "-input=false", "-no-color", "-reconfigure", ...configs], dir, rootEnv);
     if (init.status !== 0) return { root, binary, env: rootEnv, dir, location, planFile, ...NO_CHANGES, error: `init failed\n${tail(init.out)}` };
   }
   const base = { root, binary, env: runEnv, dir, location, planFile, ...NO_CHANGES };
+  const chant = tg ? await chantStateOps() : undefined;
+  if (chant) {
+    // A unit Terragrunt prepared with the suffix set: the lexicon plans it with no init of its own.
+    try {
+      const read = await chant.planCopy({ root, binary, dir, env: runEnv, exec: asyncExec(exec), backendConfig: {}, planFile, init: false, ...(destroy ? { destroy: true } : {}) });
+      return copyPlanned(base, read.json);
+    } catch (e) {
+      return { ...base, error: tail(opMessage(e)) };
+    }
+  }
   const plan = exec(binary, ["plan", "-input=false", "-no-color", ...lockTimeoutArgs("plan", runEnv), ...(destroy ? ["-destroy"] : []), `-out=${planFile}`], dir, runEnv);
   if (plan.status !== 0) return { ...base, error: `plan failed\n${tail(plan.out)}` };
   const show = exec(binary, ["show", "-json", planFile], dir, runEnv);
@@ -413,6 +454,12 @@ async function planCopy(code: string, root: string, suffix: string, binaries: Ro
   } catch {
     return { ...base, error: `show -json printed no plan\n${tail(show.out)}` };
   }
+  return copyPlanned(base, json);
+}
+
+/** A copy's plan read back: its member digest and its counts. */
+function copyPlanned(base: CopyPlan, json: unknown): CopyPlan {
+  const { root, binary } = base;
   const part = terraformChangeSetPart({ member: root, plan: json, planner: plannerForBinary(binary) });
   const count = (action: string): number => part.entries.filter((e) => e.action === action).length;
   return { ...base, member: { member: root, planDigest: part.member.planDigest ?? "" }, create: count("create"), update: count("update"), replace: count("replace"), delete: count("delete") };
@@ -831,8 +878,8 @@ function copyAdapter(r: Ready, code: { dir: string; commit: string }, work: stri
           rows.push(planRow(p, "not applied"));
           continue;
         }
-        const a = r.exec(p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.dir, p.env);
-        ok = a.status === 0;
+        const a = await applyCopy(r.exec, p.binary, p.root, p.dir, p.env, p.planFile);
+        ok = a.ok;
         rows.push(planRow(p, ok ? "applied" : "failed"));
         r.log(ok ? `applied ${p.root} at ${p.location}` : `FAILED ${p.root}\n${tail(a.out)}`);
       }
@@ -971,8 +1018,8 @@ export function ephemeralTeardown(repo: string, r: Ready): PrEnvTeardownAdapter 
             continue;
           }
           r.log(`${root}: the destroy plan removes ${p.delete + p.replace} at ${p.location}`);
-          const a = r.exec(p.binary, ["apply", "-input=false", "-no-color", ...lockTimeoutArgs("apply", p.env), p.planFile], p.dir, p.env);
-          if (a.status !== 0) {
+          const a = await applyCopy(r.exec, p.binary, p.root, p.dir, p.env, p.planFile);
+          if (!a.ok) {
             failed(`the destroy did not apply\n${tail(a.out)}`);
             continue;
           }
