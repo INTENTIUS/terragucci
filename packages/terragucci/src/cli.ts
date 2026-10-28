@@ -17,9 +17,11 @@
   terragucci verify-release <module> <version> [--config <file>]
   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]   (the modules in the registry's release catalog, read with the token Terraform would send; show: one module's versions, status and consumers)
   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]   (mark a published version on the release ledger and write the catalog again: deprecate gives its roots a tip, yank has modules.require refuse it, restore undoes either; the version stays installable)
+  terragucci modules consumers [--check] [--config <file>]   (write consumers.json, the registry module versions this repo's roots pin, which a publisher's catalog joins across the control repo; --check fails when the file differs)
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
  *   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
+ *   terragucci modules consumers [--check] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
@@ -129,7 +131,7 @@ import { checkGenerated, describeGenerate, planGenerate } from "./generate";
 import { assertLinux, install, type Tool } from "./install";
 import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
-import { describeChecks, describePublish, publish, verifyPublished } from "./publish";
+import { describeChecks, describePublish, findModules, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { chantControlPipelineFile, controlPipeline } from "./control-repo";
 import { configFromEntries, hasControlEntries, importControlConfigAt, initRecords, KIND_FILE, LEDGER_PATH, migrateRecords, putEntryAt, readEntriesAt, retireEntryAt } from "./control-records";
@@ -148,6 +150,7 @@ import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
 import { describeCatalog, describeComponent, findComponent, readCatalog } from "./publish/catalog";
 import { describeStatus, setReleaseStatus, STATUS_WORDS, type StatusWord } from "./publish/status";
+import { PROJECT_CONSUMERS, projectConsumersDocument } from "./publish/consumers";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { tradeCommand } from "./oidc-trade";
@@ -807,6 +810,27 @@ export async function main(argv: string[]): Promise<number> {
       case "modules": {
         // The release catalog publish writes beside the registry (./publish/catalog.ts), read as a consumer reads it.
         const [sub = "list", name] = args;
+        if (sub === "consumers") {
+          // This project's consumers.json (./publish/consumers.ts), which a publisher joins across the control repo (chant#4600).
+          const path = str(flags, "config") ?? findConfig(cwd);
+          const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+          const moduleDirs = settings.modules?.path ? findModules(cwd, settings.modules.path).map((m) => m.rel) : [];
+          const doc = await projectConsumersDocument(cwd, { ...(settings.roots ? { roots: settings.roots } : {}), skip: moduleDirs });
+          if (!doc) throw new ConfigError("terragucci modules consumers writes chant's consumers document (chant#4600) from the terraform lexicon's scan (chant#4599), which the installed chant does not carry; it needs a chant release that does");
+          const file = join(cwd, PROJECT_CONSUMERS);
+          const held = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
+          if (flags.check === true) {
+            if (held === doc.text) {
+              console.log(`${PROJECT_CONSUMERS} matches the roots' module pins`);
+              return 0;
+            }
+            console.log(`${PROJECT_CONSUMERS} ${held === undefined ? "is not written" : "differs from the roots' module pins"}; run terragucci modules consumers and commit it`);
+            return 1;
+          }
+          if (held !== doc.text) writeFileSync(file, doc.text);
+          console.log(`${PROJECT_CONSUMERS}: ${doc.consumers.length} module version${doc.consumers.length === 1 ? "" : "s"} pinned${held === doc.text ? ", unchanged" : ""}`);
+          return 0;
+        }
         if (sub in STATUS_WORDS) {
           // A status record on the ledger (./publish/status.ts); anyone who can publish may set one.
           const [, module, version] = args;

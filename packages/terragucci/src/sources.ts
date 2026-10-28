@@ -48,16 +48,19 @@
  * `registry.terraform.io/terraform-aws-modules/*` covers both. The proxy forms
  * are the terraform lexicon's (chant#4606).
  *
- * Reading and normalising sources is generic Terraform work; chant#3924 asks
- * the terraform lexicon for it, and this file keeps only the list and the
- * refusal once it lands.
+ * Reading and normalising sources is generic Terraform work: with a chant
+ * that carries chant#3924, the terraform lexicon reads them (`usedSources`,
+ * `lockedProviders`) and gives their forms (`moduleSourceForms`,
+ * `providerAddressForms`), and this file keeps only the lists and the
+ * refusals. Its own reader and forms stay as the fallback for a chant
+ * without them, and the stack unit's source is terragucci's either way.
  */
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { dataDir } from "./backend";
 import { ConfigError, resolveProject, resolveRepo, type SourceProxy, type SourcesSettings } from "./config";
-import { chantRegistryProxies, type ChantRegistryProxies, type ChantRegistryProxy } from "./chant-next";
+import { chantRegistryProxies, chantSourceForms, chantSourceFormsNow, type ChantRegistryProxies, type ChantRegistryProxy } from "./chant-next";
 import { configAtBase, type TrustedOptions } from "./report/policy";
 import { loadHclParser } from "./rollout/parser";
 import { baseCommit } from "./seal";
@@ -110,8 +113,10 @@ function atDefaultRegistry(address: string): string | undefined {
   return host ? address.slice(host.length + 1) : undefined;
 }
 
-/** The forms a module source matches as: as written without its query, and its registry forms. */
+/** The forms a module source matches as: as written without its query, and its registry forms. chant's (chant#3924) once loaded. */
 export function moduleForms(source: string): string[] {
+  const lib = chantSourceFormsNow();
+  if (lib) return lib.moduleSourceForms(source);
   const written = source.trim().split("?")[0]!;
   const out = [written];
   const tfr = /^tfr:\/\/([^/]*)\/(.+)$/.exec(written);
@@ -129,6 +134,8 @@ export function moduleForms(source: string): string[] {
 
 /** The forms a provider address matches as: in lower case, and with a default registry's host when it is written without one. */
 export function providerForms(address: string): string[] {
+  const lib = chantSourceFormsNow();
+  if (lib) return lib.providerAddressForms(address);
   const a = address.trim().toLowerCase();
   if (a.split("/").length === 2) return [a, ...DEFAULT_REGISTRIES.map((h) => `${h}/${a}`)];
   const hostless = atDefaultRegistry(a);
@@ -265,6 +272,14 @@ export async function rootSources(repo: string, root: string, parser: Hcl2Json):
   // A unit an explicit stack generates from a remote source: the stack file's unit block names it.
   const stacked = await stackUnitSource(repo, start, parser);
   if (stacked) used.push({ kind: "module", file: stacked.file, block: `unit.${stacked.name}`, source: stacked.source });
+  // The terraform lexicon reads the rest (chant#3924); terragucci's own walk is the fallback.
+  const lib = await chantSourceForms();
+  if (lib) {
+    const read = await lib.usedSources(join(repo, start), { project: repo, parser });
+    for (const u of read.used) used.push({ kind: u.kind, file: u.file, block: u.block, source: u.source, ...(u.implied ? { implied: u.implied } : {}) });
+    unread.push(...read.unread);
+    return { used, unread };
+  }
   await walk(start, "", [start], true);
   return { used, unread };
 }
@@ -305,6 +320,7 @@ export async function proxyUpstream(proxies: readonly SourceProxy[] | undefined)
 /** Check one root's sources against the lists: what they refuse. */
 export async function checkRootSources(repo: string, root: string, lists: SourcesSettings, parser: Hcl2Json): Promise<SourceRefusal[]> {
   const { used, unread } = await rootSources(repo, root, parser);
+  await chantSourceForms();
   const out = refusals(used, lists, await proxyUpstream(lists.proxies));
   if (lists.modules) for (const u of unread) out.push({ kind: "module", ...u, list: lists.modules });
   return out;
@@ -355,7 +371,9 @@ export async function lockedSources(repo: string, root: string, parser: Hcl2Json
     }
   }
   const lockFile = join(rootDir, ".terraform.lock.hcl");
-  const locked = existsSync(lockFile) ? [...readFileSync(lockFile, "utf-8").matchAll(/^provider\s+"([^"]+)"/gm)].map((m) => m[1]!) : [];
+  const lockText = existsSync(lockFile) ? readFileSync(lockFile, "utf-8") : "";
+  const forms = await chantSourceForms();
+  const locked = forms ? forms.lockedProviders(lockText) : [...lockText.matchAll(/^provider\s+"([^"]+)"/gm)].map((m) => m[1]!);
   // The root and every module init recorded, read from their files: the calls each makes, and the providers each uses.
   const calls = new Map<string, { file: string; source: string }>();
   const users = new Map<string, UsedSource[]>();
@@ -396,7 +414,9 @@ export async function lockedSources(repo: string, root: string, parser: Hcl2Json
 
 /** Check what one root's `init` fetched and installed against the lists: what they refuse. */
 export async function checkLockedSources(repo: string, root: string, lists: SourcesSettings, parser: Hcl2Json, env: NodeJS.ProcessEnv = {}): Promise<SourceRefusal[]> {
-  return refusals(await lockedSources(repo, root, parser, env), lists, await proxyUpstream(lists.proxies));
+  const used = await lockedSources(repo, root, parser, env);
+  await chantSourceForms();
+  return refusals(used, lists, await proxyUpstream(lists.proxies));
 }
 
 /** One line per refusal, naming the root, the block, the file, the source and the list it was checked against. */

@@ -55,7 +55,7 @@ export interface StatusResult {
 }
 
 /** Set one version's status, push it, and write the catalog again. */
-export async function setReleaseStatus(repo: string, settings: Pick<ResolvedSettings, "modules"> & { binary?: string; roots?: string[] }, change: StatusChange, opts: StatusOptions = {}): Promise<StatusResult> {
+export async function setReleaseStatus(repo: string, settings: Pick<ResolvedSettings, "modules"> & { binary?: string; roots?: string[]; control?: ResolvedSettings["control"] }, change: StatusChange, opts: StatusOptions = {}): Promise<StatusResult> {
   const core = await chantReleaseCatalog();
   if (!core) throw new ConfigError(`terragucci modules ${change.word} writes a release status record (chant#4596), which the installed chant has no writer for; it needs a chant release that carries it`);
   const status = STATUS_WORDS[change.word];
@@ -100,7 +100,7 @@ export async function setReleaseStatus(repo: string, settings: Pick<ResolvedSett
   const reg = settings.modules?.registry;
   if (reg && reg.catalog !== "off") {
     const store = opts.registryStore ?? registryStore(repo, reg, env);
-    const written = await publishCatalog(repo, reg, store, { modules, ...(settings.roots ? { roots: settings.roots } : {}), ...(settings.binary ? { binary: settings.binary } : {}) });
+    const written = await publishCatalog(repo, reg, store, { modules, ...(settings.roots ? { roots: settings.roots } : {}), ...(settings.binary ? { binary: settings.binary } : {}), ...(settings.control ? { control: settings.control } : {}), env });
     catalog = written.detail;
   }
   return { record: pushed.record, pushed: pushed.pushed, ...(catalog ? { catalog } : {}) };

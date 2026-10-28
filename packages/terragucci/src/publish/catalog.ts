@@ -26,7 +26,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
-import { ConfigError, type RegistrySettings } from "../config";
+import { ConfigError, type ControlSettings, type RegistrySettings } from "../config";
+import { controlConsumers } from "./consumers";
 import { findRoots } from "../detect";
 import {
   chantRegistryCatalog,
@@ -64,6 +65,10 @@ export interface CatalogOptions {
   parser?: Hcl2Json;
   /** Runs terraform-docs; {@link terraformDocsRunner} by default. */
   terraformDocs?: ChantTerraformDocsRunner;
+  /** `control`: the consumers of every project the control repo lists are joined in (./consumers.ts, chant#4600). */
+  control?: ControlSettings;
+  /** Where the control repo's read token and checkout are named. Default process.env. */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface CatalogResult {
@@ -237,6 +242,23 @@ export async function publishCatalog(repo: string, reg: RegistrySettings, store:
       if (r.component !== mod.rel || !r.releaseVersion) continue;
       const on = mine.filter((c) => c.pin !== null && bare(c.pin) === bare(r.releaseVersion!));
       if (on.length) consumers.push({ component: mod.rel, version: r.releaseVersion, consumers: on.map((c) => ({ root: c.root, file: c.file, address: c.address })) });
+    }
+  }
+
+  // Across a control repo: each project's consumers.json, joined by chant (chant#4600), on the versions this repo publishes.
+  if (o.control) {
+    try {
+      const joined = await controlConsumers(o.control, o.env ?? process.env);
+      if (joined) {
+        const byAddress = new Map(o.modules.map((m) => [tf.normalizeModuleSource(registryAddress(reg, m.rel).source), m.rel]));
+        for (const j of joined.consumers) {
+          const rel = byAddress.get(j.component);
+          if (rel && j.version && versions.has(`${rel}\0${j.version}`)) consumers.push({ component: rel, version: j.version, consumers: j.consumers });
+        }
+        if (joined.problems.length) notes.push(`consumers: ${joined.problems.join("; ")}`);
+      }
+    } catch (e) {
+      notes.push(`consumers across the control repo left out: ${(e as Error).message.split("\n", 1)[0]}`);
     }
   }
 

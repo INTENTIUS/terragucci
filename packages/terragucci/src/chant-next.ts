@@ -97,6 +97,12 @@
  * and `require` reads through; without them a source through a proxy is
  * matched as written.
  *
+ * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
+ * sources a root uses (`usedSources`, `lockedProviders`) and their forms
+ * (`moduleSourceForms`, `providerAddressForms`), on its `registry` subpath.
+ * ./sources.ts keeps only the lists and the refusals with them, and its own
+ * reader and forms as the fallback.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -984,6 +990,29 @@ export interface ChantRegistryProxies {
   fetchTarball(location: string, options?: { fetch?: ChantModuleFetch }): Promise<Uint8Array>;
 }
 
+// ── used sources (chant#3924) ─────────────────────────────────────────────
+
+/** A source a root uses, as the terraform lexicon reads it (`UsedSource`, chant#3924). */
+export interface ChantUsedSource {
+  kind: "module" | "provider";
+  file: string;
+  block: string;
+  source: string;
+  normal: string;
+  implied?: string;
+}
+
+/** The terraform lexicon's source reading and forms (`used-sources`, `registry/source-forms`, chant#3924), on its `registry` subpath. */
+export interface ChantSourceForms {
+  moduleSourceForms(source: string, options?: { proxies?: readonly ChantRegistryProxy[] }): string[];
+  providerAddressForms(source: string, options?: { proxies?: readonly ChantRegistryProxy[] }): string[];
+  usedSources(
+    dir: string,
+    options?: { followLocal?: boolean; project?: string; parser?: unknown; proxies?: readonly ChantRegistryProxy[] },
+  ): Promise<{ used: ChantUsedSource[]; unread: { file: string; block: string; source: string; why: string }[] }>;
+  lockedProviders(lockText: string): string[];
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -1198,6 +1227,11 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
   ),
+  sourceForms: once<ChantSourceForms>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); the source forms are chant#3924
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) => (has(m, "moduleSourceForms", "providerAddressForms", "usedSources", "lockedProviders") ? (m as unknown as ChantSourceForms) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -1288,6 +1322,10 @@ export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefin
 export const chantAfterPlan = (): Promise<ChantAfterPlan | undefined> => load("afterPlan");
 /** chant's OTLP exporter (chant#4555), or undefined. */
 export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
+/** The terraform lexicon's source reading and forms (chant#3924), or undefined. */
+export const chantSourceForms = (): Promise<ChantSourceForms | undefined> => load("sourceForms");
+/** The source forms as they already loaded, for the synchronous matchers in ./sources.ts. */
+export const chantSourceFormsNow = (): ChantSourceForms | undefined => loaded("sourceForms");
 /** The terraform lexicon's registry proxies (chant#4606), or undefined. */
 export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
 /** The terraform lexicon's module targets (chant#4603), with core's redactor and error class, or undefined. */
@@ -1332,7 +1370,8 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
   const [releaseCatalog, registryCatalog, afterPlan, moduleTargets] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan(), await chantModuleTargets()];
   const registryProxies = await chantRegistryProxies();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies };
+  const sourceForms = await chantSourceForms();
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, sourceForms: !!sourceForms };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────
