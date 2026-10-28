@@ -109,6 +109,8 @@ export const AGENT_RUNS_FILE = "_gates/agent-runs.jsonl";
 export const AGENT_RUN_LEDGERS: Readonly<Record<string, string>> = {
   "local/runs__terragucci-agent.jsonl": "agent.comment",
   "local/runs__terragucci-drift-agent.jsonl": "agent.drift",
+  // The drift agent on chant's agent job records under its drift Op (terragucci#1305).
+  "local/runs__terragucci-drift.jsonl": "agent.drift",
   "local/runs__terragucci-review.jsonl": "review.agent",
   "local/runs__terragucci-refused-wave.jsonl": "agent.refused-wave",
 };

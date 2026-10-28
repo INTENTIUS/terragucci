@@ -186,6 +186,7 @@ import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
+import { chantDriftExitLines, chantDriftFiles } from "./render-chant-drift";
 import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
@@ -2127,7 +2128,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent = false): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent: boolean | "chant" = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -2150,7 +2151,8 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     `terragucci stage tf-drift ${args.join(" ")}`,
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
     // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
-    ...(agent ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : []),
+    // On chant's drift Op (terragucci#1305) the run exits with chant's drift code instead, which starts chant's agent jobs.
+    ...(agent === true ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : agent === "chant" ? chantDriftExitLines(DRIFT_ISSUE_JS, `${REPORT_DIR}/${DRIFT_ISSUE_FILE}`) : []),
     ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${report.synth === ATMOS_WRITE ? ATMOS_DRIFT_PR_SHORT : SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
@@ -2325,6 +2327,9 @@ function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, 
     alias: { plan: alias("plan", own.alias.plan), apply: alias("apply", own.alias.apply) },
   };
 }
+
+/** An environment with the unset entries left out. */
+const definedEnv = (env: Record<string, string | undefined>): Record<string, string> => Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined));
 
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
@@ -2879,6 +2884,24 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + agentInclude + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs, ...(chantAgent ? { extra: chantAgent.files } : {}) };
   }
 
+  // terragucci#1305: with agent.drift and chant's agent job, the drift job is a chant drift Op in a workflow of its own.
+  // GitLab, Forgejo with oidc, a Terragrunt repo (its cache step) and respond.drift agent or attribute keep terragucci's job.
+  const chantDrift = drift && input.agentDrift && !tg && !agentDrift && !awsStep && !(forge === "forgejo" && oidc)
+    ? chantDriftFiles({
+        forge,
+        image,
+        schedule: drift,
+        script: [...(installStep ? [installStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, "chant")].join("\n"),
+        workflowEnv: jobEnv,
+        jobEnv: definedEnv({ ...passed, TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv, ...driftDecideEnv, ...reportKeyEnv(forge, input.reports), ...driftNotifyEnv }),
+        pullRequest: Boolean(driftPr),
+        oidc: Boolean(oidc),
+        agent: input.agentDrift,
+        ...(!input.atmos && !input.terramate ? { roots: layers.flat() } : {}),
+        marker: MARKER,
+        ...(input.runner !== undefined ? { runner: input.runner } : {}),
+      })
+    : undefined;
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";
   const isFork = "github.event.pull_request.head.repo.full_name != github.repository";
   // Forgejo (15 and later, with runner 12.5 or later) serves a job an OIDC token
@@ -2896,7 +2919,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // locks: plan: the pr-lock job, from the default branch's workflow, locks a pull request's roots and releases them when it closes.
       // ephemeral: the same events apply a pull request's copy of the ephemeral roots and destroy it on close.
       ...(locksPlan || ephemeral ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
-      ...(drift ? { schedule: [{ cron: drift }] } : {}),
+      ...(drift && !chantDrift ? { schedule: [{ cron: drift }] } : {}),
       // A dispatch with pr re-plans that pull request as `/terragucci plan [root]` does (comment.ts); with drift set, one without pr runs the drift job.
       workflow_dispatch: { inputs: REPLAN_INPUTS },
     },
@@ -3359,7 +3382,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  if (drift) {
+  if (drift && !chantDrift) {
     // Reads every root, so it takes the plan job's read-only role, and writes only the issue.
     entities.set("drift", new Job({
       "runs-on": "ubuntu-latest",
@@ -3391,7 +3414,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  if (drift && input.agentDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
+  if (drift && input.agentDrift && !chantDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
   if (forge === "forgejo") deferDeepSkips(entities);
   // Every workflow file goes through here, so its jobs run where runner places them.
   const serialize = (jobs: Map<string, never>): string => {
@@ -3402,6 +3425,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const extra: { path: string; content: string }[] = [];
   if (input.wavesSpec) extra.push({ path: WAVES_SPEC, content: input.wavesSpec });
   if (chantAgent) extra.push(...chantAgent.files);
+  if (chantDrift) extra.push(...chantDrift);
   if (input.resume) {
     // apply.resume: a schedule of its own reads the ledger and applies a wave whose approval stands, as a comment's apply does.
     const resume = new Map<string, never>([
