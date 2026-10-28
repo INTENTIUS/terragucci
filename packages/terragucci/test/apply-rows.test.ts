@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyScope, describeHeld, forgeLiveness, parseRows, planRows, readRows, releaseRows, ROWS_PATH, takeRows, type HeldRow, type Liveness, type RowHolder } from "../src/apply-rows";
+import { applyScope, chantRows, CHANT_ROWS_GATE, describeHeld, forgeLiveness, parseRows, planRows, readRows, releaseRows, releaseRowsVia, ROWS_PATH, takeRows, takeRowsVia, type HeldRow, type Liveness, type RowHolder } from "../src/apply-rows";
 import { applyWave, EXIT } from "../src/apply";
 import { git, tmp, write } from "./helpers";
 
@@ -161,9 +161,15 @@ describe("forgeLiveness", () => {
 });
 
 /**
+ * The rows file a wave holds its rows in: chant's for the pull-request loop's
+ * gate where chant has row leases (chant#4552), else terragucci's own.
+ */
+const rowsFile = async (): Promise<string> => (await chantRows())?.lockRowsPath(CHANT_ROWS_GATE) ?? ROWS_PATH;
+
+/**
  * A fake choudoufu: plan writes the root into the plan file and counts the
  * plans, show -json prints $PLANS/<root>.json, apply logs the root and what
- * chant/lifecycle on origin holds while it applies.
+ * chant/lifecycle on origin holds while it applies ($ROWS_FILE).
  */
 const FAKE = `#!/usr/bin/env bash
 dir="\${1#-chdir=}"; root="$(basename "$dir")"
@@ -171,7 +177,7 @@ case "$2" in
   init) ;;
   plan) for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done; echo plan >> "$PLANNED"; echo "Plan: 1 to add" ;;
   show) cat "$PLANS/$(cat "\${@: -1}").json" ;;
-  apply) echo "applied $root" >> "$LOG"; git -C "$ORIGIN" show "chant/lifecycle:${ROWS_PATH}" >> "$LOG" 2>/dev/null; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+  apply) echo "applied $root" >> "$LOG"; git -C "$ORIGIN" show "chant/lifecycle:$ROWS_FILE" >> "$LOG" 2>/dev/null; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
 esac
 exit 0
 `;
@@ -182,7 +188,7 @@ describe("a choudoufu wave holds what its plans change", () => {
     vi.unstubAllEnvs();
   });
 
-  function setup(name = "choudoufu"): { work: string; origin: string; bin: string; log: string; planned: string; lines: string[] } {
+  async function setup(name = "choudoufu"): Promise<{ work: string; origin: string; bin: string; log: string; planned: string; lines: string[]; file: string }> {
     const { work, origin, dir } = repo();
     write(work, { "a/main.tf": 'terraform {\n  live {\n    estate = "shop"\n  }\n}\n' });
     git(work, "add", "-A");
@@ -198,27 +204,29 @@ describe("a choudoufu wave holds what its plans change", () => {
     vi.stubEnv("LOG", join(dir, "apply.log"));
     vi.stubEnv("PLANNED", join(dir, "planned.log"));
     vi.stubEnv("ORIGIN", origin);
+    const file = await rowsFile();
+    vi.stubEnv("ROWS_FILE", file);
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(String(l)));
-    return { work, origin, bin, log: join(dir, "apply.log"), planned: join(dir, "planned.log"), lines };
+    return { work, origin, bin, log: join(dir, "apply.log"), planned: join(dir, "planned.log"), lines, file };
   }
 
   const opts = (bin: string, extra: Record<string, unknown> = {}) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: { ...process.env, GITHUB_RUN_ID: "100", TG_LOCK_POLL: "0.05" }, ...extra });
   const KEYS = ["estate shop terraform_data.left", "object left-id"];
 
   it("holds its rows while it applies, as its run, and lets go of them after", async () => {
-    const { work, origin, bin, log, lines } = setup();
+    const { work, origin, bin, log, lines, file } = await setup();
     expect(await applyWave(work, opts(bin))).toBe(EXIT.applied);
     const during = readFileSync(log, "utf-8");
     expect(during).toContain("applied a");
     expect(parseRows(during.slice(during.indexOf("{"))).rows).toEqual(Object.fromEntries(KEYS.map((k) => [k, "100"])));
-    expect(parseRows(git(origin, "show", `chant/lifecycle:${ROWS_PATH}`))).toEqual({ version: 1, holders: {}, rows: {} });
+    expect(parseRows(git(origin, "show", `chant/lifecycle:${file}`))).toEqual({ version: 1, holders: {}, rows: {} });
     expect(lines).toContain("wave 1 of 1: holding the resource its plans change, as run 100");
   });
 
   it("refuses at once, naming the run, when the apply a comment started meets a resource another run is applying", async () => {
-    const { work, bin, log, lines } = setup();
-    await takeRows(work, rows("a", "terraform_data.unrelated").concat({ key: "object left-id", root: "b", address: "kubernetes_labels.x" }), holder("55"), alive);
+    const { work, bin, log, lines } = await setup();
+    await takeRowsVia(work, rows("a", "terraform_data.unrelated").concat({ key: "object left-id", root: "b", address: "kubernetes_labels.x" }), holder("55"), alive);
     expect(await applyWave(work, opts(bin, { onHeld: "refuse", liveness: alive }))).toBe(EXIT.held);
     expect(existsSync(log)).toBe(false);
     // Another estate's change meets this one on the live object: the line names this wave's resource it holds.
@@ -228,12 +236,12 @@ describe("a choudoufu wave holds what its plans change", () => {
   });
 
   it("a push's wave waits while the run is alive, then plans again once it let go, and applies", async () => {
-    const { work, bin, log, planned, lines } = setup();
-    await takeRows(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "estate shop terraform_data.left" })), holder("55"), alive);
+    const { work, bin, log, planned, lines } = await setup();
+    await takeRowsVia(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "estate shop terraform_data.left" })), holder("55"), alive);
     let asked = 0;
     // The holder lets go after a few polls.
     const liveness: Liveness = async () => {
-      if (++asked === 3) await releaseRows(work, ["estate shop terraform_data.left"], "55");
+      if (++asked === 3) await releaseRowsVia(work, ["estate shop terraform_data.left"], "55");
       return "alive";
     };
     expect(await applyWave(work, opts(bin, { liveness }))).toBe(EXIT.applied);
@@ -245,8 +253,8 @@ describe("a choudoufu wave holds what its plans change", () => {
   });
 
   it("takes over from a run that is gone without planning again, so the apply's own re-read judges what that run left", async () => {
-    const { work, bin, log, planned, lines } = setup();
-    await takeRows(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "object left-id" })), holder("55"), alive);
+    const { work, bin, log, planned, lines } = await setup();
+    await takeRowsVia(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "object left-id" })), holder("55"), alive);
     let asked = 0;
     // Alive at the first take, gone by the poll after it.
     const liveness: Liveness = async () => (++asked > 1 ? "dead" : "alive");
@@ -257,7 +265,7 @@ describe("a choudoufu wave holds what its plans change", () => {
   });
 
   it("with --stand-down a push's wave that finds a newer push once it holds its rows applies nothing, and lets go", async () => {
-    const { work, origin, bin, log, lines } = setup();
+    const { work, origin, bin, log, lines, file } = await setup();
     const sha = git(work, "rev-parse", "HEAD").trim();
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "newer");
     git(work, "push", "-q", "origin", "main");
@@ -266,20 +274,20 @@ describe("a choudoufu wave holds what its plans change", () => {
     expect(await applyWave(work, opts(bin, { env, standDown: true }))).toBe(EXIT.superseded);
     expect(existsSync(log)).toBe(false);
     expect(lines.join("\n")).toMatch(/a newer push to main \([0-9a-f]{8}\) applies everything; standing down/);
-    expect(parseRows(git(origin, "show", `chant/lifecycle:${ROWS_PATH}`)).rows).toEqual({});
+    expect(parseRows(git(origin, "show", `chant/lifecycle:${file}`)).rows).toEqual({});
     // The tip itself applies.
     expect(await applyWave(work, opts(bin, { env: { ...env, GITHUB_SHA: git(origin, "rev-parse", "main").trim() }, standDown: true }))).toBe(EXIT.applied);
   });
 
   it("a stock binary holds nothing: the backend's state lock keeps one root's applies apart", async () => {
-    const { work, origin, bin, log } = setup("tofu");
+    const { work, origin, bin, log, file } = await setup("tofu");
     expect(await applyWave(work, opts(bin))).toBe(EXIT.applied);
     expect(readFileSync(log, "utf-8")).toBe("applied a\n");
-    expect(() => git(origin, "show", `chant/lifecycle:${ROWS_PATH}`)).toThrow();
+    expect(() => git(origin, "show", `chant/lifecycle:${file}`)).toThrow();
   });
 
   it("a checkout with no origin holds nothing and says so", async () => {
-    const { work, bin, lines } = setup();
+    const { work, bin, lines } = await setup();
     git(work, "remote", "remove", "origin");
     expect(await applyWave(work, opts(bin))).toBe(EXIT.applied);
     expect(lines).toContain("wave 1 of 1: this checkout has no origin, so nothing holds the resources it changes");

@@ -5,14 +5,18 @@ import { describe, expect, it } from "vitest";
 import { appendLifecycle } from "../src/apply";
 import { stateObject, stateVersion } from "../src/backend";
 import { copyBackend, unitBackend } from "../src/ephemeral";
-import { doneExports, EXPORT_DONE, EXPORT_LEDGER, exportState } from "../src/export";
+import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
 import { currentSerial, gitlabState, hasVersion, isGitLabAddress, probeLock, readVersion, releaseLock, shownUrl, suffixedGitLabAddress, type GitLabFetch } from "../src/gitlab-state";
 import type { BinaryExec } from "../src/migrate";
 import type { S3Fetch } from "../src/report/s3";
 import { stateAddress } from "../src/state-address";
-import { lockDigest, parseUnlocks, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { lockDigest, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { chantGated, exportRecords, exportRequest, unlockRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";
+
+// With chant's state operations an export and a release are chant's gated requests (chant's digest, a finished line in place of done.jsonl).
+const chantOps = await chantGated();
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
@@ -201,21 +205,21 @@ describe("state export of GitLab-managed state", () => {
     const first = await exportState(r.work, { root: "app", version: "1", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, now: T(0), log: () => {} });
     expect(first.code).toBe(3);
     expect(g.seen.map((s) => s.method)).toEqual(["HEAD"]);
-    expect(JSON.parse(show(r.work, EXPORT_LEDGER).trim()).request).toMatchObject({ location: ADDRESS, version_id: "1" });
+    expect(exportRequest(JSON.parse(show(r.work, EXPORT_LEDGER).trim()))).toMatchObject({ location: ADDRESS, version_id: "1" });
     appendLifecycle(r.work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: "bob", timestamp: T(1), planDigest: first.digest })], {}, "approve");
     mkdirSync(r.out);
     const file = join(r.out, "app.tfstate");
     const done = await exportState(r.work, { root: "app", version: "1", actor: "alice", out: file, env: ENV, exec: r.exec, fetch: g.fetch, now: T(2), log: () => {} });
     expect(done).toMatchObject({ code: 0, file });
     expect(readFileSync(file, "utf-8")).toBe(V(1, "secret-1"));
-    expect([...doneExports(show(r.work, EXPORT_DONE)).values()]).toEqual([expect.objectContaining({ root: "app", location: ADDRESS, version_id: "1", approvedBy: "bob" })]);
+    expect(exportRecords(chantOps, (path) => show(r.work, path))).toEqual([expect.objectContaining({ root: "app", location: ADDRESS, version_id: "1", approvedBy: "bob" })]);
   });
 
   it("takes the current serial when no version is named, and refuses a serial GitLab does not keep", async () => {
     const r = repo();
     const g = gitlab();
     await exportState(r.work, { root: "app", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, now: T(0), log: () => {} });
-    expect(JSON.parse(show(r.work, EXPORT_LEDGER).trim()).request.version_id).toBe("2");
+    expect(exportRequest(JSON.parse(show(r.work, EXPORT_LEDGER).trim())).version_id).toBe("2");
     await expect(exportState(r.work, { root: "app", version: "9", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/has no version 9/);
     await expect(exportState(r.work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/versions are serials/);
     await expect(exportState(r.work, { root: "app", actor: "alice", env: { TF_HTTP_PASSWORD: "wrong" }, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/state export: GitLab answered 401/);
@@ -244,15 +248,17 @@ describe("unlock-state of GitLab-managed state", () => {
     g.locks.set("app", JSON.stringify({ ID: "lock-1", Operation: "OperationTypeApply", Who: "root", Created: T(10) }));
     const first = await run(r, g, T(30));
     expect(first.code).toBe(3);
-    const digest = lockDigest("app", `${ADDRESS}/lock`, "lock-1");
+    // chant's digest is over its request; terragucci's own binds the root, the lock's location and its ID.
+    const digest = chantOps ? first.digest! : lockDigest("app", `${ADDRESS}/lock`, "lock-1");
     expect(first.digest).toBe(digest);
+    expect(first.command).toBe(`terragucci approve unlock app --plan ${digest}`);
     expect(g.locks.has("app")).toBe(true);
     appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(32), planDigest: digest })], {}, "approve");
     const second = await run(r, g, T(33));
     expect(second.code).toBe(0);
     expect(g.locks.has("app")).toBe(false);
     expect(r.calls.some((c) => c[0] === "force-unlock")).toBe(false);
-    expect(parseUnlocks(show(r.work, UNLOCK_DONE))).toEqual([expect.objectContaining({ root: "app", location: `${ADDRESS}/lock`, lock: expect.objectContaining({ ID: "lock-1" }), approvedBy: "lee", releasedBy: "dana" })]);
+    expect(unlockRecords(chantOps, (path) => show(r.work, path))).toEqual([expect.objectContaining({ root: "app", location: `${ADDRESS}/lock`, lockId: "lock-1", approvedBy: "lee", releasedBy: "dana", planDigest: digest })]);
   });
 
   it("refuses a backend that takes no lock, or cannot release one", async () => {

@@ -10,6 +10,7 @@ import { basename, dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
+import { chantHandover } from "../src/chant-next";
 import { renderPipeline, type PipelineInput } from "../src/render";
 import { checkoutScript, HANDOVER_LIMITS, handoverKeys, handoverTrap, packJs, takeOverScript, UNPACK_JS, type HandoverForge } from "../src/handover";
 import { bareFrom, git, tmp, write } from "./helpers";
@@ -50,6 +51,9 @@ const takeOver = (job: string, dir: string, outputs: Record<string, string>, cwd
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 };
 
+/** The step's handover function: chant's names it chant_handover where the installed chant's scripts take terragucci's parameters (chant#4554). */
+const HANDOVER = chantHandover() ? "chant_handover" : "tg_handover";
+
 const FORGES = ["github", "forgejo"] as const;
 const cases: [string, Partial<PipelineInput>][] = [
   ["plain roots", {}],
@@ -74,7 +78,7 @@ describe.each(FORGES)("%s: the jobs that run the change's code end with the step
       expect(steps[code].id, name).toBe(name === "check" ? "check" : "plan");
       for (const k of handoverKeys(forge)) expect(doc.jobs[name].outputs[k], name).toBe(`\${{ steps.${steps[code].id}.outputs.${k} }}`);
       expect(steps[code].run, name).toContain("trap ");
-      expect(steps[code].run, name).toContain("tg_handover");
+      expect(steps[code].run, name).toContain(HANDOVER);
       expect(steps[code].run, name).toContain(`CHUNK=${HANDOVER_LIMITS[forge].chunk},PARTS=${HANDOVER_LIMITS[forge].parts}`);
       // The token is in no environment the code's step starts with: not the job's, not the step's.
       expect(JSON.stringify(steps[code].env ?? {}), name).not.toContain("github.token");
@@ -97,8 +101,8 @@ describe.each(FORGES)("%s: the jobs that run the change's code end with the step
 
   it("the re-plan's step sweeps what the code left running before it hands the report on", () => {
     const run = (render(forge).jobs.replan.steps as Step[]).find(runsCode)!.run!;
-    expect(run).toContain("trap 'tg_sweep; tg_handover' EXIT");
-    expect(run.indexOf("trap 'tg_sweep; tg_handover' EXIT")).toBeGreaterThan(run.indexOf("trap tg_sweep EXIT"));
+    expect(run).toContain(`trap 'tg_sweep; ${HANDOVER}' EXIT`);
+    expect(run.indexOf(`trap 'tg_sweep; ${HANDOVER}' EXIT`)).toBeGreaterThan(run.indexOf("trap tg_sweep EXIT"));
   });
 
   it("the note jobs and check-report take the report as data, keep it as the artifact it was, and post as before", () => {

@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { chantExitCodes, chantHandover } from "../src/chant-next";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
@@ -23,6 +24,16 @@ function isolated(): string {
   return join(dir, "terragucci.mjs");
 }
 
+// A usage or config error exits 1 under chant's exit-code table (chant#4553), 2 before it.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
+/**
+ * The example's pipeline as init renders it. The committed one is the published pin's; where the installed chant's
+ * handover and checkout scripts take terragucci's parameters (chant#4554) the steps that check out and hand a report
+ * on are chant's, kept in test/golden/chant-next/example-forgejo.yml (UPDATE_GOLDEN=1 rewrites it).
+ */
+const CHANT_STEPS = !!chantHandover();
+const EXAMPLE_PIPELINE = CHANT_STEPS ? join(import.meta.dirname, "golden/chant-next/example-forgejo.yml") : join(EXAMPLE, ".forgejo/workflows/terragucci.yml");
+
 function runIn(cwd: string, bin: string, ...args: string[]) {
   return spawnSync(process.execPath, [bin, ...args], { cwd, encoding: "utf-8" });
 }
@@ -35,10 +46,10 @@ describe.skipIf(!existsSync(DIST))("the bundle", () => {
     writeFileSync(join(repo, "terragucci.yml"), 'drift: "0 6 * * *"\nwaves:\n  canary: ["envs/dev/*"]\n');
     const r = runIn(repo, isolated(), "init");
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toContain("unchanged .forgejo/workflows/terragucci.yml");
-    expect(readFileSync(join(repo, ".forgejo/workflows/terragucci.yml"), "utf-8")).toBe(
-      readFileSync(join(EXAMPLE, ".forgejo/workflows/terragucci.yml"), "utf-8"),
-    );
+    expect(r.stdout).toContain(`${CHANT_STEPS ? "updated" : "unchanged"} .forgejo/workflows/terragucci.yml`);
+    const rendered = readFileSync(join(repo, ".forgejo/workflows/terragucci.yml"), "utf-8");
+    if (CHANT_STEPS && process.env.UPDATE_GOLDEN) writeFileSync(EXAMPLE_PIPELINE, rendered);
+    expect(rendered).toBe(readFileSync(EXAMPLE_PIPELINE, "utf-8"));
   });
 
   it("reconcile dry-runs a GitHub, a GitLab and a Forgejo project, and a broken one fails alone", () => {
@@ -68,7 +79,7 @@ describe.skipIf(!existsSync(DIST))("the bundle", () => {
     git(repo, "init", "-q");
     git(repo, "remote", "add", "origin", "https://github.com/acme/infra.git");
     const r = runIn(repo, isolated(), "init", "--dry-run");
-    expect(r.status).toBe(2);
+    expect(r.status).toBe(USAGE);
     expect(r.stderr).toContain("npm i -D @intentius/tsad-reference");
   });
 
@@ -77,7 +88,7 @@ describe.skipIf(!existsSync(DIST))("the bundle", () => {
     git(repo, "init", "-q");
     git(repo, "remote", "add", "origin", "https://github.com/acme/infra.git");
     const r = runIn(repo, isolated(), "rollout", "modules/network", "1.4.0");
-    expect(r.status).toBe(2);
+    expect(r.status).toBe(USAGE);
     expect(r.stderr).toContain("npm i -D @cdktn/hcl2json");
   });
 

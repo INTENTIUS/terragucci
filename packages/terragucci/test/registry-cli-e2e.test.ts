@@ -139,7 +139,9 @@ async function fixture(): Promise<Fixture> {
   const key = join(work, "tls/key.pem");
   mkdirSync(join(work, "tls"), { recursive: true });
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", cert, "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore" });
-  await build({ stdin: { contents: SERVER, resolveDir: join(import.meta.dirname, ".."), loader: "js" }, bundle: true, platform: "node", format: "esm", target: "node20", outfile: join(bin, "registry.mjs"), logLevel: "silent" });
+  await build({ stdin: { contents: SERVER, resolveDir: join(import.meta.dirname, ".."), loader: "js" }, bundle: true, platform: "node", format: "esm", target: "node20", outfile: join(bin, "registry.mjs"), logLevel: "silent",
+    // The lexicon's source reader loads the HCL parser lazily, and the server never parses HCL; its wasm bridge does not bundle for node.
+    external: ["@cdktn/hcl2json"] });
   writeFileSync(join(bin, "oci.mjs"), OCI_SERVER);
 
   const url = `https://${HOST}`;

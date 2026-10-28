@@ -26,6 +26,9 @@ function recordingFetch(existing: Record<string, boolean> = {}): { fetch: Fetch;
     if (call.method === "GET" && url.includes("/pulls")) return json(has ? [{ html_url: "https://x/pull/1", number: 1, head: { ref: BRANCH } }] : []);
     if (call.method === "POST" && url.includes("merge_requests")) return json({ web_url: "https://gl/mr/7", iid: 7 });
     if (call.method === "POST" && url.includes("/pulls")) return json({ html_url: "https://x/pull/7", number: 7 });
+    // chant's reconcile (chant#4568) writes the open request's title and body again.
+    if (call.method === "PUT" && /merge_requests\/\d+$/.test(url)) return json({ web_url: "https://gl/mr/1", iid: 1 });
+    if (call.method === "PATCH" && /\/pulls\/\d+$/.test(url)) return json({ html_url: "https://x/pull/1", number: 1 });
     return { ok: false, status: 404, json: async () => ({}), text: async () => "not found" };
   };
   return { fetch, calls };

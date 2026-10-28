@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { chantExitCodes, chantHandover } from "../src/chant-next";
 import { main } from "../src/cli";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 
@@ -20,9 +21,19 @@ async function run(dir: string, ...argv: string[]): Promise<{ code: number; out:
   }
 }
 
-/** Compare to test/golden/<name>.json; UPDATE_GOLDEN=1 rewrites it. Paths and temp dirs are not in the output. */
-function golden(name: string, out: string): void {
-  const path = join(__dirname, "golden", `${name}.json`);
+// A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
+const EXIT_TABLE = !!(await chantExitCodes());
+const USAGE = EXIT_TABLE ? 1 : 2;
+// The steps that hand a report on are chant's (chant#4554) where its handover scripts take terragucci's parameters.
+const HANDOVER = !!chantHandover();
+
+/**
+ * Compare to test/golden/<name>.json; UPDATE_GOLDEN=1 rewrites it. Paths and temp dirs are not in the output.
+ * `next` says the installed chant renders it differently from the published pin's: its golden is then
+ * test/golden/chant-next/<name>.json.
+ */
+function golden(name: string, out: string, next = false): void {
+  const path = join(__dirname, "golden", ...(next ? ["chant-next"] : []), `${name}.json`);
   const text = `${JSON.stringify(JSON.parse(out), null, 2)}\n`;
   if (process.env.UPDATE_GOLDEN || !existsSync(path)) writeFileSync(path, text);
   expect(text).toBe(readFileSync(path, "utf-8"));
@@ -44,7 +55,7 @@ describe("--json", () => {
   it("init --dry-run lists each root with its reason, and each file with its content", async () => {
     const { code, out } = await run(repo(), "init", "--dry-run", "--binary", "tofu", "--json");
     expect(code).toBe(0);
-    golden("init-dry-run", out);
+    golden("init-dry-run", out, HANDOVER);
     const j = JSON.parse(out);
     expect(j.results.roots).toEqual([
       { path: "app", reason: "backend s3" },
@@ -58,7 +69,7 @@ describe("--json", () => {
     expect(existsSync(join(dir, ".github"))).toBe(false);
   });
 
-  it("init --gate on-destroy --dry-run shows gate: on-destructive in terragucci.yml, and an unknown gate or one the config contradicts is exit 2", async () => {
+  it("init --gate on-destroy --dry-run shows gate: on-destructive in terragucci.yml, and an unknown gate or one the config contradicts is a usage error", async () => {
     const dir = repo();
     const { code, out } = await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "on-destroy", "--json");
     expect(code).toBe(0);
@@ -66,9 +77,9 @@ describe("--json", () => {
     expect(files.find((f) => f.path === "terragucci.yml")).toEqual({ path: "terragucci.yml", status: "created", content: "gate: on-destructive\n" });
     expect(files.find((f) => f.path === ".github/workflows/terragucci.yml")?.content).toContain("--gate on-destructive");
     expect(existsSync(join(dir, "terragucci.yml"))).toBe(false);
-    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "sometimes")).code).toBe(2);
+    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "sometimes")).code).toBe(USAGE);
     write(dir, { "terragucci.yml": "gate: always\n" });
-    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "never")).code).toBe(2);
+    expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "never")).code).toBe(USAGE);
     expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "never", "--force")).code).toBe(0);
   });
 
@@ -83,15 +94,15 @@ describe("--json", () => {
 
   it("reconcile without a control repo config is a usage error", async () => {
     const { code, out } = await run(repo(), "reconcile", "--json");
-    expect(code).toBe(2);
-    golden("reconcile-usage", out);
+    expect(code).toBe(USAGE);
+    golden("reconcile-usage", out, EXIT_TABLE);
   });
 
   it("reconcile --json reports each project", async () => {
     const dir = write(tmp(), { "terragucci.yml": `defaults:\n  binary: tofu\nprojects:\n  github.com/acme/infra:\n    url: ${bareFrom(twoRootRepo())}\n` });
     const { code, out } = await run(dir, "reconcile", "--json");
     expect(code).toBe(0);
-    golden("reconcile-dry-run", out);
+    golden("reconcile-dry-run", out, HANDOVER);
   });
 
   it("init --dry-run in a GitLab repo with its own .gitlab-ci.yml writes the jobs beside it and adds the include", async () => {
@@ -114,8 +125,8 @@ describe("--json", () => {
 
   it("plan with no match is a usage error", async () => {
     const { code, out } = await run(repo(), "plan", "--root", "nope", "--json");
-    expect(code).toBe(2);
-    golden("plan-usage", out);
+    expect(code).toBe(USAGE);
+    golden("plan-usage", out, EXIT_TABLE);
   });
 
   it("config check passes a good file", async () => {
@@ -128,15 +139,15 @@ describe("--json", () => {
   it("config check lists every problem", async () => {
     const dir = write(repo(), { "terragucci.yml": "binary: nope\nforge: svn\nbogus: 1\n" });
     const { code, out } = await run(dir, "config", "check", "--json");
-    expect(code).toBe(2);
-    golden("config-check-problems", out);
+    expect(code).toBe(USAGE);
+    golden("config-check-problems", out, EXIT_TABLE);
     expect(JSON.parse(out).results.problems).toHaveLength(3);
   });
 
   it("config check asks apply before merge on GitLab for comments and a merge token, named in the config or detected from the repo", async () => {
     for (const files of [{ "terragucci.yml": "forge: gitlab\napply:\n  when: pull-request\n" }, { "terragucci.yml": "apply:\n  when: pull-request\n", ".gitlab-ci.yml": "# x\n" }] as Record<string, string>[]) {
       const { code, out } = await run(write(repo(), files), "config", "check", "--json");
-      expect(code).toBe(2);
+      expect(code).toBe(USAGE);
       const problems = JSON.parse(out).results.problems.join("\n");
       expect(problems).toMatch(/apply\.when: pull-request on GitLab needs comments: <cron>/);
       expect(problems).toMatch(/apply\.when: pull-request on GitLab needs apply\.merge_token_env/);
@@ -157,14 +168,14 @@ describe("--json", () => {
   it("config check names itself in the envelope when it cannot run", async () => {
     const { code, out } = await run(repo(), "config", "--json");
     const e = JSON.parse(out);
-    expect(code).toBe(2);
+    expect(code).toBe(USAGE);
     expect(e.command).toBe("config check");
     expect(e.results).toBeNull();
   });
 
   it("--json on a command without it is refused", async () => {
     const { code, out } = await run(repo(), "profiles", "--json");
-    expect(code).toBe(2);
+    expect(code).toBe(USAGE);
     expect(JSON.parse(out).error).toMatch(/not available on profiles/);
   });
 });

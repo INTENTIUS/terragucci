@@ -1322,6 +1322,8 @@ export interface ChantGateWriters {
   gitGateLedgerPort(opts?: { cwd?: string }): ChantGateLedgerPort;
   writeBlobToPath(dir: string, file: string, content: string, message: string, opts?: { cwd?: string }): Promise<string>;
   pushLifecycleReport(opts?: { cwd?: string }): Promise<ChantLedgerPush>;
+  /** Fetch chant/lifecycle into the checkout's branch, refusing a fork (#2303); every chant has it. */
+  requireLifecycleLedger(opts?: { cwd?: string }): Promise<void>;
   isLifecycleLocalNote(warning: string | undefined): boolean;
 }
 
@@ -1790,9 +1792,9 @@ const loaders = {
       const gate: Record<string, unknown> = await import("@intentius/chant/op/gate");
       const git: Record<string, unknown> = await import("@intentius/chant/lifecycle/git");
       const note: Record<string, unknown> = await import("@intentius/chant/lifecycle/local-note");
-      return { OP_WAVE_HOLD_RECORD_FLOOR: requests.OP_WAVE_HOLD_RECORD_FLOOR, gitGateLedgerPort: gate.gitGateLedgerPort, writeBlobToPath: git.writeBlobToPath, pushLifecycleReport: git.pushLifecycleReport, isLifecycleLocalNote: note.isLifecycleLocalNote };
+      return { OP_WAVE_HOLD_RECORD_FLOOR: requests.OP_WAVE_HOLD_RECORD_FLOOR, gitGateLedgerPort: gate.gitGateLedgerPort, writeBlobToPath: git.writeBlobToPath, pushLifecycleReport: git.pushLifecycleReport, requireLifecycleLedger: git.requireLifecycleLedger, isLifecycleLocalNote: note.isLifecycleLocalNote };
     },
-    (m) => (typeof m.OP_WAVE_HOLD_RECORD_FLOOR === "string" && has(m, "gitGateLedgerPort", "writeBlobToPath", "pushLifecycleReport", "isLifecycleLocalNote") ? (m as unknown as ChantGateWriters) : undefined),
+    (m) => (typeof m.OP_WAVE_HOLD_RECORD_FLOOR === "string" && has(m, "gitGateLedgerPort", "writeBlobToPath", "pushLifecycleReport", "requireLifecycleLedger", "isLifecycleLocalNote") ? (m as unknown as ChantGateWriters) : undefined),
   ),
   releaseRead: once<ChantReleaseRead>(
     () => import("@intentius/chant/lifecycle/release-ledger"),

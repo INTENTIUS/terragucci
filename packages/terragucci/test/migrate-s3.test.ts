@@ -19,7 +19,27 @@ import {
   type StateResource,
 } from "../src/migrate";
 import { sign, type S3Fetch } from "../src/report/s3";
+import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, write } from "./helpers";
+
+// With chant's state operations a migration is chant's gated request: its record is a finished line, read back in done.jsonl's form.
+const chantOps = await chantGated();
+
+/**
+ * A state that moved after the approval: terragucci's own gate refuses the
+ * approved digest (exit 4) and names the roots that moved; on chant's gate
+ * the new proof is a new request, which waits for its own approval (exit 3)
+ * under a digest of its own. Either way nothing is written.
+ */
+const expectMovedAfterApproval = (run: { code: number; records: { digest: string; moved?: string[] }[] }, approved: string, moved: string[]) => {
+  if (chantOps) {
+    expect(run.code).toBe(3);
+    expect(run.records[0]!.digest).not.toBe(approved);
+  } else {
+    expect(run.code).toBe(4);
+    expect(run.records[0]!.moved).toEqual(moved);
+  }
+};
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
@@ -179,9 +199,8 @@ describe("a backend move", () => {
     expect(w.latest("state/old/app.tfstate")!.id).toBe(old);
     expect(w.locks.size).toBe(0);
     expect(second.records[0]!.roots[0]!.after.version_id).toBe(w.latest("state/new/app.tfstate")!.id);
-    const done = git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`);
-    expect(JSON.parse(done)).toMatchObject({ change: "backends", roots: [{ root: "app", source: "s3://state/old/app.tfstate", source_version: old }] });
-    expect(done).not.toContain("secret-");
+    expect(migrationRecord(work, "move-app").line).toMatchObject({ change: "backends", roots: [{ root: "app", source: "s3://state/old/app.tfstate", source_version: old }] });
+    expect(git(origin, "show", `chant/lifecycle:${chantOps ? appliedFile("tf-migrate") : MIGRATE_DONE}`)).not.toContain("secret-");
   });
 
   it("refuses when the state it moves from moved after the approval, and when the new backend holds a state already", async () => {
@@ -196,8 +215,7 @@ describe("a backend move", () => {
     approve(work, "move-app", first.records[0]!.digest, T(2));
     w.put("state/old/app.tfstate", JSON.stringify(state("L", 3, ["a"])));
     const again = await runMigrations(work, { ...opts, now: T(3) });
-    expect(again.code).toBe(4);
-    expect(again.records[0]!.moved).toEqual(["app"]);
+    expectMovedAfterApproval(again, first.records[0]!.digest, ["app"]);
     expect(w.latest("state/new/app.tfstate")).toBeUndefined();
     w.put("state/new/app.tfstate", JSON.stringify(state("M", 1, ["a"])));
     const taken = await runMigrations(work, { ...opts, now: T(4) });
@@ -252,7 +270,7 @@ describe("a revert", () => {
     expect(one.resources.map((r) => r.name)).toEqual(["a", "b"]);
     expect(one.lineage).toBe("L1");
     expect(JSON.parse(w.latest("state/two.tfstate")!.body).resources).toEqual([]);
-    expect(JSON.parse(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`).trim().split("\n").at(-1)!)).toMatchObject({ gate: "split-b-revert", change: "revert", revert: "split-b", result: "applied" });
+    expect(migrationRecord(work, "split-b-revert").line).toMatchObject({ gate: "split-b-revert", change: "revert", revert: "split-b", result: "applied" });
   });
 
   it("refuses when a state moved past the version the reverted migration left", async () => {
@@ -389,7 +407,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     expect(t.calls.filter((c) => c.path.endsWith("/actions/lock") || c.path.endsWith("/actions/unlock")).map((c) => c.path.split("/").pop())).toEqual(["lock", "unlock"]);
     expect(t.isLocked()).toBe(false);
     expect(t.versions.length).toBe(2);
-    expect(JSON.parse(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`))).toMatchObject({ roots: [{ root: "app", source: "cloud://tfe.test/acme/app-prod", source_version: "sv-2" }] });
+    expect(migrationRecord(work, "move-app").line).toMatchObject({ roots: [{ root: "app", source: "cloud://tfe.test/acme/app-prod", source_version: "sv-2" }] });
   });
 
   it("refuses when the workspace's state version changed after the approval, and when its workspace is locked", async () => {
@@ -405,8 +423,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     approve(work, "move-app", first.records[0]!.digest, T(2));
     t.versions.pop();
     const dropped = await runMigrations(work, { ...opts, now: T(3) });
-    expect(dropped.code).toBe(4);
-    expect(dropped.records[0]!.moved).toEqual(["app"]);
+    expectMovedAfterApproval(dropped, first.records[0]!.digest, ["app"]);
     expect(w.latest("state/app.tfstate")).toBeUndefined();
     expect(t.isLocked()).toBe(false);
     // An approval is used once; the plan from sv-1 waits for its own.
@@ -446,7 +463,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     expect(first.records[0]!.roots[0]!.source).toMatchObject({ backend: "file", location: "exported/app.tfstate" });
     approve(work, "move-app", first.records[0]!.digest, T(2));
     write(work, { "exported/app.tfstate": JSON.stringify(state("L", 8, ["a"])) });
-    expect((await runMigrations(work, { ...opts, now: T(3) })).code).toBe(4);
+    expectMovedAfterApproval(await runMigrations(work, { ...opts, now: T(3) }), first.records[0]!.digest, ["app"]);
     const waits = await runMigrations(work, { ...opts, now: T(4) });
     expect(waits.code).toBe(3);
     approve(work, "move-app", waits.records[0]!.digest, T(5));

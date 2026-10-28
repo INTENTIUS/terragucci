@@ -30,6 +30,7 @@ function fakeWriters(push: { pushed: boolean; pushWarning?: string } = { pushed:
       return "sha";
     },
     pushLifecycleReport: async () => (pushes++, push),
+    requireLifecycleLedger: async () => {},
     isLifecycleLocalNote: (w) => w === "recorded locally (no remote for chant/lifecycle)",
   };
   return { writers, calls, blobs, pushes: () => pushes };

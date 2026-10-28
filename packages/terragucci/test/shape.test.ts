@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { atmosInstances, writeInstances } from "../src/atmos";
 import { main } from "../src/cli";
+import { chantExitCodes } from "../src/chant-next";
 import { resolveRepo } from "../src/config";
 import { copyBinary } from "../src/ephemeral";
 import { exportState } from "../src/export";
@@ -18,6 +19,9 @@ import { rollout } from "../src/rollout";
 import { detectShape } from "../src/shape";
 import { unlockState } from "../src/unlock";
 import { bareFrom, tmp, write } from "./helpers";
+
+// A config error exits 1 under chant's exit-code table (chant#4553, ruling C), 2 before it.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
 
 type Obj = Record<string, unknown>;
 
@@ -110,7 +114,7 @@ describe("refusals: config check and init give the same one", () => {
   it("an Atmos repo with a drift schedule: the drift pull request, the default, is refused in Atmos's words at config check and init", async () => {
     const repo = write(tmp(), { ...ATMOS_REPO, "terragucci.yml": 'forge: forgejo\nbinary: tofu\ndrift: "0 6 * * *"\n' });
     const checked = await configCheck(repo);
-    expect(checked.code).toBe(2);
+    expect(checked.code).toBe(USAGE);
     expect(checked.problems).toEqual([`config.respond.drift: ${ATMOS_DRIFT_PR}`]);
     await expect(init(repo, { atmos: stubAtmos(), dryRun: true })).rejects.toThrow(ATMOS_DRIFT_PR);
     expect(ATMOS_DRIFT_PR).not.toMatch(/synth|app that writes/);
@@ -128,7 +132,7 @@ describe("refusals: config check and init give the same one", () => {
     ] as const) {
       const repo = write(tmp(), { ...ATMOS_REPO, "terragucci.yml": `forge: forgejo\nbinary: tofu\n${yml}` });
       const checked = await configCheck(repo);
-      expect(checked.code, yml).toBe(2);
+      expect(checked.code, yml).toBe(USAGE);
       expect(checked.problems.join("\n"), yml).toContain(why);
       await expect(init(repo, { atmos: stubAtmos(), dryRun: true }), yml).rejects.toThrow(why);
     }
@@ -142,7 +146,7 @@ describe("refusals: config check and init give the same one", () => {
   it("oidc.roles in a Terragrunt repo found by its markers, with no terragrunt block, is refused at config check and init", async () => {
     const repo = write(tmp(), { ...TG_REPO, "terragucci.yml": `forge: forgejo\nbinary: tofu\n${ROLES}` });
     const checked = await configCheck(repo);
-    expect(checked.code).toBe(2);
+    expect(checked.code).toBe(USAGE);
     expect(checked.problems).toEqual([`config.oidc.roles: ${OIDC_ROLES_NOT_TERRAGRUNT}`]);
     await expect(init(repo, { terragrunt: "/nonexistent/terragrunt", dryRun: true })).rejects.toThrow(OIDC_ROLES_NOT_TERRAGRUNT);
   });

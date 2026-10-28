@@ -1,0 +1,214 @@
+  replan:
+    runs-on: ubuntu-latest
+    container:
+      image: img:1
+    if: (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
+    permissions:
+      contents: read
+      statuses: write
+      pull-requests: write
+      id-token: write
+    concurrency:
+      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}
+      cancel-in-progress: false
+    outputs:
+      go: '${{ steps.decide.outputs.go }}'
+      pr: '${{ steps.decide.outputs.pr }}'
+      sha: '${{ steps.decide.outputs.sha }}'
+      root: '${{ steps.decide.outputs.root }}'
+      report_0: '${{ steps.plan.outputs.report_0 }}'
+    steps:
+      - name: Check out the workflow's commit
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - id: decide
+        name: Read the comment and decide whether it re-plans
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+        run: |
+          set +e -uo pipefail
+          export TG_FORGE=github
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else if (cmd === "alive") {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@" ;; esac; }
+          terragucci comment --layers 'live/dev/app;live/prod/app' --out terragucci-comment.json || exit 1
+          read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
+          $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
+          EOF
+          [ -n "$TG_PR" ] || exit 0
+          [ "$TG_ROOT" = "-" ] && TG_ROOT=""
+          export TG_SHA
+          { echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"
+          [ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"
+      - if: steps.decide.outputs.go == '1'
+        name: Trade the job's OIDC token for the plan identities
+        shell: bash
+        run: |
+          export TG_FORGE=github
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
+          const [cmd, ...a] = process.argv.slice(1);
+          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
+          try {
+            if (cmd === "oidc") {
+              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
+              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
+              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
+            } else if (!tok) {
+              console.log("terragucci: no forge token, so no " + cmd);
+            } else if (cmd === "alive") {
+              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
+              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
+              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
+              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
+              const run = await r.json();
+              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
+            }
+          } catch (err) {
+            console.log("terragucci: " + cmd + " failed: " + err.message);
+            if (cmd === "oidc") process.exit(1);
+          }' -- "$@" ;; esac; }
+          export AWS_ROLE_ARN='arn:aws:iam::111111111111:role/plan-ro' AWS_ROLE_SESSION_NAME='terragucci-plan'
+          export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo 'terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); the job needs permissions: id-token: write' >&2
+            exit 1
+          fi
+          tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE" 'sts.amazonaws.com' || exit 1
+          terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
+      - if: steps.decide.outputs.go == '1'
+        name: Check out the pull request's head
+        shell: bash
+        env:
+          TG_TOKEN: '${{ github.token }}'
+          TG_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${TG_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="${TG_REF:-$GITHUB_REF}"
+          want="${TG_REF:-$GITHUB_SHA}"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/terragucci-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+      - if: steps.decide.outputs.go == '1'
+        name: Install terragrunt 0.99.0
+        run: |
+          dir="$(terragucci install terragrunt 0.99.0)"
+          echo "$dir" >> "$GITHUB_PATH"
+      - if: steps.decide.outputs.go == '1'
+        name: Restore the Terragrunt sources and providers cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .terragrunt-cache
+          key: terragucci-tg-${{ hashFiles('**/*.hcl') }}
+          restore-keys: terragucci-tg-
+      - if: steps.decide.outputs.go == '1'
+        id: plan
+        name: Re-plan the pull request on request and write the plan report
+        shell: bash
+        env:
+          TG_PR: '${{ steps.decide.outputs.pr }}'
+          TG_SHA: '${{ steps.decide.outputs.sha }}'
+          TG_ROOT: '${{ steps.decide.outputs.root }}'
+          TG_BASE: origin/${{ steps.decide.outputs.base }}
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u TG_TOKEN -u TG_MERGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN CHANT_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN TG_TOKEN TG_MERGE_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          set +e -uo pipefail
+          tg_was=" $(cd /proc && echo [0-9]*) "
+          tg_sweep() {
+            [ -f /.dockerenv ] || [ -f /run/.containerenv ] || return 0
+            local i p k v s left
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              left=""
+              for p in /proc/[0-9]*; do
+                p="${p#/proc/}"
+                [ "$p" = "$$" ] && continue
+                case "$tg_was" in *" $p "*) continue ;; esac
+                s=""
+                while read -r k v; do [ "$k" = "State:" ] && { s="$v"; break; }; done 2>/dev/null <"/proc/$p/status"
+                case "$s" in Z*|"") continue ;; esac
+                kill -KILL "$p" 2>/dev/null && left=1
+              done
+              [ -n "$left" ] || break
+            done
+          }
+          trap tg_sweep EXIT
+          chant_report="$PWD/terragucci-report"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to plan-note.md, plan-status.txt, drift-schedule.json, report.json; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on plan-note.md, plan-status.txt, drift-schedule.json, report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
+          trap 'tg_sweep; chant_handover' EXIT
+          if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
+          if [ -f "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" ]; then . "${RUNNER_TEMP:-/tmp}/terragucci-traded.env"; : >"${RUNNER_TEMP:-/tmp}/terragucci-traded.env"; fi
+          export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/app;live/prod/app' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
+          rc=$?
+          if [ ! -f terragucci-report/report.json ]; then
+            mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
+            exit 1
+          fi
+          counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
+          if [ -n "${TG_PR:-}" ]; then
+            # The first line says which roots the note covers, so an apply can mark it stale.
+            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >terragucci-report/plan-note.md
+          fi
+          if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
+          echo "success $counts" >terragucci-report/plan-status.txt
