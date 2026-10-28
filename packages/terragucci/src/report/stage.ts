@@ -56,7 +56,7 @@ import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
 import { sourceChecker, type SourceChecker } from "../sources";
 import { UNIT_REFUSED, uncheckedUnit, unitSourcesExec } from "../sources-terragrunt";
-import { describeTips, repoTips } from "../tips";
+import { catalogHosts, describeTips, repoTips } from "../tips";
 import { renamesIn } from "../tips/moved";
 import { liveEstate, rootSecrets } from "../tips/secrets";
 import type { DecideOptions } from "../decide";
@@ -2238,7 +2238,7 @@ async function finish(
     try {
       const renames = inputs.flatMap((i) => (i.plan && !i.error ? renamesIn(i.path, i.plan) : []));
       const secrets = inputs.flatMap((i) => (i.secrets?.length ? [{ root: i.path, binary: `${i.binary?.name ?? binary}${i.binary?.version ? ` ${i.binary.version}` : ""}`, secrets: i.secrets }] : []));
-      report.tips = await repoTips(repo, all, { settings, choudoufuRoots: inputs.filter((i) => basename(i.binary?.name ?? binary) === "choudoufu").map((i) => i.path), ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}), ...(secrets.length ? { secrets } : {}), env });
+      report.tips = await repoTips(repo, all, { settings, choudoufuRoots: inputs.filter((i) => basename(i.binary?.name ?? binary) === "choudoufu").map((i) => i.path), ...(parser ? { parser } : {}), destroying, planned: roots.length, ...(configDirs ? { configDirs } : {}), ...(renames.length ? { renames } : {}), ...(secrets.length ? { secrets } : {}), ...(catalogHosts(settings).length ? { releaseCatalogs: { hosts: catalogHosts(settings) } } : {}), env });
     } catch (e) {
       log(`tips: skipped, ${(e as Error).message}`);
       report.tips = [];

@@ -16,8 +16,10 @@
  *   terragucci publish [--dry-run] [--config <file>]
   terragucci verify-release <module> <version> [--config <file>]
   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]   (the modules in the registry's release catalog, read with the token Terraform would send; show: one module's versions, status and consumers)
+  terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]   (mark a published version on the release ledger and write the catalog again: deprecate gives its roots a tip, yank has modules.require refuse it, restore undoes either; the version stays installable)
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
+ *   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
@@ -145,6 +147,7 @@ import { checkMirror, describeRecipe, mirrorCode, planRecipe } from "./image-rec
 import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
 import { describeCatalog, describeComponent, findComponent, readCatalog } from "./publish/catalog";
+import { describeStatus, setReleaseStatus, STATUS_WORDS, type StatusWord } from "./publish/status";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { tradeCommand } from "./oidc-trade";
@@ -804,7 +807,17 @@ export async function main(argv: string[]): Promise<number> {
       case "modules": {
         // The release catalog publish writes beside the registry (./publish/catalog.ts), read as a consumer reads it.
         const [sub = "list", name] = args;
-        if (!["list", "show"].includes(sub) || (sub === "show" && !name)) throw new ConfigError("usage: terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]");
+        if (sub in STATUS_WORDS) {
+          // A status record on the ledger (./publish/status.ts); anyone who can publish may set one.
+          const [, module, version] = args;
+          if (!module || !version) throw new ConfigError(`usage: terragucci modules ${sub} <module> <version> ${sub === "restore" ? "[--reason <text>]" : "--reason <text>"} [--use <version>] [--config <file>]`);
+          const path = str(flags, "config") ?? findConfig(cwd);
+          const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+          const result = await setReleaseStatus(cwd, settings, { word: sub as StatusWord, module, version, ...(str(flags, "reason") ? { reason: str(flags, "reason") } : {}), ...(str(flags, "use") ? { use: str(flags, "use") } : {}) });
+          console.log(describeStatus(result));
+          return 0;
+        }
+        if (!["list", "show"].includes(sub) || (sub === "show" && !name)) throw new ConfigError("usage: terragucci modules [list | show <module> | deprecate|yank|restore <module> <version>] [--registry <url>] [--json] [--config <file>]");
         const registry = str(flags, "registry");
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = registry ? undefined : resolveRepo(path ? await loadConfig(resolve(path)) : {}).modules?.registry;

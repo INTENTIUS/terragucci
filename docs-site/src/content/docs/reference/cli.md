@@ -21,7 +21,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `publish` | publishes each changed module at a new version |
 | `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
-| `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers |
+| `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers; `deprecate`, `yank` and `restore` mark a version on the release ledger |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
@@ -306,7 +306,13 @@ Run in the repo that publishes, with `modules.attest` set. For each target in `m
 terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
 ```
 
-Reads the release catalog `publish` writes under `catalog/` beside `modules.registry`, or with `--registry` another registry's. A registry in a `dir` is read from the directory; any other through its URL, with the token Terraform would send the host (`TF_TOKEN_<host>` or a `credentials` block), so a registry behind `auth: token` answers. `list`, the default, prints one line per module with its address, newest active version and how many versions are deprecated or yanked. `show <module>` takes the module's path, its last path segment or its registry address, and prints each version newest first with its status and reason, date, commit, attestation and consumers. `--json` prints the catalog, or the one module, as the envelope's `results`.
+Reads the release catalog `publish` writes under `catalog/` beside `modules.registry`, or with `--registry` another registry's. A registry in a `dir` is read from the directory; any other through its URL, with the token Terraform would send the host (`TF_TOKEN_<host>` or a `credentials` block), so a registry behind `auth: token` answers. `list`, the default, prints one line per module: its address and newest active version, then a count of its deprecated and yanked versions. `show <module>` takes the module's path, its last path segment or its registry address, and prints each version newest first with its status and reason, date, commit, attestation and consumers. `--json` prints the catalog, or the one module, as the envelope's `results`.
+
+```bash
+terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
+```
+
+Run in the repo that publishes. The status record for the version goes on `chant/lifecycle`, and the release catalog is written again after the push. `deprecate` and `yank` need `--reason`; `--use` names a recorded version to move to. Roots on a deprecated version get a tip. `modules.require: attested` refuses a yanked one, though it stays installable until `restore` clears the mark. See [Deprecate or yank a version](/terragucci/guides/publish-modules/#deprecate-or-yank-a-version).
 
 ## rollout
 
@@ -1063,7 +1069,7 @@ The codes are the same with or without `--json`. Every command exits 2 on a usag
 | `estate` | page written | a project's index could not be read | | | |
 | `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
 | `verify-release` | every target verified | a target refused | | | |
-| `modules` | printed | the catalog could not be read, or the token was refused | no catalog yet, no registry to read, or a module the catalog does not list | | |
+| `modules` | printed, or the status recorded | the catalog could not be read, the token was refused, or the status record could not be pushed | no catalog yet, no registry to read, a module the catalog does not list, a version with no release record, or no `--reason` | | |
 | `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
 | `approve`, `override` | approved | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
