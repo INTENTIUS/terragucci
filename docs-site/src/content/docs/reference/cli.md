@@ -634,9 +634,7 @@ With `--propose` it serves four tools more, for an agent that gets a change plan
 | `propose` | pushes a local branch to `origin` without force and opens a pull request from it, or returns the one already open; refuses the default branch, `chant/lifecycle` and every `apply.branches` branch | `branch`, `title`, `body`, `base` |
 | `request_plan` | comments `/terragucci plan [root]` on an open pull request | `pull_request`, `root` |
 | `plan_result` | the pull request's head and plan note, and the `tf-plan` report of that head from the bucket: each root's status and policy verdict, the policy check, and whether each wave's gate will hold it; waits up to `wait` seconds (default 120, at most 600) for the head's plan | `pull_request`, `wait`, `project` |
-| `request_from_template` | runs [`request`](#request) with `--via mcp`: the same request, branch and pull request, with the propose footer after the request; returns `branch`, `pull_request`, `url`, `existing` and `next`. The requester is the user the forge says the token acts as, and `claimed_by` goes in the request as `claimedBy`. A sensitive input is refused, and so is every refusal of `request`, with nothing pushed | `template`, `name`, `version`, `app`, `inputs`, `claimed_by` |
-
-With a chant that has the propose tier, `--propose` runs on chant's read-only server too, and these four tools are named `terragucci:propose` and so on beside the read tools. With an older chant, terragucci serves them itself.
+| `request_from_template` | runs [`request`](#request) with `--via mcp`: the same request, branch and pull request, with the propose footer after the request; returns `branch`, `pull_request`, `url`, `existing` and `next`. The requester is the user the forge says the token acts as, and `claimed_by` goes in the request as `claimedBy`. A sensitive input is refused, and so is every refusal of `request`, with nothing pushed. It needs a chant with template requests, and on an older one it answers with an error naming it | `template`, `name`, `version`, `app`, `inputs`, `claimed_by` |
 
 Every other tool is marked read-only, and the server refuses these calls.
 
