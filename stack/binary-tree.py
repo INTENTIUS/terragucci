@@ -165,7 +165,11 @@ for cfg in [os.path.join(tree, c) for c in (a.config or ["terragucci.yml"])]:
     else:
         text = f"binary: {a.binary}\n" + text
     if a.endpoint:
-        if re.search(r"^env:\s*$", text, re.M):
+        # A tree written for the binary before (a claim that writes its change
+        # for it again) keeps one AWS_ENDPOINT_URL_S3, set to this endpoint.
+        if re.search(r"^  AWS_ENDPOINT_URL_S3:.*$", text, re.M):
+            text = re.sub(r"^  AWS_ENDPOINT_URL_S3:.*$", f"  AWS_ENDPOINT_URL_S3: {a.endpoint}", text, count=1, flags=re.M)
+        elif re.search(r"^env:\s*$", text, re.M):
             text = re.sub(r"^env:\s*\n", f"env:\n  AWS_ENDPOINT_URL_S3: {a.endpoint}\n", text, count=1, flags=re.M)
         elif re.search(r"^env:", text, re.M):
             raise SystemExit("binary-tree: terragucci.yml has an env: this script cannot add to")

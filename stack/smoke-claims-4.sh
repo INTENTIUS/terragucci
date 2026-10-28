@@ -4952,10 +4952,14 @@ claim_tips/moved() {
   # terraform_data.old to terraform_data.new and destroys nothing.
   # BREAK: respond.tips is off, so no pull request opens and rename's plan
   # still destroys terraform_data.old.
+  # Under SMOKE_BINARY the tree is written for that binary (binary-tree.py:
+  # under choudoufu the s3 backend becomes a live block and the root an
+  # estate) and every run is in its CI image.
   log() { echo "[smoke tip-moved] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/tip-moved" tree out pr base files plan rc=0
+  local work repo="$USER/tip-moved" tree out pr base files plan rc=0 IN_IMAGE
+  IN_IMAGE="$(bin_image)"
   local host="${URL/#http:\/\//http://${USER}:${TOKEN}@}/$USER/tip-moved.git"
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo tip-moved || return 1
@@ -4964,14 +4968,15 @@ claim_tips/moved() {
   printf 'terraform {\n  backend "s3" {\n    bucket         = "shop-terraform-state"\n    key            = "tip-moved/%s/app.tfstate"\n    region         = "us-east-1"\n    use_lockfile   = true\n    use_path_style = true\n  }\n}\n\nresource "terraform_data" "old" {\n  input = "tip-moved-%s"\n}\n' "$STAMP" "$STAMP" > "$tree/app/main.tf"
   printf 'binary: tofu\nforge: forgejo\nurl: http://forgejo:3000/%s\ntoken_env: TERRAGUCCI_FORGEJO_TOKEN\n' "$repo" > "$tree/terragucci.yml"
   [ -n "${BREAK:-}" ] && printf 'respond:\n  tips: off\n' >> "$tree/terragucci.yml"
-  printf 'terragucci-report*/\n.terraform/\n' > "$tree/.gitignore"
+  printf 'terragucci-report*/\n.terraform/\n.tofu-records/\n' > "$tree/.gitignore"
+  bin_prepare && bin_tree "$tree" "tip-moved-$(date +%s)" || { log "the tree was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   git -C "$tree" init -q -b main
   git -C "$tree" remote add origin "http://$USER:$TOKEN@forgejo:3000/$repo.git"
   push_tree "$tree" "$repo" main "terraform_data.old" >/dev/null || { drop_work "$work"; return 1; }
-  in_image "$tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; drop_work "$work"; return 1; }
+  in_image "$tree" sh -c "cd app && $SMOKE_BINARY init -input=false -no-color >/dev/null && $SMOKE_BINARY apply -auto-approve -input=false -no-color >/dev/null" >&2 || { log "the first apply failed"; drop_work "$work"; return 1; }
   perl -pi -e 's/"terraform_data" "old"/"terraform_data" "new"/' "$tree/app/main.tf"
   push_tree "$tree" "$repo" rename "rename terraform_data.old to new" >/dev/null || { drop_work "$work"; return 1; }
-  out="$(in_image "$tree" sh -c 'terragucci stage tf-plan --binary tofu --out terragucci-report >/dev/null 2>&1; terragucci respond tips --mode apply --report terragucci-report --branch rename' 2>&1)" || true
+  out="$(in_image "$tree" sh -c "terragucci stage tf-plan --binary $SMOKE_BINARY --out terragucci-report >/dev/null 2>&1; terragucci respond tips --mode apply --report terragucci-report --branch rename" 2>&1)" || true
   printf '%s\n' "$out" >&2
   clean_mounted "$tree"
   jq -e '[.tips[]? | select(.rule == "terragucci-moved" and .root == "app")] | length == 1' "$tree/terragucci-report/report.json" >/dev/null \
@@ -4990,7 +4995,7 @@ claim_tips/moved() {
     log "no pull request from terragucci/tip/moved-app"
   fi
   git -C "$tree" fetch -q "$host" rename && git -C "$tree" checkout -q -B rename FETCH_HEAD || { drop_work "$work"; return 1; }
-  in_image "$tree" terragucci stage tf-plan --binary tofu --out terragucci-report-merged >/dev/null 2>&1 || true
+  in_image "$tree" terragucci stage tf-plan --binary "$SMOKE_BINARY" --out terragucci-report-merged >/dev/null 2>&1 || true
   clean_mounted "$tree"
   plan="$tree/terragucci-report-merged/roots/app/plan.json"
   [ -f "$plan" ] || { log "the plan of rename wrote no plan"; drop_work "$work"; return 1; }

@@ -3162,10 +3162,13 @@ claim_respond/drift() {
   # drift response must open one pull request that writes the live timeout
   # into main.tf and adds an import block and generated config for the other
   # queue. BREAK: no drift and no import, so no pull request opens.
+  # Under SMOKE_BINARY the tree is written for that binary (binary-tree.py)
+  # and the apply and the response run in its CI image.
   log() { echo "[smoke respond-drift] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/respond-drift" sha queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=()
+  local work repo="$USER/respond-drift" sha queue="tg-drift-$STAMP" extra="tg-drift-$STAMP-extra" url xurl out pr files args=() IN_IMAGE
+  IN_IMAGE="$(bin_image)"
   if [ -n "${SMOKE_AWS:-}" ]; then queue="$SMOKE_AWS_PREFIX-$queue"; extra="$SMOKE_AWS_PREFIX-$extra"; fi
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   fresh_repo respond-drift || return 1
@@ -3174,8 +3177,9 @@ claim_respond/drift() {
   visibility_timeout_seconds = 30
 }")"
   [ -z "${SMOKE_AWS:-}" ] || smoke_aws_overlay_example "$work/tree" || return 1
+  bin_prepare && bin_tree "$work/tree" "respond-drift-$(date +%s)" || { log "the tree was not written for $SMOKE_BINARY"; return 1; }
   push_tree "$work/tree" "$repo" main "a queue with a literal timeout" >/dev/null || return 1
-  in_image "$work/tree" sh -c 'cd app && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; return 1; }
+  in_image "$work/tree" sh -c "cd app && $SMOKE_BINARY init -input=false -no-color >/dev/null && $SMOKE_BINARY apply -auto-approve -input=false -no-color >/dev/null" >&2 || { log "the first apply failed"; return 1; }
   if [ -z "${BREAK:-}" ] && [ -n "${SMOKE_AWS:-}" ]; then
     url="$(smoke_aws_queue_url "$queue")" || { log "$queue is not in AWS"; return 1; }
     sa sqs set-queue-attributes --queue-url "$url" --attributes VisibilityTimeout=45 >/dev/null || return 1
@@ -4641,8 +4645,8 @@ claim_forge/check() {
       forge-check.ts '  if (!expectedLike) return false;' '  if (!expectedLike) return likeMatch(v.value, expected);' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
-  fimg="$(awk '/^  floci:/ { f = 1 } f && /image:/ { print $2; exit }' "$HERE/docker-compose.yml")"
-  [ -n "$fimg" ] || { log "no floci image in docker-compose.yml"; drop_work "$work"; return 1; }
+  fimg="$(tg_forge_image floci)"
+  [ -n "$fimg" ] || { log "no floci image in ${TG_FORGE_COMPOSE:-the forge compose file}"; drop_work "$work"; return 1; }
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker run -d --name "$name" --label "terragucci.run-copied=$$" -p 127.0.0.1::4566 \
     -e FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED=true "$fimg" >/dev/null || { log "could not start floci with IAM enforcement"; drop_work "$work"; return 1; }

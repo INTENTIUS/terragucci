@@ -31,7 +31,9 @@ if docker network inspect "$TG_NETWORK" >/dev/null 2>&1; then
   done
 fi
 
-docker compose -f "$HERE/docker-compose.yml" --project-name "$P" \
+# Both files: floci, Forgejo and forgejo-runner are in the harness's or in
+# forge-fallback.yml (instance.sh), under the same names either way.
+tg_compose \
   --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability --profile observability-lite --profile blob --profile decide --profile demo \
   down --remove-orphans
 

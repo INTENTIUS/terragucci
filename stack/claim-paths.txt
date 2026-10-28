@@ -174,13 +174,17 @@ stack/mounted.sh                          ALL
 stack/locks.sh                            ALL
 stack/bootstrap.sh                        ALL
 stack/docker-compose.yml                  ALL
+stack/forge-fallback.yml                  ALL
+stack/instance.sh                         ALL
+stack/harness/compose/                    ALL
+stack/harness/stack-spec.ts               ALL
 stack/example.sh                          ALL
 stack/mock-github/                        drift/github
 stack/fixtures/cdktn                      affected/cdktn apply/cdktn ephemeral/cdktn generate/cdktn init/cdktn-refuse init/cdktn-synth linked/cdktn lock/cdktn migrate/cdktn tips/cdktn
 stack/fixtures/affected-outside-roots     affected/outside-roots
 stack/fixtures/cdf-race                   drift/choudoufu choudoufu/*
 stack/fixtures/terraform-lock             boot/* report/tofu drift/tofu
-stack/binary-tree.py                      boot/* waves/tofu pr-apply/tofu policy/wave notify/webhook report/tofu drift/tofu cost/gate steps/gate refuse/approve-plan state/unlock drift/choudoufu estate/inventory estate/history estate/graph audit/tofu
+stack/binary-tree.py                      boot/* waves/tofu pr-apply/tofu policy/wave notify/webhook report/tofu drift/tofu cost/gate steps/gate refuse/approve-plan state/unlock drift/choudoufu estate/inventory estate/history estate/graph audit/tofu tips/moved respond/drift report/sensitive
 stack/fixtures/atmos-two-stacks          affected/atmos apply/atmos-workspace check/atmos init/atmos-refuse init/atmos-version linked/atmos lock/atmos oidc/atmos-roles waves/atmos
 stack/fixtures/tg-stack                  affected/terragrunt-stack check/terragrunt-stack drift/terragrunt-stack
 stack/fixtures/atmos-reads               linked/atmos

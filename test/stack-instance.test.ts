@@ -50,14 +50,19 @@ describe("stack instances", () => {
   });
 
   it("names every container, volume and the network after the project, but the shared job cache", () => {
-    const compose = readFileSync(join(stack, "docker-compose.yml"), "utf8");
-    const names = [...compose.matchAll(/^\s+(?:container_name|name): (.+)$/gm)].map((m) => m[1]);
-    expect(names.length).toBeGreaterThan(20);
-    for (const n of names) {
-      if (n === "terragucci-job-cache") continue;
-      expect(n).toMatch(/^\$\{TG_PROJECT:-terragucci\}/);
+    // forge-fallback.yml holds floci, Forgejo and forgejo-runner on a chant
+    // without the e2e harness (terragucci#1295); the harness's own are named
+    // after the project when stack/harness/harness.ts builds them.
+    for (const file of ["docker-compose.yml", "forge-fallback.yml"]) {
+      const compose = readFileSync(join(stack, file), "utf8");
+      const names = [...compose.matchAll(/^\s+(?:container_name|name): (.+)$/gm)].map((m) => m[1]);
+      expect(names.length, file).toBeGreaterThan(file === "docker-compose.yml" ? 20 : 4);
+      for (const n of names) {
+        if (n === "terragucci-job-cache") continue;
+        expect(n, file).toMatch(/^\$\{TG_PROJECT:-terragucci\}/);
+      }
+      expect(compose, file).toMatch(/^name: \$\{TG_PROJECT:-terragucci\}$/m);
     }
-    expect(compose).toMatch(/^name: \$\{TG_PROJECT:-terragucci\}$/m);
   });
 
   it("leaves no script on the shared network or project by a literal name", () => {

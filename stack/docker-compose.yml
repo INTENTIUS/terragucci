@@ -6,6 +6,13 @@
 #   stack/validate.sh forgejo apply
 #   stack/down.sh                  remove every container, network and volume but the job cache
 #
+# floci, Forgejo and forgejo-runner are not in this file. They come from
+# chant's e2e harness (terragucci#1295), built by stack/harness/harness.ts
+# under the same keys, names and ports, or from stack/forge-fallback.yml on a
+# chant without the harness. stack/instance.sh's tg_compose runs that file and
+# this one as one project; a profile below that names floci or Forgejo gets
+# them from there.
+#
 # Two rules every service here follows, learned on choudoufu's GitLab run:
 #
 #   * A forge's public URL is its service name (http://forgejo:3000), never
@@ -40,14 +47,11 @@ networks:
     name: ${TG_PROJECT:-terragucci}
 
 volumes:
-  forgejo-data:
-    name: ${TG_PROJECT:-terragucci}-forgejo-data
-  forgejo-runner-data:
-    name: ${TG_PROJECT:-terragucci}-forgejo-runner-data
   # Mounted at /cache in every job container forgejo-runner spawns (the
   # runner's container.options in bootstrap.sh): the OpenTofu binary and the
   # provider plugin cache, so a run does not download the AWS provider again.
-  # The runner service mounts it too, only so compose creates and removes it.
+  # The forgejo-runner service mounts it too, only so compose creates and
+  # removes it.
   job-cache:
     name: terragucci-job-cache
   gitlab-runner-config:
@@ -64,27 +68,6 @@ volumes:
     name: ${TG_PROJECT:-terragucci}-demo-pgdata
 
 services:
-  # ── aws ──────────────────────────────────────────────────────────────────
-  # The patched floci from the lex00/floci fork. Upstream 2.0.1 never returns a
-  # role's permissions boundary on read; the fork does (fix/iam-permissions-boundary).
-  # Pinned by the index digest of ghcr.io/lex00/floci:b491869 (branch
-  # fix/cfn-change-set-changes) as resolved on 2026-10-18, which also describes
-  # a change set's changes (chant 0.124.29's plan counts, chant#4084) and keeps
-  # SNS tags; the index carries linux/amd64 and linux/arm64.
-  floci:
-    image: ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d
-    container_name: ${TG_PROJECT:-terragucci}-floci
-    profiles: [aws, forgejo, github, gitlab, fountain]
-    environment:
-      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: ${TERRAGUCCI_FLOCI_IAM_ENFORCEMENT:-false}
-    ports:
-      - "${TERRAGUCCI_FLOCI_PORT:-4580}:4566"
-    networks:
-      default:
-        # The AWS provider reaches S3 Control at <account-id>.<endpoint host>,
-        # and floci's account id is twelve zeros.
-        aliases: [floci, 000000000000.floci]
-
   # ── demo ─────────────────────────────────────────────────────────────────
   # app's database in the looping demo (stack/demo.sh): SQL Yodeler applies
   # example-demo/app/schema to database demo from app's wave job. Jobs reach it
@@ -139,71 +122,6 @@ services:
     networks:
       default:
         aliases: [demo-records, demo-live-records.demo-records, demo-choudoufu-compose-records.demo-records, demo-terragrunt-choudoufu-records.demo-records, demo-atmos-choudoufu-records.demo-records, demo-atmos-choudoufu-state.demo-records, demo-terragrunt-choudoufu-state.demo-records, 000000000000.demo-records]
-
-  # ── forgejo ──────────────────────────────────────────────────────────────
-  # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
-  # admin and its token afterwards (the forgejo-warden e2e pattern).
-  # Forgejo 15 and later, with runner 12.5 and later, serves Actions OIDC
-  # tokens to a job that sets enable-openid-connect; the signing key is
-  # generated under /data on first use, so no setting is needed here.
-  forgejo:
-    image: codeberg.org/forgejo/forgejo:16.0.5
-    container_name: ${TG_PROJECT:-terragucci}-forgejo
-    profiles: [forgejo]
-    environment:
-      FORGEJO__database__DB_TYPE: sqlite3
-      FORGEJO__security__INSTALL_LOCK: "true"
-      FORGEJO__server__DOMAIN: forgejo
-      FORGEJO__server__ROOT_URL: http://forgejo:3000/
-      FORGEJO__server__HTTP_PORT: "3000"
-      FORGEJO__server__SSH_PORT: "0"
-      FORGEJO__server__DISABLE_SSH: "true"
-      FORGEJO__service__DISABLE_REGISTRATION: "true"
-      FORGEJO__actions__ENABLED: "true"
-      FORGEJO__repository__DEFAULT_BRANCH: main
-      FORGEJO__log__LEVEL: warn
-    ports:
-      - "${TERRAGUCCI_FORGEJO_PORT:-3300}:3000"
-    volumes:
-      - forgejo-data:/data
-    networks:
-      default:
-        aliases: [forgejo]
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"]
-      interval: 3s
-      timeout: 3s
-      retries: 40
-
-  # The docker executor: it talks to the host's Docker through the socket and
-  # starts one job container per job, on the terragucci network (set as
-  # container.network in the config bootstrap.sh writes). It waits for that
-  # config, because the runner's credentials come from Forgejo after it boots.
-  # Root, so it can use the socket Docker Desktop mounts as root:root.
-  forgejo-runner:
-    image: data.forgejo.org/forgejo/runner:13.2.0
-    container_name: ${TG_PROJECT:-terragucci}-forgejo-runner
-    profiles: [forgejo]
-    user: "0:0"
-    depends_on:
-      forgejo:
-        condition: service_healthy
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - forgejo-runner-data:/data
-      - job-cache:/cache
-    working_dir: /data
-    command:
-      - sh
-      - -c
-      - |
-        echo "waiting for /data/config.yml (written by stack/bootstrap.sh)"
-        while [ ! -s /data/config.yml ]; do sleep 1; done
-        exec forgejo-runner daemon -c /data/config.yml
-    restart: unless-stopped
-    networks:
-      default:
-        aliases: [forgejo-runner]
 
   # ── registry ─────────────────────────────────────────────────────────────
   # A plain OCI registry with TLS, the shape OpenTofu's oci:// sources need.

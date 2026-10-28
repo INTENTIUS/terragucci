@@ -1,0 +1,10 @@
+backends:
+  - root: app
+    from:
+      backend: s3
+      config:
+        bucket: hs-tg-migrate-state
+        key: app.tfstate
+        region: us-east-1
+        use_lockfile: true
+        use_path_style: true
