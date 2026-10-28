@@ -8,10 +8,10 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 
 | Profile | Services | State |
 |---|---|---|
-| `aws` | floci | validated: starts, answers S3 |
-| `forgejo` | floci, Forgejo, forgejo-runner (docker executor) | validated: the `check` and `apply/tofu` claims pass; `check/terragrunt`, `apply/terragrunt`, `check/choudoufu` and `apply/choudoufu` wait for their first record |
-| `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply` and `reconcile` pass; `check/terragrunt`, `apply/terragrunt`, `check/choudoufu` and `apply/choudoufu` wait for their first record |
-| `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply` and `reconcile` pass; `check/terragrunt`, `apply/terragrunt`, `check/choudoufu`, `apply/choudoufu` and `approval/gate` wait for their first record |
+| `aws` | floci (from chant's e2e harness, below) | validated: starts, answers S3 |
+| `forgejo` | floci, Forgejo, forgejo-runner (docker executor), from chant's e2e harness | validated: `check`, `apply`, `check/terragrunt`, `apply/terragrunt`, `check/choudoufu` and `apply/choudoufu` pass (`docs-site/src/data/validation.json`) |
+| `github` | floci, a mock GitHub API, `act` on the host | validated: `check`, `apply`, `reconcile`, `check/terragrunt`, `apply/terragrunt`, `check/choudoufu` and `apply/choudoufu` pass |
+| `gitlab` | floci, GitLab CE, gitlab-runner (docker executor) | validated: `check`, `apply`, `reconcile`, `check/terragrunt`, `apply/terragrunt`, `check/choudoufu` and `apply/choudoufu` pass; `approval/gate` waits for its first record |
 | `fountain` | floci, fountain 0.21.0, Postgres, a fountain runner built for the steward | runs the example's apply on a steward (`just example up --fountain`); the `apply/steward` smoke claim checks it |
 | `demo` | Postgres 18.6 (`demo-postgres`), app's database in the looping demo | started by `just demo up`; SQL Yodeler applies `example-demo/app/schema` to it from app's wave |
 | `observability` | an OpenTelemetry collector, Prometheus, Tempo and Grafana with terragucci's dashboards (`stack/observability/`) | started by the `traces`, `metrics` and `dash-*` claims when it is not up; Grafana answers on `localhost:3310`; `stack/down.sh` removes it |
@@ -21,6 +21,24 @@ The forgejo claims run a hand-written workflow (`fixtures/s3-bucket/.forgejo/wor
 - `github`: GitHub has no self-hostable edition. `mock-github/server.mjs` is a small stateful GitHub: it creates repos, serves their git over smart HTTP (`git http-backend`), opens, lists and merges pull requests, and stores issue comments. The runner is `act` on the host, which runs the repo's real workflow file with its job containers on the `terragucci` network. A push is a git push to the mock, and a run is `act push` on a fresh clone of the pushed commit with a push event for that branch, so `github.ref` and the default-branch condition behave as on GitHub. act checks out from the clone and fetches the workflow's other actions, `actions/upload-artifact` and (in a Terragrunt repo) `actions/cache`, from github.com, as a hosted runner does; the uploads go to act's own artifact server for the length of the run. `act` has to be installed (`brew install act`).
 - `gitlab`: GitLab CE 17.11 and gitlab-runner 17.11 with the docker executor, taken from gitlab-warden's e2e stack. The GitLab image is linux/amd64 only, so on Apple silicon it runs under emulation and cold boot takes a few minutes. Speed does not matter here, and the runner and the job containers are native. `bootstrap.sh` runs `gitlab-boot.sh`, which mints a root token with `gitlab-rails runner`, creates an instance runner over `POST /api/v4/user/runners` and registers it with `--docker-network-mode terragucci`. The GitLab lab (below) is the same pair on a stack of its own.
 - `fountain`: laid out after waterpark's `compose/`. `bootstrap.sh fountain` builds `terragucci-fountain-steward:local` (`fountain/Dockerfile`: the tofu CI image, the fountain 0.21.0 CLI and the chant terragucci pins, with its fountain lexicon), registers the admin account, mints an API key and starts `fountain runner` with it. A sandbox is a directory in that container and inherits its floci credentials. `steward.sh` does the rest for a repo: it declares the steward on fountain through `POST /api/apply` (an Environment whose setup makes the sandbox a checkout of the repo, an Agent on the `acp` runtime running `chant acp`, and a Teammate so its turns share one thread), stores the fountain key as the repo's `FOUNTAIN_TOKEN` secret, and rewrites a pushed tree so the pipeline's wave jobs become one `apply` job running `chant run tf-apply --on fountain` in the steward image, with a `tf-apply` Op that runs the same `terragucci stage tf-apply` waves on the steward. fountain points a turn's working directory at the sandbox itself, which is why the sandbox, not a subdirectory, is the checkout.
+
+## On chant's e2e harness
+
+floci, Forgejo and forgejo-runner come from chant's e2e harness (`@intentius/chant/e2e-harness`, chant#4587; terragucci#1295), the one stack plywood and sql-yodeler run their scenarios on too. `stack/harness/compose/` is a chant docker-lexicon project that takes the three services from the harness under this stack's compose keys, container names, volumes, ports and profiles; `stack/harness/harness.ts compose` builds it into the instance's state directory (`stack/.state/harness-compose.yml`), and `instance.sh`'s `tg_compose` runs that file and `docker-compose.yml` as one project. floci is the harness's pin (`pins.ts` in chant), so it moves when chant's does. The ports bind to 127.0.0.1; `TERRAGUCCI_BIND=all` publishes them on every interface, and `TERRAGUCCI_FLOCI_IMAGE` names another floci build.
+
+On a chant without the harness (0.124.55, the pin, has none), `stack/forge-fallback.yml` holds the three services as the stack ran them before, and a line on stderr names the chant the harness needs. `TG_HARNESS=fallback` picks the fallback on any chant, and `TG_HARNESS=harness` refuses to start without the harness.
+
+`smoke.sh` keeps its protocol of one claim, a plain run that must pass, a `BREAK=1` run that must be caught and one row. On a chant with `chant e2e safe-run`, the harness's no-real-cloud wrapper, every run the runner starts goes through it, and a run whose output shows a public cloud answering fails. `--record` then also writes each claim's row in the harness's row schema (`e2e-claim-row/v1`) on a ledger in `stack/.state/claims-ledger` and renders `docs-site/src/data/e2e-claims.json` from it, the file choudoufu's product-scenario proofs cite; `smoke.json` stays the page's scoreboard. Without the wrapper the runs and `smoke.json` are as before and no harness row is written.
+
+The scenarios that span pull requests are harness scenarios (`e2e-scenario/v1`) under `stack/harness/scenarios/`, each with its overlays and a line in `index.json` naming its binary, what it needs started first and the engine claims its row is cited for:
+
+| Scenario | Tree | Claim |
+|---|---|---|
+| `tg-estate-overlap` | `example-demo-choudoufu-fanout/` | two pushes that change different resources of one estate apply at once, and the next push takes over the row a killed wave left held |
+| `tg-migrate` | `harness/scenarios/tg-migrate/base/` (the choudoufu estate fixture beside a stock root on s3 state) | the stock root is adopted into an estate under an approval of its digest, and live-check refuses a root that ignores its markers |
+| `tg-derived-store` | `harness/scenarios/tg-derived-store/base/` | a root that keeps its backend block records into the backend's bucket, with no `record_store` written |
+
+chant's driver reads a plan or apply step from `pr-plan.json` and `pr-apply.json`, which terragucci's pipeline does not write. These scenarios open pull requests, merge them, kill jobs and run out-of-band checks (`stack/harness/check.sh`) whose exit codes are their outcomes. `stack/harness/harness.ts run <id>` makes the scenario's repo (`seed.sh`), plays the plain arm and the BREAK arm with the harness's driver, and scans the runner's log; `--record` writes the row when the scan is clean. `harness.ts lint` checks every scenario, with chant's lint when chant has it.
 
 ## The example and the smoke claims
 
@@ -120,7 +138,7 @@ The compose project is `terragucci`, the network is `terragucci`, and every cont
 
 ### The capture stack
 
-`TG_STACK=capture` selects a second instance from the same `docker-compose.yml` (`instance.sh`): compose project, network and name prefix `terragucci-capture`, state in `stack/.state-capture/`, and locks in the main checkout's `stack/.state-capture/locks`, apart from the claims' locks. `just tutorial-capture` and `just capture` run there, so a capture never holds the claims' `stack!` lock. Its host ports are the shared stack's plus 100:
+`TG_STACK=capture` selects a second instance from the same compose files (`instance.sh`): compose project, network and name prefix `terragucci-capture`, state in `stack/.state-capture/`, and locks in the main checkout's `stack/.state-capture/locks`, apart from the claims' locks. `just tutorial-capture` and `just capture` run there, so a capture never holds the claims' `stack!` lock. Its host ports are the shared stack's plus 100:
 
 | Service | Shared | Capture |
 |---|---|---|
@@ -197,8 +215,8 @@ The `lock/wait-span` claim needs choudoufu, because OpenTofu sends no span for a
 
 | Piece | Pin |
 |---|---|
-| floci | `ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d` (`b491869`, branch `fix/cfn-change-set-changes`, resolved 2026-10-18, amd64 and arm64: a role's permissions boundary on read, a change set's changes, and SNS tags) |
-| Forgejo | `codeberg.org/forgejo/forgejo:16.0.5` |
+| floci | the e2e harness's pin, chant's `packages/core/src/e2e-harness/pins.ts` (`FLOCI_IMAGE`, `sha256:5ec92ae8…` on chant's integration branch); `forge-fallback.yml` keeps `ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d` (`b491869`, branch `fix/cfn-change-set-changes`, resolved 2026-10-18, amd64 and arm64: a role's permissions boundary on read, a change set's changes, and SNS tags) |
+| Forgejo | `codeberg.org/forgejo/forgejo:16.0.5`, the harness's and the fallback's |
 | forgejo-runner | `data.forgejo.org/forgejo/runner:13.2.0` |
 | job image | `public.ecr.aws/docker/library/node:22-bookworm` |
 | OpenTofu | 1.13.1, in the fixture workflow's `TOFU_VERSION` |

@@ -35,7 +35,8 @@ PROFILE="${1:-forgejo}"
 # shellcheck source=instance.sh
 . "$HERE/instance.sh"
 STATE="$TG_STATE"
-COMPOSE=(docker compose -f "$HERE/docker-compose.yml" --project-name "$TG_PROJECT")
+# floci, Forgejo and forgejo-runner come from the harness or forge-fallback.yml (instance.sh).
+COMPOSE=(tg_compose)
 
 FORGEJO_PORT="${TERRAGUCCI_FORGEJO_PORT:-3300}"
 FLOCI_PORT="${TERRAGUCCI_FLOCI_PORT:-4580}"

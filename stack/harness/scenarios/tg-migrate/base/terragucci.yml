@@ -1,0 +1,12 @@
+# tg-migrate (terragucci#1295): the choudoufu estate fixture (infra, as in
+# stack/fixtures/choudoufu-estate) beside a stock root on s3 state (app), all
+# run by choudoufu. The adopt pull request takes app into an estate.
+forge: forgejo
+binary: choudoufu
+url: http://forgejo:3000/terragucci-admin/hs-tg-migrate
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+gate: never
+env:
+  # choudoufu addresses a record store bucket virtual-hosted; the demo's
+  # records proxy forwards demo-live-records path-style to floci.
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566

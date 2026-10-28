@@ -1,0 +1,84 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-derived-store",
+  "product": "terragucci",
+  "claim": "choudoufu/derived-store",
+  "title": "A root that keeps its backend block records into the backend's bucket, with no record_store written",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-derived-store",
+  "limits": {
+    "out-of-band": 900
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base applied app",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "change",
+      "do": "open",
+      "branch": "change",
+      "overlay": "change",
+      "title": "app: a second queue"
+    },
+    {
+      "id": "merge-change",
+      "do": "merge",
+      "pull": "change"
+    },
+    {
+      "id": "applied",
+      "do": "out-of-band",
+      "label": "the merge applied",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "derived",
+      "do": "out-of-band",
+      "label": "both queues' records are in the backend's bucket under the estate",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "demo-live-records",
+        "tofu-records/hs-derived-app/aws_sqs_queue/",
+        "[.[].object.attrs.name // empty] | (index(\"hs-derived-jobs\") != null) and (index(\"hs-derived-extra\") != null)"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the backend block is gone, so no store is derived and nothing reaches the bucket"
+  }
+}

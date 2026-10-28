@@ -871,7 +871,7 @@ if [ "$CHANGED" = 1 ] || [ ! -f "$DATA/manifest.json" ]; then
     --arg tofu "$(sed -n 's/^  TOFU_VERSION: "\(.*\)"/\1/p' "$ROOT/example/.forgejo/workflows/terragucci.yml")" \
     --arg provider "$(sed -n 's/^ *version = "\([0-9.]*\)"/\1/p' "$ROOT/example/envs/dev/orders/main.tf" | head -1)" \
     --arg forgejo "$(curl -fsS "$TERRAGUCCI_FORGEJO_URL/api/v1/version" | jq -r .version | cut -d+ -f1)" \
-    --arg floci "$(sed -n 's#.*image: ghcr.io/lex00/floci@sha256:\(.\{12\}\).*#\1#p' "$HERE/docker-compose.yml")" \
+    --arg floci "$(tg_forge_image floci | sed -n 's#.*@sha256:\(.\{12\}\).*#\1#p')" \
     '{captured: $at, commit: $commit, tofu: $tofu, aws_provider: $provider, forgejo: $forgejo, floci: $floci}' \
     > "$DATA/manifest.json"
   log "wrote manifest.json"

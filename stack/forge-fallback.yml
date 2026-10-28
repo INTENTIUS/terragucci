@@ -1,0 +1,110 @@
+# floci, Forgejo and forgejo-runner as the validation stack ran them before
+# chant's e2e harness (terragucci#1295). stack/instance.sh's tg_compose uses
+# this file in place of the harness's, which stack/harness/harness.ts builds
+# into the instance's state directory, when the installed chant has no
+# @intentius/chant/e2e-harness, or under TG_HARNESS=fallback. It is always
+# run together with stack/docker-compose.yml, which holds the job cache volume
+# and every other service, as one compose project on one network.
+#
+# The harness's services carry the same compose keys, container names, ports,
+# volumes and profiles, so a stack started from one file is stopped by the
+# other. Two things differ: the harness binds the ports to 127.0.0.1, and its
+# floci is the harness's pin (chant packages/core/src/e2e-harness/pins.ts).
+name: ${TG_PROJECT:-terragucci}
+
+networks:
+  default:
+    name: ${TG_PROJECT:-terragucci}
+
+volumes:
+  forgejo-data:
+    name: ${TG_PROJECT:-terragucci}-forgejo-data
+  forgejo-runner-data:
+    name: ${TG_PROJECT:-terragucci}-forgejo-runner-data
+
+services:
+  # ── aws ──────────────────────────────────────────────────────────────────
+  # The patched floci from the lex00/floci fork. Upstream 2.0.1 never returns a
+  # role's permissions boundary on read; the fork does (fix/iam-permissions-boundary).
+  # Pinned by the index digest of ghcr.io/lex00/floci:b491869 (branch
+  # fix/cfn-change-set-changes) as resolved on 2026-10-18, which also describes
+  # a change set's changes (chant 0.124.29's plan counts, chant#4084) and keeps
+  # SNS tags; the index carries linux/amd64 and linux/arm64.
+  floci:
+    image: ghcr.io/lex00/floci@sha256:63d8f1ed5ef595d7356c6f76318f3d76bc31ce3250cdf2dd8d14bd4d59604b8d
+    container_name: ${TG_PROJECT:-terragucci}-floci
+    profiles: [aws, forgejo, github, gitlab, fountain]
+    environment:
+      FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED: ${TERRAGUCCI_FLOCI_IAM_ENFORCEMENT:-false}
+    ports:
+      - "${TERRAGUCCI_FLOCI_PORT:-4580}:4566"
+    networks:
+      default:
+        # The AWS provider reaches S3 Control at <account-id>.<endpoint host>,
+        # and floci's account id is twelve zeros.
+        aliases: [floci, 000000000000.floci]
+
+  # ── forgejo ──────────────────────────────────────────────────────────────
+  # sqlite and INSTALL_LOCK skip the web installer; bootstrap.sh mints the
+  # admin and its token afterwards (the forgejo-warden e2e pattern).
+  # Forgejo 15 and later, with runner 12.5 and later, serves Actions OIDC
+  # tokens to a job that sets enable-openid-connect; the signing key is
+  # generated under /data on first use, so no setting is needed here.
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    container_name: ${TG_PROJECT:-terragucci}-forgejo
+    profiles: [forgejo]
+    environment:
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__DOMAIN: forgejo
+      FORGEJO__server__ROOT_URL: http://forgejo:3000/
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__SSH_PORT: "0"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__actions__ENABLED: "true"
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__log__LEVEL: warn
+    ports:
+      - "${TERRAGUCCI_FORGEJO_PORT:-3300}:3000"
+    volumes:
+      - forgejo-data:/data
+    networks:
+      default:
+        aliases: [forgejo]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/version"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  # The docker executor: it talks to the host's Docker through the socket and
+  # starts one job container per job, on the terragucci network (set as
+  # container.network in the config bootstrap.sh writes). It waits for that
+  # config, because the runner's credentials come from Forgejo after it boots.
+  # Root, so it can use the socket Docker Desktop mounts as root:root.
+  forgejo-runner:
+    image: data.forgejo.org/forgejo/runner:13.2.0
+    container_name: ${TG_PROJECT:-terragucci}-forgejo-runner
+    profiles: [forgejo]
+    user: "0:0"
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - forgejo-runner-data:/data
+      - job-cache:/cache
+    working_dir: /data
+    command:
+      - sh
+      - -c
+      - |
+        echo "waiting for /data/config.yml (written by stack/bootstrap.sh)"
+        while [ ! -s /data/config.yml ]; do sleep 1; done
+        exec forgejo-runner daemon -c /data/config.yml
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [forgejo-runner]

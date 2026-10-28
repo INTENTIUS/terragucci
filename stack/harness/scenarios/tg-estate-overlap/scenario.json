@@ -1,0 +1,189 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-estate-overlap",
+  "product": "terragucci",
+  "claim": "choudoufu/rows-overlap",
+  "title": "Two pushes that change different resources of one estate apply at once, and a killed wave's held row is taken over by the next",
+  "tree": {
+    "base": "../../../../example-demo-choudoufu-fanout",
+    "overlays": "overlays"
+  },
+  "env": "local",
+  "reportUrl": "s3://demo-reports/demo/hs-tg-estate-overlap",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base's first wave applied every estate",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "a",
+      "do": "open",
+      "branch": "overlap-a",
+      "overlay": "overlap-a",
+      "title": "app-01: queue a"
+    },
+    {
+      "id": "b",
+      "do": "open-concurrent",
+      "branch": "overlap-b",
+      "overlay": "overlap-b",
+      "title": "app-01: queue b"
+    },
+    {
+      "id": "merge-a",
+      "do": "merge",
+      "pull": "a"
+    },
+    {
+      "id": "merge-b",
+      "do": "merge",
+      "pull": "b"
+    },
+    {
+      "id": "both-applied",
+      "do": "out-of-band",
+      "label": "both pushes' waves applied, at the same time",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "both-recorded",
+      "do": "out-of-band",
+      "label": "app-01's estate holds a record of each queue",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "demo-live-records",
+        "tofu-records/fo-app-01/aws_sqs_queue/",
+        "[.[].object.attrs.name // empty] | (index(\"hs-overlap-app-01-a\") != null) and (index(\"hs-overlap-app-01-b\") != null)"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "no-row-held",
+      "do": "out-of-band",
+      "label": "no row of the estate is left held on chant/lifecycle",
+      "command": [
+        "stack/harness/check.sh",
+        "ledger-file",
+        "_locks/apply-rows.json",
+        "(.rows // {}) | length == 0"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "takeover",
+      "do": "open",
+      "branch": "takeover",
+      "overlay": "takeover",
+      "title": "app-01: the queue whose wave is killed"
+    },
+    {
+      "id": "merge-takeover",
+      "do": "merge",
+      "pull": "takeover"
+    },
+    {
+      "id": "apply-running",
+      "do": "out-of-band",
+      "label": "the merge's apply job is running",
+      "command": [
+        "stack/harness/check.sh",
+        "job-running",
+        "apply"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "kill",
+      "do": "kill-job",
+      "match": "apply"
+    },
+    {
+      "id": "next",
+      "do": "open",
+      "branch": "next",
+      "overlay": "next",
+      "title": "app-01: the push after the killed wave"
+    },
+    {
+      "id": "merge-next",
+      "do": "merge",
+      "pull": "next"
+    },
+    {
+      "id": "taken-over",
+      "do": "out-of-band",
+      "label": "the next push's wave applied, the killed queue with it",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "takeover-recorded",
+      "do": "out-of-band",
+      "label": "both queues have records, so the held row was taken over",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "demo-live-records",
+        "tofu-records/fo-app-01/aws_sqs_queue/",
+        "[.[].object.attrs.name // empty] | (index(\"hs-overlap-app-01-takeover\") != null) and (index(\"hs-overlap-app-01-next\") != null)"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "every pull request also changes one shared queue, so a and b race for one record and one wave fails"
+  }
+}

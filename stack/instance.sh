@@ -52,6 +52,57 @@ esac
 TG_NETWORK="$TG_PROJECT"
 export TG_STACK TG_PROJECT TG_NETWORK TG_STATE
 
+# floci, Forgejo and forgejo-runner come from chant's e2e harness
+# (terragucci#1295): stack/harness/harness.ts builds them under this
+# instance's project into $TG_STATE/harness-compose.yml. On a chant without
+# the harness, stack/forge-fallback.yml, the services as the stack ran them
+# before, stands in, and a line on stderr says so. TG_HARNESS=fallback picks
+# the fallback; TG_HARNESS=harness refuses to run without the harness.
+# Worked out once per run and instance: TG_FORGE_COMPOSE is exported to
+# every child, with TG_FORGE_COMPOSE_FOR naming the project it was built for.
+tg_forge_compose() { # sets TG_FORGE_COMPOSE, the compose file that holds floci, Forgejo and forgejo-runner
+  if [ -z "${TG_FORGE_COMPOSE:-}" ] || [ ! -f "$TG_FORGE_COMPOSE" ] || [ "${TG_FORGE_COMPOSE_FOR:-}" != "$TG_PROJECT" ]; then
+    local out="$TG_STATE/harness-compose.yml" rc=0 tsx="$TG_INSTANCE_HERE/../node_modules/.bin/tsx"
+    case "${TG_HARNESS:-auto}" in
+      fallback) TG_FORGE_COMPOSE="$TG_INSTANCE_HERE/forge-fallback.yml" ;;
+      auto|harness)
+        mkdir -p "$TG_STATE"
+        if [ -x "$tsx" ]; then
+          TG_PROJECT="$TG_PROJECT" "$tsx" "$TG_INSTANCE_HERE/harness/harness.ts" compose --out "$out" >&2 || rc=$?
+        else
+          rc=3; echo "[stack] no tsx in node_modules (npm ci first), so the chant harness cannot be built" >&2
+        fi
+        if [ "$rc" = 0 ]; then
+          TG_FORGE_COMPOSE="$out"
+        elif [ "$rc" = 3 ] && [ "${TG_HARNESS:-auto}" = auto ]; then
+          echo "[stack] using stack/forge-fallback.yml for floci, Forgejo and forgejo-runner" >&2
+          TG_FORGE_COMPOSE="$TG_INSTANCE_HERE/forge-fallback.yml"
+        else
+          echo "[stack] TG_HARNESS=${TG_HARNESS:-auto}: the chant harness's compose was not built (exit $rc)" >&2
+          return 1
+        fi
+        ;;
+      *) echo "TG_HARNESS is '$TG_HARNESS'; it is auto (the default), harness or fallback" >&2; return 1 ;;
+    esac
+    TG_FORGE_COMPOSE_FOR="$TG_PROJECT"
+    export TG_FORGE_COMPOSE TG_FORGE_COMPOSE_FOR
+  fi
+}
+
+# docker compose on this instance's project: the forge services' file and
+# stack/docker-compose.yml, one project and one network.
+tg_compose() {
+  tg_forge_compose || return 1
+  docker compose -f "$TG_FORGE_COMPOSE" -f "$TG_INSTANCE_HERE/docker-compose.yml" --project-name "$TG_PROJECT" "$@"
+}
+
+# The image a forge service runs (floci, forgejo, forgejo-runner), as the file
+# in use names it.
+tg_forge_image() { # service
+  tg_forge_compose || return 1
+  awk -v s="  $1:" '$0 == s { f = 1; next } f && /^  [^ ]/ { exit } f && /^ +image:/ { sub(/^ +image: */, ""); gsub(/["'"'"']/, ""); print; exit }' "$TG_FORGE_COMPOSE"
+}
+
 # The Forgejo admin's and the demo people's passwords. The defaults are for a
 # throwaway instance on localhost; a host that is reachable by others (the
 # demo host) sets TERRAGUCCI_FORGEJO_ADMIN_PASSWORD and

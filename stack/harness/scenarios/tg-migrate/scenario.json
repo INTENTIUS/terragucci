@@ -1,0 +1,167 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-migrate",
+  "product": "terragucci",
+  "claim": "choudoufu/migrate-stock-in",
+  "title": "A stock root on s3 state is adopted into an estate under an approval of its digest, and live-check refuses a root that ignores its markers",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-migrate",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "stock-applied",
+      "do": "out-of-band",
+      "label": "the base applied infra's estate and app's stock state (cdf-apply)",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "infra-stamped",
+      "do": "out-of-band",
+      "label": "infra's bucket carries its estate's marker",
+      "command": [
+        "stack/harness/check.sh",
+        "bucket-estate",
+        "hs-tg-migrate-cdf",
+        "hs-tg-migrate-infra"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "adopt",
+      "do": "open",
+      "branch": "adopt",
+      "overlay": "adopt",
+      "title": "app: adopt its state into an estate"
+    },
+    {
+      "id": "merge-adopt",
+      "do": "merge",
+      "pull": "adopt"
+    },
+    {
+      "id": "waits",
+      "do": "out-of-band",
+      "label": "wave 1 proved the adoption and stopped to wait for its digest",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "approve",
+      "do": "out-of-band",
+      "label": "the reviewer approves the waiting adoption, which starts its apply again",
+      "command": [
+        "stack/harness/check.sh",
+        "approve",
+        "adopt-app"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "adopted",
+      "do": "out-of-band",
+      "label": "the resumed apply finished green",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "stamped-a",
+      "do": "out-of-band",
+      "label": "queue a carries app's estate",
+      "command": [
+        "stack/harness/check.sh",
+        "queue-estate",
+        "hs-tg-migrate-a",
+        "hs-tg-migrate-app"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "stamped-b",
+      "do": "out-of-band",
+      "label": "queue b carries app's estate",
+      "command": [
+        "stack/harness/check.sh",
+        "queue-estate",
+        "hs-tg-migrate-b",
+        "hs-tg-migrate-app"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "ignored",
+      "do": "open",
+      "branch": "cdf-ignored",
+      "overlay": "cdf-ignored",
+      "title": "infra: a bucket that ignores its tags"
+    },
+    {
+      "id": "refused",
+      "do": "out-of-band",
+      "label": "the push of the branch goes red, live-check naming infra (cdf-check)",
+      "command": [
+        "stack/harness/check.sh",
+        "branch-run",
+        "cdf-ignored",
+        "failure"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the adoption names a state key app never wrote, so app is never stamped"
+  }
+}

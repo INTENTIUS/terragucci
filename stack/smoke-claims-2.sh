@@ -5865,8 +5865,8 @@ claim_choudoufu/iam() {
   image="$(image_tag choudoufu)"
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
   build_cli || return 1
-  fimg="$(awk '/^  floci:/ { f = 1 } f && /image:/ { print $2; exit }' "$HERE/docker-compose.yml")"
-  [ -n "$fimg" ] || { log "no floci image in docker-compose.yml"; return 1; }
+  fimg="$(tg_forge_image floci)"
+  [ -n "$fimg" ] || { log "no floci image in ${TG_FORGE_COMPOSE:-the forge compose file}"; return 1; }
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker run -d --name "$name" --label "terragucci.run-copied=$$" --network "${TG_NETWORK:-terragucci}" -p 127.0.0.1::4566 \
     -e FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED=true "$fimg" >/dev/null || { log "could not start floci with IAM enforcement"; return 1; }
