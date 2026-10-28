@@ -225,7 +225,7 @@ const registry = map(REGISTRY_KEYS as (keyof RegistrySettings)[], {
   dependentRequired: { endpoint: ["bucket"] },
 });
 
-const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci://[^/]+/.)" };
+const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci://[^/]+/.|gitlab$|gitlab://[^/\\s]+/[^/\\s?#]+/[^\\s?#]+$)" };
 
 const modules = map([...MODULES_KEYS] as (keyof ModulesSettings)[], {
   path: str,

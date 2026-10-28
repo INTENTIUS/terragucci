@@ -375,9 +375,35 @@ OpenTofu 1.12 and later also read `"use_registry_credentials": true` in a downlo
 
 ### Other ways to keep a registry private
 
-A registry on a private network needs no function for the token: serve it only inside a VPN, behind an IP allowlist, or behind Cloudflare Access, and use `auth: off`. Terraform still needs the header, so keep the edge function or `_headers` file for it.
+A registry on a private network needs no function for the token: serve it only inside a VPN or behind an IP allowlist or Cloudflare Access, and use `auth: off`. Terraform still needs the header, so keep the edge function or `_headers` file for it.
 
 A team that already runs GitLab, HCP Terraform, Artifactory or Nexus can publish its modules there and read them with that registry's own credentials.
+
+### Publish to GitLab's module registry
+
+A GitLab project's Terraform module registry can take each release too:
+
+```yaml
+modules:
+  publish:
+    - git-tags
+    - gitlab://gitlab.example.com/platform/modules
+```
+
+In GitLab CI, `publish: gitlab` names the job's own project and uploads with its `CI_JOB_TOKEN`. Elsewhere, write the project's address and put a token with the `api` scope in `GITLAB_TOKEN`.
+
+The upload is the archive the bucket registry serves and the attestation signs, so every target has one digest. Publish reads the release back as Terraform would before it reports it. A release already there with the same content is left alone, and one with other content is refused. The host keeps no commit for what it holds, so publish takes the commit from the release record on the ledger. Without a record, as for an upload by hand, the commit comes from the `git-tags` tag; with neither, publish stops and says what to fetch.
+
+Roots call the module under the project's top-level group:
+
+```hcl
+module "network" {
+  source  = "gitlab.example.com/platform/network/generic"
+  version = "1.3.0"
+}
+```
+
+The system is `modules.registry.system` when the repo also serves a bucket registry, else `generic`. To read a private project, Terraform and OpenTofu take `TF_TOKEN_gitlab_example_com` with the `read_api` scope, or a `credentials` block. GitLab has no deprecated flag, so a deprecation shows only in the bucket's catalog and in the tip.
 
 ### Point the binaries at the registry by CLI config
 
@@ -428,7 +454,7 @@ provider_installation {
 }
 ```
 
-`include` and `exclude` name the same providers. A mirrored provider then comes only from the mirror, and any other provider comes straight from its registry. With `auth: token`, the edge function signs each archive URL in the mirror's version files, as it does tarballs, and the index and version files need the token.
+`include` and `exclude` name the same providers. A mirrored provider then comes only from the mirror, and any other provider comes straight from its registry. With `auth: token` the index and version files need the token. The edge function signs each archive URL in the version files, as it signs tarballs.
 
 ## Browse the release catalog
 
@@ -459,7 +485,7 @@ It reads `catalog/index.json` the way Terraform reads the registry, with `TF_TOK
 
 ### Deprecate or yank a version
 
-A published version can be marked on the release ledger, by anyone who can publish:
+Anyone who can publish marks a version on the release ledger:
 
 ```bash
 terragucci modules deprecate modules/network 1.2.0 --reason "drops the old subnet layout" --use 1.3.0
@@ -467,7 +493,7 @@ terragucci modules yank modules/network 1.1.0 --reason "opens the admin port" --
 terragucci modules restore modules/network 1.1.0
 ```
 
-Each writes one status record beside the version's release record, with who set it, when, the reason and the version named by `--use`, and pushes it. The catalog is then written again, so the mark reaches roots in other repos. A root that pins a deprecated version gets the `terragucci-deprecated-version` tip on its plan and still passes. A yanked version is refused by [`modules.require: attested`](#require-attested-releases), naming the version to move to. Both stay in the registry's `versions`, so an existing pin still runs `init`. `restore` clears either mark with one more record; the earlier ones stay in the ledger's history.
+Each pushes one status record beside the release record. The record keeps who set it and when, with the reason and the `--use` version. The catalog is then written again, so the mark reaches roots in other repos. A root that pins a deprecated version gets the `terragucci-deprecated-version` tip on its plan and still passes. A yanked version is refused by [`modules.require: attested`](#require-attested-releases), naming the version to move to. Both stay in the registry's `versions`, so an existing pin still runs `init`. `restore` clears either mark with one more record; the earlier ones stay in the ledger's history.
 
 ## Attest each release
 

@@ -87,6 +87,12 @@
  * `terragucci modules` reads it. Without them publish writes no catalog and
  * says so in its row.
  *
+ * Newer than the pin too (terragucci#1300): the terraform lexicon's module
+ * targets on its `registry` subpath (chant#4603), core's publish-target
+ * contract over a module version (chant#4602). ./publish/hosted.ts wraps one
+ * as a `modules.publish` target; without them `modules.publish: gitlab` is
+ * refused with the chant release it needs.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -845,6 +851,64 @@ export interface ChantRegistryCatalog {
   CATALOG_PATH: string;
 }
 
+// ── module targets (terragucci#1300, chant#4602-#4604) ───────────────────
+
+/** A module in a hosted registry, without the host (`ModuleAddress`, chant#4603). */
+export interface ChantModuleAddress {
+  namespace: string;
+  name: string;
+  system: string;
+}
+
+/** What a module target is given (`ModuleVersionContext`, chant#4603), on core's publish context (chant#4602). */
+export interface ChantModuleVersionContext {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  redactor: { add(value: string | undefined | null): void; redact(text: string): string };
+  log(line: string): void;
+  provenance: { oidc: boolean; ci: "github" | "gitlab" | null; reason: string };
+  tag: string | null;
+  address: ChantModuleAddress;
+  version: string;
+  archive: Uint8Array;
+  revision: string;
+  content: string;
+}
+
+/** A module publish target (`ModulePublishTarget`, chant#4603): core's contract plus its two reads. */
+export interface ChantModuleTarget {
+  kind: string;
+  name: string;
+  credentialEnv: string[];
+  versions(address: ChantModuleAddress, ctx: Pick<ChantModuleVersionContext, "env" | "redactor">): Promise<string[]>;
+  held(address: ChantModuleAddress, version: string, ctx: Pick<ChantModuleVersionContext, "env" | "redactor">): Promise<{ content: string; revision?: string; status?: string } | undefined>;
+  plan(ctx: ChantModuleVersionContext): Promise<unknown[]>;
+  stage(ctx: ChantModuleVersionContext): Promise<{ target: string; destination: string }>;
+  reveal(ctx: ChantModuleVersionContext, staged: { target: string; destination: string }): Promise<unknown>;
+}
+
+/** The fetch a module target and its registry reads take. */
+export type ChantModuleFetch = (url: string, init?: { method?: string; headers?: unknown; body?: unknown; redirect?: "follow" | "manual" }) => Promise<Response>;
+
+/** What a module target's factory is given (`ModuleTargetDeps`). */
+export interface ChantModuleTargetDeps {
+  fetch?: ChantModuleFetch;
+  registryFetch?: ChantModuleFetch;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+/**
+ * The terraform lexicon's module targets (`registry/targets`, chant#4603),
+ * with core's redactor and error class from the publish-target contract
+ * (`lifecycle/publish-credentials`, `lifecycle/release-publish`, on the pin).
+ */
+export interface ChantModuleTargets {
+  gitlabModuleTarget(options: { project?: string; api?: string; tokenEnv?: string; namespace?: string }, deps?: ChantModuleTargetDeps): ChantModuleTarget;
+  createRedactor(env?: NodeJS.ProcessEnv, names?: readonly string[]): ChantModuleVersionContext["redactor"];
+  PublishTargetError: new (code: string, message: string, fix?: string) => Error & { code: string; fix?: string };
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -1038,6 +1102,17 @@ const loaders = {
         ? (m as unknown as ChantRegistryCatalog)
         : undefined,
   ),
+  moduleTargets: once<ChantModuleTargets>(
+    // One subpath at a time, for the reason inTurn gives.
+    async () => {
+      // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); its targets are chant#4603
+      const targets: object = await import("@intentius/chant-lexicon-terraform/registry");
+      const credentials: object = await import("@intentius/chant/lifecycle/publish-credentials");
+      const contract: object = await import("@intentius/chant/lifecycle/release-publish");
+      return { ...contract, ...credentials, ...targets };
+    },
+    (m) => (has(m, "gitlabModuleTarget", "createRedactor", "PublishTargetError") ? (m as unknown as ChantModuleTargets) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -1126,6 +1201,8 @@ export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load(
 export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
 /** chant's OTLP exporter (chant#4555), or undefined. */
 export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
+/** The terraform lexicon's module targets (chant#4603), with core's redactor and error class, or undefined. */
+export const chantModuleTargets = (): Promise<ChantModuleTargets | undefined> => load("moduleTargets");
 /** chant core's release catalog, status records and changelog (chant#4595, #4596, #4597), or undefined. */
 export const chantReleaseCatalog = (): Promise<ChantReleaseCatalog | undefined> => load("releaseCatalog");
 /** The terraform lexicon's docs extractor, consumer scan, catalog reader and deprecated-version check (chant#4598, #4599), or undefined. */
@@ -1164,8 +1241,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
   const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
-  const [releaseCatalog, registryCatalog] = [await chantReleaseCatalog(), await chantRegistryCatalog()];
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog };
+  const [releaseCatalog, registryCatalog, moduleTargets] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantModuleTargets()];
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, moduleTargets: !!moduleTargets };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

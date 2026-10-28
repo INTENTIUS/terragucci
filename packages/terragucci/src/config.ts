@@ -1537,13 +1537,20 @@ function checkRegistryTokens(r: Record<string, unknown>, where: string, problems
   }
 }
 
+/**
+ * A GitLab module registry in `modules.publish` (terragucci#1300): `gitlab`,
+ * the project a GitLab CI job runs in, or `gitlab://<host>/<project path>`.
+ */
+export const gitlabPublishForm = /^gitlab:\/\/[^/\s]+\/[^/\s?#]+\/[^\s?#]+$/;
+export const isGitlabTarget = (t: string): boolean => t === "gitlab" || gitlabPublishForm.test(t);
+
 function checkModules(m: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(m)) if (!MODULES_KEYS.has(k)) problems.push(`${where}.${k} is not a setting; use ${[...MODULES_KEYS].join(", ")}`);
   if (m.path !== undefined && typeof m.path !== "string") problems.push(`${where}.path must be a glob`);
   const targets = Array.isArray(m.publish) ? m.publish : m.publish === undefined ? [] : [m.publish];
   for (const t of targets) {
-    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t))) {
-      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address or git-tags`);
+    if (typeof t !== "string" || !(t === "git-tags" || /^oci:\/\/[^/]+\/.+/.test(t) || isGitlabTarget(t))) {
+      problems.push(`${where}.publish is ${JSON.stringify(t)}; use an oci:// registry address, git-tags, gitlab (in GitLab CI) or gitlab://<host>/<group>/<project>`);
     }
   }
   if (m.registry !== undefined) checkRegistry(m.registry, `${where}.registry`, targets, problems);
