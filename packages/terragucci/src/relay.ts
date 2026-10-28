@@ -55,8 +55,8 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantCiProductWordsNow, chantNotifyRelay, type ChantNotifyRelay, type ChantRelayDeps } from "./chant-next";
-import { TERRAGUCCI_WORDS } from "./ci-words";
+import { chantNotifyRelay, type ChantNotifyRelay, type ChantRelayDeps } from "./chant-next";
+import { productWords } from "./ci-words";
 import { APPLY_OP, readLedger, waveGate, writeWaveRecord, type GateLedger, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { chantCommand, waitingWaves } from "./approve";
@@ -346,13 +346,12 @@ function chantTeamsReply(raw: string): boolean {
   }
 }
 
-/** A chant button's click, decided by chant's relay over this relay's ledger; undefined when chant's relay or words are not installed. */
+/** A chant button's click, decided by chant's relay over this relay's ledger; undefined when chant's relay is not installed. */
 async function chantAnswer(chant: ChantNotifyRelay | undefined, app: Click["app"], raw: string, settings: RelaySettings, deps: RelayDeps): Promise<{ answer?: Answer; error?: string; responseUrl?: string; thread?: string; who?: string; action?: string } | undefined> {
-  const words = chantCiProductWordsNow();
-  if (!chant || !words) return undefined;
+  if (!chant) return undefined;
   const click = app === "slack" ? chant.slackRelayClick(raw) : chant.teamsRelayClick(raw);
   if ("error" in click) return { error: click.error };
-  const a = await chant.decideRelayClick(click, { ...(settings.key ? { key: settings.key } : {}) }, chantRelayDeps(deps, app, words.assertProductWords(TERRAGUCCI_WORDS)));
+  const a = await chant.decideRelayClick(click, { ...(settings.key ? { key: settings.key } : {}) }, chantRelayDeps(deps, app, productWords()));
   return { answer: { ok: a.ok, text: a.text }, ...(click.responseUrl ? { responseUrl: click.responseUrl } : {}), ...(click.thread ? { thread: click.thread } : {}), who: click.chatUser, action: click.action };
 }
 

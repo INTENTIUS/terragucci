@@ -1,0 +1,13 @@
+# tg-derived-store (terragucci#1295): a root that keeps its s3 backend block
+# and names an estate. choudoufu derives the record store from the backend's
+# bucket (choudoufu#2293) and terragucci's init uses that setup
+# (terragucci#1285).
+forge: forgejo
+binary: choudoufu
+url: http://forgejo:3000/terragucci-admin/hs-tg-derived-store
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+gate: never
+env:
+  # The derived store is the backend's bucket, which choudoufu addresses
+  # virtual-hosted; the demo's records proxy forwards it to floci.
+  AWS_ENDPOINT_URL_S3: http://demo-records:4566

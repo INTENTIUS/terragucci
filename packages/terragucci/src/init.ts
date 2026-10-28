@@ -62,7 +62,7 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { chantAgentJob, chantCheckHooks, chantCiControl, chantCiProduct } from "./chant-next";
+import { chantAgentJob, chantCheckHooks, chantCiControl } from "./chant-next";
 import { CHANT_AGENT_PATHS } from "./render-chant-agent";
 import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
@@ -361,8 +361,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const declFile = declarationFile(repo) ?? declPath;
   const declText = existsSync(declFile) ? readFileSync(declFile, "utf-8") : undefined;
   const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
-  // chant's product pipeline (chant#4550), when the installed chant has it: the pipeline takes terragucci's words through it.
-  const ciProduct = await chantCiProduct();
   // chant's agent job (chant#4616): with it, agent.comment's jobs are chant's, in a workflow of their own (./render-chant-agent.ts).
   // terragucci#1305: with it, agent.drift's drift job is a chant drift Op (./render-chant-drift.ts).
   if (agentCommentInput(settings) || (settings.drift && agentDriftInput(settings))) await chantAgentJob();
@@ -382,7 +380,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const pipeline = renderPipeline({
     ...checkHooksInput,
     ...(stepSpec ? { wavesSpec: stepSpec } : {}),
-    ...(ciProduct ? { ciProduct } : {}),
     forge: forgeChoice.value,
     binary: binary.value,
     version: version.value,

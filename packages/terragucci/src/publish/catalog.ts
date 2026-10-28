@@ -29,9 +29,8 @@ import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { ConfigError, type ControlSettings, type RegistrySettings } from "../config";
 import { controlConsumers } from "./consumers";
 import { findRoots } from "../detect";
+import { registryCatalog as tf, releaseCatalog as core } from "../chant-catalog";
 import {
-  chantRegistryCatalog,
-  chantReleaseCatalog,
   type ChantCatalogVersion,
   type ChantModuleConsumer,
   type ChantReleaseCatalogDoc,
@@ -131,9 +130,6 @@ const bare = (v: string): string => v.replace(/^v(?=\d)/, "");
  * run reads nothing and writes nothing.
  */
 export async function publishCatalog(repo: string, reg: RegistrySettings, store: RegistryStore, o: CatalogOptions): Promise<CatalogResult> {
-  const core = await chantReleaseCatalog();
-  const tf = await chantRegistryCatalog();
-  if (!core || !tf) return { status: "skipped", detail: "the installed chant has no release catalog (chant#4595); a chant release that carries it writes one under catalog/" };
   if (o.dryRun) return { status: "published", detail: `dry run: would write the release catalog under ${CATALOG_DIR}/ from the ledger` };
 
   const ledger = await readModuleLedger(repo, core.RELEASE_STATUS_FILE);
@@ -303,9 +299,6 @@ export interface CatalogSource {
  * a registry behind `auth: token` answers (terragucci#1289 ruling B).
  */
 export async function readCatalog(src: CatalogSource): Promise<ChantReleaseCatalogDoc> {
-  const core = await chantReleaseCatalog();
-  const tf = await chantRegistryCatalog();
-  if (!core || !tf) throw new ConfigError("the installed chant has no release catalog reader (chant#4595, chant#4599); terragucci modules needs a chant release that carries it");
   const reg = src.settings;
   if (!src.registry && reg?.dir !== undefined && src.repo) {
     const file = join(src.repo, reg.dir, catalogKey(reg, "index.json"));

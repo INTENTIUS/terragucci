@@ -14,7 +14,7 @@ The bench operates about 10,000 resources in a dozen repos through the CI jobs t
 
 The chart gives the CI time and runner minutes to expect at your estate's size.
 
-The bench times operating an estate already split into 1,361 states. Building and splitting that estate is setup, before the clock starts. What makes it hard:
+The bench times operating an estate already split into 1,361 states. The estate is a terralith, one generated root module of AWS resources, carved into roots, and every figure here is measured on it. Building and splitting that estate is setup, before the clock starts. What makes it hard:
 
 - Each state belongs to its own root, and roots read each other's state, so they apply in order, in waves.
 - Each root planned or applied starts its own provider process, about 800 MB.

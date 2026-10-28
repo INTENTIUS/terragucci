@@ -18,7 +18,6 @@ import { withEnvironmentRoles } from "../src/environments";
 import { shapeProblems } from "../src/refusals";
 import { groupedPipeline, runMigrations } from "../src/migrate";
 import { PIPELINE_PATHS } from "../src/render";
-import { chantHandover } from "../src/chant-next";
 import { backend, tmp, write } from "./helpers";
 
 const PROD = { plan_role: "arn:aws:iam::222222222222:role/prod-plan", apply_role: "arn:aws:iam::222222222222:role/prod-apply" };
@@ -242,10 +241,7 @@ describe("apply groups: the pipeline", () => {
 
   for (const forge of ["github", "gitlab", "forgejo"] as const) {
     it(`${forge}: an environments repo with prod and dev (golden)`, () => {
-      // GitHub's and Forgejo's checkout and handover steps are chant's own scripts where chant takes terragucci's words
-      // (chant#4554), and terragucci's fallback where it does not; each has its golden. GitLab's jobs have neither.
-      const via = forge !== "gitlab" && chantHandover() ? ".chant" : "";
-      golden(`environments-${forge}${via}.yml`, renderPipeline(input(forge)).content);
+      golden(`environments-${forge}.yml`, renderPipeline(input(forge)).content);
     });
   }
 });

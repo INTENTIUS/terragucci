@@ -190,7 +190,7 @@ import { chantDriftExitLines, chantDriftFiles } from "./render-chant-drift";
 import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
-import type { ChantCiProduct, ChantProductCommand } from "./chant-next";
+import { commentLine, productPipelineJobs, type CiProductCommand } from "@intentius/chant/ci-product";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
@@ -339,14 +339,6 @@ export interface PipelineInput {
   agentDrift?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
-  /**
-   * chant's product pipeline (`@intentius/chant/ci-product`, chant#4550),
-   * when the installed chant has it: the pipeline then takes terragucci's
-   * words through `productPipelineJobs`, which checks them against the jobs
-   * the pipeline has and gives the comments the jobs answer and the waves'
-   * op and gate names. init loads it (./chant-next.ts `chantCiProduct`).
-   */
-  ciProduct?: ChantCiProduct;
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
@@ -2281,12 +2273,11 @@ interface CommentWords {
 }
 
 /**
- * The comments the jobs answer. With chant's product pipeline (chant#4550)
+ * The comments the jobs answer. chant's product pipeline (chant#4550)
  * `productPipelineJobs` takes terragucci's words, refuses them when a command
  * names a job this pipeline lacks, and names each comment; the waves spec it
  * gives must keep op `tf-apply` and gates `wave-{k}`, so the approvals
- * already on the ledger keep counting. Without it, terragucci's own words.
- * Both give the same text.
+ * already on the ledger keep counting.
  */
 function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, locksPlan: boolean): CommentWords {
   const own: CommentWords = {
@@ -2297,15 +2288,13 @@ function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, 
     unlock: "/terragucci unlock",
     alias: { plan: "atlantis plan", apply: "atlantis apply" },
   };
-  const chant = input.ciProduct;
-  if (!chant) return own;
   const count = input.terragrunt ? input.layers.length : undefined;
   const spec = wavesSpec({ waves: count ?? input.layers, gate: "always", approval: "ledger", call: waveCallArgv, migrations: false });
   // chant refuses a command with no job to answer it, so the words name only the commands this pipeline has jobs for.
   const locks = locksPlan || prApply;
-  const has: ChantProductCommand[] = ["plan", "apply", ...(locks ? (["lock", "unlock"] as const) : []), ...(input.agentComment ? (["agent"] as const) : [])];
+  const has: CiProductCommand[] = ["plan", "apply", ...(locks ? (["lock", "unlock"] as const) : []), ...(input.agentComment ? (["agent"] as const) : [])];
   const words = { ...TERRAGUCCI_WORDS, commands: Object.fromEntries(Object.entries(TERRAGUCCI_WORDS.commands).filter(([, c]) => has.includes(c))) };
-  const jobs = chant.productPipelineJobs(forge, "default", {
+  const jobs = productPipelineJobs(forge, "default", {
     words,
     // The apply on merge runs on op waves; with apply.when: pull-request the comment applies the open pull request.
     ...(prApply ? { applyBeforeMerge: true } : { waves: spec }),
@@ -2316,8 +2305,8 @@ function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, 
   if (named && (named.name !== WAVES_OP || (named.gateName ?? "{gate}-wave-{k}") !== "wave-{k}")) {
     throw new RenderError(`chant names the waves ${named.name} / ${named.gateName ?? "{gate}-wave-{k}"}, and the approvals on _gates/${WAVES_OP}.jsonl are under ${WAVES_OP} / wave-{k}`);
   }
-  const line = (c: ChantProductCommand, fallback: string): string => jobs.comments[c] ?? chant.commentLine(jobs.words, c) ?? fallback;
-  const alias = (c: ChantProductCommand, fallback: string): string => jobs.words.aliases.find((a) => a.command === c)?.from ?? fallback;
+  const line = (c: CiProductCommand, fallback: string): string => jobs.comments[c] ?? commentLine(jobs.words, c) ?? fallback;
+  const alias = (c: CiProductCommand, fallback: string): string => jobs.words.aliases.find((a) => a.command === c)?.from ?? fallback;
   return {
     prefix: `/${jobs.words.product}`,
     plan: line("plan", own.plan),

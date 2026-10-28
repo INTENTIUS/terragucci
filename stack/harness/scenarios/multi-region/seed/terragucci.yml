@@ -1,0 +1,12 @@
+# multi-region (terragucci#1296): aws-bench's ec2-multiregion estate, the
+# Terraform arm of the lex00/aws-bench fork, as one root under estate/. Its
+# providers name floci's endpoint by a variable; the jobs set it to floci on
+# the stack's network.
+forge: forgejo
+binary: terraform
+url: http://forgejo:3000/terragucci-admin/hs-multi-region
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["estate"]
+gate: never
+env:
+  TF_VAR_floci_endpoint: http://floci:4566

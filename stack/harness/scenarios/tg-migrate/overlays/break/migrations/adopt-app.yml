@@ -1,0 +1,12 @@
+# BREAK: the adoption names a state key app never wrote, so wave 1 cannot
+# prove it and app is never stamped (tg-migrate).
+backends:
+  - root: app
+    from:
+      backend: s3
+      config:
+        bucket: hs-tg-migrate-state
+        key: not-app.tfstate
+        region: us-east-1
+        use_lockfile: true
+        use_path_style: true

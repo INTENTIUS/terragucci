@@ -30,13 +30,21 @@
  * here is terragucci's own: the files a cut report keeps, the re-plan's sweep
  * before the handover, and a checkout of a ref the step names (`TG_REF`).
  *
- * Where the installed chant's handover takes those as parameters (chant#4554,
- * ../chant-next.ts), packJs, handoverTrap and checkoutScript are chant's with
- * terragucci's words passed in. The scripts below stay as the fallback for a
- * chant without them (the 0.124.54 pin).
+ * chant's handover takes those as parameters (chant#4554): packJs,
+ * handoverTrap and checkoutScript are chant's with terragucci's words passed
+ * in.
  */
-import { HANDOVER_LIMITS, handoverKeys, handoverOutputs, takeOverScript as chantTakeOverScript, UNPACK_JS, type HandoverForge } from "@intentius/chant/ci-handover";
-import { chantHandover } from "./chant-next";
+import {
+  checkoutScript as chantCheckoutScript,
+  HANDOVER_LIMITS,
+  handoverKeys,
+  handoverOutputs,
+  handoverTrap as chantHandoverTrap,
+  packJs as chantPackJs,
+  takeOverScript as chantTakeOverScript,
+  UNPACK_JS,
+  type HandoverForge,
+} from "@intentius/chant/ci-handover";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 
 export { HANDOVER_LIMITS, handoverKeys, handoverOutputs, UNPACK_JS, type HandoverForge };
@@ -53,24 +61,7 @@ function noteFiles(): string[] {
  * large; the log says which.
  */
 export function packJs(forge: HandoverForge): string {
-  const chant = chantHandover();
-  if (chant) return chant.packJs(forge, { noteFiles: noteFiles(), label: "terragucci" });
-  const { chunk, parts } = HANDOVER_LIMITS[forge];
-  return [
-    'const fs=require("fs"),p=require("path"),z=require("zlib");',
-    "const [dir,out]=process.argv.slice(1);",
-    `const CHUNK=${chunk},PARTS=${parts},NOTE=${JSON.stringify(noteFiles())};`,
-    "const all={};",
-    "const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+\"/\"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString(\"base64\")}};",
-    'walk(dir,"");',
-    'const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");',
-    "let b=pack(all);",
-    "if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));",
-    'if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to the note and the status; it hands on none of it")}',
-    'else console.error("terragucci: the report is too large to hand to the next job whole; it hands on the note, the status and report.json")}',
-    'let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\\n";',
-    "fs.appendFileSync(out,o);",
-  ].join("");
+  return chantPackJs(forge, { noteFiles: noteFiles(), label: "terragucci" });
 }
 
 /**
@@ -80,12 +71,7 @@ export function packJs(forge: HandoverForge): string {
  * started are killed first.
  */
 export function handoverTrap(dir: string, forge: HandoverForge, sweep = false): string[] {
-  const chant = chantHandover();
-  if (chant) return chant.handoverTrap(dir, forge, { noteFiles: noteFiles(), label: "terragucci", ...(sweep ? { before: "tg_sweep" } : {}) });
-  return [
-    `tg_handover() { node -e '${packJs(forge)}' ${dir} "\${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }`,
-    sweep ? "trap 'tg_sweep; tg_handover' EXIT" : "trap tg_handover EXIT",
-  ];
+  return chantHandoverTrap(dir, forge, { noteFiles: noteFiles(), label: "terragucci", ...(sweep ? { before: "tg_sweep" } : {}) });
 }
 
 /**
@@ -106,32 +92,5 @@ export function takeOverScript(job: string, dir: string, forge: HandoverForge): 
  * workspace already checked out is cleaned first, as actions/checkout does.
  */
 export function checkoutScript(history: boolean): string {
-  const chant = chantHandover();
-  if (chant) return chant.checkoutScript(history, false, { tokenEnv: "TG_TOKEN", refEnv: "TG_REF", headName: "terragucci-head" });
-  const fetch = history
-    ? `git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"`
-    : 'git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"';
-  return [
-    "set -eu",
-    'git config --global --add safe.directory "$PWD" 2>/dev/null || true',
-    "[ -d .git ] || git init -q .",
-    'git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"',
-    'if [ -n "${TG_TOKEN:-}" ]; then',
-    `  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\\n')"`,
-    "fi",
-    'ref="${TG_REF:-$GITHUB_REF}"',
-    'want="${TG_REF:-$GITHUB_SHA}"',
-    'case "$ref" in',
-    '  refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;',
-    '  refs/tags/*) target="$ref" ;;',
-    '  refs/*) target="refs/remotes/${ref#refs/}" ;;',
-    '  *) target="refs/remotes/origin/terragucci-head" ;;',
-    "esac",
-    "if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi",
-    fetch,
-    'case "$ref" in',
-    '  refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;',
-    '  *) git checkout -q --force --detach "$target" ;;',
-    "esac",
-  ].join("\n");
+  return chantCheckoutScript(history, false, { tokenEnv: "TG_TOKEN", refEnv: "TG_REF", headName: "terragucci-head" });
 }

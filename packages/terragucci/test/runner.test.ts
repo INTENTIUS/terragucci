@@ -6,7 +6,6 @@ import { ConfigError, validateConfig, type ForgeName } from "../src/config";
 import { jobStage, renderPipeline, RenderError, type PipelineInput } from "../src/render";
 import { reconcile } from "../src/reconcile";
 import { bareFrom, twoRootRepo } from "./helpers";
-import { chantHandover } from "../src/chant-next";
 
 const base = { binary: "tofu", version: "1.13.1", image: "img:1", layers: [["network"], ["app", "cache"]], env: {} } as const;
 const render = (forge: ForgeName, extra: Partial<PipelineInput> = {}) => renderPipeline({ ...base, forge, ...extra } as PipelineInput);
@@ -40,7 +39,7 @@ describe("runner", () => {
   it("github: each job runs on its stage's runner, and every other job on the default (golden)", () => {
     const out = render("github", { ...RICH, runner: BY_STAGE, pass: PASS });
     // The checkout and handover steps are chant's scripts where chant takes terragucci's words (chant#4554); each has its golden.
-    golden(`runner-github${chantHandover() ? ".chant" : ""}.yml`, out.content);
+    golden("runner-github.yml", out.content);
     const jobs = jobsOf(out.content);
     for (const [name, job] of Object.entries(jobs)) {
       const stage = jobStage(name);

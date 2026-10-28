@@ -8,11 +8,9 @@
  * the approvals already on `_gates/tf-apply.jsonl` under `wave-<k>` keep
  * counting across the switch.
  *
- * chant reads these through `@intentius/chant/ci-product` when the installed
- * chant has it (./chant-next.ts, `chantCiProduct`); on a chant without it
- * terragucci's own code renders the same names.
+ * chant reads these through `@intentius/chant/ci-product`.
  */
-import { chantCiProductWordsNow } from "./chant-next";
+import { assertProductWords, productStatusContext, type CiProductWords } from "@intentius/chant/ci-product-words";
 
 /** ./comment.ts ATLANTIS_COMMENTS_ENV, written out so comment.ts can import this file without a cycle. */
 const ATLANTIS_COMMENTS_ENV = "TG_ATLANTIS_COMMENTS";
@@ -20,11 +18,7 @@ const ATLANTIS_COMMENTS_ENV = "TG_ATLANTIS_COMMENTS";
 /** The op the waves record under: their gates stay `tf-apply` / `wave-<k>`. Kept in step with ./chant-waves.ts WAVES_OP. */
 const WAVES_OP = "tf-apply";
 
-/**
- * The words, in the shape of chant's `CiProductWordsInput`. Written out
- * here, not typed from chant, so this file compiles on a chant without the
- * product pipeline.
- */
+/** The words, in the shape of chant's `CiProductWordsInput`. */
 export const TERRAGUCCI_WORDS = {
   product: "terragucci",
   noun: ["root", "roots"] as [string, string],
@@ -44,13 +38,18 @@ export const TERRAGUCCI_WORDS = {
   notify: { source: "terragucci", wave: "wave {k}", headers: "x-terragucci" },
 };
 
+let checked: CiProductWords | undefined;
+
+/** TERRAGUCCI_WORDS with every slot filled, as chant's `assertProductWords` checks them. */
+export function productWords(): CiProductWords {
+  return (checked ??= assertProductWords(TERRAGUCCI_WORDS));
+}
+
 /**
  * terragucci's status context for a stage: `terragucci/plan`,
- * `terragucci/apply`, `terragucci/lock`. With chant's words module loaded
- * (./chant-next.ts) chant's `productStatusContext` names it from
- * TERRAGUCCI_WORDS, which gives the same context.
+ * `terragucci/apply`, `terragucci/lock`, named by chant's
+ * `productStatusContext` from TERRAGUCCI_WORDS.
  */
 export function terragucciStatus(stage: "plan" | "apply" | "lock" | "approval" | "control"): string {
-  const chant = chantCiProductWordsNow();
-  return chant ? chant.productStatusContext(chant.assertProductWords(TERRAGUCCI_WORDS), stage) : `${TERRAGUCCI_WORDS.product}/${stage}`;
+  return productStatusContext(productWords(), stage);
 }

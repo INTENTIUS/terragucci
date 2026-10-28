@@ -428,7 +428,7 @@ smoke_aws_docker_env() {
 # job container it starts. The stack's own runner keeps floci, so a floci claim
 # can never reach AWS. Needs lib.sh's api and URL.
 
-sa_runner_image() { sed -n 's#^ *image: *\(data\.forgejo\.org/forgejo/runner:[^ ]*\) *$#\1#p' "$SA_HERE/docker-compose.yml" | head -1; }
+sa_runner_image() { tg_forge_image forgejo-runner; }
 
 smoke_aws_runner_down() {
   local id
@@ -446,7 +446,7 @@ smoke_aws_runner_up() { # name of the run, for its log
   local image reg uuid token log_env="" log_path
   smoke_aws_runner_down
   image="$(sa_runner_image)"
-  [ -n "$image" ] || { sa_log "no forgejo runner image in docker-compose.yml"; return 1; }
+  [ -n "$image" ] || { sa_log "no forgejo runner image in ${TG_FORGE_COMPOSE:-the forge compose file}"; return 1; }
   if [ -n "${SMOKE_AWS_MEASURE:-}" ]; then
     log_path="/cache/smoke-aws-logs/$SMOKE_AWS_PREFIX/${1:-run}-$(date +%s).log"
     docker run --rm --user 0:0 -v "$SA_CACHE_VOLUME:/cache" "$image" \

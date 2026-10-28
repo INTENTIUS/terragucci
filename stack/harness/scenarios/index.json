@@ -1,0 +1,141 @@
+{
+  "tg-estate-overlap": {
+    "binary": "choudoufu",
+    "needs": [
+      "image:choudoufu",
+      "script:DEMO_SCENARIOS=fan-out-choudoufu stack/demo.sh up",
+      "bucket:demo-live-records",
+      "bucket:demo-reports"
+    ],
+    "cites": [
+      "choudoufu claim 2 (product line)",
+      "choudoufu live/CONCURRENCY.md:45",
+      "choudoufu claim 5 (rows-takeover, killed)"
+    ]
+  },
+  "tg-migrate": {
+    "binary": "choudoufu",
+    "needs": [
+      "image:choudoufu",
+      "script:DEMO_SCENARIOS=fan-out-choudoufu stack/demo.sh up",
+      "bucket:demo-live-records",
+      "versioned:hs-tg-migrate-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "choudoufu claim 6 (stock-in)",
+      "choudoufu claim 7 (cdf-check, cdf-apply)"
+    ]
+  },
+  "tg-derived-store": {
+    "binary": "choudoufu",
+    "needs": [
+      "image:choudoufu",
+      "script:DEMO_SCENARIOS=fan-out-choudoufu stack/demo.sh up",
+      "bucket:demo-live-records",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "choudoufu#2293 (once a choudoufu release carries it)",
+      "terragucci#1285"
+    ]
+  },
+  "tg-compose-cross-estate": {
+    "binary": "choudoufu",
+    "source": "choudoufu:examples/cross-estate-dependency",
+    "lift": [
+      "forgejo/.forgejo:.forgejo"
+    ],
+    "secrets": {
+      "CHOUDOUFU_APPLY_ACCESS_KEY_ID": "test",
+      "CHOUDOUFU_APPLY_SECRET_ACCESS_KEY": "test",
+      "CHOUDOUFU_PLAN_ACCESS_KEY_ID": "test",
+      "CHOUDOUFU_PLAN_SECRET_ACCESS_KEY": "test"
+    },
+    "vars": {
+      "AWS_REGION": "us-east-1"
+    },
+    "needs": [
+      "profile:forgejo",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "choudoufu#2302 (examples/cross-estate-dependency scripts/prove.sh)",
+      "choudoufu#2213",
+      "choudoufu#2219"
+    ]
+  },
+  "tg-compose-ci-pipelines": {
+    "binary": "choudoufu",
+    "source": "choudoufu:examples/ci-pipelines",
+    "lift": [
+      "forgejo/.forgejo:.forgejo"
+    ],
+    "recordStore": "terraform/estate.chdf.hcl",
+    "secrets": {
+      "CHOUDOUFU_APPLY_ACCESS_KEY_ID": "test",
+      "CHOUDOUFU_APPLY_SECRET_ACCESS_KEY": "test",
+      "CHOUDOUFU_PLAN_ACCESS_KEY_ID": "test",
+      "CHOUDOUFU_PLAN_SECRET_ACCESS_KEY": "test"
+    },
+    "vars": {
+      "AWS_REGION": "us-east-1"
+    },
+    "needs": [
+      "profile:forgejo",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "choudoufu#2302 (examples/ci-pipelines: smoke-ci-pipelines and the ci.yml dispatch job)"
+    ]
+  },
+  "tg-compose-terragrunt": {
+    "binary": "choudoufu",
+    "source": "choudoufu:examples/demo-terragrunt",
+    "secrets": {
+      "CHOUDOUFU_PLAN_HMAC_KEY": "hs-tg-compose-terragrunt"
+    },
+    "needs": [
+      "script:DEMO_SCENARIOS=terragrunt-choudoufu-create stack/demo.sh up",
+      "bucket:demo-terragrunt-choudoufu-state",
+      "bucket:demo-terragrunt-choudoufu-records",
+      "bucket:demo-reports"
+    ],
+    "cites": [
+      "choudoufu#2302 (examples/demo-terragrunt)",
+      "choudoufu#2213",
+      "choudoufu#2219",
+      "B6"
+    ]
+  },
+  "tg-compose-atmos": {
+    "binary": "choudoufu",
+    "source": "choudoufu:examples/demo-atmos",
+    "needs": [
+      "script:DEMO_SCENARIOS=atmos-choudoufu-create stack/demo.sh up",
+      "bucket:demo-atmos-choudoufu-state",
+      "bucket:demo-atmos-choudoufu-records",
+      "bucket:demo-reports"
+    ],
+    "cites": [
+      "choudoufu#2302 (examples/demo-atmos)",
+      "choudoufu#2213",
+      "choudoufu#2219",
+      "B7"
+    ]
+  },
+  "multi-region": {
+    "binary": "terraform",
+    "source": "lex00/aws-bench@e8c259c23efe1a0805595ac9a340c178b427c1d3:benchmarks/arms/terraform-ec2-multiregion",
+    "into": "estate",
+    "needs": [
+      "image:terraform",
+      "bucket:hs-multi-region-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "chant#4586 ruling A (estate shape in place of the terralith core-set row)",
+      "plywood (the Pulumi tree, later)"
+    ]
+  }
+}

@@ -28,8 +28,8 @@
  * refused with the migration guide's reason.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { chantCiProductWordsNow } from "./chant-next";
-import { TERRAGUCCI_WORDS } from "./ci-words";
+import { parseProductComment } from "@intentius/chant/ci-product-words";
+import { productWords } from "./ci-words";
 import { ConfigError } from "./config";
 import { poster, type Fetch } from "./forge";
 import { commentCell, leftOut } from "./import/guide";
@@ -37,11 +37,6 @@ import { commentCell, leftOut } from "./import/guide";
 /** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
 export const COMMENT_COMMANDS = ["plan", "apply", "agent"] as const;
 
-/** Commands a comment never runs, named in the reply so nobody waits on them. */
-const NEVER = new Set(["approve", "force-unlock", "unlock-state", "import", "state", "destroy", "merge"]);
-
-/** A root as a comment may name it: path segments, no leading dash, no shell or glob syntax. */
-const ROOT = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
 export const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
 export const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 export const LOGIN = /^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}$/;
@@ -67,57 +62,21 @@ export type ParsedComment =
 export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment | undefined {
   if (typeof body !== "string") return undefined;
   const text = body.trim();
-  const chant = chantCiProductWordsNow();
-  if (chant) return parseWithChant(chant, text, o);
+  // An `atlantis` form terragucci has no counterpart for keeps the migration guide's reason, which is terragucci's text;
+  // every other comment, the aliases included, is read by chant's `parseProductComment` (chant#4550) with terragucci's words.
   if (o.atlantis) {
-    const alias = fromAtlantis(text);
-    if (alias !== undefined) return typeof alias === "string" ? parseComment(alias) : alias;
+    const refused = fromAtlantis(text);
+    if (refused !== undefined) return refused;
   }
-  if (text !== "/terragucci" && !/^\/terragucci[ \t]/.test(text)) return undefined;
-  if (/[\r\n]/.test(text)) return { kind: "refused", reason: "a command is one line, and nothing else in the comment" };
-  const words = text.split(/[ \t]+/);
-  const verb = words[1];
-  if (verb === undefined) return { kind: "refused", reason: "the command is `/terragucci plan [root]`" };
-  if (verb === "apply") return parseApply(words);
-  if (verb === "lock") return words.length === 2 ? { kind: "lock" } : { kind: "refused", reason: "`/terragucci lock` takes nothing after it: it locks every root the pull request reaches" };
-  if (verb === "unlock") return words.length === 2 ? { kind: "unlock" } : { kind: "refused", reason: "`/terragucci unlock` takes nothing after it: it releases every lock the pull request holds" };
-  if (verb === "agent") {
-    // The ask is the rest of the line, as written; it is never split or run.
-    const ask = text.replace(/^\/terragucci[ \t]+agent/, "").trim();
-    if (ask === "") return { kind: "refused", reason: "`/terragucci agent` needs an ask after it, on the same line, such as `/terragucci agent rename the bucket variable to bucket_name`" };
-    if (ask.length > ASK_MAX) return { kind: "refused", reason: `an ask is at most ${ASK_MAX} characters` };
-    // Control characters (escape sequences, NUL) have no place in an ask.
-    if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(ask)) return { kind: "refused", reason: "an ask is plain text, with no control characters" };
-    return { kind: "agent", ask };
-  }
-  if (verb !== "plan") {
-    return {
-      kind: "refused",
-      reason: NEVER.has(verb) ? `a comment never runs \`${verb}\`: terragucci re-plans, and re-runs an apply already approved, on request and nothing more` : "the commands are `/terragucci plan [root]` and `/terragucci apply [wave-<n>]`",
-    };
-  }
-  if (words.length > 3) return { kind: "refused", reason: "`/terragucci plan` takes one root at most" };
-  const root = words[2];
-  if (root === undefined) return { kind: "plan" };
-  if (!ROOT.test(root) || root.split("/").some((s) => s === "" || s === "." || s === "..")) return { kind: "refused", reason: "the root is a path from the repository root, like `envs/dev/orders`" };
-  return { kind: "plan", root };
-}
-
-/**
- * The same grammar through chant's `parseProductComment` (chant#4550), with
- * terragucci's words. An `atlantis` form terragucci has no counterpart for
- * keeps the migration guide's reason, which is terragucci's text; every
- * other comment, the aliases included, is chant's to read.
- */
-function parseWithChant(chant: NonNullable<ReturnType<typeof chantCiProductWordsNow>>, text: string, o: ParseOptions): ParsedComment | undefined {
-  if (o.atlantis) {
-    const alias = fromAtlantis(text);
-    if (alias !== undefined && typeof alias !== "string") return alias;
-  }
-  const words = chant.assertProductWords(TERRAGUCCI_WORDS);
-  const parsed = chant.parseProductComment(words, text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
+  const parsed = parseProductComment(productWords(), text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
   if (parsed === undefined) return undefined;
-  if (parsed.kind === "plan") return parsed.member !== undefined ? { kind: "plan", root: parsed.member } : { kind: "plan" };
+  if (parsed.kind === "plan") {
+    // chant's grammar reads `--target`, `--refresh` and `--target-dependents` after the plan word (chant#4626, #4627, on chant
+    // main); a terragucci re-plan plans whole roots, so it refuses them by name rather than drop them.
+    const flags = parsed as { targets?: string[]; refresh?: true; targetDependents?: true };
+    if (flags.targets?.length || flags.refresh || flags.targetDependents) return { kind: "refused", reason: "`/terragucci plan` re-plans whole roots: it takes no `--target`, `--refresh` or `--target-dependents`" };
+    return parsed.member !== undefined ? { kind: "plan", root: parsed.member } : { kind: "plan" };
+  }
   return parsed;
 }
 
@@ -135,19 +94,18 @@ export function parseOptions(env: NodeJS.ProcessEnv): ParseOptions {
 }
 
 /**
- * An `atlantis plan` or `atlantis apply` comment in terragucci's words:
- * `-d <dir>` names the root, and whatever else follows is passed on to the
- * same grammar. A form terragucci has no counterpart for is refused with the
- * guide's reason. Undefined for any other comment, which stays unaddressed.
+ * The refusal for an `atlantis plan` or `atlantis apply` form terragucci has
+ * no counterpart for, with the migration guide's reason. Undefined for every
+ * other comment: chant's grammar reads the forms terragucci accepts
+ * (`-d <dir>` names the root).
  */
-export function fromAtlantis(text: string): string | ParsedComment | undefined {
+export function fromAtlantis(text: string): ParsedComment | undefined {
   const m = /^atlantis[ \t]+(plan|apply)(?=\s|$)/.exec(text);
   if (!m) return undefined;
   if (/[\r\n]/.test(text)) return { kind: "refused", reason: "a command is one line, and nothing else in the comment" };
   const verb = m[1] as "plan" | "apply";
   const words = text.split(/[ \t]+/).slice(2);
   const refuse = (reason: string): ParsedComment => ({ kind: "refused", reason });
-  const rest: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
     if (w === "-d" || w === "--dir" || w === "-p" || w === "--project") {
@@ -156,28 +114,15 @@ export function fromAtlantis(text: string): string | ParsedComment | undefined {
         return refuse(`\`atlantis apply ${w}\` applies one root, and terragucci does not: ${l.rule}. ${commentCell("Apply part of the change")}`);
       }
       if (w === "-p" || w === "--project") return refuse(`a root goes by its path, not a project name: write \`atlantis plan -d <dir>\` or ${commentCell("Plan one project")}`);
-      const dir = words[++i];
-      if (dir === undefined) return refuse("`-d` names the root's directory, like `atlantis plan -d envs/dev/orders`");
-      rest.push(dir.replace(/^\.\/+/, "").replace(/\/+$/, ""));
+      if (words[++i] === undefined) return refuse("`-d` names the root's directory, like `atlantis plan -d envs/dev/orders`");
     } else if (w === "-w" || w === "--workspace") return refuse(`\`${w}\` picks a workspace, and terragucci has ${commentCell("Plan one workspace")}`);
     else if (w === "--") {
       const l = leftOut("Flags at run time");
       return refuse(`a comment passes no flags to the binary: ${l.rule}. Instead: ${l.instead}`);
     } else if (w === "--verbose") continue;
     else if (w.startsWith("-")) return refuse(`\`atlantis ${verb}\` takes ${verb === "plan" ? "`-d <dir>` and nothing else" : "nothing, or a wave like `wave-2`"} here`);
-    else rest.push(w);
   }
-  return `/terragucci ${verb}${rest.length ? ` ${rest.join(" ")}` : ""}`;
-}
-
-/** `/terragucci apply` with nothing after it, or with one wave: `wave-<n>`, n from 1. */
-function parseApply(words: string[]): ParsedComment {
-  if (words.length > 3) return { kind: "refused", reason: "`/terragucci apply` takes one wave at most, like `wave-2`" };
-  const wave = words[2];
-  if (wave === undefined) return { kind: "apply" };
-  const m = /^wave-([1-9][0-9]{0,2})$/.exec(wave);
-  if (!m) return { kind: "refused", reason: "the wave is written `wave-<n>`, like `wave-2`" };
-  return { kind: "apply", wave: Number(m[1]) };
+  return undefined;
 }
 
 /** The root a comment named, when it is one of the roots the pipeline was written with. */

@@ -579,6 +579,44 @@ claim_drift/choudoufu() {
   return $rc
 }
 
+claim_choudoufu/plan_bytes() {
+  # One estate of two terraform_data resources on choudoufu's local record
+  # store, applied once in the choudoufu CI image. The same checkout is then
+  # planned twice, each plan shown as JSON: the two must be the same bytes
+  # once each is put in key order (jq -S) and its top-level timestamp, which
+  # every plan stamps, is left out. Nothing reaches floci.
+  # BREAK: one resource's input is timestamp(), so the second plan differs
+  # from the first and the comparison must catch it.
+  log() { echo "[smoke cdf-plan-bytes] $*" >&2; }
+  local work image rc=0 input='"plan-bytes"' a b
+  image="$(image_tag choudoufu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
+  work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
+  mkdir -p "$work/estate"
+  printf 'terraform {\n  live {\n    estate = "plan-bytes-%s"\n  }\n}\n\nresource "terraform_data" "kept" {\n  input = "kept"\n}\n' "$STAMP" > "$work/estate/main.tf"
+  [ -z "${BREAK:-}" ] || input='timestamp()'
+  printf '\nresource "terraform_data" "moving" {\n  input = %s\n}\n' "$input" >> "$work/estate/main.tf"
+  plans() { # the apply, then two plans shown as plan-1.json and plan-2.json
+    run_copied --rm -v "$work/estate:/estate" -w /estate -e TF_IN_AUTOMATION=1 -e TF_INPUT=0 --entrypoint sh "$image" -c '
+      choudoufu init -input=false -no-color >/dev/null &&
+      choudoufu apply -auto-approve -input=false -no-color >/dev/null &&
+      for i in 1 2; do
+        choudoufu plan -input=false -no-color -out="p$i" >/dev/null && choudoufu show -json "p$i" > "plan-$i.json" || exit 1
+      done'
+  }
+  plans >&2 || { log "the apply or a plan failed"; drop_work "$work" "$image"; return 1; }
+  clean_mounted "$work/estate" "$image"
+  a="$(jq -S 'del(.timestamp)' "$work/estate/plan-1.json")" || rc=1
+  b="$(jq -S 'del(.timestamp)' "$work/estate/plan-2.json")" || rc=1
+  if [ $rc = 0 ] && [ "$a" = "$b" ]; then
+    log "the two plans are the same $(printf '%s' "$a" | wc -c | tr -d ' ') bytes"
+  else
+    log "the two plans differ: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") | head -8 | tr '\n' ' ')"; rc=1
+  fi
+  drop_work "$work" "$image"
+  return $rc
+}
+
 claim_choudoufu/rows_takeover() {
   # A repo of one choudoufu estate of one SQS queue on the Forgejo stack,
   # visibility timeout 30, applied; gate: never, TG_LOCK_POLL 3. The proxy
@@ -3645,11 +3683,15 @@ claim_report/sensitive() {
   # names both.
   # BREAK: the root creates four SQS queues in place of the four sensitive
   # resources and has no import or removed block.
+  # Under SMOKE_BINARY the tree is written for that binary (binary-tree.py:
+  # under choudoufu the local backend becomes the local record store) before
+  # each run, and every run is in its CI image.
   log() { echo "[smoke highlight-sensitive] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work rc=0 queue="tg-import-$STAMP" url r t why
-  docker image inspect "$(image_tag tofu)" >/dev/null 2>&1 || { log "no CI image; run 'just example up' first"; return 1; }
+  local work rc=0 queue="tg-import-$STAMP" url r t why IN_IMAGE estates
+  IN_IMAGE="$(bin_image)"
+  docker image inspect "$IN_IMAGE" >/dev/null 2>&1 || { log "no CI image $IN_IMAGE; run 'just example up' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   mkdir -p "$work/repo/sens"
@@ -3670,7 +3712,9 @@ provider "aws" {
   printf '%s\nresource "terraform_data" "old" {\n  input = "old"\n}\n' "$head" > "$work/repo/sens/main.tf"
   cp "$EXAMPLE/envs/dev/orders/.terraform.lock.hcl" "$work/repo/sens/"
   printf 'binary: tofu\nroots: ["sens"]\n' > "$work/repo/terragucci.yml"
-  in_image "$work/repo" sh -c 'cd sens && tofu init -input=false -no-color >/dev/null && tofu apply -auto-approve -input=false -no-color >/dev/null' >&2 || { log "the first apply failed"; drop_work "$work"; return 1; }
+  estates="sensitive-$(date +%s)"
+  bin_prepare && bin_tree "$work/repo" "$estates" || { log "the tree was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
+  in_image "$work/repo" sh -c "cd sens && $SMOKE_BINARY init -input=false -no-color >/dev/null && $SMOKE_BINARY apply -auto-approve -input=false -no-color >/dev/null" >&2 || { log "the first apply failed"; drop_work "$work"; return 1; }
   clean_mounted "$work/repo"
   url="$(sqs CreateQueue "{\"QueueName\":\"$queue\"}" | jq -r '.QueueUrl // empty')"
   [ -n "$url" ] || { log "could not make $queue in floci"; drop_work "$work"; return 1; }
@@ -3714,9 +3758,11 @@ removed {
 }
 HCL
   fi
+  # The change is written for the binary the way the first apply's tree was, as the same estate.
+  bin_tree "$work/repo" "$estates" || { log "the change was not written for $SMOKE_BINARY"; drop_work "$work"; return 1; }
   git -C "$work/repo" init -q -b main
   git -C "$work/repo" add -A && git -C "$work/repo" -c user.name=smoke -c user.email=smoke@localhost -c commit.gpgsign=false commit -qm "smoke highlight-sensitive"
-  in_image "$work/repo" terragucci stage tf-plan --layers sens >&2 || log "the plan run exited non-zero"
+  in_image "$work/repo" terragucci stage tf-plan --layers sens --binary "$SMOKE_BINARY" >&2 || log "the plan run exited non-zero"
   clean_mounted "$work/repo"
   r="$work/repo/terragucci-report/report.json"
   if [ ! -f "$r" ]; then

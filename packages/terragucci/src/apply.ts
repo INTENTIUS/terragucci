@@ -86,7 +86,7 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
-import { chantAfterPlan, chantGateWriters, chantOpStandDown, chantPrEnvLedger, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
+import { chantAfterPlan, chantGateWriters, chantOpStandDown, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
 import { declaredTerraformRoots } from "./chant-config";
 import type { RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
@@ -2431,15 +2431,14 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   const env = options.env ?? process.env;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-  const ledgerChangeSet = !!(await chantPrEnvLedger());
   // chant stores the change set on the local ledger before its gate fetches the remote one, so a checkout whose copy is
   // behind (an approval made elsewhere since its last run) or missing would fork the ledger. Bring it up to date first.
-  if (ledgerChangeSet) await fetchLifecycleStatus({ cwd: repo });
+  await fetchLifecycleStatus({ cwd: repo });
   writePlans(plansPath, {
     runs: [...planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))), ...migrationMembers.map((m) => planEntry(m.member, m.planDigest, true, 0))],
     ...(priced ? { members: [priced] } : {}),
-    // chant#4551: the change set the pending fact cites. A chant before it would not read the field, so it goes only to one that has the ledger's writers.
-    ...(ledgerChangeSet ? { changeSet: wavePlansChangeSet(planned.filter((p) => p.member).map((p) => ({ path: p.root, plan: p.plan, ...(p.error ? { error: p.error } : {}), binary: p.bin }))) } : {}),
+    // chant#4551: the change set the pending fact cites.
+    changeSet: wavePlansChangeSet(planned.filter((p) => p.member).map((p) => ({ path: p.root, plan: p.plan, ...(p.error ? { error: p.error } : {}), binary: p.bin }))),
     pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum.map(ruleReport) } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });

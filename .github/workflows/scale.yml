@@ -1,9 +1,6 @@
 name: scale
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       scale:
@@ -32,7 +29,7 @@ jobs:
       contents: write
       pull-requests: write
     env:
-      TGSCALE_RELEASE: '${{ github.event.release.tag_name && github.event.release.tag_name || inputs.release }}'
+      TGSCALE_RELEASE: '${{ inputs.release }}'
       SCALE: '${{ inputs.scale || ''136'' }}'
       TGSCALE_CAPACITY: '2'
     steps:

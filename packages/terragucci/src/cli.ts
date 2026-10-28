@@ -100,7 +100,7 @@ import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
 import { applyGroups } from "./cloud-identity";
 import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
-import { checkJob, describeJobCheck, jobSeen, type JobExpectation } from "./check-job";
+import { runCheckJob, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
 import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
@@ -147,7 +147,7 @@ import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
 import { checkHooks } from "./pre-commit";
-import { checkMirror, describeRecipe, mirrorCode, planRecipe } from "./image-recipe";
+import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
 import { describeCatalog, describeComponent, findComponent, readCatalog } from "./publish/catalog";
@@ -662,7 +662,8 @@ export async function main(argv: string[]): Promise<number> {
           ...(str(flags, "runner-tags") ? { runnerTags: list(str(flags, "runner-tags")) } : {}),
           ...(flags["self-hosted"] === true ? { selfHosted: true } : {}),
         };
-        const told = describeJobCheck(expect, checkJob(expect, await jobSeen(expect)));
+        // chant core's guard when the installed chant has it (chant#4624), else terragucci's own check.
+        const told = await runCheckJob(expect);
         for (const l of told.out) console.log(l);
         for (const l of told.err) console.error(l);
         return told.ok ? 0 : 1;
@@ -683,7 +684,7 @@ export async function main(argv: string[]): Promise<number> {
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
         const mirror = imageMirror(settings.image);
         if (!mirror) return 0;
-        const result = checkMirror(cwd, mirror, { ...(str(flags, "platform") ? { platform: str(flags, "platform") } : {}), code: await mirrorCode() });
+        const result = checkMirror(cwd, mirror, str(flags, "platform") ? { platform: str(flags, "platform") } : {});
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
       }
@@ -697,9 +698,7 @@ export async function main(argv: string[]): Promise<number> {
         const out = str(flags, "out") ?? "image";
         let recipe;
         try {
-          const code = await mirrorCode();
           recipe = planRecipe(cwd, {
-            code,
             binary: binary as Binary,
             terragrunt: settings.terragrunt !== undefined || existsSync(resolve(cwd, "root.hcl")) || existsSync(resolve(cwd, "terragrunt.hcl")),
             ...(str(flags, "from") ? { from: str(flags, "from") } : {}),

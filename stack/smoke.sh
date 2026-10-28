@@ -301,6 +301,7 @@ choudoufu/rows-overlap|with binary: choudoufu two pushes whose plans change diff
 choudoufu/rows-wait|with binary: choudoufu two tf-apply waves change the visibility timeout of one SQS queue on floci: the second waits for the first and makes no call while the call of the first is in flight, as the request log of the emulator shows, then plans again and applies its value|
 drift/choudoufu|with binary: choudoufu a queue changed outside choudoufu on a root under live resource markers is drift: tf-drift plans the root in full, its report and one drift issue name the root and the attribute, and a run with no change closes the issue|
 choudoufu/rows-takeover|with binary: choudoufu a wave killed after its change landed, while it held the queue it changes, leaves its row held; the wave of the next push takes it over with nothing unlocked, and the re-read of its apply refuses the plan the killed run made stale before any call|
+choudoufu/plan-bytes|with binary: choudoufu an estate applied once and planned twice from the same checkout writes the same plan twice: the two plan.json files are the same bytes once each is put in key order and its timestamp left out|
 approval/resume|terragucci approve, given a forge token of the approver, resumes the waiting wave of a merged pull request, which applies with nothing else done|
 approval/resume-schedule|with apply.resume set, a run of the resume workflow applies a waiting wave once an approval of its digest is on chant/lifecycle|
 refuse/approve-plan|terragucci approve --plan with a digest the plans moved past approves nothing, exits 1 and names the digest waiting|
@@ -454,7 +455,7 @@ init/pass-secrets|with pass naming a repo secret and a repo variable, init write
 
 # The core claims, which SMOKE_BINARY=terraform and SMOKE_BINARY=choudoufu run
 # on that binary, each a row of its own in smoke.json.
-BINARY_CLAIMS='boot/tofu waves/tofu pr-apply/tofu policy/wave notify/webhook report/tofu drift/tofu cost/gate steps/gate refuse/approve-plan estate/inventory estate/history estate/graph audit/tofu'
+BINARY_CLAIMS='boot/tofu waves/tofu pr-apply/tofu policy/wave notify/webhook report/tofu drift/tofu cost/gate steps/gate refuse/approve-plan estate/inventory estate/history estate/graph audit/tofu tips/moved respond/drift report/sensitive'
 # A core claim that shows something else on a binary: <binary> <claim>|what
 # its row shows.
 BINARY_SAYS='choudoufu drift|with binary: choudoufu and the roots under live resource markers, each root plans in full: the queue deleted outside choudoufu is named by root in the report and one drift issue, the change waiting on main shows as drift too, and a run with no drift closes it
@@ -799,6 +800,7 @@ apply/provider-cache  weight=90
 apply/provider-cache-no-lock  weight=90
 state/unlock         runner self! weight=300
 tips/moved            self! weight=150
+choudoufu/plan-bytes  self! weight=60
 estate/mcp       weight=120
 agent/drift          runner self! weight=250
 apply/runner-nudge         stack! self! weight=200
@@ -947,7 +949,7 @@ start_run() { # run
     case " $(echo $QUEUE) " in *" $name:plain "*) next=1 ;; esac
   fi
   echo "[smoke] start $name ($mode)" >&2
-  BREAK="$brk" SMOKE_PLAIN_NEXT="$next" SMOKE_LOCKS_HELD=1 "$BASH" "$HERE/smoke.sh" "$name" \
+  BREAK="$brk" SMOKE_PLAIN_NEXT="$next" SMOKE_LOCKS_HELD=1 ${SMOKE_SAFE_RUN[@]+"${SMOKE_SAFE_RUN[@]}"} "$BASH" "$HERE/smoke.sh" "$name" \
     >"$SMOKE_LOG_DIR/${name//\//.}.$mode.log" 2>&1 </dev/null &
   LAST_PID=$!
 }
@@ -956,6 +958,11 @@ finish_run() { # run
   local run="$1" name="${1%:*}" mode="${1#*:}" line
   line="$(grep "^SMOKE claim=$name " "$SMOKE_LOG_DIR/${name//\//.}.$mode.log" 2>/dev/null | tail -1 || true)"
   [ -n "$line" ] || line="SMOKE claim=$name verdict=fail no-verdict"
+  # chant's wrapper found a public cloud answering in the run's output: the
+  # run proves nothing, whatever its own line said.
+  if grep -q '^REAL-CLOUD CALL' "$SMOKE_LOG_DIR/${name//\//.}.$mode.log" 2>/dev/null; then
+    line="SMOKE claim=$name verdict=fail real-cloud: the no-real-cloud scan found a public cloud answering; see the log"
+  fi
   echo "$line" >"$SMOKE_LOG_DIR/${name//\//.}.$mode.verdict"
   unlock_holder "$$.$run"
   smoke_line "$line"
@@ -1044,12 +1051,74 @@ run_queue() {
   echo "[smoke] every run finished in $(( $(date +%s) - started ))s, $SMOKE_JOBS at a time; logs in $SMOKE_LOG_DIR" >&2
 }
 
+# ── chant's e2e harness (terragucci#1295) ──
+#
+# Every run the runner starts goes through chant's no-real-cloud wrapper,
+# `chant e2e safe-run` (chant#4587): every cloud variable unset, floci's test
+# keys, empty cloud config, a file:// Pulumi backend, and a scan of the run's
+# output for a public cloud answering, which fails the run (finish_run).
+# --record then writes each claim's row in the harness's row schema
+# (e2e-claim-row/v1) on a ledger in the state directory and renders
+# docs-site/src/data/e2e-claims.json from it (stack/harness/harness.ts
+# record), beside smoke.json, which stays the page's scoreboard.
+#
+# On a chant without the wrapper, runs start as before, smoke.json is written
+# as before, and no harness row is written: a line says which chant it needs.
+# SMOKE_AWS=1, the real-AWS pilot, never goes through it: it records nothing.
+SMOKE_SAFE_RUN=()
+SMOKE_SAFE_RUN_NEEDS="chant e2e safe-run (chant#4587 C1, in the chant release after 0.124.55)"
+safe_run_detect() {
+  SMOKE_SAFE_RUN=()
+  [ -z "${SMOKE_AWS:-}" ] || return 0
+  if "$CHANT" e2e safe-run -- true >/dev/null 2>&1; then
+    SMOKE_SAFE_RUN=("$CHANT" e2e safe-run --scan "$SMOKE_LOG_DIR" --)
+    echo "[smoke] every run goes through chant e2e safe-run" >&2
+  else
+    echo "[smoke] the installed chant has no e2e safe-run, so runs start without the harness's no-real-cloud wrapper and no harness row is written; that needs $SMOKE_SAFE_RUN_NEEDS" >&2
+  fi
+}
+
+# The version the run's binary reports, from its CI image. A claim that says
+# it runs on another binary takes that binary's pinned version instead.
+engine_version() {
+  docker run --rm --entrypoint "$SMOKE_BINARY" "$(image_tag "$SMOKE_BINARY")" version 2>/dev/null \
+    | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1
+}
+
+# --record's harness rows, after every run finished. A refusal never stops
+# the record: smoke.json is still written.
+harness_rows() {
+  local version rc=0
+  if [ ${#SMOKE_SAFE_RUN[@]} = 0 ]; then
+    echo "smoke: no harness rows: the runs did not go through $SMOKE_SAFE_RUN_NEEDS" >&2
+    return 0
+  fi
+  version="$(engine_version)"
+  [ -n "$version" ] || { echo "smoke: no harness rows: the $SMOKE_BINARY image reported no version" >&2; return 0; }
+  # The claim table this run read, so each row takes its engine from its
+  # claim: a claim that says "with binary: choudoufu" runs its jobs in the
+  # choudoufu image in a tofu run too, and its row carries choudoufu at the
+  # version TOOL_VERSIONS builds that image with (stack/harness/rows.ts).
+  printf '%s\n' "$CLAIMS" >"$SMOKE_LOG_DIR/claims.table"
+  (cd "$HERE/.." && node_modules/.bin/tsx stack/harness/harness.ts record --logs "$SMOKE_LOG_DIR" \
+    --binary "$SMOKE_BINARY" --forge "$SMOKE_FORGE" --engine-version "$version" \
+    --claims "$SMOKE_LOG_DIR/claims.table") || rc=$?
+  case "$rc" in
+    0) ;;
+    3) echo "smoke: no harness rows (see the line above); smoke.json is written as before" >&2 ;;
+    4) echo "smoke: no harness rows: a public cloud answered in a run's log (see above); smoke.json is written as before" >&2 ;;
+    *) echo "smoke: the harness rows were not written (exit $rc); smoke.json is written as before" >&2 ;;
+  esac
+  return 0
+}
+
 # Before any run starts: build the bundle and work out the image tags once,
 # build the CI images if they are missing, and start the stack (bootstrap.sh
 # keeps a token that still works, so no run's token goes stale under it).
 runner_prep() {
   mkdir -p "$SMOKE_LOG_DIR" || return 1
   echo "[smoke] logs in $SMOKE_LOG_DIR, $SMOKE_JOBS at a time" >&2
+  safe_run_detect
   (cd "$HERE/.." && node scripts/build-cli.mjs >/dev/null) || { echo "[smoke] the CLI did not build" >&2; return 1; }
   export SMOKE_CLI_BUILT=1
   # This tree's own image tags: a run from another worktree builds its own, so
@@ -1173,6 +1242,7 @@ if [ "${1:-}" = --record ]; then
   # shellcheck disable=SC2046
   QUEUE="$(build_queue "plain break" $(runnable_names))"
   run_queue
+  harness_rows
   # The rows in CLAIMS order, whatever order the runs finished in.
   rows=()
   for name in $(names); do

@@ -1,20 +1,16 @@
 /** The marker a plan note carries its waves in, for `approval: pr-review` (../review.ts), and the Terragrunt previews a gate compares with (../tg-preview.ts). */
-import { chantCiProductWordsNow } from "../chant-next";
-import { TERRAGUCCI_WORDS } from "../ci-words";
+import { approveLine } from "@intentius/chant/ci-product-words";
+import { productWords, TERRAGUCCI_WORDS } from "../ci-words";
 import type { NotePreview } from "../tg-preview";
 
 /**
  * The command that approves wave `wave`'s plans of `digest`, with `--sign`
- * under `approval: sealed`. With chant's product words (chant#4550) chant's
- * `approveLine` fills terragucci's template, which gives the same line.
+ * under `approval: sealed`: chant's `approveLine` (chant#4550) fills
+ * terragucci's template.
  */
 export function approveCommand(wave: number, digest: string, sealed = false): string {
-  const chant = chantCiProductWordsNow();
-  if (chant) {
-    const words = chant.assertProductWords(TERRAGUCCI_WORDS);
-    return chant.approveLine(words, { op: TERRAGUCCI_WORDS.op, gate: words.gateName.replace("{k}", String(wave)), digest, sign: sealed });
-  }
-  return `terragucci approve wave-${wave} --plan ${digest}${sealed ? " --sign" : ""}`;
+  const words = productWords();
+  return approveLine(words, { op: TERRAGUCCI_WORDS.op, gate: words.gateName.replace("{k}", String(wave)), digest, sign: sealed });
 }
 
 /** The marker the plan note carries the waves in. */

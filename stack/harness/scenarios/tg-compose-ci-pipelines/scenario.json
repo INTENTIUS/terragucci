@@ -1,0 +1,162 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-compose-ci-pipelines",
+  "product": "terragucci",
+  "claim": "choudoufu/ci-pipelines",
+  "title": "The ci-pipelines example's own Forgejo workflows: live-check and live-plan pass on the pull request, the merge's live-apply stops at chant's gate, and the re-run after the approval applies",
+  "tree": {
+    "base": ".",
+    "overlays": "overlays"
+  },
+  "env": "local",
+  "reportUrl": "s3://terragucci-reports/hs-tg-compose-ci-pipelines",
+  "limits": {
+    "out-of-band": 1500
+  },
+  "steps": [
+    {
+      "id": "settled",
+      "do": "out-of-band",
+      "label": "the base push's live-apply run ended (it stops at the gate, and nobody approves it)",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "log",
+      "do": "open",
+      "branch": "add-log-group",
+      "overlay": "log",
+      "title": "estate: a second log group"
+    },
+    {
+      "id": "checked",
+      "do": "out-of-band",
+      "label": "live-check on the pull request went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "add-log-group",
+        "success",
+        "live-check.yml"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "live-plan on the pull request went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "add-log-group",
+        "success",
+        "live-plan.yml"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge-log",
+      "do": "merge",
+      "pull": "log"
+    },
+    {
+      "id": "gated",
+      "do": "out-of-band",
+      "label": "the merge's live-apply stopped at its gate, on the ledger as gated, with its run green",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "ledger": {
+            "op": "live-apply",
+            "status": "gated"
+          }
+        }
+      ]
+    },
+    {
+      "id": "approved",
+      "do": "out-of-band",
+      "label": "the reviewer approves the gate with chant approve, on chant/lifecycle",
+      "command": [
+        "stack/harness/check.sh",
+        "chant-approve",
+        "live-apply",
+        "approve-live-apply"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "applied",
+      "do": "out-of-band",
+      "label": "live-apply run again walks through the gate and applies, on the ledger as ok",
+      "command": [
+        "stack/harness/check.sh",
+        "rerun",
+        "live-apply.yml"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "ledger": {
+            "op": "live-apply",
+            "status": "ok",
+            "count": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "recorded",
+      "do": "out-of-band",
+      "label": "the estate's record store holds a record of the new log group",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "choudoufu-records-123456789012-us-east-1",
+        "tofu-records/ci-pipelines-example/",
+        "map(tostring) | any(contains(\"/choudoufu-ci-pipelines-example/pr\"))"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "every pull request adds a log group that ignores its tags, so live-check refuses it and nothing applies"
+  }
+}
