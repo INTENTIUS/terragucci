@@ -26,6 +26,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { chantModuleCatalog } from "./chant-next";
 import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from "./config";
 import { age, buildEstate, linkUnrecorded, renderEstateHtml, type Estate, type ProjectIndex } from "./report/estate";
 import { storeFromEnv } from "./report/bucket";
@@ -312,7 +313,8 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   const { projects, out } = await sources(config, options, client);
   const indexes: ProjectIndex[] = [];
   for (const p of projects) indexes.push(await readProject(p.project, p.reports, out, client));
-  const page = buildEstate(indexes, now);
+  // The known-module catalog beside each module version a choudoufu root runs, when the installed chant has it (chant#4560).
+  const page = buildEstate(indexes, now, await chantModuleCatalog());
   if (out?.bucket) {
     const trail = await auditTrail(client(out), out.prefix ?? "");
     if (trail) page.audit = trail;

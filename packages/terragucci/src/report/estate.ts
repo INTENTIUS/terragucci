@@ -11,7 +11,10 @@
  * project's inventory.json (./inventory.ts): addresses, types and providers,
  * never a value. Then the versions every root runs, from each project's
  * versions.json (./versions.ts): per module, provider and binary, the
- * versions in use and the roots on each. Last, the state versions each root's applies left, from the
+ * versions in use and the roots on each. A module version a choudoufu root
+ * runs carries the known-module catalog's answer from chant's terraform
+ * lexicon (chant#4560), when the installed chant has it: the tier, and the
+ * refusal IDs that tier recorded. Last, the state versions each root's applies left, from the
  * project's states.json (./state-versions.ts): version ids, never contents.
  *
  * The dependency graph comes from the run view of each project's newest
@@ -28,7 +31,8 @@
  */
 import { esc } from "./html";
 import { countTypes, type Inventory } from "./inventory";
-import { estateVersions, type EstateVersionRow, type EstateVersions, type Versions } from "./versions";
+import { estateVersions, type EstateModuleCompat, type EstateVersionRow, type EstateVersions, type Versions } from "./versions";
+import type { ChantModuleCatalog } from "../chant-next";
 import type { ReportResource } from "./schema";
 import type { ChangeRow } from "./history";
 import type { AuditEntry } from "./audit";
@@ -455,7 +459,38 @@ export function linkUnrecorded(page: Estate, entries: AuditEntry[]): void {
   }
 }
 
-export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Estate {
+/** A module version's cell from the catalog's answer. */
+function compatOf(c: NonNullable<ReturnType<ChantModuleCatalog["moduleCompatibility"]>>, page: string): EstateModuleCompat {
+  return {
+    tier: c.tier,
+    status: c.status,
+    examples: c.examples,
+    refused: c.refusedExamples,
+    refusals: c.refusals.map((r) => ({ id: r.id, sites: r.sites })),
+    ...(c.status === "unknown-version" ? { measured: c.measuredVersions } : {}),
+    page,
+  };
+}
+
+/**
+ * Put the catalog's answer on each module version a choudoufu root runs.
+ * terragucci decides nothing here: the status and every figure are the
+ * catalog's.
+ */
+export function addModuleCompat(versions: EstateVersions, indexes: readonly ProjectIndex[], catalog: ChantModuleCatalog): void {
+  const choudoufu = new Set<string>();
+  for (const p of indexes) for (const r of p.versions?.roots ?? []) if (r.binary?.name === "choudoufu") choudoufu.add(`${p.project}\u0000${r.root}`);
+  for (const m of versions.modules) {
+    for (const row of m.versions) {
+      if (row.version === undefined || !row.roots.some((r) => choudoufu.has(`${r.project}\u0000${r.root}`))) continue;
+      const c = catalog.moduleCompatibility(m.source, row.version);
+      if (c) row.compat = compatOf(c, catalog.MODULE_COMPATIBILITY_PAGE);
+    }
+  }
+}
+
+/** `catalog`: chant's known-module catalog (../chant-next.ts chantModuleCatalog), absent when the installed chant has none. */
+export function buildEstate(indexes: ProjectIndex[], now: Date = new Date(), catalog?: ChantModuleCatalog): Estate {
   const projects = indexes.map((p) => projectState(p, now));
   const overridden = projects.reduce((n, p) => n + (p.overridden ?? 0), 0);
   const inventoried = projects.filter((p) => p.inventory);
@@ -487,7 +522,9 @@ export function buildEstate(indexes: ProjectIndex[], now: Date = new Date()): Es
     })(),
     ...((): { versions?: EstateVersions } => {
       // An index that could not be read leaves its project out, as it leaves its inventory out.
-      const versions = estateVersions(indexes.filter((p) => p.reports && p.error === undefined));
+      const read = indexes.filter((p) => p.reports && p.error === undefined);
+      const versions = estateVersions(read);
+      if (versions && catalog) addModuleCompat(versions, read, catalog);
       return versions ? { versions } : {};
     })(),
   };
@@ -584,6 +621,27 @@ function resourcesSection(estate: Estate, now: Date): string {
 }
 
 /**
+ * A module version's catalog cell: the tier first, then the catalog's answer.
+ * Each refusal ID links to choudoufu's table.
+ */
+export function compatCell(c: EstateModuleCompat): string {
+  const tier = `<small class="tier">${esc(c.tier)}</small>`;
+  const examples = (n: number): string => (n === 1 ? "1 example" : `${n} examples`);
+  switch (c.status) {
+    case "clear":
+      return `${tier} plans in ${examples(c.examples)}`;
+    case "refused": {
+      const ids = c.refusals.map((r) => `<a href="${esc(c.page)}"><code>${esc(r.id)}</code></a> (${r.sites === 1 ? "1 site" : `${r.sites} sites`})`).join(", ");
+      return `${tier} <span class="warn">refused in ${c.refused} of ${examples(c.examples)}</span>: ${ids}`;
+    }
+    case "unknown-version":
+      return `${tier} <a href="${esc(c.page)}">no row at this version</a>${c.measured && c.measured.length ? `; measured ${c.measured.map((v) => `<code>${esc(v)}</code>`).join(", ")}` : ""}`;
+    case "unknown-module":
+      return `${tier} <a href="${esc(c.page)}">no row for this module</a>`;
+  }
+}
+
+/**
  * The versions section: per module source, provider and binary, each version
  * in use, newest first, and the roots on it. A rollout that finished leaves
  * one version of what it moved.
@@ -594,14 +652,16 @@ function versionsSection(estate: Estate): string {
   const where = (r: EstateVersionRow["roots"][number]): string => `${esc(r.project)}: <code>${esc(r.root)}</code>${r.call ? ` <small>${esc(r.call)}</small>` : ""}`;
   const table = (title: string, kind: string, none: string, groups: { name: string; versions: EstateVersionRow[] }[]): string => {
     if (groups.length === 0) return "";
+    // The catalog column shows only when some version carries the catalog's answer.
+    const compat = groups.some((g) => g.versions.some((x) => x.compat));
     const bodies = groups.map((g) => {
       const live = g.versions.length;
-      const head = `<tr class="head"><th colspan="2"><code>${esc(g.name)}</code>: ${live === 1 ? "1 version" : `<span class="warn">${live} versions</span>`} live</th></tr>`;
-      const rows = g.versions.map((x) => `<tr data-version="${esc(x.version ?? "")}"><td>${x.version !== undefined ? `<code>${esc(x.version)}</code>` : `<span class="none">${none}</span>`}</td><td>${x.roots.map(where).join("<br>")}</td></tr>`);
+      const head = `<tr class="head"><th colspan="${compat ? 3 : 2}"><code>${esc(g.name)}</code>: ${live === 1 ? "1 version" : `<span class="warn">${live} versions</span>`} live</th></tr>`;
+      const rows = g.versions.map((x) => `<tr data-version="${esc(x.version ?? "")}"${x.compat ? ` data-compat="${esc(x.compat.status)}"` : ""}><td>${x.version !== undefined ? `<code>${esc(x.version)}</code>` : `<span class="none">${none}</span>`}</td><td>${x.roots.map(where).join("<br>")}</td>${compat ? `<td>${x.compat ? compatCell(x.compat) : ""}</td>` : ""}</tr>`);
       return `<tbody class="ver" data-${kind}="${esc(g.name)}" data-live="${live}">${head}${rows.join("")}</tbody>`;
     });
     return `<h3>${title}</h3>
-<div class="scroll"><table id="versions-${title.toLowerCase()}"><thead><tr><th>Version</th><th>Roots</th></tr></thead>${bodies.join("\n")}</table></div>`;
+<div class="scroll"><table id="versions-${title.toLowerCase()}"><thead><tr><th>Version</th><th>Roots</th>${compat ? "<th>On choudoufu</th>" : ""}</tr></thead>${bodies.join("\n")}</table></div>`;
   };
   return [
     table("Modules", "module", "no version in its source", v.modules.map((m) => ({ name: m.source, versions: m.versions }))),

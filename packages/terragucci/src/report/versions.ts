@@ -136,10 +136,31 @@ export interface EstateVersionRoot {
   call?: string;
 }
 
+/**
+ * The known-module catalog's answer for a module version a choudoufu root
+ * runs: chant's terraform lexicon (chant#4560), the static tier of
+ * choudoufu's module table. Every figure is from the one tier it names.
+ */
+export interface EstateModuleCompat {
+  tier: string;
+  status: "unknown-module" | "unknown-version" | "clear" | "refused";
+  /** Examples measured at this version, and how many of them were refused. */
+  examples: number;
+  refused: number;
+  /** Refusal IDs at this version, with their sites across the refused examples. */
+  refusals: { id: string; sites: number }[];
+  /** For a version with no row: the versions the tier measured. */
+  measured?: string[];
+  /** choudoufu's page with the table. */
+  page: string;
+}
+
 /** One version in use and the roots on it. An absent version: the root's binary did not say, or the module's source names none. */
 export interface EstateVersionRow {
   version?: string;
   roots: EstateVersionRoot[];
+  /** For a module version a choudoufu root runs, when the installed chant has the catalog. */
+  compat?: EstateModuleCompat;
 }
 
 /** The estate's versions: per binary, provider and module source, each version in use, newest first, and the roots on it. */

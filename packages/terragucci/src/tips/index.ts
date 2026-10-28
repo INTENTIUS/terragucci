@@ -10,6 +10,10 @@
  * Rollout tips are terragucci's own and read the repo's shape: how many roots
  * share a local module, whether there is a canary wave, whether a gate is off
  * where plans destroy.
+ *
+ * The module table tip words what chant's known-module catalog says about a
+ * choudoufu root's pinned module (chant#4560, through ../chant-next.ts): the
+ * status and its figures are the catalog's, and only the words are here.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -28,7 +32,7 @@ import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041"
 import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042";
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
-import { chantTf046 } from "../chant-next";
+import { chantModuleCatalog, chantTf046, type ChantModuleCompatibility } from "../chant-next";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
@@ -73,6 +77,8 @@ export const SHARED_AUDIENCE_TIP = "terragucci-gitlab-audience";
 export const SECRET_IN_STATE_TIP = "terragucci-secret-in-state";
 /** tf-check's and tf-plan's tip for a choudoufu root whose live block does not refuse secrets (./secrets.ts). */
 export const CHOUDOUFU_SECRETS_TIP = "terragucci-choudoufu-secrets";
+/** A plan's tip for a choudoufu root's module pin that choudoufu's module table refuses or has no row for. */
+export const MODULE_TABLE_TIP = "terragucci-module-table";
 
 /** A local module is shared widely at this many roots. */
 export const SHARED_MODULE_ROOTS = 10;
@@ -82,7 +88,9 @@ export const FEW_ROOTS = 5;
 export const HUNDREDS_OF_ROOTS = 100;
 
 export interface TipOptions {
-  settings: Pick<ResolvedSettings, "gate" | "tips"> & { waves?: { canary?: string[] } };
+  settings: Pick<ResolvedSettings, "gate" | "tips"> & { waves?: { canary?: string[] }; binary?: string };
+  /** The roots that run choudoufu. Default: every root when `settings.binary` is choudoufu, else none. */
+  choudoufuRoots?: readonly string[];
   /** The HCL parser. Without it the code tips and the shared-module tip are left out. */
   parser?: Hcl2Json;
   /** The chant rule ids to run. Default: all of `codeRules()`. */
@@ -119,6 +127,26 @@ async function callsIn(repo: string, dir: string, parser: Hcl2Json): Promise<Cal
     }
   }
   return out;
+}
+
+/**
+ * The module table tip's words for the catalog's answer, or undefined when
+ * the version plans in every example the table measured.
+ */
+export function moduleTableMessage(c: ChantModuleCompatibility): string | undefined {
+  const table = `choudoufu's module table (${c.tier} tier)`;
+  switch (c.status) {
+    case "clear":
+      return undefined;
+    case "refused": {
+      const ids = c.refusals.map((r) => `${r.id} (${r.sites === 1 ? "1 site" : `${r.sites} sites`})`).join(", ");
+      return `${c.module} ${c.version} is refused in ${c.refusedExamples} of ${c.examples} examples in ${table}: ${ids}. A call that uses the same features is refused the same way. Run choudoufu live-check on this root to see each site, or pin a version whose examples plan.`;
+    }
+    case "unknown-version":
+      return `${table} has no row for ${c.module} ${c.version}${c.measuredVersions.length ? `; it measured ${c.measuredVersions.join(", ")}` : ""}. Run choudoufu live-check on this root before the pin merges, or pin a measured version.`;
+    case "unknown-module":
+      return `${table} has no row for ${c.module}. Run choudoufu live-check on this root to see whether its calls plan.`;
+  }
 }
 
 /** The providers a root constrains to a range, as `name` and `version`. */
@@ -164,6 +192,8 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
     const checks = (options.rules ?? Object.keys(rules)).map((id) => rules[id]).filter((c): c is PostSynthCheck => c !== undefined);
     const floating = new Set<string>();
     const users = new Map<string, Set<string>>();
+    const choudoufu = new Set(options.choudoufuRoots ?? (options.settings.binary === "choudoufu" ? roots : []));
+    const catalog = choudoufu.size > 0 ? await chantModuleCatalog() : undefined;
     for (const dir of options.configDirs ?? []) {
       const entities = await parseTerraformRootDir(join(repo, dir), dir, parser);
       const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;
@@ -179,6 +209,13 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
         }
       }
       for (const m of await localModules(repo, root, parser)) users.set(m, (users.get(m) ?? new Set()).add(root));
+      if (catalog && choudoufu.has(root)) {
+        for (const { source, version } of await callsIn(repo, root, parser)) {
+          const c = version === undefined ? undefined : catalog.moduleCompatibility(source, version);
+          const message = c && moduleTableMessage(c);
+          if (message) tips.push(ownTip(MODULE_TABLE_TIP, message, root));
+        }
+      }
       // Chant's own range tips name the call already; this one says what the range costs a rollout.
       for (const { name, version } of await providerRanges(repo, root, parser)) {
         tips.push(ownTip(
