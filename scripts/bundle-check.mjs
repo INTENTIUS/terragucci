@@ -1,13 +1,16 @@
 // Holds @intentius/terragucci to its shape (terragucci#18, #87, #163): one runtime
 // dependency, @intentius/chant at the pinned version, no imports but Node's own modules and the two optional packages,
 // no input from a path that would drag lint rules, codegen, the TypeScript
-// compiler or the dashboards' renderers into the bundle, and a 2 MB accident
+// compiler or the dashboards' renderers into the bundle, and a 2.25 MB accident
 // ceiling on its size. The ceiling was 1 MB until `terragucci mcp` brought the
 // MCP SDK and zod in, about 150 KB (terragucci#657), 1.25 MB until the
 // bundle's own code (query, schema, estate moves, GitLab state) passed it, and
 // 1.5 MB until environments (terragucci#945) passed that. It was 2.5 MB for
 // one release while chant's pr-env-run pulled in its config loader; chant
 // 0.124.46 bundles it in about 32 KB (INTENTIUS/chant#4364).
+// It was 2 MB until the ci-products units (terragucci#1282 to #1305) passed it
+// with chant core external: 2088 KB on chant's integration build, of which
+// terragucci's own code is 1729 KB and the terraform lexicon 313 KB.
 //
 // Since terragucci#1281 the bundle imports chant core from the installed,
 // pinned @intentius/chant wherever that chant serves compiled JS
@@ -24,7 +27,7 @@ import { builtinModules } from "node:module";
 import { join } from "node:path";
 import { chantRuntimeTarget, chantServesCompiled } from "./chant-external.mjs";
 
-const CEILING_BYTES = 2048 * 1024;
+const CEILING_BYTES = 2304 * 1024;
 const OPTIONAL = new Set(["@intentius/tsad-reference", "@cdktn/hcl2json"]);
 
 // Matched against each metafile input with everything up to the last
