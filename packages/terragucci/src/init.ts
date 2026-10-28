@@ -23,6 +23,7 @@ import {
   FORGE_ENVIRONMENT_NOT_FORGEJO,
   normalizeGate,
   gitlabPrApplyProblems,
+  gitlabPublishToken,
   findConfig,
   ownJobsProblems,
   loadConfig,
@@ -401,7 +402,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
     ...(settings.modules?.publish || settings.modules?.registry
-      ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}) }
+      ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}), ...(gitlabPublishToken(settings.modules) ? { publishGitlabToken: gitlabPublishToken(settings.modules)! } : {}) }
       : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),

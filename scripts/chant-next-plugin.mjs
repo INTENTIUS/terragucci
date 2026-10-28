@@ -3,7 +3,7 @@
 // throws when it is imported, so a bundle builds on either chant, and the CLI built on 0.124.52 applies in
 // waves. scripts/cli-bundle.mjs (the shipped bundle) and test/pipeline.test.ts (the CLI its stand-in steps run)
 // both take it from here.
-const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape|registry|lint\/post-synth\/tf046|module-catalog|drift-rows|state-ops|lock-rows)$|^@intentius\/chant\/(object-store|components\/check-hooks|terraform\/credentials|bucket-check|ci-product|ci-product-words|ci-control|exit-codes|components\/pr-env-ledger|op\/op-waves-capability|otlp|lifecycle\/release-catalog|lifecycle\/release-catalog-site|lifecycle\/release-status|lifecycle\/release-changelog|lifecycle\/gated-request|lifecycle\/resource-lock|forge-check|notify-relay|ci-estate|policy-source)$|^@intentius\/chant-lexicon-(github|gitlab|forgejo)\/components\/control-pipeline$/;
+const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape|registry|lint\/post-synth\/tf046|module-catalog|drift-rows|state-ops|lock-rows)$|^@intentius\/chant\/(object-store|components\/check-hooks|terraform\/credentials|bucket-check|ci-product|ci-product-words|ci-control|exit-codes|components\/pr-env-ledger|op\/op-waves-capability|otlp|lifecycle\/release-catalog|lifecycle\/release-catalog-site|lifecycle\/release-status|lifecycle\/release-changelog|lifecycle\/gated-request|lifecycle\/resource-lock|ci-agent|forge-check|notify-relay|ci-estate|policy-source)$|^@intentius\/chant-lexicon-(github|gitlab|forgejo)\/components\/control-pipeline$/;
 
 export const chantNext = {
   name: "chant-next",

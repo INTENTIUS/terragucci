@@ -297,6 +297,8 @@ export interface PipelineInput {
   publishBucket?: string;
   /** Set when `modules.attest` is: the publish job gets the signing key's two secrets (GitHub and Forgejo; GitLab's CI variables are already there). */
   attest?: boolean;
+  /** Set when `modules.publish` names a `gitlab://` project: the secret the publish job passes as `GITLAB_TOKEN` (`modules.gitlab_token`, GitHub and Forgejo; GitLab's CI variables are already there). */
+  publishGitlabToken?: string;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
   /** `rollouts:`, when `respond.rollout` is not off: the cron of the job that continues every rollout in flight. */
@@ -673,6 +675,21 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
  * fails. A Terragrunt check stops at its first failing line, so the step is
  * its last line there; a plain check counts it with the rest.
  */
+/**
+ * With `control` set, the check job holds the project's consumers.json to its
+ * roots' module pins (`terragucci modules consumers --check`, terragucci#1289),
+ * so a publisher's catalog joins what the roots pin. On a chant without the
+ * consumer scan the command says so and passes.
+ */
+export function withConsumersCheck(body: string, control: boolean, terragrunt: boolean): string {
+  if (!control) return body;
+  const line = "terragucci modules consumers --check";
+  if (terragrunt) return `${body}\n${line}`;
+  const lines = body.split("\n");
+  const last = lines.pop();
+  return [...lines, `${line} || failed=1`, last].join("\n");
+}
+
 export function withCheckHooks(body: string, binary: Binary, roots: readonly string[], hooks: PipelineInput["checkHooks"], terragrunt: boolean): string {
   if (!hooks) return body;
   const line = `terragucci check-hooks --binary ${binary}${hooks.preCommit ? " --pre-commit" : ""} --targets ${sh(roots.join(","))}`;
@@ -2373,7 +2390,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const checkBody = withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), binary, roots, input.checkHooks, tg !== undefined);
+  const checkBody = withConsumersCheck(withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), binary, roots, input.checkHooks, tg !== undefined), input.control !== undefined, tg !== undefined);
   // The check hooks are read from the declaration at base, so the check job takes the history, as the policy tests do.
   const checkHistory = Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true || input.checkHooks !== undefined;
   const synth = input.synth ? { synth: input.synth } : {};
@@ -3327,6 +3344,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         TERRAGUCCI_REGISTRY_INSECURE: "${{ secrets.TERRAGUCCI_REGISTRY_INSECURE }}",
         ...(input.attest ? { COSIGN_PRIVATE_KEY: "${{ secrets.COSIGN_PRIVATE_KEY }}", COSIGN_PASSWORD: "${{ secrets.COSIGN_PASSWORD }}" } : {}),
         ...(input.publishBucket ? reportKeyEnv(forge, { bucket: input.publishBucket }) : {}),
+        ...(input.publishGitlabToken ? { GITLAB_TOKEN: `\${{ secrets.${input.publishGitlabToken} }}` } : {}),
       },
       steps: [
         new Step({ uses: CHECKOUT, with: { "fetch-depth": 0 } }),

@@ -104,6 +104,13 @@ export const EPHEMERAL_DONE_FILE = "_gates/tf-ephemeral/done.jsonl";
 /** Ephemeral environments since chant runs them: chant's pr-env records, and each pull request's gate `_gates/pr-<n>.jsonl` (../ephemeral.ts). */
 /** Agent runs: the record of each `agent.comment` and `agent.drift` run (../agent-record.ts). */
 export const AGENT_RUNS_FILE = "_gates/agent-runs.jsonl";
+/** Agent runs on chant's run ledger (chant#4616), one file per op: `local/runs__<op>.jsonl` (../agent-record.ts `AGENT_OPS`). */
+export const AGENT_RUN_LEDGERS: Readonly<Record<string, string>> = {
+  "local/runs__terragucci-agent.jsonl": "agent.comment",
+  "local/runs__terragucci-drift-agent.jsonl": "agent.drift",
+  "local/runs__terragucci-review.jsonl": "review.agent",
+  "local/runs__terragucci-refused-wave.jsonl": "agent.refused-wave",
+};
 export const PR_ENV_RECORDS_FILE = "_pr-envs/records.jsonl";
 export const PR_ENV_LEDGER_PATTERN = /^_gates\/pr-[1-9][0-9]*\.jsonl$/;
 
@@ -144,6 +151,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
   if (path === EPHEMERAL_DONE_FILE) return ephemeralEntries(project, lines, commitUrl);
   if (path === PR_ENV_RECORDS_FILE) return prEnvEntries(project, lines, commitUrl);
   if (path === AGENT_RUNS_FILE) return agentRunEntries(project, lines, commitUrl);
+  if (AGENT_RUN_LEDGERS[path]) return agentRunLedgerEntries(project, path, lines, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   const { entries } = deriveGateAudit({
     ledgers: [{ op: opOf(path), path, lines }],
@@ -366,6 +374,37 @@ function agentRunEntries(project: string, lines: readonly GateLedgerLine[], comm
       result: str(r.result) ?? "unknown",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: AGENT_RUNS_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ actor: r.actor, model: str(r.model), cost: r.cost, commit: str(r.commit), pull_request: str(r.pullRequest), requested_by: str(r.requestedBy), reason: str(r.reason), run_url: str(r.runUrl) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of chant's run ledger for an agent op (chant#4616): one per
+ * run record, with `outcomes.agent` as chant's agent job writes it. `who` is
+ * who asked, since chant's record names no forge identity for the agent.
+ */
+function agentRunLedgerEntries(project: string, path: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
+    const outcomes = r?.outcomes && typeof r.outcomes === "object" ? (r.outcomes as Line) : undefined;
+    const a = outcomes?.agent && typeof outcomes.agent === "object" ? (outcomes.agent as Line) : undefined;
+    if (!r || r.version !== 1 || !a || typeof r.ended !== "string") continue;
+    const url = commitUrl(c.commit);
+    const usage = a.usage && typeof a.usage === "object" ? (a.usage as Line) : {};
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, path, c.text),
+      kind: "agent-run",
+      project,
+      at: r.ended,
+      who: str(a.requestedBy) ?? null,
+      what: AGENT_RUN_LEDGERS[path]!,
+      digest: str(a.promptDigest) ?? null,
+      result: str(a.result) ?? "unknown",
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({ model: str(usage.model), cost: typeof usage.usd === "number" ? { usd: usage.usd } : undefined, commit: str(a.commit), pull_request: str(a.pullRequest), requested_by: str(a.requestedBy), reason: str(a.reason), run_id: str(r.id) }),
     });
   }
   return out;
