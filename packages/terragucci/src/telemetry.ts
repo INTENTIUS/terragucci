@@ -22,6 +22,7 @@
  * that ran it.
  */
 import { randomBytes } from "node:crypto";
+import { chantOtlp } from "./chant-next";
 
 export type AttrValue = string | number | boolean;
 export type Attrs = Record<string, AttrValue | undefined>;
@@ -239,6 +240,9 @@ export function metricsBody(gauges: Gauge[], resource: Attrs, version: string, a
 
 /** POST one OTLP/JSON body. Returns the problem, or undefined when it was taken. Never throws. */
 export async function send(t: Target, body: unknown, fetchFn: OtlpFetch = fetch as unknown as OtlpFetch): Promise<string | undefined> {
+  // chant's exporter (chant#4555) sends the same POST with the same timeout and answers; the body stays terragucci's.
+  const chant = await chantOtlp();
+  if (chant) return chant.sendOtlp(t, body, fetchFn);
   try {
     const res = await fetchFn(t.url, {
       method: "POST",

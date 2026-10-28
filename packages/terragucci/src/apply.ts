@@ -86,6 +86,8 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
+import { chantPrEnvLedger } from "./chant-next";
+import { wavePlansChangeSet } from "./report/build";
 import { detectActor } from "./actor";
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -172,7 +174,7 @@ import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./cloud-identity";
-import { readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
+import { readCallFile, runChantWave, serveWave, specAtBase, stateCode, waveCallArgv, waveExit, waveRecordPath, wavesSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
 import { groupOf } from "./cloud-identity";
 import type { WaveComposedInput } from "./report/build";
@@ -1444,8 +1446,8 @@ function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): 
     else if (!changed.has(root)) status = "unchanged";
     else if (w.applied?.has(root)) status = "applied";
     else if (w.decided) status = "decided";
-    else if (code === EXIT.waiting) status = "waiting";
-    else if (code === EXIT.refused || code === EXIT.held || code === EXIT.superseded) status = "refused";
+    else if (stateCode(code) === EXIT.waiting) status = "waiting";
+    else if ([EXIT.refused, EXIT.held, EXIT.superseded].includes(stateCode(code) as 4 | 5 | 6)) status = "refused";
     else status = "not-applied";
     out[root] = { status };
   }
@@ -1695,6 +1697,7 @@ export function waveSpans(w: Pick<WaveRun, "started" | "plannedAt" | "gateSince"
 
 /** Where a wave stands, from how it ended. */
 export function waveState(code: number, w: Pick<WaveRun, "decided" | "refused" | "blocked" | "appliedRest" | "roots">): WaveState {
+  code = stateCode(code);
   if (code === EXIT.applied) return w.decided ? "applying" : "applied";
   // terragucci#1161: a wave that applied what it planned and blocked the rest stands applied; one that planned nothing, blocked.
   if (w.appliedRest) return "applied";
@@ -1954,6 +1957,8 @@ interface PlansFile {
   members?: WaveMember[];
   /** A Terragrunt repo: how many waves `terragrunt find` gave. */
   waves?: number;
+  /** The wave's change-set document, which chant stores and the pending fact cites (chant#4551). Only for a chant that reads it. */
+  changeSet?: unknown;
   pending?: Record<string, unknown>;
   overriders?: string[];
 }
@@ -2130,6 +2135,8 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   writePlans(plansPath, {
     runs: [...planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))), ...migrationMembers.map((m) => planEntry(m.member, m.planDigest, true, 0))],
     ...(priced ? { members: [priced] } : {}),
+    // chant#4551: the change set the pending fact cites. A chant before it would not read the field, so it goes only to one that has the ledger's writers.
+    ...((await chantPrEnvLedger()) ? { changeSet: wavePlansChangeSet(planned.filter((p) => p.member).map((p) => ({ path: p.root, plan: p.plan, ...(p.error ? { error: p.error } : {}), binary: p.bin }))) } : {}),
     pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum.map(ruleReport) } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });

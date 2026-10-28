@@ -59,6 +59,17 @@
  * (./control-repo.ts, ./control-records.ts, ./reconcile.ts). Without them
  * terragucci's own code runs, with its record files.
  *
+ * Newer than the pin too (terragucci#1282 part e): chant's exit-code table
+ * (`exit-codes`, chant#4553), which terragucci passes through; the
+ * terraform lexicon's drift rows (`drift-rows`, chant#4580), which count and
+ * name the drift report's objects; chant's pull request environment ledger
+ * (`components/pr-env-ledger`, chant#4551); the op-wave step contract
+ * (`op/op-waves-capability`, chant#4545) with the terraform lexicon's
+ * `terraform-apply` capability passed in process; and chant's OTLP exporter
+ * (`otlp`, chant#4555). The review agent's tag list (chant#4580) and the
+ * object store's setting hints (chant#4584) are told apart by what the
+ * installed module exports, on subpaths the pin already has.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -392,7 +403,7 @@ export interface ChantCredentials {
  */
 export interface ChantObjectStore {
   storeFromEnv(
-    where: { bucket: string; endpoint?: string; role?: string; sessionName?: string; setting?: string; roleSetting?: string },
+    where: { bucket: string; endpoint?: string; role?: string; sessionName?: string; setting?: string; roleSetting?: string; hints?: { oidc?: string; gcp?: string; azure?: string } },
     env?: NodeJS.ProcessEnv,
     fetchFn?: StoreFetch,
   ): ObjectStore;
@@ -609,6 +620,58 @@ export interface ChantControlPipeline {
   generateControlPipeline(options?: { words?: object; image?: string; command?: string }): { path: string; content: string; notes: string[] };
 }
 
+// ── part e: exit codes, drift rows, pr-env ledger, wave step, otlp ─────────
+
+/** chant's exit-code table (`@intentius/chant/exit-codes`, chant#4553). */
+export interface ChantExitCodes {
+  CHANT_EXIT: { done: 0; failed: 1; drift: 2; waiting: 3; moved: 4; held: 5; superseded: 6; denied: 7; declined: 8 };
+  chantExitName(code: number): string | undefined;
+}
+
+/** The terraform lexicon's drift rows (`drift-rows`, chant#4580), with terragucci's counting rules. */
+export interface ChantDriftRows {
+  terraformPlanDriftRows(plan: unknown, options?: { live?: boolean }): { address: string; action: string; type?: string; name?: string }[];
+  terraformPlanDriftCount(plan: unknown, options?: { live?: boolean }): number;
+  terraformPlanDriftNames(plan: unknown, options?: { live?: boolean }): Map<string, string>;
+}
+
+/** chant's `_pr-envs/records.jsonl` writer (`components/pr-env-ledger`, chant#4551). */
+export interface ChantPrEnvLedger {
+  appendPrEnvRecord(record: unknown, opts?: { cwd?: string }): Promise<{ commit: string }>;
+  PR_ENV_APPEND_FLOOR: string;
+}
+
+/** The part of chant's `lifecycle/git` the pr-env writer needs after it appends. */
+export interface ChantLifecycleGit {
+  pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }>;
+}
+
+/** chant's op-wave step contract (`op/op-waves-capability`, chant#4545). */
+export interface ChantOpWaveStep {
+  opWaveStepProblems(spec: object): string[];
+  opWaveHoldsProblems(holds: unknown): string[];
+  planOpWaveStep: (...args: never[]) => unknown;
+  applyOpWaveStep: (...args: never[]) => unknown;
+}
+
+/** A capability registry with the terraform lexicon's `terraform-apply`, for a wave run in terragucci's process (ruling C). */
+export interface ChantWaveCapabilities {
+  registry: { has(kind: string): boolean; kinds?(): string[] };
+}
+
+/** chant's OTLP exporter (`@intentius/chant/otlp`, chant#4555). */
+export interface ChantOtlp {
+  otlpFromEnv(env?: NodeJS.ProcessEnv, opts?: { prefix?: string }): { prefix: string } | undefined;
+  OTLP_EXPORTER_FLOOR: string;
+  configureOtlp?(opts: { prefix?: string }): unknown;
+  /** One OTLP/JSON POST: the problem, or undefined when the collector took it. Never throws. */
+  sendOtlp(
+    target: { url: string; headers: Record<string, string> },
+    body: unknown,
+    fetchFn?: (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>,
+  ): Promise<string | undefined>;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -726,6 +789,51 @@ const loaders = {
     () => import("@intentius/chant-lexicon-forgejo/components/control-pipeline"),
     (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
   ),
+  exitCodes: once<ChantExitCodes>(
+    // @ts-ignore chant 0.124.54 has no exit-codes subpath (chant#4553)
+    () => import("@intentius/chant/exit-codes"),
+    (m) => {
+      const t = m.CHANT_EXIT as Record<string, unknown> | undefined;
+      return t && t.moved === 4 && t.denied === 7 && has(m, "chantExitName") ? (m as unknown as ChantExitCodes) : undefined;
+    },
+  ),
+  driftRows: once<ChantDriftRows>(
+    // @ts-ignore chant 0.124.54 has no drift-rows subpath (chant#4580)
+    () => import("@intentius/chant-lexicon-terraform/drift-rows"),
+    (m) => (has(m, "terraformPlanDriftRows", "terraformPlanDriftCount", "terraformPlanDriftNames") ? (m as unknown as ChantDriftRows) : undefined),
+  ),
+  prEnvLedger: once<ChantPrEnvLedger & ChantLifecycleGit>(
+    async () => {
+      // @ts-ignore chant 0.124.54 has no components/pr-env-ledger subpath (chant#4551)
+      const ledger: object = await import("@intentius/chant/components/pr-env-ledger");
+      const git: object = await import("@intentius/chant/lifecycle/git");
+      return { ...git, ...ledger };
+    },
+    (m) => (has(m, "appendPrEnvRecord", "pushLifecycleReport") ? (m as unknown as ChantPrEnvLedger & ChantLifecycleGit) : undefined),
+  ),
+  opWaveStep: once<ChantOpWaveStep>(
+    // @ts-ignore chant 0.124.54 has no op/op-waves-capability subpath (chant#4545)
+    () => import("@intentius/chant/op/op-waves-capability"),
+    (m) => (has(m, "opWaveStepProblems", "opWaveHoldsProblems", "planOpWaveStep", "applyOpWaveStep") ? (m as unknown as ChantOpWaveStep) : undefined),
+  ),
+  waveCapabilities: once<ChantWaveCapabilities>(
+    async () => {
+      const core: Record<string, unknown> = await import("@intentius/chant/components/capability");
+      const lexicon: Record<string, unknown> = await import("@intentius/chant-lexicon-terraform/components/capability-plugin");
+      const Registry = core.CapabilityRegistry as (new () => { register(c: unknown): unknown; has(kind: string): boolean }) | undefined;
+      const capability = lexicon.terraformApplyCapability as { kind?: string } | undefined;
+      if (!Registry || capability?.kind !== "terraform-apply") return {};
+      const registry = new Registry();
+      registry.register(capability);
+      return { registry };
+    },
+    (m) => (m.registry ? (m as unknown as ChantWaveCapabilities) : undefined),
+  ),
+  otlp: once<ChantOtlp>(
+    // @ts-ignore chant 0.124.54 has no otlp subpath (chant#4555)
+    () => import("@intentius/chant/otlp"),
+    (m) => (has(m, "otlpFromEnv", "sendOtlp") && typeof m.OTLP_EXPORTER_FLOOR === "string" ? (m as unknown as ChantOtlp) : undefined),
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -795,6 +903,33 @@ export const chantCiProduct = (): Promise<ChantCiProduct | undefined> => load("c
  */
 export const chantCiProductWordsNow = (): ChantCiProductWords | undefined => loaded("ciProductWords");
 
+/** chant's exit-code table (chant#4553), or undefined. */
+export const chantExitCodes = (): Promise<ChantExitCodes | undefined> => load("exitCodes");
+/** chant's exit-code table as it already loaded, for the synchronous exit paths. cli.ts loads it first. */
+export const chantExitCodesNow = (): ChantExitCodes | undefined => loaded("exitCodes");
+/** The terraform lexicon's drift rows (chant#4580), or undefined. */
+export const chantDriftRows = (): Promise<ChantDriftRows | undefined> => load("driftRows");
+/** The drift rows as they already loaded, for the synchronous report code. cli.ts loads them first. */
+export const chantDriftRowsNow = (): ChantDriftRows | undefined => loaded("driftRows");
+/** chant's pull request environment ledger writer (chant#4551), or undefined. */
+export const chantPrEnvLedger = (): Promise<(ChantPrEnvLedger & ChantLifecycleGit) | undefined> => load("prEnvLedger");
+/** chant's op-wave step contract (chant#4545), or undefined. */
+export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load("opWaveStep");
+/** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C), or undefined. */
+export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
+/** chant's OTLP exporter (chant#4555), or undefined. */
+export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
+
+/**
+ * Load the parts synchronous code reads, once, before a command runs: the
+ * words module, the exit-code table and the drift rows. cli.ts calls it.
+ */
+export async function preloadChantNext(): Promise<void> {
+  await chantCiProductWords();
+  await chantExitCodes();
+  await chantDriftRows();
+}
+
 /** chant core's control repo (`@intentius/chant/ci-control`, chant#4568), or undefined. */
 export const chantCiControl = (): Promise<ChantCiControl | undefined> => load("ciControl");
 /** chant's control repo as it already loaded, for the synchronous script builders (./control-repo.ts). init loads it first. */
@@ -817,8 +952,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo")]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────
@@ -836,6 +971,8 @@ export interface ChantReadCommitStatus {
 export interface ChantForgeReads {
   defaultBranch?: () => Promise<string>;
   commitStatuses?: (sha: string) => Promise<ChantReadCommitStatus[]>;
+  /** chant#4584: the statuses read filtered by ref, where the installed client takes one (GitLab filters; GitHub and Forgejo ignore it). */
+  commitStatusesAt?: (sha: string, ref: string) => Promise<ChantReadCommitStatus[]>;
 }
 
 /** `forge`'s default-branch and status reads, each undefined when the installed chant's client lacks it. */
@@ -844,6 +981,10 @@ export function chantForgeReads(forge: PrForge): ChantForgeReads {
   return {
     ...(typeof f.defaultBranch === "function" ? { defaultBranch: () => (f.defaultBranch as () => Promise<string>).call(forge) } : {}),
     ...(typeof f.commitStatuses === "function" ? { commitStatuses: (sha: string) => (f.commitStatuses as (sha: string) => Promise<ChantReadCommitStatus[]>).call(forge, sha) } : {}),
+    // A client whose read takes the ref (chant#4584) declares two parameters; the pin's takes one and would drop the filter.
+    ...(typeof f.commitStatuses === "function" && (f.commitStatuses as (...a: unknown[]) => unknown).length >= 2
+      ? { commitStatusesAt: (sha: string, ref: string) => (f.commitStatuses as (sha: string, ref: string) => Promise<ChantReadCommitStatus[]>).call(forge, sha, ref) }
+      : {}),
   };
 }
 

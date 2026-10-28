@@ -317,6 +317,16 @@ export function planTotals(roots: readonly RootInput[]): { totals: Record<Change
   return countTotals(doc.summary.actions, doc.entries, (member) => policyRefused(byPath.get(member)!));
 }
 
+/**
+ * The change-set document of a wave's planned roots, as the plans file hands
+ * it to chant (chant#4551): chant stores it and the wave's pending fact cites
+ * it, so the ledger keeps the plans an approval was asked for. Roots that did
+ * not plan are left out.
+ */
+export function wavePlansChangeSet(roots: readonly RootInput[]): ReturnType<typeof composeChangeSet> {
+  return composeChangeSet(roots.filter((r) => r.plan !== undefined && r.error === undefined).map(plannedPart));
+}
+
 export function buildReport(input: BuildInput): Report {
   const inputRun = input.run;
   const byPath = new Map(input.roots.map((r) => [r.path, r]));

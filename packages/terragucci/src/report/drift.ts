@@ -7,6 +7,7 @@
  * JSON and HTML as a plan's, and code waiting on main never shows in it.
  */
 import type { IssueResult, PrForge } from "@intentius/chant/pr-forge";
+import { chantDriftRowsNow } from "../chant-next";
 import type { ForgeTarget } from "../forge";
 import type { ForgeName } from "../config";
 import type { Attributed } from "../respond/attribute";
@@ -58,6 +59,9 @@ export function liveDrift(plan: unknown): unknown {
 
 /** How many resources a refresh-only plan found drifted. */
 export function driftCount(plan: unknown): number {
+  // The terraform lexicon's drift rows (chant#4580) count by this rule: every resource_drift entry.
+  const chant = chantDriftRowsNow();
+  if (chant) return chant.terraformPlanDriftCount(plan);
   const list = plan !== null && typeof plan === "object" ? (plan as Json).resource_drift : undefined;
   return Array.isArray(list) ? list.length : 0;
 }
@@ -73,6 +77,9 @@ const code = (s: string): string => "`" + s.replaceAll("`", "'") + "`";
  * name has to come from here.
  */
 export function driftNames(plan: unknown): Map<string, string> {
+  // The terraform lexicon's drift rows (chant#4580) name the objects by the same keys, in the same order.
+  const chant = chantDriftRowsNow();
+  if (chant) return chant.terraformPlanDriftNames(plan);
   const out = new Map<string, string>();
   const list = plan !== null && typeof plan === "object" ? (plan as Json).resource_drift : undefined;
   if (!Array.isArray(list)) return out;

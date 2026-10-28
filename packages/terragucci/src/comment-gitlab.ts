@@ -56,6 +56,7 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
+import { chantForgeReads } from "./chant-next";
 import { terragucciStatus } from "./ci-words";
 import { agentSettingsAt } from "./involved";
 import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
@@ -370,7 +371,11 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
     if (typeof c !== "string" || !SHA.test(c)) continue;
     let statuses: any;
     try {
-      statuses = await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT())}&ref=${encodeURIComponent(base)}`);
+      // chant's statuses read with the ref filter (chant#4584), where the installed client has it; the same answer, read through chant.
+      const at = chantForgeReads(ask.forge).commitStatusesAt;
+      statuses = at
+        ? (await at(c, base)).filter((s) => s.context === APPLY_CONTEXT()).map((s) => ({ name: s.context, status: s.state, ...(s.targetUrl ? { target_url: s.targetUrl } : {}) }))
+        : await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT())}&ref=${encodeURIComponent(base)}`);
     } catch (e) {
       return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
     }
