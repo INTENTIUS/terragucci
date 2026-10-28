@@ -17,7 +17,8 @@
 import { spawnSync } from "node:child_process";
 import type { ResolvedSettings } from "../config";
 import { ConfigError } from "../config";
-import { chantReleaseCatalog, type ChantReleaseState, type ChantReleaseStatusRecord } from "../chant-next";
+import { releaseCatalog as core } from "../chant-catalog";
+import { type ChantReleaseState, type ChantReleaseStatusRecord } from "../chant-next";
 import { publishCatalog } from "./catalog";
 import { findModules } from "./index";
 import { actorOf, LEDGER_ENV, LIFECYCLE, readModuleLedger } from "./ledger";
@@ -56,8 +57,6 @@ export interface StatusResult {
 
 /** Set one version's status, push it, and write the catalog again. */
 export async function setReleaseStatus(repo: string, settings: Pick<ResolvedSettings, "modules"> & { binary?: string; roots?: string[]; control?: ResolvedSettings["control"] }, change: StatusChange, opts: StatusOptions = {}): Promise<StatusResult> {
-  const core = await chantReleaseCatalog();
-  if (!core) throw new ConfigError(`terragucci modules ${change.word} writes a release status record (chant#4596), which the installed chant has no writer for; it needs a chant release that carries it`);
   const status = STATUS_WORDS[change.word];
   if (status !== "active" && !change.reason?.trim()) throw new ConfigError(`terragucci modules ${change.word} needs --reason <text>: the record says why, for everyone whose root pins the version`);
   const want = parseSemver(change.version);

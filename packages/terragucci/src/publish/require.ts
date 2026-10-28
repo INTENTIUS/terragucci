@@ -34,7 +34,8 @@ import { pinFiles, pinVersion } from "../rollout/pins";
 import { moduleTarAt } from "./archive";
 import { attestKey } from "./attest";
 import { fetchLedger, shown, type Ledger, type VersionedReleaseRecord } from "./ledger";
-import { chantReleaseCatalog, type ChantReleaseCatalog } from "../chant-next";
+import { releaseCatalog } from "../chant-catalog";
+import type { ChantReleaseCatalog } from "../chant-next";
 import { Registry, installable, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 
 const DIGEST = /^[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-fA-F]{32,}$/;
@@ -298,8 +299,7 @@ export async function checkRootPins(repo: string, root: string, sources: Checked
       continue;
     }
     // A yanked release is refused before anything is fetched; it stays in the registry, so the refusal is the only stop.
-    const core = ledger.status ? await chantReleaseCatalog() : undefined;
-    const yanked = core && yankedPin(ledger, module, pin.pin, core);
+    const yanked = yankedPin(ledger, module, pin.pin, releaseCatalog);
     if (yanked) {
       refuse(pin.pin, yanked);
       continue;

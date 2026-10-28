@@ -32,7 +32,8 @@ import { tf041 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf041"
 import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042";
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
-import { chantModuleCatalog, chantRegistryCatalog, chantTf046, type ChantModuleCompatibility, type ChantReleaseCatalogDoc } from "../chant-next";
+import { registryCatalog as tf } from "../chant-catalog";
+import { chantModuleCatalog, chantTf046, type ChantModuleCompatibility, type ChantReleaseCatalogDoc } from "../chant-next";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
@@ -329,12 +330,9 @@ export function catalogHosts(settings: { modules?: { registry?: { url: string } 
 /**
  * The deprecated-version tips: each call whose pin a catalog marks, worded
  * from the lexicon's check (`deprecatedPins`, chant#4599). A tip is advice,
- * so a catalog that cannot be read is skipped, and a chant without the check
- * gives none.
+ * so a catalog that cannot be read is skipped.
  */
 async function deprecatedVersionTips(repo: string, roots: readonly string[], parser: Hcl2Json, catalogs: readonly ChantReleaseCatalogDoc[] | { hosts: readonly string[] }): Promise<ReportTip[]> {
-  const tf = await chantRegistryCatalog();
-  if (!tf) return [];
   let calls: Awaited<ReturnType<typeof tf.moduleConsumers>>;
   try {
     calls = await tf.moduleConsumers(repo, roots, parser);

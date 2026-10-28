@@ -69,15 +69,8 @@
  * tip from it for a choudoufu project. Without it the column and the tip are
  * left out.
  *
- * Newer than the pin too (terragucci#1297, #1298): chant core's release
- * catalog (`lifecycle/release-catalog` and `lifecycle/release-catalog-site`,
- * chant#4595), its status records (`lifecycle/release-status`, chant#4596)
- * and its changelog (`lifecycle/release-changelog`, chant#4597), with the
- * terraform lexicon's docs extractor, consumer scan, catalog reader and
- * deprecated-version check on its `registry` subpath (chant#4598, #4599).
- * ./publish/catalog.ts writes the catalog beside the registry with them, and
- * `terragucci modules` reads it. Without them publish writes no catalog and
- * says so in its row.
+ * The release catalog and the registry catalog parts are imported directly in
+ * ./chant-catalog.ts (terragucci#1304 P6); the types for them stay below.
  *
  * Newer than the pin too (terragucci#1302): the registry proxies (chant#4606)
  * on the lexicon's `registry` subpath, which `sources.proxies` matches and
@@ -106,8 +99,8 @@
  * reader and forms as the fallback.
  *
  * The types below are the part of chant's contract terragucci calls, written
- * out so the code compiles against a chant without them. An `import()` of a
- * subpath the pin lacks carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
+ * out so the code compiles against a chant without them. A `@ts-ignore` marks an
+ * `import()` of a subpath the pin lacks; scripts/cli-bundle.mjs stands
  * in a module that throws for a subpath the installed chant lacks, so the
  * bundle builds either way.
  */
@@ -1396,32 +1389,25 @@ const has = (m: Record<string, unknown>, ...names: string[]): boolean => names.e
 
 const loaders = {
   compose: once<ChantCompose>(
-    // @ts-ignore chant 0.124.52 has no compose subpath (terragucci#1278)
     () => import("@intentius/chant-lexicon-terraform/compose"),
     (m) => (has(m, "compositionFor", "moduleNames", "readOrder") ? (m as unknown as ChantCompose) : undefined),
   ),
   composeRun: once<ChantComposeRun>(
     // One subpath at a time, for the reason inTurn gives.
     async () => {
-      // @ts-ignore chant 0.124.52 has no compose/run subpath (terragucci#1278)
       const run: object = await import("@intentius/chant-lexicon-terraform/compose/run");
-      // @ts-ignore chant 0.124.52 has no compose/estate subpath (terragucci#1278)
       const estate: object = await import("@intentius/chant-lexicon-terraform/compose/estate");
-      // @ts-ignore chant 0.124.52 has no compose/root subpath (terragucci#1278)
       const root: object = await import("@intentius/chant-lexicon-terraform/compose/root");
-      // @ts-ignore chant 0.124.52 has no compose/slice subpath (terragucci#1278)
       const slice: object = await import("@intentius/chant-lexicon-terraform/compose/slice");
       return { ...slice, ...root, ...estate, ...run };
     },
     (m) => (has(m, "ComposedRun", "EstateRun", "writeEstateRoot", "moduleValues") ? (m as unknown as ChantComposeRun) : undefined),
   ),
   state: once<ChantState>(
-    // @ts-ignore chant 0.124.52 has no state subpath (terragucci#1278)
     () => import("@intentius/chant-lexicon-terraform/state"),
     (m) => (has(m, "takeLocksWithSources", "SourceLockedError", "StateLockedError") ? (m as unknown as ChantState) : undefined),
   ),
   planShape: once<ChantPlanShape>(
-    // @ts-ignore chant 0.124.52 has no plan-shape subpath (terragucci#1278)
     () => import("@intentius/chant-lexicon-terraform/plan-shape"),
     (m) => (has(m, "terraformPlanShape") ? (m as unknown as ChantPlanShape) : undefined),
   ),
@@ -1480,29 +1466,10 @@ const loaders = {
   ),
   afterPlan: once<ChantAfterPlan>(
     // chant 0.124.54's op entry has runOpWave and no after-plan hook: OP_WAVE_AFTER_PLAN_FLOOR present means it has the hook and hookExec (chant#4614).
+    // 0.124.55's op entry exports opWavePlansPath and not opWavePlanPath, so this reads missing there and the callback path runs (terragucci#1304 row 2).
+    // A chant that exports opWavePlanPath (OP_WAVE_PLAN_PATH_FLOOR, after 0.124.55) turns the step path on; delete the callback path once the pin carries it.
     () => import("@intentius/chant/op"),
     (m) => (has(m, "runOpWave", "opWavePlanPath", "spawnExecAsync") && typeof m.OP_WAVE_AFTER_PLAN_FLOOR === "string" ? (m as unknown as ChantAfterPlan) : undefined),
-  ),
-  releaseCatalog: once<ChantReleaseCatalog>(
-    // One subpath at a time, for the reason inTurn gives.
-    async () => {
-      const model: object = await import("@intentius/chant/lifecycle/release-catalog");
-      const site: object = await import("@intentius/chant/lifecycle/release-catalog-site");
-      const status: object = await import("@intentius/chant/lifecycle/release-status");
-      const changelog: object = await import("@intentius/chant/lifecycle/release-changelog");
-      return { ...changelog, ...status, ...site, ...model };
-    },
-    (m) =>
-      has(m, "buildReleaseCatalog", "parseReleaseCatalog", "renderCatalogSite", "versionPath", "componentPath") && has(m, "parseReleaseStatus", "catalogStatusInputs", "statusOf", "appendReleaseStatus", "releaseChangelog") && typeof m.RELEASE_STATUS_FILE === "string"
-        ? (m as unknown as ChantReleaseCatalog)
-        : undefined,
-  ),
-  registryCatalog: once<ChantRegistryCatalog>(
-    () => import("@intentius/chant-lexicon-terraform/registry"),
-    (m) =>
-      has(m, "moduleDocs", "terraformCatalogFields", "terraformCatalogSections", "moduleConsumers", "normalizeModuleSource", "readRegistryCatalog", "deprecatedPins") && typeof m.CATALOG_PATH === "string"
-        ? (m as unknown as ChantRegistryCatalog)
-        : undefined,
   ),
   registryProxies: once<ChantRegistryProxies>(
     () => import("@intentius/chant-lexicon-terraform/registry"),
@@ -1695,10 +1662,6 @@ export const chantSourceForms = (): Promise<ChantSourceForms | undefined> => loa
 export const chantSourceFormsNow = (): ChantSourceForms | undefined => loaded("sourceForms");
 /** The terraform lexicon's registry proxies (chant#4606), or undefined. */
 export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
-/** chant core's release catalog, status records and changelog (chant#4595, #4596, #4597), or undefined. */
-export const chantReleaseCatalog = (): Promise<ChantReleaseCatalog | undefined> => load("releaseCatalog");
-/** The terraform lexicon's docs extractor, consumer scan, catalog reader and deprecated-version check (chant#4598, #4599), or undefined. */
-export const chantRegistryCatalog = (): Promise<ChantRegistryCatalog | undefined> => load("registryCatalog");
 /** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
 export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
 /** chant's recorded op-wave hold (chant#4623), or undefined on a chant whose hold writes no applied or finished line. */
@@ -1777,7 +1740,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
   const [compose, composeRun, state, planShape, objectStore, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
-  const [releaseCatalog, registryCatalog, afterPlan] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan()];
+  const afterPlan = await chantAfterPlan();
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [forgeCheck, notifyRelay, ciEstate, policySource, opStandDown] = [await chantForgeCheck(), await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
@@ -1788,5 +1751,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
   const [jobGuard, ciAudit] = [await chantJobGuard(), await chantCiAudit()];
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, jobGuard: !!jobGuard, ciAudit: !!ciAudit };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, afterPlan: !!afterPlan, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, jobGuard: !!jobGuard, ciAudit: !!ciAudit };
 }

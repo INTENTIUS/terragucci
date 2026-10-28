@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { RegistrySettings } from "../src/config";
-import { chantNextParts, chantReleaseCatalog, type ChantReleaseCatalogDoc } from "../src/chant-next";
+import { releaseCatalog } from "../src/chant-catalog";
+import type { ChantReleaseCatalogDoc } from "../src/chant-next";
 import { publish } from "../src/publish";
 import { parseLedger, type Ledger } from "../src/publish/ledger";
 import type { RegistryStore } from "../src/publish/registry";
@@ -10,8 +11,6 @@ import { describeStatus, setReleaseStatus } from "../src/publish/status";
 import { DEPRECATED_VERSION_TIP, catalogHosts, repoTips } from "../src/tips";
 import { git, tmp, write } from "./helpers";
 
-const parts = await chantNextParts();
-const withCatalog = parts.releaseCatalog && parts.registryCatalog;
 const parser = async () => (await import("@cdktn/hcl2json")) as never;
 
 function commit(dir: string, message: string): void {
@@ -57,7 +56,7 @@ async function published() {
 
 const show = (repo: string, path: string): string => execFileSync("git", ["-C", repo, "show", `chant/lifecycle:${path}`], { encoding: "utf-8" });
 
-describe.skipIf(!withCatalog)("deprecate, yank and restore (terragucci#1298)", () => {
+describe("deprecate, yank and restore (terragucci#1298)", () => {
   it("records a deprecation with actor and reason, and rewrites the catalog; a deprecated pin gets the tip and passes", async () => {
     const { repo, mem } = await published();
     const r = await setReleaseStatus(repo, settings, { word: "deprecate", module: "net", version: "0.1.0", reason: "no id output", use: "0.2.0" }, { registryStore: mem.store, env: { USER: "ana" } });
@@ -79,7 +78,7 @@ describe.skipIf(!withCatalog)("deprecate, yank and restore (terragucci#1298)", (
     await setReleaseStatus(repo, settings, { word: "yank", module: "modules/net", version: "0.1.0", reason: "leaks the admin role" }, { registryStore: mem.store, env: { USER: "ana" } });
     expect(JSON.parse(mem.objects.get("v1/modules/acme/net/generic/versions")!).modules[0].versions).toEqual([{ version: "0.1.0" }, { version: "0.2.0" }]);
 
-    const core = (await chantReleaseCatalog())!;
+    const core = releaseCatalog;
     const ledger = (): Ledger => ({ from: repo, records: parseLedger(show(repo, "modules/releases.jsonl")), file: () => undefined, status: show(repo, "modules/release-status.jsonl") });
     expect(yankedPin(ledger(), "net", "0.1.0", core)).toBe("modules/net 0.1.0 is yanked (leaks the admin role) by ana; move the pin to 0.2.0");
     expect(yankedPin(ledger(), "net", "0.2.0", core)).toBeUndefined();
