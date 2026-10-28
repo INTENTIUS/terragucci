@@ -1,6 +1,6 @@
 /**
- * A hosted module registry as a `modules.publish` target (terragucci#1300,
- * bundle C of terragucci#1290): the terraform lexicon's module target
+ * A hosted module registry as a `modules.publish` target (terragucci#1300 for
+ * GitLab, #1301 for HCP Terraform, bundle C of terragucci#1290): the terraform lexicon's module target
  * (`registry/targets`, chant#4603) wrapped as publish's own `Target`.
  *
  * The lexicon holds the host's calls, the token order and the masking; this
@@ -115,7 +115,8 @@ export function hostedTarget(label: string, make: HostedFactory, namespace: stri
       } catch (e) {
         throw asConfig(lib, e);
       }
-      const tag = o.gitTags ? tryGit(o.repo, ["rev-list", "-n", "1", `refs/tags/${mod.rel}/v${v}`]) : undefined;
+      // A host that keeps the commit (HCP's commit-sha) gives it; else the git tag's.
+      const tag = held?.revision ?? (o.gitTags ? tryGit(o.repo, ["rev-list", "-n", "1", `refs/tags/${mod.rel}/v${v}`]) : undefined);
       if (held?.content && tag) return { version: best, revision: tag, content: held.content };
       throw new ConfigError(
         `${label} holds ${source(address(mod))} ${v}, and the ledger has no release record of it${record ? ` whose commit ${record.gitSha.slice(0, 8)} this checkout holds` : ""}${o.gitTags ? ` and there is no tag ${mod.rel}/v${v}` : ""}, so publish cannot tell what changed since; fetch chant/lifecycle and the full history, or publish git-tags too so the tag names the commit`,
@@ -182,6 +183,31 @@ export function gitlabPlace(p: string, env: NodeJS.ProcessEnv): { api?: string; 
   if (!m || !m[2].includes("/")) throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; write gitlab://<host>/<group>/<project>, such as gitlab://gitlab.example.com/platform/modules`);
   const host = m[1].toLowerCase();
   return { api: `https://${host}/api/v4`, project: m[2], namespace: m[2].split("/")[0]!, host };
+}
+
+/** `hcp://<org>` (app.terraform.io) or `hcp://<host>/<org>` (Terraform Enterprise): the host and organization. */
+export function hcpPlace(p: string): { host: string; organization: string } {
+  const m = /^hcp:\/\/(?:([^/\s]+\.[^/\s]+)\/)?([A-Za-z0-9_-]+)\/*$/.exec(p);
+  if (!m) throw new ConfigError(`modules.publish is ${JSON.stringify(p)}; write hcp://<organization>, or hcp://<host>/<organization> for Terraform Enterprise`);
+  return { host: (m[1] ?? HCP_HOST).toLowerCase(), organization: m[2] };
+}
+
+/** HCP Terraform's host, which `hcp://<org>` publishes to. */
+export const HCP_HOST = "app.terraform.io";
+
+/** HCP Terraform's or Terraform Enterprise's private module registry as a publish target. */
+export function hcpTarget(p: string, o: HostedOptions): HostedTarget {
+  const place = hcpPlace(p);
+  return hostedTarget(
+    p,
+    (lib, deps) => {
+      if (!lib.hcpModuleTarget) throw new ConfigError(`modules.publish: ${p} publishes through the terraform lexicon's HCP Terraform target (chant#4604), which the installed chant does not carry; it needs a chant release that does`);
+      return lib.hcpModuleTarget({ organization: place.organization, host: place.host }, deps);
+    },
+    place.organization,
+    (a) => `${place.host}/${place.organization}/${a.name}/${a.system}`,
+    o,
+  );
 }
 
 /** The GitLab module registry as a publish target. */

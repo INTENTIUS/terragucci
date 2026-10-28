@@ -405,6 +405,21 @@ module "network" {
 
 The system is `modules.registry.system` when the repo also serves a bucket registry, else `generic`. To read a private project, Terraform and OpenTofu take `TF_TOKEN_gitlab_example_com` with the `read_api` scope, or a `credentials` block. GitLab has no deprecated flag, so a deprecation shows only in the bucket's catalog and in the tip.
 
+### Publish to HCP Terraform
+
+HCP Terraform's private registry takes releases through its API, on every tier and with no VCS connection:
+
+```yaml
+modules:
+  publish:
+    - git-tags
+    - hcp://acme                     # or hcp://tfe.example.com/acme for Terraform Enterprise
+```
+
+The publish job reads its token from `TFE_TOKEN`, else from `TF_TOKEN_app_terraform_io` or a `credentials` block for the host. The token's team needs the Manage modules permission. A 404 from HCP means the team lacks it or the organization has no private registry, and the publish error says both.
+
+Publish creates the module when HCP lacks it and then the version with its commit, and uploads the same archive as the other targets. It waits for HCP to finish reading the archive, and a release still being read when the wait ends is reported without failing. A 429 is retried after `Retry-After`. Roots call `app.terraform.io/acme/network/generic`, with the system from `modules.registry.system` when it is set. HCP has no deprecated flag either.
+
 ### Point the binaries at the registry by CLI config
 
 A `host` block in the CLI config sends a host's module requests to another address, with no service discovery. It suits CI images and machines you set up, such as a registry reached at an internal name:
