@@ -150,15 +150,11 @@ describe("a backend move between backends that keep no versions", () => {
     approve(work, first.records[0].digest, T(2));
     store.states.set(oldPg, state("L1", 5, ["keep", "moved"]));
     const again = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(3), log: (l) => void lines.push(l) });
-    if (chantOps) {
-      // On chant's gate the proof is the request's attachment: new contents are a new request, which waits for its own approval.
-      expect(again.code).toBe(3);
-      expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
-    } else {
-      expect(again.code).toBe(4);
-      expect(again.records[0]).toMatchObject({ status: "refused", moved: ["app"] });
-      expect(lines.join("\n")).toContain("the states moved since: app");
-    }
+    // On chant's gate new contents are a new request under a digest of its own, refused against the approved request's stored proof.
+    if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
+    expect(again.code).toBe(4);
+    expect(again.records[0]).toMatchObject({ status: "refused", moved: ["app"] });
+    expect(lines.join("\n")).toContain("the states moved since: app");
     expect(store.pushes).toEqual([]);
   });
 

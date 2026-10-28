@@ -286,8 +286,8 @@ describe("a move between two estates", () => {
     // Another queue now carries the markers: the digest names q-jobs.
     setLive(work, [{ id: "q-other", estate: "mono", address: "aws_sqs_queue.jobs" }, { id: "q-keep", estate: "mono", address: "aws_sqs_queue.keep" }]);
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
-    // terragucci's own gate refuses the approved digest; on chant's gate the new proof is a new request, which waits for its own approval.
-    expect(again.code).toBe(chantOps ? 3 : 4);
+    // Refused against the approved digest; on chant's gate the new proof is a new request, compared with the approved request's stored proof.
+    expect(again.code).toBe(4);
     if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(liveOf(work).find((l) => l.id === "q-other")?.estate).toBe("mono");
   });
@@ -463,8 +463,8 @@ describe("adopting a state into an estate", () => {
     const path = join(work, "app", "old.tfstate");
     writeFileSync(path, readFileSync(path, "utf-8").replace('"serial":3', '"serial":4'));
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} });
-    // terragucci's own gate refuses the approved digest; on chant's gate the new proof is a new request, which waits for its own approval.
-    expect(again.code).toBe(chantOps ? 3 : 4);
+    // Refused against the approved digest; on chant's gate the new proof is a new request, compared with the approved request's stored proof.
+    expect(again.code).toBe(4);
     if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(liveOf(work).every((l) => l.estate === undefined)).toBe(true);
   });
