@@ -486,8 +486,9 @@ function agentRunEntries(project: string, lines: readonly GateLedgerLine[], comm
 
 /**
  * The entries of `_gates/template-requests.jsonl`: one per pull request a
- * template request opened, with the requester as `who`, the app as `what`,
- * and the template, its version and the pull request in `detail`.
+ * template request opened, with the requester (the run's actor) as `who`,
+ * the app as `what`, and the template, its version, the add-on, the
+ * claimed requester and the pull request in `detail`.
  */
 function requestEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
   const out: AuditEntry[] = [];
@@ -506,7 +507,7 @@ function requestEntries(project: string, lines: readonly GateLedgerLine[], commi
       digest: null,
       result: "opened",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: REQUESTS_FILE, commit: c.commit, ...(url ? { url } : {}) },
-      detail: drop({ template: str(r.template), version: str(r.templateVersion), app: r.app, via: str(r.via), branch: str(r.branch), pull_request: typeof r.pullRequest === "number" ? r.pullRequest : undefined, url: str(r.url) }),
+      detail: drop({ template: str(r.template), version: str(r.templateVersion), app: r.app, addon: str(r.addon), claimed_by: str(r.claimedBy), via: str(r.via), branch: str(r.branch), pull_request: typeof r.pullRequest === "number" ? r.pullRequest : undefined, url: str(r.url) }),
     });
   }
   return out;

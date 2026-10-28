@@ -6,11 +6,22 @@ import { chantTemplateRender, chantTemplateRequests, overrideChantNext, type Cha
 import { publish } from "../src/publish";
 import type { RegistryStore } from "../src/publish/registry";
 import { AUDIT_KINDS, ledgerEntries, REQUESTS_FILE } from "../src/report/audit";
-import { REQUEST_NEEDS_CHANT } from "../src/templates";
+import { ADDON_NEEDS_CHANT, REQUEST_NEEDS_CHANT } from "../src/templates";
 import { bareFrom, git, tmp, write } from "./helpers";
 
 const CATALOG = readFileSync(join(__dirname, "fixtures/templates/catalog.json"), "utf-8");
 const chantHas = Boolean((await chantTemplateRequests()) && (await chantTemplateRender()));
+const chantHasAddons = chantHas && typeof (await chantTemplateRender())?.renderAddonCall === "function";
+
+/** An app's root as chant's renderAppRoot writes it: one `module "app"` calling the bucket template at 1.2.0. */
+const ORDERS_MAIN = `module "app" {
+  source  = "modules.test/acme/bucket/aws"
+  version = "1.2.0"
+
+  bucket_name = "orders-data"
+}
+`;
+const ORDERS = { "apps/orders/main.tf": ORDERS_MAIN };
 
 const CONFIG = `forge: forgejo
 url: https://forge.test/acme/infra
@@ -96,7 +107,7 @@ describe("terragucci templates", () => {
     const { code, out } = await run(dir, "templates", "list", "--json");
     expect(code).toBe(0);
     const rows = JSON.parse(out).results;
-    expect(rows).toHaveLength(1);
+    expect(rows.map((r: { template: string; kind: string }) => `${r.template}:${r.kind}`)).toEqual(["acme/bucket/aws:app", "acme/cache/aws:addon"]);
     expect(rows[0]).toMatchObject({ template: "acme/bucket/aws", name: "bucket", component: "modules/bucket", address: "modules.test/acme/bucket/aws", kind: "app", latest: "1.2.0" });
     expect(rows[0].versions.map((v: { version: string; attestation: string }) => `${v.version}:${v.attestation}`)).toEqual(["1.2.0:signed"]);
     expect(rows[0].fields.map((f: { name: string }) => f.name)).toEqual(["bucket_name", "readers", "tags", "api_key"]);
@@ -235,6 +246,130 @@ describe.runIf(chantHas)("terragucci request", () => {
   });
 });
 
+describe("terragucci request --app on a chant without renderAddonCall", () => {
+  it("refuses with exit 1, names the chant it needs, and writes nothing", async () => {
+    const real = await chantTemplateRender();
+    if (!real || !(await chantTemplateRequests())) return;
+    const { dir, bare } = repo(CONFIG, ORDERS);
+    const { renderAddonCall: _gone, ...older } = real;
+    const restore = overrideChantNext("templateRender", older);
+    try {
+      const { code, out } = await run(dir, "request", "acme/cache/aws", "--app", "orders", "--name", "cache", "--input", "subnet_ids=app.private_subnets", "--dry-run", "--json");
+      expect(code).toBe(1);
+      expect(JSON.parse(out).error).toBe(ADDON_NEEDS_CHANT);
+      expect(requestBranches(bare)).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe.runIf(chantHasAddons)("terragucci request --app (an add-on)", () => {
+  const golden = (name: string, text: string): void => {
+    const path = join(__dirname, "golden", name);
+    if (process.env.UPDATE_GOLDEN || !existsSync(path)) writeFileSync(path, text);
+    expect(text).toBe(readFileSync(path, "utf-8"));
+  };
+
+  it("--dry-run --json prints the add-on's branch and its one file, and writes nothing", async () => {
+    const { dir, bare } = repo(CONFIG, ORDERS);
+    const { code, out } = await run(dir, "request", "acme/cache/aws", "--app", "orders", "--name", "cache", "--input", "subnet_ids=app.private_subnets", "--dry-run", "--json");
+    expect(code).toBe(0);
+    expect(JSON.parse(out).results).toEqual({ branch: "request/cache/orders/cache", files: ["apps/orders/addon-cache.tf"] });
+    expect(existsSync(join(dir, "apps/orders/addon-cache.tf"))).toBe(false);
+    expect(requestBranches(bare)).toEqual([]);
+  });
+
+  it("opens one pull request adding addon-cache.tf, with app.<output> as module.app.<output>, the actor as requester and the claimed requester beside it", async () => {
+    const { dir, bare } = repo(CONFIG, ORDERS);
+    const forge = fakeForge();
+    vi.stubGlobal("fetch", forge.fetch);
+    vi.stubEnv("FORGE_TOKEN", "t");
+    const { code, out, err } = await run(dir, "request", "acme/cache/aws", "--app", "orders", "--name", "cache", "--input", "subnet_ids=app.private_subnets", "--requested-by", "ci-bot", "--claimed-by", "bob", "--via", "form", "--json");
+    expect(code, err).toBe(0);
+    expect(JSON.parse(out).results).toMatchObject({ branch: "request/cache/orders/cache", files: ["apps/orders/addon-cache.tf"], title: "Request: cache for orders from cache 0.3.0", pull_request: 7, existing: false });
+    expect(git(bare, "diff", "--name-only", "main", "request/cache/orders/cache").split("\n").filter(Boolean)).toEqual(["apps/orders/addon-cache.tf"]);
+    const file = git(bare, "show", "request/cache/orders/cache:apps/orders/addon-cache.tf");
+    expect(file).toContain('module "cache" {');
+    expect(file).toMatch(/subnet_ids\s+= module\.app\.private_subnets\n/);
+    golden("addon-cache.tf", file.endsWith("\n") ? file : `${file}\n`);
+
+    const sent = JSON.parse(forge.opened()[0]!.body!);
+    expect(sent.body).toContain('"kind": "addon"');
+    expect(sent.body).toContain('"addon": "cache"');
+    expect(sent.body).toContain('"requestedBy": "ci-bot"');
+    expect(sent.body).toContain('"claimedBy": "bob"');
+
+    const ledger = git(bare, "show", `chant/lifecycle:${REQUESTS_FILE}`).trim().split("\n");
+    const entries = ledgerEntries("forge.test/acme/infra", REQUESTS_FILE, [{ text: ledger[0]!, commit: "c0ffee", added: true } as never]);
+    expect(entries[0]).toMatchObject({ kind: "request", who: "ci-bot", what: "orders", detail: { template: "acme/cache/aws", version: "0.3.0", app: "orders", addon: "cache", claimed_by: "bob", via: "form", pull_request: 7 } });
+  });
+
+  it.each([
+    ["not-an-app", "acme/cache/aws", "missing", "subnet_ids=app.private_subnets", {}],
+    ["wrong-kind", "acme/bucket/aws", "orders", "bucket_name=x", {}],
+    ["unknown-output", "acme/cache/aws", "orders", "subnet_ids=app.nope", {}],
+    ["addon-exists", "acme/cache/aws", "orders", "subnet_ids=app.private_subnets", { "apps/orders/addon-cache.tf": "# mine\n" }],
+  ] as const)("refuses %s with exit 1 and no branch pushed", async (want, template, app, input, extra) => {
+    const { dir, bare } = repo(CONFIG, { ...ORDERS, ...extra });
+    const forge = fakeForge();
+    vi.stubGlobal("fetch", forge.fetch);
+    vi.stubEnv("FORGE_TOKEN", "t");
+    const { code, out } = await run(dir, "request", template, "--app", app, "--name", "cache", "--input", input, "--json");
+    expect(code).toBe(1);
+    expect(JSON.parse(out).results.code).toBe(want);
+    expect(requestBranches(bare)).toEqual([]);
+    expect(forge.opened()).toHaveLength(0);
+  });
+
+  it("refuses wrong-kind for an add-on template without --app", async () => {
+    const { dir } = repo(CONFIG, ORDERS);
+    const { code, out } = await run(dir, "request", "acme/cache/aws", "--name", "cache", "--input", 'subnet_ids=["s-1"]', "--dry-run", "--json");
+    expect(code).toBe(1);
+    expect(JSON.parse(out).results.code).toBe("wrong-kind");
+  });
+});
+
+describe("terragucci templates apps", () => {
+  const ADDON = `module "cache" {
+  source  = "modules.test/acme/cache/aws"
+  version = "0.3.0"
+
+  subnet_ids = module.app.private_subnets
+}
+`;
+
+  it("--json lists each app with its template, version, add-ons and the actions its modules declare", async () => {
+    const { dir } = repo(CONFIG, { ...ORDERS, "apps/orders/addon-cache.tf": ADDON, "apps/plain/main.tf": 'resource "terraform_data" "x" {}\n', "live/net/main.tf": ORDERS_MAIN });
+    const { code, out } = await run(dir, "templates", "apps", "--json");
+    expect(code).toBe(0);
+    const rows = JSON.parse(out).results;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ app: "orders", template: "acme/bucket/aws", version: "1.2.0", addons: [{ name: "cache", template: "acme/cache/aws", version: "0.3.0" }] });
+    expect(rows[0].root).toBe("apps/orders");
+    expect(rows[0].actions).toEqual([
+      { module: "app", type: "aws_lambda_invoke", name: "rotate", address: "module.app.action.aws_lambda_invoke.rotate" },
+      { module: "cache", type: "aws_lambda_invoke", name: "flush", address: "module.cache.action.aws_lambda_invoke.flush" },
+    ]);
+  });
+
+  it("--template keeps the apps on a template, as their own or an add-on's, and --ref reads one commit", async () => {
+    const { dir } = repo(CONFIG, { ...ORDERS, "apps/orders/addon-cache.tf": ADDON, "apps/web/main.tf": ORDERS_MAIN });
+    expect(JSON.parse((await run(dir, "templates", "apps", "--template", "acme/cache/aws", "--json")).out).results.map((r: { app: string }) => r.app)).toEqual(["orders"]);
+    expect(JSON.parse((await run(dir, "templates", "apps", "--template", "modules.test/acme/bucket/aws", "--json")).out).results.map((r: { app: string }) => r.app)).toEqual(["orders", "web"]);
+    writeFileSync(join(dir, "apps/web/main.tf"), "# gone\n");
+    expect(JSON.parse((await run(dir, "templates", "apps", "--json")).out).results.map((r: { app: string }) => r.app)).toEqual(["orders"]);
+    expect(JSON.parse((await run(dir, "templates", "apps", "--ref", "origin/main", "--json")).out).results.map((r: { app: string }) => r.app)).toEqual(["orders", "web"]);
+  });
+
+  it("names templates by source and lists no actions when the catalog cannot be read", async () => {
+    const { dir } = repo(CONFIG.replace(/modules:\n(  .*\n|    .*\n)+/, ""), ORDERS);
+    const { code, out } = await run(dir, "templates", "apps", "--json");
+    expect(code).toBe(0);
+    expect(JSON.parse(out).results).toEqual([{ app: "orders", root: "apps/orders", template: "acme/bucket/aws", version: "1.2.0", addons: [], actions: [] }]);
+  });
+});
+
 describe("the request audit kind", () => {
   it("is in AUDIT_KINDS and audit.schema.json alike", () => {
     const schema = JSON.parse(readFileSync(join(__dirname, "../src/report/audit.schema.json"), "utf-8"));
@@ -262,7 +397,9 @@ describe("the request workflow", () => {
     const f = (JSON.parse(out).results.files as { path: string; status: string; content: string }[]).find((x) => x.path === file);
     expect(f?.status).toBe("created");
     expect(f!.content).toMatch(/workflow_dispatch:\n {4}inputs:\n {6}template:/);
-    for (const k of ["template", "version", "name", "inputs"]) expect(f!.content).toContain(`      ${k}:\n`);
+    for (const k of ["template", "version", "name", "inputs", "app", "claimed_by"]) expect(f!.content).toContain(`      ${k}:\n`);
+    expect(f!.content).toContain('--app "$TG_APP"');
+    expect(f!.content).toContain('--claimed-by "$TG_CLAIMED_BY"');
     expect(f!.content).toContain("terragucci request");
     golden(`request-${forge}.yml`, f!.content);
     expect(existsSync(join(dir, file))).toBe(false);
@@ -284,6 +421,7 @@ describe("publish carries a module's template.yml into its catalog entry", () =>
       "modules/bucket/main.tf": 'variable "bucket_name" {\n  type = string\n}\n\nresource "terraform_data" "b" {}\n',
       "modules/bucket/.terraform-docs.yml": "formatter: markdown table\n",
       "modules/bucket/template.yml": "contract: 1\ndescription: A bucket.\ninputs:\n  - name: bucket_name\n    kind: string\n",
+      "modules/bucket/actions.tf": 'action "aws_lambda_invoke" "rotate" {\n  config {\n    function_name = "rotate"\n  }\n}\n',
     });
     git(dir, "init", "-q", "-b", "main");
     git(dir, "add", "-A");
@@ -304,5 +442,6 @@ describe("publish carries a module's template.yml into its catalog entry", () =>
     const catalog = JSON.parse(objects.get("catalog/index.json")!) as ChantReleaseCatalogDoc;
     const v = catalog.components.find((c) => c.name === "modules/bucket")!.versions[0]!;
     expect(v.fields.terraform.template).toEqual({ contract: 1, description: "A bucket.", inputs: [{ name: "bucket_name", kind: "string" }] });
+    expect(v.fields.terraform.actions).toEqual([{ type: "aws_lambda_invoke", name: "rotate" }]);
   });
 });

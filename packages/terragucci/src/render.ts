@@ -231,12 +231,19 @@ export const REQUEST_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   forgejo: ".forgejo/workflows/terragucci-request.yml",
 };
 
-/** The request workflow's dispatch inputs: the template, its version, the app's name and its inputs as JSON. */
+/**
+ * The request workflow's dispatch inputs: the template, its version, the app's (or add-on's)
+ * name and its inputs as JSON; `app` for an add-on, naming the app it goes into; and
+ * `claimed_by`, the person the dispatching client says asked, which the request shows as
+ * claimed next to the run's actor.
+ */
 export const REQUEST_INPUTS = {
   template: { description: "The template's address, such as acme/bucket/aws", required: true, type: "string" },
   version: { description: "The template version; empty for its newest one a request may name", required: false, type: "string" },
-  name: { description: "The app's name: a lowercase letter, then lowercase letters, digits and -", required: true, type: "string" },
+  name: { description: "The app's name, or with app the add-on's: a lowercase letter, then lowercase letters, digits and -", required: true, type: "string" },
   inputs: { description: "The template's inputs as one JSON object, by name", required: false, default: "{}", type: "string" },
+  app: { description: "For an add-on template: the existing app it goes into; empty for a new app", required: false, type: "string" },
+  claimed_by: { description: "Who the client says asked; shown as claimed, next to the run's actor", required: false, type: "string" },
 };
 
 export const PIPELINE_PATHS: Record<ForgeName, string> = {
@@ -3585,7 +3592,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
 /**
  * The request job's script: the dispatch's inputs, read from the environment so
  * no value is pasted into the shell, become `terragucci request --via form`,
- * with the person who dispatched the run as the requester.
+ * with the person who dispatched the run as the requester, and `--app` and
+ * `--claimed-by` when the dispatch gave them.
  */
 export function requestScript(): string {
   return [
@@ -3595,6 +3603,8 @@ export function requestScript(): string {
     '[ -s "$inputs" ] || printf \'{}\' > "$inputs"',
     'set -- "$TG_TEMPLATE" --name "$TG_NAME" --inputs-file "$inputs" --via form --requested-by "$TG_REQUESTED_BY"',
     '[ -z "${TG_VERSION:-}" ] || set -- "$@" --version "$TG_VERSION"',
+    '[ -z "${TG_APP:-}" ] || set -- "$@" --app "$TG_APP"',
+    '[ -z "${TG_CLAIMED_BY:-}" ] || set -- "$@" --claimed-by "$TG_CLAIMED_BY"',
     'terragucci request "$@"',
   ].join("\n");
 }
@@ -3602,7 +3612,7 @@ export function requestScript(): string {
 /**
  * The request workflow (GitHub and Forgejo): dispatched with REQUEST_INPUTS, it runs
  * `terragucci request` from the default branch, which pushes `request/<template>/<app>`
- * and opens its pull request. It pushes and opens with `token_env`'s secret when the config
+ * (`request/<template>/<app>/<addon>` for an add-on) and opens its pull request. It pushes and opens with `token_env`'s secret when the config
  * names one: GitHub starts no workflow for a pull request the job's own token opens, so
  * the app's root would get no plan. Without it, the job's own token.
  */
@@ -3613,8 +3623,8 @@ function requestWorkflow(image: string, env: Record<string, string>, tokenEnv: s
     on: { workflow_dispatch: { inputs: REQUEST_INPUTS } },
     env,
     permissions: { contents: "read" },
-    // One run per app name at a time: two would race to push its branch.
-    concurrency: { group: "terragucci-request-${{ github.repository }}-${{ github.event.inputs.name }}", "cancel-in-progress": false },
+    // One run per app (or add-on of an app) at a time: two would race to push its branch.
+    concurrency: { group: "terragucci-request-${{ github.repository }}-${{ github.event.inputs.app }}-${{ github.event.inputs.name }}", "cancel-in-progress": false },
   } as never);
   const request = new Job({
     "runs-on": "ubuntu-latest",
@@ -3627,11 +3637,13 @@ function requestWorkflow(image: string, env: Record<string, string>, tokenEnv: s
       TG_VERSION: "${{ github.event.inputs.version }}",
       TG_NAME: "${{ github.event.inputs.name }}",
       TG_INPUTS: "${{ github.event.inputs.inputs }}",
+      TG_APP: "${{ github.event.inputs.app }}",
       TG_REQUESTED_BY: "${{ github.triggering_actor || github.actor }}",
+      TG_CLAIMED_BY: "${{ github.event.inputs.claimed_by }}",
     },
     steps: [
       new Step({ uses: CHECKOUT, with: { "fetch-depth": 0, ...(tokenEnv ? { token } : {}) } }),
-      new Step({ name: "Open the pull request that adds the app's root from the template", shell: "bash", run: requestScript() }),
+      new Step({ name: "Open the pull request that adds the app's root or the add-on from the template", shell: "bash", run: requestScript() }),
     ],
   } as never);
   return new Map<string, never>([["workflow", workflow as never], ["request", request as never]]);

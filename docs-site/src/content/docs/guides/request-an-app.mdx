@@ -65,6 +65,18 @@ A person or an agent asks for an app from a template, and terragucci opens a pul
 
 </Steps>
 
+## Add an add-on to an app
+
+An add-on is a second template, such as a cache or a database, whose `template.yml` says `kind: addon`. Name the app it joins with `--app`. The pull request then adds one module call to that app's root, in `addon-<name>.tf`, so the add-on shares the app's state and plan.
+
+An input can refer to one of the app module's outputs as `app.<output>`, which the file writes as `module.app.<output>`:
+
+```bash
+npx terragucci request acme/cache/aws --app orders --name cache --input subnet_ids=app.private_subnets --dry-run
+```
+
+The branch is `request/cache/orders/cache`, and `apps/orders/addon-cache.tf` is its only file. The workflow takes an add-on through its `app` input. To see what each app already has, run `npx terragucci templates apps`.
+
 ## Refused requests
 
-The command exits 1 and pushes nothing, and `--json` prints the reason's code. A deprecated or yanked version is `not-active`, and one below `templates.require` is `unsigned`. Each kind of bad input has its own code. An app whose directory is on the default branch is `app-exists`. [The CLI reference](/terragucci/reference/cli/#request) lists every code.
+The command exits 1 and pushes nothing, and `--json` prints the reason's code. A deprecated or yanked version is `not-active`, and one below `templates.require` is `unsigned`. Each kind of bad input has its own code. An app whose directory is on the default branch is `app-exists`. The add-on codes are listed with the others in the CLI reference. [The CLI reference](/terragucci/reference/cli/#request) lists every code.

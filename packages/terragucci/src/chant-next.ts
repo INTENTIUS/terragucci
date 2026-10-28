@@ -1402,7 +1402,10 @@ export interface ChantTemplateRequest {
   app: string;
   addon?: string;
   inputs: Record<string, unknown>;
+  /** Who asked, as the forge vouches for it: the run's actor. */
   requestedBy: string;
+  /** Who the client says asked, shown as claimed; a chant without it leaves it out of the document. */
+  claimedBy?: string;
   via: "form" | "mcp" | "cli";
 }
 
@@ -1438,6 +1441,12 @@ export interface ChantRenderedFile {
 /** The terraform lexicon's template rendering (`@intentius/chant-lexicon-terraform/template`, chant#4652). */
 export interface ChantTemplateRender {
   renderAppRoot(options: { request: ChantTemplateRequest; source: string; inputs: readonly ChantTemplateInput[]; outputs?: readonly { name: string; description?: string | null; sensitive?: boolean }[] }): ChantRenderedFile[];
+  /**
+   * An add-on's module call for an app's root, `addon-<name>.tf` (ruling C of chant#4642). A value
+   * `app.<output>` becomes `module.app.<output>`, and one naming an output the app module lacks throws
+   * with code `unknown-output`. Absent on a chant whose template module has only app roots.
+   */
+  renderAddonCall?(options: { request: ChantTemplateRequest; source: string; inputs: readonly ChantTemplateInput[]; appOutputs: readonly (string | { name: string })[] }): ChantRenderedFile;
   terraformInputType(input: Pick<ChantTemplateInput, "kind" | "of">): string;
   /** Thrown with a `code` and a `subject` when a request cannot become files. */
   TemplateRenderError: new (...args: never[]) => Error & { code: string; subject: string };
