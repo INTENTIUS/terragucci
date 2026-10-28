@@ -98,7 +98,7 @@ export interface PublishOptions {
 }
 
 /** What publish reads from the settings: `modules`, the binary `modules.test` runs, and the roots whose module calls the catalog lists. */
-export type PublishSettings = Pick<ResolvedSettings, "modules"> & { binary?: string; roots?: string[] };
+export type PublishSettings = Pick<ResolvedSettings, "modules"> & { binary?: string; roots?: string[]; control?: ResolvedSettings["control"] };
 
 /** What publishing one release needs from the target, past the archive. */
 interface PublishContext {
@@ -476,6 +476,8 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
             ...(keyPath ? { attestKey: keyPath } : {}),
             ...(opts.parser ? { parser: opts.parser } : {}),
             ...(opts.terraformDocs ? { terraformDocs: opts.terraformDocs } : {}),
+            ...(settings.control ? { control: settings.control } : {}),
+            env,
           });
           // On a chant without the catalog, the row reads as it did before.
           return written.status === "skipped" ? undefined : written.detail;

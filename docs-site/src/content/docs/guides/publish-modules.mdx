@@ -490,6 +490,8 @@ A registry with `modules.registry` also gets a release catalog under `catalog/` 
 
 A version's page shows its inputs, outputs, required providers, examples and README, read from the module at the commit the version was cut from. A module with a `.terraform-docs.yml` gets the markdown terraform-docs writes with that file instead, when `terraform-docs` is on the job's `PATH`; it runs on a scratch copy and prints to stdout, so the module's README in the repo is never rewritten. The changelog groups the conventional commits since the previous version. Under it sit the attestation with the command that checks it and the roots in this repo that pin the version.
 
+Across a [control repo](/terragucci/concepts/control-repo/), each project keeps a `consumers.json` at its top: `terragucci modules consumers` writes it from the project's roots, and `--check` fails when it no longer matches them. A publishing repo with `control` reads the control repo's projects and each one's `consumers.json`, with `TERRAGUCCI_CONTROL_READ_TOKEN`, and the catalog lists every project's roots on each version. Without the token it lists this repo's roots only.
+
 A version keeps the page it was first written with, and a file already in the bucket with the same bytes is left alone, so a rerun that publishes nothing writes nothing. `terragucci publish --dry-run` writes no catalog. To turn the catalog off:
 
 ```yaml
