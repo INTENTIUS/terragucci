@@ -6,9 +6,9 @@ import { cpSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseLedger, type ResolutionRecord } from "../src/apply";
-import { chantCiEstate, chantCiProductWords, chantForgeCheck, chantNotifyRelay, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
+import { chantCiEstate, chantForgeCheck, chantNotifyRelay, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
 import { wavesStepSpec, waveCallArgv } from "../src/chant-waves";
-import { TERRAGUCCI_WORDS } from "../src/ci-words";
+import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
 import type { Fetch } from "../src/forge";
 import { forgeCheck, forgeCheckContract, type CheckRow } from "../src/forge-check";
@@ -25,7 +25,6 @@ const relay = await chantNotifyRelay();
 const ciEstate = await chantCiEstate();
 const policySource = await chantPolicySource();
 const standDown = await chantOpStandDown();
-const words = await chantCiProductWords();
 
 let restore: (() => void)[] = [];
 afterEach(() => {
@@ -39,8 +38,8 @@ describe("the notify slot", () => {
     expect([NOTIFY_SOURCE, HEADER_PREFIX]).toEqual(["terragucci", "x-terragucci"]);
   });
 
-  it.runIf(words)("passes chant's words check", () => {
-    expect(words!.assertProductWords(TERRAGUCCI_WORDS).product).toBe("terragucci");
+  it("passes chant's words check", () => {
+    expect(productWords().product).toBe("terragucci");
   });
 });
 
@@ -207,7 +206,7 @@ describe("ledger estate", () => {
   });
 
   it.runIf(ciEstate)("builds terragucci's schemas from an empty ledger, with no wave records to switch on", () => {
-    const e = ciEstate!.buildLedgerEstate({ load: { runs: [], gates: [], applies: [], pr_envs: [] }, words: words!.assertProductWords(TERRAGUCCI_WORDS), project: "infra", members: ["infra"] });
+    const e = ciEstate!.buildLedgerEstate({ load: { runs: [], gates: [], applies: [], pr_envs: [] }, words: productWords(), project: "infra", members: ["infra"] });
     expect([e.estate.schema, e.dora.schema, e.dora.audit]).toEqual(["terragucci.estate/v1", "terragucci.dora/v1", false]);
   });
 });

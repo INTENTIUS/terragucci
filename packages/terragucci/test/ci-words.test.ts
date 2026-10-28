@@ -1,40 +1,24 @@
-// terragucci's words on chant's product pipeline (chant#4550, terragucci#1282 part c). With chant's
-// `ci-product-words` and `ci-product` loaded, the comment grammar, the approve line, the status contexts and the
-// pipeline's comment conditions come from chant; without them, terragucci's own code. Both give the same names, so
-// branch protection, typed comments and the approvals already on `_gates/tf-apply.jsonl` keep working.
-import { afterEach, describe, expect, it } from "vitest";
-import { chantCiProduct, chantCiProductWords, overrideChantNext } from "../src/chant-next";
+// terragucci's words on chant's product pipeline (chant#4550, terragucci#1282 part c): the comment grammar, the
+// approve line, the status contexts and the pipeline's comment conditions come from chant's `ci-product-words` and
+// `ci-product` with terragucci's words. They give the names terragucci always gave, so branch protection, typed
+// comments and the approvals already on `_gates/tf-apply.jsonl` keep working.
+import { describe, expect, it } from "vitest";
 import { terragucciStatus, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { parseComment, type ParsedComment } from "../src/comment";
 import { approveCommand } from "../src/report/marker";
-import { renderPipeline, type PipelineInput } from "../src/render";
 
-const words = await chantCiProductWords();
-const product = await chantCiProduct();
-
-let restore: (() => void)[] = [];
-afterEach(() => {
-  for (const r of restore) r();
-  restore = [];
-});
-const without = (): void => {
-  restore.push(overrideChantNext("ciProductWords", null), overrideChantNext("ciProduct", null));
-};
-
-const COMMENTS: [string, boolean][] = [
-  ["/terragucci plan", false],
-  ["/terragucci plan envs/dev/orders", false],
-  ["/terragucci apply", false],
-  ["/terragucci apply wave-2", false],
-  ["/terragucci lock", false],
-  ["/terragucci unlock", false],
-  ["/terragucci agent rename the bucket variable", false],
-  ["atlantis plan -d envs/dev/orders", true],
-  ["atlantis apply", true],
-  ["a comment for someone else", false],
+const COMMENTS: [string, boolean, ParsedComment | undefined][] = [
+  ["/terragucci plan", false, { kind: "plan" }],
+  ["/terragucci plan envs/dev/orders", false, { kind: "plan", root: "envs/dev/orders" }],
+  ["/terragucci apply", false, { kind: "apply" }],
+  ["/terragucci apply wave-2", false, { kind: "apply", wave: 2 }],
+  ["/terragucci lock", false, { kind: "lock" }],
+  ["/terragucci unlock", false, { kind: "unlock" }],
+  ["/terragucci agent rename the bucket variable", false, { kind: "agent", ask: "rename the bucket variable" }],
+  ["atlantis plan -d envs/dev/orders", true, { kind: "plan", root: "envs/dev/orders" }],
+  ["atlantis apply", true, { kind: "apply" }],
+  ["a comment for someone else", false, undefined],
 ];
-
-const kindOf = (p: ParsedComment | undefined): unknown => (p === undefined ? undefined : p.kind === "refused" ? "refused" : p);
 
 describe("terragucci's words", () => {
   it("name every slot chant#4550 lists for terragucci", () => {
@@ -55,8 +39,7 @@ describe("terragucci's words", () => {
     ]);
   });
 
-  it("give terragucci's contexts and approve line without chant's module", () => {
-    without();
+  it("give terragucci's contexts and approve line through chant", () => {
     expect(terragucciStatus("plan")).toBe("terragucci/plan");
     expect(terragucciStatus("apply")).toBe("terragucci/apply");
     expect(terragucciStatus("lock")).toBe("terragucci/lock");
@@ -64,42 +47,11 @@ describe("terragucci's words", () => {
     expect(approveCommand(2, "abc123", true)).toBe("terragucci approve wave-2 --plan abc123 --sign");
   });
 
-  it.runIf(words)("give the same contexts and approve line through chant", () => {
-    expect(terragucciStatus("plan")).toBe("terragucci/plan");
-    expect(terragucciStatus("apply")).toBe("terragucci/apply");
-    expect(terragucciStatus("lock")).toBe("terragucci/lock");
-    expect(approveCommand(2, "abc123")).toBe("terragucci approve wave-2 --plan abc123");
-    expect(approveCommand(2, "abc123", true)).toBe("terragucci approve wave-2 --plan abc123 --sign");
+  it("read each comment in terragucci's grammar", () => {
+    for (const [body, atlantis, want] of COMMENTS) expect(parseComment(body, atlantis ? { atlantis: true } : {}), body).toEqual(want);
   });
 
-  it.runIf(words)("read each comment as terragucci's own grammar does", () => {
-    for (const [body, atlantis] of COMMENTS) {
-      const o = atlantis ? { atlantis: true } : {};
-      const chant = parseComment(body, o);
-      without();
-      const own = parseComment(body, o);
-      for (const r of restore) r();
-      restore = [];
-      expect(kindOf(chant), body).toEqual(kindOf(own));
-    }
-  });
-
-  it.runIf(words)("keep the migration guide's reason for an atlantis form terragucci has no counterpart for", () => {
-    const chant = parseComment("atlantis apply -d envs/dev", { atlantis: true });
-    without();
-    expect(chant).toEqual(parseComment("atlantis apply -d envs/dev", { atlantis: true }));
-  });
-});
-
-describe("the pipeline's comment conditions", () => {
-  const input = (more: Partial<PipelineInput> = {}): PipelineInput =>
-    ({ forge: "github", binary: "tofu", version: "1.10.0", image: "ghcr.io/intentius/terragucci:test", layers: [["network"], ["app"]], env: {}, ...more }) as PipelineInput;
-
-  it.runIf(product)("render the same workflow through chant's product pipeline", () => {
-    for (const more of [{}, { atlantisComments: true }, { locksPlan: true }, { applyWhen: "pull-request" as const }]) {
-      const own = renderPipeline(input(more));
-      const chant = renderPipeline(input({ ...more, ciProduct: product! }));
-      expect(JSON.stringify(chant)).toBe(JSON.stringify(own));
-    }
+  it("keep the migration guide's reason for an atlantis form terragucci has no counterpart for", () => {
+    expect(parseComment("atlantis apply -d envs/dev", { atlantis: true })).toMatchObject({ kind: "refused", reason: expect.stringContaining("applies one root") });
   });
 });

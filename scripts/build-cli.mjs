@@ -8,7 +8,7 @@
 // lexicon code it uses. The TypeScript folder that a .ts config needs, and the
 // HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
 import { dirname, join } from "node:path";
@@ -71,33 +71,6 @@ const edgeEntries = {
     ].join("\n"),
   },
 };
-// chant#4589 moved the store error classes to @intentius/chant/object-store/errors,
-// which imports no Node built-in, so a chant that has it needs no stand-in.
-// The bundle resolves from the package first (a nested copy), then the root.
-const chantFile = (pkgName, rel) => [pkg, root].some((base) => [".js", ".ts"].some((ext) => existsSync(join(base, "node_modules", pkgName, rel + ext))));
-const chantHasEdgeErrors = ["src", "dist"].some((d) => chantFile("@intentius/chant", `${d}/object-store/errors`));
-// chant#4590: the Lambda@Edge handler reads its tokens from SSM or Secrets Manager.
-const chantReadsTokenStores = ["src", "dist"].some((d) => chantFile("@intentius/chant-lexicon-terraform", `${d}/registry/edge/token-source`));
-// Fallback for the published chant pin: the lexicon's registry writer there imports
-// StoreConflict from chant core's object store, whose clients import node:fs and
-// node:crypto, which a Worker without nodejs_compat cannot load. The edge function
-// never writes a store, so the module is stood in for by its two error classes.
-const edgeStoreStub = {
-  name: "edge-store-stub",
-  setup(b) {
-    b.onResolve({ filter: /^@intentius\/chant\/object-store$/ }, () => ({ path: "object-store", namespace: "edge-store-stub" }));
-    b.onLoad({ filter: /.*/, namespace: "edge-store-stub" }, () => ({
-      loader: "js",
-      contents: [
-        "export class StoreError extends Error {}",
-        "export class StoreConflict extends StoreError {}",
-        'const none = () => { throw new Error("the registry edge function writes no object store"); };',
-        "export const defaultFetch = none, encodePath = none, encodeStrict = none, xmlText = none;",
-        "",
-      ].join("\n"),
-    }));
-  },
-};
 for (const [file, entry] of Object.entries(edgeEntries)) {
   try {
     await build({
@@ -109,16 +82,12 @@ for (const [file, entry] of Object.entries(edgeEntries)) {
       minify: true,
       conditions: ["import", "default"],
       outfile: join(stage, file),
-      plugins: chantHasEdgeErrors ? [] : [edgeStoreStub],
       logLevel: "silent",
     });
   } catch (e) {
     console.log(`  ${file}: not built (${String(e.message).split("\n")[0]})`);
   }
 }
-
-// Tells `terragucci registry edge` the Lambda@Edge bundle can read tokens from a store.
-if (chantReadsTokenStores) writeFileSync(join(stage, "registry-edge-token-stores"), "chant#4590\n");
 
 // The JSON Schemas of what terragucci writes, published so a reader can validate
 // terragucci.report/v1, terragucci.report-index/v1, terragucci.estate/v1, terragucci.audit/v1, terragucci.inventory/v1, terragucci.changes/v1, terragucci.history/v1, terragucci.dora/v1, terragucci.state-versions/v1, terragucci.run/v1, terragucci.state-edges/v1, terragucci.estates/v1 and terragucci.versions/v1.

@@ -28,13 +28,6 @@ export const LAMBDA_BUNDLE = "registry-edge-lambda.mjs";
 export const LAMBDA_OPTIONS = "registry-edge.json";
 /** The tokens the Lambda@Edge options carry with `auth: token`, read when the command runs. */
 export const TOKENS_VARIABLE = "TERRAGUCCI_REGISTRY_TOKENS";
-/**
- * Written beside the bundles by scripts/build-cli.mjs when the chant it
- * bundled reads tokens from SSM or Secrets Manager (chant#4590). Without it
- * the Lambda@Edge handler would take `auth.source` as unknown and check
- * against no tokens, so the command refuses a store source instead.
- */
-export const TOKEN_STORES_MARKER = "registry-edge-token-stores";
 
 export interface EdgeFile {
   path: string;
@@ -165,9 +158,6 @@ export function planEdge(reg: RegistrySettings, opts: EdgeOptions = {}): EdgePla
   if (!origin) throw new ConfigError("edge cloudfront reads each download answer from the bucket's address; give --origin <url>");
   const env = opts.env ?? process.env;
   const store = auth && tokens !== "zip";
-  if (store && !existsSync(join(dir, TOKEN_STORES_MARKER))) {
-    throw new ConfigError(`tokens: ${tokens} needs a chant whose registry edge function reads its tokens from a store (chant#4590), and the one this terragucci was built on does not; use tokens: zip or a newer terragucci`);
-  }
   if (store && (!reg.tokens_name)) throw new ConfigError(`tokens: ${tokens} needs tokens_name, ${tokens === "ssm" ? "the SSM parameter's name" : "the secret's name or ARN"}`);
   const zipped = store ? [] : tokensOf(env[TOKENS_VARIABLE]);
   if (auth && !store && zipped.length === 0) throw new ConfigError(`auth: token on CloudFront puts the tokens in the function, which has no environment of its own; set ${TOKENS_VARIABLE} to the token (two, comma separated, while one rotates out) and run this again`);

@@ -1,34 +1,14 @@
 // The registry edge preset (terragucci#1287): the _headers file publish writes for a Pages site, and the
-// files `terragucci registry edge` writes for a Cloudflare Worker or Lambda@Edge. chant's lexicon is stood
-// in for, so these run on any chant; the real binaries against the real function are in registry-cli-e2e.test.ts.
+// files `terragucci registry edge` writes for a Cloudflare Worker or Lambda@Edge, through chant's lexicon; the real
+// binaries against the real function are in registry-cli-e2e.test.ts.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { RegistrySettings } from "../src/config";
-import { overrideChantNext, type ChantRegistry } from "../src/chant-next";
 import { publish } from "../src/publish";
-import { bucketOrigin, describeEdge, LAMBDA_BUNDLE, planEdge, TOKEN_STORES_MARKER, TOKENS_VARIABLE, WORKER_BUNDLE } from "../src/publish/edge";
+import { bucketOrigin, describeEdge, LAMBDA_BUNDLE, planEdge, TOKENS_VARIABLE, WORKER_BUNDLE } from "../src/publish/edge";
 import { dirStore, HEADERS_FILE } from "../src/publish/registry";
 import { git, tmp, write } from "./helpers";
-
-const restores: (() => void)[] = [];
-afterEach(() => {
-  while (restores.length) restores.pop()!();
-});
-
-/** The lexicon's /registry with only headersFile, so publish's own copies write the rest. */
-function headersOnly(limit = 100): void {
-  const stub: Partial<ChantRegistry> = {
-    headersFile: (rules, existing) => {
-      const held = (existing ?? "").split("\n\n").filter((b) => b.trim());
-      const lines = rules.map((r) => `${r.path}\n  X-Terraform-Get: ${r.location}`);
-      return `${[...held.map((b) => b.trim()), ...lines].join("\n\n")}\n`;
-    },
-    PAGES_HEADER_RULES: limit,
-  };
-  // chantRegistry() hands the stub out; with no writeVersion in it, publish writes the version with its own copy.
-  restores.push(overrideChantNext("registry", stub));
-}
 
 function repo(): string {
   const dir = tmp("terragucci-edge-");
@@ -43,7 +23,6 @@ const PAGES: RegistrySettings = { dir: "public", url: "https://modules.test", na
 
 describe("edge: pages", () => {
   it("writes a _headers rule for each version's download, keeping the rules already there", async () => {
-    headersOnly();
     const r = repo();
     const site = tmp("terragucci-edge-site-");
     write(site, { [HEADERS_FILE]: "/*\n  X-Frame-Options: DENY\n" });
@@ -53,21 +32,7 @@ describe("edge: pages", () => {
     expect(text).toContain("/v1/modules/acme/net/generic/0.1.0/download\n  X-Terraform-Get: https://modules.test/v1/modules/acme/net/generic/0.1.0/net-0.1.0.tar.gz");
   });
 
-  it("says so on the row when the rules pass what Cloudflare Pages reads", async () => {
-    headersOnly(0);
-    const rows = await publish(repo(), { modules: { registry: PAGES } }, { registryStore: dirStore(tmp("terragucci-edge-site-")) });
-    expect(rows.find((x) => x.status === "published")?.detail).toContain("Cloudflare Pages reads only 0");
-  });
-
-  it("leaves _headers out, and says so, on a chant without the writer", async () => {
-    restores.push(overrideChantNext("registry", null));
-    const site = tmp("terragucci-edge-site-");
-    const rows = await publish(repo(), { modules: { registry: PAGES } }, { registryStore: dirStore(site) });
-    expect(rows.find((x) => x.status === "published")?.detail).toContain("_headers not written");
-  });
-
   it("writes no _headers for a bucket", async () => {
-    headersOnly();
     const site = tmp("terragucci-edge-bucket-");
     await publish(repo(), { modules: { registry: { ...PAGES, dir: undefined, bucket: "s3://modules" } } }, { registryStore: dirStore(site) });
     expect(() => readFileSync(join(site, HEADERS_FILE))).toThrow();
@@ -118,7 +83,6 @@ describe("terragucci registry edge", () => {
 
   it("names an SSM parameter or a secret in the options, holds no token, and drops the keep-out-of-git step", () => {
     const dir = bundles();
-    write(dir, { [TOKEN_STORES_MARKER]: "chant#4590\n" });
     const options = (plan: ReturnType<typeof planEdge>) => JSON.parse(String(plan.files.find((f) => f.path === "registry-edge.json")!.content));
     const ssm = planEdge({ ...S3, auth: "token", tokens: "ssm", tokens_name: "/registry/tokens" }, { bundleDir: dir, env: { [TOKENS_VARIABLE]: "leaked" } });
     expect(options(ssm).auth).toEqual({ source: { kind: "ssm", name: "/registry/tokens", region: "us-east-1" } });
@@ -136,10 +100,8 @@ describe("terragucci registry edge", () => {
     expect(describeEdge(zip, "registry-edge")).toContain("keep the directory out of git");
   });
 
-  it("refuses a token store on a build without chant#4590, and on a Worker", () => {
-    expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: bundles() })).toThrow("chant#4590");
+  it("refuses a token store on a Worker, and one with no name", () => {
     const dir = bundles();
-    write(dir, { [TOKEN_STORES_MARKER]: "x\n" });
     expect(() => planEdge({ ...S3, bucket: "gs://acme-mods", edge: "cloudflare", auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: dir })).toThrow("Lambda@Edge");
     expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm" }, { bundleDir: dir })).toThrow("tokens_name");
   });

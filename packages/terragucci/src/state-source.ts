@@ -11,16 +11,14 @@
  * and that version's download URL. The token is the one Terraform and
  * OpenTofu use for the host: `TF_TOKEN_<host>`, else a `credentials` block
  * in the CLI config, else `~/.terraform.d/credentials.tfrc.json`, read by
- * chant core's reader (`@intentius/chant/terraform/credentials`, chant#4563)
- * when the installed chant has it and by the copy below when it does not,
- * which skips the CLI config. A migration holds the workspace's
+ * chant core's reader (`@intentius/chant/terraform/credentials`, chant#4563).
+ * A migration holds the workspace's
  * lock while it writes, as it holds an S3 state's lock file, and the
  * workspace's state is left where it was.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { chantCredentials } from "./chant-next";
+import { terraformCredential } from "@intentius/chant/terraform/credentials";
 import { ConfigError } from "./config";
 import type { StoreFetch } from "./report/object-store";
 
@@ -76,27 +74,9 @@ export interface HostToken {
   from: string;
 }
 
-/** The fallback for a chant without its credentials reader: `TF_TOKEN_<host>`, else the CLI's credentials file. */
-function ownToken(host: string, env: NodeJS.ProcessEnv): HostToken | undefined {
-  const variable = tokenVariable(host);
-  const v = env[variable];
-  if (v) return { token: v, from: variable };
-  const file = join(env.HOME ?? homedir(), ".terraform.d", "credentials.tfrc.json");
-  if (!existsSync(file)) return undefined;
-  try {
-    const doc = JSON.parse(readFileSync(file, "utf-8")) as { credentials?: Record<string, { token?: string }> };
-    const token = doc.credentials?.[host]?.token;
-    return token ? { token, from: file } : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The token for a host, found as Terraform and OpenTofu find it: chant's reader when the installed chant has it, else the copy here. */
+/** The token for a host, found as Terraform and OpenTofu find it, by chant's reader. */
 export async function tokenFor(host: string, env: NodeJS.ProcessEnv): Promise<HostToken | undefined> {
-  const chant = await chantCredentials();
-  if (!chant) return ownToken(host, env);
-  return chant.terraformCredential(host, { env });
+  return terraformCredential(host, { env });
 }
 
 /** What to set for a host's token: its variable, or a credentials block for a host whose port has no variable form. */

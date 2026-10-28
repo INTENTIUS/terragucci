@@ -18,66 +18,27 @@
  *
  * The lock walk, the grouping, the mirror modules and the mirror check are
  * chant's terraform lexicon's (`/registry`, chant#4564), shared with the
- * provider network mirror. The CLI hands them in from `mirrorCode()` when
- * the installed chant has them; the copies here are the fallback until
- * terragucci's chant pin carries them. The Dockerfile, CLI config and build
- * script stay here, as words and templates.
+ * provider network mirror. The Dockerfile, CLI config and build script stay
+ * here, as words and templates.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, posix, relative } from "node:path";
+import { existsSync } from "node:fs";
+import { posix } from "node:path";
 import { imageFor, imageReference, terragruntImage } from "./images";
 import { MIRROR_DIR, type Binary } from "./config";
-import { LOCK_FILE, readLock } from "./rollout/lock";
+import { readLock } from "./rollout/lock";
 import type { CheckResult } from "./check";
-import { chantRegistry } from "./chant-next";
+import {
+  lockEntries,
+  lockFiles,
+  mirrorGroups,
+  mirrorHas as lexiconMirrorHas,
+  mirrorModules,
+  type LockEntry,
+  type MirrorGroup,
+} from "@intentius/chant-lexicon-terraform/registry";
 
-/** Directories a lock file is never looked for in: caches and what init or a package manager writes. */
-const SKIP = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", "cdktf.out", ".terragucci"]);
-
-/** The repo's lock files, as `/`-separated paths relative to the repo, sorted. */
-export function lockFiles(repo: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    let names: string[];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const n of names) {
-      const p = join(dir, n);
-      if (n === LOCK_FILE) {
-        out.push(posix.normalize(relative(repo, p).split("\\").join("/")));
-        continue;
-      }
-      if (SKIP.has(n)) continue;
-      let dirLike = false;
-      try {
-        dirLike = statSync(p).isDirectory();
-      } catch {
-        dirLike = false;
-      }
-      if (dirLike) walk(p);
-    }
-  };
-  walk(repo);
-  return out.sort();
-}
-
-/** One provider one lock file pins. */
-export interface LockEntry {
-  /** The lock file, relative to the repo. */
-  lock: string;
-  /** The full address, `registry.opentofu.org/hashicorp/aws`. */
-  address: string;
-  version: string;
-}
-
-/** Every provider each of `files` pins. */
-export function lockEntries(repo: string, files: string[] = lockFiles(repo)): LockEntry[] {
-  return files.flatMap((lock) => [...readLock(readFileSync(join(repo, lock), "utf-8"))].map(([address, version]) => ({ lock, address, version })));
-}
+export { lockEntries, lockFiles, type LockEntry, type MirrorGroup } from "@intentius/chant-lexicon-terraform/registry";
 
 /** The job's platform as the binary names it: `linux_amd64`. */
 export function hostPlatform(platform: string = process.platform, arch: string = process.arch): string {
@@ -87,15 +48,12 @@ export function hostPlatform(platform: string = process.platform, arch: string =
 
 /**
  * Whether the mirror holds the provider at the version for the platform, in
- * either layout a `filesystem_mirror` reads: packed (what `providers mirror`
- * writes, a zip per platform) or unpacked (a directory per platform).
+ * either layout a `filesystem_mirror` reads, as chant's lexicon reads it
+ * (chant#4564). terragucci compares lower case, as `providers mirror` writes
+ * its directories.
  */
 export function mirrorHas(mirror: string, address: string, version: string, platform: string): boolean {
-  const parts = address.toLowerCase().split("/");
-  if (parts.length !== 3) return false;
-  const dir = join(mirror, ...parts);
-  const type = parts[2]!;
-  return existsSync(join(dir, `terraform-provider-${type}_${version}_${platform}.zip`)) || existsSync(join(dir, version, platform));
+  return address.split("/").length === 3 && lexiconMirrorHas(mirror, address.toLowerCase(), version, platform);
 }
 
 /** Reads a lock file at the commit before the one checked; undefined when that commit or the file is not there. */
@@ -119,7 +77,7 @@ export interface MirrorCheckOptions {
   platform?: string;
   /** The lock files at the previous run's commit. Default: the commit's first parent, from git. Pass null for none. */
   previous?: PreviousLock | null;
-  /** The mirror code (`mirrorCode()`). Default: the copies here. */
+  /** The mirror code. Default: MIRROR_CODE. */
   code?: MirrorCode;
 }
 
@@ -132,7 +90,7 @@ export interface MirrorCheckOptions {
  */
 export function checkMirror(repo: string, mirror: string, options: MirrorCheckOptions = {}): CheckResult {
   const platform = options.platform ?? hostPlatform();
-  const code = options.code ?? OWN_MIRROR_CODE;
+  const code = options.code ?? MIRROR_CODE;
   const files = code.lockFiles(repo);
   const log: string[] = [];
   const report: string[] = [];
@@ -173,46 +131,7 @@ export function checkMirror(repo: string, mirror: string, options: MirrorCheckOp
   return { ok: stale.length === 0, log, report };
 }
 
-/** Lock files that pin the same providers at the same versions, mirrored once. */
-export interface MirrorGroup {
-  locks: string[];
-  /** The first lock file's text, which `providers mirror` checks downloads against. */
-  text: string;
-  providers: Map<string, string>;
-}
-
-/** The repo's lock files grouped by what they pin; a lock file that pins nothing is left out. */
-function ownGroups(repo: string, locks: string[] = lockFiles(repo)): MirrorGroup[] {
-  const groups = new Map<string, MirrorGroup>();
-  for (const lock of locks) {
-    const text = readFileSync(join(repo, lock), "utf-8");
-    const providers = readLock(text);
-    if (providers.size === 0) continue;
-    const key = [...providers].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([a, v]) => `${a}=${v}`).join("\n");
-    const g = groups.get(key);
-    if (g) g.locks.push(lock);
-    else groups.set(key, { locks: [lock], text, providers });
-  }
-  return [...groups.values()];
-}
-
-/** One module per group, under `dir`: each provider at exactly its locked version, with the lock file beside it. */
-function ownModules(groups: MirrorGroup[], options: { dir?: string } = {}): { path: string; content: string }[] {
-  const files: { path: string; content: string }[] = [];
-  groups.forEach((g, i) => {
-    const dir = `${options.dir ?? "mirror"}/${String(i + 1).padStart(2, "0")}`;
-    const required = [...g.providers].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([address, version], n) => `    p${n} = { source = "${address}", version = "= ${version}" }`);
-    files.push({
-      path: `${dir}/versions.tf`,
-      content: [`# The providers ${g.locks.join(", ")} lock${g.locks.length === 1 ? "s" : ""}, each at exactly its locked version.`, "terraform {", "  required_providers {", ...required, "  }", "}", ""].join("\n"),
-    });
-    // The lock file itself, so providers mirror checks each download against its hashes.
-    files.push({ path: `${dir}/${LOCK_FILE}`, content: g.text });
-  });
-  return files;
-}
-
-/** The mirror code the recipe and the check run: chant's lexicon's (chant#4564), or the copies here. */
+/** The mirror code the recipe and the check run: chant's lexicon's (chant#4564). A test passes its own. */
 export interface MirrorCode {
   lockFiles(repo: string): string[];
   lockEntries(repo: string, files?: string[]): LockEntry[];
@@ -221,21 +140,8 @@ export interface MirrorCode {
   mirrorHas(mirror: string, address: string, version: string, platform: string): boolean;
 }
 
-/** The copies here. */
-export const OWN_MIRROR_CODE: MirrorCode = { lockFiles, lockEntries, mirrorGroups: ownGroups, mirrorModules: ownModules, mirrorHas };
-
-/** chant's mirror code when the installed chant's `/registry` has it (chant#4564), else the copies here. */
-export async function mirrorCode(): Promise<MirrorCode> {
-  const lexicon = (await chantRegistry()) as (Partial<MirrorCode> & object) | undefined;
-  const names = ["lockFiles", "lockEntries", "mirrorGroups", "mirrorModules", "mirrorHas"] as const;
-  if (!lexicon || !names.every((n) => typeof lexicon[n] === "function")) return OWN_MIRROR_CODE;
-  const chant = lexicon as MirrorCode;
-  return {
-    ...chant,
-    // terragucci's check compares lower case, as `providers mirror` writes its directories.
-    mirrorHas: (mirror, address, version, platform) => address.split("/").length === 3 && chant.mirrorHas(mirror, address.toLowerCase(), version, platform),
-  };
-}
+/** chant's lexicon's mirror code, with terragucci's lower-case check. */
+export const MIRROR_CODE: MirrorCode = { lockFiles, lockEntries, mirrorGroups, mirrorModules, mirrorHas };
 
 /** A file the recipe writes, relative to its output directory. */
 export interface RecipeFile {
@@ -255,7 +161,7 @@ export interface RecipeOptions {
   platforms?: string[];
   /** Where the mirror goes in the image. Default MIRROR_DIR. */
   mirror?: string;
-  /** The mirror code (`mirrorCode()`). Default: the copies here. */
+  /** The mirror code. Default: MIRROR_CODE. */
   code?: MirrorCode;
 }
 
@@ -292,7 +198,7 @@ export function planRecipe(repo: string, options: RecipeOptions = {}): Recipe {
   const bad = platforms.filter((p) => !PLATFORM.test(p));
   if (bad.length) throw new Error(`--platform ${bad.join(", ")}: name a platform as os/arch, such as linux/amd64`);
   const mirror = options.mirror ?? MIRROR_DIR;
-  const code = options.code ?? OWN_MIRROR_CODE;
+  const code = options.code ?? MIRROR_CODE;
   const groups = code.mirrorGroups(repo, code.lockFiles(repo));
   const files: RecipeFile[] = code.mirrorModules(groups, { dir: "mirror" });
   const providers = [...new Set(groups.flatMap((g) => [...g.providers].map(([a, v]) => `${a} ${v}`)))].sort();

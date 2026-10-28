@@ -56,14 +56,13 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
-import { chantForgeReads } from "./chant-next";
 import { terragucciStatus } from "./ci-words";
 import { agentSettingsAt } from "./involved";
 import { allowRoot, LOGIN, parseComment, parseOptions, SHA } from "./comment";
 import { gitlabApi, HEAD_VAR, MR_VAR, NOTE_VAR, openChecks } from "./comment-apply-gitlab";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import type { PrForge } from "@intentius/chant/pr-forge";
-import { call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
+import { commitStatuses, call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
 import { CHANT_AGENT_ASK_VAR, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, startDefaultPipeline, startReview, type ReviewStart } from "./gitlab-agent";
 import { postPlanNote, type PlanNoteOutcome } from "./plan-note-gitlab";
@@ -376,19 +375,15 @@ async function answer(ask: Ask): Promise<NoteOutcome> {
   const later = [...new Set((Array.isArray(newer) ? newer : []).filter((p) => Number(p?.id) > Number(pipeline.id) && p?.sha !== sha).map((p) => p.sha as string))];
   for (const c of later) {
     if (typeof c !== "string" || !SHA.test(c)) continue;
-    let statuses: any;
+    let applied: { targetUrl?: string } | undefined;
     try {
-      // chant's statuses read with the ref filter (chant#4584), where the installed client has it; the same answer, read through chant.
-      const at = chantForgeReads(ask.forge).commitStatusesAt;
-      statuses = at
-        ? (await at(c, base)).filter((s) => s.context === APPLY_CONTEXT()).map((s) => ({ name: s.context, status: s.state, ...(s.targetUrl ? { target_url: s.targetUrl } : {}) }))
-        : await api("GET", `/projects/${id}/repository/commits/${c}/statuses?name=${encodeURIComponent(APPLY_CONTEXT())}&ref=${encodeURIComponent(base)}`);
+      // chant's statuses read with the ref filter (chant#4584).
+      applied = (await commitStatuses(ask.forge, c, base)).find((s) => s.context === APPLY_CONTEXT());
     } catch (e) {
       return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
     }
-    const applied = Array.isArray(statuses) ? statuses.find((s: any) => s?.name === APPLY_CONTEXT()) : undefined;
     if (applied) {
-      const run = typeof applied.target_url === "string" && /^https?:\/\//.test(applied.target_url) ? ` (${applied.target_url})` : "";
+      const run = typeof applied.targetUrl === "string" && /^https?:\/\//.test(applied.targetUrl) ? ` (${applied.targetUrl})` : "";
       return reply(`a later apply already ran on ${base} at ${short(c)}${run}, so the merge commit ${short(sha)} of !${iid} is not applied: comment on the merge request that commit came from, or push again`);
     }
   }

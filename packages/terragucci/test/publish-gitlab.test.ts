@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
-import { chantNextParts } from "../src/chant-next";
 import { describePublish, publish } from "../src/publish";
 import { gzip, moduleTar } from "../src/publish/archive";
 import { gitlabPlace } from "../src/publish/hosted";
 import { git, tmp, write } from "./helpers";
 
-const parts = await chantNextParts();
 
 function commit(dir: string, message: string): void {
   git(dir, "add", "-A");
@@ -27,7 +25,6 @@ const settings = { modules: { publish: TARGET } };
 
 /** The lexicon's GitLab fake: every call stays in the process. */
 async function fakeGitlab() {
-  // @ts-ignore chant 0.124.54 has no registry/targets/fake-gitlab (chant#4603)
   const { createFakeGitlab } = (await import("@intentius/chant-lexicon-terraform/registry/targets/fake-gitlab")) as {
     createFakeGitlab(o: { host: string; projects: Record<string, string>; tokens: Record<string, string[]> }): {
       fetch: (url: string, init?: unknown) => Promise<Response>;
@@ -39,7 +36,7 @@ async function fakeGitlab() {
   return createFakeGitlab({ host: "gitlab.test", projects: { "7": "platform/modules" }, tokens: { [TOKEN]: ["7"] } });
 }
 
-describe.skipIf(!parts.moduleTargets)("modules.publish: gitlab (terragucci#1300)", () => {
+describe("modules.publish: gitlab (terragucci#1300)", () => {
   it("uploads a new version, reads it back, records it, and is unchanged on a rerun", async () => {
     const repo = repoWithModule();
     const gl = await fakeGitlab();

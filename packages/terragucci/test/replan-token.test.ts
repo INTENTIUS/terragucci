@@ -18,7 +18,6 @@ import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV, tradedVars } from "../src/cl
 import { s3FromEnv } from "../src/report/s3";
 import { gcsFromEnv } from "../src/report/gcs";
 import { authProviderOutput, ROLES_ENV } from "../src/terragrunt";
-import { chantHandover } from "../src/chant-next";
 
 const PLAN = "arn:aws:iam::111111111111:role/plan-ro";
 const APPLY = "arn:aws:iam::111111111111:role/apply-rw";
@@ -495,6 +494,6 @@ describe("the re-plan's Terragrunt cache", () => {
   it.each(["github", "forgejo"] as const)("%s: the re-plan job (golden)", (forge) => {
     const out = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", env: {}, ...tgInput() } as PipelineInput).content;
     // The checkout and handover steps are chant's scripts where chant takes terragucci's words (chant#4554); each has its golden.
-    golden(`replan-${forge}${chantHandover() ? ".chant" : ""}.yml`, replanBlock(out));
+    golden(`replan-${forge}.yml`, replanBlock(out));
   });
 });

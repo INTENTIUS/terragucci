@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
-import { chantModuleTargets } from "../src/chant-next";
 import { describePublish, publish } from "../src/publish";
 import { gzip, moduleTar } from "../src/publish/archive";
 import { hcpPlace } from "../src/publish/hosted";
 import { git, tmp, write } from "./helpers";
 
-const withHcp = typeof (await chantModuleTargets())?.hcpModuleTarget === "function";
 
 function commit(dir: string, message: string): void {
   git(dir, "add", "-A");
@@ -26,7 +24,6 @@ const settings = { modules: { publish: "hcp://acme" } };
 
 /** The lexicon's HCP fake: every call stays in the process, and no HCP account is used. */
 async function fakeHcp(o: { manageModules?: boolean; entitled?: boolean } = {}) {
-  // @ts-ignore chant 0.124.54 has no registry/targets/fake-hcp (chant#4604)
   const { createFakeHcp } = (await import("@intentius/chant-lexicon-terraform/registry/targets/fake-hcp")) as {
     createFakeHcp(o: { organization: string; tokens: Record<string, { manageModules: boolean }>; entitled?: boolean }): {
       fetch: (url: string, init?: unknown) => Promise<Response>;
@@ -44,7 +41,7 @@ const noWait = { sleep: async () => {}, now: (() => {
   return () => (t += 1000);
 })() };
 
-describe.skipIf(!withHcp)("modules.publish: hcp://<org> (terragucci#1301)", () => {
+describe("modules.publish: hcp://<org> (terragucci#1301)", () => {
   it("creates the module and the version, uploads the archive, and is unchanged on a rerun", async () => {
     const repo = repoWithModule();
     const hcp = await fakeHcp();

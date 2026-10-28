@@ -41,8 +41,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { COST_KEY_SECRET, loadConfig, resolveProject, resolveRepo, type ForgeName, type ProjectSettings } from "./config";
 import { globMatch } from "./detect";
-import { chantCiProductWordsNow, chantForgeCheck, chantForgeCheckNow, type ChantForgeCheck, type ChantForgeCheckContract, type ChantForgeCheckJob, type ChantForgeCheckResult, type ChantForgeCheckTarget } from "./chant-next";
-import { TERRAGUCCI_WORDS } from "./ci-words";
+import { chantForgeCheck, chantForgeCheckNow, type ChantForgeCheck, type ChantForgeCheckContract, type ChantForgeCheckJob, type ChantForgeCheckResult, type ChantForgeCheckTarget } from "./chant-next";
+import { productWords } from "./ci-words";
 import { apiBase, call, DEFAULT_TOKEN_ENV, ForgeError, type Fetch, type ForgeTarget } from "./forge";
 import { configIdentities, IDENTITY_STAGES, type ConfigIdentitiesFlags, type Identities, type StageIdentities } from "./identities";
 import { encodeStrict, xmlText } from "./report/object-store";
@@ -846,7 +846,7 @@ async function chantForgeCheckOf(chant: ChantForgeCheck, path: string, file: str
     ...(idFlags.ownerId ?? live.ownerId ? { ownerId: idFlags.ownerId ?? live.ownerId } : {}),
     ...(idFlags.repoId ?? live.repoId ? { repoId: idFlags.repoId ?? live.repoId } : {}),
   });
-  const words = chantCiProductWordsNow()?.assertProductWords(TERRAGUCCI_WORDS) ?? TERRAGUCCI_WORDS;
+  const words = productWords();
   return chant.forgeCheck(
     { target, contract: forgeCheckContract(contract, settings), words, file: contract.file, ...(requireClouds ? { requireClouds: true } : {}) },
     { fetch: deps.fetch, env: deps.env, ...(deps.readFile ? { readFile: deps.readFile } : {}), ...(deps.now ? { now: deps.now } : {}) },

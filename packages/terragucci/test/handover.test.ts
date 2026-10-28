@@ -10,7 +10,6 @@ import { basename, dirname, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
-import { chantHandover } from "../src/chant-next";
 import { renderPipeline, type PipelineInput } from "../src/render";
 import { checkoutScript, HANDOVER_LIMITS, handoverKeys, handoverTrap, packJs, takeOverScript, UNPACK_JS, type HandoverForge } from "../src/handover";
 import { bareFrom, git, tmp, write } from "./helpers";
@@ -51,8 +50,8 @@ const takeOver = (job: string, dir: string, outputs: Record<string, string>, cwd
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 };
 
-/** The step's handover function: chant's names it chant_handover where the installed chant's scripts take terragucci's parameters (chant#4554). */
-const HANDOVER = chantHandover() ? "chant_handover" : "tg_handover";
+/** The step's handover function, as chant's scripts name it with terragucci's parameters (chant#4554). */
+const HANDOVER = "chant_handover";
 
 const FORGES = ["github", "forgejo"] as const;
 const cases: [string, Partial<PipelineInput>][] = [

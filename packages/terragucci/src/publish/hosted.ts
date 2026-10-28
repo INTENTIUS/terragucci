@@ -20,7 +20,10 @@
  */
 import type { RegistrySettings } from "../config";
 import { ConfigError } from "../config";
-import { chantModuleTargets, type ChantModuleAddress, type ChantModuleFetch, type ChantModuleTarget, type ChantModuleTargets, type ChantModuleVersionContext } from "../chant-next";
+import { createRedactor } from "@intentius/chant/lifecycle/publish-credentials";
+import { PublishTargetError } from "@intentius/chant/lifecycle/release-publish";
+import { artifactoryModuleTarget, gitlabModuleTarget, hcpModuleTarget, nexusModuleTarget } from "@intentius/chant-lexicon-terraform/registry";
+import type { ChantModuleAddress, ChantModuleFetch, ChantModuleTarget, ChantModuleTargets, ChantModuleVersionContext } from "../chant-next";
 import { gzip, moduleTarAt, sha256 } from "./archive";
 import { tryGit } from "./git";
 import { readModuleLedger } from "./ledger";
@@ -51,7 +54,10 @@ export interface HostedOptions {
   now?: () => number;
 }
 
-/** A hosted target the installed chant can make, given the lexicon's factories. */
+/** The terraform lexicon's module targets (chant#4603-#4605), with core's redactor and error class (chant#4602). */
+export const MODULE_TARGETS = { gitlabModuleTarget, hcpModuleTarget, artifactoryModuleTarget, nexusModuleTarget, createRedactor, PublishTargetError } as unknown as ChantModuleTargets;
+
+/** A hosted target, given the lexicon's factories. */
 export type HostedFactory = (lib: ChantModuleTargets, deps: { fetch?: ChantModuleFetch; registryFetch?: ChantModuleFetch; sleep?: (ms: number) => Promise<void>; now?: () => number }) => ChantModuleTarget;
 
 /**
@@ -77,8 +83,7 @@ export function hostedTarget(label: string, make: HostedFactory, namespace: stri
   let made: { lib: ChantModuleTargets; target: ChantModuleTarget } | undefined;
   const target = async () => {
     if (!made) {
-      const lib = await chantModuleTargets();
-      if (!lib) throw new ConfigError(`modules.publish: ${label} publishes through the terraform lexicon's module targets (chant#4603), which the installed chant does not carry; it needs a chant release that does`);
+      const lib = MODULE_TARGETS;
       made = { lib, target: make(lib, { ...(o.fetch ? { fetch: o.fetch, registryFetch: o.fetch } : {}), ...(o.sleep ? { sleep: o.sleep } : {}), ...(o.now ? { now: o.now } : {}) }) };
     }
     return made;
@@ -206,10 +211,7 @@ export function hcpTarget(p: string, o: HostedOptions): HostedTarget {
   const place = hcpPlace(p);
   return hostedTarget(
     p,
-    (lib, deps) => {
-      if (!lib.hcpModuleTarget) throw new ConfigError(`modules.publish: ${p} publishes through the terraform lexicon's HCP Terraform target (chant#4604), which the installed chant does not carry; it needs a chant release that does`);
-      return lib.hcpModuleTarget({ organization: place.organization, host: place.host }, deps);
-    },
+    (lib, deps) => lib.hcpModuleTarget({ organization: place.organization, host: place.host }, deps),
     place.organization,
     (a) => `${place.host}/${place.organization}/${a.name}/${a.system}`,
     o,
@@ -242,7 +244,6 @@ export function repositoryTarget(p: string, o: HostedOptions): HostedTarget {
     p,
     (lib, deps) => {
       const make = place.kind === "artifactory" ? lib.artifactoryModuleTarget : lib.nexusModuleTarget;
-      if (!make) throw new ConfigError(`modules.publish: ${p} publishes through the terraform lexicon's ${place.kind === "artifactory" ? "Artifactory" : "Nexus"} target (chant#4605), which the installed chant does not carry; it needs a chant release that does`);
       return make({ url, repo: place.repo }, deps);
     },
     place.namespace,
