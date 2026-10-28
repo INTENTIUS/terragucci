@@ -1327,6 +1327,83 @@ export interface ChantAgentJob {
   generate: Record<"github" | "gitlab" | "forgejo", ChantOpGenerator>;
 }
 
+// ── template requests (chant#4651, #4652) ──────────────────────────────────
+
+/** An input's engine-neutral kind in template.yml/v1 (`TemplateInputKind`). */
+export type ChantTemplateInputKind = "string" | "number" | "bool" | "list" | "map" | "object";
+
+/** One input of a template (`TemplateInput`). */
+export interface ChantTemplateInput {
+  name: string;
+  kind: ChantTemplateInputKind;
+  of?: "string" | "number" | "bool";
+  label?: string;
+  description?: string;
+  default?: unknown;
+  required?: boolean;
+  sensitive?: boolean;
+}
+
+/** A parsed template.yml (`TemplateSpec`). */
+export interface ChantTemplateSpec {
+  $schema?: string;
+  contract: 1;
+  kind?: "app" | "addon";
+  description: string;
+  inputs: ChantTemplateInput[];
+}
+
+/** A template request, template-request/v1 (`TemplateRequest`). */
+export interface ChantTemplateRequest {
+  $schema: string;
+  contract: 1;
+  kind: "app" | "addon";
+  template: string;
+  version: string;
+  app: string;
+  addon?: string;
+  inputs: Record<string, unknown>;
+  requestedBy: string;
+  via: "form" | "mcp" | "cli";
+}
+
+/** One refusal of a request (`TemplateRequestRefusal`). */
+export interface ChantTemplateRequestRefusal {
+  code: string;
+  field: string;
+  reason: string;
+}
+
+/** chant core's template request (`@intentius/chant/template-request`, chant#4651). */
+export interface ChantTemplateRequests {
+  TEMPLATE_REQUEST_FLOOR: string;
+  makeTemplateRequest(input: Omit<ChantTemplateRequest, "$schema" | "contract">): ChantTemplateRequest;
+  checkTemplateRequest(
+    request: unknown,
+    catalog: ChantReleaseCatalogDoc,
+    templateSpec: ChantTemplateSpec,
+    options?: { component?: string; require?: "verified" | "signed" | "unsigned" },
+  ): { ok: true; request: ChantTemplateRequest } | { ok: false; refusals: ChantTemplateRequestRefusal[] };
+  requestBranch(request: Pick<ChantTemplateRequest, "template" | "app"> & Partial<Pick<ChantTemplateRequest, "kind" | "addon">>): string;
+  requestBody(request: ChantTemplateRequest, words?: object): string;
+  templateName(template: string): string;
+  parseTemplateSpec(text: string | unknown): ChantTemplateSpec;
+}
+
+/** One file of a rendered request, relative to the app's root (`RenderedFile`). */
+export interface ChantRenderedFile {
+  path: string;
+  text: string;
+}
+
+/** The terraform lexicon's template rendering (`@intentius/chant-lexicon-terraform/template`, chant#4652). */
+export interface ChantTemplateRender {
+  renderAppRoot(options: { request: ChantTemplateRequest; source: string; inputs: readonly ChantTemplateInput[]; outputs?: readonly { name: string; description?: string | null; sensitive?: boolean }[] }): ChantRenderedFile[];
+  terraformInputType(input: Pick<ChantTemplateInput, "kind" | "of">): string;
+  /** Thrown with a `code` and a `subject` when a request cannot become files. */
+  TemplateRenderError: new (...args: never[]) => Error & { code: string; subject: string };
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -1552,6 +1629,16 @@ const loaders = {
     () => import("@intentius/chant/lifecycle/release-ledger"),
     (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
   ),
+  templateRequest: once<ChantTemplateRequests>(
+    // @ts-ignore: chant#4651's subpath, newer than the pin
+    () => import("@intentius/chant/template-request"),
+    (m) => (has(m, "makeTemplateRequest", "checkTemplateRequest", "requestBranch", "requestBody", "templateName", "parseTemplateSpec") && typeof m.TEMPLATE_REQUEST_FLOOR === "string" ? (m as unknown as ChantTemplateRequests) : undefined),
+  ),
+  templateRender: once<ChantTemplateRender>(
+    // @ts-ignore: chant#4652's subpath, newer than the pin
+    () => import("@intentius/chant-lexicon-terraform/template"),
+    (m) => (has(m, "renderAppRoot", "terraformInputType", "TemplateRenderError") ? (m as unknown as ChantTemplateRender) : undefined),
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -1668,6 +1755,11 @@ export function chantControlPipeline(forge: "github" | "gitlab" | "forgejo"): Pr
   return load(forge === "github" ? "controlPipelineGithub" : forge === "gitlab" ? "controlPipelineGitlab" : "controlPipelineForgejo");
 }
 
+/** chant core's template request (`@intentius/chant/template-request`, chant#4651), or undefined. */
+export const chantTemplateRequests = (): Promise<ChantTemplateRequests | undefined> => load("templateRequest");
+/** The terraform lexicon's template rendering (`@intentius/chant-lexicon-terraform/template`, chant#4652), or undefined. */
+export const chantTemplateRender = (): Promise<ChantTemplateRender | undefined> => load("templateRender");
+
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
  * Returns the function that puts the import back.
@@ -1691,5 +1783,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const holdRecord = await chantHoldRecord();
   const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof };
+  const templateRequest = await chantTemplateRequests();
+  const templateRender = await chantTemplateRender();
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

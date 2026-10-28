@@ -53,7 +53,7 @@ import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { resolveControl } from "./control-repo";
-import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, REQUEST_PATHS, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
@@ -409,6 +409,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
     ...(rollouts ? { rollouts } : {}),
+    ...(settings.templates && forgeChoice.value !== "gitlab" ? { templates: true } : {}),
     // control: after the last apply, a job tells the control repo (./control-repo.ts). The member is this repo's name in the control repo's workspace.
     ...(control ? { control } : {}),
     // Every job runs the shape's prepare before it reads the roots; an Atmos repo's jobs install Atmos for it.
@@ -446,6 +447,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
   const rolloutRel = forgeChoice.value === "gitlab" ? undefined : ROLLOUT_PATHS[forgeChoice.value];
+  const requestRel = forgeChoice.value === "gitlab" ? undefined : REQUEST_PATHS[forgeChoice.value];
   const reviewRel = forgeChoice.value === "gitlab" ? undefined : REVIEW_PATHS[forgeChoice.value];
   const ephemeralRel = forgeChoice.value === "gitlab" ? undefined : EPHEMERAL_PATHS[forgeChoice.value];
   const resumeRel = forgeChoice.value === "gitlab" ? undefined : RESUME_PATHS[forgeChoice.value];
@@ -455,7 +457,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
     // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.
-    if ((f.path === rolloutRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel || f.path === agentRel || f.path === driftRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
+    if ((f.path === rolloutRel || f.path === requestRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel || f.path === agentRel || f.path === driftRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
     files.push(plan(path, f.content));
   }
   // chant.config.ts: every root as a terraform.roots entry, so chant's step names it (terragucci#1303). A file terragucci did not write stays.
@@ -472,7 +474,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${COMPONENTS_PATH} exists and terragucci did not write it; move it aside or pass --force`);
   }
   // A rollout, review, ephemeral or resume workflow an earlier init wrote goes when the config stops asking for it.
-  for (const rel of [rolloutRel, reviewRel, ephemeralRel, resumeRel, agentRel, driftRel]) {
+  for (const rel of [rolloutRel, requestRel, reviewRel, ephemeralRel, resumeRel, agentRel, driftRel]) {
     if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
     const path = join(repo, rel);
     if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });
@@ -575,6 +577,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     notes.push(`control is set: give this repo a ${control.tokenEnv} secret, a token that may dispatch to ${control.repo} and do nothing else; its apply on the default branch then runs ${control.member}'s dependents there with the Op ${control.op}`);
   }
   if (settings.rollouts && !rollouts) notes.push("rollouts is set and respond.rollout is off, so no rollout job is written");
+  if (settings.templates && forgeChoice.value === "gitlab") notes.push("templates is set: on GitLab no request workflow is written, so run terragucci request from a checkout to open an app's merge request");
   if (settings.comments && forgeChoice.value === "gitlab") {
     notes.push(`comments is set: add a pipeline schedule with the cron ${settings.comments} and the variable TERRAGUCCI_SCHEDULE set to comments under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope and the Developer role so the comments job can answer notes and start pipelines`);
   }

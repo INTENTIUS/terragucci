@@ -1,6 +1,6 @@
 ---
 title: The CLI's JSON output
-description: The envelope that init, reconcile, plan, stage, rollout, respond, config check, config identities, forge check and query print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
+description: The envelope that init, reconcile, plan, stage, rollout, respond, config check, config identities, forge check, query, modules, templates and request print with --json, the exit codes behind it, and the outcome stage tf-apply writes.
 prompt: |
   Read https://intentius.io/terragucci/reference/cli-json/.
   Write a script that runs `npx terragucci plan --json` and branches on the envelope's `exit` and `status` and on `results.roots`, printing each failed root's summary.
@@ -24,7 +24,7 @@ With `--json`, these commands print only one JSON object on stdout.
 | Field | Holds |
 |---|---|
 | `schema` | The envelope version. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check` or `query`. |
+| `command` | `init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check`, `query`, `modules`, `templates` or `request`. |
 | `exit` | The process exit code. |
 | `status` | `ok` for exit 0, `failed` for 1, `usage` for 2, `waiting` for 3. |
 | `results` | What the command found or did, as below. `null` when the command could not run. |

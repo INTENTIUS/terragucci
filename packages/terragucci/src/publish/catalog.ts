@@ -37,6 +37,8 @@ import {
   type ChantReleaseStatusRecord,
   type ChantTerraformDocsRunner,
 } from "../chant-next";
+import { chantTemplateRequests } from "../chant-next";
+import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { moduleTarAt, tarEntries } from "./archive";
 import { tryGit, hasCommit } from "./git";
 import { attestDir, ATTEST_FILES, readModuleLedger, type VersionedReleaseRecord } from "./ledger";
@@ -93,6 +95,27 @@ export function terraformDocsRunner(): ChantTerraformDocsRunner {
     if (r.status !== 0) throw new Error((r.stderr || "").trim() || `terraform-docs exited ${r.status}`);
     return r.stdout;
   };
+}
+
+/** The file beside a module that makes it a template (template.yml/v1, chant#4651). */
+export const TEMPLATE_FILE = "template.yml";
+
+/**
+ * A version's template.yml, as its catalog entry carries it under
+ * `fields.terraform.template`: read from the release's own files, so it is
+ * the file the release signed. Checked with chant's reader when the installed
+ * chant has one; a file that does not pass is left out, with a note.
+ */
+async function templateField(dir: string): Promise<{ spec?: unknown; note?: string }> {
+  const file = join(dir, TEMPLATE_FILE);
+  if (!existsSync(file)) return {};
+  const text = readFileSync(file, "utf-8");
+  const chant = await chantTemplateRequests();
+  try {
+    return { spec: chant ? chant.parseTemplateSpec(text) : parseYAMLDocument(text) };
+  } catch (e) {
+    return { note: `${TEMPLATE_FILE} left out of the catalog: ${(e as Error).message.split("\n", 1)[0]}` };
+  }
 }
 
 /** The module's files at `commit`, in a scratch directory the caller removes; undefined when the checkout lacks the commit. */
@@ -197,7 +220,9 @@ export async function publishCatalog(repo: string, reg: RegistrySettings, store:
       try {
         const docs = await tf.moduleDocs(dir, { ...(o.parser ? { parser: o.parser } : {}), terraformDocs: runner, ...(o.binary ? { binary: o.binary } : {}) });
         if (docs.note) notes.push(`${mod.rel} ${r.releaseVersion ?? ""}: ${docs.note}`.replace(/ :/, ":"));
-        fields.push({ component: mod.rel, ...at, engine: "terraform", fields: tf.terraformCatalogFields(docs, addr.source) });
+        const template = await templateField(dir);
+        if (template.note) notes.push(`${mod.rel} ${r.releaseVersion ?? r.digest}: ${template.note}`);
+        fields.push({ component: mod.rel, ...at, engine: "terraform", fields: { ...tf.terraformCatalogFields(docs, addr.source), ...(template.spec ? { template: template.spec } : {}) } });
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -320,6 +345,8 @@ export function findComponent(catalog: ChantReleaseCatalogDoc, name: string): Ch
   return (
     catalog.components.find((c) => c.name === want) ??
     catalog.components.find((c) => (c.fields.terraform as { address?: string } | undefined)?.address === want) ??
+    // The address without its host: `acme/bucket/aws` for `modules.example.com/acme/bucket/aws`.
+    catalog.components.find((c) => (c.fields.terraform as { address?: string } | undefined)?.address?.split("/").slice(1).join("/") === want) ??
     catalog.components.find((c) => c.name.split("/").pop() === want)
   );
 }

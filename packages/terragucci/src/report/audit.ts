@@ -33,7 +33,7 @@ export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 /** The record, its page and its summary, at the top of the reports prefix. */
 export const AUDIT_FILES = { record: "audit.jsonl", page: "audit.html", summary: "audit.json" } as const;
 
-export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write", "agent-run"] as const;
+export const AUDIT_KINDS = ["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "migration", "unlock", "state-export", "ephemeral-apply", "ephemeral-destroy", "unrecorded-write", "agent-run", "request"] as const;
 export type AuditKind = (typeof AUDIT_KINDS)[number];
 
 /** Where an entry was read: a ledger line and the commit that added or removed it, a report in the bucket, or a state's list of versions. */
@@ -114,6 +114,8 @@ export const AGENT_RUN_LEDGERS: Readonly<Record<string, string>> = {
   "local/runs__terragucci-review.jsonl": "review.agent",
   "local/runs__terragucci-refused-wave.jsonl": "agent.refused-wave",
 };
+/** Template requests: one line per pull request `terragucci request` opened (../templates.ts). */
+export const REQUESTS_FILE = "_gates/template-requests.jsonl";
 export const PR_ENV_RECORDS_FILE = "_pr-envs/records.jsonl";
 export const PR_ENV_LEDGER_PATTERN = /^_gates\/pr-[1-9][0-9]*\.jsonl$/;
 
@@ -155,6 +157,7 @@ export function ledgerEntries(project: string, path: string, lines: readonly Gat
   if (path === PR_ENV_RECORDS_FILE) return prEnvEntries(project, lines, commitUrl);
   if (path === AGENT_RUNS_FILE) return agentRunEntries(project, lines, commitUrl);
   if (AGENT_RUN_LEDGERS[path]) return agentRunLedgerEntries(project, path, lines, commitUrl);
+  if (path === REQUESTS_FILE) return requestEntries(project, lines, commitUrl);
   const override = path === OVERRIDE_LEDGER_FILE;
   const { entries } = deriveGateAudit({
     ledgers: [{ op: opOf(path), path, lines }],
@@ -387,6 +390,34 @@ function agentRunEntries(project: string, lines: readonly GateLedgerLine[], comm
       result: str(r.result) ?? "unknown",
       evidence: { source: "ledger", branch: LEDGER_BRANCH, path: AGENT_RUNS_FILE, commit: c.commit, ...(url ? { url } : {}) },
       detail: drop({ actor: r.actor, model: str(r.model), cost: r.cost, commit: str(r.commit), pull_request: str(r.pullRequest), requested_by: str(r.requestedBy), reason: str(r.reason), run_url: str(r.runUrl) }),
+    });
+  }
+  return out;
+}
+
+/**
+ * The entries of `_gates/template-requests.jsonl`: one per pull request a
+ * template request opened, with the requester as `who`, the app as `what`,
+ * and the template, its version and the pull request in `detail`.
+ */
+function requestEntries(project: string, lines: readonly GateLedgerLine[], commitUrl: (commit: string) => string | undefined): AuditEntry[] {
+  const out: AuditEntry[] = [];
+  for (const c of addedLines(lines)) {
+    const r = parse(c.text);
+    if (!r || r.version !== 1 || r.kind !== "request" || typeof r.timestamp !== "string" || typeof r.app !== "string") continue;
+    const url = commitUrl(c.commit);
+    out.push({
+      schema: AUDIT_SCHEMA,
+      id: sha("ledger", project, REQUESTS_FILE, c.text),
+      kind: "request",
+      project,
+      at: r.timestamp,
+      who: str(r.requestedBy) ?? null,
+      what: r.app,
+      digest: null,
+      result: "opened",
+      evidence: { source: "ledger", branch: LEDGER_BRANCH, path: REQUESTS_FILE, commit: c.commit, ...(url ? { url } : {}) },
+      detail: drop({ template: str(r.template), version: str(r.templateVersion), app: r.app, via: str(r.via), branch: str(r.branch), pull_request: typeof r.pullRequest === "number" ? r.pullRequest : undefined, url: str(r.url) }),
     });
   }
   return out;
