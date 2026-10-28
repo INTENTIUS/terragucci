@@ -1744,7 +1744,8 @@ async function runGated(
       log(`${label} waits for an approval of digest ${result.digest} by someone other than ${by}. Read the proof above, then approve it with:`);
       log(`  ${command}`);
       log("Then run this job again.");
-      return { code: EXIT.waiting, record: { ...record, status: "waiting" }, command };
+      // On chant's gate the approval binds chant's request digest, so the record names that one.
+      return { code: EXIT.waiting, record: { ...record, digest: result.digest, status: "waiting" }, command };
     }
   }
 }
