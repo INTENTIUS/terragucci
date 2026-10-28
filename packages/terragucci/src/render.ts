@@ -221,6 +221,24 @@ export const ROLLOUT_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   forgejo: ".forgejo/workflows/terragucci-rollout.yml",
 };
 
+/**
+ * The request workflow, beside the pipeline on GitHub and Forgejo, with `templates` set: a
+ * `workflow_dispatch` whose inputs are REQUEST_INPUTS, which opens a pull request adding an
+ * app's root from a template. A form dispatches it by this file name.
+ */
+export const REQUEST_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: ".github/workflows/terragucci-request.yml",
+  forgejo: ".forgejo/workflows/terragucci-request.yml",
+};
+
+/** The request workflow's dispatch inputs: the template, its version, the app's name and its inputs as JSON. */
+export const REQUEST_INPUTS = {
+  template: { description: "The template's address, such as acme/bucket/aws", required: true, type: "string" },
+  version: { description: "The template version; empty for its newest one a request may name", required: false, type: "string" },
+  name: { description: "The app's name: a lowercase letter, then lowercase letters, digits and -", required: true, type: "string" },
+  inputs: { description: "The template's inputs as one JSON object, by name", required: false, default: "{}", type: "string" },
+};
+
 export const PIPELINE_PATHS: Record<ForgeName, string> = {
   github: ".github/workflows/terragucci.yml",
   forgejo: ".forgejo/workflows/terragucci.yml",
@@ -303,6 +321,8 @@ export interface PipelineInput {
   publishGitlabToken?: string;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
+  /** `templates:` is set: the request workflow, on GitHub and Forgejo. */
+  templates?: boolean;
   /** `rollouts:`, when `respond.rollout` is not off: the cron of the job that continues every rollout in flight. */
   rollouts?: string;
   /** `control`, settled: after the last apply succeeds on the default branch, a job sends the control repo a dispatch (control-repo.ts). */
@@ -395,7 +415,7 @@ export interface RenderedPipeline {
   content: string;
   /** The jobs that apply roots, built from the same list the workflow's jobs are. */
   applyJobs: PipelineApplyJob[];
-  /** Further workflow files on GitHub and Forgejo: the resume workflow, the review workflow with `review.agent`, and the rollout workflow with `rollouts`. */
+  /** Further workflow files on GitHub and Forgejo: the resume workflow, the review workflow with `review.agent`, the rollout workflow with `rollouts`, and the request workflow with `templates`. */
   extra?: { path: string; content: string }[];
 }
 
@@ -3457,8 +3477,64 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   }
   // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
   if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv })) });
+  if (input.templates) extra.push({ path: REQUEST_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(requestWorkflow(image, jobEnv, tokenEnv)) });
   if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined)) });
   return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(entities) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), applyJobs: renderedApplyJobs, ...(extra.length ? { extra } : {}) };
+}
+
+/**
+ * The request job's script: the dispatch's inputs, read from the environment so
+ * no value is pasted into the shell, become `terragucci request --via form`,
+ * with the person who dispatched the run as the requester.
+ */
+export function requestScript(): string {
+  return [
+    "set -eu",
+    'inputs="$(mktemp)"',
+    'printf \'%s\' "${TG_INPUTS:-}" > "$inputs"',
+    '[ -s "$inputs" ] || printf \'{}\' > "$inputs"',
+    'set -- "$TG_TEMPLATE" --name "$TG_NAME" --inputs-file "$inputs" --via form --requested-by "$TG_REQUESTED_BY"',
+    '[ -z "${TG_VERSION:-}" ] || set -- "$@" --version "$TG_VERSION"',
+    'terragucci request "$@"',
+  ].join("\n");
+}
+
+/**
+ * The request workflow (GitHub and Forgejo): dispatched with REQUEST_INPUTS, it runs
+ * `terragucci request` from the default branch, which pushes `request/<template>/<app>`
+ * and opens its pull request. It pushes and opens with `token_env`'s secret when the config
+ * names one: GitHub starts no workflow for a pull request the job's own token opens, so
+ * the app's root would get no plan. Without it, the job's own token.
+ */
+function requestWorkflow(image: string, env: Record<string, string>, tokenEnv: string | undefined): Map<string, never> {
+  const token = tokenEnv ? `\${{ secrets.${tokenEnv} }}` : "${{ github.token }}";
+  const workflow = new Workflow({
+    name: "terragucci-request",
+    on: { workflow_dispatch: { inputs: REQUEST_INPUTS } },
+    env,
+    permissions: { contents: "read" },
+    // One run per app name at a time: two would race to push its branch.
+    concurrency: { group: "terragucci-request-${{ github.repository }}-${{ github.event.inputs.name }}", "cancel-in-progress": false },
+  } as never);
+  const request = new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    // It pushes the request's branch, records the request on chant/lifecycle and opens the pull request.
+    permissions: { contents: "write", "pull-requests": "write" },
+    env: {
+      TG_TOKEN: token,
+      TG_TEMPLATE: "${{ github.event.inputs.template }}",
+      TG_VERSION: "${{ github.event.inputs.version }}",
+      TG_NAME: "${{ github.event.inputs.name }}",
+      TG_INPUTS: "${{ github.event.inputs.inputs }}",
+      TG_REQUESTED_BY: "${{ github.triggering_actor || github.actor }}",
+    },
+    steps: [
+      new Step({ uses: CHECKOUT, with: { "fetch-depth": 0, ...(tokenEnv ? { token } : {}) } }),
+      new Step({ name: "Open the pull request that adds the app's root from the template", shell: "bash", run: requestScript() }),
+    ],
+  } as never);
+  return new Map<string, never>([["workflow", workflow as never], ["request", request as never]]);
 }
 
 /**

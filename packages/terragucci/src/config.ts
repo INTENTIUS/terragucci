@@ -473,6 +473,36 @@ export interface ControlSettings {
   ref?: string;
 }
 
+/** `templates`' settings. */
+export const TEMPLATES_KEYS = ["registry", "apps", "require"] as const;
+/** `templates.require`: `signed` takes a signed or verified version, `any` an unsigned one too. */
+export const TEMPLATES_REQUIRE = ["signed", "any"] as const;
+/** Where a requested app's root goes by default. */
+export const TEMPLATES_APPS = "apps/{name}";
+
+export interface TemplatesSettings {
+  /** The registry URL whose release catalog lists the templates. Default `modules.registry.url`. */
+  registry?: string;
+  /** The path of a requested app's root, with `{name}` in it. Default `apps/{name}`. */
+  apps?: string;
+  /** The lowest attestation a template version needs. Default `signed`. */
+  require?: (typeof TEMPLATES_REQUIRE)[number];
+}
+
+/** The problems of a `templates` value. */
+export function templatesProblems(v: unknown, where: string): string[] {
+  if (!isObject(v)) return [`${where} must be a map (settings: ${TEMPLATES_KEYS.join(", ")})`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!(TEMPLATES_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${TEMPLATES_KEYS.join(", ")})`);
+  if (v.registry !== undefined && !(typeof v.registry === "string" && /^https?:\/\/[^\s/]+/.test(v.registry))) out.push(`${where}.registry must be the registry's URL, such as https://modules.example.com`);
+  if (v.apps !== undefined) {
+    if (typeof v.apps !== "string" || !v.apps.includes("{name}")) out.push(`${where}.apps must be a path with {name} in it, such as apps/{name}`);
+    else if (v.apps.startsWith("/") || v.apps.split("/").some((p) => p === ".." || p === "")) out.push(`${where}.apps must be a relative path inside the repo, such as apps/{name}`);
+  }
+  if (v.require !== undefined && !(TEMPLATES_REQUIRE as readonly string[]).includes(v.require as string)) out.push(`${where}.require must be one of ${TEMPLATES_REQUIRE.join(", ")}`);
+  return out;
+}
+
 export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref"] as const;
 /** The token a member holds for the dispatch when `control.token_env` is unset. */
 export const CONTROL_TOKEN_ENV = "TERRAGUCCI_CONTROL_TOKEN";
@@ -658,6 +688,12 @@ export interface ProjectSettings {
    * control repo. `respond.rollout: off` leaves the job out.
    */
   rollouts?: string | false;
+  /**
+   * Apps from templates (`terragucci templates`, `terragucci request`): the
+   * registry whose catalog lists the templates, where a requested app's root
+   * goes, and the lowest attestation a template version needs.
+   */
+  templates?: TemplatesSettings;
   /**
    * The control repo to tell once the default branch's apply succeeded (ControlSettings). The pipeline gets a
    * job that sends the control repo a dispatch, and the control repo runs this project's dependents.
@@ -1117,7 +1153,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1246,6 +1282,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.rollouts must be a cron schedule or false`);
   }
   if (s.control !== undefined) problems.push(...controlProblems(s.control, `${where}.control`));
+  if (s.templates !== undefined) problems.push(...templatesProblems(s.templates, `${where}.templates`));
   if (s.gitlab !== undefined) {
     if (!isObject(s.gitlab)) problems.push(`${where}.gitlab must be a map (settings: token)`);
     else {

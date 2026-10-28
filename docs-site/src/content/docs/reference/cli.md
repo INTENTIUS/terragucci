@@ -22,6 +22,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `publish` | publishes each changed module at a new version |
 | `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
 | `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers; `deprecate`, `yank` and `restore` mark a version on the release ledger |
+| `templates` | lists the templates in the release catalog: each with the versions a request may name, their attestation, kind and form fields; read only |
+| `request` | opens a pull request that adds an app's root from a template: the module call, and the files `generate` writes for it |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
@@ -323,6 +325,28 @@ terragucci modules consumers [--check] [--config <file>]
 ```
 
 Writes `consumers.json` at the repo's top: each registry module version the roots pin, and where, in chant's consumers document. A publishing repo across the control repo joins it into its catalog. `--check` writes nothing and exits 1 when the file is missing or no longer matches the roots. The check job of a repo with `control` runs it, and it passes with a note on a chant that has no consumer scan.
+
+## templates
+
+```bash
+terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]
+```
+
+Reads the release catalog of `templates.registry`, else of `modules.registry`, or with `--registry` another registry's, as [`modules`](#modules) does. A template is a module whose release has a `template.yml` beside its code, which `publish` copies into the version's catalog entry. `list`, the default, prints each template with a version a request may name: active, and signed or verified, or with `templates.require: any` unsigned too. `show <template>` takes its address without the host (`acme/bucket/aws`), its full address, its path or its last path segment, and prints its versions and its form fields: each input's name, kind, label, default, whether it is required and whether it is sensitive. `--json` prints the list, or the one template, as the envelope's `results`.
+
+## request
+
+```bash
+terragucci request <template> --name <app> [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]
+```
+
+Builds a template request for the app `--name`, checks it against the catalog and the version's `template.yml`, and opens one pull request on `request/<template>/<app>` from the default branch. The branch adds the app's root at `templates.apps` with `{name}` filled in: `main.tf` with one `module "app"` call pinned to the version, and the backend, provider and version files [`generate`](#generate) writes for the root. The branch is pushed without force, and a branch that already has an open pull request returns that one with `existing: true`. The pull request's title is `Request: <app> from <template> <version>`, and its body holds the request as a fenced `json` block.
+
+`--version` defaults to the newest version `templates list` shows. `--inputs-file` holds the inputs as one JSON object; each `--input <k>=<v>` goes over it, its value read as JSON unless the input is a string. A sensitive input is never given: the root declares it as a sensitive variable, which the app sets from its own secret store. `--via` says where the request came from (default `cli`; the request workflow passes `form`), and `--requested-by` who asked (default the CI run's actor, else `git config user.email`). `--dry-run` prints the branch and the files and pushes nothing. The pull request is opened with `TG_TOKEN`, else `token_env`'s variable.
+
+A refusal exits 1, pushes nothing, and with `--json` puts its `code` and every refusal in `results`: `unknown-version`, `not-active` (deprecated or yanked), `unsigned` (below `templates.require`), `unknown-input`, `missing-input`, `sensitive-input`, `input-type`, `bad-name`, `not-a-template` (the version has no `template.yml`), `not-a-root` (the app's path matches none of `roots`) and `app-exists` (the app's directory is on the default branch). Each opened pull request is a `request` entry in the [audit trail](/terragucci/reference/audit-trail/). The command needs a chant with template requests, and on an older one it exits 1 and names it.
+
+With `templates` set, `init` writes the request workflow, `.github/workflows/terragucci-request.yml` (`.forgejo/workflows/` on Forgejo). It runs on `workflow_dispatch` with the inputs `template`, `version` (empty for the newest), `name` and `inputs` (a JSON object, default `{}`), and runs `terragucci request --via form` with the actor who dispatched it as the requester. A form dispatches it by that file name. It pushes and opens with `token_env`'s secret when the config names one, since GitHub starts no workflow for a pull request the job's own token opens.
 
 ## rollout
 
@@ -1042,7 +1066,7 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check`, `query` and `modules` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check`, `query`, `modules`, `templates` and `request` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -1069,6 +1093,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one; `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
 | `publish` | done | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | waiting | |
+| `request` | pull request opened or already open, or with `--dry-run` its files listed | a refusal, or a chant without template requests | | |
 | `respond` | event handled, even when the response is `off` | unknown event or missing flag | | |
 | `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | |
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | |
