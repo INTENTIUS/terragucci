@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chantHandover } from "../src/chant-next";
 import { main } from "../src/cli";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 
@@ -23,8 +22,6 @@ async function run(dir: string, ...argv: string[]): Promise<{ code: number; out:
 
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
 const USAGE = 1;
-// The steps that hand a report on are chant's (chant#4554) where its handover scripts take terragucci's parameters.
-const HANDOVER = !!chantHandover();
 
 /**
  * Compare to test/golden/<name>.json; UPDATE_GOLDEN=1 rewrites it. Paths and temp dirs are not in the output.
@@ -54,7 +51,7 @@ describe("--json", () => {
   it("init --dry-run lists each root with its reason, and each file with its content", async () => {
     const { code, out } = await run(repo(), "init", "--dry-run", "--binary", "tofu", "--json");
     expect(code).toBe(0);
-    golden("init-dry-run", out, HANDOVER);
+    golden("init-dry-run", out);
     const j = JSON.parse(out);
     expect(j.results.roots).toEqual([
       { path: "app", reason: "backend s3" },
@@ -101,7 +98,7 @@ describe("--json", () => {
     const dir = write(tmp(), { "terragucci.yml": `defaults:\n  binary: tofu\nprojects:\n  github.com/acme/infra:\n    url: ${bareFrom(twoRootRepo())}\n` });
     const { code, out } = await run(dir, "reconcile", "--json");
     expect(code).toBe(0);
-    golden("reconcile-dry-run", out, HANDOVER);
+    golden("reconcile-dry-run", out);
   });
 
   it("init --dry-run in a GitLab repo with its own .gitlab-ci.yml writes the jobs beside it and adds the include", async () => {

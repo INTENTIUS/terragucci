@@ -20,25 +20,30 @@
  * to, so the modules of a monorepo's parts publish under namespaces of their
  * own. Its name is the last segment of its path.
  *
- * The protocol code moved to chant's terraform lexicon
- * (`@intentius/chant-lexicon-terraform/registry`, chant#4565). The writer and
- * the reader below call it when the installed chant carries it (./chant-next)
- * and fall back to the copies here when it does not; the copies and the pure
- * helpers go once terragucci's chant pin carries the lexicon's, leaving this
- * file the config mapping (registryStore, keyFor and the settings shapes).
+ * The protocol code is chant's terraform lexicon's
+ * (`@intentius/chant-lexicon-terraform/registry`, chant#4565): the writer and
+ * the reader below call it. This file keeps the config mapping
+ * (registryStore, keyFor and the settings shapes).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, posix } from "node:path";
-import { gunzipSync } from "node:zlib";
+import {
+  fetchTarball as lexiconFetchTarball,
+  headersFile,
+  PAGES_HEADER_RULES,
+  registryLocation as lexiconRegistryLocation,
+  registryVersions as lexiconRegistryVersions,
+  writeVersion as lexiconWriteVersion,
+  type RegistryFetch,
+} from "@intentius/chant-lexicon-terraform/registry";
 import { ConfigError, REGISTRY_NAME, type RegistrySettings } from "../config";
 import { storeFromEnv } from "../report/bucket";
-import { StoreConflict, type ObjectStore, type StoreCondition } from "../report/object-store";
-import { chantRegistry, type ChantRegistry } from "../chant-next";
+import { StoreConflict, type ObjectStore } from "../report/object-store";
 import type { Fetch } from "./oci";
-import { compareSemver, formatSemver, parseSemver, type Semver } from "./semver";
+import type { Semver } from "./semver";
 
-export const DISCOVERY = ".well-known/terraform.json";
-export const MODULES_V1 = "/v1/modules/";
+export { downloadDoc, newest, parseRegistrySource, readVersions, RegistryError, tarballName, versionsDoc } from "@intentius/chant-lexicon-terraform/registry";
+
 export const DEFAULT_SYSTEM = "generic";
 
 /** Where a module is in the registry. */
@@ -72,22 +77,6 @@ export function registryAddress(reg: Pick<RegistrySettings, "url" | "namespace" 
   const system = reg.system ?? DEFAULT_SYSTEM;
   if (!REGISTRY_NAME.test(name)) throw new ConfigError(`${rel}: a registry module's name is letters, digits, - and _, and ${JSON.stringify(name)} is not; rename the directory`);
   return { namespace, name, system, source: `${registryHost(reg)}/${namespace}/${name}/${system}`, path: `v1/modules/${namespace}/${name}/${system}` };
-}
-
-/** The protocol's versions answer. */
-export function versionsDoc(versions: string[]): string {
-  const sorted = [...new Set(versions)].map((v) => parseSemver(v)!).filter(Boolean).sort(compareSemver).map(formatSemver);
-  return `${JSON.stringify({ modules: [{ versions: sorted.map((version) => ({ version })) }] }, null, 2)}\n`;
-}
-
-export function readVersions(text: string | undefined): string[] {
-  if (!text) return [];
-  try {
-    const doc = JSON.parse(text) as { modules?: { versions?: { version?: unknown }[] }[] };
-    return (doc.modules?.[0]?.versions ?? []).map((v) => v.version).filter((v): v is string => typeof v === "string");
-  } catch {
-    return [];
-  }
 }
 
 /** What the registry keeps beside a version, so the next publish knows what it holds. */
@@ -138,26 +127,7 @@ export interface VersionFiles {
 }
 
 export async function writeVersion(store: RegistryStore, reg: RegistrySettings, addr: RegistryAddress, version: Semver, files: VersionFiles): Promise<void> {
-  const lexicon = await chantRegistry();
-  if (typeof lexicon?.writeVersion === "function") return lexicon.writeVersion(store, addr, version, files, { prefix: reg.prefix, isConflict: (e) => e instanceof StoreConflict });
-  const discovery = `${JSON.stringify({ "modules.v1": MODULES_V1 })}\n`;
-  const disco = await store.read(keyFor(reg, DISCOVERY));
-  if (disco.body !== discovery) await store.put(keyFor(reg, DISCOVERY), discovery, "application/json");
-  if (files.tarball) await store.put(files.tarball.key, files.tarball.body, "application/gzip");
-  await store.put(files.download.key, files.download.body, "application/json");
-  await store.put(files.meta.key, files.meta.body, "application/json");
-  const key = keyFor(reg, `${addr.path}/versions`);
-  // Read, add, write only over the copy read: two publishes at once cannot drop each other's version.
-  for (let attempt = 0; ; attempt++) {
-    const held = await store.read(key);
-    const when: StoreCondition | undefined = held.body === undefined ? { ifNoneMatch: "*" } : held.etag ? { ifMatch: held.etag } : undefined;
-    try {
-      await store.put(key, versionsDoc([...readVersions(held.body), formatSemver(version)]), "application/json", when);
-      return;
-    } catch (e) {
-      if (!(e instanceof StoreConflict) || attempt >= 3) throw e;
-    }
-  }
+  return lexiconWriteVersion(store, addr, version, files, { prefix: reg.prefix, isConflict: (e) => e instanceof StoreConflict });
 }
 
 /** The file Cloudflare Pages and Netlify read their response headers from, at the site's root. */
@@ -166,142 +136,33 @@ export const HEADERS_FILE = "_headers";
 /**
  * `edge: pages`: add a version's X-Terraform-Get rule to the site's
  * `_headers` file, keeping every rule already there (chant#4566's
- * `headersFile`). Returns a note for the publish row when the file is left
- * out, because the installed chant has no writer, or when it holds more rules
- * than Cloudflare Pages reads.
+ * `headersFile`). Returns a note for the publish row when the file holds more
+ * rules than Cloudflare Pages reads.
  */
 export async function writeHeadersFile(store: RegistryStore, reg: Pick<RegistrySettings, "prefix">, rule: { path: string; location: string }): Promise<string | undefined> {
-  const lexicon = await chantRegistry();
-  if (!lexicon?.headersFile) return `${HEADERS_FILE} not written: the installed chant has no _headers writer, so Terraform cannot install this version from a Pages site`;
   const key = keyFor(reg, HEADERS_FILE);
-  const text = lexicon.headersFile([{ path: `/${rule.path}`, location: rule.location }], (await store.read(key)).body);
+  const text = headersFile([{ path: `/${rule.path}`, location: rule.location }], (await store.read(key)).body);
   await store.put(key, text, "text/plain");
-  const limit = lexicon.PAGES_HEADER_RULES ?? 100;
+  const limit = PAGES_HEADER_RULES;
   const rules = text.split("\n").filter((l) => /^\s+X-Terraform-Get:/i.test(l)).length;
   return rules > limit ? `${HEADERS_FILE} has ${rules} download rules, and Cloudflare Pages reads only ${limit}; serve the registry through edge: cloudflare, or on Netlify` : undefined;
 }
 
-/** The location a version's download answer gives. */
-export function downloadDoc(location: string): string {
-  return `${JSON.stringify({ location })}\n`;
-}
-
-/** The tarball's name beside its version. */
-export const tarballName = (addr: RegistryAddress, version: string): string => `${addr.name}-${version}.tar.gz`;
-
 // ---- reading a registry, as Terraform and OpenTofu do ------------------------
 
-const NO_LEXICON: unique symbol = Symbol("no lexicon registry");
-
-/** The lexicon's reader, its RegistryError turned into terragucci's so callers keep one class to catch. */
-async function viaLexicon<T>(call: (lexicon: ChantRegistry) => Promise<T>): Promise<T | typeof NO_LEXICON> {
-  const lexicon = await chantRegistry();
-  if (!lexicon) return NO_LEXICON;
-  try {
-    return await call(lexicon);
-  } catch (e) {
-    if (e instanceof Error && e.name === "RegistryError" && !(e instanceof RegistryError)) throw new RegistryError(e.message);
-    throw e;
-  }
-}
-
-const httpGet = async (fetchFn: Fetch, url: string): Promise<Response> => {
-  try {
-    return await fetchFn(url, { method: "GET", redirect: "follow" });
-  } catch (e) {
-    const cause = (e as { cause?: { message?: string } }).cause?.message;
-    throw new RegistryError(`${url}: ${(e as Error).message}${cause ? ` (${cause})` : ""}`);
-  }
-};
-
-/** A registry source split into its host and module, or undefined when the source is not one: `host/ns/name/system`, with an optional `//subdir`. */
-export function parseRegistrySource(source: string): { host: string; namespace: string; name: string; system: string } | undefined {
-  const base = source.split("?")[0]!.split("//")[0]!;
-  const m = /^([a-z0-9.-]+(?::\d+)?)\/([^/]+)\/([^/]+)\/([^/]+)$/i.exec(base);
-  if (!m || !m[1]!.includes(".") && !m[1]!.includes(":") && m[1] !== "localhost") return undefined;
-  return { host: m[1]!.toLowerCase(), namespace: m[2]!, name: m[3]!, system: m[4]! };
-}
-
-/** The modules.v1 base a host's service discovery names. */
-export async function modulesBase(host: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<string> {
-  const disco = `https://${host}/${DISCOVERY}`;
-  const res = await httpGet(fetchFn, disco);
-  if (!res.ok) throw new RegistryError(`${disco} answered ${res.status}`);
-  let base: unknown;
-  try {
-    base = ((await res.json()) as Record<string, unknown>)["modules.v1"];
-  } catch {
-    throw new RegistryError(`${disco} is not JSON`);
-  }
-  if (typeof base !== "string") throw new RegistryError(`${disco} names no modules.v1`);
-  const url = new URL(base, disco).toString();
-  return url.endsWith("/") ? url : `${url}/`;
-}
-
-export class RegistryError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RegistryError";
-  }
-}
+const asRegistryFetch = (fetchFn: Fetch): RegistryFetch => fetchFn as unknown as RegistryFetch;
 
 /** Every version a registry lists for a module. */
 export async function registryVersions(source: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<string[]> {
-  const read = await viaLexicon((lexicon) => lexicon.registryVersions(source, { fetch: fetchFn }));
-  if (read !== NO_LEXICON) return read;
-  const s = parseRegistrySource(source);
-  if (!s) throw new RegistryError(`${source} is not a registry source`);
-  const url = `${await modulesBase(s.host, fetchFn)}${s.namespace}/${s.name}/${s.system}/versions`;
-  const res = await httpGet(fetchFn, url);
-  if (res.status === 404) return [];
-  if (!res.ok) throw new RegistryError(`${url} answered ${res.status}`);
-  return readVersions(await res.text());
+  return lexiconRegistryVersions(source, { fetch: asRegistryFetch(fetchFn) });
 }
 
 /** Where a registry says one version is: the download answer's header or JSON `location`, resolved against its URL. */
 export async function registryLocation(source: string, version: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<string> {
-  const read = await viaLexicon((lexicon) => lexicon.registryLocation(source, version, { fetch: fetchFn }));
-  if (read !== NO_LEXICON) return read;
-  const s = parseRegistrySource(source);
-  if (!s) throw new RegistryError(`${source} is not a registry source`);
-  const url = `${await modulesBase(s.host, fetchFn)}${s.namespace}/${s.name}/${s.system}/${version}/download`;
-  const res = await httpGet(fetchFn, url);
-  if (res.status === 404) throw new RegistryError(`${s.host}/${s.namespace}/${s.name}/${s.system} has no version ${version}`);
-  if (!res.ok) throw new RegistryError(`${url} answered ${res.status}`);
-  let location = res.headers.get("x-terraform-get") ?? undefined;
-  if (!location) {
-    try {
-      const body = (await res.json()) as { location?: unknown };
-      if (typeof body.location === "string") location = body.location;
-    } catch {
-      /* no body */
-    }
-  }
-  if (!location) throw new RegistryError(`${url} names no location`);
-  if (/^(\.{0,2}\/)/.test(location)) location = new URL(location, url).toString();
-  return location;
+  return lexiconRegistryLocation(source, version, { fetch: asRegistryFetch(fetchFn) });
 }
 
 /** The module archive a tarball location holds, uncompressed: the bytes a release's digest is of. */
 export async function fetchTarball(location: string, fetchFn: Fetch = fetch as unknown as Fetch): Promise<Buffer> {
-  const read = await viaLexicon((lexicon) => lexicon.fetchTarball(location, { fetch: fetchFn }));
-  if (read !== NO_LEXICON) return read;
-  const res = await httpGet(fetchFn, location);
-  if (!res.ok) throw new RegistryError(`${location} answered ${res.status}`);
-  const body = Buffer.from(await res.arrayBuffer());
-  try {
-    return gunzipSync(body);
-  } catch {
-    throw new RegistryError(`${location} is not a gzip archive`);
-  }
-}
-
-/** The newest of a list of versions. */
-export function newest(versions: string[]): Semver | undefined {
-  let best: Semver | undefined;
-  for (const v of versions) {
-    const p = parseSemver(v);
-    if (p && (!best || compareSemver(p, best) > 0)) best = p;
-  }
-  return best;
+  return lexiconFetchTarball(location, { fetch: asRegistryFetch(fetchFn) });
 }

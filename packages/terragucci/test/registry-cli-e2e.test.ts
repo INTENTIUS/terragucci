@@ -37,9 +37,7 @@ const ok = (cmd: string, args: string[]): boolean => spawnSync(cmd, args, { stdi
 
 async function hasEdge(): Promise<boolean> {
   try {
-    // @ts-ignore chant 0.124.54 has no registry/edge subpath (chant#4566)
     const m = (await import("@intentius/chant-lexicon-terraform/registry/edge")) as Record<string, unknown>;
-    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565)
     const r = (await import("@intentius/chant-lexicon-terraform/registry")) as Record<string, unknown>;
     return typeof m.registryEdge === "function" && typeof r.serveRegistry === "function" && typeof r.dirFiles === "function";
   } catch {

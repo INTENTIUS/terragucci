@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
-import { chantModuleTargets, chantNextParts } from "../src/chant-next";
+import { chantNextParts } from "../src/chant-next";
 import { publish } from "../src/publish";
 import { repositoryPlace } from "../src/publish/hosted";
 import { proxyUpstream, sourceAllowed } from "../src/sources";
 import { git, tmp, write } from "./helpers";
 
 const parts = await chantNextParts();
-const lib = await chantModuleTargets();
-const withRepositories = typeof lib?.artifactoryModuleTarget === "function" && typeof lib?.nexusModuleTarget === "function";
 
 function commit(dir: string, message: string): void {
   git(dir, "add", "-A");
@@ -47,9 +45,8 @@ describe("artifactory:// and nexus:// in modules.publish (terragucci#1302)", () 
   });
 });
 
-describe.skipIf(!withRepositories)("publishing to Artifactory and Nexus over the lexicon's fakes", () => {
+describe("publishing to Artifactory and Nexus over the lexicon's fakes", () => {
   it("deploys the zip to Artifactory under <repo>__<namespace>, and is unchanged on a rerun", async () => {
-    // @ts-ignore chant 0.124.54 has no registry/targets/fake-artifactory (chant#4605)
     const { createFakeArtifactory } = (await import("@intentius/chant-lexicon-terraform/registry/targets/fake-artifactory")) as {
       createFakeArtifactory(o: { host: string; repos: string[]; users: Record<string, string> }): { fetch: (url: string, init?: unknown) => Promise<Response>; requests: { method: string; url: string; headers: Record<string, string> }[] };
     };
@@ -66,7 +63,6 @@ describe.skipIf(!withRepositories)("publishing to Artifactory and Nexus over the
   });
 
   it("uploads to a Nexus hosted repository and reads it back through the in-memory host block", async () => {
-    // @ts-ignore chant 0.124.54 has no registry/targets/fake-nexus (chant#4605)
     const { createFakeNexus } = (await import("@intentius/chant-lexicon-terraform/registry/targets/fake-nexus")) as {
       createFakeNexus(o: { host: string; repos: string[]; users: Record<string, string> }): { fetch: (url: string, init?: unknown) => Promise<Response>; requests: { method: string; url: string }[] };
     };

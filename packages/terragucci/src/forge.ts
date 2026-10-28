@@ -7,8 +7,7 @@
  * chant's forge clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
  * prForgeOf, for a target built here. What they say stays with terragucci.
  */
-import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge } from "@intentius/chant/pr-forge";
-import { chantForgeReads } from "./chant-next";
+import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
 import { ConfigError, type ForgeName } from "./config";
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
@@ -67,16 +66,20 @@ export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: s
   return res.json();
 }
 
-/** The repo's default branch: chant's forge client reads it where the installed chant has the read (chant#4554). */
+/** The repo's default branch, as chant's forge client reads it (chant#4554). */
 export async function defaultBranch(fetch: Fetch, t: ForgeTarget): Promise<string> {
-  const read = chantForgeReads(prForgeOf(t, fetch)).defaultBranch;
-  if (read) return read();
-  if (t.forge === "gitlab") {
-    const p = (await call(fetch, t, "GET", `/projects/${encodeURIComponent(t.path)}`)) as { default_branch?: string };
-    return p.default_branch ?? "main";
-  }
-  const r = (await call(fetch, t, "GET", `/repos/${t.path}`)) as { default_branch?: string };
-  return r.default_branch ?? "main";
+  const forge = prForgeOf(t, fetch);
+  if (!forge.defaultBranch) throw new ForgeError(`chant's ${t.forge} client reads no default branch`);
+  return forge.defaultBranch();
+}
+
+/**
+ * Each context's newest status on `sha`, as chant's forge client reads it
+ * (chant#4554); with `ref`, GitLab's statuses of that ref alone (chant#4584).
+ */
+export async function commitStatuses(forge: PrForge, sha: string, ref?: string): Promise<ReadCommitStatus[]> {
+  if (!forge.commitStatuses) throw new ForgeError("the forge client reads no commit statuses");
+  return forge.commitStatuses(sha, ref);
 }
 
 /**

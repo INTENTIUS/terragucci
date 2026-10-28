@@ -37,8 +37,8 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { chantCiEstate, chantCiProductWords, chantCiProductWordsNow, chantModuleCatalog, type ChantCiEstate, type ChantLedgerEstate } from "./chant-next";
-import { TERRAGUCCI_WORDS } from "./ci-words";
+import { chantCiEstate, chantModuleCatalog, type ChantCiEstate, type ChantLedgerEstate } from "./chant-next";
+import { productWords } from "./ci-words";
 import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from "./config";
 import { age, buildEstate, linkUnrecorded, renderEstateHtml, type Estate, type EstateRun, type ProjectIndex } from "./report/estate";
 import { storeFromEnv } from "./report/bucket";
@@ -325,9 +325,7 @@ function linkHistory(page: Estate, history: History): void {
 export async function ledgerEstate(cwd: string, projects: readonly string[], now: Date, chant?: ChantCiEstate): Promise<{ chant: ChantCiEstate; ledger: ChantLedgerEstate; words: object } | undefined> {
   const ci = chant ?? (await chantCiEstate());
   if (!ci || projects.length !== 1) return undefined;
-  const wordsModule = chantCiProductWordsNow() ?? (await chantCiProductWords());
-  if (!wordsModule) return undefined;
-  const words = wordsModule.assertProductWords(TERRAGUCCI_WORDS);
+  const words = productWords();
   try {
     const load = await ci.readEstateLedger(cwd);
     const ledger = ci.buildLedgerEstate({ load, words, now, project: projects[0]!, members: projects });

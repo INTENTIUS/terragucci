@@ -64,7 +64,6 @@
  * With `reports` set, `ephemeral.json` beside the project's index lists the
  * live copies and their expiry, and the estate page shows them.
  */
-import { chantPrEnvLedger } from "./chant-next";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -80,10 +79,12 @@ import {
   type PrEnvPorts,
   type PrEnvRunResult,
 } from "@intentius/chant/components/pr-env-run";
+import { appendPrEnvRecord } from "@intentius/chant/components/pr-env-ledger";
+import { pushLifecycleReport } from "@intentius/chant/lifecycle/git";
 import { livePrEnvironments, parsePrEnvRecords, PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, type LivePrEnvironment, type PrEnvRecord, type PrEnvReportRow, type PrEnvTeardownAdapter } from "@intentius/chant/components/pr-environment";
 import type { TeardownOutcome } from "@intentius/chant/lexicon";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
-import { appendLifecycle, decideGate, lockTimeoutArgs, readLedger } from "./apply";
+import { decideGate, lockTimeoutArgs, readLedger } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import {
@@ -644,23 +645,13 @@ async function pullState(fetchFn: Fetch, r: Ready, pr: number): Promise<"open" |
 
 /**
  * A pull request environment's record through chant's writer
- * (`appendPrEnvRecord`, chant#4551), pushed. False when the installed chant
- * has no writer or the push did not land, so the caller writes it itself;
- * an unpushed local commit never reaches the remote, so nothing is counted
- * twice.
+ * (`appendPrEnvRecord`, chant#4551), pushed. A push that did not land is
+ * logged; the local commit stays and the next push carries it.
  */
-async function chantAppendPrEnv(repo: string, record: PrEnvRecord, log: (line: string) => void): Promise<boolean> {
-  const chant = await chantPrEnvLedger();
-  if (!chant) return false;
-  try {
-    await chant.appendPrEnvRecord(record, { cwd: repo });
-    const pushed = await chant.pushLifecycleReport({ cwd: repo });
-    if (pushed.pushed) return true;
-    log(`pull request ${record.pr}: chant's record was not pushed (${pushed.pushWarning ?? "no remote"}); writing it directly`);
-  } catch (e) {
-    log(`pull request ${record.pr}: chant did not record the ${record.kind} (${(e as Error).message}); writing it directly`);
-  }
-  return false;
+async function chantAppendPrEnv(repo: string, record: PrEnvRecord, log: (line: string) => void): Promise<void> {
+  await appendPrEnvRecord(record, { cwd: repo });
+  const pushed = await pushLifecycleReport({ cwd: repo });
+  if (!pushed.pushed) log(`pull request ${record.pr}: its ${record.kind} record was not pushed (${pushed.pushWarning ?? "no remote"})`);
 }
 
 /**
@@ -678,9 +669,8 @@ async function ports(repo: string, r: Ready, options: EphemeralOptions, gate = f
     readRecords: async () => readRecords(repo),
     async appendRecord(record) {
       try {
-        // chant's writer (chant#4551) appends under the member prefix and checks the record; terragucci's raw git write when chant has none, or its push did not land.
-        if (await chantAppendPrEnv(repo, record, r.log)) return;
-        appendLifecycle(repo, EPHEMERAL_RECORDS, [JSON.stringify(record)], {}, `Ephemeral copy of pull request ${record.pr} ${record.kind} (${record.result})`);
+        // chant's writer (chant#4551) appends under the member prefix and checks the record.
+        await chantAppendPrEnv(repo, record, r.log);
       } catch (e) {
         r.log(`pull request ${record.pr}: its ${record.kind} was not recorded on chant/lifecycle: ${(e as Error).message}`);
       }

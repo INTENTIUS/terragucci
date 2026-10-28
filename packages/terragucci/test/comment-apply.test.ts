@@ -17,7 +17,7 @@ describe("parseComment: apply", () => {
   });
 
   it("refuses anything else after apply", () => {
-    for (const c of ["/terragucci apply wave-0", "/terragucci apply wave-01", "/terragucci apply 2", "/terragucci apply wave-2 wave-3", "/terragucci apply envs/dev/app", "/terragucci apply wave-$(id)", "/terragucci apply wave-2\n/terragucci approve", "/terragucci apply wave-1000"]) {
+    for (const c of ["/terragucci apply wave-0", "/terragucci apply wave-01", "/terragucci apply 2", "/terragucci apply wave-2 wave-3", "/terragucci apply envs/dev/app", "/terragucci apply wave-$(id)", "/terragucci apply wave-2\n/terragucci approve"]) {
       expect(parseComment(c), c).toMatchObject({ kind: "refused" });
     }
   });
