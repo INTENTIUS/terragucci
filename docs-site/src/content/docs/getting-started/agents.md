@@ -33,7 +33,7 @@ A key that `terragucci config check` refuses is not part of terragucci.
    | no wave to wait; review and branch protection are enough | `--gate never` |
 
 4. Write a `terragucci.yml`, as small as possible, only if the defaults are wrong; [terragucci.yml keys](/terragucci/reference/config/) lists every key. `init --gate` writes the `gate` key itself.
-5. Run `npx terragucci init`, with the `--gate` from step 3, to write the pipeline, and show the user the files it wrote. If `init` exits 2 because `terragucci.yml` sets another gate, show the user both values and ask before passing `--force`.
+5. Run `npx terragucci init`, with the `--gate` from step 3, to write the pipeline, and show the user the files it wrote. If `init` exits 1 because `terragucci.yml` sets another gate, show the user both values and ask before passing `--force`.
 6. Open a pull request with the config and the files `init` wrote; check `git status` so the commit holds nothing else. Then stop. Approvals are records on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and they belong to the user.
 
    ```text

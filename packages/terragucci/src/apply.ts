@@ -177,7 +177,8 @@ import { answerLine, retractLine } from "./point-gate";
 import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./cloud-identity";
-import { committedSpecAt, WAVES_SPEC, readCallFile, runChantWave, serveWave, specAtBase, stateCode, waveCallArgv, waveExit, waveRecordPath, wavesSpec, wavesSpecText, wavesStepSpec, waveStepProblems, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
+import { CHANT_EXIT } from "@intentius/chant/exit-codes";
+import { committedSpecAt, WAVES_SPEC, readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, wavesSpecText, wavesStepSpec, waveStepProblems, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
 import { groupOf } from "./cloud-identity";
 import type { WaveComposedInput } from "./report/build";
@@ -191,8 +192,8 @@ export const approveLine = (wave: number, digest: string, mode: Approval = "ledg
 
 /** The migration files in a repo's migrations/. */
 
-/** Exit codes of `stage tf-apply`. */
-export const EXIT = { applied: 0, failed: 1, waiting: 3, refused: 4, held: 5, superseded: 6 } as const;
+/** Exit codes of `stage tf-apply`: chant's table (chant#4553), under the names terragucci's code reads them by. */
+export const EXIT = { applied: CHANT_EXIT.done, failed: CHANT_EXIT.failed, waiting: CHANT_EXIT.waiting, refused: CHANT_EXIT.moved, held: CHANT_EXIT.held, superseded: CHANT_EXIT.superseded, denied: CHANT_EXIT.denied, declined: CHANT_EXIT.declined } as const;
 /** runWave's answer when the run it waited for let go: the wave plans again (applyOneWave). Never an exit code. */
 const REPLAN = -1;
 
@@ -1744,8 +1745,8 @@ function rootOutcomes(code: number, w: WaveRun, layer: readonly string[] = []): 
     else if (!changed.has(root)) status = "unchanged";
     else if (w.applied?.has(root)) status = "applied";
     else if (w.decided) status = "decided";
-    else if (stateCode(code) === EXIT.waiting) status = "waiting";
-    else if ([EXIT.refused, EXIT.held, EXIT.superseded].includes(stateCode(code) as 4 | 5 | 6)) status = "refused";
+    else if (code === EXIT.waiting) status = "waiting";
+    else if (([EXIT.refused, EXIT.held, EXIT.superseded, EXIT.declined] as number[]).includes(code)) status = "refused";
     else status = "not-applied";
     out[root] = { status };
   }
@@ -1995,13 +1996,13 @@ export function waveSpans(w: Pick<WaveRun, "started" | "plannedAt" | "gateSince"
 
 /** Where a wave stands, from how it ended. */
 export function waveState(code: number, w: Pick<WaveRun, "decided" | "refused" | "blocked" | "appliedRest" | "roots">): WaveState {
-  code = stateCode(code);
   if (code === EXIT.applied) return w.decided ? "applying" : "applied";
   // terragucci#1161: a wave that applied what it planned and blocked the rest stands applied; one that planned nothing, blocked.
   if (w.appliedRest) return "applied";
   if ((code === EXIT.failed || code === EXIT.waiting) && w.blocked?.size && !w.roots?.length) return "blocked";
   if (code === EXIT.waiting) return "waiting";
-  if (code === EXIT.refused || code === EXIT.held || code === EXIT.superseded || w.refused?.reason === "policy") return "refused";
+  // A declined decision point (8) applies nothing, as a refusal does; a denial (7) is a failure.
+  if (code === EXIT.refused || code === EXIT.held || code === EXIT.superseded || code === EXIT.declined || w.refused?.reason === "policy") return "refused";
   return "failed";
 }
 
@@ -4593,7 +4594,7 @@ export interface WaveOutcome {
 
 /** The wave's outcome as `terragucci.outcome/v1`. */
 export function waveOutcome(wave: number, code: number, w: WaveRun): WaveOutcome {
-  const status: OutcomeStatus = code === EXIT.applied ? "applied" : code === EXIT.waiting ? "waiting" : code === EXIT.refused || code === EXIT.held || code === EXIT.superseded ? "refused" : "failed";
+  const status: OutcomeStatus = code === EXIT.applied ? "applied" : code === EXIT.waiting ? "waiting" : code === EXIT.refused || code === EXIT.held || code === EXIT.superseded || code === EXIT.declined ? "refused" : "failed";
   const denied = w.refused && (w.refused.reason === "policy" || w.refused.reason === "override") ? w.refused.roots : [];
   const failed = [...new Set([...(w.planned ?? []).filter((p) => p.error && !denied.includes(p.root)).map((p) => p.root), ...(w.failed ?? [])])].sort();
   return {

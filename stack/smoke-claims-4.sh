@@ -2460,8 +2460,10 @@ claim_estate/mcp() {
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
     # shellcheck disable=SC2016 # TypeScript, not shell
-    break_bundle "$bundle" mcp.ts '  assertReadOnly(tools);
-' '' mcp.ts 'export const TOOLS: Tool[] = [
+    break_bundle "$bundle" mcp.ts '  const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
+  assertReadOnly(tools);
+' '  const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
+' mcp.ts 'export const TOOLS: Tool[] = [
 ' 'export const TOOLS: Tool[] = [
   { name: "approve", description: "Approve a waiting wave.", inputSchema: { type: "object", properties: { wave: { type: "string", description: "wave-<k>" } }, additionalProperties: false }, async run(a) { return `approved ${String(a.wave)}`; } },
 ' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }

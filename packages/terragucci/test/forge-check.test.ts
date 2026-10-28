@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { chantExitCodes, overrideChantNext } from "../src/chant-next";
+import { overrideChantNext } from "../src/chant-next";
 import { main } from "../src/cli";
 import type { Fetch } from "../src/forge";
 import { assertReadOnly, celNarrowerOrEqual, compareTrust, forgeCheck, readOnly, ReadOnlyError, trustJobs, type CheckRow, type ForgeCheckDeps } from "../src/forge-check";
@@ -17,7 +17,7 @@ beforeAll(() => {
 afterAll(() => restoreForgeCheck());
 
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 const FIXTURES = join(__dirname, "fixtures", "identities");
 /** The provider's goldens for terragucci_forge_check, written from this file's --json runs. */

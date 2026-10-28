@@ -3,10 +3,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { CHECK_AUDIENCE, checkJob, describeJobCheck, jobSeen, runnerTags, tokenClaims, type JobExpectation } from "../src/check-job";
 import { main } from "../src/cli";
-import { chantExitCodes } from "../src/chant-next";
 
 // chant#4553: on chant's exit-code table a usage error is 1; terragucci's own table made it 2.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 const jwt = (claims: Record<string, unknown>): string => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
 const tokenFetch = (claims: Record<string, unknown>) =>

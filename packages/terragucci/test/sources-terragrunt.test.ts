@@ -6,7 +6,6 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { applyWave } from "../src/apply";
-import { chantExitCodes } from "../src/chant-next";
 import { main } from "../src/cli";
 import { init } from "../src/init";
 import { runStage } from "../src/report/stage";
@@ -15,7 +14,7 @@ import { SOURCES_NEXT_ENV, sourcesWrapper } from "../src/sources-terragrunt";
 import { git, tmp, write } from "./helpers";
 
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 const GIT_HOST = "git::https://git.example.com/platform";
 const OTHER_HOST = "git::https://git.unlisted.example/acme";
 

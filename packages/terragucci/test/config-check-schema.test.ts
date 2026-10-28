@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
-import { chantExitCodes } from "../src/chant-next";
 import { tmp, write } from "./helpers";
 
 // A config error exits 1 under chant's exit-code table (chant#4553, ruling C), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 // A schema that refuses what config.ts accepts: config check must say so.
 vi.mock("../src/config-schema", async (actual) => ({

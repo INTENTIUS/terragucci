@@ -157,7 +157,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
    terragucci.yml records gate: never
    ```
 
-   A `terragucci.yml` that already sets another gate stays as it is, and `init` exits 2 unless you pass `--force`. [Gate policy](/terragucci/reference/stages/#gate-policy) has the details.
+   A `terragucci.yml` that already sets another gate stays as it is, and `init` exits 1 unless you pass `--force`. [Gate policy](/terragucci/reference/stages/#gate-policy) has the details.
 
    In a Terragrunt repo `init` finds the units and writes the same files. [Use Terragrunt](/terragucci/guides/use-terragrunt/) covers the version, excludes and roles.
 

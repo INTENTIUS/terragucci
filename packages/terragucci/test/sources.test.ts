@@ -6,7 +6,7 @@ import { ConfigError, validateConfig } from "../src/config";
 import { runStage } from "../src/report/stage";
 import { loadHclParser } from "../src/rollout/parser";
 import { checkSourcesResult } from "../src/check";
-import { chantExitCodes, chantSourceForms } from "../src/chant-next";
+import { chantSourceForms } from "../src/chant-next";
 import { main } from "../src/cli";
 import { init } from "../src/init";
 import { checkScript } from "../src/render";
@@ -15,7 +15,7 @@ import { git, tmp, write } from "./helpers";
 
 const parser = await loadHclParser();
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 // chant's used-sources read (chant#3924) says "project" where terragucci's own says "repo".
 const OUTSIDE = (await chantSourceForms()) ? "outside the project" : "outside the repo";
 

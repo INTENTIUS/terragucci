@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { atmosInstances, writeInstances } from "../src/atmos";
 import { main } from "../src/cli";
-import { chantExitCodes } from "../src/chant-next";
 import { resolveRepo } from "../src/config";
 import { copyBinary } from "../src/ephemeral";
 import { exportState } from "../src/export";
@@ -21,7 +20,7 @@ import { unlockState } from "../src/unlock";
 import { bareFrom, tmp, write } from "./helpers";
 
 // A config error exits 1 under chant's exit-code table (chant#4553, ruling C), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 type Obj = Record<string, unknown>;
 

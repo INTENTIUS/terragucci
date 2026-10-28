@@ -8,12 +8,12 @@ ENV HOME=/tmp
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory '*'
 RUN npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@0.24.0 && npm cache clean --force
-RUN cd /tmp && npm pack --silent @intentius/chant@0.124.54 && tar -xzf intentius-chant-0.124.54.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force
+RUN cd /tmp && npm pack --silent @intentius/chant@0.124.55 && tar -xzf intentius-chant-0.124.55.tgz package/dist/wave-runtime.mjs && install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs && printf '#!/bin/sh\nexec node /opt/chant/wave-runtime.mjs "$@"\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant && rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force
 COPY --from=fetch /out/ /usr/local/bin/
 COPY --chmod=0755 packages/terragucci/dist/terragucci.mjs /usr/local/bin/terragucci
 LABEL org.opencontainers.image.title="terragucci-terraform"
 LABEL org.opencontainers.image.description="Terraform 1.14.9 and the terragucci engine"
-LABEL org.opencontainers.image.version="0.4.45"
+LABEL org.opencontainers.image.version="0.4.46"
 LABEL org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 CMD ["bash"]

@@ -73,7 +73,7 @@ terragucci init [--forge github|gitlab|forgejo] [--binary tofu|terraform|choudou
 | `--dry-run` | compute everything and write nothing |
 | `--force` | overwrite a pipeline file or `terragucci.components.json` terragucci did not write; on GitLab that is `.gitlab/terragucci.yml`, never your `.gitlab-ci.yml`. With `--gate`, replace a different `gate:` in the config |
 
-A flag detection would not reach goes into a new `terragucci.yml`. For `--forge`, `--binary` and `--approval`, an existing config file is never edited: `init` exits 2 and names the line to add, such as `binary: terraform`. A key already set there wins.
+A flag detection would not reach goes into a new `terragucci.yml`. For `--forge`, `--binary` and `--approval`, an existing config file is never edited: `init` exits 1 and names the line to add, such as `binary: terraform`. A key already set there wins.
 
 `--gate` is written even when it names the default, and it is the one flag `init` writes into an existing config:
 
@@ -82,10 +82,10 @@ A flag detection would not reach goes into a new `terragucci.yml`. For `--forge`
 | none | writes one with `gate: never` |
 | no `gate` key | adds `gate: never` at the end and keeps the rest of the file |
 | `gate: never` | leaves it as it is |
-| another gate, such as `gate: always` | exits 2: `--gate never differs from terragucci.yml, which sets gate: always; pass --force to write gate: never into it, or drop --gate` |
+| another gate, such as `gate: always` | exits 1: `--gate never differs from terragucci.yml, which sets gate: always; pass --force to write gate: never into it, or drop --gate` |
 | another gate, with `--force` | replaces the `gate:` line |
 
-With `--dry-run` the config shows as `would write terragucci.yml` or `would update terragucci.yml`, and `--json` carries its new content. A `terragucci.ts` config is code, so `init` exits 2 and names the `gate` to set in it.
+With `--dry-run` the config shows as `would write terragucci.yml` or `would update terragucci.yml`, and `--json` carries its new content. A `terragucci.ts` config is code, so `init` exits 1 and names the `gate` to set in it.
 
 The approval mode decides what else `init` writes.
 
@@ -146,11 +146,11 @@ Reads the file named, else `atlantis.yaml` (or `atlantis.yml`), or OpenTaco's `d
 | `--dry-run` | print what would be written, and write nothing |
 | `--force` | replace an existing `terragucci.yml` |
 
-It exits 2 when the file is missing or not YAML, or when `terragucci.yml` exists and `--force` is not given. A project `dir` that matches no directory with Terraform files is written and named.
+It exits 1 when the file is missing or not YAML, or when `terragucci.yml` exists and `--force` is not given. A project `dir` that matches no directory with Terraform files is written and named.
 
 Run [`init`](#init) next to write the pipeline.
 
-`import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 2 on a repo with no Terragrunt or a legacy `config.yml`.
+`import terragrunt-scale` reads `.gruntwork` (or the directory named) and each unit's `gruntwork.hcl`, and writes each environment's plan and apply roles as `terragrunt.credentials` ([Terragrunt Scale](/terragucci/guides/use-terragrunt/#terragrunt-scale)). It exits 1 on a repo with no Terragrunt or a legacy `config.yml`.
 
 `import spacelift` reads `.spacelift/config.yml` (or the file named) and every `spacelift_*` resource in the repo's `.tf` files; `import env0` reads `env0-discovery.yml` (or the file named), each `env0.yml` custom flow and every `env0_*` resource. Either runs on the admin code alone when the file is missing. They map by the concepts table of [Use terragucci with Spacelift or env zero](/terragucci/guides/coming-from-spacelift-or-env-zero/#import), keep `apply.when: merge` unless `--apply-when` says otherwise, since both platforms apply a tracked branch after a push, and name each stack or environment whose state the platform manages.
 
@@ -173,7 +173,7 @@ Reads the workspaces over the platform's API, with the token in `TF_TOKEN_<host>
 | `--forge` | the forge, when the remote cannot tell; on GitLab the secrets are listed as masked CI/CD variables to create, with no `pass` |
 | `--dry-run`, `--force` | as above |
 
-It exits 2 when the host refuses the token or names no TFE API, and, before it reads anything, when `terragucci.yml` exists and `--force` is not given.
+It exits 1 when the host refuses the token or names no TFE API, and, before it reads anything, when `terragucci.yml` exists and `--force` is not given.
 
 ## reconcile
 
@@ -269,7 +269,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 Both `stage tf-plan` and `stage tf-drift` write the report even when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Wave 1 first runs each [state migration](/terragucci/reference/migration-files/) that has not applied, behind its own gate, and `stage tf-plan` proves them. It refuses `--json` with exit 2. With `TG_OUTCOME_JSON` set it writes the wave's outcome to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
+`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Wave 1 first runs each [state migration](/terragucci/reference/migration-files/) that has not applied, behind its own gate, and `stage tf-plan` proves them. It refuses `--json` with exit 1. With `TG_OUTCOME_JSON` set it writes the wave's outcome to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
 
 | Flag | Environment | Meaning |
 |---|---|---|
@@ -688,7 +688,7 @@ Two generated jobs, `drift-agent` and `drift-agent-push`, run the halves of the 
 
 | Command | Does |
 |---|---|
-| `drift-agent prompt` | reads `report.json` and `issue.json` from the drift job's report in `--report`, and writes the prompt to `--out`: each drifted resource with the state's value and the live one, never a sensitive one; exits 2 when the run opened no drift issue |
+| `drift-agent prompt` | reads `report.json` and `issue.json` from the drift job's report in `--report`, and writes the prompt to `--out`: each drifted resource with the state's value and the live one, never a sensitive one; exits 1 when the run opened no drift issue |
 | `drift-agent push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them; commits a passing patch on top of `TG_SHA` to `terragucci/drift-agent-<issue>`, pushes it without force with `TG_TOKEN`, opens the pull request and comments its link on the issue `TG_ISSUE` names |
 
 ## config check
@@ -947,7 +947,7 @@ The generated pipeline runs it for [`ephemeral`](/terragucci/reference/config/#e
 | `down` | plans the destroy of each root of the live copy and applies it, in reverse order, from the commit the copy applied, and appends the destroy with `--reason` and how many roots it destroyed; with no live copy it does nothing |
 | `sweep` | destroys each live copy whose TTL passed (`expired`), and each whose pull request the forge says is closed or merged (`closed`), reading it with `TG_TOKEN` |
 
-These are config errors (exit 2):
+These are config errors (exit 1):
 
 - a root on a backend other than `s3`, `azurerm`, `gcs` or `local`;
 - a backend block that names no key;
@@ -1046,49 +1046,52 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## Exit codes
 
-The codes are the same with or without `--json`. Every command exits 2 on a usage or config error.
+The codes are the same with or without `--json`, and they are chant's: a pipeline that reads chant's exit codes reads terragucci's the same way. A usage or config error has no code of its own and exits 1.
 
 | Code | Meaning |
 |---|---|
 | 0 | done |
-| 1 | one or more projects or roots failed |
-| 2 | a usage or config error |
+| 1 | one or more projects or roots failed, or a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
 | 4 | a wave's plans changed after an approval or a policy override no run applied, so `stage tf-apply` applied nothing; or a share's plans changed after its wave decided, and the roots that moved were not applied |
+| 5 | `stage tf-apply --on-held refuse`: another run's apply holds a resource the wave changes |
+| 6 | `stage tf-apply --stand-down`: a newer push applies instead |
+| 7 | `stage tf-apply`: chant's policy denied the plan and no override counts |
+| 8 | `stage tf-apply`: a decision point was answered with an answer the gate does not pass on, so nothing applied |
 
-| Command | 0 | 1 | 2 | 3 | 4 |
-|---|---|---|---|---|---|
-| `init` | done | | an existing config file needs a line added, or sets another gate than `--gate` | | |
-| `reconcile` | done | a project failed | | | |
-| `generate` | written, or with `--check` every generated file matches | with `--check`, a generated file out of line | a file it did not write is in the way, or a root's own files declare what it would write | | |
-| `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | | |
-| `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one | `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
-| `publish` | done | | OCI tag exists already; git tag exists with different content | | |
-| `rollout` | complete | stopped | | waiting | |
-| `respond` | event handled, even when the response is `off` | | unknown event or missing flag | | |
-| `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | | |
-| `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | | |
-| `pr-merge` | merged | not merged | | | |
-| `config check` | `ok`, with or without warnings | | problems found | | |
-| `config identities` | printed | | no config, an unknown project, or no forge to name | | |
-| `forge check` | no mismatch | a mismatch, or with `--require-clouds` a cloud not checked | no config, an unknown project, or no forge to name | | |
-| `state export` | the version written and recorded | | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
-| `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | | |
-| `check-job` | the job runs where its environment's apply is set to run | a forge environment, ref or runner differs | a flag missing | | |
-| `install` | done | | not a Linux host | | |
-| `estate` | page written | a project's index could not be read | | | |
-| `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | | |
-| `verify-release` | every target verified | a target refused | | | |
-| `modules` | printed, the status recorded, or `consumers.json` written or matching | the catalog could not be read, the token was refused, the status record could not be pushed, or with `consumers --check` the file is out of line | no catalog yet, no registry to read, a module the catalog does not list, a version with no release record, or no `--reason` | | |
-| `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy | no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
-| `unlock-state` | released, or no lock held | a run that may hold the lock is alive | no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
-| `approve`, `override` | approved | `approve --plan` names a digest no wave waits for | no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
-| `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | | a bad flag | | |
-| `relay` | never: it serves until stopped | | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
-| `query` | rows printed | | a bad flag or config, a statement that does not run or writes | | |
-| `mcp` | the client closed stdin | | a bad flag or config | | |
-| `guard` | the guard written | | a bad flag or config, a control repo, no git checkout, or a Claude Code settings file that is not JSON | | |
-| `view` | stopped with Ctrl-C, or the view exported | behold stopped or refused the reports | a bad flag or config, or a source behold cannot read | | |
-| `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed | a bad flag, or a run that opened no drift issue | | |
+| Command | 0 | 1 | 3 | 4 |
+|---|---|---|---|---|
+| `init` | done | an existing config file needs a line added, or sets another gate than `--gate` | | |
+| `reconcile` | done | a project failed | | |
+| `generate` | written, or with `--check` every generated file matches | with `--check`, a generated file out of line; a file it did not write is in the way, or a root's own files declare what it would write | | |
+| `plan`, `stage tf-plan`, `stage tf-drift` | done | a root refused to plan | | |
+| `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one; `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
+| `publish` | done | OCI tag exists already; git tag exists with different content | | |
+| `rollout` | complete | stopped | waiting | |
+| `respond` | event handled, even when the response is `off` | unknown event or missing flag | | |
+| `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | |
+| `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | |
+| `pr-merge` | merged | not merged | | |
+| `config check` | `ok`, with or without warnings | problems found | | |
+| `config identities` | printed | no config, an unknown project, or no forge to name | | |
+| `forge check` | no mismatch | a mismatch, or with `--require-clouds` a cloud not checked; no config, an unknown project, or no forge to name | | |
+| `state export` | the version written and recorded | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
+| `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | |
+| `check-job` | the job runs where its environment's apply is set to run | a forge environment, ref or runner differs; a flag missing | | |
+| `install` | done | not a Linux host | | |
+| `estate` | page written | a project's index could not be read | | |
+| `audit` | record written, or with `--check` nothing missing | a ledger or index could not be read; with `--check`, an entry the record lacks | | |
+| `verify-release` | every target verified | a target refused | | |
+| `modules` | printed, the status recorded, or `consumers.json` written or matching | the catalog could not be read, the token was refused, the status record could not be pushed, or with `consumers --check` the file is out of line; no catalog yet, no registry to read, a module the catalog does not list, a version with no release record, or no `--reason` | | |
+| `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy; no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
+| `unlock-state` | released, or no lock held | a run that may hold the lock is alive; no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
+| `approve`, `override` | approved | `approve --plan` names a digest no wave waits for; no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
+| `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | a bad flag | | |
+| `relay` | never: it serves until stopped | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
+| `query` | rows printed | a bad flag or config, a statement that does not run or writes | | |
+| `mcp` | the client closed stdin | a bad flag or config | | |
+| `guard` | the guard written | a bad flag or config, a control repo, no git checkout, or a Claude Code settings file that is not JSON | | |
+| `view` | stopped with Ctrl-C, or the view exported | behold stopped or refused the reports; a bad flag or config, or a source behold cannot read | | |
+| `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed; a bad flag, or a run that opened no drift issue | | |
 
 Code 4 comes from `stage tf-apply`, `unlock-state` and `ephemeral`, which have no `--json`.

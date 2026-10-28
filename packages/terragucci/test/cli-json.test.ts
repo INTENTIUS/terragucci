@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chantExitCodes, chantHandover } from "../src/chant-next";
+import { chantHandover } from "../src/chant-next";
 import { main } from "../src/cli";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 
@@ -22,8 +22,7 @@ async function run(dir: string, ...argv: string[]): Promise<{ code: number; out:
 }
 
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-const EXIT_TABLE = !!(await chantExitCodes());
-const USAGE = EXIT_TABLE ? 1 : 2;
+const USAGE = 1;
 // The steps that hand a report on are chant's (chant#4554) where its handover scripts take terragucci's parameters.
 const HANDOVER = !!chantHandover();
 
@@ -95,7 +94,7 @@ describe("--json", () => {
   it("reconcile without a control repo config is a usage error", async () => {
     const { code, out } = await run(repo(), "reconcile", "--json");
     expect(code).toBe(USAGE);
-    golden("reconcile-usage", out, EXIT_TABLE);
+    golden("reconcile-usage", out, true);
   });
 
   it("reconcile --json reports each project", async () => {
@@ -126,7 +125,7 @@ describe("--json", () => {
   it("plan with no match is a usage error", async () => {
     const { code, out } = await run(repo(), "plan", "--root", "nope", "--json");
     expect(code).toBe(USAGE);
-    golden("plan-usage", out, EXIT_TABLE);
+    golden("plan-usage", out, true);
   });
 
   it("config check passes a good file", async () => {
@@ -140,7 +139,7 @@ describe("--json", () => {
     const dir = write(repo(), { "terragucci.yml": "binary: nope\nforge: svn\nbogus: 1\n" });
     const { code, out } = await run(dir, "config", "check", "--json");
     expect(code).toBe(USAGE);
-    golden("config-check-problems", out, EXIT_TABLE);
+    golden("config-check-problems", out, true);
     expect(JSON.parse(out).results.problems).toHaveLength(3);
   });
 
