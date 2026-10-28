@@ -57,7 +57,7 @@ import { join } from "node:path";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { chantCiProductWordsNow, chantNotifyRelay, type ChantNotifyRelay, type ChantRelayDeps } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
-import { APPLY_OP, appendResolution, readLedger, waveGate, type GateLedger, type ResolutionRecord } from "./apply";
+import { APPLY_OP, readLedger, waveGate, writeWaveRecord, type GateLedger, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { chantCommand, waitingWaves } from "./approve";
 import { ConfigError, type Approval } from "./config";
@@ -236,7 +236,8 @@ export interface RelayDeps {
   /** The rule on the default branch: the approval mode, the signers file, and `apply.resume`. */
   rule(): Promise<{ mode: Approval; signers: GateSigners; signersPath: string; resume?: number }>;
   ledger(): GateLedger;
-  record(r: ResolutionRecord): void;
+  /** Record the approval and push it: chant's gate ledger writer when chant has one (writeWaveRecord), else terragucci's own. */
+  record(r: ResolutionRecord): void | Promise<void>;
   /** Answer a decision point question yes as `by`, relayed by the relay: the chant bin's `points answer`. Its refusal is `error`. */
   answer(id: string, by: string): Promise<{ answered: true } | { error: string }>;
   now?: () => Date;
@@ -283,7 +284,7 @@ export async function decideClick(click: Click, deps: RelayDeps, chant?: ChantNo
       return { ok: true, text: `${gate}: decision point question ${wave.question} answered yes by ${principal}, relayed by ${deps.principal}, for ${wave.digest} and no other plans. ${resumeLine(rule.resume)}` };
     }
     const timestamp = (deps.now?.() ?? new Date()).toISOString();
-    deps.record({ version: 1, kind: "resolution", op: APPLY_OP, gate, resolvedBy: principal, relayedBy: deps.principal, timestamp, planDigest: wave.digest, via: click.app });
+    await deps.record({ version: 1, kind: "resolution", op: APPLY_OP, gate, resolvedBy: principal, relayedBy: deps.principal, timestamp, planDigest: wave.digest, via: click.app });
     const next = resumeLine(rule.resume);
     return { ok: true, text: `${gate} approved by ${principal}, relayed by ${deps.principal}, for ${wave.digest} and no other plans. ${next}` };
   } catch (e) {
@@ -319,7 +320,7 @@ export function chantRelayDeps(deps: RelayDeps, app: Click["app"], words: ChantR
         const r = await deps.answer(wave.question, input.actor);
         return "error" in r ? { ok: false, error: `${input.gate} asks a decision point, and its question ${wave.question} was not answered for ${input.actor}: ${r.error}` } : { ok: true };
       }
-      deps.record({ version: 1, kind: "resolution", op: APPLY_OP, gate: input.gate, resolvedBy: input.actor, relayedBy: input.relayedBy, timestamp: (deps.now?.() ?? new Date()).toISOString(), planDigest: wave.digest, via: app });
+      await deps.record({ version: 1, kind: "resolution", op: APPLY_OP, gate: input.gate, resolvedBy: input.actor, relayedBy: input.relayedBy, timestamp: (deps.now?.() ?? new Date()).toISOString(), planDigest: wave.digest, via: app });
       return { ok: true };
     },
   };
@@ -556,7 +557,7 @@ export function workspaceDeps(dir: string, branch: string, principal: string): R
       return { mode: rule.mode, signers: rule.signers, signersPath: rule.signersPath, ...(typeof resume === "number" ? { resume } : {}) };
     },
     ledger: () => readLedger(dir),
-    record: (r) => appendResolution(dir, r),
+    record: (r) => writeWaveRecord(dir, r, `Approved: ${r.op} ${r.gate}${r.relayedBy ? `, relayed by ${r.relayedBy}` : ""}`),
     async answer(id, by) {
       // chant reads the points and answer kinds from a checkout, and the trust policy, signers history included, at origin/HEAD.
       const shallow = spawnSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: dir, encoding: "utf-8" }).stdout.trim() === "true";
