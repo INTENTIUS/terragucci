@@ -2,6 +2,7 @@
 // on a branch it applies from and on its runner, and stops naming the expected and found values (#976).
 import { describe, expect, it, vi } from "vitest";
 import { CHECK_AUDIENCE, checkJob, describeJobCheck, jobSeen, runCheckJob, runnerTags, tokenClaims, type JobExpectation } from "../src/check-job";
+import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import type { ChantJobGuard, ChantJobGuardSpec } from "../src/chant-next";
 import { main } from "../src/cli";
 
@@ -122,7 +123,8 @@ describe("check-job: the command", () => {
     expect(ok.code).toBe(0);
     expect(ok.out).toContain("terragucci check-job: environment prod: forge environment prod");
     const bad = await run(argv, { CI_ENVIRONMENT_NAME: "dev", CI_COMMIT_REF_NAME: "main", CI_COMMIT_REF_PROTECTED: "true", CI_RUNNER_TAGS: '["self-hosted","prod"]' });
-    expect(bad.code).toBe(1);
+    // 9 (`misplaced`) when the installed chant's table has it, else 1 (chant#4624).
+    expect(bad.code).toBe((CHANT_EXIT as Record<string, number>).misplaced ?? 1);
     expect(bad.err).toContain("forge environment: expected prod, found dev");
     expect((await run(["check-job", "--forge", "gitlab"], {})).code).toBe(USAGE);
     // --self-hosted takes no value: the next flag is still read.

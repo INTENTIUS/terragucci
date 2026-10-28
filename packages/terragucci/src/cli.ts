@@ -245,7 +245,7 @@ const USAGE = `usage:
   terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
   terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
 
-Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing.
+Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing; 9 check-job refused, the job runs somewhere its environment does not allow (with a chant that has the code).
 
 init, reconcile, control init, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
 
@@ -666,7 +666,8 @@ export async function main(argv: string[]): Promise<number> {
         const told = await runCheckJob(expect);
         for (const l of told.out) console.log(l);
         for (const l of told.err) console.error(l);
-        return told.ok ? 0 : 1;
+        // A refusal exits 9 (`misplaced`) when the installed chant's table has it (chant#4624), else 1.
+        return told.ok ? 0 : (CHANT_EXIT as Record<string, number>).misplaced ?? CHANT_EXIT.failed;
       }
       case "check-pins": {
         // tf-check's pin step in a Terragrunt repo: each unit's terraform source, as check-root checks a root's module calls.

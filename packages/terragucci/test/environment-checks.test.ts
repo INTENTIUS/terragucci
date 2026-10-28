@@ -41,11 +41,11 @@ describe("check-job in an environment's apply jobs", () => {
   it("github: the first line, before the token is fetched, with the forge environment, the default branch and self-hosted", () => {
     const jobs = jobsOf(renderPipeline(input("github")).content);
     const prod = applyBody(jobs["apply-wave-1-prod"]).split("\n");
-    expect(prod[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit 1; fi`);
+    expect(prod[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit $?; fi`);
     // The token fetch and the restart come after it.
     expect(prod.findIndex((l) => l.includes("tg oidc"))).toBeGreaterThan(0);
     const dev = applyBody(jobs["apply-wave-1-dev"]).split("\n");
-    expect(dev[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit 1; fi`);
+    expect(dev[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit $?; fi`);
     // The roots in no environment, and the deciding job, check nothing.
     expect(applyBody(jobs["apply-wave-1-default"])).not.toContain("check-job");
     expect(JSON.stringify(jobs["apply-wave-1"])).not.toContain("check-job");
@@ -53,25 +53,25 @@ describe("check-job in an environment's apply jobs", () => {
 
   it("gitlab: the first line of the script, with the environment, the default branch and the runner's tags", () => {
     const jobs = jobsOf(renderPipeline(input("gitlab")).content);
-    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit 1`);
-    expect(applyBody(jobs["apply-wave-2-dev"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit 1`);
+    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit $?`);
+    expect(applyBody(jobs["apply-wave-2-dev"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit $?`);
     expect(applyBody(jobs["apply-wave-1-default"])).not.toContain("check-job");
   });
 
   it("forgejo: no forge environment; the ref and self-hosted", () => {
     const settings = { ...ENVS, environments: { prod: ENVS.environments!.prod, dev: { roots: ["envs/dev/**"], oidc: DEV } } };
     const jobs = jobsOf(renderPipeline(input("forgejo", settings)).content);
-    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit 1; fi`);
+    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit $?; fi`);
   });
 
   it("apply.branches: each branch is one the job may apply from; the top-level apply runner when the environment names none", () => {
     const jobs = jobsOf(renderPipeline(input("gitlab", { ...ENVS, runner: { apply: "apply-runners" } }, { applyBranches: { release: ["envs/dev/**"] } })).content);
-    expect(applyBody(jobs["apply-wave-1-dev"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH,release" --forge-environment 'development' --runner-tags 'apply-runners' || exit 1`);
+    expect(applyBody(jobs["apply-wave-1-dev"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH,release" --forge-environment 'development' --runner-tags 'apply-runners' || exit $?`);
   });
 
   it("github without oidc: the job may request no token, so the forge environment is left to the forge", () => {
     const jobs = jobsOf(renderPipeline(input("github", { environments: { prod: { roots: ["envs/prod/**"] } } })).content);
-    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" || exit 1; fi`);
+    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`if [ -z "\${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" || exit $?; fi`);
   });
 
   it("no environments: no job checks, identity groups included", () => {

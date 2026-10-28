@@ -840,7 +840,7 @@ jobs:
       - name: Apply group prod of wave 1
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=forgejo
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -983,7 +983,7 @@ jobs:
       - name: Apply group dev of wave 1
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'dev' --branches "$TG_BRANCH" || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'dev' --branches "$TG_BRANCH" || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=forgejo
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -1423,7 +1423,7 @@ jobs:
       - name: Apply group prod of wave 2
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=forgejo
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
@@ -1570,7 +1570,7 @@ jobs:
       - name: Apply group dev of wave 2
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'dev' --branches "$TG_BRANCH" || exit 1; fi
+          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then terragucci check-job --forge forgejo --environment 'dev' --branches "$TG_BRANCH" || exit $?; fi
           if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
           export TG_FORGE=forgejo
           tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
