@@ -103,7 +103,7 @@ An agent that answers "when did `envs/prod/app` last apply, and what did it chan
 
 The `waiting` tool prints each waiting wave's `terragucci approve` command for a person to run; the server cannot run it.
 
-With a [chant](/terragucci/concepts/glossary/#chant) release that has the product tool hook, the server is chant's own read-only server with terragucci's tools added to it. The tools are then named `terragucci:last_apply`, `terragucci:index` and so on, and chant's read tools for the ledger and the workspace are served beside them. Started with `--propose`, terragucci runs its own server as before. [CLI commands](/terragucci/reference/cli/#mcp) lists each tool's arguments.
+With a [chant](/terragucci/concepts/glossary/#chant) release that has the product tool hook, the server is chant's own read-only server with terragucci's tools added to it. The tools are then named `terragucci:last_apply`, `terragucci:index` and so on, and chant's read tools for the ledger and the workspace are served beside them. Started with `--propose`, the server is chant's too when chant has the propose tier, and terragucci's own otherwise. [CLI commands](/terragucci/reference/cli/#mcp) lists each tool's arguments.
 
 ## MCP or `--json`
 

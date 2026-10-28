@@ -240,6 +240,8 @@ export interface RequestOptions {
   parser?: Hcl2Json;
   /** Where a note goes; stdout carries `--json`'s envelope, so stderr by default. */
   log?: (line: string) => void;
+  /** A paragraph after chant's request body, such as the footer of a pull request opened over MCP. */
+  footer?: string;
 }
 
 export type RequestResult =
@@ -355,7 +357,7 @@ export async function request(o: RequestOptions): Promise<RequestResult> {
   if (at.dryRun) return { ok: true, dryRun: true, branch, files: paths };
 
   const { title, files } = planned;
-  const body = core.requestBody(checked, productWords());
+  const body = [core.requestBody(checked, productWords()), o.footer?.trim()].filter(Boolean).join("\n\n");
   const open = await prForgeOf(at.target, at.fetch).findPullRequest(branch);
   if (open) return { ok: true, dryRun: false, branch, files: paths, title, pull_request: open.number, url: open.url ?? "", existing: true, request: checked };
 
