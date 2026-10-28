@@ -29,6 +29,19 @@
 #   check.sh bucket-estate <bucket> <estate>
 #                                         the SQS queue or S3 bucket in floci
 #                                         carries tofu-estate <estate>
+#   check.sh pr-run <branch> <status>     the newest pull_request run of the
+#                                         branch's head ended status
+#   check.sh review <branch>              the reviewer approves the open pull
+#                                         request from branch (a review on the
+#                                         forge, as a person gives it)
+#   check.sh ec2-running <region> <n>     floci holds n running EC2 instances
+#                                         in region
+#   check.sh cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer>
+#                                         the subnet's VpcId is the VPC's id,
+#                                         and each carries its own estate's
+#                                         tofu-estate tag (choudoufu's
+#                                         cross-estate-dependency prove.sh,
+#                                         checks 2)
 #   check.sh approve [wave-<k> | <migration>]
 #                                         terragucci approve as the reviewer
 #                                         in a clone of main, with no digest
@@ -125,6 +138,51 @@ case "${1:-}" in
     log "bucket $2 carries tofu-estate '${got}'"
     [ "$got" = "${3:?}" ]
     ;;
+  pr-run)
+    branch="${2:?pr-run <branch> <status>}"; want="${3:?pr-run <branch> <status>}"
+    sha=""
+    for _ in $(seq 1 60); do sha="$(remote_head "$REPO" "$branch")"; [ -n "$sha" ] && break; sleep 2; done
+    [ -n "$sha" ] || { log "$branch has no head"; exit 1; }
+    wait_run "$REPO" "$sha" pull_request || exit 1
+    [ "$RUN_STATUS" = "$want" ] || { log "the pull_request run of $branch ended $RUN_STATUS, not $want"; exit 1; }
+    ;;
+  review)
+    branch="${2:?review <branch>}"
+    pr="$(api "$URL/api/v1/repos/$REPO/pulls?state=open&limit=50" | jq -r --arg b "$branch" '.[] | select(.head.ref == $b) | .number' | head -1)"
+    [ -n "$pr" ] || { log "no open pull request from $branch"; exit 1; }
+    curl -fsS -o /dev/null -H "Authorization: token $TERRAGUCCI_FORGEJO_REVIEWER_TOKEN" -H 'content-type: application/json' -X POST \
+      -d '{"event":"APPROVED","body":"Approved by the e2e harness."}' "$URL/api/v1/repos/$REPO/pulls/$pr/reviews" \
+      || { log "$TERRAGUCCI_FORGEJO_REVIEWER could not approve pull request $pr"; exit 1; }
+    log "$TERRAGUCCI_FORGEJO_REVIEWER approved pull request $pr"
+    ;;
+  ec2-running|cross-estate)
+    # floci's EC2 Query API, in the region a SigV4 credential scope names. floci
+    # checks no signature, so the scope is the only part of the header it reads.
+    ec2() { # region, query string -> the XML answer
+      curl -fsS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' \
+        -H "Authorization: AWS4-HMAC-SHA256 Credential=test/20260101/$1/ec2/aws4_request, SignedHeaders=host, Signature=0" \
+        --data "Version=2016-11-15&$2"
+    }
+    first() { sed -n "s#.*<$1>\([^<]*\)</$1>.*#\1#p" | head -1; }
+    estate_tag() { # region, resource id
+      ec2 "$1" "Action=DescribeTags&Filter.1.Name=resource-id&Filter.1.Value.1=$2&Filter.2.Name=key&Filter.2.Value.1=tofu-estate" | tr -d '\n' | sed -n 's#.*<value>\([^<]*\)</value>.*#\1#p'
+    }
+    if [ "$1" = ec2-running ]; then
+      region="${2:?ec2-running <region> <n>}"; want="${3:?ec2-running <region> <n>}"
+      got="$(ec2 "$region" "Action=DescribeInstances&Filter.1.Name=instance-state-name&Filter.1.Value.1=running" | grep -c '<instanceId>' || true)"
+      log "$got running instance(s) in $region"
+      [ "$got" = "$want" ]
+    else
+      vpc_cidr="${2:?}"; subnet_cidr="${3:?}"; producer="${4:?}"; consumer="${5:?}"
+      vpc="$(ec2 us-east-1 "Action=DescribeVpcs&Filter.1.Name=cidr&Filter.1.Value.1=$vpc_cidr" | first vpcId)"
+      subnet="$(ec2 us-east-1 "Action=DescribeSubnets&Filter.1.Name=cidr-block&Filter.1.Value.1=$subnet_cidr" | first subnetId)"
+      subnet_vpc="$(ec2 us-east-1 "Action=DescribeSubnets&SubnetId.1=$subnet" | first vpcId)"
+      log "VPC ${vpc:-none} ($(estate_tag us-east-1 "$vpc")), subnet ${subnet:-none} ($(estate_tag us-east-1 "$subnet")) in ${subnet_vpc:-none}"
+      [ -n "$vpc" ] && [ "$subnet_vpc" = "$vpc" ] || { log "the subnet is not in the producer's VPC"; exit 1; }
+      [ "$(estate_tag us-east-1 "$vpc")" = "$producer" ] && [ "$(estate_tag us-east-1 "$subnet")" = "$consumer" ] \
+        || { log "the VPC and the subnet do not carry $producer and $consumer"; exit 1; }
+    fi
+    ;;
   approve)
     work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
     clone_main "$work/repo"
@@ -152,5 +210,5 @@ case "${1:-}" in
       exit 1
     fi
     ;;
-  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | approve [gate] | plan-twice <root>" >&2; exit 2 ;;
+  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | plan-twice <root>" >&2; exit 2 ;;
 esac

@@ -31,9 +31,26 @@ export interface ScenarioIndexEntry {
   needs: string[];
   /** The engine claims and issues its row is cited for. */
   cites: string[];
-  /** Where the base tree comes from, when it is not in this repo. */
+  /**
+   * Where the base tree comes from, when it is not in this repo:
+   * `<repo>:<path>` of an INTENTIUS repo (as stack/demo.sh reads choudoufu's
+   * demo trees), or `<owner>/<repo>@<commit>:<path>` on github.com.
+   */
   source?: string;
+  /** The directory of the base the sourced tree goes in. */
+  into?: string;
+  /** Moves inside the base before init, `from:to` (a tree's forgejo/.forgejo to .forgejo). */
+  lift?: string[];
+  /** The repo's Actions secrets and variables, by name. */
+  secrets?: Record<string, string>;
+  vars?: Record<string, string>;
 }
+
+/** An overlay named `tree:<path>` is that directory of the seeded base, a sourced tree's own pull request files. */
+export const TREE_OVERLAY = "tree:";
+
+/** A source that names a tree in another repo. */
+export const SOURCE_PATTERN = /^([a-z0-9-]+|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[0-9a-f]{40}):[^:]+$/;
 
 export type ScenarioIndex = Record<string, ScenarioIndexEntry>;
 
@@ -52,9 +69,14 @@ export function scenarioIds(dir = SCENARIOS_DIR): string[] {
     .sort();
 }
 
-/** An overlay's files, repo-relative path to content, read from overlays/<name>/ beside the scenario file. */
-export function overlayFiles(scenarioFile: string, name: string): Record<string, string> {
-  const root = join(dirname(scenarioFile), "overlays", name);
+/**
+ * An overlay's files, repo-relative path to content, read from
+ * overlays/<name>/ beside the scenario file, or for `tree:<path>` from that
+ * directory of the seeded base (`baseDir`).
+ */
+export function overlayFiles(scenarioFile: string, name: string, baseDir?: string): Record<string, string> {
+  if (name.startsWith(TREE_OVERLAY) && !baseDir) throw new Error(`overlay ${name} is read from the seeded base, and there is none yet`);
+  const root = name.startsWith(TREE_OVERLAY) ? join(baseDir!, name.slice(TREE_OVERLAY.length)) : join(dirname(scenarioFile), "overlays", name);
   if (!existsSync(root)) throw new Error(`${relative(process.cwd(), scenarioFile)} names overlay ${name}, which has no directory ${relative(process.cwd(), root)}`);
   const out: Record<string, string> = {};
   const walk = (d: string) => {
@@ -99,12 +121,16 @@ export function localFindings(file: string, index: ScenarioIndex): Finding[] {
   const tree = doc.tree as { base?: unknown } | undefined;
   if (typeof tree?.base !== "string") out.push({ at: "/tree/base", message: "no base tree" });
   else if (typeof id === "string" && index[id]?.source) {
-    if (!/^[a-z0-9-]+:[^:]+$/.test(index[id]!.source!)) out.push({ at: "/tree/base", message: `index.json's source ${index[id]!.source} is not <repo>:<path>` });
+    if (!SOURCE_PATTERN.test(index[id]!.source!)) out.push({ at: "/tree/base", message: `index.json's source ${index[id]!.source} is not <repo>:<path> or <owner>/<repo>@<commit>:<path>` });
   } else if (!existsSync(join(dirname(file), tree.base))) out.push({ at: "/tree/base", message: `${tree.base} is not there` });
   if (typeof doc.reportUrl !== "string" || !/^s3:\/\/[^/]+\/.+/.test(doc.reportUrl)) out.push({ at: "/reportUrl", message: "no s3:// report URL" });
 
   const overlay = (at: string, name: unknown) => {
     if (typeof name !== "string") return;
+    if (name.startsWith(TREE_OVERLAY)) {
+      if (typeof id !== "string" || !index[id]?.source) out.push({ at, message: `overlay ${name} reads a sourced tree, and the scenario has no source` });
+      return;
+    }
     if (!existsSync(join(dirname(file), "overlays", name))) out.push({ at, message: `overlay ${name} has no directory overlays/${name}` });
   };
   if (brk) overlay("/break/overlay", brk.overlay);

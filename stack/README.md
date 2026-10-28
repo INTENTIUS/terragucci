@@ -37,8 +37,16 @@ The scenarios that span pull requests are harness scenarios (`e2e-scenario/v1`) 
 | `tg-estate-overlap` | `example-demo-choudoufu-fanout/` | two pushes that change different resources of one estate apply at once, and the next push takes over the row a killed wave left held |
 | `tg-migrate` | `harness/scenarios/tg-migrate/base/` (the choudoufu estate fixture beside a stock root on s3 state) | the stock root is adopted into an estate under an approval of its digest, and live-check refuses a root that ignores its markers |
 | `tg-derived-store` | `harness/scenarios/tg-derived-store/base/` | a root that keeps its backend block records into the backend's bucket, with no `record_store` written |
+| `tg-compose-cross-estate` | choudoufu's `examples/cross-estate-dependency/`, its `forgejo/.forgejo` lifted to the repo's root | its own workflows run `chant run estates-apply`: the network estate, then the service estate that reads its VPC by its markers, as `scripts/prove.sh` checks, with the run on chant's ledger |
+| `tg-compose-terragrunt` | choudoufu's `examples/demo-terragrunt/` | its own workflow plans every unit with choudoufu on the tree's create pull request, and the merge applies the reviewed plan |
+| `tg-compose-atmos` | choudoufu's `examples/demo-atmos/` | its own workflow plans the affected components with choudoufu, and the merge deploys the reviewed plan |
+| `multi-region` | aws-bench's `ec2-multiregion` Terraform arm (`lex00/aws-bench` at `e8c259c2`), under `estate/` with a terragucci.yml and an s3 backend from `seed/` | the estate plans and applies through the generated pipeline on Terraform: six instances over three regions, then a change that reaches one region |
 
 chant's driver reads a plan or apply step from `pr-plan.json` and `pr-apply.json`, which terragucci's pipeline does not write. These scenarios open pull requests, merge them, kill jobs and run out-of-band checks (`stack/harness/check.sh`) whose exit codes are their outcomes. `stack/harness/harness.ts run <id>` makes the scenario's repo (`seed.sh`), plays the plain arm and the BREAK arm with the harness's driver, and scans the runner's log; `--record` writes the row when the scan is clean. `harness.ts lint` checks every scenario, with chant's lint when chant has it.
+
+A scenario whose tree lives in another repo names it in `index.json` (`source`): choudoufu's trees are read as `stack/demo.sh` reads them (`DEMO_CHOUDOUFU_TREES`, or a clone under the state directory at `DEMO_CHOUDOUFU_TREES_REF`), and a tree on github.com at a pinned commit is cloned under `stack/.state/trees/`. Their overlays can be the tree's own pull request files (`tree:scenarios/<act>/pull`).
+
+The multi-region estate is aws-bench's, used as a scenario tree alone: its agent runs are paid and stay out. Its authors tested the Terraform arm with Terraform 1.15.8 and hashicorp/aws 6.56.0 against floci's `awsbench-integration-v2` branch (the arm's `REPRODUCE.md`). The harness's floci is another build, so the scenario's first four steps are the check that the estate deploys there: the base applies, and floci then runs four instances in us-east-1 and one each in us-west-1 and us-west-2, the counts `REPRODUCE.md` expects. That check is the maintainer's run, with the rest, at epic-ready.
 
 ## The example and the smoke claims
 

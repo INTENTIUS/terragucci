@@ -1,0 +1,148 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "multi-region",
+  "product": "terragucci",
+  "claim": "estate/multi-region",
+  "title": "aws-bench's ec2-multiregion estate plans and applies on floci through the generated pipeline: six instances over three regions, and a change that reaches one region",
+  "tree": {
+    "base": ".",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-multi-region",
+  "limits": {
+    "out-of-band": 1800
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied the estate",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "us-east-1",
+      "do": "out-of-band",
+      "label": "four instances run in us-east-1",
+      "command": [
+        "stack/harness/check.sh",
+        "ec2-running",
+        "us-east-1",
+        "4"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "us-west-1",
+      "do": "out-of-band",
+      "label": "one instance runs in us-west-1",
+      "command": [
+        "stack/harness/check.sh",
+        "ec2-running",
+        "us-west-1",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "us-west-2",
+      "do": "out-of-band",
+      "label": "one instance runs in us-west-2",
+      "command": [
+        "stack/harness/check.sh",
+        "ec2-running",
+        "us-west-2",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "ssm",
+      "do": "open",
+      "branch": "ssm",
+      "overlay": "ssm",
+      "title": "estate: a parameter in us-west-1"
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "the pull request's plan job went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "ssm",
+        "success"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge-ssm",
+      "do": "merge",
+      "pull": "ssm"
+    },
+    {
+      "id": "applied",
+      "do": "out-of-band",
+      "label": "the merge's wave applied",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "in-state",
+      "do": "out-of-band",
+      "label": "the state holds the parameter",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "hs-multi-region-state",
+        "multi-region/terraform.tfstate",
+        "[.[0].resources[]? | select(.type == \"aws_ssm_parameter\")] | length == 1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the providers' endpoint is a host nothing answers on, so the merge's apply fails"
+  }
+}

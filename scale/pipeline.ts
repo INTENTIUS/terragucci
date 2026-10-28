@@ -1,14 +1,19 @@
 /**
- * The scale bench, rerun for each release.
+ * The scale bench, run by hand when a figure on the Scale page is quoted
+ * again.
  *
- * `just ci` renders this into .github/workflows/scale.yml. When a release is
- * published, the job boots the bench's own stack (stack/scale/), runs a
- * terralith of 10,069 resources carved into 1,361 roots across 12 repos
- * through the pipeline that release generates, and opens a pull request with
- * the run's record in docs-site/src/data/scale.json, the numbers the Scale
- * page states. A failed run fails the job and opens nothing, so the page keeps
- * the last numbers a run proved. Dispatch it by hand to run another scale or
- * release.
+ * `just ci` renders this into .github/workflows/scale.yml. Dispatched, the job
+ * boots the bench's own stack (stack/scale/), runs a terralith of 10,069
+ * resources carved into 1,361 roots across 12 repos through the pipeline a
+ * release generates, and opens a pull request with the run's record in
+ * docs-site/src/data/scale.json, the numbers the Scale page states. A failed
+ * run fails the job and opens nothing, so the page keeps the last numbers a
+ * run proved.
+ *
+ * The terralith is for scale figures alone (chant#4586 ruling A,
+ * terragucci#1296): no release waits on it and no test reads it. The
+ * estate-shaped scenario the claims run on is multi-region
+ * (stack/harness/scenarios/multi-region).
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
@@ -17,7 +22,6 @@ import { CHECKOUT, SETUP_NODE, NODE_VERSION, UPLOAD_ARTIFACT, installJust } from
 export const workflow = new Workflow({
   name: "scale",
   on: {
-    release: { types: ["published"] },
     workflow_dispatch: {
       inputs: {
         scale: {
@@ -46,7 +50,7 @@ export const scale = new Job({
   // The only step that writes: a branch and a pull request, never main.
   permissions: { contents: "write", "pull-requests": "write" },
   env: {
-    TGSCALE_RELEASE: "${{ github.event.release.tag_name && github.event.release.tag_name || inputs.release }}",
+    TGSCALE_RELEASE: "${{ inputs.release }}",
     SCALE: "${{ inputs.scale || '136' }}",
     // A hosted runner has four CPUs and 16 GB: two jobs of four roots each keep eight AWS providers in memory at once.
     TGSCALE_CAPACITY: "2",

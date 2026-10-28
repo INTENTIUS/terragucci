@@ -1,0 +1,132 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-compose-cross-estate",
+  "product": "terragucci",
+  "claim": "choudoufu/cross-estate-dependency",
+  "title": "The cross-estate-dependency example's own Forgejo workflows apply the network estate, then the service estate that reads its VPC by its markers",
+  "tree": {
+    "base": ".",
+    "overlays": "overlays"
+  },
+  "env": "local",
+  "reportUrl": "s3://terragucci-reports/hs-tg-compose-cross-estate",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "estates-apply on the base push applied both estates, on the ledger as ok",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "ledger": {
+            "op": "estates-apply",
+            "status": "ok"
+          }
+        }
+      ]
+    },
+    {
+      "id": "base-crossed",
+      "do": "out-of-band",
+      "label": "the subnet is in the producer's VPC, and each carries its own estate",
+      "command": [
+        "stack/harness/check.sh",
+        "cross-estate",
+        "10.90.0.0/16",
+        "10.90.1.0/24",
+        "cross-estate-network",
+        "cross-estate-service"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "sg",
+      "do": "open",
+      "branch": "network-sg",
+      "overlay": "sg",
+      "title": "network: a security group in the VPC"
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "estates-plan on the pull request went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "network-sg",
+        "success"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge-sg",
+      "do": "merge",
+      "pull": "sg"
+    },
+    {
+      "id": "applied",
+      "do": "out-of-band",
+      "label": "estates-apply on the merge applied both estates, on the ledger as ok",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "ledger": {
+            "op": "estates-apply",
+            "status": "ok"
+          }
+        }
+      ]
+    },
+    {
+      "id": "crossed",
+      "do": "out-of-band",
+      "label": "after the change the subnet is still in the producer's VPC",
+      "command": [
+        "stack/harness/check.sh",
+        "cross-estate",
+        "10.90.0.0/16",
+        "10.90.1.0/24",
+        "cross-estate-network",
+        "cross-estate-service"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the consumer filters on an estate nothing applied, so its phase fails"
+  }
+}
