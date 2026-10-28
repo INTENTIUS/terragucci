@@ -1218,7 +1218,7 @@ describe("the chant compose demo (terragucci#1269)", () => {
     expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
     expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
     expect(demo).toContain(`-f "$HERE/demo-chant-compose.Dockerfile" "$(tool_tree chant-compose)"`);
-    expect(demo).toContain('CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.54}"');
+    expect(demo).toContain('CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.55}"');
     expect(demo).toContain('CHANT_COMPOSE_REF="${DEMO_CHANT_COMPOSE_REF:-}"');
     expect(demo).toContain('CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-}"');
     expect(dockerfile).toContain('"@intentius/chant@${CHANT_VERSION}" "@intentius/chant-lexicon-aws@${CHANT_VERSION}"');
