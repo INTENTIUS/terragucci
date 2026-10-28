@@ -20,8 +20,8 @@ import { S3Client, s3FromEnv } from "./s3";
 /** The STS session name a report's role is assumed under when AWS_ROLE_SESSION_NAME is unset. */
 const SESSION_NAME = "terragucci-report";
 
-/** terragucci's own client for `reports`: the fallback, and the check that runs first. */
-function ownStore(reports: { bucket: string; endpoint?: string; role?: string }, env: NodeJS.ProcessEnv, fetchFn?: StoreFetch): ObjectStore {
+/** terragucci's own client for `reports`: the fallback, and the check that runs first. Exported for its tests. */
+export function ownStore(reports: { bucket: string; endpoint?: string; role?: string }, env: NodeJS.ProcessEnv, fetchFn?: StoreFetch): ObjectStore {
   const b = parseReportsBucket(reports.bucket);
   if (b.kind !== "s3" && reports.role) throw new StoreError(`reports.role is an AWS role, and ${reports.bucket} is not an S3 bucket: the job writes it with its own oidc identity`);
   const endpoint = reports.endpoint?.replace(/\/+$/, "");

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import { estate } from "../src/estate";
 import { AzureBlobClient, azureFromEnv, blobSas, sharedKey, AZURE_VERSION } from "../src/report/azure-blob";
-import { storeFromEnv } from "../src/report/bucket";
+import { ownStore, storeFromEnv } from "../src/report/bucket";
 import { buildReport } from "../src/report/build";
 import { GcsClient, gcsFromEnv, signedUrl } from "../src/report/gcs";
 import { parseReportsBucket, StoreConflict, StoreError, type StoreFetch } from "../src/report/object-store";
@@ -82,13 +82,16 @@ describe("reports.bucket", () => {
   it("picks the client from the scheme and the identity from the job's environment", () => {
     const dir = tmp();
     write(dir, { "token": "forge-token", "gcp.json": "{}" });
-    expect(storeFromEnv({ bucket: "s3://b" }, { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" })).toBeInstanceOf(S3Client);
-    const gcs = storeFromEnv({ bucket: "gs://acme-reports" }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "gcp.json") });
-    expect(gcs).toBeInstanceOf(GcsClient);
-    expect(gcs.location).toBe("gs://acme-reports");
-    const az = storeFromEnv({ bucket: "az://acmereports/terragucci" }, { ARM_TENANT_ID: "t", ARM_CLIENT_ID: "c", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") });
-    expect(az).toBeInstanceOf(AzureBlobClient);
-    expect(az.location).toBe("az://acmereports/terragucci");
+    // storeFromEnv hands back a store that goes through chant's client when the installed chant has one (#1282 part b); ownStore is the client it checks with first, and the fallback.
+    const s3Env = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
+    expect(ownStore({ bucket: "s3://b" }, s3Env)).toBeInstanceOf(S3Client);
+    expect(storeFromEnv({ bucket: "s3://b" }, s3Env).location).toBe("s3://b");
+    const gcsEnv = { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "gcp.json") };
+    expect(ownStore({ bucket: "gs://acme-reports" }, gcsEnv)).toBeInstanceOf(GcsClient);
+    expect(storeFromEnv({ bucket: "gs://acme-reports" }, gcsEnv).location).toBe("gs://acme-reports");
+    const azEnv = { ARM_TENANT_ID: "t", ARM_CLIENT_ID: "c", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") };
+    expect(ownStore({ bucket: "az://acmereports/terragucci" }, azEnv)).toBeInstanceOf(AzureBlobClient);
+    expect(storeFromEnv({ bucket: "az://acmereports/terragucci" }, azEnv).location).toBe("az://acmereports/terragucci");
     expect(() => storeFromEnv({ bucket: "az://acmereports/terragucci" }, {})).toThrow(/give the job oidc.azure \(it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH\), or set AZURE_STORAGE_KEY/);
     expect(() => storeFromEnv({ bucket: "gs://acme-reports" }, {})).toThrow(/give the job oidc.gcp \(it sets GOOGLE_APPLICATION_CREDENTIALS\)/);
     expect(() => storeFromEnv({ bucket: "gs://acme-reports", role: "arn:aws:iam::123456789012:role/r" }, {})).toThrow(/reports.role is an AWS role/);

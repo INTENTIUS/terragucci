@@ -99,7 +99,6 @@ describe.skipIf(!withCatalog)("deprecate, yank and restore (terragucci#1298)", (
 describe("the hosts the deprecated-version tip reads", () => {
   it("are the repo's own registry and the registry hosts sources.modules names, never a public registry or a git host", () => {
     expect(catalogHosts({ modules: { registry: { url: "https://Modules.Example.com" } }, sources: { modules: ["./**", "registry.terraform.io/terraform-aws-modules/*", "mods.acme.dev/acme/*", "git::https://github.com/acme/*"] } })).toEqual([
-      "github.com",
       "mods.acme.dev",
       "modules.example.com",
     ]);

@@ -7,7 +7,7 @@ import { AGENT_RUN_LEDGERS } from "../src/report/audit";
 import { CHANT_DRIFT_OP, CHANT_DRIFT_OP_FILE, CHANT_DRIFT_PATHS, CHANT_DRIFT_SCRIPT_FILE, CHANT_DRIFT_SPEC_FILE, chantDriftFiles, chantDriftOpFile, rootDriftOpName } from "../src/render-chant-drift";
 import { driftScript, MARKER, renderPipeline } from "../src/render";
 
-const agent = agentDriftInput(validateConfig({ agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", drift: { max_cost_usd: 2 } } }, "t"))!;
+const agent = agentDriftInput(validateConfig({ drift: "0 6 * * *", respond: { drift: "off" }, agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", drift: { max_cost_usd: 2 } } }, "t"))!;
 
 function fakeAgentJob(seen: { specs?: ChantScheduledOpSpec[]; options?: unknown[] } = {}): ChantAgentJob {
   return {
@@ -29,13 +29,13 @@ afterEach(() => {
   restore = undefined;
 });
 
-const input = { forge: "github" as const, binary: "tofu" as const, version: "1.13.1", image: "img:1", layers: [["net"], ["app/web"]], env: {}, drift: "0 6 * * *", agentDrift: agent };
+const input = { forge: "github" as const, binary: "tofu" as const, version: "1.13.1", image: "img:1", layers: [["net"], ["app/web"]], env: {}, drift: "0 6 * * *", respond: { drift: "off" as const }, agentDrift: agent };
 
 describe("the drift job as a chant drift Op", () => {
   it("keeps terragucci's drift and drift-agent jobs on a chant without the agent job", () => {
     const out = renderPipeline(input);
     expect(out.content).toContain("drift-agent-push:");
-    expect(out.content).toContain("cron: 0 6 * * *");
+    expect(out.content).toContain("cron: '0 6 * * *'");
     expect(out.extra?.some((f) => f.path === CHANT_DRIFT_PATHS.github) ?? false).toBe(false);
   });
 
@@ -44,7 +44,7 @@ describe("the drift job as a chant drift Op", () => {
     const out = renderPipeline(input);
     expect(out.content).not.toContain("drift-agent-push:");
     expect(out.content).not.toMatch(/^ {2}drift:$/m);
-    expect(out.content).not.toContain("cron: 0 6 * * *");
+    expect(out.content).not.toContain("cron: '0 6 * * *'");
     const paths = out.extra!.map((f) => f.path);
     expect(paths).toEqual(expect.arrayContaining([CHANT_DRIFT_SCRIPT_FILE, CHANT_DRIFT_SPEC_FILE, CHANT_DRIFT_PATHS.github, CHANT_DRIFT_OP_FILE]));
     const spec = JSON.parse(out.extra!.find((f) => f.path === CHANT_DRIFT_SPEC_FILE)!.content);

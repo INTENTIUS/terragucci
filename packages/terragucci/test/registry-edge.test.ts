@@ -81,7 +81,7 @@ describe("terragucci registry edge", () => {
   it("derives the bucket's address from bucket and endpoint", () => {
     expect(bucketOrigin(S3)).toBe("https://acme-modules.s3.amazonaws.com");
     expect(bucketOrigin({ bucket: "s3://m", endpoint: "https://s3.local:9000/" })).toBe("https://s3.local:9000/m");
-    expect(bucketOrigin({ bucket: "gs://m" })).toBe("https://storage.googleapis.com/m");
+    expect(bucketOrigin({ bucket: "gs://acme-mods" })).toBe("https://storage.googleapis.com/acme-mods");
     expect(bucketOrigin({ bucket: "az://acct/mods" })).toBe("https://acct.blob.core.windows.net/mods");
   });
 
@@ -98,9 +98,9 @@ describe("terragucci registry edge", () => {
   });
 
   it("with auth: token, prints how to make, store and rotate the Worker's token", () => {
-    const plan = planEdge({ ...S3, bucket: "gs://m", auth: "token" }, { bundleDir: bundles() });
+    const plan = planEdge({ ...S3, bucket: "gs://acme-mods", auth: "token" }, { bundleDir: bundles() });
     expect(String(plan.files[1]!.content)).toContain('REGISTRY_AUTH = "token"');
-    expect(String(plan.files[1]!.content)).toContain('REGISTRY_ORIGIN = "https://storage.googleapis.com/m"');
+    expect(String(plan.files[1]!.content)).toContain('REGISTRY_ORIGIN = "https://storage.googleapis.com/acme-mods"');
     const text = describeEdge(plan, "registry-edge");
     expect(text).toContain("npx wrangler secret put REGISTRY_TOKENS");
     expect(text).toContain("TF_TOKEN_modules_example_com");
@@ -140,7 +140,7 @@ describe("terragucci registry edge", () => {
     expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: bundles() })).toThrow("chant#4590");
     const dir = bundles();
     write(dir, { [TOKEN_STORES_MARKER]: "x\n" });
-    expect(() => planEdge({ ...S3, bucket: "gs://m", edge: "cloudflare", auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: dir })).toThrow("Lambda@Edge");
+    expect(() => planEdge({ ...S3, bucket: "gs://acme-mods", edge: "cloudflare", auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: dir })).toThrow("Lambda@Edge");
     expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm" }, { bundleDir: dir })).toThrow("tokens_name");
   });
 

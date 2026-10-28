@@ -280,7 +280,8 @@ describe("terragucci.estate/v1", () => {
     expect([...keys(edges.flatMap((e) => [e.consumer_planned, e.producer_applied]))].sort()).toEqual(named(ESTATE.$defs.edgeRun).sort());
     expect([...keys([page.versions])].sort()).toEqual(named(ESTATE.properties.versions).sort());
     const rows: Json[] = ["binaries", "providers", "modules"].flatMap((k) => page.versions[k].flatMap((g: Json) => g.versions));
-    expect([...keys(rows)].sort()).toEqual(named(ESTATE.$defs.versionRow).sort());
+    // compat is the module catalog's answer on a version a choudoufu root runs (terragucci#1286); these roots run tofu, and module-table.test.ts holds compat.
+    expect([...keys(rows)].sort()).toEqual(named(ESTATE.$defs.versionRow).filter((k) => k !== "compat").sort());
     expect([...keys(rows.flatMap((r) => r.roots))].sort()).toEqual(named(ESTATE.$defs.versionRow.properties.roots.items).sort());
     const copies: Json[] = projects.flatMap((p) => p.ephemeral ?? []);
     expect([...keys(copies)].sort()).toEqual(named(ESTATE.$defs.project.properties.ephemeral.items).sort());
