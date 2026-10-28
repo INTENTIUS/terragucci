@@ -366,7 +366,7 @@ describe("terragucci templates apps", () => {
     const { dir } = repo(CONFIG.replace(/modules:\n(  .*\n|    .*\n)+/, ""), ORDERS);
     const { code, out } = await run(dir, "templates", "apps", "--json");
     expect(code).toBe(0);
-    expect(JSON.parse(out).results).toEqual([{ app: "orders", root: "apps/orders", template: "acme/bucket/aws", version: "1.2.0", addons: [], actions: [] }]);
+    expect(JSON.parse(out).results).toEqual([{ app: "orders", root: "apps/orders", template: "acme/bucket/aws", version: "1.2.0", upgrade: null, yanked: false, addons: [], actions: [] }]);
   });
 });
 

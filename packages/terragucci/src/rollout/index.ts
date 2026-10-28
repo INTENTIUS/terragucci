@@ -37,12 +37,14 @@ import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } 
 import { DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "../forge";
 import type { Fetch as RegistryFetch } from "../publish/oci";
 import { parseRegistrySource } from "../publish/registry";
+import { compareSemver, parseSemver } from "../publish/semver";
 import { IDENTITY, where, withToken } from "../reconcile";
 import { newestPublished, ociRepoFor, registryAliases } from "./discover";
 import { appliedState, fetchForge, type ListedPullRequest, type RolloutForge } from "./forge";
 import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locker } from "./lock";
 import { loadHclParser } from "./parser";
 import { moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
+import { appOf, changelogLines, movesYanked, templateContext, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
 import { planWaves, type Wave } from "./waves";
 
 export type RolloutKind = "module" | "provider";
@@ -81,6 +83,10 @@ export interface RootStatus {
   /** At `from` or elsewhere: the version found. */
   version?: string;
   reason?: string;
+  /** In a template's rollout: the app the root is, by `templates.apps`. */
+  app?: string;
+  /** In a template's rollout: the root is pinned to a version the catalog marks yanked, and moves from it right after the canaries. */
+  yanked?: true;
 }
 
 export type PartState = "applied" | "nothing-to-move" | "opened" | "would-open" | "open" | "waiting-apply" | "failed" | "closed" | "not-reached";
@@ -95,6 +101,8 @@ export interface PartStatus {
   failed?: string[];
   /** Files the pull request changes, when it is opened or would be. */
   files?: string[];
+  /** In a template's rollout: the apps the part moves, by name (`orders`), or a root's path when it is no app. */
+  apps?: string[];
   reason?: string;
 }
 
@@ -118,6 +126,10 @@ export interface RolloutResult {
   to: string;
   /** Where `to` came from, when the rollout found it. */
   discovered?: string;
+  /** Set when the release catalog lists the module as a template: its address and short name. */
+  template?: RolloutTemplate;
+  /** Things the run could not read, such as the release catalog. */
+  notes?: string[];
   mode: "dry-run" | "apply";
   /**
    * `complete`: every wave applied. `opened`/`would-open`: the next wave's pull
@@ -283,14 +295,17 @@ interface Classified {
   calls?: ModuleCall[];
 }
 
-function classifyModule(project: string, root: string, calls: ModuleCall[], from: string | undefined, to: string): Classified {
-  const base = { project, root };
-  if (calls.length === 0) return { status: { ...base, state: "absent" } };
+function classifyModule(project: string, root: string, calls: ModuleCall[], from: string | undefined, to: string, tmpl?: TemplateContext): Classified {
+  const base = { project, root, ...(tmpl && calls.length > 0 ? { app: appOf(tmpl, root) } : {}) };
+  if (calls.length === 0) return { status: { project, root, state: "absent" } };
   const refused = calls.filter((c) => c.pin.pin === null);
   if (refused.length > 0) return { status: { ...base, state: "refused", reason: refused.map((c) => `${c.file} ${c.call}: ${c.pin.unpinned}`).join("; ") }, calls };
   const at = (c: ModuleCall, v: string) => c.version === v || c.pin.pin === v;
   if (calls.every((c) => at(c, to))) return { status: { ...base, state: "to", version: to }, calls };
-  if (from !== undefined && calls.every((c) => at(c, from) || at(c, to))) return { status: { ...base, state: "from", version: from }, calls };
+  if (from !== undefined && calls.every((c) => at(c, from) || at(c, to))) return { status: { ...base, state: "from", version: from, ...(movesYanked(tmpl, from, to) ? { yanked: true as const } : {}) }, calls };
+  // A template's app pinned to a yanked version below `to` moves from that version.
+  const pins = [...new Set(calls.filter((c) => !at(c, to)).map((c) => c.version!))];
+  if (pins.length === 1 && movesYanked(tmpl, pins[0]!, to)) return { status: { ...base, state: "from", version: pins[0]!, yanked: true }, calls };
   const others = [...new Set(calls.filter((c) => !(from !== undefined && at(c, from)) && !at(c, to)).map((c) => c.version!))];
   if (from !== undefined && calls.some((c) => at(c, from))) {
     return { status: { ...base, state: "refused", reason: `its calls are pinned at more than one version (${[from, ...others].join(", ")})` }, calls };
@@ -474,8 +489,9 @@ export async function continueRollouts(cwd: string, options: Omit<RolloutOptions
       branches.add(pr.branch);
       const m = readMarker(pr.body);
       if (!m || (m.kind !== "module" && m.kind !== "provider") || !m.name || !m.to || !Number.isInteger(m.wave)) continue;
-      const of = /, wave \d+ of (\d+)$/.exec(pr.title);
-      const marker = { ...m, ...(m.waves === undefined && of ? { waves: Number(of[1]) } : {}) } as Seen["marker"];
+      // `terragucci rollout: <what>, wave 1 of 3`, or a template's `Upgrade bucket to 1.3.0: orders (wave 1 of 3)`.
+      const of = /(?:, wave \d+ of (\d+)|\(wave \d+ of (\d+)\))$/.exec(pr.title);
+      const marker = { ...m, ...(m.waves === undefined && of ? { waves: Number(of[1] ?? of[2]) } : {}) } as Seen["marker"];
       const id = JSON.stringify([m.kind, m.name, m.to]);
       groups.set(id, [...(groups.get(id) ?? []), { marker, state: pr.state, url: pr.url }]);
     }
@@ -532,6 +548,16 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     if (options.kind === "module") for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!, options.aliases));
   }
 
+  // A template (the catalog says so): the rollout names apps, reads the changelog and moves yanked pins.
+  const notes: string[] = [];
+  let tmpl: TemplateContext | undefined;
+  if (options.kind === "module" && projects.length > 0) {
+    const first = projects[0]!;
+    const got = await templateContext(first.dir, config.projects ? resolveRepo(config.defaults ?? {}) : first.settings, options.name);
+    tmpl = got.context;
+    if (got.note) notes.push(got.note);
+  }
+
   let to = options.to;
   let discovered: string | undefined;
   if (!to) {
@@ -555,6 +581,14 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     const seen = new Set<string>();
     if (options.kind === "module") {
       for (const list of calls.values()) for (const c of list) if (c.version !== null && c.version !== toVersion) seen.add(c.version);
+      // A yanked pin joins the rollout from its own version, so it does not decide which version moves.
+      const kept = [...seen].filter((v) => !movesYanked(tmpl, v, toVersion));
+      if (kept.length > 0 && kept.length < seen.size) for (const v of [...seen]) if (!kept.includes(v)) seen.delete(v);
+      if (kept.length === 0 && seen.size > 1) {
+        const newest = [...seen].sort((a, b) => compareSemver(parseSemver(b)!, parseSemver(a)!))[0]!;
+        seen.clear();
+        seen.add(newest);
+      }
     } else {
       for (const p of projects) {
         for (const r of roots.get(p.key)!) {
@@ -577,7 +611,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     const refused = refusedOf.get(p.key);
     if (refused) statuses.push({ project: p.key, root: ".", state: "refused", reason: refused });
     for (const r of roots.get(p.key)!) {
-      const s = options.kind === "module" ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion).status : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
+      const s = options.kind === "module" ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion, tmpl).status : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
       if (s.state !== "absent") statuses.push(s);
       if (s.state === "from" || s.state === "to") list.push(r);
     }
@@ -596,7 +630,8 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
       const tg = join(p.dir, r, "terragrunt.hcl");
       if (existsSync(tg)) for (const d of await terragruntDependencies(r, readFileSync(tg, "utf-8"), parser!)) deps.get(r)?.add(d) ?? deps.set(r, new Set([d]));
     }
-    planned.push({ key: p.key, roots: list, dependsOn: deps, canary: p.settings.waves?.canary ?? [] });
+    const yanked = list.filter((r) => statuses.some((s) => s.project === p.key && s.root === r && s.yanked));
+    planned.push({ key: p.key, roots: list, dependsOn: deps, canary: p.settings.waves?.canary ?? [], ...(yanked.length > 0 ? { first: yanked } : {}) });
   }
   try {
     plan.push(...planWaves(planned));
@@ -611,16 +646,23 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     ...(from !== undefined ? { from } : {}),
     to: toVersion,
     ...(discovered ? { discovered } : {}),
+    ...(tmpl ? { template: { template: tmpl.template, name: tmpl.name } } : {}),
     mode: options.mode,
     status: "complete",
-    waves: plan.map((w) => ({ wave: w.wave, canary: w.canary, parts: w.parts.map((p) => ({ ...p, branch: waveBranch(options.name, toVersion, w.wave), state: "not-reached" as PartState })) })),
+    waves: plan.map((w) => ({
+      wave: w.wave,
+      canary: w.canary,
+      parts: w.parts.map((p) => ({ ...p, branch: waveBranch(options.name, toVersion, w.wave), state: "not-reached" as PartState, ...(tmpl ? { apps: p.roots.map((r) => appOf(tmpl!, r)) } : {}) })),
+    })),
     roots: statuses,
     tips: [],
+    ...(notes.length > 0 ? { notes } : {}),
   };
   const lockerFor = (p: Project) => (options.locker ?? binaryLocker)(p.settings.binary ?? detectBinary(p.dir, roots.get(p.key)!).value);
 
   for (const wave of result.waves) {
     const due: PartStatus[] = [];
+    const opening = (part: PartStatus) => openPart(byKey.get(part.project)!, part, wave, result, options, lockerFor, parser, tmpl);
     let waiting = false;
     for (const part of wave.parts) {
       const project = byKey.get(part.project)!;
@@ -653,7 +695,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
       break;
     }
     if (due.length > 0) {
-      for (const part of due) await openPart(byKey.get(part.project)!, part, wave, result, options, lockerFor, parser);
+      for (const part of due) await opening(part);
       if (result.stop) result.status = "stopped";
       else result.status = options.mode === "apply" ? "opened" : "would-open";
       break;
@@ -677,8 +719,10 @@ async function openPart(
   options: RolloutOptions & { mode: "dry-run" | "apply" },
   lockerFor: (p: Project) => Locker,
   parser: Hcl2Json | undefined,
+  tmpl?: TemplateContext,
 ): Promise<void> {
-  const moving = part.roots.filter((r) => result.roots.find((s) => s.project === part.project && s.root === r)?.state === "from");
+  const statusOf = (r: string) => result.roots.find((s) => s.project === part.project && s.root === r);
+  const moving = part.roots.filter((r) => statusOf(r)?.state === "from");
   if (options.mode === "dry-run" && options.kind === "provider") {
     // The binary writes the lock file; a dry run names the files without running it.
     part.files = moving.map((r) => (r === "." ? LOCK_FILE : posix.join(r, LOCK_FILE))).sort();
@@ -689,7 +733,7 @@ async function openPart(
   for (const root of moving) {
     const moved =
       options.kind === "module"
-        ? await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!, options.aliases), result.from!, result.to, parser!)
+        ? await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!, options.aliases), statusOf(root)?.yanked ? statusOf(root)!.version! : result.from!, result.to, parser!)
         : moveLock(project.dir, root, options.name, result.from!, result.to, lockerFor(project));
     if ("refused" in moved) {
       part.state = "failed";
@@ -707,15 +751,35 @@ async function openPart(
   for (const [file, content] of edits) writeFileSync(join(project.dir, file), content);
   const total = result.waves.length;
   const what = options.kind === "module" ? `${options.name} ${result.from} -> ${result.to}` : `provider ${options.name} ${result.from} -> ${result.to}`;
-  const title = `terragucci rollout: ${what}, wave ${wave.wave} of ${total}`;
+  const title = tmpl ? templateTitle(tmpl, result.to, moving, wave.wave, total) : `terragucci rollout: ${what}, wave ${wave.wave} of ${total}`;
   const others = result.roots.filter((r) => r.project === part.project && (r.state === "refused" || r.state === "elsewhere"));
+  // The lowest version a moved root leaves, so the changelog covers a yanked pin's versions too.
+  const lowest = moving.map((r) => (statusOf(r)?.yanked ? statusOf(r)!.version! : result.from!)).sort((a, b) => compareSemver(parseSemver(a) ?? parseSemver("0.0.0")!, parseSemver(b) ?? parseSemver("0.0.0")!))[0] ?? result.from!;
+  const appLine = (r: string) => {
+    const s = statusOf(r);
+    const yanked = s?.yanked ? `, on ${s.version}, which is yanked${tmpl!.yanked.get(s.version!) ? `: ${tmpl!.yanked.get(s.version!)}` : ""}` : "";
+    return `- \`${r}\`${appOf(tmpl!, r) !== r ? ` (${appOf(tmpl!, r)}${yanked})` : yanked ? ` (${yanked.slice(2)})` : ""}`;
+  };
+  const intro = tmpl
+    ? [
+        `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: upgrade the apps built from ${tmpl.template} from ${result.from} to ${result.to}.`,
+        "",
+        "This pull request moves the template's pin for these apps and changes no other file:",
+        "",
+        ...moving.map(appLine),
+        "",
+        ...changelogLines(tmpl, lowest, result.to),
+      ]
+    : [
+        `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: ${what}.`,
+        "",
+        `This pull request moves ${options.kind === "module" ? "the pin" : `\`${LOCK_FILE}\``} for these roots and changes no other file:`,
+        "",
+        ...moving.map((r) => `- \`${r}\``),
+      ];
   const body = [
     `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving })} -->`,
-    `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: ${what}.`,
-    "",
-    `This pull request moves ${options.kind === "module" ? "the pin" : `\`${LOCK_FILE}\``} for these roots and changes no other file:`,
-    "",
-    ...moving.map((r) => `- \`${r}\``),
+    ...intro,
     ...(others.length > 0 ? ["", "Not moved by this rollout:", "", ...others.map((r) => `- \`${r.root}\`: ${r.reason}`)] : []),
     "",
     wave.wave < total
@@ -742,7 +806,7 @@ const PART_TEXT: Record<PartState, string> = {
 };
 
 export function describeRollout(result: RolloutResult): string {
-  const what = result.kind === "module" ? result.name : `provider ${result.name}`;
+  const what = result.kind === "module" ? (result.template ? `${result.name} (template ${result.template.name})` : result.name) : `provider ${result.name}`;
   const lines = [`${what} ${result.from ?? "?"} -> ${result.to}${result.discovered ? ` (newest published: ${result.discovered})` : ""}: ${result.status}${result.stop ? ` (${result.stop})` : ""}`];
   const multi = new Set(result.waves.flatMap((w) => w.parts.map((p) => p.project))).size > 1;
   for (const w of result.waves) {
@@ -750,6 +814,7 @@ export function describeRollout(result: RolloutResult): string {
     for (const p of w.parts) {
       lines.push(`    ${multi ? `${p.project}: ` : ""}${PART_TEXT[p.state]}${p.pullRequest ? ` ${p.pullRequest}` : ""}${p.reason ? ` (${p.reason})` : ""}`);
       lines.push(`      roots: ${p.roots.join(", ")}`);
+      if (p.apps?.length) lines.push(`      apps: ${p.apps.join(", ")}`);
       if (p.pending?.length) lines.push(`      apply pending: ${p.pending.join(", ")}`);
       if (p.failed?.length) lines.push(`      apply failed: ${p.failed.join(", ")}`);
       if (p.files?.length) lines.push(`      files: ${p.files.join(", ")}`);
@@ -759,6 +824,7 @@ export function describeRollout(result: RolloutResult): string {
     lines.push(`  not in the rollout: ${multi ? `${r.project} ` : ""}${r.root}: ${r.reason}`);
   }
   for (const t of result.tips) lines.push(`  tip (${t.rule}): ${t.message}`);
+  for (const n of result.notes ?? []) lines.push(`  note: ${n}`);
   if (result.mode === "dry-run" && (result.status === "would-open" || result.status === "complete")) lines.push("dry run: nothing was opened");
   return lines.join("\n");
 }

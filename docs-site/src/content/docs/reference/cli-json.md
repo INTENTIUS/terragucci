@@ -132,10 +132,12 @@ On every exit but a usage error, `stage tf-apply` writes its wave's outcome to t
 | `kind`, `name` | `module` or `provider`, and the module or provider address. |
 | `from`, `to` | The version that moves and the one it moves to. |
 | `discovered` | Where `to` was found, when no version was named: a tag, or an OCI repository. |
+| `template` | Set when the module is a template in the release catalog: its `template` address and short `name`. |
+| `notes` | Set when the run could not read something, such as the release catalog. |
 | `mode` | `dry-run` or `apply`. |
 | `status` | `complete`, `opened`, `would-open`, `waiting` or `stopped`, with `stop` saying why it stopped. |
-| `waves` | `wave`, `canary` and `parts`: `project`, `roots`, `branch`, `state`, `pullRequest`, `pending`, `failed`, `files`. |
-| `roots` | `project`, `root`, `state` (`from`, `to`, `refused` or `elsewhere`), `version`, `reason`. |
+| `waves` | `wave`, `canary` and `parts`: `project`, `roots`, `branch`, `state`, `pullRequest`, `pending`, `failed`, `files`, and for a template `apps`, the apps the part moves. |
+| `roots` | `project`, `root`, `state` (`from`, `to`, `refused` or `elsewhere`), `version`, `reason`, and for a template `app` and `yanked` (true when the root moves from a yanked version). |
 | `tips` | Each refused root's tip, as `rule`, `project`, `root` and `message`. |
 
 A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`, `waiting-apply`, `failed`, `closed` or `not-reached`. Exit 3 means waiting; 1 means stopped.

@@ -222,6 +222,18 @@ export const ROLLOUT_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
 };
 
 /**
+ * The rollout workflow's dispatch inputs. With `module` it starts that module's rollout
+ * (`terragucci rollout <module> [<version>] --mode apply`), which opens its first wave; an
+ * empty `version` is the module's newest published one. Without `module`, and on the
+ * schedule, it continues every rollout in flight. A client such as an Upgrade button
+ * dispatches it by its file name, ROLLOUT_PATHS.
+ */
+export const ROLLOUT_INPUTS = {
+  module: { description: "The module or template to roll out, such as acme/bucket/aws; empty continues every rollout in flight", required: false, type: "string" },
+  version: { description: "The version to move to; empty for the newest published one", required: false, type: "string" },
+};
+
+/**
  * The request workflow, beside the pipeline on GitHub and Forgejo, with `templates` set: a
  * `workflow_dispatch` whose inputs are REQUEST_INPUTS, which opens a pull request adding an
  * app's root from a template. A form dispatches it by this file name.
@@ -594,6 +606,27 @@ export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string, 
  */
 export function rolloutScript(forge: ForgeName, tokenEnv?: string): string {
   return ["set -u", ...respondSetup(forge, tokenEnv), "terragucci respond rollout --mode apply"].join("\n");
+}
+
+/**
+ * The rollout workflow's run (GitHub and Forgejo): with TG_MODULE, a person's start of that
+ * rollout, where exit 3 (a wave already open, or its apply not yet reported) is no failure;
+ * without it, the scheduled continue of every rollout in flight.
+ */
+export function rolloutDispatchScript(forge: Exclude<ForgeName, "gitlab">, tokenEnv?: string): string {
+  return [
+    "set -u",
+    ...respondSetup(forge, tokenEnv),
+    'if [ -n "${TG_MODULE:-}" ]; then',
+    '  set -- "$TG_MODULE"',
+    '  [ -z "${TG_VERSION:-}" ] || set -- "$@" "$TG_VERSION"',
+    "  code=0",
+    '  terragucci rollout "$@" --mode apply || code=$?',
+    '  [ "$code" -eq 3 ] || exit "$code"',
+    "else",
+    "  terragucci respond rollout --mode apply",
+    "fi",
+  ].join("\n");
 }
 
 /**
@@ -3651,7 +3684,8 @@ function requestWorkflow(image: string, env: Record<string, string>, tokenEnv: s
 
 /**
  * The rollout workflow (GitHub and Forgejo): on its schedule, or by hand,
- * `terragucci respond rollout --mode apply` from the default branch. It opens
+ * `terragucci respond rollout --mode apply` from the default branch; dispatched
+ * with `module` (ROLLOUT_INPUTS), it starts that rollout instead. It opens
  * pull requests and pushes their branches with `token_env`'s secret when the
  * config names one: GitHub starts no workflow for a pull request the job's own
  * token opens, so the wave would get no plan. Without it, the job's own token.
@@ -3660,7 +3694,7 @@ function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cro
   const token = tokenEnv ? `\${{ secrets.${tokenEnv} }}` : "${{ github.token }}";
   const workflow = new Workflow({
     name: "terragucci-rollout",
-    on: { schedule: [{ cron }], workflow_dispatch: {} },
+    on: { schedule: [{ cron }], workflow_dispatch: { inputs: ROLLOUT_INPUTS } },
     env,
     permissions: { contents: "read" },
     // One run at a time: two would both see a wave due and race to open it.
@@ -3671,11 +3705,11 @@ function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cro
     container: { image },
     // It reads each wave's merge commit's checks and statuses, pushes the next wave's branch and opens its pull request.
     permissions: { contents: "write", "pull-requests": "write", statuses: "read", ...(forge === "github" ? { checks: "read" } : {}) },
-    env: { TG_TOKEN: token },
+    env: { TG_TOKEN: token, TG_MODULE: "${{ github.event.inputs.module }}", TG_VERSION: "${{ github.event.inputs.version }}" },
     steps: [
       new Step({ uses: CHECKOUT, with: { "fetch-depth": 0, ...(tokenEnv ? { token } : {}) } }),
       ...(install ? [new Step(install)] : []),
-      new Step({ name: "Open the next wave of each rollout whose last wave merged and applied", shell: "bash", run: rolloutScript(forge, tokenEnv) }),
+      new Step({ name: "Start the dispatched rollout, or open the next wave of each rollout whose last wave merged and applied", shell: "bash", run: rolloutDispatchScript(forge, tokenEnv) }),
     ],
   } as never);
   return new Map<string, never>([["workflow", workflow as never], ["rollout", rollout as never]]);

@@ -12,7 +12,7 @@ import { execFileSync } from "node:child_process";
 import { posix } from "node:path";
 import { Registry, parseOci, type Fetch } from "../publish/oci";
 import { compareSemver, formatSemver, parseSemver, type Semver } from "../publish/semver";
-import { parseRegistrySource, registryAddress, registryVersions } from "../publish/registry";
+import { parseRegistrySource, registryAddress, registryHost, registryVersions } from "../publish/registry";
 import type { ModulesSettings } from "../config";
 
 export interface DiscoverInput {
@@ -90,6 +90,11 @@ export function registryAliases(module: string, settings: Array<{ modules?: Modu
   for (const s of settings) {
     const reg = s.modules?.registry;
     if (!reg) continue;
+    // Named by its address without the host (`acme/bucket/aws`, as a template is): that address on this registry.
+    if (/^[^/]+\/[^/]+\/[^/]+$/.test(rel)) {
+      const named = `${registryHost(reg)}/${rel}`.toLowerCase();
+      if (parseRegistrySource(named)) out.add(named);
+    }
     try {
       out.add(registryAddress(reg, rel).source.toLowerCase());
     } catch {
