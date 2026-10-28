@@ -175,7 +175,7 @@ describe("init", () => {
     const r = await init(dir, { binary: "tofu" });
     // approval: ledger is the default, and it needs no chant.workspace.json. On GitLab the repo's .gitlab-ci.yml includes the pipeline.
     const gitlab = path.startsWith(".gitlab/");
-    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"], ...(gitlab ? [[".gitlab-ci.yml", "created"]] : []), ["terragucci.components.json", "created"]]);
+    expect(r.files.map((f) => [f.path.slice(dir.length + 1), f.status])).toEqual([[path, "created"], ...(gitlab ? [] : [[".chant/op-waves/tf-apply.spec.json", "created"]]), ["chant.config.ts", "created"], ...(gitlab ? [[".gitlab-ci.yml", "created"]] : []), ["terragucci.components.json", "created"]]);
     const text = readFileSync(join(dir, path), "utf-8");
     expect(text.startsWith(MARKER)).toBe(true);
     const parsed = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, unknown>;
@@ -198,7 +198,7 @@ describe("init", () => {
     const dir = withRemote("https://github.com/acme/infra.git");
     await init(dir, { binary: "tofu" });
     const again = await init(dir, { binary: "tofu" });
-    expect(again.files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    expect(again.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
   });
 
   it("refuses to overwrite a pipeline file it did not write, unless forced", async () => {
@@ -214,7 +214,7 @@ describe("init", () => {
     const r = await init(dir, { forge: "gitlab" });
     expect(r.configNote).toMatch(/records forge/);
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("forge: gitlab\n");
-    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    expect((await init(dir)).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
   });
 
   it("a detectable choice is not written to terragucci.yml", async () => {
@@ -271,13 +271,13 @@ describe("init", () => {
     const mine = { name: "shop", schema: 1, minReader: "0.90.0", members: [{ name: "app", path: "app" }], identity: { gates: { "wave-1": { class: "human" } } } };
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "chant.workspace.json": JSON.stringify(mine) });
     const r = await init(dir, { binary: "tofu" });
-    expect(r.files.map((f) => f.status)).toEqual(["created", "updated", "created"]);
+    expect(r.files.map((f) => f.status)).toEqual(["created", "created", "created", "updated", "created"]);
     expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({
       ...mine,
       minReader: "0.102.0",
       identity: { gates: { "wave-1": { class: "human" }, "wave-2": {} } },
     });
-    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged", "unchanged"]);
   });
 
   it("under approval: ledger, the default, init writes no chant.workspace.json and the pipeline carries no --approval", async () => {
@@ -291,15 +291,15 @@ describe("init", () => {
     const mine = { name: "shop", schema: 1, minReader: "0.102.0", members: [], identity: { attribution: "identified", gates: { "wave-1": {}, "wave-2": {}, "deploy-prod": {} } } };
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "approval: ledger\n", "chant.workspace.json": JSON.stringify(mine) });
     const r = await init(dir, { binary: "tofu" });
-    expect(r.files.map((f) => f.status)).toEqual(["created", "updated", "created"]);
+    expect(r.files.map((f) => f.status)).toEqual(["created", "created", "created", "updated", "created"]);
     expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"))).toEqual({ ...mine, identity: { attribution: "identified", gates: { "deploy-prod": {} } } });
-    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged", "unchanged"]);
   });
 
   it("with no approval key, a declaration that lists wave gates stays sealed, and --approval ledger is saved and drops them", async () => {
     const mine = { name: "shop", schema: 1, minReader: "0.102.0", members: [], identity: { gates: { "wave-1": {}, "wave-2": {} } } };
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "chant.workspace.json": JSON.stringify(mine) });
-    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["created", "unchanged", "created"]);
+    expect((await init(dir, { binary: "tofu" })).files.map((f) => f.status)).toEqual(["created", "created", "created", "unchanged", "created"]);
     const r = await init(dir, { binary: "tofu", approval: "ledger" });
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("approval: ledger\n");
     expect(r.configNote).toMatch(/records approval/);

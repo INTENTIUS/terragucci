@@ -1474,7 +1474,8 @@ async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: Wav
   if ("error" in steps || (steps.ws && hookCount(steps.ws.hooks) > 0)) reasons.push("ci.hooks runs around each root's plan in terragucci");
   if (pendingEstateMigrations(repo, ctx.migrated).size > 0) reasons.push("an estate migration plans some of its roots");
   const waves = applyWaves(options.layers, options.canary);
-  if (waveReads(repo, waves, roots, options.wave).reads.size > 0) reasons.push("a root reads another root's state, which terragucci holds on when the value was unknown at review");
+  // reads holds every root of the wave, an empty list for one that reads no state.
+  if ([...waveReads(repo, waves, roots, options.wave).reads.values()].some((r) => r.length > 0)) reasons.push("a root reads another root's state, which terragucci holds on when the value was unknown at review");
   return { reasons, chant, registry: caps.registry, settings };
 }
 

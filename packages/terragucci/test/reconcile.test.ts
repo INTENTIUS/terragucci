@@ -59,9 +59,9 @@ describe("reconcile", () => {
     const { fetch, calls } = recordingFetch();
     const out = await reconcile(config, { mode: "dry-run", fetch, env: {} });
     expect(out.map((o) => [o.key, o.status, o.changes.map((c) => c.path)])).toEqual([
-      ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml", "terragucci.components.json"]],
-      ["gitlab.example.com/platform/network", "would-change", [".gitlab/terragucci.yml", ".gitlab-ci.yml", "terragucci.components.json"]],
-      ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml", "terragucci.components.json"]],
+      ["github.com/acme/infra", "would-change", [".github/workflows/terragucci.yml", ".chant/op-waves/tf-apply.spec.json", "chant.config.ts", "terragucci.components.json"]],
+      ["gitlab.example.com/platform/network", "would-change", [".gitlab/terragucci.yml", "chant.config.ts", ".gitlab-ci.yml", "terragucci.components.json"]],
+      ["codeberg.org/acme/edge", "would-change", [".forgejo/workflows/terragucci.yml", ".chant/op-waves/tf-apply.spec.json", "chant.config.ts", "terragucci.components.json"]],
     ]);
     expect(calls).toEqual([]);
     expect(() => git(bares.github, "rev-parse", "--verify", BRANCH)).toThrow();
@@ -130,7 +130,7 @@ describe("reconcile", () => {
     const bare = bareFrom(write(twoRootRepo(), { ".gitlab-ci.yml": own }));
     const config = validateConfig({ defaults: { binary: "tofu" }, projects: { "gitlab.example.com/platform/network": { url: bare } } }, "t");
     const out = await reconcile(config, { mode: "apply", fetch: recordingFetch().fetch, env });
-    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], [".gitlab-ci.yml", "updated"], ["terragucci.components.json", "created"]]);
+    expect(out[0].changes.map((c) => [c.path, c.status])).toEqual([[".gitlab/terragucci.yml", "created"], ["chant.config.ts", "created"], [".gitlab-ci.yml", "updated"], ["terragucci.components.json", "created"]]);
     expect(git(bare, "show", `${BRANCH}:.gitlab-ci.yml`)).toBe(`include:\n  - local: .gitlab/terragucci.yml\n\n${own}`);
     git(bare, "update-ref", "refs/heads/main", `refs/heads/${BRANCH}`);
     const again = recordingFetch();

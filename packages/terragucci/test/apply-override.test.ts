@@ -55,7 +55,7 @@ describe("a wave behind its gate", () => {
         approve(origin, approveAs(second, 5));
         expect(await applyWave(work, { ...opts(bin), now: T(6) })).toBe(0);
         expect(appliedOf(origin).map((a) => a.planDigest)).toEqual([first, second]);
-      }, 20_000);
+      }, 60_000); // four waves: about 8s alone, past 20s under a full parallel run
 
       it(`under ${mode}, an approval of plans that never applied is stale: the moved plans are refused`, async () => {
         const lines: string[] = [];
