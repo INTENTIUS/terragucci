@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { appendLifecycle, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
 import {
   addressMatches,
@@ -29,6 +29,13 @@ import {
 import { ledgerEntries, MIGRATE_DONE_FILE, MIGRATE_LEDGER_FILE } from "../src/report/audit";
 import { S3Client, type S3Fetch } from "../src/report/s3";
 import { tmp, write } from "./helpers";
+import { overrideChantNext } from "../src/chant-next";
+
+// A test that pins the in-wave hold path to terragucci's own ledger writes, or to chant's recorded hold (chant#4623), restores it here.
+const restoreChant: Array<() => void> = [];
+afterEach(() => {
+  while (restoreChant.length) restoreChant.pop()!();
+});
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();
@@ -264,6 +271,8 @@ describe("running a migration from wave 1", () => {
   });
 
   it("under chant run wave, proves the migration, holds wave 1 on its gate through CHANT_HOLD, and applies once chant hands it the approval", async () => {
+    // A chant before chant#4623: the hold path writes the proof, the applied line and done.jsonl itself.
+    restoreChant.push(overrideChantNext("holdRecord", null));
     const { work, origin } = repo();
     const lines: string[] = [];
     const log = (l: string) => void lines.push(l);
@@ -289,6 +298,32 @@ describe("running a migration from wave 1", () => {
     // Once applied it never runs again, as when chant plans the wave again in the same job.
     const other = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { ...approved, digest: "sha256:other" } }, log });
     expect(other).toEqual({ code: 0, records: [] });
+  });
+
+  it("under chant run wave on a chant that records the hold (chant#4623), hands chant the proof and writes how it ended to CHANT_HOLD_FINISHED, with no ledger line of its own", async () => {
+    restoreChant.push(overrideChantNext("holdRecord", { OP_WAVE_HOLD_RECORD_FLOOR: "0.125.0", gatedRequestAttachmentPath: (op: string, d: string) => ({ dir: `_gates/${op}/requests`, file: `${d.replace(/:/g, "_")}.json` }) }));
+    const { work, origin } = repo();
+    const log = () => {};
+    const file = join(tmp(), "hold.json");
+    const held = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file }, log });
+    expect(held.code).toBe(3);
+    const asked = JSON.parse(readFileSync(file, "utf-8")) as { op: string; gate: string; digest: string; record?: boolean; attachment?: string };
+    expect(asked).toMatchObject({ op: "tf-migrate", gate: "split-b", record: true });
+    expect(JSON.parse(asked.attachment!)).toMatchObject({ name: "split-b", digest: asked.digest });
+    expect(asked.attachment).not.toContain("secret-");
+    // chant keeps the proof beside its pending fact, so this run wrote nothing to chant/lifecycle.
+    expect(() => git(origin, "show", `chant/lifecycle:_gates/tf-migrate/split-b/${asked.digest.replace(":", "_")}.json`)).toThrow();
+    // chant spent the approval, and hands the re-run CHANT_HOLD_FINISHED.
+    const finished = join(tmp(), "hold-finished.json");
+    const approved = { op: "tf-migrate", gate: "split-b", digest: asked.digest, approvedBy: "alice", approvedAt: T(2) };
+    const applied = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved, finished }, now: T(3), log });
+    expect(applied.code).toBe(0);
+    expect(names(work, "two")).toEqual(["c", "b"]);
+    const wrote = JSON.parse(readFileSync(finished, "utf-8")) as { result: string; detail: Record<string, unknown> };
+    expect(wrote).toMatchObject({ result: "applied", detail: { result: "applied", approved_by: "alice", roots: expect.stringContaining("one") } });
+    expect(JSON.stringify(wrote)).not.toContain("secret-");
+    expect(() => git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`)).toThrow();
+    expect(() => git(origin, "show", "chant/lifecycle:_gates/tf-migrate/applied.jsonl")).toThrow();
   });
 
   it("under chant run wave, the approved run of the first of two migrations applies it and holds wave 1 on the second's gate", async () => {

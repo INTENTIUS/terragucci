@@ -165,6 +165,7 @@ A revert needs versions kept: a root with no version recorded before, or a local
 |---|---|
 | `terragucci-report/migrations/<name>.json` in the job, and `<prefix>/<project>/migrations/<name>.json` in the [reports bucket](/terragucci/reference/reports-bucket/) | the moves, each root's version id and digest before and after, the proof and the plan after the write, the approver and the outcome; for estates, each resource's live id |
 | `_gates/tf-migrate/done.jsonl` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) | one line per migration that wrote its states: the digest, the approver, the result and each root's version before and after |
+| `_gates/tf-migrate/applied.jsonl` on `chant/lifecycle` | with a chant that runs the migration's gate, in place of the done.jsonl line: the spent approval, then a `finished` line with the same facts. chant writes both, inside wave 1 too, and keeps the proof at `_gates/tf-migrate/requests/<digest>.json` |
 | the [audit trail](/terragucci/reference/audit-trail/) | a `migration` entry from that line, and the gate's request and approval |
 
 A migration that applied never runs again. Its file can stay in the repo; changing it after it applied fails wave 1, so write a new file for a new move.

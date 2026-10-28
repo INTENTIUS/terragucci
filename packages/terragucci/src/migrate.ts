@@ -62,7 +62,7 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantState, type ChantSourceLock, type LockOperation } from "./chant-next";
+import { chantHoldRecord, chantState, type ChantSourceLock, type LockOperation } from "./chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
@@ -1553,6 +1553,13 @@ export interface RunMigrationsOptions {
 export interface MigrationHold {
   file: string;
   approved?: { op: string; gate: string; digest: string; approvedBy: string; approvedAt: string };
+  /**
+   * chant's `CHANT_HOLD_FINISHED` (chant#4623), set on the approved re-run
+   * only when chant wrote the gate's applied line. The migration then writes
+   * how it ended there, and chant writes the finished line from it, so this
+   * run writes no applied or done.jsonl line of its own.
+   */
+  finished?: string;
 }
 
 export interface MigrationsRun {
@@ -1659,8 +1666,10 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
  * `finished` line holds what `migrate revert` and the list of migrations
  * still to apply read (migrationDetail, migrationHistory), so nothing is
  * written to done.jsonl. A migration inside a wave (`hold`) stays on the
- * wave's hold hook, which chant decides already, and still writes its
- * applied and done.jsonl lines itself.
+ * wave's hold hook, which chant decides already. On a chant with the
+ * recorded hold (chant#4623) chant writes that gate's applied and finished
+ * lines too; on an older one the hold path writes its applied and
+ * done.jsonl lines itself.
  */
 async function runGated(
   repo: string,
@@ -1740,6 +1749,12 @@ async function runGated(
   }
 }
 
+/** What a migration under chant's recorded hold writes to `CHANT_HOLD_FINISHED` (chant#4623): how it ended and the finished line's detail. */
+function writeHoldFinished(file: string, result: "applied" | "failed", detail: Record<string, string | number | boolean>): void {
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ result, detail }) + "\n");
+}
+
 async function runOne(repo: string, m: Migration, ledger: GateLedger, options: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void }, work: string): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env } = options;
   const label = `migration ${m.name}`;
@@ -1789,12 +1804,15 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     const a = options.hold.approved;
     if (!a || a.op !== MIGRATE_OP || a.gate !== m.name || !samePlanDigest(a.digest, record.digest)) {
       const description = `${label}: ${record.roots.map((r) => r.root).join(", ")}`;
+      const proof = JSON.stringify(record, null, 2) + "\n";
+      // chant#4623: chant records the gate and keeps the proof beside the pending fact.
+      const recorded = !!(await chantHoldRecord());
       mkdirSync(dirname(options.hold.file), { recursive: true });
-      writeFileSync(options.hold.file, JSON.stringify({ op: MIGRATE_OP, gate: m.name, digest: record.digest, description, pending: { ...(commit ? { commit } : {}), members } }) + "\n");
-      // The proof beside the pending fact, which a refusal later compares with.
-      if (git(repo, ["cat-file", "-e", `refs/remotes/origin/chant/lifecycle:${keptPath(m.name, record.digest)}`]).status !== 0) {
+      writeFileSync(options.hold.file, JSON.stringify({ op: MIGRATE_OP, gate: m.name, digest: record.digest, description, pending: { ...(commit ? { commit } : {}), members }, ...(recorded ? { record: true, attachment: proof } : {}) }) + "\n");
+      // The proof beside the pending fact, which a refusal later compares with. Only on a chant that keeps none.
+      if (!recorded && git(repo, ["cat-file", "-e", `refs/remotes/origin/chant/lifecycle:${keptPath(m.name, record.digest)}`]).status !== 0) {
         try {
-          appendLifecycle(repo, "", [], { [keptPath(m.name, record.digest)]: JSON.stringify(record, null, 2) + "\n" }, `The proof of ${MIGRATE_OP} ${m.name}: ${record.digest}`);
+          appendLifecycle(repo, "", [], { [keptPath(m.name, record.digest)]: proof }, `The proof of ${MIGRATE_OP} ${m.name}: ${record.digest}`);
         } catch (e) {
           log(`${label}: the proof was not kept beside the pending fact: ${(e as Error).message}`);
         }
@@ -1840,8 +1858,12 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     return { code: EXIT.waiting, record: { ...record, status: "waiting" }, command };
   }
   log(`${label}: approved by ${decision.by} for this digest`);
-  const applied: AppliedRecord = { version: 1, kind: "applied", op: MIGRATE_OP, gate: m.name, planDigest: record.digest, approvedAt: decision.at, approvedBy: decision.by, timestamp: now, ...(runId ? { runId } : {}), ...(commit ? { commit } : {}) };
-  appendLifecycle(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
+  // chant#4623: under chant's recorded hold, chant spent the approval already and writes the finished line from `finished`.
+  const finishedFile = options.hold?.approved ? options.hold.finished : undefined;
+  if (!finishedFile) {
+    const applied: AppliedRecord = { version: 1, kind: "applied", op: MIGRATE_OP, gate: m.name, planDigest: record.digest, approvedAt: decision.at, approvedBy: decision.by, timestamp: now, ...(runId ? { runId } : {}), ...(commit ? { commit } : {}) };
+    appendLifecycle(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
+  }
   let result: MigrationRecord;
   const sinks = plan.estate ? options.progress?.(m.name) : undefined;
   try {
@@ -1849,15 +1871,18 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   } catch (e) {
     log(`${label}: ${(e as Error).message}`);
     sinks?.end?.("failed", undefined, (e as Error).message);
+    // No `result` in the detail: the migration threw, and its history skips the line (finishedMigrationLines).
+    if (finishedFile) writeHoldFinished(finishedFile, "failed", { approved_by: decision.by, error: (e as Error).message.slice(0, 400) });
     return { code: EXIT.failed, record: { ...record, status: "failed", error: (e as Error).message } };
   }
   sinks?.end?.(result.status, result.progress, result.error);
   result = { ...result, approved_by: decision.by, finished: new Date().toISOString(), ...(commit ? { commit } : {}) };
+  if (finishedFile) writeHoldFinished(finishedFile, result.status === "applied" ? "applied" : "failed", { approved_by: decision.by, ...migrationDetail(result, m) });
   if (result.status === "refused") {
     log(`${label}: under the lock, the state of ${result.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
     return { code: EXIT.refused, record: result };
   }
-  appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
+  if (!finishedFile) appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
   if (!plan.estate) for (const r of result.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
   if (result.status !== "applied") {
     log(`${label}: ${result.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);
