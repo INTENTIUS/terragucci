@@ -1,14 +1,29 @@
 ---
-title: Changes in 0.4.45
-description: "terragucci 0.4.45, released 2026-10-24."
+title: Changes in 0.4.46
+description: "terragucci 0.4.46, released 2026-10-28."
 ---
 
-Release `0.4.45` is on npm as `@intentius/terragucci@0.4.45`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.45) lists every change.
+Release `0.4.46` is on npm as `@intentius/terragucci@0.4.46`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.46) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.45 init`, then merge the pipeline it writes |
+| Each repo | `npx @intentius/terragucci@0.4.46 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.46
+
+This release is built on chant 0.124.55, whose wave runtime the CI images carry, and much of what terragucci carried itself now comes from chant.
+
+- Exit codes are chant's table: 0 done, 1 failed, 2 drift, 3 waiting, 4 moved, 5 held, 6 superseded, 7 denied, 8 declined. A usage or config error now exits 1, where it exited 2. `stage tf-apply` passes chant's 7 and 8 through, where it gave 1 and 4. [Exit codes](/terragucci/reference/cli/#exit-codes) lists each command's.
+- When a repo has plain roots, `init` also writes `chant.config.ts` and `.chant/op-waves/tf-apply.spec.json` for chant. Each wave then plans and applies through chant's `terraform-apply` step.
+- A composed run (`waves.compose`) is chant's. Its temporary root is `.chant-compose/`, and a state it could not write is kept as `<key>.chant-unwritten`. chant can leave a root out of the run and compose the rest; the note and `compose.left_out` in the report name each root left out with its reason.
+- `modules.publish` takes a GitLab module registry (`gitlab`), HCP Terraform (`hcp://<organization>`) and Artifactory or Nexus. `terragucci registry edge` writes an edge function for a bucket-hosted registry, with an optional token check. `modules.registry.providers: mirror` serves providers from the same registry. See [Publish modules](/terragucci/guides/publish-modules/).
+- Each release is recorded on chant's ledger and listed in a release catalog beside the registry, which `terragucci modules` reads. `modules deprecate` and `modules yank` mark a version, and `modules restore` clears the mark. Roots on a deprecated version get the `terragucci-deprecated-version` tip, and `modules.require: attested` refuses a yanked pin.
+- `sources.proxies` names an Artifactory or Nexus registry proxy, so a source written through it matches the entry for its upstream.
+- `check.pre_commit: true` runs the repo's `.pre-commit-config.yaml` in `tf-check` ([Run your pre-commit hooks in CI](/terragucci/guides/run-pre-commit-hooks/)).
+- A choudoufu root's derived record store is read wherever its state was. The estate page and the `terragucci-module-table` tip give each module version's row in choudoufu's module table.
+- State exports, lock releases and migrations record their approvals as chant's gated requests, in `_gates/<op>/applied.jsonl` on `chant/lifecycle`, with the digest of what each one wrote.
+- The CLI bundle imports chant core from the installed `@intentius/chant` instead of carrying it.
 
 ## In 0.4.45
 
