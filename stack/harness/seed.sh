@@ -5,9 +5,23 @@
 #
 #   stack/harness/seed.sh <scenario id>
 #
-# It reads the scenario's tree.base and its line in scenarios/index.json (a
-# line with source: <repo>:<path> reads the tree from that INTENTIUS repo
-# instead, as stack/demo.sh reads choudoufu's demo trees), and:
+# It reads the scenario's tree.base and its line in scenarios/index.json. A
+# line with a source reads the tree from another repo instead:
+#
+#   <repo>:<path>                INTENTIUS/<repo>, from DEMO_<REPO>_TREES or the
+#                                clone stack/demo.sh keeps under the state
+#                                directory, at DEMO_<REPO>_TREES_REF (default
+#                                main), as the demo reads choudoufu's trees
+#   <owner>/<repo>@<ref>:<path>  github.com/<owner>/<repo> at that commit, in a
+#                                clone under the state directory (trees/)
+#
+# and the line's into (a directory of the base the tree goes in), lift (moves
+# inside the base, from:to, such as a tree's forgejo/.forgejo to .forgejo),
+# secrets and vars (the repo's Actions secrets and variables) shape the repo.
+# A seed/ directory beside the scenario file is copied over the base before
+# terragucci init, for what a sourced tree lacks (terragucci.yml, a backend).
+#
+# Then it:
 #
 #   1. meets each of the line's needs, in order:
 #        image:<name>    a CI image scripts/images.ts names (tofu, terraform,
@@ -44,7 +58,25 @@ entry="$(jq -c --arg id "$ID" '.[$id] // empty' "$HERE/scenarios/index.json")"
 [ -n "$entry" ] || { log "no line for $ID in scenarios/index.json"; exit 2; }
 binary="$(jq -r .binary <<<"$entry")"
 base_rel="$(jq -r .tree.base "$SCENARIO")"
+base_src=""
 source="$(jq -r '.source // empty' <<<"$entry")"
+case "$source" in
+  */*@*:*)
+    # github.com/<owner>/<repo> at a commit.
+    gh_repo="${source%%@*}"; rest="${source#*@}"; gh_ref="${rest%%:*}"; src_path="${rest#*:}"
+    checkout="$TG_STATE/trees/${gh_repo//\//-}"
+    if [ ! -d "$checkout/.git" ]; then
+      mkdir -p "$(dirname "$checkout")"
+      log "cloning $gh_repo into $checkout for its tree"
+      git clone -q --filter=blob:none "https://github.com/$gh_repo.git" "$checkout" >&2
+    fi
+    git -C "$checkout" fetch -q origin "$gh_ref" && git -C "$checkout" checkout -q --detach FETCH_HEAD \
+      || { log "could not fetch $gh_ref of $gh_repo"; exit 1; }
+    source=""
+    base_src="$checkout/$src_path"
+    [ -d "$base_src" ] || { log "$src_path is not in $gh_repo at $gh_ref"; exit 1; }
+    ;;
+esac
 if [ -n "$source" ]; then
   # A tree another repo holds, <repo>:<path> (INTENTIUS/<repo>), read from
   # DEMO_<REPO>_TREES or the clone stack/demo.sh keeps under the state
@@ -64,7 +96,7 @@ if [ -n "$source" ]; then
   fi
   base_src="$checkout/$src_path"
   [ -d "$base_src" ] || { log "$source is not in $checkout"; exit 1; }
-else
+elif [ -z "${base_src:-}" ]; then
   base_src="$(cd "$(dirname "$SCENARIO")/$base_rel" && pwd)"
 fi
 tag_of() { (cd "$ROOT" && npx tsx scripts/images.ts tags | awk -v n="$1" '$1 == n { print $2 }'); }
@@ -103,11 +135,28 @@ for who in "$TERRAGUCCI_FORGEJO_AUTHOR" "$TERRAGUCCI_FORGEJO_REVIEWER"; do
   api -o /dev/null -H 'content-type: application/json' -X PUT -d '{"permission":"write"}' "$URL/api/v1/repos/$repo/collaborators/$who"
 done
 jq -n --arg d "$TOKEN" '{data: $d}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/TERRAGUCCI_FORGEJO_TOKEN"
+while IFS=$'\t' read -r k v; do
+  [ -n "$k" ] || continue
+  jq -n --arg d "$v" '{data: $d}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/secrets/$k"
+done < <(jq -r '(.secrets // {}) | to_entries[] | [.key, .value] | @tsv' <<<"$entry")
+while IFS=$'\t' read -r k v; do
+  [ -n "$k" ] || continue
+  jq -n --arg v "$v" '{value: $v}' | api -o /dev/null -H 'content-type: application/json' -X POST -d @- "$URL/api/v1/repos/$repo/actions/variables/$k" \
+    || jq -n --arg v "$v" '{value: $v}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/variables/$k"
+done < <(jq -r '(.vars // {}) | to_entries[] | [.key, .value] | @tsv' <<<"$entry")
 
 base="$TG_STATE/scenarios/$ID/base-$(date +%Y%m%d-%H%M%S)-$$"
-mkdir -p "$base"
-cp -R "$base_src/." "$base/"
-[ ! -d "$base/.git" ] || mv "$base/.git" "$base.git-of-source"
+into="$(jq -r '.into // empty' <<<"$entry")"
+mkdir -p "$base/$into"
+(cd "$base_src" && tar --exclude=.git --exclude=node_modules --exclude=.terraform -cf - .) | (cd "$base/$into" && tar -xf -)
+while IFS= read -r move; do
+  [ -n "$move" ] || continue
+  from="${move%%:*}"; to="${move#*:}"
+  [ -e "$base/$from" ] || { log "lift: $from is not in the tree"; exit 1; }
+  mkdir -p "$(dirname "$base/$to")"
+  mv "$base/$from" "$base/$to"
+done < <(jq -r '(.lift // [])[]' <<<"$entry")
+[ ! -d "$HERE/scenarios/$ID/seed" ] || cp -R "$HERE/scenarios/$ID/seed/." "$base/"
 if [ ! -d "$base/.forgejo/workflows" ]; then
   (cd "$base" && node "$ROOT/packages/terragucci/dist/terragucci.mjs" init >/dev/null) || { log "terragucci init failed in the base"; exit 1; }
 fi

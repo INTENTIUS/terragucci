@@ -492,7 +492,7 @@ just scale down               # its containers, network and volumes
 
 `carve.py` splits the terralith and checks the carved roots declare exactly its resources. Each root gets `stack/scale/terraform.lock.hcl` as its lock file. `scale.sh` drives the phases (reconcile, create, plan, change) through Forgejo's API, fails the run on the first phase whose runs do not all succeed, and counts the resources in the state files. `summarize.py` writes the run's record to `stack/scale/.state/runs/scale-<resources>.json` and folds the records into the site's file, where a run replaces the one of its size. Job times come from each job log's first and last lines, since Forgejo's API leaves them empty.
 
-The scale workflow (`scale/pipeline.ts`) runs the 10,069-resource point on a GitHub-hosted runner when a release is published, and opens a pull request with the record. Dispatch it by hand for another scale or release.
+The scale workflow (`scale/pipeline.ts`) runs the 10,069-resource point on a GitHub-hosted runner and opens a pull request with the record. It runs only when dispatched, when a figure on the Scale page is quoted again: the terralith is for scale figures alone (chant#4586 ruling A), no release waits on it, and no test reads it. The estate-shaped scenario the claims run on is `multi-region` (`stack/harness/scenarios/`), aws-bench's ec2-multiregion estate.
 
 ## Where a feature goes
 

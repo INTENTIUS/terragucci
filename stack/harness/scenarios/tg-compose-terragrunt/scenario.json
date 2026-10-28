@@ -1,0 +1,119 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-compose-terragrunt",
+  "product": "terragucci",
+  "claim": "choudoufu/compose-terragrunt",
+  "title": "choudoufu's Terragrunt demo tree, run by its own Forgejo workflow: the pull request plans every unit with choudoufu, and the merge applies the reviewed plan",
+  "tree": {
+    "base": ".",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://demo-reports/demo",
+  "limits": {
+    "out-of-band": 1500
+  },
+  "steps": [
+    {
+      "id": "settled",
+      "do": "out-of-band",
+      "label": "the base push's run ended (its apply job refuses a push no reviewed pull request made)",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "create",
+      "do": "open",
+      "branch": "create",
+      "overlay": "tree:scenarios/terragrunt-choudoufu-create/pull",
+      "title": "terragrunt-choudoufu-create: the tree's own pull request"
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "the pull request's plan job went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "create",
+        "success"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "reviewed",
+      "do": "out-of-band",
+      "label": "the reviewer approves the pull request",
+      "command": [
+        "stack/harness/check.sh",
+        "review",
+        "create"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge-create",
+      "do": "merge",
+      "pull": "create",
+      "expect": [
+        {
+          "comment": "<!-- terragrunt-choudoufu-plan -->"
+        }
+      ]
+    },
+    {
+      "id": "applied",
+      "do": "out-of-band",
+      "label": "the merge's apply job applied the reviewed plan",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "recorded",
+      "do": "out-of-band",
+      "label": "the network estate's records are in its record store",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "demo-terragrunt-choudoufu-records",
+        "tofu-records/tgc-network/",
+        "length > 0"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "every pull request adds a resource live-check refuses, so the plan fails and nothing applies"
+  }
+}

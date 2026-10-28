@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { breakVerdict, parseSmokeLine, plainVerdict, smokeClaimRun, smokeScenario } from "../stack/harness/rows";
-import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath, TERRAGUCCI_STEPS } from "../stack/harness/scenarios";
+import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath, SOURCE_PATTERN, TERRAGUCCI_STEPS, TREE_OVERLAY } from "../stack/harness/scenarios";
 import { forgeServices, JOB_CACHE_VOLUME, PROFILES, STACK_PORTS, type HarnessStackFn, type ServiceSpec } from "../stack/harness/stack-spec";
 
 const root = join(__dirname, "..");
@@ -159,10 +159,36 @@ describe("the scenarios", () => {
       const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { steps: Array<{ do: string; overlay?: string }>; break: { overlay?: string } };
       for (const s of doc.steps) {
         expect(TERRAGUCCI_STEPS.has(s.do), `${id} ${s.do}`).toBe(true);
-        if (s.overlay) expect(Object.keys(overlayFiles(scenarioPath(id), s.overlay)).length, `${id} ${s.overlay}`).toBeGreaterThan(0);
+        if (s.overlay && !s.overlay.startsWith(TREE_OVERLAY)) expect(Object.keys(overlayFiles(scenarioPath(id), s.overlay)).length, `${id} ${s.overlay}`).toBeGreaterThan(0);
       }
       if (doc.break.overlay) expect(Object.keys(overlayFiles(scenarioPath(id), doc.break.overlay)).length).toBeGreaterThan(0);
     }
+  });
+
+  it("reads a sourced tree from a repo it names, at a pinned commit off INTENTIUS", () => {
+    for (const [id, e] of Object.entries(index)) {
+      if (!e.source) continue;
+      expect(e.source, id).toMatch(SOURCE_PATTERN);
+      if (e.source.includes("@")) expect(e.source, id).toMatch(/@[0-9a-f]{40}:/);
+    }
+    expect(index["tg-compose-cross-estate"]?.lift).toEqual(["forgejo/.forgejo:.forgejo"]);
+    expect(index["multi-region"]?.source).toBe("lex00/aws-bench@e8c259c23efe1a0805595ac9a340c178b427c1d3:benchmarks/arms/terraform-ec2-multiregion");
+  });
+
+  it("covers the example pipelines and the multi-region estate, each with a claim choudoufu can cite", () => {
+    for (const id of ["tg-compose-cross-estate", "tg-compose-terragrunt", "tg-compose-atmos", "multi-region"]) {
+      const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { claim: string; break: { overlay?: string } };
+      expect(doc.claim, id).toMatch(/^[a-z]+\/[a-z-]+$/);
+      expect(doc.break.overlay, id).toBe("break");
+    }
+  });
+
+  it("reads a tree: overlay from the seeded base, and refuses one before there is a base", () => {
+    const base = mkdtempSync(join(tmpdir(), "tg-base-"));
+    execFileSync("mkdir", ["-p", join(base, "scenarios", "act", "pull", "app")]);
+    execFileSync("sh", ["-c", `printf 'x' > "${join(base, "scenarios", "act", "pull", "app", "main.tf")}"`]);
+    expect(overlayFiles(scenarioPath("tg-compose-terragrunt"), "tree:scenarios/act/pull", base)).toEqual({ "app/main.tf": "x" });
+    expect(() => overlayFiles(scenarioPath("tg-compose-terragrunt"), "tree:scenarios/act/pull")).toThrow(/seeded base/);
   });
 
   it("refuses a scenario with no claim, no BREAK arm, or a plan step", () => {
@@ -252,5 +278,15 @@ describe("smoke.sh on the harness", () => {
     expect(smoke).toContain('SMOKE_SAFE_RUN=("$CHANT" e2e safe-run --scan "$SMOKE_LOG_DIR" --)');
     expect(smoke).toMatch(/grep -q '\^REAL-CLOUD CALL'/);
     expect(smoke).toContain("harness_rows\n");
+  });
+});
+
+describe("the terralith, for scale alone", () => {
+  it("runs the scale bench only when dispatched, never on a release", () => {
+    const wf = readFileSync(join(root, ".github", "workflows", "scale.yml"), "utf8");
+    expect(wf).toContain("workflow_dispatch:");
+    // An event is a key of on:, two spaces in; the dispatch's release input is deeper.
+    expect(wf).not.toMatch(/^ {2}release:/m);
+    expect(wf).not.toContain("github.event.release");
   });
 });

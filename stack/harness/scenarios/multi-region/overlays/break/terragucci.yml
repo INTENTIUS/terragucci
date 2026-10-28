@@ -1,0 +1,10 @@
+# BREAK: the providers' floci endpoint is a host nothing answers on, so the
+# merge's apply cannot reach EC2, SSM or STS and fails (multi-region).
+forge: forgejo
+binary: terraform
+url: http://forgejo:3000/terragucci-admin/hs-multi-region
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["estate"]
+gate: never
+env:
+  TF_VAR_floci_endpoint: http://floci-nowhere:4566
