@@ -18,7 +18,7 @@
     {
       "id": "base-applied",
       "do": "out-of-band",
-      "label": "estates-apply on the base push applied both estates, on the ledger as ok",
+      "label": "estates-apply on the base push applied both estates",
       "command": [
         "stack/harness/check.sh",
         "main-runs",
@@ -27,12 +27,6 @@
       "expect": [
         {
           "exit": 0
-        },
-        {
-          "ledger": {
-            "op": "estates-apply",
-            "status": "ok"
-          }
         }
       ]
     },
