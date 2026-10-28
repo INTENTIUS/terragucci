@@ -62,7 +62,7 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantHoldRecord, chantState, type ChantSourceLock, type LockOperation } from "./chant-next";
+import { chantHoldRecord, chantRequestProof, chantState, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
 import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
@@ -531,6 +531,65 @@ export const beforeMembers = (roots: MigrationRoot[]): { member: string; planDig
 export function movedSinceApproval(ledger: Pick<GateLedger, "pending">, gate: string, approved: string | undefined, members: readonly { member: string; planDigest: string }[], roots: readonly string[]): string[] {
   const fact = [...ledger.pending].reverse().find((p) => p.gate === gate && p.members && samePlanDigest(p.planDigest, approved));
   return fact ? movedMembers(fact.members!, members) : [...roots];
+}
+
+/**
+ * The approval a migration's new request on chant's gate (chant#4551) moved
+ * away from. A state written after the approval changes the proof, so chant
+ * asks again under a digest of its own; the approval that stands is the
+ * newest approval of another request of the migration, unspent, not its
+ * requester's own, and made since the newest pending fact before this run
+ * (the rule decideGate and chant's evaluateGate apply), so a run after the
+ * refusal waits for the new digest's approval. `now` is this run's time: a
+ * pending fact of that time is the one this run asked. The roots that moved
+ * are the ones whose state before differs from that request's stored proof
+ * (`_gates/tf-migrate/requests/<digest>.json`), or every root when chant
+ * kept none to compare. Undefined when no approval stands, so the request
+ * only waits.
+ */
+export async function movedSinceChantApproval(
+  repo: string,
+  gate: string,
+  digest: string,
+  now: string,
+  roots: readonly MigrationRoot[],
+  chant: Pick<ChantStateOps, "readGatedRequests">,
+): Promise<{ approved: string; by: string; moved: string[] } | undefined> {
+  let requests: Awaited<ReturnType<ChantStateOps["readGatedRequests"]>>;
+  try {
+    requests = await chant.readGatedRequests(MIGRATE_OP, { cwd: repo });
+  } catch {
+    return undefined;
+  }
+  const t = (s: string): number => Date.parse(s);
+  const mine = requests.filter((r) => r.gate === gate);
+  const asked = (r: (typeof mine)[number]): boolean => samePlanDigest(r.digest, digest) && t(r.pending.timestamp) === t(now);
+  const since = Math.max(0, ...mine.filter((r) => !asked(r)).map((r) => t(r.pending.timestamp)));
+  let prior: (typeof mine)[number] | undefined;
+  let approval: (typeof mine)[number]["approvals"][number] | undefined;
+  for (const r of mine) {
+    if (samePlanDigest(r.digest, digest) || r.applied) continue;
+    const requester = r.request.by.toLowerCase();
+    for (const a of r.approvals) {
+      if (a.resolvedBy.toLowerCase() === requester || t(a.timestamp) < since) continue;
+      if (!approval || t(a.timestamp) >= t(approval.timestamp)) [prior, approval] = [r, a];
+    }
+  }
+  if (!prior || !approval) return undefined;
+  const all = roots.map((r) => r.root);
+  let stored: Pick<MigrationRecord, "roots"> | undefined;
+  const reader = await chantRequestProof();
+  if (reader) {
+    const { dir, file } = reader.gatedRequestAttachmentPath(MIGRATE_OP, prior.digest);
+    try {
+      const text = await reader.readBlobFromPath(dir, file, { cwd: repo });
+      if (text) stored = JSON.parse(text) as Pick<MigrationRecord, "roots">;
+    } catch {
+      stored = undefined;
+    }
+  }
+  const moved = Array.isArray(stored?.roots) ? movedMembers(beforeMembers(stored.roots), beforeMembers([...roots])) : all;
+  return { approved: prior.digest, by: approval.resolvedBy, moved };
 }
 
 // ── running the binary ───────────────────────────────────────────────────
@@ -1748,6 +1807,14 @@ async function runGated(
     // falls through: the request still waits for another approver
     case "waiting": {
       const command = migrateApproveCommand(m.name, result.digest, o.rule.mode === "sealed");
+      // A state that moved after an approval is refused (CHANT_EXIT.moved, 4) and names the roots, as on terragucci's own gate.
+      const moved = await movedSinceChantApproval(repo, m.name, result.digest, o.now, record.roots, chant);
+      if (moved) {
+        log(`${label}: ${moved.by} approved ${moved.approved}, and the states moved since: ${moved.moved.join(", ") || "the migration file"}; nothing was written`);
+        log(`${label}: read the proof above, then approve this plan with:`);
+        log(`  ${command}`);
+        return { code: EXIT.refused, record: { ...record, digest: result.digest, status: "refused", moved: moved.moved }, command };
+      }
       log(`${label} waits for an approval of digest ${result.digest} by someone other than ${by}. Read the proof above, then approve it with:`);
       log(`  ${command}`);
       log("Then run this job again.");

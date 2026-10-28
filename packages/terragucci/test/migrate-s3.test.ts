@@ -26,19 +26,15 @@ import { tmp, write } from "./helpers";
 const chantOps = await chantGated();
 
 /**
- * A state that moved after the approval: terragucci's own gate refuses the
- * approved digest (exit 4) and names the roots that moved; on chant's gate
- * the new proof is a new request, which waits for its own approval (exit 3)
- * under a digest of its own. Either way nothing is written.
+ * A state that moved after the approval is refused (exit 4) and names the
+ * roots that moved. On chant's gate the new proof is a new request under a
+ * digest of its own, compared with the approved request's stored proof.
+ * Either way nothing is written.
  */
 const expectMovedAfterApproval = (run: { code: number; records: { digest: string; moved?: string[] }[] }, approved: string, moved: string[]) => {
-  if (chantOps) {
-    expect(run.code).toBe(3);
-    expect(run.records[0]!.digest).not.toBe(approved);
-  } else {
-    expect(run.code).toBe(4);
-    expect(run.records[0]!.moved).toEqual(moved);
-  }
+  if (chantOps) expect(run.records[0]!.digest).not.toBe(approved);
+  expect(run.code).toBe(4);
+  expect(run.records[0]!.moved).toEqual(moved);
 };
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 9, 12, m)).toISOString();

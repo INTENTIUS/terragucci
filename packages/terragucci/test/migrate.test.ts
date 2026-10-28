@@ -16,6 +16,8 @@ import {
   migrateApproveCommand,
   moveResources,
   movedSinceApproval,
+  movedSinceChantApproval,
+  type MigrationRoot,
   OVERRIDE_FILE,
   parseMigration,
   planMigration,
@@ -376,15 +378,11 @@ describe("running a migration from wave 1", () => {
     // Someone wrote one's state since: the same resources, a new serial.
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     const again = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log: (l) => void lines.push(l) });
-    if (chantOps) {
-      // On chant's gate the proof is the request's attachment: a state written since is a new request, which waits for its own approval.
-      expect(again.code).toBe(3);
-      expect(again.records[0].digest).not.toBe(first.records[0].digest);
-    } else {
-      expect(again.code).toBe(4);
-      expect(again.records[0]).toMatchObject({ status: "refused", moved: ["one"] });
-      expect(lines.join("\n")).toContain("the states moved since: one");
-    }
+    // On chant's gate a state written since is a new request under a digest of its own, refused against the approved request's stored proof.
+    if (chantOps) expect(again.records[0].digest).not.toBe(first.records[0].digest);
+    expect(again.code).toBe(4);
+    expect(again.records[0]).toMatchObject({ status: "refused", moved: ["one"] });
+    expect(lines.join("\n")).toContain("the states moved since: one");
     expect(names(work, "two")).toEqual(["c"]);
   });
 
@@ -406,6 +404,37 @@ describe("running a migration from wave 1", () => {
     // Another gate's fact of that digest does not count, and with none to compare every root moved.
     expect(movedSinceApproval(ledger, "split-moved", "jcs1-sha256:old", now, ["pg", "s3", "tfe"])).toEqual(["pg", "s3", "tfe"]);
     expect(movedSinceApproval(ledger, "move-backends", undefined, now, ["pg", "s3", "tfe"])).toEqual(["pg", "s3", "tfe"]);
+  });
+
+  it("on chant's gate, names the roots whose state moved since the approved request's stored proof", async () => {
+    const root = (name: string, version: string): MigrationRoot => ({ root: name, before: { version_id: version, digest: `sha256:${name}${version}` } }) as unknown as MigrationRoot;
+    const request = (digest: string, at: string, approvals: { resolvedBy: string; timestamp: string }[], applied?: boolean) => ({
+      op: "tf-migrate",
+      gate: "split-b",
+      digest,
+      request: { kind: "migrate", subject: "split-b", by: "bob", at, fields: {} },
+      pending: { timestamp: at },
+      approvals,
+      ...(applied ? { applied: { timestamp: T(4) } } : {}),
+    });
+    const requests = (old: ReturnType<typeof request>) => ({ readGatedRequests: async () => [old, request("sha256:new", T(3), [])] });
+    const approved = request("sha256:old", T(1), [{ resolvedBy: "alice", timestamp: T(2) }]);
+    const now = [root("one", "v2"), root("two", "v1")];
+    // chant kept the approved request's proof: only the root whose state before differs moved.
+    const kept = new Map([["_gates/tf-migrate/requests/sha256_old.json", JSON.stringify({ roots: [root("one", "v1"), root("two", "v1")] })]]);
+    restoreChant.push(overrideChantNext("requestProof", { gatedRequestAttachmentPath: (op: string, d: string) => ({ dir: `_gates/${op}/requests`, file: `${d.replace(/:/g, "_")}.json` }), readBlobFromPath: async (dir: string, file: string) => kept.get(`${dir}/${file}`) ?? null }));
+    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved))).toEqual({ approved: "sha256:old", by: "alice", moved: ["one"] });
+    // No approval, the requester's own, or one spent already: the new request only waits.
+    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [])))).toBeUndefined();
+    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [{ resolvedBy: "Bob", timestamp: T(2) }])))).toBeUndefined();
+    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [{ resolvedBy: "alice", timestamp: T(2) }], true)))).toBeUndefined();
+    // A later run finds the new request asked already, newer than the approval: it waits for that digest's approval.
+    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(5), now, requests(approved))).toBeUndefined();
+    // With no proof to compare, every root moved; on a chant without the reader too.
+    kept.clear();
+    expect((await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved)))?.moved).toEqual(["one", "two"]);
+    restoreChant.push(overrideChantNext("requestProof", null));
+    expect((await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved)))?.moved).toEqual(["one", "two"]);
   });
 
   it("under chant run wave, wave 1 refused for a state written after the approval names the root", async () => {
