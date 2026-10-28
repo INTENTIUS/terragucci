@@ -124,6 +124,23 @@
               "call": { "type": "string", "description": "For a module, the call's address in the root." }
             }
           }
+        },
+        "compat": {
+          "type": "object",
+          "description": "For a module version a choudoufu root runs: the known-module catalog's answer from chant's terraform lexicon, the static tier of choudoufu's module table. Every figure is from the tier it names. Absent when the installed chant has no catalog.",
+          "required": ["tier", "status", "examples", "refused", "refusals", "page"],
+          "properties": {
+            "tier": { "type": "string" },
+            "status": { "enum": ["unknown-module", "unknown-version", "clear", "refused"] },
+            "examples": { "type": "integer", "minimum": 0 },
+            "refused": { "type": "integer", "minimum": 0 },
+            "refusals": {
+              "type": "array",
+              "items": { "type": "object", "required": ["id", "sites"], "properties": { "id": { "type": "string" }, "sites": { "type": "integer", "minimum": 0 } } }
+            },
+            "measured": { "type": "array", "items": { "type": "string" } },
+            "page": { "type": "string" }
+          }
         }
       }
     },

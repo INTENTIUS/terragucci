@@ -70,6 +70,13 @@
  * object store's setting hints (chant#4584) are told apart by what the
  * installed module exports, on subpaths the pin already has.
  *
+ * Newer than the pin too (chant#4560, terragucci#1286): the terraform
+ * lexicon's known-module catalog (`module-catalog`), the static tier of
+ * choudoufu's module compatibility table. ./report/estate.ts puts its answer
+ * beside each module version on the estate page and ./tips/index.ts words a
+ * tip from it for a choudoufu project. Without it the column and the tip are
+ * left out.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -458,6 +465,36 @@ export interface ChantTf046 {
   checkLocalRecordStore(ctx: PostSynthContext, env: Readonly<Record<string, string | undefined>>): PostSynthDiagnostic[];
 }
 
+// ── module catalog (chant#4560) ────────────────────────────────────────────
+
+/** One refusal ID at a module version, across the examples that carry it. */
+export interface ChantModuleRefusal {
+  id: string;
+  sites: number;
+  docsUrl: string;
+  examples: string[];
+}
+
+/** The catalog's answer for one pinned module version. Every figure is from the one tier it names. */
+export interface ChantModuleCompatibility {
+  module: string;
+  version: string;
+  tier: string;
+  status: "unknown-module" | "unknown-version" | "clear" | "refused";
+  examples: number;
+  clearExamples: number;
+  refusedExamples: number;
+  refusals: ChantModuleRefusal[];
+  measuredVersions: string[];
+}
+
+/** The terraform lexicon's known-module catalog (`module-catalog`, chant#4560). */
+export interface ChantModuleCatalog {
+  moduleCompatibility(source: string, version: string): ChantModuleCompatibility | undefined;
+  MODULE_COMPATIBILITY_PAGE: string;
+  MODULE_CATALOG_SOURCE: { date: string; awsProvider: string; commit: string };
+}
+
 // ── ci-product (chant#4550) ────────────────────────────────────────────────
 
 /** A command a comment may name, as chant's words module lists them. */
@@ -757,6 +794,11 @@ const loaders = {
       return check?.id === "TF046" && typeof check.check === "function" && has(m, "checkLocalRecordStore") ? (m as unknown as ChantTf046) : undefined;
     },
   ),
+  moduleCatalog: once<ChantModuleCatalog>(
+    // @ts-ignore chant 0.124.54 has no module-catalog subpath (chant#4560)
+    () => import("@intentius/chant-lexicon-terraform/module-catalog"),
+    (m) => (has(m, "moduleCompatibility") && typeof m.MODULE_COMPATIBILITY_PAGE === "string" && typeof m.MODULE_CATALOG_SOURCE === "object" ? (m as unknown as ChantModuleCatalog) : undefined),
+  ),
   ciProductWords: once<ChantCiProductWords>(
     // @ts-ignore chant 0.124.54 has no ci-product-words module (chant#4550)
     () => import("@intentius/chant/ci-product-words"),
@@ -892,6 +934,9 @@ export const chantBucketCheck = (): Promise<ChantBucketCheck | undefined> => loa
 /** The terraform lexicon's TF046 (chant#4561), or undefined. */
 export const chantTf046 = (): Promise<ChantTf046 | undefined> => load("tf046");
 
+/** The terraform lexicon's known-module catalog (`module-catalog`, chant#4560), or undefined. */
+export const chantModuleCatalog = (): Promise<ChantModuleCatalog | undefined> => load("moduleCatalog");
+
 /** chant's words module (`@intentius/chant/ci-product-words`, chant#4550), or undefined. */
 export const chantCiProductWords = (): Promise<ChantCiProductWords | undefined> => load("ciProductWords");
 /** chant's product pipeline (`@intentius/chant/ci-product`, chant#4550), or undefined. */
@@ -952,8 +997,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp };
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────
