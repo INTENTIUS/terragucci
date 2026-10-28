@@ -5,6 +5,10 @@ import { main } from "../src/cli";
 import type { ProjectSettings } from "../src/config";
 import { awsTrustPolicy, gcpCondition, identities, pathOfRemote, tokenOf, type Identities, type Repository } from "../src/identities";
 import { tmp } from "./helpers";
+import { chantExitCodes } from "../src/chant-next";
+
+// chant#4553: on chant's exit-code table a usage error is 1; terragucci's own table made it 2.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
 
 const FIXTURES = join(__dirname, "fixtures", "identities");
 /** The provider's goldens: its data sources are tested against the core's own output. */
@@ -192,7 +196,7 @@ describe("config identities --json", () => {
     expect(c.environments.map((e) => [e.name, e.roots])).toEqual([["prod", null], ["dev", null], ["default", null]]);
     expect(c.environments[0]!.stages.drift!.aws!.audience).toBe("terragucci-drift");
     const bad = await run(dir, "config", "identities", "--json");
-    expect(bad.code).toBe(2);
+    expect(bad.code).toBe(USAGE);
     expect(JSON.parse(bad.out)).toMatchObject({ command: "config identities", results: null });
     expect(JSON.parse(bad.out).error).toContain("gitlab.com/acme/platform/infra");
   });
@@ -203,7 +207,7 @@ describe("config identities --json", () => {
     expect(c.environments[0]!.roots).toBeNull();
     writeFileSync(join(dir, "terragucci.yml"), "binary: tofu\n");
     const bad = await run(dir, "config", "identities", "--json");
-    expect(bad.code).toBe(2);
+    expect(bad.code).toBe(USAGE);
     expect(JSON.parse(bad.out).error).toContain("--forge");
   });
 

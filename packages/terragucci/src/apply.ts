@@ -99,6 +99,7 @@ import type { OpWaveDecision } from "@intentius/chant/op";
 import { resolveGateRunLocator, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { fetchLifecycleStatus } from "@intentius/chant/lifecycle/git";
 import { appliesFrom, routeConflicts, routedBranch } from "@intentius/chant/workspace/ci-branches";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import {
@@ -540,7 +541,28 @@ function fetchLifecycle(repo: string): boolean {
   if (!heads.stdout.trim()) return false;
   const f = git(repo, ["fetch", "-q", "origin", `+refs/heads/${LIFECYCLE}:${REMOTE_REF}`]);
   if (f.status !== 0) throw new ConfigError(`cannot fetch ${LIFECYCLE}, so the gate cannot be decided: ${f.stderr.trim()}`);
+  catchUpLocalLedger(repo);
   return true;
+}
+
+/**
+ * Bring the checkout's own chant/lifecycle up to what was just fetched, when
+ * that loses nothing: it is missing, or behind. chant's writers append to the
+ * local branch and push it with a lease on REMOTE_REF, so a local branch left
+ * behind a REMOTE_REF this fetch moved would push over every record made since
+ * it was last read (an approval made elsewhere between two runs). A local
+ * branch with records origin does not have is left alone, for chant to settle.
+ */
+function catchUpLocalLedger(repo: string): void {
+  const tip = git(repo, ["rev-parse", "--verify", "-q", `${REMOTE_REF}^{commit}`]).stdout.trim();
+  if (!tip) return;
+  const local = git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${LIFECYCLE}^{commit}`]).stdout.trim();
+  if (local === tip) return;
+  if (local && git(repo, ["merge-base", "--is-ancestor", local, tip]).status !== 0) return;
+  // A checked-out chant/lifecycle is never moved under its work tree.
+  if (git(repo, ["symbolic-ref", "-q", "HEAD"]).stdout.trim() === `refs/heads/${LIFECYCLE}`) return;
+  // With the old value, a writer that moved the branch since is never undone.
+  git(repo, ["update-ref", `refs/heads/${LIFECYCLE}`, tip, local || "0".repeat(tip.length)]);
 }
 
 /** The gate ledger as `chant/lifecycle` on origin holds it now: the waves' gates, or with `path` another op's file. */
@@ -590,6 +612,9 @@ function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | A
 export async function writeWaveRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | FinishedRecord, message: string): Promise<void> {
   const chant = await chantGateWriters();
   if (!chant) return appendRecord(repo, record, {}, message, record.kind === "pending" || record.kind === "resolution" || record.kind === undefined ? LEDGER_PATH : APPLIED_PATH);
+  // chant's writers append to the checkout's branch and push it with a lease: bring the branch up to origin first,
+  // so a record made elsewhere since the wave last read the ledger is appended to, never pushed over.
+  await chant.requireLifecycleLedger({ cwd: repo });
   const port = chant.gitGateLedgerPort({ cwd: repo });
   const line = record as unknown as Record<string, unknown>;
   const { version: _version, ...input } = line;
@@ -615,6 +640,7 @@ export async function writeWaveRecord(repo: string, record: PendingRecord | Reso
 export async function writeWaveFiles(repo: string, files: Record<string, string>, message: string): Promise<void> {
   const chant = await chantGateWriters();
   if (!chant) return appendLifecycle(repo, "", [], files, message);
+  await chant.requireLifecycleLedger({ cwd: repo });
   for (const [path, text] of Object.entries(files)) {
     const at = path.lastIndexOf("/");
     await chant.writeBlobToPath(path.slice(0, at), path.slice(at + 1), text, message, { cwd: repo });
@@ -2404,11 +2430,15 @@ async function planRoots(repo: string, options: ApplyWaveOptions, ctx: WavesCont
   }
   const env = options.env ?? process.env;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const ledgerChangeSet = !!(await chantPrEnvLedger());
+  // chant stores the change set on the local ledger before its gate fetches the remote one, so a checkout whose copy is
+  // behind (an approval made elsewhere since its last run) or missing would fork the ledger. Bring it up to date first.
+  if (ledgerChangeSet) await fetchLifecycleStatus({ cwd: repo });
   writePlans(plansPath, {
     runs: [...planned.map((p) => planEntry(p.root, p.member!.planDigest, !changing.has(p.root), p.destroys, denied.get(p.root))), ...migrationMembers.map((m) => planEntry(m.member, m.planDigest, true, 0))],
     ...(priced ? { members: [priced] } : {}),
     // chant#4551: the change set the pending fact cites. A chant before it would not read the field, so it goes only to one that has the ledger's writers.
-    ...((await chantPrEnvLedger()) ? { changeSet: wavePlansChangeSet(planned.filter((p) => p.member).map((p) => ({ path: p.root, plan: p.plan, ...(p.error ? { error: p.error } : {}), binary: p.bin }))) } : {}),
+    ...(ledgerChangeSet ? { changeSet: wavePlansChangeSet(planned.filter((p) => p.member).map((p) => ({ path: p.root, plan: p.plan, ...(p.error ? { error: p.error } : {}), binary: p.bin }))) } : {}),
     pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}), members, ...(j.quorum ? { approval_rules: j.quorum.map(ruleReport) } : {}) },
     ...(j.overriders ? { overriders: j.overriders, overridersSource: "policy.override" } : {}),
   });

@@ -31,6 +31,7 @@ import { resolveRepo } from "../src/config";
 import { REPORT_MINOR, type Report } from "../src/report/schema";
 import { rc } from "./report-fixtures";
 import { git, tmp, write } from "./helpers";
+import { chantHandover } from "../src/chant-next";
 
 const unit = (deps: string[] = []): string =>
   [
@@ -872,7 +873,15 @@ describe("the Terragrunt example", () => {
     const r = await init(repo, { dryRun: true });
     expect(r.roots).toHaveLength(15);
     expect(r.layers.map((w) => w.length)).toEqual([1, 4, 2, 7, 1]);
-    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    // The example is committed as a chant without parameterised handover scripts renders it. Where chant takes
+    // terragucci's words (chant#4554) the checkout and handover steps are chant's, and nothing else in the pipeline moves.
+    if (!chantHandover()) {
+      expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+      return;
+    }
+    expect(r.files.map((f) => f.status)).toEqual(["updated", "unchanged", "unchanged"]);
+    const lines = (t: string) => t.split("\n").filter((l) => !/tg_handover|chant_handover|chant_report|chant_auth|GIT_CONFIG_COUNT=1/.test(l));
+    expect(lines(r.files[0]!.content)).toEqual(lines(readFileSync(r.files[0]!.path, "utf-8")));
   });
 
   it("every scenario applies to the example as committed", () => {

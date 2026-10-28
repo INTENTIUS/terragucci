@@ -3,6 +3,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { CHECK_AUDIENCE, checkJob, describeJobCheck, jobSeen, runnerTags, tokenClaims, type JobExpectation } from "../src/check-job";
 import { main } from "../src/cli";
+import { chantExitCodes } from "../src/chant-next";
+
+// chant#4553: on chant's exit-code table a usage error is 1; terragucci's own table made it 2.
+const USAGE = (await chantExitCodes()) ? 1 : 2;
 
 const jwt = (claims: Record<string, unknown>): string => `h.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.s`;
 const tokenFetch = (claims: Record<string, unknown>) =>
@@ -112,7 +116,7 @@ describe("check-job: the command", () => {
     }
   }
 
-  it("exits 0 when the job matches, 1 naming what does not, and 2 on a usage error", async () => {
+  it("exits 0 when the job matches, 1 naming what does not, and the usage code on a usage error", async () => {
     const argv = ["check-job", "--forge", "gitlab", "--environment", "prod", "--forge-environment", "prod", "--branches", "main", "--runner-tags", "self-hosted,prod"];
     const ok = await run(argv, { CI_ENVIRONMENT_NAME: "prod", CI_COMMIT_REF_NAME: "main", CI_COMMIT_REF_PROTECTED: "true", CI_RUNNER_TAGS: '["self-hosted","prod"]' });
     expect(ok.code).toBe(0);
@@ -120,7 +124,7 @@ describe("check-job: the command", () => {
     const bad = await run(argv, { CI_ENVIRONMENT_NAME: "dev", CI_COMMIT_REF_NAME: "main", CI_COMMIT_REF_PROTECTED: "true", CI_RUNNER_TAGS: '["self-hosted","prod"]' });
     expect(bad.code).toBe(1);
     expect(bad.err).toContain("forge environment: expected prod, found dev");
-    expect((await run(["check-job", "--forge", "gitlab"], {})).code).toBe(2);
+    expect((await run(["check-job", "--forge", "gitlab"], {})).code).toBe(USAGE);
     // --self-hosted takes no value: the next flag is still read.
     const forgejo = await run(["check-job", "--forge", "forgejo", "--environment", "prod", "--self-hosted", "--branches", "main"], { GITHUB_REF: "refs/heads/main", RUNNER_ENVIRONMENT: "self-hosted" });
     expect(forgejo.code).toBe(0);

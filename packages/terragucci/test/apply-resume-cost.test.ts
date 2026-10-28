@@ -14,6 +14,8 @@ describe("a wave behind its gate", () => {
     const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} });
     const ledgerOf = (origin: string) => parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
     const appliedText = (origin: string) => git(origin, "show", `chant/lifecycle:${APPLIED_PATH}`);
+    /** Every line of the applied ledger, read as records: chant's writers sort a line's keys, terragucci's keep its own order. */
+    const appliedLines = (origin: string) => appliedText(origin).split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
     const create = (name: string, input: string) => ({ address: `terraform_data.${name}`, mode: "managed", type: "terraform_data", name, change: { actions: ["create"], before: null, after: { input }, after_unknown: {} } });
     /** Root a's plan: these changes, its records holding `recorded`. */
     const planA = (work: string, changes: unknown[], recorded: string[] = []) =>
@@ -48,7 +50,7 @@ describe("a wave behind its gate", () => {
       expect(spent).toMatchObject({ kind: "applied", planDigest: digest, approvedAt: T(2) });
       expect(spent).not.toHaveProperty("changes");
       expect(applied).toMatchObject({ kind: "changes", planDigest: digest, approvedAt: T(2), changes: [{ root: "a", address: "terraform_data.first", actions: "create" }, { root: "a", address: "terraform_data.second", actions: "create" }] });
-      expect(text).toContain(`"kind":"finished","op":"tf-apply","gate":"wave-1","planDigest":"${digest}","applied":"${T(3)}","result":"failed"`);
+      expect(appliedLines(origin)).toContainEqual(expect.objectContaining({ kind: "finished", op: "tf-apply", gate: "wave-1", planDigest: digest, applied: T(3), result: "failed" }));
     });
 
     it("applies the rest under the same approval once first is in the records, and records that it resumed", async () => {
@@ -66,7 +68,7 @@ describe("a wave behind its gate", () => {
       const resumed = parseApplied(appliedText(origin)).at(-1)!;
       expect(resumed).toMatchObject({ kind: "changes", approvedAt: covered!.timestamp, approvedBy: "alice", resumes: digest, changes: [{ address: "terraform_data.second" }] });
       expect(resumed.planDigest).not.toBe(digest);
-      expect(appliedText(origin)).toContain(`"applied":"${T(4)}","result":"applied"`);
+      expect(appliedLines(origin)).toContainEqual(expect.objectContaining({ kind: "finished", applied: T(4), result: "applied" }));
     });
 
     it("waits for an approval of its own when a remaining change moved since the approval", async () => {
