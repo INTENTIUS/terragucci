@@ -41,6 +41,14 @@ export interface ScenarioIndexEntry {
   into?: string;
   /** Moves inside the base before init, `from:to` (a tree's forgejo/.forgejo to .forgejo). */
   lift?: string[];
+  /**
+   * A choudoufu sidecar in the base (`terraform/estate.chdf.hcl`) whose s3
+   * record store seed.sh makes in floci with the settings choudoufu asserts
+   * (versioning, a noncurrent-version lifecycle rule, the public access
+   * block), and whose bucket_owner it points at floci's account, as the
+   * tree's own smoke does in its scratch copy.
+   */
+  recordStore?: string;
   /** The repo's Actions secrets and variables, by name. */
   secrets?: Record<string, string>;
   vars?: Record<string, string>;

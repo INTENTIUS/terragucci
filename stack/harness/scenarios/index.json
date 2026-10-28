@@ -65,6 +65,30 @@
       "choudoufu#2219"
     ]
   },
+  "tg-compose-ci-pipelines": {
+    "binary": "choudoufu",
+    "source": "choudoufu:examples/ci-pipelines",
+    "lift": [
+      "forgejo/.forgejo:.forgejo"
+    ],
+    "recordStore": "terraform/estate.chdf.hcl",
+    "secrets": {
+      "CHOUDOUFU_APPLY_ACCESS_KEY_ID": "test",
+      "CHOUDOUFU_APPLY_SECRET_ACCESS_KEY": "test",
+      "CHOUDOUFU_PLAN_ACCESS_KEY_ID": "test",
+      "CHOUDOUFU_PLAN_SECRET_ACCESS_KEY": "test"
+    },
+    "vars": {
+      "AWS_REGION": "us-east-1"
+    },
+    "needs": [
+      "profile:forgejo",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "choudoufu#2302 (examples/ci-pipelines: smoke-ci-pipelines and the ci.yml dispatch job)"
+    ]
+  },
   "tg-compose-terragrunt": {
     "binary": "choudoufu",
     "source": "choudoufu:examples/demo-terragrunt",

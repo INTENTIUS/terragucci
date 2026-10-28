@@ -20,6 +20,10 @@
 # secrets and vars (the repo's Actions secrets and variables) shape the repo.
 # A seed/ directory beside the scenario file is copied over the base before
 # terragucci init, for what a sourced tree lacks (terragucci.yml, a backend).
+# The line's recordStore names a choudoufu sidecar in the base whose s3
+# record store is made in floci, with versioning, a noncurrent-version
+# lifecycle rule and the public access block, and whose bucket_owner is
+# rewritten to floci's account, as the tree's own smoke does.
 #
 # Then it:
 #
@@ -40,7 +44,9 @@
 #      to main as the base commit.
 #
 # It prints, one per line: REPO=, BASE_DIR= (a git checkout of the base),
-# BASE_SHA= and ENGINE_VERSION= (the version the binary's CI image reports).
+# BASE_SHA= and ENGINE_VERSION=: the choudoufu release the tree's own
+# workflows download, when they download one, and otherwise the version the
+# binary's CI image reports.
 # Progress goes to stderr.
 set -euo pipefail
 
@@ -156,6 +162,32 @@ while IFS= read -r move; do
   mkdir -p "$(dirname "$base/$to")"
   mv "$base/$from" "$base/$to"
 done < <(jq -r '(.lift // [])[]' <<<"$entry")
+sidecar="$(jq -r '.recordStore // empty' <<<"$entry")"
+if [ -n "$sidecar" ]; then
+  [ -f "$base/$sidecar" ] || { log "recordStore: $sidecar is not in the tree"; exit 1; }
+  bucket="$(sed -nE 's/^[[:space:]]*bucket[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$base/$sidecar" | head -1)"
+  [ -n "$bucket" ] || { log "recordStore: $sidecar names no bucket"; exit 1; }
+  s3_put() { # query, xml body: a bucket subresource, with the Content-MD5 S3 asks of these two
+    curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket?$1" -H 'content-type: application/xml' \
+      -H "Content-MD5: $(printf '%s' "$2" | openssl md5 -binary | base64)" --data-binary "$2"
+  }
+  S3NS='xmlns="http://s3.amazonaws.com/doc/2006-03-01/"'
+  curl -fsS -o /dev/null -X PUT "$FLOCI/$bucket" || true
+  s3_put versioning "<VersioningConfiguration $S3NS><Status>Enabled</Status></VersioningConfiguration>" \
+    && s3_put lifecycle "<LifecycleConfiguration $S3NS><Rule><ID>expire-noncurrent</ID><Filter><Prefix></Prefix></Filter><Status>Enabled</Status><NoncurrentVersionExpiration><NoncurrentDays>30</NoncurrentDays></NoncurrentVersionExpiration></Rule></LifecycleConfiguration>" \
+    && s3_put publicAccessBlock "<PublicAccessBlockConfiguration $S3NS><BlockPublicAcls>true</BlockPublicAcls><IgnorePublicAcls>true</IgnorePublicAcls><BlockPublicPolicy>true</BlockPublicPolicy><RestrictPublicBuckets>true</RestrictPublicBuckets></PublicAccessBlockConfiguration>" \
+    || { log "recordStore: s3://$bucket did not take its settings"; exit 1; }
+  # floci's account, read from its STS as the tree's smoke reads it. floci
+  # checks no signature; the credential scope routes the call.
+  account="$(curl -fsS -X POST "$FLOCI/" -H 'content-type: application/x-www-form-urlencoded' \
+    -H "Authorization: AWS4-HMAC-SHA256 Credential=test/20260101/us-east-1/sts/aws4_request, SignedHeaders=host, Signature=0" \
+    --data 'Action=GetCallerIdentity&Version=2011-06-15' | tr -d '\n' | sed -n 's#.*<Account>\([0-9]*\)</Account>.*#\1#p')"
+  [[ "$account" =~ ^[0-9]{12}$ ]] || { log "recordStore: floci reported account '${account}', not twelve digits"; exit 1; }
+  if grep -qE '^[[:space:]]*bucket_owner[[:space:]]*=' "$base/$sidecar"; then
+    perl -pi -e 's/^(\s*bucket_owner\s*=\s*)"[0-9]+"/$1"'"$account"'"/' "$base/$sidecar"
+  fi
+  log "record store s3://$bucket on floci, owned by $account"
+fi
 [ ! -d "$HERE/scenarios/$ID/seed" ] || cp -R "$HERE/scenarios/$ID/seed/." "$base/"
 if [ ! -d "$base/.forgejo/workflows" ]; then
   (cd "$base" && node "$ROOT/packages/terragucci/dist/terragucci.mjs" init >/dev/null) || { log "terragucci init failed in the base"; exit 1; }
@@ -165,7 +197,19 @@ git -C "$base" remote add origin "http://$USER:$TOKEN@forgejo:3000/$repo.git"
 sha="$(push_tree "$base" "$repo" main "$ID: the base")"
 wait_run "$repo" "$sha" >&2 || log "the base's first run did not finish green; the scenario's reset settles it again"
 
-version="$(docker run --rm --entrypoint "$binary" "$(tag_of "$binary")" version 2>/dev/null | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1 || true)"
+# The engine the row names: a tree whose workflows download their own
+# choudoufu runs that release (cross-estate-dependency's v0.18.0), not the
+# CI image's.
+version=""
+if [ "$binary" = choudoufu ] && [ -d "$base/.forgejo/workflows" ]; then
+  pinned="$(grep -rhoE 'choudoufu/releases/download/v[0-9]+\.[0-9]+\.[0-9]+' "$base/.forgejo/workflows" | sed 's#.*/download/##' | sort -u || true)"
+  case "$(printf '%s' "$pinned" | grep -c . || true)" in
+    0) ;;
+    1) version="$pinned"; log "the tree's workflows download choudoufu $version" ;;
+    *) log "the tree's workflows download several choudoufu releases ($(echo $pinned)); the row cannot name one"; exit 1 ;;
+  esac
+fi
+[ -n "$version" ] || version="$(docker run --rm --entrypoint "$binary" "$(tag_of "$binary")" version 2>/dev/null | grep -Eo 'v?[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -1 || true)"
 [ -n "$version" ] || { log "the $binary image reported no version"; exit 1; }
 
 echo "REPO=$repo"

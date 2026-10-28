@@ -173,15 +173,51 @@ describe("the scenarios", () => {
       if (e.source.includes("@")) expect(e.source, id).toMatch(/@[0-9a-f]{40}:/);
     }
     expect(index["tg-compose-cross-estate"]?.lift).toEqual(["forgejo/.forgejo:.forgejo"]);
+    expect(index["tg-compose-ci-pipelines"]?.source).toBe("choudoufu:examples/ci-pipelines");
+    expect(index["tg-compose-ci-pipelines"]?.lift).toEqual(["forgejo/.forgejo:.forgejo"]);
+    expect(index["tg-compose-ci-pipelines"]?.recordStore).toBe("terraform/estate.chdf.hcl");
     expect(index["multi-region"]?.source).toBe("lex00/aws-bench@e8c259c23efe1a0805595ac9a340c178b427c1d3:benchmarks/arms/terraform-ec2-multiregion");
   });
 
   it("covers the example pipelines and the multi-region estate, each with a claim choudoufu can cite", () => {
-    for (const id of ["tg-compose-cross-estate", "tg-compose-terragrunt", "tg-compose-atmos", "multi-region"]) {
+    for (const id of ["tg-compose-cross-estate", "tg-compose-ci-pipelines", "tg-compose-terragrunt", "tg-compose-atmos", "multi-region"]) {
       const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { claim: string; break: { overlay?: string } };
       expect(doc.claim, id).toMatch(/^[a-z]+\/[a-z-]+$/);
       expect(doc.break.overlay, id).toBe("break");
     }
+  });
+
+  it("drives ci-pipelines through its own gate: the approval, then the run again applying once", () => {
+    const doc = JSON.parse(readFileSync(scenarioPath("tg-compose-ci-pipelines"), "utf8")) as { claim: string; steps: Array<{ id: string; command?: string[]; expect?: unknown[] }> };
+    expect(doc.claim).toBe("choudoufu/ci-pipelines");
+    const by = new Map(doc.steps.map((s) => [s.id, s]));
+    expect(by.get("checked")!.command).toEqual(["stack/harness/check.sh", "pr-run", "add-log-group", "success", "live-check.yml"]);
+    expect(by.get("planned")!.command).toEqual(["stack/harness/check.sh", "pr-run", "add-log-group", "success", "live-plan.yml"]);
+    expect(by.get("gated")!.expect).toContainEqual({ ledger: { op: "live-apply", status: "gated" } });
+    expect(by.get("approved")!.command).toEqual(["stack/harness/check.sh", "chant-approve", "live-apply", "approve-live-apply"]);
+    expect(by.get("applied")!.expect).toContainEqual({ ledger: { op: "live-apply", status: "ok", count: 1 } });
+    const ids = doc.steps.map((s) => s.id);
+    expect(ids.indexOf("approved")).toBeGreaterThan(ids.indexOf("gated"));
+    expect(ids.indexOf("applied")).toBeGreaterThan(ids.indexOf("approved"));
+    const brk = overlayFiles(scenarioPath("tg-compose-ci-pipelines"), "break");
+    expect(brk["terraform/break.tf"]).toMatch(/ignore_changes = \[tags\]/);
+  });
+
+  it("knows every check.sh command a scenario runs", () => {
+    const check = readFileSync(join(stack, "harness", "check.sh"), "utf8");
+    for (const id of scenarioIds()) {
+      const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { steps: Array<{ command?: string[] }> };
+      for (const s of doc.steps) {
+        if (s.command?.[0] !== "stack/harness/check.sh") continue;
+        expect(check, `${id} ${s.command[1]}`).toMatch(new RegExp(`^  (?:[a-z0-9-]+\\|)*${s.command[1]}(?:\\|[a-z0-9-]+)*\\)`, "m"));
+      }
+    }
+  });
+
+  it("names the choudoufu its tree's workflows download as the row's engine", () => {
+    const seed = readFileSync(join(stack, "harness", "seed.sh"), "utf8");
+    expect(seed).toContain("choudoufu/releases/download/v[0-9]+");
+    expect(seed).toContain(`jq -r '.recordStore // empty'`);
   });
 
   it("reads a tree: overlay from the seeded base, and refuses one before there is a base", () => {
