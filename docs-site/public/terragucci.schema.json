@@ -777,6 +777,12 @@
               "enum": [
                 "mirror"
               ]
+            },
+            "catalog": {
+              "enum": [
+                "on",
+                "off"
+              ]
             }
           },
           "additionalProperties": false,
@@ -2645,6 +2651,12 @@
                 "providers": {
                   "enum": [
                     "mirror"
+                  ]
+                },
+                "catalog": {
+                  "enum": [
+                    "on",
+                    "off"
                   ]
                 }
               },

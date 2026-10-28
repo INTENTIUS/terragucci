@@ -77,6 +77,16 @@
  * tip from it for a choudoufu project. Without it the column and the tip are
  * left out.
  *
+ * Newer than the pin too (terragucci#1297, #1298): chant core's release
+ * catalog (`lifecycle/release-catalog` and `lifecycle/release-catalog-site`,
+ * chant#4595), its status records (`lifecycle/release-status`, chant#4596)
+ * and its changelog (`lifecycle/release-changelog`, chant#4597), with the
+ * terraform lexicon's docs extractor, consumer scan, catalog reader and
+ * deprecated-version check on its `registry` subpath (chant#4598, #4599).
+ * ./publish/catalog.ts writes the catalog beside the registry with them, and
+ * `terragucci modules` reads it. Without them publish writes no catalog and
+ * says so in its row.
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. Each `import()`
  * carries a `@ts-ignore` for the same reason; scripts/cli-bundle.mjs stands
@@ -709,6 +719,132 @@ export interface ChantOtlp {
   ): Promise<string | undefined>;
 }
 
+// ── release catalog (terragucci#1297, chant#4595-#4599) ───────────────────
+
+/** A version's status in the catalog. */
+export type ChantReleaseState = "active" | "deprecated" | "yanked";
+
+/** One version in chant's release catalog (`CatalogVersion`, chant#4595). */
+export interface ChantCatalogVersion {
+  version: string | null;
+  digest: string;
+  commit: string;
+  time: string;
+  actor: string;
+  envs: string[];
+  status: { state: ChantReleaseState; reason: string | null; replacement: string | null; actor: string | null; time: string | null };
+  changelog: { bump: "major" | "minor" | "patch" | null; entries: { kind: string; sha: string; subject: string; scope?: string }[] };
+  attestation: { state: "verified" | "signed" | "unsigned"; verify: string | null; identity: string | null };
+  consumers: { repo?: string; root: string; file?: string; address?: string }[];
+  fields: Record<string, Record<string, unknown>>;
+}
+
+/** One component in the catalog. */
+export interface ChantCatalogComponent {
+  name: string;
+  latest: string | null;
+  fields: Record<string, Record<string, unknown>>;
+  versions: ChantCatalogVersion[];
+}
+
+/** chant's release catalog document (`ReleaseCatalog`, chant#4595). */
+export interface ChantReleaseCatalogDoc {
+  $schema: string;
+  contract: 1;
+  chant: string;
+  generatedAt: string;
+  components: ChantCatalogComponent[];
+}
+
+/** A status record (`ReleaseStatusRecord`, chant#4596). */
+export interface ChantReleaseStatusRecord {
+  version: 1;
+  component: string;
+  env: string;
+  digest: string;
+  releaseVersion?: string;
+  status: ChantReleaseState;
+  reason?: string;
+  replacement?: string;
+  actor: string;
+  timestamp: string;
+}
+
+/** The site's engine sections (`CatalogSiteSections`), passed through untouched. */
+export type ChantCatalogSections = object;
+
+/**
+ * chant core's release catalog: the model (`lifecycle/release-catalog`,
+ * chant#4595), its static site (`lifecycle/release-catalog-site`), the status
+ * records (`lifecycle/release-status`, chant#4596) and the changelog
+ * (`lifecycle/release-changelog`, chant#4597).
+ */
+export interface ChantReleaseCatalog {
+  buildReleaseCatalog(
+    input: {
+      releases: readonly unknown[];
+      statuses?: readonly unknown[];
+      changelogs?: readonly { component: string; version?: string; digest?: string; entries: unknown[]; bump?: string }[];
+      consumers?: readonly { component: string; version?: string; digest?: string; consumers: unknown[] }[];
+      attestations?: readonly { component: string; digest: string; state: string; verify?: string; identity?: string }[];
+      fields?: readonly { component: string; version?: string; digest?: string; engine: string; fields: Record<string, unknown> }[];
+    },
+    opts: { generatedAt: string; chant?: string },
+  ): ChantReleaseCatalogDoc;
+  parseReleaseCatalog(text: string | unknown): ChantReleaseCatalogDoc;
+  renderCatalogSite(catalog: ChantReleaseCatalogDoc, sections?: ChantCatalogSections, opts?: { title?: string }): { path: string; contentType: string; bytes: Uint8Array }[];
+  versionPath(component: string, key: string): string;
+  componentPath(component: string): string;
+  parseReleaseStatus(text: string | null): { records: ChantReleaseStatusRecord[]; malformed: number };
+  catalogStatusInputs(records: readonly ChantReleaseStatusRecord[]): unknown[];
+  statusOf(records: readonly ChantReleaseStatusRecord[], component: string, digest: string): { status: ChantReleaseState; record?: ChantReleaseStatusRecord };
+  appendReleaseStatus(input: Omit<ChantReleaseStatusRecord, "version">, opts?: { cwd?: string }): Promise<{ commit: string; record: ChantReleaseStatusRecord }>;
+  releaseChangelog(commits: readonly { sha: string; message: string }[]): { bump: "major" | "minor" | "patch"; entries: { kind: string; sha: string; subject: string; scope?: string }[] };
+  RELEASE_STATUS_FILE: string;
+  RELEASE_CATALOG_FLOOR: string;
+}
+
+/** A module call the terraform lexicon's scan found (`ModuleConsumer`, chant#4599). */
+export interface ChantModuleConsumer {
+  root: string;
+  file: string;
+  address: string;
+  kind: "terraform" | "terragrunt";
+  source: string;
+  module: string;
+  pin: string | null;
+}
+
+/** One finding of the deprecated-version check (`DeprecatedPin`, chant#4599). */
+export interface ChantDeprecatedPin {
+  consumer: ChantModuleConsumer;
+  component: string;
+  version: string;
+  status: "deprecated" | "yanked";
+  reason: string | null;
+  replacement: string | null;
+  message: string;
+}
+
+/** The terraform-docs runner the lexicon's extractor takes (`TerraformDocsRunner`, chant#4598). */
+export type ChantTerraformDocsRunner = (args: { dir: string; config: string }) => Promise<string | null>;
+
+/**
+ * The terraform lexicon's catalog parts, on its `registry` subpath: the docs
+ * extractor and catalog fields (chant#4598), the consumer scan, the catalog
+ * reader and the deprecated-version check (chant#4599).
+ */
+export interface ChantRegistryCatalog {
+  moduleDocs(dir: string, options?: { parser?: unknown; terraformDocs?: ChantTerraformDocsRunner; binary?: string }): Promise<{ docsFrom: "terraform-docs" | "hcl"; note: string | null } & Record<string, unknown>>;
+  terraformCatalogFields(docs: unknown, address: string): Record<string, unknown>;
+  terraformCatalogSections(): ChantCatalogSections;
+  moduleConsumers(repo: string, roots: readonly string[], parser?: unknown): Promise<ChantModuleConsumer[]>;
+  normalizeModuleSource(module: string): string;
+  readRegistryCatalog(registry: string, options?: { fetch?: (url: string, init?: RequestInit) => Promise<Response>; scheme?: "https" | "http"; token?: string | false }): Promise<ChantReleaseCatalogDoc | null>;
+  deprecatedPins(consumers: readonly ChantModuleConsumer[], catalog: ChantReleaseCatalogDoc): { warnings: ChantDeprecatedPin[]; refusals: ChantDeprecatedPin[] };
+  CATALOG_PATH: string;
+}
+
 // ── loading ────────────────────────────────────────────────────────────────
 
 /**
@@ -876,6 +1012,32 @@ const loaders = {
     () => import("@intentius/chant/otlp"),
     (m) => (has(m, "otlpFromEnv", "sendOtlp") && typeof m.OTLP_EXPORTER_FLOOR === "string" ? (m as unknown as ChantOtlp) : undefined),
   ),
+  releaseCatalog: once<ChantReleaseCatalog>(
+    // One subpath at a time, for the reason inTurn gives.
+    async () => {
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-catalog (chant#4595)
+      const model: object = await import("@intentius/chant/lifecycle/release-catalog");
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-catalog-site (chant#4595)
+      const site: object = await import("@intentius/chant/lifecycle/release-catalog-site");
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-status (chant#4596)
+      const status: object = await import("@intentius/chant/lifecycle/release-status");
+      // @ts-ignore chant 0.124.54 has no lifecycle/release-changelog (chant#4597)
+      const changelog: object = await import("@intentius/chant/lifecycle/release-changelog");
+      return { ...changelog, ...status, ...site, ...model };
+    },
+    (m) =>
+      has(m, "buildReleaseCatalog", "parseReleaseCatalog", "renderCatalogSite", "versionPath", "componentPath") && has(m, "parseReleaseStatus", "catalogStatusInputs", "statusOf", "appendReleaseStatus", "releaseChangelog") && typeof m.RELEASE_STATUS_FILE === "string"
+        ? (m as unknown as ChantReleaseCatalog)
+        : undefined,
+  ),
+  registryCatalog: once<ChantRegistryCatalog>(
+    // @ts-ignore chant 0.124.54 has no registry subpath (chant#4565); the catalog parts are chant#4598 and #4599
+    () => import("@intentius/chant-lexicon-terraform/registry"),
+    (m) =>
+      has(m, "moduleDocs", "terraformCatalogFields", "terraformCatalogSections", "moduleConsumers", "normalizeModuleSource", "readRegistryCatalog", "deprecatedPins") && typeof m.CATALOG_PATH === "string"
+        ? (m as unknown as ChantRegistryCatalog)
+        : undefined,
+  ),
   objectStore: once<ChantObjectStore>(
     // @ts-ignore chant 0.124.54 has no object-store subpath (chant#4554)
     () => import("@intentius/chant/object-store"),
@@ -964,6 +1126,10 @@ export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load(
 export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
 /** chant's OTLP exporter (chant#4555), or undefined. */
 export const chantOtlp = (): Promise<ChantOtlp | undefined> => load("otlp");
+/** chant core's release catalog, status records and changelog (chant#4595, #4596, #4597), or undefined. */
+export const chantReleaseCatalog = (): Promise<ChantReleaseCatalog | undefined> => load("releaseCatalog");
+/** The terraform lexicon's docs extractor, consumer scan, catalog reader and deprecated-version check (chant#4598, #4599), or undefined. */
+export const chantRegistryCatalog = (): Promise<ChantRegistryCatalog | undefined> => load("registryCatalog");
 
 /**
  * Load the parts synchronous code reads, once, before a command runs: the
@@ -998,7 +1164,8 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
   const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp };
+  const [releaseCatalog, registryCatalog] = [await chantReleaseCatalog(), await chantRegistryCatalog()];
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

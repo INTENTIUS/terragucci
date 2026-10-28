@@ -1417,9 +1417,11 @@ export const STEPS_MOVED =
   "steps are ci.hooks in chant.workspace.json now, each with a command list and perRun: true (before: init or drift is before.observe, after: init is before.plan, after: drift is after.plan, roots is targets, on_failure is onFailure); see https://intentius.io/terragucci/guides/run-steps/";
 
 export const MODULES_KEYS = new Set(["path", "publish", "attest", "require", "trusted", "test", "registry"]);
-export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth", "tokens", "tokens_name", "tokens_region", "providers"];
+export const REGISTRY_KEYS = ["bucket", "dir", "endpoint", "prefix", "url", "namespace", "namespaces", "system", "download", "edge", "auth", "tokens", "tokens_name", "tokens_region", "providers", "catalog"];
 /** `modules.registry.providers`: `mirror` serves the providers the lock files pin as a network mirror under `providers/` (chant#4564). */
 export const REGISTRY_PROVIDERS = ["mirror"] as const;
+/** `modules.registry.catalog`: the release catalog under `catalog/` beside the registry's files (terragucci#1297). `on` by default; `off` writes none. */
+export const REGISTRY_CATALOG = ["on", "off"] as const;
 /**
  * `modules.registry.edge`: what sends Terraform the X-Terraform-Get header a
  * stored download answer cannot carry (terragucci#1287). `cloudflare` is a
@@ -1503,6 +1505,7 @@ function checkRegistry(r: unknown, where: string, targets: unknown[], problems: 
     else if (r.edge === "pages" && r.dir === undefined) problems.push(`${where}.edge: pages writes a _headers file beside the files a Pages site deploys, so it needs ${where}.dir`);
   }
   if (r.providers !== undefined && !REGISTRY_PROVIDERS.includes(r.providers as (typeof REGISTRY_PROVIDERS)[number])) problems.push(`${where}.providers is ${JSON.stringify(r.providers)}; the one setting is mirror`);
+  if (r.catalog !== undefined && !REGISTRY_CATALOG.includes(r.catalog as (typeof REGISTRY_CATALOG)[number])) problems.push(`${where}.catalog is ${JSON.stringify(r.catalog)}; use on or off`);
   if (r.auth !== undefined) {
     if (!REGISTRY_AUTHS.includes(r.auth as RegistryAuth)) problems.push(`${where}.auth is ${JSON.stringify(r.auth)}; use off or token`);
     else if (r.auth === "token" && (r.edge === undefined || REGISTRY_EDGES.includes(r.edge as RegistryEdge))) {
@@ -1645,6 +1648,8 @@ export interface RegistrySettings {
   tokens_region?: string;
   /** `mirror`: publish also serves every provider the lock files pin as a provider network mirror under `providers/`. */
   providers?: (typeof REGISTRY_PROVIDERS)[number];
+  /** `off`: publish writes no release catalog under `catalog/`. Default `on`. */
+  catalog?: (typeof REGISTRY_CATALOG)[number];
 }
 
 /** Why a control repo's projects take no `rollouts` job: each project's pipeline sees only its own roots. */
