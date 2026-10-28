@@ -4,7 +4,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { chantExitCodes } from "../src/chant-next";
 import { main } from "../src/cli";
 import { readInlineReport } from "../src/report/html";
 import { affectedRoots, eachLimited, emptyStateText, providerDownloads, rootsParallelism, runStage } from "../src/report/stage";
@@ -12,7 +11,7 @@ import { git, tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
 
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
 

@@ -1,8 +1,0 @@
-{
-  "schema": 1,
-  "command": "plan",
-  "exit": 2,
-  "status": "usage",
-  "results": null,
-  "error": "no root matches nope"
-}

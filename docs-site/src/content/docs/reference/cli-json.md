@@ -109,7 +109,7 @@ On every exit but a usage error, `stage tf-apply` writes its wave's outcome to t
 | Field | Holds |
 |---|---|
 | `schema` | `terragucci.outcome/v1`. It changes only when a field is removed or changes meaning; new fields can appear without a bump. |
-| `status`, `exit` | `applied` (0), `waiting` (3), `refused` (4; 5 when another run's apply holds a resource it changes; 6 when a newer push superseded it) or `failed` (1) |
+| `status`, `exit` | `applied` (0), `waiting` (3), `refused` (4; 5 when another run's apply holds a resource it changes; 6 when a newer push superseded it; 8 when a decision point was answered with an answer the gate does not pass on) or `failed` (1; 7 when chant's policy denied the plan) |
 | `wave`, `roots` | the wave and its roots (units in a Terragrunt repo); `roots` is empty when the repo has no such wave |
 | `line` | the line the job's `terragucci/apply` status carries, when the wave wrote one (`TG_OUTCOME`) |
 | `set_digest` | the set digest over the roots that change: what an approval binds |
@@ -150,7 +150,7 @@ A part's `state` is `applied`, `nothing-to-move`, `opened`, `would-open`, `open`
 
 `respond rollout` with no module puts `mode` and `rollouts` in `data`: for each rollout in flight, `kind`, `name`, `from`, `to`, `wave` (its newest), `waves`, `action` (`ran`, `waiting`, `stopped`, `done` or `failed`), `reason`, `pullRequests`, and `result`, [the rollout](#rollout) when it ran.
 
-Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not run. An unknown event or a missing flag exits 2 with `results` null.
+Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not run. An unknown event or a missing flag exits 1 with `results` null.
 
 ## config check
 
@@ -160,7 +160,7 @@ Exit 0 when handled, and 1 when a rollout `respond rollout` continued could not 
 |---|---|
 | `file` | the config file read |
 | `ok` | whether it has no problems |
-| `problems` | a list of strings; a config with problems exits 2 |
+| `problems` | a list of strings; a config with problems exits 1 |
 | `approval` | for a repo's own config with no problems: `mode` (`ledger`, `pr-review` or `sealed`), `source` (the key, [`identity.gates`](/terragucci/concepts/glossary/#identitygates), or the default) and a `note` when the repo should change something |
 | `warnings` | present when there are some: each role that reaches another environment's state, as text; warnings leave the exit code 0 |
 | `tips` | present when there are some and no problems: `rule` and `message` of each [config check tip](/terragucci/reference/tips/#config-check-tips); tips leave the exit code 0 |

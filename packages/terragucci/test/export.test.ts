@@ -10,7 +10,6 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import type { BinaryExec } from "../src/migrate";
 import type { S3Fetch } from "../src/report/s3";
 import { main } from "../src/cli";
-import { chantExitCodes } from "../src/chant-next";
 import { appliedFile, chantGated, chantRequestDigest, exportRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -210,7 +209,7 @@ describe("terragucci state export", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-      const usage = (await chantExitCodes())?.CHANT_EXIT.failed ?? 2;
+      const usage = 1;
       expect(await main(["state"])).toBe(usage);
       expect(await main(["state", "export"])).toBe(usage);
     } finally {

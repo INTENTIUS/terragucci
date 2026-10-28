@@ -59,14 +59,15 @@
  * (./control-repo.ts, ./control-records.ts, ./reconcile.ts). Without them
  * terragucci's own code runs, with its record files.
  *
- * Newer than the pin too (terragucci#1282 part e): chant's exit-code table
- * (`exit-codes`, chant#4553), which terragucci passes through; the
+ * Newer than the pin too (terragucci#1282 part e): the
  * terraform lexicon's drift rows (`drift-rows`, chant#4580), which count and
  * name the drift report's objects; chant's pull request environment ledger
  * (`components/pr-env-ledger`, chant#4551); the op-wave step contract
  * (`op/op-waves-capability`, chant#4545) with the terraform lexicon's
  * `terraform-apply` capability passed in process; and chant's OTLP exporter
- * (`otlp`, chant#4555). The review agent's tag list (chant#4580) and the
+ * (`otlp`, chant#4555). chant's exit-code table (`exit-codes`, chant#4553)
+ * is imported directly since the pin moved to 0.124.55, which carries it
+ * (./apply.ts, ./cli.ts). The review agent's tag list (chant#4580) and the
  * object store's setting hints (chant#4584) are told apart by what the
  * installed module exports, on subpaths the pin already has.
  *
@@ -695,12 +696,6 @@ export interface ChantControlPipeline {
 }
 
 // ── part e: exit codes, drift rows, pr-env ledger, wave step, otlp ─────────
-
-/** chant's exit-code table (`@intentius/chant/exit-codes`, chant#4553). */
-export interface ChantExitCodes {
-  CHANT_EXIT: { done: 0; failed: 1; drift: 2; waiting: 3; moved: 4; held: 5; superseded: 6; denied: 7; declined: 8 };
-  chantExitName(code: number): string | undefined;
-}
 
 /** The terraform lexicon's drift rows (`drift-rows`, chant#4580), with terragucci's counting rules. */
 export interface ChantDriftRows {
@@ -1591,14 +1586,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-forgejo/components/control-pipeline"),
     (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
   ),
-  exitCodes: once<ChantExitCodes>(
-    // @ts-ignore chant 0.124.54 has no exit-codes subpath (chant#4553)
-    () => import("@intentius/chant/exit-codes"),
-    (m) => {
-      const t = m.CHANT_EXIT as Record<string, unknown> | undefined;
-      return t && t.moved === 4 && t.denied === 7 && has(m, "chantExitName") ? (m as unknown as ChantExitCodes) : undefined;
-    },
-  ),
   driftRows: once<ChantDriftRows>(
     // @ts-ignore chant 0.124.54 has no drift-rows subpath (chant#4580)
     () => import("@intentius/chant-lexicon-terraform/drift-rows"),
@@ -1880,10 +1867,6 @@ export const chantCiProduct = (): Promise<ChantCiProduct | undefined> => load("c
  */
 export const chantCiProductWordsNow = (): ChantCiProductWords | undefined => loaded("ciProductWords");
 
-/** chant's exit-code table (chant#4553), or undefined. */
-export const chantExitCodes = (): Promise<ChantExitCodes | undefined> => load("exitCodes");
-/** chant's exit-code table as it already loaded, for the synchronous exit paths. cli.ts loads it first. */
-export const chantExitCodesNow = (): ChantExitCodes | undefined => loaded("exitCodes");
 /** The terraform lexicon's drift rows (chant#4580), or undefined. */
 export const chantDriftRows = (): Promise<ChantDriftRows | undefined> => load("driftRows");
 /** The drift rows as they already loaded, for the synchronous report code. cli.ts loads them first. */
@@ -1935,11 +1918,10 @@ export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJo
 
 /**
  * Load the parts synchronous code reads, once, before a command runs: the
- * words module, the exit-code table and the drift rows. cli.ts calls it.
+ * words module and the drift rows. cli.ts calls it.
  */
 export async function preloadChantNext(): Promise<void> {
   await chantCiProductWords();
-  await chantExitCodes();
   await chantDriftRows();
   await chantPolicySource();
   await chantOpStandDown();
@@ -1986,7 +1968,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, exitCodes, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantExitCodes(), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
+  const [compose, composeRun, state, planShape, registry, objectStore, checkHooks, credentials, bucketCheck, tf046, moduleCatalog, ciProductWords, ciProduct, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, driftRows, prEnvLedger, opWaveStep, waveCapabilities, otlp] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantRegistry(), chantObjectStore(), chantCheckHooks(), chantCredentials(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiProductWords(), chantCiProduct(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantDriftRows(), chantPrEnvLedger(), chantOpWaveStep(), chantWaveCapabilities(), chantOtlp()]);
   const [releaseCatalog, registryCatalog, afterPlan, moduleTargets] = [await chantReleaseCatalog(), await chantRegistryCatalog(), await chantAfterPlan(), await chantModuleTargets()];
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
@@ -1997,7 +1979,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const holdRecord = await chantHoldRecord();
   const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, exitCodes: !!exitCodes, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, registry: !!registry, objectStore: !!objectStore, checkHooks: !!checkHooks, credentials: !!credentials, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciProductWords: !!ciProductWords, ciProduct: !!ciProduct, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, driftRows: !!driftRows, prEnvLedger: !!prEnvLedger, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, otlp: !!otlp, releaseCatalog: !!releaseCatalog, registryCatalog: !!registryCatalog, afterPlan: !!afterPlan, moduleTargets: !!moduleTargets, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof };
 }
 
 // ── forge reads (chant#4554) ───────────────────────────────────────────────

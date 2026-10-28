@@ -5,10 +5,9 @@ import { main } from "../src/cli";
 import type { ProjectSettings } from "../src/config";
 import { awsTrustPolicy, gcpCondition, identities, pathOfRemote, tokenOf, type Identities, type Repository } from "../src/identities";
 import { tmp } from "./helpers";
-import { chantExitCodes } from "../src/chant-next";
 
 // chant#4553: on chant's exit-code table a usage error is 1; terragucci's own table made it 2.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 const FIXTURES = join(__dirname, "fixtures", "identities");
 /** The provider's goldens: its data sources are tested against the core's own output. */

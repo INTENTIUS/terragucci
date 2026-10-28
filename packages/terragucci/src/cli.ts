@@ -93,7 +93,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chantAgentJob, chantExitCodesNow, chantProductMcp, preloadChantNext } from "./chant-next";
+import { CHANT_EXIT } from "@intentius/chant/exit-codes";
+import { chantAgentJob, chantProductMcp, preloadChantNext } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
@@ -422,10 +423,10 @@ function originForge(dir: string): ForgeName | undefined {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  // chant's words module (chant#4550), its exit-code table (chant#4553) and the drift rows (chant#4580), loaded once for the code that reads them synchronously; none on a chant without them.
+  // chant's words module (chant#4550) and the drift rows (chant#4580), loaded once for the code that reads them synchronously; none on a chant without them.
   await preloadChantNext();
-  // A usage or config error exits 1 under chant's table (chant#4553, ruling C), 2 before it.
-  const USAGE_EXIT = chantExitCodesNow()?.CHANT_EXIT.failed ?? 2;
+  // A usage or config error exits 1 under chant's table (chant#4553, ruling C).
+  const USAGE_EXIT = CHANT_EXIT.failed;
   const { cmd, flags, args, repeated } = parse(argv);
   const cwd = process.cwd();
   const json = flags.json === true;

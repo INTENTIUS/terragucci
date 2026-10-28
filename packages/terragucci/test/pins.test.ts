@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
-import { chantExitCodes } from "../src/chant-next";
 import { main } from "../src/cli";
 import { validateConfig } from "../src/config";
 import { init } from "../src/init";
@@ -18,7 +17,7 @@ import type { Report } from "../src/report/schema";
 import { git, tmp, write } from "./helpers";
 
 // chant#4553: on chant's exit-code table a usage error is 1; terragucci's own table made it 2.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
 

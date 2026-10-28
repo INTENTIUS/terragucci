@@ -1,13 +1,13 @@
-// terragucci#1282 part e: the switches onto chant's exit-code table (chant#4553), the terraform lexicon's drift rows
+// terragucci#1282 part e: chant's exit-code table (chant#4553), and the switches onto the terraform lexicon's drift rows
 // (chant#4580), the op-wave step contract (chant#4545) and chant's OTLP exporter (chant#4555). Each case stands a
 // module in for chant's, makes it missing, or runs only when the installed chant has it.
 import { afterEach, describe, expect, it } from "vitest";
-import { chantDriftRows, chantExitCodes, chantOpWaveStep, chantOtlp, overrideChantNext } from "../src/chant-next";
-import { stateCode, waveCallArgv, waveExit, waveStepProblems, wavesStepSpec } from "../src/chant-waves";
+import { CHANT_EXIT } from "@intentius/chant/exit-codes";
+import { chantDriftRows, chantOpWaveStep, chantOtlp, overrideChantNext } from "../src/chant-next";
+import { waveCallArgv, waveExit, waveStepProblems, wavesStepSpec } from "../src/chant-waves";
 import { driftCount, driftNames } from "../src/report/drift";
 import { send } from "../src/telemetry";
 
-const exitCodes = await chantExitCodes();
 const driftRows = await chantDriftRows();
 const step = await chantOpWaveStep();
 const otlp = await chantOtlp();
@@ -18,30 +18,16 @@ afterEach(() => {
   restore = [];
 });
 
-const TABLE = { CHANT_EXIT: { done: 0, failed: 1, drift: 2, waiting: 3, moved: 4, held: 5, superseded: 6, denied: 7, declined: 8 }, chantExitName: () => "" };
-
 describe("exit codes", () => {
-  it("map chant's denial and declined point onto terragucci's without chant's table", () => {
-    restore.push(overrideChantNext("exitCodes", null));
-    expect(waveExit(7)).toBe(1);
-    expect(waveExit(8)).toBe(4);
-    expect(waveExit(3)).toBe(3);
-  });
-
-  it("pass chant's code through with chant's table", async () => {
-    restore.push(overrideChantNext("exitCodes", TABLE));
-    await chantExitCodes();
+  it("pass chant's code through, and a code terragucci's own calls came to takes a non-zero exit", () => {
+    expect(waveExit(0, 1)).toBe(0);
     expect(waveExit(7)).toBe(7);
     expect(waveExit(8)).toBe(8);
     expect(waveExit(4, 1)).toBe(1);
   });
 
-  it("read a wave's state from either", () => {
-    expect([stateCode(7), stateCode(8), stateCode(3)]).toEqual([1, 4, 3]);
-  });
-
-  it.runIf(exitCodes)("match the installed chant's table", () => {
-    expect(exitCodes!.CHANT_EXIT).toMatchObject(TABLE.CHANT_EXIT);
+  it("are chant's table: 0 done, 1 failed, 2 drift, 3 waiting, 4 moved, 5 held, 6 superseded, 7 denied, 8 declined", () => {
+    expect(CHANT_EXIT).toEqual({ done: 0, failed: 1, drift: 2, waiting: 3, moved: 4, held: 5, superseded: 6, denied: 7, declined: 8 });
   });
 });
 

@@ -12,11 +12,10 @@
  * pending fact, spends the approval and the policy overrides, and settles a
  * state migration's own gate.
  *
- * chant's exit codes map onto terragucci's (waveExit): an approval of other
- * plans leaves chant waiting where terragucci refuses (4), chant's policy
- * refusal (7) is terragucci's 1, or 4 when an override stands for an earlier
- * plan, and a decision point's refusing answer (8) is 4. With chant's one
- * exit-code table (chant#4553) loaded, chant's code passes through as it is.
+ * chant's exit code passes through as it is (chant's one table, chant#4553):
+ * 0 done, 1 failed, 2 drift, 3 waiting, 4 moved, 5 held, 6 superseded,
+ * 7 denied and 8 declined. A code terragucci's own calls came to for the wave
+ * takes a non-zero exit (waveExit).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -25,7 +24,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
 import { chantCommand } from "./chant-bin";
-import { chantExitCodesNow, chantOpStandDownNow } from "./chant-next";
+import { chantOpStandDownNow } from "./chant-next";
 import { ConfigError } from "./config";
 
 /** The op, and the spec's name: the waves' gates stay `tf-apply` / `wave-<k>`. */
@@ -211,26 +210,13 @@ export function readWaveRecord(repo: string, k: number): OpWaveDecision | undefi
 /**
  * terragucci's exit code for chant's. `own` is the code terragucci's own
  * calls came to for the wave (a refusal it reported after the gate, a plan or
- * a migration that failed), which a non-zero exit takes.
+ * a migration that failed), which a non-zero exit takes. Otherwise chant's
+ * code passes through, so a denial stays 7 and a declined point 8.
  */
 export function waveExit(chant: number, own?: number): number {
   if (chant === 0) return 0;
   if (own !== undefined && own !== 0) return own;
-  // chant's one table (chant#4553): terragucci passes chant's code through, so a denial stays 7 and a declined point 8.
-  if (chantExitCodesNow()) return chant;
-  if (chant === 7) return 1;
-  // A decision point answered otherwise (chant#3836): the wave applies nothing, as terragucci's refusals do.
-  if (chant === 8) return 4;
   return chant;
-}
-
-/**
- * The code terragucci's own wave states read a wave's end by: chant's denial
- * (7) as a failure and a declined decision point (8) as a refusal, as
- * waveExit gave them before chant's table passed through.
- */
-export function stateCode(code: number): number {
-  return code === 7 ? 1 : code === 8 ? 4 : code;
 }
 
 /**

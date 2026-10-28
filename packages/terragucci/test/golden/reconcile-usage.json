@@ -1,8 +1,0 @@
-{
-  "schema": 1,
-  "command": "reconcile",
-  "exit": 2,
-  "status": "usage",
-  "results": null,
-  "error": "reconcile needs --config <file>"
-}

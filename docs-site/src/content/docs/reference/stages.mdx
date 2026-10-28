@@ -22,12 +22,16 @@ Every stage takes the root directories and the binary.
 
 ## Exit codes
 
-Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes). Two belong to waves:
+Stages exit with [the CLI's codes](/terragucci/reference/cli/#exit-codes), which are chant's. These belong to waves:
 
 | Code | Means |
 |---|---|
 | 3 | a wave waits for approval |
 | 4 | a wave's plans changed after an approval no run applied, so nothing applied |
+| 5 | another run's apply holds a resource the wave changes, under `--on-held refuse` |
+| 6 | a newer push applies instead, under `--stand-down` |
+| 7 | chant's policy denied the plan and no override counts |
+| 8 | a decision point was answered with an answer the gate does not pass on, so nothing applied |
 
 ## Check
 

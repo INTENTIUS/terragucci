@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { chantExitCodes, chantHandover } from "../src/chant-next";
+import { chantHandover } from "../src/chant-next";
 import { bareFrom, git, tmp, twoRootRepo, write } from "./helpers";
 
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
@@ -25,7 +25,7 @@ function isolated(): string {
 }
 
 // A usage or config error exits 1 under chant's exit-code table (chant#4553), 2 before it.
-const USAGE = (await chantExitCodes()) ? 1 : 2;
+const USAGE = 1;
 /**
  * The example's pipeline as init renders it. The committed one is the published pin's; where the installed chant's
  * handover and checkout scripts take terragucci's parameters (chant#4554) the steps that check out and hand a report
