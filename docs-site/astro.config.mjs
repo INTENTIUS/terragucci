@@ -148,6 +148,8 @@ export default defineConfig({
 								{ label: 'Move resources between roots', slug: 'guides/move-resources-between-roots' },
 								{ label: 'Release a state lock a killed job left', slug: 'guides/release-a-state-lock' },
 								{ label: 'Ephemeral environments per pull request', slug: 'guides/ephemeral-environments' },
+								{ label: 'Request an app from a template', slug: 'guides/request-an-app' },
+								{ label: 'Run a day-2 action', slug: 'guides/run-a-day-2-action' },
 							],
 						},
 						{
@@ -219,6 +221,7 @@ export default defineConfig({
 								{ label: 'Have an agent summarize a refused wave', slug: 'guides/agent-refused-wave' },
 								{ label: 'Read the estate over MCP', slug: 'guides/agent-read-over-mcp' },
 								{ label: 'Have an agent propose a change over MCP', slug: 'guides/agent-propose-over-mcp' },
+								{ label: 'Have an agent request an app from a template over MCP', slug: 'guides/agent-request-from-a-template' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
 								{ label: 'Have an agent fix drift', slug: 'guides/agent-fix-drift' },
 								{ label: 'Have a model review a pull request', slug: 'guides/agent-review-a-pull-request' },
