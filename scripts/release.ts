@@ -4,7 +4,7 @@
 //   npx tsx scripts/release.ts digests [--run <id>]  this version's image digests from GHCR into
 //                                                    image-digests.json, and the same files again, pinned
 // Both regenerate the same set: the five Dockerfiles, both examples' pipelines,
-// the examples' patches and the cli-json goldens. A bump leaves the earlier
+// the examples' patches and the goldens that carry the image tags (cli-json, request workflows). A bump leaves the earlier
 // release's digests in image-digests.json; no key matches the new tags, so init
 // writes them bare until `digests` records this version's.
 import { execFileSync } from "node:child_process";
@@ -17,7 +17,7 @@ const LOCK = join(root, "package-lock.json");
 const DIGESTS = join(root, "packages/terragucci/src/image-digests.json");
 const SANDBOX = join(root, "stack/sandbox-github.sh");
 const EXAMPLES = ["example", "example-terragrunt"];
-const GOLDENS = "packages/terragucci/test/cli-json.test.ts";
+const GOLDENS = ["packages/terragucci/test/cli-json.test.ts", "packages/terragucci/test/templates.test.ts"];
 
 function run(bin: string, argv: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): void {
   console.log(`$ ${[bin, ...argv].join(" ")}`);
@@ -35,7 +35,7 @@ function regenerate(): void {
   for (const ex of EXAMPLES) run(process.execPath, [join(root, "packages/terragucci/dist/terragucci.mjs"), "init"], { cwd: join(root, ex) });
   // The patches carry the pipelines' blob hashes, so they follow the pipelines.
   run("just", ["example-patches"]);
-  run("npx", ["vitest", "run", GOLDENS], { env: { ...process.env, UPDATE_GOLDEN: "1" } });
+  run("npx", ["vitest", "run", ...GOLDENS], { env: { ...process.env, UPDATE_GOLDEN: "1" } });
 }
 
 function bump(version: string): void {
