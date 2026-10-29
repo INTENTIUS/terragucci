@@ -47,11 +47,11 @@ export { REQUESTS_FILE };
 
 /** The chant `terragucci request` needs, named in its refusal on an older one. */
 export const REQUEST_NEEDS_CHANT =
-  "terragucci request builds chant's template request (@intentius/chant/template-request) and renders the app's root with the terraform lexicon (@intentius/chant-lexicon-terraform/template), which the installed chant does not carry; it needs a chant release newer than 0.124.56 that has both";
+  "terragucci request builds chant's template request (@intentius/chant/template-request) and renders the app's root with the terraform lexicon (@intentius/chant-lexicon-terraform/template), which the installed chant does not carry; it needs a chant release newer than 0.124.57 that has both";
 
 /** The chant an add-on request needs, named in its refusal on a chant whose template module renders app roots only. */
 export const ADDON_NEEDS_CHANT =
-  "terragucci request --app renders the add-on's module call with the terraform lexicon's renderAddonCall (@intentius/chant-lexicon-terraform/template), which the installed chant does not carry; it needs a chant release newer than 0.124.56 that has it";
+  "terragucci request --app renders the add-on's module call with the terraform lexicon's renderAddonCall (@intentius/chant-lexicon-terraform/template), which the installed chant does not carry; it needs a chant release newer than 0.124.57 that has it";
 
 /** Where a request comes from. */
 export const REQUEST_VIA = ["form", "mcp", "cli"] as const;
