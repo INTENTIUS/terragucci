@@ -3,7 +3,7 @@
 // throws when it is imported, so a bundle builds on either chant, and the CLI built on 0.124.52 applies in
 // waves. The lexicon's `action-ops` (chant#4653, terragucci#1310) is newer than the 0.124.56 pin. scripts/cli-bundle.mjs (the shipped bundle) and test/pipeline.test.ts (the CLI its stand-in steps run)
 // both take it from here.
-const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape|registry|lint\/post-synth\/tf046|module-catalog|drift-rows|state-ops|lock-rows|template|action-ops)$|^@intentius\/chant\/(object-store|components\/check-hooks|bucket-check|ci-product|ci-product-words|ci-control|exit-codes|op\/op-waves-capability|otlp|lifecycle\/gated-request|lifecycle\/resource-lock|ci-agent|forge-check|notify-relay|ci-estate|policy-source)$|^@intentius\/chant-lexicon-(github|gitlab|forgejo)\/components\/control-pipeline$/;
+const CHANT_NEXT = /^@intentius\/chant-lexicon-terraform\/(compose|compose\/run|compose\/root|compose\/estate|compose\/slice|state|plan-shape|registry|lint\/post-synth\/tf046|module-catalog|drift-rows|state-ops|lock-rows|template|action-ops)$|^@intentius\/chant\/(object-store|components\/check-hooks|bucket-check|ci-product|ci-product-words|ci-control|exit-codes|op\/op-waves-capability|otlp|lifecycle\/gated-request|lifecycle\/resource-lock|ci-agent|forge-check|notify-relay|ci-estate|policy-source|template-request)$|^@intentius\/chant-lexicon-(github|gitlab|forgejo)\/components\/control-pipeline$/;
 
 // A subpath the pin has is imported only by parts whose own floor is newer
 // than the pin: `op` (the stand-down, chant#4581). On a chant that serves it as TypeScript, bundling it brings
