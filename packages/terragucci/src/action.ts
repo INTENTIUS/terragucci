@@ -31,8 +31,7 @@
  *
  * Only Terraform 1.14 or newer invokes an action. A root on OpenTofu or
  * choudoufu is refused here by its engine's name, with the version terragucci
- * runs it at, before any binary runs and whichever chant is installed. A
- * chant without `invokeAction` gets a refusal naming the chant it needs.
+ * runs it at, before any binary runs.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -42,7 +41,7 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, type PendingRecord } from "./apply";
 import { approvalRule, checkoutApproval } from "./approval";
 import { binaryEnv } from "./binary-env";
-import { chantInvokeAction, type ChantGatedRequestRead, type ChantInvokeActionResult, type ChantRootRun } from "./chant-next";
+import { chantStateOps, type ChantStateOps, type ChantGatedRequestRead, type ChantInvokeActionResult, type ChantRootRun } from "./chant-next";
 import { ACTION_ADDRESS } from "./comment";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type Approval, type Binary } from "./config";
 import { requestRules, syncLocalLedger } from "./gated-request";
@@ -63,8 +62,13 @@ export const actionApproveCommand = (root: string, digest: string, sealed = fals
 /** The subject chant asks an action's request under: `<root>:<address>`. */
 export const actionSubject = (root: string, address: string): string => `${root}:${address}`;
 
-/** The refusal when the installed chant has no `invokeAction`. */
-export const ACTION_NEEDS_CHANT = "terragucci action runs the terraform lexicon's invokeAction (chant#4653), which the installed chant does not carry; it needs a chant release that does";
+
+/** The terraform lexicon's state operations, which hold `invokeAction`. */
+async function actionOps(): Promise<ChantStateOps> {
+  const ops = await chantStateOps();
+  if (!ops) throw new ConfigError("the terraform lexicon's state operations did not load; reinstall @intentius/chant-lexicon-terraform");
+  return ops;
+}
 
 /** The oldest Terraform that invokes an action. */
 const MIN_TERRAFORM = "1.14";
@@ -203,11 +207,10 @@ export async function runAction(repo: string, o: ActionOptions): Promise<ActionR
   const settings = resolveRepo(config);
   const shape = detectShape(repo, settings);
   const binary: Binary | string = o.binary ?? settings.binary ?? shape.binary([rel]).value;
-  // Ruling E: OpenTofu and choudoufu have no action invocation; refused by name, before any binary runs, on any chant.
+  // Ruling E: OpenTofu and choudoufu have no action invocation; refused by name, before any binary runs.
   const engine = engineRefusal(rel, binaryName(binary));
   if (engine) return refuse(rel, engine);
-  const chant = await chantInvokeAction();
-  if (!chant) return refuse(rel, ACTION_NEEDS_CHANT);
+  const chant = await actionOps();
 
   const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
   if (init.status !== 0) return refuse(rel, `${rel}: ${binary} init failed:\n${tail(init.out)}`);
@@ -282,11 +285,7 @@ export function resumableActions(requests: readonly ChantGatedRequestRead[], now
  */
 export async function resumeActions(repo: string, o: { dryRun?: boolean; env?: NodeJS.ProcessEnv; exec?: ActionOptions["exec"]; now?: string; log?: (line: string) => void } = {}): Promise<{ code: number; actions: ResumableAction[]; results: ActionResult[] }> {
   const log = o.log ?? ((l: string) => console.log(l));
-  const chant = await chantInvokeAction();
-  if (!chant) {
-    log(`no action is resumed: ${ACTION_NEEDS_CHANT}`);
-    return { code: 0, actions: [], results: [] };
-  }
+  const chant = await actionOps();
   syncLocalLedger(repo);
   const now = o.now ?? new Date().toISOString();
   const actions = resumableActions(await chant.readGatedRequests(ACTION_OP, { cwd: repo }).catch(() => []), now);

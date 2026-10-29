@@ -65,7 +65,7 @@ export type ParsedComment =
 /**
  * An action address as `-invoke` takes it, the pattern of the terraform
  * lexicon's `ACTION_ADDRESS` (chant#4653 action-ops.ts), written out so a
- * comment is read the same on a chant without it: `action.<type>.<label>`
+ * comment is read without loading it: `action.<type>.<label>`
  * after any number of `module.<name>.` steps, each with an optional instance
  * key (`[0]`, `["a"]`).
  */
@@ -120,9 +120,7 @@ export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment
   }
   const parsed = parseProductComment(words ?? productWords(), text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
   if (parsed === undefined) return undefined;
-  // The installed chant's parsed comment carries `action` only from chant#4653 on, so the check reads it through a widened type.
-  const asAction = parsed as unknown as { kind: string; member?: string; address?: string };
-  if (asAction.kind === "action" && asAction.member !== undefined && asAction.address !== undefined) return checkedAction(asAction.member, asAction.address, o.layers);
+  if (parsed.kind === "action") return checkedAction(parsed.member, parsed.address, o.layers);
   if (parsed.kind === "plan") {
     // chant's grammar reads `--target`, `--refresh` and `--target-dependents` after the plan word (chant#4626, #4627, on chant
     // main); a terragucci re-plan plans whole roots, so it refuses them by name rather than drop them.

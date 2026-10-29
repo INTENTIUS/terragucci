@@ -38,7 +38,6 @@ import {
   type ChantTerraformDocsRunner,
 } from "../chant-next";
 import { chantTemplateRequests } from "../chant-next";
-import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { loadHclParser } from "../rollout/parser";
 import { moduleTarAt, tarEntries } from "./archive";
 import { tryGit, hasCommit } from "./git";
@@ -104,16 +103,16 @@ export const TEMPLATE_FILE = "template.yml";
 /**
  * A version's template.yml, as its catalog entry carries it under
  * `fields.terraform.template`: read from the release's own files, so it is
- * the file the release signed. Checked with chant's reader when the installed
- * chant has one; a file that does not pass is left out, with a note.
+ * the file the release signed. Checked with chant's reader; a file that does not pass is left out, with a note.
  */
 async function templateField(dir: string): Promise<{ spec?: unknown; note?: string }> {
   const file = join(dir, TEMPLATE_FILE);
   if (!existsSync(file)) return {};
   const text = readFileSync(file, "utf-8");
   const chant = await chantTemplateRequests();
+  if (!chant) throw new ConfigError("chant's template request (@intentius/chant/template-request) did not load; reinstall @intentius/chant");
   try {
-    return { spec: chant ? chant.parseTemplateSpec(text) : parseYAMLDocument(text) };
+    return { spec: chant.parseTemplateSpec(text) };
   } catch (e) {
     return { note: `${TEMPLATE_FILE} left out of the catalog: ${(e as Error).message.split("\n", 1)[0]}` };
   }

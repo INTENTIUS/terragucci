@@ -2,16 +2,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
-import { chantTemplateRender, chantTemplateRequests, overrideChantNext, type ChantReleaseCatalogDoc } from "../src/chant-next";
+import { overrideChantNext, type ChantReleaseCatalogDoc } from "../src/chant-next";
 import { publish } from "../src/publish";
 import type { RegistryStore } from "../src/publish/registry";
 import { AUDIT_KINDS, ledgerEntries, REQUESTS_FILE } from "../src/report/audit";
-import { ADDON_NEEDS_CHANT, REQUEST_NEEDS_CHANT } from "../src/templates";
 import { bareFrom, git, tmp, write } from "./helpers";
 
 const CATALOG = readFileSync(join(__dirname, "fixtures/templates/catalog.json"), "utf-8");
-const chantHas = Boolean((await chantTemplateRequests()) && (await chantTemplateRender()));
-const chantHasAddons = chantHas && typeof (await chantTemplateRender())?.renderAddonCall === "function";
 
 /** An app's root as chant's renderAppRoot writes it: one `module "app"` calling the bucket template at 1.2.0. */
 const ORDERS_MAIN = `module "app" {
@@ -140,22 +137,7 @@ describe("terragucci templates", () => {
   });
 });
 
-describe("terragucci request on a chant without template requests", () => {
-  it("refuses with exit 1, names the chant it needs, and writes nothing", async () => {
-    const { dir, bare } = repo();
-    const restore = overrideChantNext("templateRequest", null);
-    try {
-      const { code, out } = await run(dir, "request", "acme/bucket/aws", "--name", "orders", "--input", "bucket_name=orders-data", "--dry-run", "--json");
-      expect(code).toBe(1);
-      expect(JSON.parse(out).error).toBe(REQUEST_NEEDS_CHANT);
-      expect(requestBranches(bare)).toEqual([]);
-    } finally {
-      restore();
-    }
-  });
-});
-
-describe.runIf(chantHas)("terragucci request", () => {
+describe("terragucci request", () => {
   it("--dry-run --json prints the branch and the files, and writes nothing", async () => {
     const { dir, bare } = repo();
     const { code, out } = await run(dir, "request", "acme/bucket/aws", "--name", "orders", "--input", "bucket_name=orders-data", "--dry-run", "--json");
@@ -246,25 +228,7 @@ describe.runIf(chantHas)("terragucci request", () => {
   });
 });
 
-describe("terragucci request --app on a chant without renderAddonCall", () => {
-  it("refuses with exit 1, names the chant it needs, and writes nothing", async () => {
-    const real = await chantTemplateRender();
-    if (!real || !(await chantTemplateRequests())) return;
-    const { dir, bare } = repo(CONFIG, ORDERS);
-    const { renderAddonCall: _gone, ...older } = real;
-    const restore = overrideChantNext("templateRender", older);
-    try {
-      const { code, out } = await run(dir, "request", "acme/cache/aws", "--app", "orders", "--name", "cache", "--input", "subnet_ids=app.private_subnets", "--dry-run", "--json");
-      expect(code).toBe(1);
-      expect(JSON.parse(out).error).toBe(ADDON_NEEDS_CHANT);
-      expect(requestBranches(bare)).toEqual([]);
-    } finally {
-      restore();
-    }
-  });
-});
-
-describe.runIf(chantHasAddons)("terragucci request --app (an add-on)", () => {
+describe("terragucci request --app (an add-on)", () => {
   const golden = (name: string, text: string): void => {
     const path = join(__dirname, "golden", name);
     if (process.env.UPDATE_GOLDEN || !existsSync(path)) writeFileSync(path, text);

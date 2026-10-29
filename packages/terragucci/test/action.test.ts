@@ -2,10 +2,10 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ACTION_APPLIED, ACTION_LEDGER, ACTION_NEEDS_CHANT, actionApproveCommand, engineRefusal, noActionReply, resumableActions, resumeActions, runAction, type ActionOptions } from "../src/action";
+import { ACTION_APPLIED, ACTION_LEDGER, actionApproveCommand, engineRefusal, noActionReply, resumableActions, resumeActions, runAction, type ActionOptions } from "../src/action";
 import { appendLifecycle } from "../src/apply";
 import { approveGate, isGateKeyword } from "../src/approve";
-import { chantInvokeAction, overrideChantNext, type ChantGatedRequestRead, type ChantInvokeActionInput } from "../src/chant-next";
+import { overrideChantNext, type ChantGatedRequestRead, type ChantInvokeActionInput } from "../src/chant-next";
 import { main } from "../src/cli";
 import { decideComment, parseComment, readActionDispatch } from "../src/comment";
 import { ACTION_PATHS, renderPipeline, type PipelineInput } from "../src/render";
@@ -18,9 +18,6 @@ const LAYERS = [["apps/orders", "apps/web"]];
 const ADDRESS = "action.aws_lambda_invoke.rotate";
 const D = "sha256:" + "a".repeat(64);
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 28, 12, m)).toISOString();
-
-/** The installed chant has the terraform lexicon's invokeAction (chant#4653). */
-const hasAction = !!(await chantInvokeAction());
 
 describe("the action comment", () => {
   it("reads /terragucci action <root> <address>, a module's action included", () => {
@@ -153,21 +150,13 @@ describe("terragucci action", () => {
     expect(text.out).toContain("tofu 1.13.1");
   });
 
-  it("on a chant without invokeAction, refuses naming the chant it needs", async () => {
-    const r = repo();
-    restore = overrideChantNext("stateOps", { readGatedRequests: async () => [] });
-    const done = await cli(r.work, "action", "apps/orders", ADDRESS, "--json", "--binary", r.bin);
-    expect(done.code).toBe(1);
-    expect(JSON.parse(done.out).reason).toBe(ACTION_NEEDS_CHANT);
-  });
-
   it("refuses an address that is no action address, and a path that is no root", async () => {
     const r = repo();
     expect((await cli(r.work, "action", "apps/orders", "aws_lambda_function.x", "--json", "--binary", r.bin)).code).toBe(1);
     expect((await cli(r.work, "action", "apps/nowhere", ADDRESS, "--binary", r.bin)).code).toBe(1);
   });
 
-  it.runIf(hasAction)("on chant's gated request: waits, runs once someone else approved, and records how it ended", async () => {
+  it("on chant's gated request: waits, runs once someone else approved, and records how it ended", async () => {
     const r = repo();
     const calls: string[][] = [];
     const plan = { format_version: "1.2", action_invocations: [{ address: ADDRESS, type: "aws_lambda_invoke", name: "rotate", config_values: { function_name: "rotate-keys" } }] };
