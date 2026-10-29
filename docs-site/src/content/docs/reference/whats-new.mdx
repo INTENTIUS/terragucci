@@ -1,14 +1,23 @@
 ---
-title: Changes in 0.4.46
-description: "terragucci 0.4.46, released 2026-10-28."
+title: Changes in 0.4.47
+description: "terragucci 0.4.47, released 2026-10-28."
 ---
 
-Release `0.4.46` is on npm as `@intentius/terragucci@0.4.46`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.46) lists every change.
+Release `0.4.47` is on npm as `@intentius/terragucci@0.4.47`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.47) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.46 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.47 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.47
+
+The package and the CI images move to chant 0.124.57, and more of what terragucci did itself is done by chant.
+
+- A wave with nothing keeping it back plans and applies through chant's `terraform-apply` step. Such a wave waits for its root's row on chant's ledger, and its run and release records are pushed again when another job pushed first.
+- `terragucci check-job` is chant's job guard. A job that runs where its stack is not set to apply exits 9 (`misplaced`) and runs nothing. On GitHub the job's token is asked for the `chant-check-job` audience.
+- Drift attribution reads CloudTrail and the known writes through chant's audit log reads. The unrecorded writer audit is still terragucci's.
+- terragucci no longer keeps its own copies of chant code such as the comment words. Each of those parts behaves as chant's does.
 
 ## In 0.4.46
 
