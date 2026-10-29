@@ -2,7 +2,9 @@
 
 # terragucci
 
-One workflow, one audit trail and one policy for every Terraform and OpenTofu repo, run in your own CI. Plan, approve and apply hundreds of roots from pull requests and trace every run.
+Sophisticated automation for Terraform.
+
+Built on chant; can run choudoufu as its engine.
 
 CI does this: each job runs in your forge's CI and writes to your git and your bucket.
 
