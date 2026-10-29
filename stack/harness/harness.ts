@@ -192,7 +192,12 @@ async function lint(args: string[]): Promise<number> {
   const index = readIndex();
   const ids = args.length > 0 ? args : scenarioIds();
   const h = await loadHarness();
+  // chant#4650's steps and outcomes (await-pull, comment, pull, gated) are newer than some harnesses that lint scenarios;
+  // a scenario using them gets only ./scenarios.ts on such a chant.
+  const pullSteps = h !== undefined && typeof (h as unknown as Record<string, unknown>).E2E_HARNESS_PULL_STEPS_FLOOR === "string";
+  const needsPullSteps = (text: string) => /"do"\s*:\s*"(await-pull|comment)"|"(gated|pull)"\s*:\s*\{/.test(text);
   let bad = 0;
+  let older = 0;
   for (const id of ids) {
     const file = scenarioPath(id);
     if (!existsSync(file)) {
@@ -200,7 +205,10 @@ async function lint(args: string[]): Promise<number> {
       bad++;
       continue;
     }
-    const findings = [...localFindings(file, index), ...(h ? h.lintScenario(JSON.parse(readFileSync(file, "utf8"))) : [])];
+    const text = readFileSync(file, "utf8");
+    const chantLints = h !== undefined && (pullSteps || !needsPullSteps(text));
+    if (h && !chantLints) older++;
+    const findings = [...localFindings(file, index), ...(chantLints ? h.lintScenario(JSON.parse(text)) : [])];
     for (const f of findings) console.error(`${id}${f.at}: ${f.message}`);
     if (findings.length > 0) bad++;
   }
@@ -210,7 +218,8 @@ async function lint(args: string[]): Promise<number> {
       bad++;
     }
   }
-  console.error(`harness lint: ${ids.length - bad} of ${ids.length} scenario(s) hold${h ? "" : ` (chant's lintScenario skipped: needs ${HARNESS_NEEDS})`}`);
+  const skipped = h ? (older > 0 ? ` (chant's lintScenario skipped for ${older}: their await-pull, comment, pull or gated need chant#4650)` : "") : ` (chant's lintScenario skipped: needs ${HARNESS_NEEDS})`;
+  console.error(`harness lint: ${ids.length - bad} of ${ids.length} scenario(s) hold${skipped}`);
   return bad === 0 ? 0 : 1;
 }
 
