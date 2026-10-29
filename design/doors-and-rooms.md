@@ -41,7 +41,7 @@ Nobody chooses a tool for these, and anyone loses trust if one is missing or bur
 
 ## Coverage
 
-The validation page leads with two grids (area by tool, area by forge) over `smoke.json` and `validation.json`, with the full tables below. Every check runs on OpenTofu on Forgejo. Runs on Terraform, choudoufu and github.com are expensive, so they re-run only the checks where the binary or forge changes what happens; a cell for a binary-independent area says "same code on every binary" instead of looking like a gap.
+The site shows no claims or results (maintainer ruling, 2026-10-29). EVIDENCE.md at the repo root holds two grids (area by tool, area by forge) over `smoke.json` and `validation.json`, with the full tables below, and is updated with each release. Every check runs on OpenTofu on Forgejo. Runs on Terraform, choudoufu and github.com are expensive, so they re-run only the checks where the binary or forge changes what happens; a cell for a binary-independent area says "same code on every binary" instead of looking like a gap.
 
 ## Rejected
 

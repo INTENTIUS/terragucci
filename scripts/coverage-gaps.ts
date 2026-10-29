@@ -1,12 +1,12 @@
-// What is left to fill on the validation page, and how: every grid cell that is
-// not proven (from docs-site/src/data/coverage.ts, the code the grids render
+// What is left to fill in EVIDENCE.md, and how: every grid cell that is
+// not proven (from stack/evidence/coverage.ts, the code the grids render
 // with), every claim a claim table defines that has no recorded row, and every
 // recorded capture that still prints a command terragucci no longer prints.
 // It reads files only and runs nothing; `just coverage-fill` runs the fills.
 //   npx tsx scripts/coverage-gaps.ts [--json]
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { gaps } from "../docs-site/src/data/coverage";
+import { gaps } from "../stack/evidence/coverage";
 
 const ROOT = join(import.meta.dirname, "..");
 const read = (f: string) => readFileSync(join(ROOT, f), "utf8");
@@ -21,8 +21,8 @@ function table(file: string, name: string): string[] {
 }
 
 type Rec = { claim: string; forge?: string; binary?: string; verdict: string };
-const smoke = (JSON.parse(read("docs-site/src/data/smoke.json")) as { claims: Rec[] }).claims;
-const validation = (JSON.parse(read("docs-site/src/data/validation.json")) as { claims: (Rec & { forge: string })[] }).claims;
+const smoke = (JSON.parse(read("stack/evidence/smoke.json")) as { claims: Rec[] }).claims;
+const validation = (JSON.parse(read("stack/evidence/validation.json")) as { claims: (Rec & { forge: string })[] }).claims;
 
 // A claim defined in a table with no row from the recorder that runs it.
 type Unrecorded = { claim: string; where: string; fill: string };
@@ -45,7 +45,7 @@ for (const l of table("stack/validation.sh", "CLAIMS")) {
 const githubCom = byForge("github.com");
 for (const l of table("stack/sandbox-github.sh", "PROVE_CLAIMS")) {
   const n = l.split("|")[1]!;
-  if (!githubCom.has(n)) unrecorded.push({ claim: `github.com/${n}`, where: "PROVE_CLAIMS in stack/sandbox-github.sh", fill: "just sandbox prove --record docs-site/src/data/validation.json" });
+  if (!githubCom.has(n)) unrecorded.push({ claim: `github.com/${n}`, where: "PROVE_CLAIMS in stack/sandbox-github.sh", fill: "just sandbox prove --record stack/evidence/validation.json" });
 }
 const pending = [...smoke, ...validation].filter((r) => r.verdict === "pending").map((r) => r.claim);
 

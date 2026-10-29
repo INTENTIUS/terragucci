@@ -5,7 +5,6 @@
 // differs on each binary and forge, since the shape works on all of them.
 // A room for a tool also says what that tool already does, linked to its own
 // docs, when to use that instead, and what terragucci adds on top.
-import CoverageGrid from './CoverageGrid.astro';
 import { ASSUMED, BINARIES, FORGES, SHAPES, room } from '../data/rooms';
 
 interface Props {
@@ -56,12 +55,6 @@ const elsewhere = isShape ? [...BINARIES, ...FORGES].filter((x) => x.differs.len
 				<ul>{r.native.adds.map((a) => <li>{a}</li>)}</ul>
 			</section>
 		</div>
-	)}
-	{r.column && (
-		<section>
-			<h2>Proof</h2>
-			<CoverageGrid column={r.column} />
-		</section>
 	)}
 	<slot />
 	<section>

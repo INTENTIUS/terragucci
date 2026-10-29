@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fill the gaps the validation page shows, one source at a time, on demand.
+# Fill the gaps EVIDENCE.md lists, one source at a time, on demand.
 #
 #   just coverage-fill                 print the plan: each step, what it runs, what it fills
 #   just coverage-fill <step>...       run those steps, in the order given
@@ -16,7 +16,7 @@
 #   validation  the per-forge claims (just validation-record gitlab forgejo); it takes the whole stack
 #               down before and after, so it runs only with --exclusive
 #
-# Each step writes its rows into docs-site/src/data/smoke.json or validation.json, or its captures
+# Each step writes its rows into stack/evidence/smoke.json or validation.json, or its captures
 # under docs-site/src/data/tutorial; review and commit them. `npx tsx scripts/coverage-gaps.ts` lists
 # what is still open, including the cells only a new claim can fill. Nothing here runs in CI.
 set -euo pipefail
@@ -77,8 +77,8 @@ for step in "${STEPS[@]}"; do
       if [ -n "$booted" ]; then log "gitlab: taking the lab down"; just gitlab-lab down; fi
       ;;
     github)
-      log "github: just sandbox prove --record"; just sandbox prove --record docs-site/src/data/validation.json
-      log "github: just sandbox prove --break --record"; just sandbox prove --break --record docs-site/src/data/validation.json
+      log "github: just sandbox prove --record"; just sandbox prove --record stack/evidence/validation.json
+      log "github: just sandbox prove --break --record"; just sandbox prove --break --record stack/evidence/validation.json
       if [ -n "$(stale_for github)" ]; then log "github: recapturing the GitHub views"; just sandbox capture; fi
       ;;
     validation)

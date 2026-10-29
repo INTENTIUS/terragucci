@@ -50,7 +50,7 @@ export TG_STACK="${TG_STACK:-capture}"
 ROOT="$(cd "$HERE/.." && pwd)"
 EXAMPLE="$ROOT/example"
 DATA="$ROOT/docs-site/src/data/tutorial"
-SMOKE="$ROOT/docs-site/src/data/smoke.json"
+SMOKE="$ROOT/stack/evidence/smoke.json"
 
 log()  { echo "[capture] $*" >&2; }
 fail() { log "FAIL: $*"; exit 1; }
