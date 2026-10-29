@@ -1,23 +1,20 @@
 ---
-title: Changes in 0.4.48
-description: "terragucci 0.4.48, released 2026-10-28."
+title: Changes in 0.4.49
+description: "terragucci 0.4.49, released 2026-10-29."
 ---
 
-Release `0.4.48` is on npm as `@intentius/terragucci@0.4.48`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.48) lists every change.
+Release `0.4.49` is on npm as `@intentius/terragucci@0.4.49`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.49) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.48 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.49 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
 ## In 0.4.49
 
-0.4.48 was tagged but never published: its request-workflow goldens still named 0.4.47's image, so the publish run's tests failed.
+With chant 0.124.58 underneath, requesting an app or an add-on from a template, gated day-2 actions, requests from an agent and upgrade waves all run through chant, so terragucci drops the fallbacks it kept for an older chant. Each of those has a published guide now.
 
-The package and the CI images move to chant 0.124.58, which carries the self-service epic (terragucci#1308 to #1312).
-
-- Templates and add-on requests, day-2 actions, agent requests and upgrade waves come from chant, and the fallbacks terragucci kept for them are gone.
-- Three guides are published: request an app, run a day-2 action, and agent request from a template.
+The release before this one was tagged but never reached npm, because its request workflow goldens still named the image from the release before it and the publish run's tests failed.
 
 ## In 0.4.47
 
