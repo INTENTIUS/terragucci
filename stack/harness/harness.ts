@@ -240,6 +240,19 @@ async function ledgerRuns(env: Record<string, string>, repo: string, ledgerEnv: 
 }
 
 /**
+ * The gated requests of `op` on the scenario repo's chant/lifecycle
+ * (chant#4650's `gated` outcome), read the same way from a fresh clone.
+ */
+async function ledgerGated(env: Record<string, string>, repo: string, op: string): Promise<unknown[]> {
+  const dir = join(STATE, "scenarios", "ledger-clones", `${repo.replace("/", "-")}-gated-${Date.now()}`);
+  const url = env.TERRAGUCCI_FORGEJO_URL!.replace(/^http:\/\//, `http://${env.TERRAGUCCI_FORGEJO_USER}:${env.TERRAGUCCI_FORGEJO_TOKEN}@`);
+  const cloned = sh("git", ["clone", "-q", "--single-branch", "--branch", "chant/lifecycle", `${url}/${repo}.git`, dir]);
+  if (cloned.status !== 0) return [];
+  const { readGatedRequests } = (await import("@intentius/chant/lifecycle/gated-request")) as { readGatedRequests: (op: string, o: { cwd: string }) => Promise<unknown[]> };
+  return readGatedRequests(op, { cwd: dir });
+}
+
+/**
  * One scenario on the running stack: seed.sh makes its repo and base, the
  * driver plays the plain arm and the BREAK arm, the runner's log joins the
  * scan, and with --record the row goes on the claims ledger when the scan
@@ -298,7 +311,7 @@ async function run(args: string[]): Promise<number> {
       },
       clock: h.realClock,
       overlay: (name: string) => overlayFiles(file, name, seed.BASE_DIR),
-      ledger: { runs: (ledgerEnv: string, op: string) => ledgerRuns(env, seed.REPO!, ledgerEnv, op) },
+      ledger: { runs: (ledgerEnv: string, op: string) => ledgerRuns(env, seed.REPO!, ledgerEnv, op), gatedRequests: (op: string) => ledgerGated(env, seed.REPO!, op) },
       jobs: h.dockerJobs(process.env.TG_NETWORK || "terragucci"),
       outOfBand: { run: (command: string[]) => safe.run(command[0]!.startsWith("stack/") ? [join(ROOT, command[0]!), ...command.slice(1)] : command, checkEnv()) },
       reset: async () => {

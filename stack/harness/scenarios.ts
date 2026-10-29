@@ -11,6 +11,13 @@
  * (gated) and out-of-band checks (stack/harness/check.sh, exit). The plan, approve and
  * apply steps wait for chant's pr-report, which no terragucci job writes.
  *
+ * A scenario whose product opens the pull request (a request, a rollout, an
+ * MCP call, behold's form) starts it with an out-of-band check.sh helper and
+ * binds it with await-pull; merge then names that step. harness.ts's reset
+ * closes every open pull request and deletes every branch but main before
+ * each arm, so the BREAK arm's await-pull never finds the plain arm's pull
+ * request on the same branch (chant#4650).
+ *
  * chant's lintScenario is the lint (./harness.ts lint). `localFindings` here
  * is the part of it a chant without the harness can still run, so the
  * scenarios are checked on every chant, and the steps chant's driver could
@@ -50,6 +57,12 @@ export interface ScenarioIndexEntry {
    * tree's own smoke does in its scratch copy.
    */
   recordStore?: string;
+  /**
+   * Directories of stack/harness/fixtures/ seed.sh copies into the base before
+   * the scenario's own seed/, with @REPO@ read as the repo: `templates`, the
+   * fixture module registry the template scenarios read.
+   */
+  fixtures?: string[];
   /** The repo's Actions secrets and variables, by name. */
   secrets?: Record<string, string>;
   vars?: Record<string, string>;
@@ -132,6 +145,9 @@ export function localFindings(file: string, index: ScenarioIndex): Finding[] {
   else if (typeof id === "string" && index[id]?.source) {
     if (!SOURCE_PATTERN.test(index[id]!.source!)) out.push({ at: "/tree/base", message: `index.json's source ${index[id]!.source} is not <repo>:<path> or <owner>/<repo>@<commit>:<path>` });
   } else if (!existsSync(join(dirname(file), tree.base))) out.push({ at: "/tree/base", message: `${tree.base} is not there` });
+  for (const f of (typeof id === "string" ? index[id]?.fixtures : undefined) ?? []) {
+    if (!existsSync(join(SCENARIOS_DIR, "..", "fixtures", f))) out.push({ at: "/tree/base", message: `index.json's fixture ${f} is not a directory of stack/harness/fixtures` });
+  }
   if (typeof doc.reportUrl !== "string" || !/^s3:\/\/[^/]+\/.+/.test(doc.reportUrl)) out.push({ at: "/reportUrl", message: "no s3:// report URL" });
 
   const overlay = (at: string, name: unknown) => {
@@ -157,7 +173,7 @@ export function localFindings(file: string, index: ScenarioIndex): Finding[] {
     if (s.do === "open" || s.do === "open-concurrent") overlay(`${at}/overlay`, s.overlay);
     if (s.do === "merge") {
       const o = typeof s.pull === "string" ? seen.get(s.pull) : undefined;
-      if (!o || (o.do !== "open" && o.do !== "open-concurrent")) out.push({ at: `${at}/pull`, message: `merge names ${String(s.pull)}, which is not an earlier open step` });
+      if (!o || (o.do !== "open" && o.do !== "open-concurrent" && o.do !== "await-pull")) out.push({ at: `${at}/pull`, message: `merge names ${String(s.pull)}, which is not an earlier open or await-pull step` });
     }
     if (s.do === "out-of-band") {
       const cmd = s.command as unknown[] | undefined;

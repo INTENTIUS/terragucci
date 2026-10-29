@@ -1,0 +1,12 @@
+contract: 1
+kind: app
+description: An S3 bucket for one app, with its tags.
+inputs:
+  - name: bucket_name
+    kind: string
+    label: Bucket name
+    description: The bucket's name, unique in the account.
+  - name: tags
+    kind: map
+    of: string
+    default: {}
