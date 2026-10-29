@@ -244,25 +244,31 @@ describe("the scenarios", () => {
 
   it("plays each template scenario on the fixture registry, a product opening the pull request the driver merges", () => {
     const index = readIndex();
-    const ids = ["tg-template-app", "tg-template-addon", "tg-agent-request", "tg-template-upgrade", "tg-behold-request", "tg-behold-addon"];
+    const ids = ["tg-template-app", "tg-template-addon", "tg-agent-request", "tg-template-upgrade", "tg-behold-request", "tg-behold-addon", "tg-behold-action"];
     const fixture = join(stack, "harness", "fixtures", "templates", "registry");
     const catalog = JSON.parse(readFileSync(join(fixture, "catalog", "index.json"), "utf8")) as { components: { fields: { terraform: { address: string } }; versions: { version: string; attestation: { state: string } }[] }[] };
-    expect(catalog.components.map((c) => c.fields.terraform.address)).toEqual(["modules.harness.local/acme/bucket/aws", "modules.harness.local/acme/cache/aws"]);
+    expect(catalog.components.map((c) => c.fields.terraform.address)).toEqual(["modules.harness.local/acme/bucket/aws", "modules.harness.local/acme/cache/aws", "modules.harness.local/acme/app/aws"]);
     expect(catalog.components[0]!.versions.map((v) => `${v.version} ${v.attestation.state}`)).toEqual(["1.4.0 unsigned", "1.3.0 signed", "1.2.0 signed"]);
     for (const v of ["1.2.0", "1.3.0", "1.4.0"]) {
       expect(readFileSync(join(fixture, "v1", "modules", "acme", "bucket", "aws", v, "download"), "utf8")).toContain(`git::http://forgejo:3000/@REPO@.git//registry/src/bucket/${v}`);
       expect(existsSync(join(fixture, "src", "bucket", v, "main.tf"))).toBe(true);
     }
     expect(readFileSync(join(fixture, "tofurc"), "utf8")).toContain('"modules.v1" = "http://forgejo:3000/@REPO@/raw/branch/main/registry/v1/modules/"');
+    expect(readFileSync(join(fixture, "terraformrc"), "utf8")).toContain('"modules.v1" = "http://template-registry:8080/@REPO@/v1/modules/"');
+    expect(readFileSync(join(stack, "docker-compose.yml"), "utf8")).toMatch(/template-registry:\n[\s\S]*?profiles: \[templates\][\s\S]*?\.\/harness\/template-registry\.mjs:\/srv\/template-registry\.mjs:ro/);
     for (const id of ids) {
       expect(index[id]?.fixtures, id).toEqual(["templates"]);
       const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { steps: Array<{ id: string; do: string; pull?: string; command?: string[] }> };
       const awaited = doc.steps.filter((s) => s.do === "await-pull").map((s) => s.id);
-      expect(awaited.length, id).toBeGreaterThan(0);
+      // An action opens no pull request; every other template scenario's product opens one.
+      expect(awaited.length > 0, id).toBe(id !== "tg-behold-action");
       for (const m of doc.steps.filter((s) => s.do === "merge")) expect(awaited, id).toContain(m.pull);
       expect(doc.steps.some((s) => s.do === "open"), id).toBe(false);
       const config = readFileSync(join(stack, "harness", "scenarios", id, "base", "terragucci.yml"), "utf8");
-      expect(config, id).toContain("TF_CLI_CONFIG_FILE: ${{ github.workspace }}/registry/tofurc");
+      // OpenTofu reads the repo's registry files from Forgejo; Terraform needs the template-registry service's X-Terraform-Get.
+      const terraform = index[id]!.binary === "terraform";
+      expect(config, id).toContain(`TF_CLI_CONFIG_FILE: \${{ github.workspace }}/registry/${terraform ? "terraformrc" : "tofurc"}`);
+      expect(index[id]!.needs.includes("profile:templates"), id).toBe(terraform);
       expect(config, id).toContain("dir: registry");
     }
     // A merge may name an await-pull step, and nothing else but an open.

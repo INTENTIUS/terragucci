@@ -1,0 +1,35 @@
+# tg-behold-action (behold#1037): orders is an app made from acme/app/aws
+# 1.0.0, whose module declares the day-2 action aws_lambda_invoke.rotate. The
+# catalog lists the action, so behold's apps read offers it as
+# module.app.action.aws_lambda_invoke.rotate. Terraform runs the action (an
+# OpenTofu repo is refused by engine name), and Terraform reads its modules
+# from the stack's template-registry service.
+forge: forgejo
+binary: terraform
+url: http://forgejo:3000/terragucci-admin/hs-tg-behold-action
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["apps/*"]
+gate: never
+apply:
+  resume: 5
+env:
+  # The fixture registry's host, answered by the template-registry service
+  # from this repo's own files (registry/terraformrc, from
+  # stack/harness/fixtures/templates).
+  TF_CLI_CONFIG_FILE: ${{ github.workspace }}/registry/terraformrc
+modules:
+  registry:
+    dir: registry
+    url: https://modules.harness.local
+    namespace: acme
+    system: aws
+templates:
+  apps: apps/{name}
+  require: signed
+generate:
+  backend:
+    s3:
+      bucket: hs-tg-behold-action-state
+      key: "{root}/terraform.tfstate"
+      region: us-east-1
+      use_path_style: true

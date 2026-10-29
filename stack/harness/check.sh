@@ -52,7 +52,9 @@
 #                                         reviewer, in the reviewer's clone of
 #                                         main with chant/lifecycle, with the
 #                                         chant the tree pins, and the ledger
-#                                         pushed back
+#                                         pushed back; as the author instead
+#                                         under BREAK=1 when overlays/break
+#                                         holds an approve-as file saying author
 #   check.sh rerun <workflow> [status]    the workflow run again on main (a
 #                                         dispatch, or an empty commit when
 #                                         Forgejo refuses one) ended status
@@ -104,6 +106,14 @@
 #   check.sh behold-upgrade <app> [<version>]
 #                                         POST /api/templates/upgrade; 0 on 202
 #                                         (behold dispatches terragucci-rollout.yml)
+#   check.sh behold-action <root> <address>
+#                                         POST /api/templates/action; 0 on 202
+#                                         (behold dispatches terragucci-action.yml)
+#   check.sh behold-history <root> <kind> terragucci audit writes the repo's
+#                                         audit.jsonl to the reports bucket in
+#                                         floci, and behold, serving it as its
+#                                         --terragucci source, lists exactly one
+#                                         <kind> entry for the root with result ok
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -167,19 +177,22 @@ tg_net() {
   [ -z "$overlay" ] || mounts+=(-v "$overlay:/break:ro")
   run_copied --rm ${tty[@]+"${tty[@]}"} --network "$TG_NETWORK" "${mounts[@]}" \
     -e "TERRAGUCCI_FORGEJO_TOKEN=$AUTHOR_TOKEN" -e "TG_CLONE=http://$AUTHOR:$AUTHOR_TOKEN@forgejo:3000/$REPO.git" -e "TG_AUTHOR=$AUTHOR" \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
     --entrypoint sh "$image" -c 'mkdir -p /tmp/bin && printf "#!/bin/sh\nexec node /opt/tg/terragucci.mjs \"\$@\"\n" > /tmp/bin/terragucci && chmod +x /tmp/bin/terragucci && export PATH="/tmp/bin:$PATH" \
       && git clone -q --branch main "$TG_CLONE" /tmp/repo >&2 && cd /tmp/repo \
+      && { git fetch -q origin chant/lifecycle:chant/lifecycle 2>/dev/null || true; } \
       && git config user.name "$TG_AUTHOR" && git config user.email "$TG_AUTHOR@terragucci.local" \
       && { [ ! -d /break ] || { cp -R /break/. . && echo "[check] overlays/break copied over the clone" >&2; }; } \
       && exec "$@"' tg-net "$@"
 }
 
-# behold_up <dir>: behold serve on the checkout in dir, on a free loopback port
+# behold_up <dir> [serve flag...]: behold serve on the checkout in dir, on a free loopback port
 # (BEHOLD_URL), with this checkout's terragucci first on PATH. behold_down stops it.
 BEHOLD_PID=""
-behold_up() {
+behold_up() { # dir [serve flag...]
   local dir="$1" shim i
+  shift
   local -a behold
   read -r -a behold <<<"${BEHOLD:-behold}"
   command -v "${behold[0]}" >/dev/null 2>&1 || { log "no behold to run: set BEHOLD to the behold command, such as \"node <behold checkout>/bin/behold.js\""; return 1; }
@@ -191,7 +204,7 @@ behold_up() {
   BEHOLD_PORT="${BEHOLD_PORT:-$(( 4700 + RANDOM % 200 ))}"
   BEHOLD_URL="http://127.0.0.1:$BEHOLD_PORT"
   PATH="$shim:$PATH" FORGEJO_TOKEN="$AUTHOR_TOKEN" FORGEJO_URL="$URL" \
-    "${behold[@]}" serve "$dir" --port "$BEHOLD_PORT" > "$(dirname "$dir")/behold.log" 2>&1 &
+    "${behold[@]}" serve "$dir" --port "$BEHOLD_PORT" "$@" > "$(dirname "$dir")/behold.log" 2>&1 &
   BEHOLD_PID=$!
   trap behold_down EXIT
   for i in $(seq 1 120); do
@@ -338,9 +351,15 @@ case "${1:-}" in
     ;;
   chant-approve)
     op="${2:?chant-approve <op> <gate>}"; gate="${3:?chant-approve <op> <gate>}"
-    who="$TERRAGUCCI_FORGEJO_REVIEWER"
+    who="$TERRAGUCCI_FORGEJO_REVIEWER"; who_token="$TERRAGUCCI_FORGEJO_REVIEWER_TOKEN"
+    # A BREAK arm whose overlays/break holds approve-as with "author" approves as the author, who asked.
+    overlay="$(break_overlay)"
+    if [ -n "$overlay" ] && [ "$(cat "$overlay/approve-as" 2>/dev/null)" = author ]; then
+      who="$AUTHOR"; who_token="$AUTHOR_TOKEN"
+      log "BREAK: $who, who asked, approves"
+    fi
     work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
-    git clone -q "$(remote "$who" "$TERRAGUCCI_FORGEJO_REVIEWER_TOKEN")" "$work/repo" >&2
+    git clone -q "$(remote "$who" "$who_token")" "$work/repo" >&2
     git -C "$work/repo" show-ref -q --verify refs/remotes/origin/chant/lifecycle \
       || { log "$REPO has no chant/lifecycle, so no gate is waiting"; exit 1; }
     git -C "$work/repo" branch -q chant/lifecycle origin/chant/lifecycle
@@ -479,5 +498,29 @@ case "${1:-}" in
     behold_call POST /api/templates/upgrade "$body"
     [ "$B_STATUS" = 202 ] || { log "behold refused the upgrade: $(jq -r '.code // "no code"' <<<"$B_BODY" 2>/dev/null)"; exit 1; }
     ;;
-  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> [workflow] | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | chant-approve <op> <gate> | rerun <workflow> [status] | plan-twice <root> | request <template> --name <n> [flag...] | rollout <module> [<version>] | templates-apps <jq> | agent-request <tool> <json> | behold-request <template> <name> [--app <app>] [--version <v>] [<k>=<v>...] | behold-apps <app> [--addon <name>]... | behold-upgrade <app> [<version>]" >&2; exit 2 ;;
+  behold-action)
+    root="${2:?behold-action <root> <address>}"; address="${3:?behold-action <root> <address>}"
+    body="$(jq -nc --arg r "$root" --arg a "$address" '{root: $r, address: $a}')"
+    behold_up "$(behold_checkout)" || exit 1
+    behold_call POST /api/templates/action "$body"
+    [ "$B_STATUS" = 202 ] || { log "behold refused the action: $(jq -r '.code // "no code"' <<<"$B_BODY" 2>/dev/null)"; exit 1; }
+    ;;
+  behold-history)
+    root="${2:?behold-history <root> <kind>}"; kind="${3:?behold-history <root> <kind>}"
+    wait_settled || exit 1
+    prefix="hs-${TG_SCENARIO:?}"
+    # The audit record the scheduled audit job writes, written now from the repo's ledger.
+    tg_net terragucci audit --bucket s3://terragucci-reports --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" >&2 \
+      || { log "terragucci audit did not write the audit record"; exit 1; }
+    reports="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")/reports"
+    mkdir -p "$reports"
+    curl -fsS -o "$reports/audit.jsonl" "$FLOCI/terragucci-reports/$prefix/audit.jsonl" || { log "no $prefix/audit.jsonl in floci"; exit 1; }
+    project="$(head -1 "$reports/audit.jsonl" | jq -r '.project // empty')"
+    behold_up "$(behold_checkout)" --terragucci "$reports" ${project:+--terragucci-project "$project"} || exit 1
+    behold_call GET "/api/terragucci/timeline?root=$(jq -rn --arg r "$root" '$r | @uri')&fresh=1"
+    [ "$B_STATUS" = 200 ] || exit 1
+    jq -e --arg k "$kind" --arg r "$root" '[.entries[] | select(.kind == $k and (.roots | index($r)) and .result == "ok")] | length == 1' <<<"$B_BODY" >&2 \
+      || { log "behold's timeline for $root does not hold exactly one $kind entry with result ok"; exit 1; }
+    ;;
+  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> [workflow] | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | chant-approve <op> <gate> | rerun <workflow> [status] | plan-twice <root> | request <template> --name <n> [flag...] | rollout <module> [<version>] | templates-apps <jq> | agent-request <tool> <json> | behold-request <template> <name> [--app <app>] [--version <v>] [<k>=<v>...] | behold-apps <app> [--addon <name>]... | behold-upgrade <app> [<version>] | behold-action <root> <address> | behold-history <root> <kind>" >&2; exit 2 ;;
 esac
