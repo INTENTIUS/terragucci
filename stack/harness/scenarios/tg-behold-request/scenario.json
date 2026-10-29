@@ -1,0 +1,95 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-behold-request",
+  "product": "terragucci",
+  "claim": "behold/template-form",
+  "title": "behold's Templates form asks for an app; behold dispatches terragucci's request workflow, which opens the pull request, and it plans",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-behold-request",
+  "limits": {
+    "out-of-band": 1200,
+    "await-pull": 900
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied billing",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "request",
+      "do": "out-of-band",
+      "label": "behold's form posts orders from acme/bucket/aws 1.2.0 to /api/templates/request",
+      "command": [
+        "stack/harness/check.sh",
+        "behold-request",
+        "acme/bucket/aws",
+        "orders",
+        "--version",
+        "1.2.0",
+        "bucket_name=hs-tgbr-orders"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "pull",
+      "do": "await-pull",
+      "branch": "request/bucket/orders",
+      "expect": [
+        {
+          "pull": {
+            "title": "Request: orders from bucket 1.2.0",
+            "files": [
+              "apps/orders/main.tf",
+              "apps/orders/backend.tf",
+              "apps/orders/providers.tf",
+              "apps/orders/versions.tf"
+            ],
+            "only": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "the pull request's plan job went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "request/bucket/orders",
+        "success"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "overlays/break marks 1.2.0 yanked in behold's checkout's catalog, so GET /api/templates no longer offers it, the post answers 422 not-active, and the request step's exit 0 does not hold"
+  }
+}

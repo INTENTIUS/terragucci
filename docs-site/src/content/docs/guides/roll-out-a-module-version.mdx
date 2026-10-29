@@ -72,7 +72,7 @@ Every root that pins the module moved to the new version through one pull reques
 
    | Forge | Job | Token | Schedule |
    |---|---|---|---|
-   | GitHub | its own workflow, `terragucci-rollout.yml`, which you can also start by hand | the secret `token_env` names, else the job's own; GitHub runs no workflow for a pull request the job's own token opens, so name a secret holding a token that can push branches and open pull requests | the `rollouts` cron |
+   | GitHub | its own workflow, `terragucci-rollout.yml`, which you can also start by hand, with the `module` and `version` inputs below | the secret `token_env` names, else the job's own; GitHub runs no workflow for a pull request the job's own token opens, so name a secret holding a token that can push branches and open pull requests | the `rollouts` cron |
    | Forgejo | the same | the secret `token_env` names, else the job's own | the `rollouts` cron |
    | GitLab | the `rollout` job in the pipeline | the `token_env` variable | a pipeline schedule with that cron and the variable `TERRAGUCCI_SCHEDULE` set to `rollouts`; `init` prints the steps |
 
@@ -105,6 +105,35 @@ npx terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 ```
 
 Each lock file is rewritten for that provider alone, and an exact `version` constraint moves too. The wave stops unless every other provider stays where it was.
+
+## Upgrade the apps built from a template
+
+An app made from a template pins it exactly in its `module "app"` call, so the same flow moves it. Name the template by its address:
+
+```bash
+npx terragucci templates apps --template acme/bucket/aws
+npx terragucci rollout acme/bucket/aws 1.3.0
+```
+
+The first command gives each app an `upgrade`: the newest active release above its pin that a request may name, so under `templates.require: signed` (the default) an unsigned release is never offered. Its `yanked` is true when the catalog pulled that pin. With `templates` set in `terragucci.yml`, the second speaks in apps:
+
+- Each wave's pull request is titled by the apps it moves, such as `Upgrade bucket to 1.3.0: orders (wave 1 of 2)`.
+- Its body lists those apps with the catalog's changelog entries after the old pin.
+- The target passes the same signing check: under `templates.require: signed` a rollout to an unsigned release exits 1 and opens nothing, and with no version named it moves to the newest signed one.
+- An app on a yanked pin moves from it in the first wave after the canaries. One that reads another moving root's state keeps its place in dependency order.
+
+`waves.canary` takes app roots such as `apps/orders`. Start it with `--mode apply` or from the workflow; the schedule then opens each later wave. On GitHub and Forgejo the workflow's dispatch takes two inputs:
+
+| Input | Meaning |
+|---|---|
+| `module` | the module or template, such as `acme/bucket/aws`; empty continues every one in flight, as the schedule does |
+| `version` | the release to move to; empty for the newest published |
+
+```bash
+gh workflow run terragucci-rollout.yml -f module=acme/bucket/aws -f version=1.3.0
+```
+
+A dispatch that finds the wave still open, or its apply not yet reported, ends without failing. Without a readable catalog the run names roots instead of apps and adds a note.
 
 ## Next
 

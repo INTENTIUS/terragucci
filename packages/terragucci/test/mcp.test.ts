@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { assertReadOnly, callTool, checkArgs, context, PROPOSE_TOOLS, PROPOSED_FOOTER, readOnlyStore, refusal, serve, TOOLS, type McpOptions, type Tool } from "../src/mcp";
-import { chantProductMcp } from "../src/chant-next";
+import { chantProductMcp, chantProposeMcp } from "../src/chant-next";
 import type { Fetch } from "../src/forge";
 import { buildReport } from "../src/report/build";
 import { StoreError, type ObjectStore } from "../src/report/object-store";
@@ -19,6 +19,8 @@ const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
 // Where the installed chant has the product hook (chant#4555), the bundle serves chant's read-only server, with
 // terragucci's tools as `terragucci:<name>`; a tool it does not serve is unknown there.
 const CHANT_MCP = !!(await chantProductMcp());
+// Where it also has the propose tier (chant#4655), `--propose` serves on chant's server too.
+const CHANT_PROPOSE = !!(await chantProposeMcp());
 
 function memoryStore(objects: Map<string, string> = new Map()): ObjectStore & { objects: Map<string, string>; puts: number } {
   const s = {
@@ -103,7 +105,7 @@ describe("terragucci mcp", () => {
   it("lists only tools that read, each marked read-only, none named for a write", async () => {
     const client = await connected(options(bucket()));
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "report", "run_view", "state_versions", "waiting"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "report", "run_view", "state_versions", "templates", "waiting"]);
     for (const t of tools) {
       expect(t.annotations?.readOnlyHint).toBe(true);
       expect(t.annotations?.destructiveHint).toBe(false);
@@ -286,7 +288,7 @@ describe("terragucci mcp --propose", () => {
     expect((await plain.listTools()).tools.map((t) => t.name)).not.toContain("propose");
     const client = await connected(o);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "plan_result", "propose", "report", "request_plan", "run_view", "state_versions", "waiting"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "plan_result", "propose", "report", "request_from_template", "request_plan", "run_view", "state_versions", "templates", "waiting"]);
     for (const t of tools) {
       expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
       expect(t.annotations?.destructiveHint).toBe(false);
@@ -398,6 +400,24 @@ describe.skipIf(!existsSync(DIST))("the bundle's terragucci mcp", () => {
     expect(said(r)).toContain(CHANT_MCP ? "Unknown tool: terragucci:approve" : "terragucci mcp is read-only");
     await client.close();
   }, 30_000);
+
+  it("lists templates without --propose, and request_from_template only with it, over stdio", async () => {
+    const cwd = tmp();
+    const names = async (argv: string[]): Promise<{ server?: string; tools: string[] }> => {
+      const transport = new StdioClientTransport({ command: process.execPath, args: [DIST, "mcp", "--bucket", "s3://nowhere", ...argv], cwd, stderr: "pipe", env: { PATH: process.env.PATH ?? "" } });
+      const client = new Client({ name: "test", version: "1" });
+      await client.connect(transport);
+      const out = { server: client.getServerVersion()?.name, tools: (await client.listTools()).tools.map((t) => t.name) };
+      await client.close();
+      return out;
+    };
+    const plain = await names([]);
+    expect(plain.tools).toContain(CHANT_MCP ? "terragucci:templates" : "templates");
+    expect(plain.tools.some((t) => t.endsWith("request_from_template"))).toBe(false);
+    const proposing = await names(["--propose"]);
+    expect(proposing.server).toBe(CHANT_PROPOSE ? "chant" : "terragucci");
+    expect(proposing.tools).toEqual(expect.arrayContaining(CHANT_PROPOSE ? ["terragucci:templates", "terragucci:request_from_template"] : ["templates", "request_from_template"]));
+  }, 60_000);
 
   it("ends when its stdin closes", async () => {
     const child = spawn(process.execPath, [DIST, "mcp", "--bucket", "s3://nowhere"], { cwd: tmp(), stdio: ["pipe", "pipe", "pipe"] });

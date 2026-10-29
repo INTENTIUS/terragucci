@@ -51,6 +51,9 @@ import {
   UNLOCK_DONE_FILE,
   UNLOCK_APPLIED_FILE,
   MIGRATE_APPLIED_FILE,
+  ACTION_LEDGER_FILE,
+  ACTION_APPLIED_FILE,
+  joinActionRequesters,
   AGENT_RUN_LEDGERS,
  
   EXPORT_APPLIED_FILE,
@@ -61,6 +64,7 @@ import {
   PR_ENV_LEDGER_PATTERN,
   PR_ENV_RECORDS_FILE,
   AGENT_RUNS_FILE,
+  REQUESTS_FILE,
   readRecord,
   renderAuditHtml,
   reportEntry,
@@ -221,12 +225,12 @@ function readLedger(source: Source): AuditEntry[] | "none" {
     // Each pull request's copy has a gate ledger of its own, _gates/pr-<n>.jsonl, under chant's pr-env.
     const tree = git(dir, ["ls-tree", "--name-only", ref, "_gates/"]);
     const prLedgers = tree.ok ? tree.out.split("\n").filter((p) => PR_ENV_LEDGER_PATTERN.test(p)).sort() : [];
-    for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE, MIGRATE_LEDGER_FILE, MIGRATE_DONE_FILE, MIGRATE_APPLIED_FILE, UNLOCK_LEDGER_FILE, UNLOCK_DONE_FILE, UNLOCK_APPLIED_FILE, EXPORT_LEDGER_FILE, EXPORT_DONE_FILE, EXPORT_APPLIED_FILE, EPHEMERAL_LEDGER_FILE, EPHEMERAL_DONE_FILE, ...prLedgers, PR_ENV_RECORDS_FILE, AGENT_RUNS_FILE, ...Object.keys(AGENT_RUN_LEDGERS)]) {
+    for (const path of [APPLY_LEDGER, OVERRIDE_LEDGER_FILE, MIGRATE_LEDGER_FILE, MIGRATE_DONE_FILE, MIGRATE_APPLIED_FILE, UNLOCK_LEDGER_FILE, UNLOCK_DONE_FILE, UNLOCK_APPLIED_FILE, EXPORT_LEDGER_FILE, EXPORT_DONE_FILE, EXPORT_APPLIED_FILE, EPHEMERAL_LEDGER_FILE, EPHEMERAL_DONE_FILE, ACTION_LEDGER_FILE, ACTION_APPLIED_FILE, ...prLedgers, PR_ENV_RECORDS_FILE, AGENT_RUNS_FILE, ...Object.keys(AGENT_RUN_LEDGERS), REQUESTS_FILE]) {
       const log = git(dir, ["-c", "core.quotepath=off", "log", "--reverse", "--no-color", "--no-ext-diff", "--no-renames", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", ref, "--", path]);
       if (!log.ok) throw new Error(`cannot read the history of ${path} on ${LEDGER_BRANCH}: ${log.err}`);
       entries.push(...ledgerEntries(source.project, path, gateLedgerLinesFromLog(log.out), source.commitUrl));
     }
-    return entries;
+    return joinActionRequesters(entries);
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });
   }

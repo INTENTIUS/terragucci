@@ -6,6 +6,11 @@
  * another's state lands in a later wave. chant's planner does the layering
  * (`planPinWaves`), the order gated waves use.
  *
+ * Roots in `first` (an app pinned to a version the catalog marks yanked)
+ * move in the first wave after the canaries, ahead of the dependency order,
+ * when every root they depend on is a canary. One that depends on another
+ * root of the rollout keeps its place in the dependency order.
+ *
  * Across the projects of a control repo there is no dependency graph to read,
  * so order is the canary list and then project order in the config: wave 1
  * holds every project's canaries, and each project's other waves follow, one
@@ -22,6 +27,8 @@ export interface ProjectRoots {
   dependsOn: Map<string, Set<string>>;
   /** `waves.canary` from the project's settings. */
   canary: string[];
+  /** Roots that move right after the canaries: apps pinned to a yanked version. */
+  first?: string[];
 }
 
 export interface WavePart {
@@ -37,6 +44,7 @@ export interface Wave {
 
 export function planWaves(projects: ProjectRoots[]): Wave[] {
   const canaries: WavePart[] = [];
+  const firsts: WavePart[] = [];
   const rest: Array<{ project: string; layers: string[][] }> = [];
   for (const p of projects) {
     const canary = p.roots.filter((r) => p.canary.some((g) => globMatch(g, r)));
@@ -45,10 +53,18 @@ export function planWaves(projects: ProjectRoots[]): Wave[] {
       canary,
     );
     if (canary.length > 0) canaries.push({ project: p.key, roots: planned[0]!.roots });
-    rest.push({ project: p.key, layers: planned.filter((w) => !w.canary).map((w) => w.roots) });
+    const inRollout = new Set(p.roots);
+    const first = (p.first ?? [])
+      .filter((r) => inRollout.has(r) && !canary.includes(r))
+      .filter((r) => [...(p.dependsOn.get(r) ?? [])].every((d) => d === r || !inRollout.has(d) || canary.includes(d)))
+      .sort();
+    if (first.length > 0) firsts.push({ project: p.key, roots: first });
+    const layers = planned.filter((w) => !w.canary).map((w) => w.roots.filter((r) => !first.includes(r))).filter((l) => l.length > 0);
+    rest.push({ project: p.key, layers });
   }
   const waves: Wave[] = [];
   if (canaries.length > 0) waves.push({ wave: 1, canary: true, parts: canaries });
+  if (firsts.length > 0) waves.push({ wave: waves.length + 1, canary: false, parts: firsts });
   for (const { project, layers } of rest) {
     for (const roots of layers) waves.push({ wave: waves.length + 1, canary: false, parts: [{ project, roots }] });
   }

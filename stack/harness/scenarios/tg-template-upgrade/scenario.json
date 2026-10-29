@@ -1,0 +1,187 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-template-upgrade",
+  "product": "terragucci",
+  "claim": "template/upgrade-waves",
+  "title": "A template's new version reaches every app built from it through the module rollout, canary first, one pull request per wave, titled by the apps it moves",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-template-upgrade",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied orders and billing",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "offered",
+      "do": "out-of-band",
+      "label": "templates apps offers 1.3.0, the newest signed version, to both apps (1.4.0 is unsigned)",
+      "command": [
+        "stack/harness/check.sh",
+        "templates-apps",
+        "map(select(.template == \"acme/bucket/aws\")) | length == 2 and all(.upgrade == \"1.3.0\")"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "wave-1",
+      "do": "out-of-band",
+      "label": "the rollout opens wave 1, the canary",
+      "command": [
+        "stack/harness/check.sh",
+        "rollout",
+        "acme/bucket/aws",
+        "1.3.0"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "pull-1",
+      "do": "await-pull",
+      "branch": "terragucci/rollout/acme-bucket-aws-1.3.0/wave-1",
+      "expect": [
+        {
+          "pull": {
+            "title": "Upgrade bucket to 1.3.0: orders (wave 1 of 2)",
+            "files": [
+              "apps/orders/main.tf"
+            ],
+            "only": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "planned-1",
+      "do": "out-of-band",
+      "label": "wave 1's plan job went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "terragucci/rollout/acme-bucket-aws-1.3.0/wave-1",
+        "success"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "review-1",
+      "do": "out-of-band",
+      "label": "the reviewer approves wave 1",
+      "command": [
+        "stack/harness/check.sh",
+        "review",
+        "terragucci/rollout/acme-bucket-aws-1.3.0/wave-1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge-1",
+      "do": "merge",
+      "pull": "pull-1"
+    },
+    {
+      "id": "applied-1",
+      "do": "out-of-band",
+      "label": "wave 1's merge applied",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "versioned",
+      "do": "out-of-band",
+      "label": "orders's state holds 1.3.0's versioning",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "hs-tg-template-upgrade-state",
+        "apps/orders/terraform.tfstate",
+        "[.[0].resources[]? | select(.type == \"aws_s3_bucket_versioning\")] | length == 1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "wave-2",
+      "do": "out-of-band",
+      "label": "the rollout, run again, opens wave 2",
+      "command": [
+        "stack/harness/check.sh",
+        "rollout",
+        "acme/bucket/aws",
+        "1.3.0"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "pull-2",
+      "do": "await-pull",
+      "branch": "terragucci/rollout/acme-bucket-aws-1.3.0/wave-2",
+      "expect": [
+        {
+          "pull": {
+            "title": "Upgrade bucket to 1.3.0: billing (wave 2 of 2)",
+            "files": [
+              "apps/billing/main.tf"
+            ],
+            "only": true
+          }
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "overlays/break's terragucci.yml has no waves.canary, so wave 1 moves both apps and its pull outcome (orders only, wave 1 of 2) does not hold"
+  }
+}

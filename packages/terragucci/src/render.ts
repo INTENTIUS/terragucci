@@ -221,6 +221,43 @@ export const ROLLOUT_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   forgejo: ".forgejo/workflows/terragucci-rollout.yml",
 };
 
+/**
+ * The rollout workflow's dispatch inputs. With `module` it starts that module's rollout
+ * (`terragucci rollout <module> [<version>] --mode apply`), which opens its first wave; an
+ * empty `version` is the module's newest published one. Without `module`, and on the
+ * schedule, it continues every rollout in flight. A client such as an Upgrade button
+ * dispatches it by its file name, ROLLOUT_PATHS.
+ */
+export const ROLLOUT_INPUTS = {
+  module: { description: "The module or template to roll out, such as acme/bucket/aws; empty continues every rollout in flight", required: false, type: "string" },
+  version: { description: "The version to move to; empty for the newest published one", required: false, type: "string" },
+};
+
+/**
+ * The request workflow, beside the pipeline on GitHub and Forgejo, with `templates` set: a
+ * `workflow_dispatch` whose inputs are REQUEST_INPUTS, which opens a pull request adding an
+ * app's root from a template. A form dispatches it by this file name.
+ */
+export const REQUEST_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: ".github/workflows/terragucci-request.yml",
+  forgejo: ".forgejo/workflows/terragucci-request.yml",
+};
+
+/**
+ * The request workflow's dispatch inputs: the template, its version, the app's (or add-on's)
+ * name and its inputs as JSON; `app` for an add-on, naming the app it goes into; and
+ * `claimed_by`, the person the dispatching client says asked, which the request shows as
+ * claimed next to the run's actor.
+ */
+export const REQUEST_INPUTS = {
+  template: { description: "The template's address, such as acme/bucket/aws", required: true, type: "string" },
+  version: { description: "The template version; empty for its newest one a request may name", required: false, type: "string" },
+  name: { description: "The app's name, or with app the add-on's: a lowercase letter, then lowercase letters, digits and -", required: true, type: "string" },
+  inputs: { description: "The template's inputs as one JSON object, by name", required: false, default: "{}", type: "string" },
+  app: { description: "For an add-on template: the existing app it goes into; empty for a new app", required: false, type: "string" },
+  claimed_by: { description: "Who the client says asked; shown as claimed, next to the run's actor", required: false, type: "string" },
+};
+
 export const PIPELINE_PATHS: Record<ForgeName, string> = {
   github: ".github/workflows/terragucci.yml",
   forgejo: ".forgejo/workflows/terragucci.yml",
@@ -303,6 +340,8 @@ export interface PipelineInput {
   publishGitlabToken?: string;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
   drift?: string;
+  /** `templates:` is set: the request workflow, on GitHub and Forgejo. */
+  templates?: boolean;
   /** `rollouts:`, when `respond.rollout` is not off: the cron of the job that continues every rollout in flight. */
   rollouts?: string;
   /** `control`, settled: after the last apply succeeds on the default branch, a job sends the control repo a dispatch (control-repo.ts). */
@@ -395,7 +434,7 @@ export interface RenderedPipeline {
   content: string;
   /** The jobs that apply roots, built from the same list the workflow's jobs are. */
   applyJobs: PipelineApplyJob[];
-  /** Further workflow files on GitHub and Forgejo: the resume workflow, the review workflow with `review.agent`, and the rollout workflow with `rollouts`. */
+  /** Further workflow files on GitHub and Forgejo: the resume workflow, the review workflow with `review.agent`, the rollout workflow with `rollouts`, and the request workflow with `templates`. */
   extra?: { path: string; content: string }[];
 }
 
@@ -404,6 +443,71 @@ export const RESUME_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
   github: ".github/workflows/terragucci-resume.yml",
   forgejo: ".forgejo/workflows/terragucci-resume.yml",
 };
+
+/** The day-2 action workflow (./action.ts), beside the pipeline (GitHub and Forgejo). behold dispatches it by this name with inputs `root` and `address`. */
+export const ACTION_WORKFLOW = "terragucci-action.yml";
+export const ACTION_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+  github: `.github/workflows/${ACTION_WORKFLOW}`,
+  forgejo: `.forgejo/workflows/${ACTION_WORKFLOW}`,
+};
+/** The action workflow's workflow_dispatch inputs. */
+export const ACTION_INPUTS = {
+  root: { description: "The root the action is in, a path from the repository root", required: true, type: "string" },
+  address: { description: "The action's address, such as module.app.action.aws_lambda_invoke.rotate", required: true, type: "string" },
+};
+
+/** The first words of an action comment, as the jobs' conditions test them. */
+const ACTION_COMMENT = "/terragucci action ";
+
+/**
+ * The action job's first step (./action.ts): `terragucci action --decide`
+ * reads the comment or the dispatch from the event file, checks who asked,
+ * the root and the address, and replies to a refusal. No credential is taken
+ * before it says go.
+ */
+export function actionDecideScript(layers: string[][], forge: Exclude<ForgeName, "gitlab">): string {
+  return [
+    "set -uo pipefail",
+    `terragucci action --decide --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-action.json || exit 1`,
+    `node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).go?0:1)' terragucci-action.json || exit 0`,
+    'echo "go=1" >>"$GITHUB_OUTPUT"',
+  ].join("\n");
+}
+
+/**
+ * The action job's second step: the apply credentials, then `terragucci
+ * action --from`, which asks for the action as the person who asked, runs
+ * it once an approval by someone else stands, and replies on the pull
+ * request. A request that waits ends the step green: the reply carries the
+ * approve line.
+ */
+export function actionRunScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcSettings | undefined): string {
+  return [
+    ...stageTokens(forge, oidc, "apply"),
+    "set -uo pipefail",
+    ...cloudScripts(forge, oidc, "apply", "terragucci-action"),
+    `terragucci action --from terragucci-action.json${forge === "forgejo" ? " --forge forgejo" : ""}`,
+    "code=$?",
+    '[ "$code" -eq 3 ] && exit 0',
+    'exit "$code"',
+  ].join("\n");
+}
+
+/**
+ * The resume job's action step: `terragucci action --resume --dry-run` lists
+ * the requests an approval now stands for, and with none the step stops
+ * before any credential; otherwise each runs as the person who asked.
+ */
+export function actionResumeScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcSettings | undefined): string {
+  return [
+    ...stageTokens(forge, oidc, "apply"),
+    "set -uo pipefail",
+    "terragucci action --resume --dry-run --out terragucci-actions.txt || exit 1",
+    "[ -s terragucci-actions.txt ] || exit 0",
+    ...cloudScripts(forge, oidc, "apply", "terragucci-action"),
+    "terragucci action --resume",
+  ].join("\n");
+}
 
 /** The ephemeral sweep's workflow file, beside the pipeline's (GitHub and Forgejo). */
 export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
@@ -502,6 +606,27 @@ export function tipsScript(binary: Binary, forge: ForgeName, tokenEnv?: string, 
  */
 export function rolloutScript(forge: ForgeName, tokenEnv?: string): string {
   return ["set -u", ...respondSetup(forge, tokenEnv), "terragucci respond rollout --mode apply"].join("\n");
+}
+
+/**
+ * The rollout workflow's run (GitHub and Forgejo): with TG_MODULE, a person's start of that
+ * rollout, where exit 3 (a wave already open, or its apply not yet reported) is no failure;
+ * without it, the scheduled continue of every rollout in flight.
+ */
+export function rolloutDispatchScript(forge: Exclude<ForgeName, "gitlab">, tokenEnv?: string): string {
+  return [
+    "set -u",
+    ...respondSetup(forge, tokenEnv),
+    'if [ -n "${TG_MODULE:-}" ]; then',
+    '  set -- "$TG_MODULE"',
+    '  [ -z "${TG_VERSION:-}" ] || set -- "$@" "$TG_VERSION"',
+    "  code=0",
+    '  terragucci rollout "$@" --mode apply || code=$?',
+    '  [ "$code" -eq 3 ] || exit "$code"',
+    "else",
+    "  terragucci respond rollout --mode apply",
+    "fi",
+  ].join("\n");
 }
 
 /**
@@ -2370,6 +2495,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const rollouts = input.rollouts;
   const roots = layers.flat().sort();
   if (roots.length === 0) throw new RenderError(tg ? "there are no Terragrunt units to run" : "there are no roots to run");
+  // A day-2 action (./action.ts) runs from a workflow of its own, for plain roots on Terraform, which alone invokes an action block.
+  const actionFlow = forge !== "gitlab" && binary === "terraform" && !tg;
   const jobEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0", ...(tg ? terragruntJobEnv(binary, tg) : {}), ...env, ...(input.atlantisComments ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {}) };
   // Only the jobs that run a stage send telemetry (plan, apply, drift), so only they get the headers secret; check and publish never see it.
   const headersEnv = headersSecret ? { OTEL_EXPORTER_OTLP_HEADERS: forge === "gitlab" ? `$${headersSecret}` : `\${{ secrets.${headersSecret} }}` } : {};
@@ -3062,7 +3189,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },
-    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}) || ${REPLAN_DISPATCH}`,
+    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}${actionFlow ? ` && !${says(ACTION_COMMENT)}` : ""}) || ${REPLAN_DISPATCH}`,
     permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
     ...openid(needsToken),
     concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
@@ -3435,9 +3562,42 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ],
       } as never) as never],
     ]);
+    // A day-2 action whose approval now stands runs as the person who asked (./action.ts resumeActions), in a job of its own.
+    if (actionFlow) {
+      resume.set("action", new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        permissions: { contents: "write", ...(needsToken ? { "id-token": "write" } : {}) },
+        ...openid(needsToken),
+        concurrency: { group: "terragucci-action-${{ github.repository }}", "cancel-in-progress": false },
+        env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv },
+        steps: steps(new Step({ name: "Run each day-2 action whose approval stands", shell: "bash", run: actionResumeScript(forge, oidc) }), false, true),
+      } as never) as never);
+    }
     // The resume applies a commit the push's own pipeline left waiting: the control repo is told here, once, by a job of its own.
     if (input.control) resume.set("control", controlJob(input.control, forge, image, { needs: "resume", cond: "needs.resume.outputs.control_sha != ''", sha: "${{ needs.resume.outputs.control_sha }}" }));
     extra.push({ path: RESUME_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(resume) });
+  }
+  if (actionFlow) {
+    // Day-2 actions: a workflow of its own, on a `/terragucci action` comment or a dispatch with root and address (behold's button).
+    const action = new Map<string, never>([
+      ["workflow", new Workflow({ name: "terragucci action", on: { issue_comment: { types: ["created"] }, workflow_dispatch: { inputs: ACTION_INPUTS } }, env: jobEnv, permissions: { contents: "read" } }) as never],
+      ["action", new Job({
+        "runs-on": "ubuntu-latest",
+        container: { image },
+        if: `(github.event_name == 'issue_comment' && ${says(ACTION_COMMENT)}) || github.event_name == 'workflow_dispatch'`,
+        // It pushes the request and its records to chant/lifecycle and replies on the pull request.
+        permissions: { contents: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
+        ...openid(needsToken),
+        concurrency: { group: "terragucci-action-${{ github.repository }}", "cancel-in-progress": false },
+        env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv },
+        steps: [
+          ...steps(new Step({ id: "decide", name: "Read the comment or the dispatch and decide whether an action runs", shell: "bash", run: actionDecideScript(layers, forge) }), false, true),
+          new Step({ if: "steps.decide.outputs.go == '1'", name: "Ask for the action, and run it once an approval by someone else stands", shell: "bash", run: actionRunScript(forge, oidc) }),
+        ],
+      } as never) as never],
+    ]);
+    extra.push({ path: ACTION_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(action) });
   }
   if (ephemeral) {
     // ephemeral: a schedule of its own destroys the copies whose TTL passed or whose pull request closed.
@@ -3457,13 +3617,75 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   }
   // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
   if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv })) });
+  if (input.templates) extra.push({ path: REQUEST_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(requestWorkflow(image, jobEnv, tokenEnv)) });
   if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined)) });
   return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(entities) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), applyJobs: renderedApplyJobs, ...(extra.length ? { extra } : {}) };
 }
 
 /**
+ * The request job's script: the dispatch's inputs, read from the environment so
+ * no value is pasted into the shell, become `terragucci request --via form`,
+ * with the person who dispatched the run as the requester, and `--app` and
+ * `--claimed-by` when the dispatch gave them.
+ */
+export function requestScript(): string {
+  return [
+    "set -eu",
+    'inputs="$(mktemp)"',
+    'printf \'%s\' "${TG_INPUTS:-}" > "$inputs"',
+    '[ -s "$inputs" ] || printf \'{}\' > "$inputs"',
+    'set -- "$TG_TEMPLATE" --name "$TG_NAME" --inputs-file "$inputs" --via form --requested-by "$TG_REQUESTED_BY"',
+    '[ -z "${TG_VERSION:-}" ] || set -- "$@" --version "$TG_VERSION"',
+    '[ -z "${TG_APP:-}" ] || set -- "$@" --app "$TG_APP"',
+    '[ -z "${TG_CLAIMED_BY:-}" ] || set -- "$@" --claimed-by "$TG_CLAIMED_BY"',
+    'terragucci request "$@"',
+  ].join("\n");
+}
+
+/**
+ * The request workflow (GitHub and Forgejo): dispatched with REQUEST_INPUTS, it runs
+ * `terragucci request` from the default branch, which pushes `request/<template>/<app>`
+ * (`request/<template>/<app>/<addon>` for an add-on) and opens its pull request. It pushes and opens with `token_env`'s secret when the config
+ * names one: GitHub starts no workflow for a pull request the job's own token opens, so
+ * the app's root would get no plan. Without it, the job's own token.
+ */
+function requestWorkflow(image: string, env: Record<string, string>, tokenEnv: string | undefined): Map<string, never> {
+  const token = tokenEnv ? `\${{ secrets.${tokenEnv} }}` : "${{ github.token }}";
+  const workflow = new Workflow({
+    name: "terragucci-request",
+    on: { workflow_dispatch: { inputs: REQUEST_INPUTS } },
+    env,
+    permissions: { contents: "read" },
+    // One run per app (or add-on of an app) at a time: two would race to push its branch.
+    concurrency: { group: "terragucci-request-${{ github.repository }}-${{ github.event.inputs.app }}-${{ github.event.inputs.name }}", "cancel-in-progress": false },
+  } as never);
+  const request = new Job({
+    "runs-on": "ubuntu-latest",
+    container: { image },
+    // It pushes the request's branch, records the request on chant/lifecycle and opens the pull request.
+    permissions: { contents: "write", "pull-requests": "write" },
+    env: {
+      TG_TOKEN: token,
+      TG_TEMPLATE: "${{ github.event.inputs.template }}",
+      TG_VERSION: "${{ github.event.inputs.version }}",
+      TG_NAME: "${{ github.event.inputs.name }}",
+      TG_INPUTS: "${{ github.event.inputs.inputs }}",
+      TG_APP: "${{ github.event.inputs.app }}",
+      TG_REQUESTED_BY: "${{ github.triggering_actor || github.actor }}",
+      TG_CLAIMED_BY: "${{ github.event.inputs.claimed_by }}",
+    },
+    steps: [
+      new Step({ uses: CHECKOUT, with: { "fetch-depth": 0, ...(tokenEnv ? { token } : {}) } }),
+      new Step({ name: "Open the pull request that adds the app's root or the add-on from the template", shell: "bash", run: requestScript() }),
+    ],
+  } as never);
+  return new Map<string, never>([["workflow", workflow as never], ["request", request as never]]);
+}
+
+/**
  * The rollout workflow (GitHub and Forgejo): on its schedule, or by hand,
- * `terragucci respond rollout --mode apply` from the default branch. It opens
+ * `terragucci respond rollout --mode apply` from the default branch; dispatched
+ * with `module` (ROLLOUT_INPUTS), it starts that rollout instead. It opens
  * pull requests and pushes their branches with `token_env`'s secret when the
  * config names one: GitHub starts no workflow for a pull request the job's own
  * token opens, so the wave would get no plan. Without it, the job's own token.
@@ -3472,7 +3694,7 @@ function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cro
   const token = tokenEnv ? `\${{ secrets.${tokenEnv} }}` : "${{ github.token }}";
   const workflow = new Workflow({
     name: "terragucci-rollout",
-    on: { schedule: [{ cron }], workflow_dispatch: {} },
+    on: { schedule: [{ cron }], workflow_dispatch: { inputs: ROLLOUT_INPUTS } },
     env,
     permissions: { contents: "read" },
     // One run at a time: two would both see a wave due and race to open it.
@@ -3483,11 +3705,11 @@ function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cro
     container: { image },
     // It reads each wave's merge commit's checks and statuses, pushes the next wave's branch and opens its pull request.
     permissions: { contents: "write", "pull-requests": "write", statuses: "read", ...(forge === "github" ? { checks: "read" } : {}) },
-    env: { TG_TOKEN: token },
+    env: { TG_TOKEN: token, TG_MODULE: "${{ github.event.inputs.module }}", TG_VERSION: "${{ github.event.inputs.version }}" },
     steps: [
       new Step({ uses: CHECKOUT, with: { "fetch-depth": 0, ...(tokenEnv ? { token } : {}) } }),
       ...(install ? [new Step(install)] : []),
-      new Step({ name: "Open the next wave of each rollout whose last wave merged and applied", shell: "bash", run: rolloutScript(forge, tokenEnv) }),
+      new Step({ name: "Start the dispatched rollout, or open the next wave of each rollout whose last wave merged and applied", shell: "bash", run: rolloutDispatchScript(forge, tokenEnv) }),
     ],
   } as never);
   return new Map<string, never>([["workflow", workflow as never], ["rollout", rollout as never]]);

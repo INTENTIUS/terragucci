@@ -1,0 +1,12 @@
+# tg-action-run (terragucci#1310): an app root as a template writes one, which
+# holds only `module "app"`, on floci. The module declares the day-2 action
+# `aws_lambda_invoke.rotate`, invoked by its module address. The resume job
+# runs an action once its approval stands.
+forge: forgejo
+binary: terraform
+url: http://forgejo:3000/terragucci-admin/hs-tg-action-run
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["apps/orders"]
+gate: never
+apply:
+  resume: 5

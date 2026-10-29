@@ -1,0 +1,431 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/workspace/release-catalog/v1/release-catalog.schema.json",
+  "contract": 1,
+  "chant": "0.124.57",
+  "generatedAt": "2026-10-01T00:00:00Z",
+  "components": [
+    {
+      "name": "modules/bucket",
+      "latest": "1.2.0",
+      "fields": {
+        "terraform": {
+          "address": "modules.test/acme/bucket/aws"
+        }
+      },
+      "versions": [
+        {
+          "version": "1.2.0",
+          "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "commit": "3333333333333333333333333333333333333333",
+          "time": "2026-10-01T00:00:00Z",
+          "actor": "publisher",
+          "envs": [
+            "modules"
+          ],
+          "status": {
+            "state": "active",
+            "reason": null,
+            "replacement": null,
+            "actor": null,
+            "time": null
+          },
+          "changelog": {
+            "bump": null,
+            "entries": []
+          },
+          "attestation": {
+            "state": "signed",
+            "verify": null,
+            "identity": null
+          },
+          "consumers": [],
+          "fields": {
+            "terraform": {
+              "address": "modules.test/acme/bucket/aws",
+              "inputs": [
+                {
+                  "name": "api_key",
+                  "type": "string",
+                  "required": true,
+                  "description": "The key the app signs uploads with.",
+                  "sensitive": true
+                },
+                {
+                  "name": "bucket_name",
+                  "type": "string",
+                  "required": true,
+                  "description": "The bucket's globally unique name.",
+                  "sensitive": false
+                },
+                {
+                  "name": "readers",
+                  "type": "list(string)",
+                  "required": false,
+                  "default": [],
+                  "description": null,
+                  "sensitive": false
+                },
+                {
+                  "name": "tags",
+                  "type": "map(string)",
+                  "required": false,
+                  "default": {},
+                  "description": null,
+                  "sensitive": false
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "bucket_arn",
+                  "description": "The bucket's ARN.",
+                  "sensitive": false
+                },
+                {
+                  "name": "private_subnets",
+                  "description": "The app's private subnet IDs.",
+                  "sensitive": false
+                }
+              ],
+              "template": {
+                "contract": 1,
+                "kind": "app",
+                "description": "An S3 bucket for one app, with its tags and the roles that read it.",
+                "inputs": [
+                  {
+                    "name": "bucket_name",
+                    "kind": "string",
+                    "label": "Bucket name",
+                    "description": "The bucket's globally unique name."
+                  },
+                  {
+                    "name": "readers",
+                    "kind": "list",
+                    "of": "string",
+                    "label": "Reader roles",
+                    "default": []
+                  },
+                  {
+                    "name": "tags",
+                    "kind": "map",
+                    "of": "string",
+                    "default": {}
+                  },
+                  {
+                    "name": "api_key",
+                    "kind": "string",
+                    "sensitive": true,
+                    "description": "The key the app signs uploads with."
+                  }
+                ]
+              },
+              "actions": [
+                {
+                  "type": "aws_lambda_invoke",
+                  "name": "rotate"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "version": "1.1.0",
+          "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "commit": "2222222222222222222222222222222222222222",
+          "time": "2026-09-15T00:00:00Z",
+          "actor": "publisher",
+          "envs": [
+            "modules"
+          ],
+          "status": {
+            "state": "yanked",
+            "reason": "drops the bucket's encryption",
+            "replacement": "1.2.0",
+            "actor": "publisher",
+            "time": "2026-10-01T00:00:00Z"
+          },
+          "changelog": {
+            "bump": null,
+            "entries": []
+          },
+          "attestation": {
+            "state": "signed",
+            "verify": null,
+            "identity": null
+          },
+          "consumers": [],
+          "fields": {
+            "terraform": {
+              "address": "modules.test/acme/bucket/aws",
+              "inputs": [
+                {
+                  "name": "api_key",
+                  "type": "string",
+                  "required": true,
+                  "description": "The key the app signs uploads with.",
+                  "sensitive": true
+                },
+                {
+                  "name": "bucket_name",
+                  "type": "string",
+                  "required": true,
+                  "description": "The bucket's globally unique name.",
+                  "sensitive": false
+                },
+                {
+                  "name": "readers",
+                  "type": "list(string)",
+                  "required": false,
+                  "default": [],
+                  "description": null,
+                  "sensitive": false
+                },
+                {
+                  "name": "tags",
+                  "type": "map(string)",
+                  "required": false,
+                  "default": {},
+                  "description": null,
+                  "sensitive": false
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "bucket_arn",
+                  "description": "The bucket's ARN.",
+                  "sensitive": false
+                }
+              ],
+              "template": {
+                "contract": 1,
+                "kind": "app",
+                "description": "An S3 bucket for one app, with its tags and the roles that read it.",
+                "inputs": [
+                  {
+                    "name": "bucket_name",
+                    "kind": "string",
+                    "label": "Bucket name",
+                    "description": "The bucket's globally unique name."
+                  },
+                  {
+                    "name": "readers",
+                    "kind": "list",
+                    "of": "string",
+                    "label": "Reader roles",
+                    "default": []
+                  },
+                  {
+                    "name": "tags",
+                    "kind": "map",
+                    "of": "string",
+                    "default": {}
+                  },
+                  {
+                    "name": "api_key",
+                    "kind": "string",
+                    "sensitive": true,
+                    "description": "The key the app signs uploads with."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "version": "1.0.0",
+          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "commit": "1111111111111111111111111111111111111111",
+          "time": "2026-09-01T00:00:00Z",
+          "actor": "publisher",
+          "envs": [
+            "modules"
+          ],
+          "status": {
+            "state": "active",
+            "reason": null,
+            "replacement": null,
+            "actor": null,
+            "time": null
+          },
+          "changelog": {
+            "bump": null,
+            "entries": []
+          },
+          "attestation": {
+            "state": "unsigned",
+            "verify": null,
+            "identity": null
+          },
+          "consumers": [],
+          "fields": {
+            "terraform": {
+              "address": "modules.test/acme/bucket/aws",
+              "inputs": [
+                {
+                  "name": "api_key",
+                  "type": "string",
+                  "required": true,
+                  "description": "The key the app signs uploads with.",
+                  "sensitive": true
+                },
+                {
+                  "name": "bucket_name",
+                  "type": "string",
+                  "required": true,
+                  "description": "The bucket's globally unique name.",
+                  "sensitive": false
+                },
+                {
+                  "name": "readers",
+                  "type": "list(string)",
+                  "required": false,
+                  "default": [],
+                  "description": null,
+                  "sensitive": false
+                },
+                {
+                  "name": "tags",
+                  "type": "map(string)",
+                  "required": false,
+                  "default": {},
+                  "description": null,
+                  "sensitive": false
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "bucket_arn",
+                  "description": "The bucket's ARN.",
+                  "sensitive": false
+                }
+              ],
+              "template": {
+                "contract": 1,
+                "kind": "app",
+                "description": "An S3 bucket for one app, with its tags and the roles that read it.",
+                "inputs": [
+                  {
+                    "name": "bucket_name",
+                    "kind": "string",
+                    "label": "Bucket name",
+                    "description": "The bucket's globally unique name."
+                  },
+                  {
+                    "name": "readers",
+                    "kind": "list",
+                    "of": "string",
+                    "label": "Reader roles",
+                    "default": []
+                  },
+                  {
+                    "name": "tags",
+                    "kind": "map",
+                    "of": "string",
+                    "default": {}
+                  },
+                  {
+                    "name": "api_key",
+                    "kind": "string",
+                    "sensitive": true,
+                    "description": "The key the app signs uploads with."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "modules/cache",
+      "latest": "0.3.0",
+      "fields": {
+        "terraform": {
+          "address": "modules.test/acme/cache/aws"
+        }
+      },
+      "versions": [
+        {
+          "version": "0.3.0",
+          "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "commit": "4444444444444444444444444444444444444444",
+          "time": "2026-10-01T00:00:00Z",
+          "actor": "publisher",
+          "envs": [
+            "modules"
+          ],
+          "status": {
+            "state": "active",
+            "reason": null,
+            "replacement": null,
+            "actor": null,
+            "time": null
+          },
+          "changelog": {
+            "bump": null,
+            "entries": []
+          },
+          "attestation": {
+            "state": "signed",
+            "verify": null,
+            "identity": null
+          },
+          "consumers": [],
+          "fields": {
+            "terraform": {
+              "address": "modules.test/acme/cache/aws",
+              "inputs": [
+                {
+                  "name": "node_type",
+                  "type": "string",
+                  "required": false,
+                  "default": "cache.t4g.micro",
+                  "description": null,
+                  "sensitive": false
+                },
+                {
+                  "name": "subnet_ids",
+                  "type": "list(string)",
+                  "required": true,
+                  "description": "The subnets the cache runs in.",
+                  "sensitive": false
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "endpoint",
+                  "description": "The cache's endpoint.",
+                  "sensitive": false
+                }
+              ],
+              "actions": [
+                {
+                  "type": "aws_lambda_invoke",
+                  "name": "flush"
+                }
+              ],
+              "template": {
+                "contract": 1,
+                "kind": "addon",
+                "description": "A cache beside an app, in the app's own subnets.",
+                "inputs": [
+                  {
+                    "name": "subnet_ids",
+                    "kind": "list",
+                    "of": "string",
+                    "label": "Subnets",
+                    "description": "The subnets the cache runs in."
+                  },
+                  {
+                    "name": "node_type",
+                    "kind": "string",
+                    "default": "cache.t4g.micro"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -35,9 +35,21 @@
  * through the hook as `terragucci:<name>`, each declared read-only
  * ({@link productHook}). The server then also serves chant's read tools (the
  * ledger, the workspace graph), and chant makes the checks above: it refuses
- * to start with a tool named as a write, and serves no run tool. `--propose`,
- * whose tools write to the forge, keeps terragucci's own server below, since
- * a read-only server serves no tool that writes.
+ * to start with a tool named as a write, and serves no run tool.
+ *
+ * `--propose` moves onto chant's server too when chant has the propose tier
+ * (`serve mcp --read-only --propose`, chant#4655): PROPOSE_TOOLS are then
+ * contributed with `forgeWrite: true`, whose names chant lets hold `request`
+ * or `propose` and no other write word. On an older chant, `--propose` keeps
+ * terragucci's own server below, since its read-only server serves no tool
+ * that writes.
+ *
+ * `templates` reads the release catalog's templates, and `request_from_template`
+ * (with `--propose`) runs `terragucci request` with `via: mcp` (./templates.ts):
+ * the same request document, branch and pull request a form opens, with
+ * PROPOSED_FOOTER after the request. Its requester is the user the forge says
+ * the server's token acts as; a person the agent says it asks for goes in
+ * `claimedBy`, which the forge does not vouch for.
  */
 import { execFileSync } from "node:child_process";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -59,7 +71,8 @@ import { statesKey, type IndexEntry } from "./report/store";
 import { readLedger } from "./apply";
 import { waitingWaves } from "./approve";
 import { loadMcpSdk } from "./mcp-sdk";
-import { chantProductMcp, type ChantProductMcpHook } from "./chant-next";
+import { chantProductMcp, chantProposeMcp, type ChantMcpTool, type ChantProductMcp, type ChantProductMcpHook } from "./chant-next";
+import { findTemplate, listTemplates, readTemplatesCatalog, request, templatesSettings } from "./templates";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { version as VERSION } from "../package.json";
 
@@ -68,7 +81,7 @@ type Reports = NonNullable<TerragucciConfig["reports"]>;
 /** A tool's input: JSON Schema, every property listed, nothing else accepted. */
 interface InputSchema {
   type: "object";
-  properties: Record<string, { type: "string" | "integer"; description: string; minimum?: number; maximum?: number }>;
+  properties: Record<string, { type: "string" | "integer" | "object"; description: string; minimum?: number; maximum?: number }>;
   required?: string[];
   additionalProperties: false;
 }
@@ -97,6 +110,10 @@ export interface Context {
   project(name: string | undefined): Promise<{ project: string; store: ObjectStore; prefix: string }>;
   /** The repo the server runs in, for `chant/lifecycle`. */
   repo: string;
+  /** The server's environment: where the forge token and git's credentials come from. */
+  env: NodeJS.ProcessEnv;
+  /** The repo's settings, for `templates` and `request_from_template`. */
+  settings(): ResolvedSettings;
   /** The repo's forge, with the token from the server's environment, for the propose tools. */
   forge(): Forge;
   /** Wait, for `plan_result`. */
@@ -163,6 +180,7 @@ export function checkArgs(tool: Tool, args: Record<string, unknown> | undefined)
     const v = a[k];
     if (v === undefined) continue;
     if (p.type === "string" && (typeof v !== "string" || v === "")) throw new ToolError(`${tool.name}: ${k} must be a string`);
+    if (p.type === "object" && (typeof v !== "object" || v === null || Array.isArray(v))) throw new ToolError(`${tool.name}: ${k} must be an object`);
     if (p.type === "integer" && !(Number.isInteger(v) && (p.minimum === undefined || (v as number) >= p.minimum) && (p.maximum === undefined || (v as number) <= p.maximum))) {
       throw new ToolError(`${tool.name}: ${k} must be a whole number${p.minimum !== undefined ? ` from ${p.minimum}` : ""}${p.maximum !== undefined ? ` to ${p.maximum}` : ""}`);
     }
@@ -409,6 +427,23 @@ export const TOOLS: Tool[] = [
       return waitingWaves(readLedger(ctx.repo)).map((w) => ({ ...w, approve: `terragucci approve wave-${w.wave} --plan ${w.digest}` }));
     },
   },
+  {
+    name: "templates",
+    description: "The templates in the release catalog, as `terragucci templates list --json` prints them: each template's address, kind (app or addon), the versions a request may name and the newest one's form fields, sensitive ones marked. With template, that one.",
+    inputSchema: {
+      type: "object",
+      properties: { template: { type: "string", description: "Only this template: its address (acme/bucket/aws), its path or its last segment." } },
+      additionalProperties: false,
+    },
+    async run(a, ctx) {
+      const settings = ctx.settings();
+      const rows = listTemplates(await readTemplatesCatalog(ctx.repo, settings), templatesSettings(settings).require);
+      if (a.template === undefined) return rows;
+      const row = findTemplate(rows, a.template as string);
+      if (!row) throw new ToolError(`the catalog lists no template ${a.template as string} with a version a request may name; templates lists them`);
+      return row;
+    },
+  },
 ];
 
 /** The branch that holds the approval records: never pushed from here. */
@@ -601,7 +636,77 @@ export const PROPOSE_TOOLS: Tool[] = [
       }
     },
   },
+  {
+    name: "request_from_template",
+    description: "Ask for an app from a template, or with app an add-on to an existing app, as `terragucci request` and the request form do: the same request document, branch (request/<template>/<name>) and pull request, which the pipeline plans and a person reviews and merges. A sensitive input is refused: it comes from the app's secret store. Returns the pull request already open for the branch when there is one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        template: { type: "string", description: "The template, as templates lists it: acme/bucket/aws." },
+        version: { type: "string", description: "The version. Default: the newest one a request may name." },
+        name: { type: "string", description: "The app's name, or with app the add-on's." },
+        app: { type: "string", description: "An add-on request: the app the add-on goes into." },
+        inputs: { type: "object", description: "The template's inputs by name. Never a sensitive one." },
+        claimed_by: { type: "string", description: "The person the agent asks for, shown as claimed beside the requester the forge names." },
+      },
+      required: ["template", "name"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    async run(a, ctx) {
+      const f = ctx.forge();
+      needToken(f);
+      const requestedBy = await forgeActor(f, ctx.env);
+      const r = await request({
+        cwd: ctx.repo,
+        settings: f.settings,
+        template: a.template as string,
+        name: a.name as string,
+        ...(a.app !== undefined ? { app: a.app as string } : {}),
+        ...(a.version !== undefined ? { version: a.version as string } : {}),
+        inputs: (a.inputs as Record<string, unknown> | undefined) ?? {},
+        via: "mcp",
+        requestedBy,
+        ...(a.claimed_by !== undefined ? { claimedBy: a.claimed_by as string } : {}),
+        dryRun: false,
+        env: ctx.env,
+        fetch: f.fetch,
+        footer: PROPOSED_FOOTER,
+        // stdout carries the protocol.
+        log: (l) => console.error(l),
+      });
+      if (!r.ok) throw new ToolError(r.refusals.map((x) => `refused (${x.code}): ${x.reason}`).join("\n"));
+      if (r.dryRun) throw new ToolError("request_from_template opened nothing");
+      return {
+        branch: r.branch,
+        pull_request: r.pull_request,
+        url: r.url,
+        existing: r.existing,
+        next: `the pipeline plans ${r.branch}; plan_result with pull_request ${r.pull_request} reads its plan note and policy result, and a person reviews and merges it`,
+      };
+    },
+  },
 ];
+
+/**
+ * Who asks, as the forge vouches for it: the user `GET /user` says the
+ * server's token acts as, else the run's actor where the server runs in a
+ * pipeline. Refused when neither names one.
+ */
+export async function forgeActor(f: Forge, env: NodeJS.ProcessEnv): Promise<string> {
+  let why = "";
+  try {
+    const u = (await call(f.fetch, f.target, "GET", "/user")) as { login?: unknown; username?: unknown } | undefined;
+    const login = f.target.forge === "gitlab" ? u?.username : u?.login;
+    if (typeof login === "string" && login) return login;
+    why = "GET /user named no user";
+  } catch (e) {
+    why = (e as Error).message;
+  }
+  const actor = env.GITHUB_TRIGGERING_ACTOR || env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN;
+  if (actor) return actor;
+  throw new ToolError(`the forge did not say whose token ${f.tokenEnv} is (${why}), so there is no requester it vouches for; a request needs one`);
+}
 
 const text = (value: unknown): CallToolResult => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
 const failed = (message: string): CallToolResult => ({ isError: true, content: [{ type: "text", text: message }] });
@@ -657,8 +762,13 @@ export function context(o: McpOptions): Context {
   };
   return {
     repo: o.cwd,
+    env,
+    settings() {
+      if (control) throw new ToolError("templates and request_from_template work in a project's own repo, not in a control repo");
+      return resolveRepo(o.config);
+    },
     forge() {
-      if (control) throw new ToolError("propose, request_plan and plan_result work in a project's own repo, not in a control repo");
+      if (control) throw new ToolError("propose, request_plan, plan_result and request_from_template work in a project's own repo, not in a control repo");
       const settings = resolveRepo(o.config);
       const target = forgeOf(o.cwd, settings, env);
       return { target, fetch: o.forgeFetch ?? (globalThis.fetch as unknown as Fetch), settings, tokenEnv: settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge] };
@@ -690,7 +800,10 @@ export function context(o: McpOptions): Context {
   };
 }
 
-const READ_ONLY_INSTRUCTIONS = "terragucci's estate, reports, state versions, audit trail and DORA figures, read-only. Nothing here approves, applies, overrides or writes; a person does that at a shell.";
+const READ_ONLY_INSTRUCTIONS = "terragucci's estate, reports, state versions, audit trail, DORA figures and templates, read-only. Nothing here approves, applies, overrides or writes; a person does that at a shell.";
+
+const PROPOSE_INSTRUCTIONS =
+  "terragucci's estate, reports, state versions, audit trail, DORA figures and templates, and two ways to propose a change: commit it to a local branch and call propose to push it and open a pull request, or call request_from_template to ask for an app or an add-on from a template. Then plan_result reads the pull request's plan note and policy result. Nothing here approves, applies, overrides or merges; a person does that.";
 
 /** The server, on any transport: the tools listed, each call answered or refused. */
 export async function serve(o: McpOptions, transport: Transport): Promise<Server> {
@@ -703,7 +816,7 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
     {
       capabilities: { tools: {} },
       instructions: o.propose
-        ? "terragucci's estate, reports, state versions, audit trail and DORA figures, and a way to propose a change: commit it to a local branch, call propose to push it and open a pull request, then plan_result to read its plan note and policy result. Nothing here approves, applies, overrides or merges; a person does that."
+        ? PROPOSE_INSTRUCTIONS
         : READ_ONLY_INSTRUCTIONS,
     },
   );
@@ -719,39 +832,53 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
  * terragucci's tools as chant's product tool hook (chant#4555): each reads
  * through the same context, with the bucket's client wrapped so a write
  * throws, checks its arguments as terragucci's server does, and is declared
- * read-only. A refusal or a missing object is thrown, and chant answers it as
- * an error result.
+ * read-only. With `propose` (chant#4655's tier), PROPOSE_TOOLS follow,
+ * declared `forgeWrite: true`, and the hook asks for the tier. A refusal or a
+ * missing object is thrown, and chant answers it as an error result.
  */
-export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS): ChantProductMcpHook {
-  assertReadOnly(tools);
+export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS, propose = false): ChantProductMcpHook {
+  const forge = propose ? PROPOSE_TOOLS : [];
+  assertReadOnly([...tools, ...forge]);
   const ctx = context(o);
+  const contributed = (t: Tool, kind: { readOnly: true } | { forgeWrite: true }): ChantMcpTool => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: { type: "object" as const, properties: t.inputSchema.properties, ...(t.inputSchema.required ? { required: t.inputSchema.required } : {}) },
+    ...kind,
+    handler: async (params: Record<string, unknown>) => t.run(checkArgs(t, params), ctx),
+  });
   return {
     product: "terragucci",
     readOnly: true,
-    instructions: READ_ONLY_INSTRUCTIONS,
-    tools: () =>
-      tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: { type: "object" as const, properties: t.inputSchema.properties, ...(t.inputSchema.required ? { required: t.inputSchema.required } : {}) },
-        readOnly: true,
-        handler: async (params: Record<string, unknown>) => t.run(checkArgs(t, params), ctx),
-      })),
+    ...(propose ? { propose: true } : {}),
+    instructions: propose ? PROPOSE_INSTRUCTIONS : READ_ONLY_INSTRUCTIONS,
+    tools: () => [...tools.map((t) => contributed(t, { readOnly: true })), ...forge.map((t) => contributed(t, { forgeWrite: true }))],
   };
 }
 
-/** `terragucci mcp`: serve on stdin and stdout until the client closes them. */
-export async function mcp(o: McpOptions): Promise<void> {
-  const chant = o.propose || o.tools ? undefined : await chantProductMcp();
+/**
+ * The chant whose server `terragucci mcp` runs on, or undefined for
+ * terragucci's own: any chant with the product tool hook, and with
+ * `--propose` only one with the propose tier (chant#4655).
+ */
+export async function chantServer(o: Pick<McpOptions, "propose" | "tools">): Promise<ChantProductMcp | undefined> {
+  if (o.tools) return undefined;
+  return o.propose ? chantProposeMcp() : chantProductMcp();
+}
+
+/** `terragucci mcp`: serve on stdin and stdout (or `transport`, in tests) until the client closes them. */
+export async function mcp(o: McpOptions & { transport?: Transport }): Promise<void> {
+  const chant = await chantServer(o);
   if (chant) {
     // chant's `serve mcp` loads a lexicon first and exits where it finds none (a directory that is no chant
     // project, as a laptop's often is); terragucci's tools need none, so it names the terraform lexicon (chant#3648).
-    const code = await chant.runChantInProcess(["serve", "mcp", "--read-only", "--lexicon", "terraform"], TERRAGUCCI_WORDS, { mcp: productHook(o) });
+    const argv = ["serve", "mcp", "--read-only", ...(o.propose ? ["--propose"] : []), "--lexicon", "terraform"];
+    const code = await chant.runChantInProcess(argv, TERRAGUCCI_WORDS, { mcp: productHook(o, TOOLS, o.propose === true) });
     if (code !== 0) throw new ConfigError(`chant's MCP server ended with exit ${code}`);
     return;
   }
   const { StdioServerTransport } = await loadMcpSdk();
-  const server = await serve(o, new StdioServerTransport());
+  const server = await serve(o, o.transport ?? new StdioServerTransport());
   await new Promise<void>((resolve) => {
     server.onclose = () => resolve();
     process.stdin.once("end", () => resolve());

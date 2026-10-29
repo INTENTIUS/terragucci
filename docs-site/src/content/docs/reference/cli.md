@@ -22,6 +22,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `publish` | publishes each changed module at a new version |
 | `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
 | `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers; `deprecate`, `yank` and `restore` mark a version on the release ledger |
+| `templates` | lists the templates in the release catalog: each with the versions a request may name, their attestation, kind and form fields; with `apps`, the apps made from them; read only |
+| `request` | opens a pull request that adds an app's root from a template (the module call, and the files `generate` writes for it), or with `--app` one add-on's module call in an app's root |
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
@@ -35,7 +37,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `query` | runs one SQL statement over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
-| `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request and reads its plan |
+| `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request, requests an app from a template and reads the plan |
 | `guard` | writes wrappers for the binaries and a Claude Code hook that refuse an apply in a root of the pipeline, for a coding agent's shell |
 | `view` | runs [behold](https://intentius.io/behold/using/terragucci/) on your machine over the repo and its reports bucket: the roots as one graph, each resource marked with what the newest runs found; `--export` writes a static copy |
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/); the generated pipeline runs it |
@@ -324,6 +326,39 @@ terragucci modules consumers [--check] [--config <file>]
 
 Writes `consumers.json` at the repo's top: each registry module version the roots pin, and where, in chant's consumers document. A publishing repo across the control repo joins it into its catalog. `--check` writes nothing and exits 1 when the file is missing or no longer matches the roots. The check job of a repo with `control` runs it, and it passes with a note on a chant that has no consumer scan.
 
+## templates
+
+```bash
+terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]
+terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]
+```
+
+Reads the release catalog of `templates.registry`, else of `modules.registry`, or with `--registry` another registry's, as [`modules`](#modules) does. A template is a module whose release has a `template.yml` beside its code, which `publish` copies into the version's catalog entry. `list`, the default, prints each template with a version a request may name: active, and signed or verified, or with `templates.require: any` unsigned too. `show <template>` takes its address without the host (`acme/bucket/aws`), its full address, its path or its last path segment, and prints its versions and its form fields: each input's name, kind, label, default, whether it is required and whether it is sensitive. `--json` prints the list, or the one template, as the envelope's `results`.
+
+`apps` lists the apps under `templates.apps`: each directory there whose root has a `module "app"` call. It reads the checkout, or with `--ref` that commit's files, so `--ref origin/main` reads the default branch. Each app has its `root`, the `template` and `version` its `module "app"` calls, its `addons` (each `module "<name>"` in an `addon-<name>.tf` file, with its `name`, `template` and `version`) and its `actions`: each `action` block the app's module and its add-ons' modules declare, with its `module`, `type`, `name` and its `address` in the app's root, such as `module.app.action.aws_lambda_invoke.rotate`. `publish` lists a module's `action` blocks in the version's catalog entry; with no catalog, or a version published without the list, `actions` is empty. `--template` keeps the apps on that template, as their own or an add-on's.
+
+From the catalog, an app or add-on also has `upgrade`, the newest active version above its `version` that `templates.require` lets a request name, so never an unsigned one under `signed` (null when there is none), which [`rollout`](#rollout) moves it to. `yanked` is true when the catalog marks its `version` as yanked.
+
+```json
+{"app":"orders","root":"apps/orders","template":"acme/bucket/aws","version":"1.2.0","upgrade":"1.3.0","yanked":false,"addons":[{"name":"cache","template":"acme/cache/aws","version":"0.3.0","upgrade":null,"yanked":false}],"actions":[{"module":"app","type":"aws_lambda_invoke","name":"rotate","address":"module.app.action.aws_lambda_invoke.rotate"}]}
+```
+
+## request
+
+```bash
+terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]
+```
+
+Builds a template request for the app `--name`, checks it against the catalog and the version's `template.yml`, and opens one pull request on `request/<template>/<app>` from the default branch. The branch adds the app's root at `templates.apps` with `{name}` filled in: `main.tf` with one `module "app"` call pinned to the version, and the backend, provider and version files [`generate`](#generate) writes for the root. The branch is pushed without force, and a branch that already has an open pull request returns that one with `existing: true`. The pull request's title is `Request: <app> from <template> <version>`, and its body holds the request as a fenced `json` block.
+
+With `--app <app>`, the template must be an add-on template (`kind: addon` in its `template.yml`) and `--name` names the add-on. The branch is `request/<template>/<app>/<addon>`, and it adds one file to the app's root on the default branch: `addon-<addon>.tf`, with one `module "<addon>"` call pinned to the version. An input given as `app.<output>` becomes `module.app.<output>`, a reference to an output of the app's own module, as the catalog lists them for the version the app calls. The app and its add-ons are one root, so they plan and apply together. The title is `Request: <addon> for <app> from <template> <version>`.
+
+`--version` defaults to the newest version `templates list` shows. `--inputs-file` holds the inputs as one JSON object; each `--input <k>=<v>` goes over it, its value read as JSON unless the input is a string. A sensitive input is never given: the root declares it as a sensitive variable, which the app sets from its own secret store. `--via` says where the request came from (default `cli`; the request workflow passes `form`), and `--requested-by` who asked (default the CI run's actor, else `git config user.email`). `--claimed-by` names the person a client says asked, such as the person signed in to a form; the forge does not vouch for it, so the request carries it as `claimedBy` beside `requestedBy`, and the audit entry as `claimed_by`. `--dry-run` prints the branch and the files and pushes nothing. The pull request is opened with `TG_TOKEN`, else `token_env`'s variable.
+
+A refusal exits 1, pushes nothing, and with `--json` puts its `code` and every refusal in `results`: `unknown-version`, `not-active` (deprecated or yanked), `unsigned` (below `templates.require`), `unknown-input`, `missing-input`, `sensitive-input`, `input-type`, `bad-name`, `not-a-template` (the version has no `template.yml`), `not-a-root` (the app's path matches none of `roots`), `app-exists` (the app's directory is on the default branch), `wrong-kind` (an add-on template without `--app`, or an app template with it), `not-an-app` (`--app` names no root with a `module "app"` call on the default branch), `unknown-output` (an `app.<output>` the app's module does not have) and `addon-exists` (the app's root already has `addon-<addon>.tf` or a module of that name). Each opened pull request is a `request` entry in the [audit trail](/terragucci/reference/audit-trail/). The command needs a chant with template requests, and on an older one it exits 1 and names it.
+
+With `templates` set, `init` writes the request workflow, `.github/workflows/terragucci-request.yml` (`.forgejo/workflows/` on Forgejo). It runs on `workflow_dispatch` with the inputs `template`, `version` (empty for the newest), `name`, `inputs` (a JSON object, default `{}`), `app` (for an add-on, the app it goes into) and `claimed_by` (optional), and runs `terragucci request --via form` with the actor who dispatched it as the requester and `claimed_by` as `--claimed-by`. A form dispatches it by that file name. It pushes and opens with `token_env`'s secret when the config names one, since GitHub starts no workflow for a pull request the job's own token opens.
+
 ## rollout
 
 ```bash
@@ -332,6 +367,10 @@ terragucci rollout --provider <address> <version> [--from <version>] [--mode dry
 ```
 
 `--mode` defaults to `dry-run`, and neither mode runs `terraform apply`. See [Rolling out a module version](/terragucci/reference/stages/#rolling-out-a-module-version).
+
+A template is named by its address without the host, such as `acme/bucket/aws`. With `templates` set, a template's rollout names apps. Wave 1's pull request is titled like `Upgrade bucket to 1.3.0: orders (wave 1 of 2)`, and its body adds the catalog's changelog entries after the old pin. Under `templates.require: signed` a rollout to a version the catalog lists unsigned exits 1, and with no version named the rollout takes the newest signed active one. An app on a yanked version below the new one moves from that version, in the first wave after the canaries.
+
+The rollout workflow that `init` writes for `rollouts` is `.github/workflows/terragucci-rollout.yml`, or the same name under `.forgejo/workflows/`. Its `workflow_dispatch` takes the optional inputs `module` and `version`. Dispatched with `module`, it runs `terragucci rollout <module> [<version>] --mode apply`, where exit 3 does not fail the job. On its schedule it runs `terragucci respond rollout --mode apply`.
 
 ## respond
 
@@ -592,14 +631,16 @@ Serves the Model Context Protocol on stdin and stdout until the client closes th
 | `audit` | the audit trail, `audit.jsonl`, newest first, with `audit.json` | `project`, `kind`, `limit` |
 | `dora` | `dora.json` | none |
 | `waiting` | the waves waiting on `chant/lifecycle` in the repo it runs in, each with the `terragucci approve` command a person runs | none |
+| `templates` | the templates in the release catalog, as `templates list --json` prints them: each one's kind, the versions a request may name and the newest one's form fields | `template` |
 
-With `--propose` it serves three tools more, for an agent that gets a change planned without leaving its client ([Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/)). They use the forge token in the variable `token_env` names (by default `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`) and git's own credentials, from the server's environment. A control repo has none of them.
+With `--propose` it serves four tools more, for an agent that gets a change planned without leaving its client ([Have an agent propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/)). They use the forge token in the variable `token_env` names (by default `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`) and git's own credentials, from the server's environment. A control repo has none of them.
 
 | Tool | Does | Arguments |
 |---|---|---|
 | `propose` | pushes a local branch to `origin` without force and opens a pull request from it, or returns the one already open; refuses the default branch, `chant/lifecycle` and every `apply.branches` branch | `branch`, `title`, `body`, `base` |
 | `request_plan` | comments `/terragucci plan [root]` on an open pull request | `pull_request`, `root` |
 | `plan_result` | the pull request's head and plan note, and the `tf-plan` report of that head from the bucket: each root's status and policy verdict, the policy check, and whether each wave's gate will hold it; waits up to `wait` seconds (default 120, at most 600) for the head's plan | `pull_request`, `wait`, `project` |
+| `request_from_template` | runs [`request`](#request) with `--via mcp`: the same request, branch and pull request, with the propose footer after the request; returns `branch`, `pull_request`, `url`, `existing` and `next`. The requester is the user the forge says the token acts as, and `claimed_by` goes in the request as `claimedBy`. A sensitive input is refused, and so is every refusal of `request`, with nothing pushed. It needs a chant with template requests, and on an older one it answers with an error naming it | `template`, `name`, `version`, `app`, `inputs`, `claimed_by` |
 
 Every other tool is marked read-only, and the server refuses these calls.
 
@@ -609,7 +650,7 @@ Every other tool is marked read-only, and the server refuses these calls.
 | with an argument the tool does not list | an error naming the argument; one named like a credential (`token`, `secret`, `key`) says credentials come from the server's environment |
 | with a `path` outside the reports prefix | an error |
 
-Without `--propose` the server writes nothing, and with it only the branch, the pull request and the comment above. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
+Without `--propose` the server writes nothing, and with it only the branches, the pull requests and the comment above, and a request's line on `chant/lifecycle`. Its bucket client refuses writes and signed links, and the server does not start with a tool whose name says it would write (approve, apply, override, lock, merge).
 
 ## guard
 
@@ -1042,7 +1083,7 @@ Prints the directory it unpacked the release to, after checking it against its S
 
 ## --json
 
-`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check`, `query` and `modules` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
+`init`, `reconcile`, `plan`, `stage`, `rollout`, `respond`, `config check`, `config identities`, `forge check`, `query`, `modules`, `templates` and `request` take `--json`, which makes the command print only one envelope on stdout. [The CLI's JSON output](/terragucci/reference/cli-json/) lists the fields.
 
 ## Exit codes
 
@@ -1069,6 +1110,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `stage tf-apply` | wave applied, or with `--shares` decided for its shares | a root failed, or the policy denied one; `--json`, or a share with no decision file | waits for an approval | plans changed after an approval or a policy override no run applied, or after a share's wave decided |
 | `publish` | done | OCI tag exists already; git tag exists with different content | | |
 | `rollout` | complete | stopped | waiting | |
+| `request` | pull request opened or already open, or with `--dry-run` its files listed | a refusal, or a chant without template requests | | |
 | `respond` | event handled, even when the response is `off` | unknown event or missing flag | | |
 | `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | |
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | |

@@ -1,0 +1,4 @@
+templates:
+  registry: https://modules.example.com
+  apps: services/{name}
+  require: any

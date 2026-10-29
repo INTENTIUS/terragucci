@@ -1,0 +1,149 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-template-addon",
+  "product": "terragucci",
+  "claim": "template/addon-request",
+  "title": "An add-on request adds one module call to an existing app's root, wired to the app module's output, and the app's one plan and apply take it",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-template-addon",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied orders",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "request",
+      "do": "out-of-band",
+      "label": "terragucci request adds the cache add-on to orders, reading the app's bucket_arn",
+      "command": [
+        "stack/harness/check.sh",
+        "request",
+        "acme/cache/aws",
+        "--app",
+        "orders",
+        "--name",
+        "cache",
+        "--version",
+        "0.3.0",
+        "--input",
+        "cache_name=hs-tgad-orders-cache",
+        "--input",
+        "origin_arn=app.bucket_arn"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "pull",
+      "do": "await-pull",
+      "branch": "request/cache/orders/cache",
+      "expect": [
+        {
+          "pull": {
+            "title": "Request: cache for orders from cache 0.3.0",
+            "files": [
+              "apps/orders/addon-cache.tf"
+            ],
+            "only": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "the pull request's plan job went green",
+      "command": [
+        "stack/harness/check.sh",
+        "pr-run",
+        "request/cache/orders/cache",
+        "success"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "do": "out-of-band",
+      "label": "the reviewer approves the pull request",
+      "command": [
+        "stack/harness/check.sh",
+        "review",
+        "request/cache/orders/cache"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "merge",
+      "do": "merge",
+      "pull": "pull"
+    },
+    {
+      "id": "applied",
+      "do": "out-of-band",
+      "label": "the merge's wave applied",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "in-state",
+      "do": "out-of-band",
+      "label": "orders's state holds its bucket and the cache's",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "hs-tg-template-addon-state",
+        "apps/orders/terraform.tfstate",
+        "[.[0].resources[]? | select(.type == \"aws_s3_bucket\")] | length == 2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "overlays/break's catalog lists no bucket_arn output for acme/bucket/aws 1.2.0, the version orders pins, so app.bucket_arn is refused with unknown-output and the request step's exit 0 does not hold"
+  }
+}

@@ -52,7 +52,9 @@
 #                                         reviewer, in the reviewer's clone of
 #                                         main with chant/lifecycle, with the
 #                                         chant the tree pins, and the ledger
-#                                         pushed back
+#                                         pushed back; as the author instead
+#                                         under BREAK=1 when overlays/break
+#                                         holds an approve-as file saying author
 #   check.sh rerun <workflow> [status]    the workflow run again on main (a
 #                                         dispatch, or an empty commit when
 #                                         Forgejo refuses one) ended status
@@ -61,6 +63,57 @@
 #                                         binary's CI image; both plans, shown
 #                                         as JSON in key order with their
 #                                         timestamps left out, are the same bytes
+#
+# Templates (terragucci#1308-#1312). The product opens the pull request, so a
+# scenario starts it here and binds it with await-pull. Each runs on a fresh
+# clone of main; under BREAK=1 the scenario's overlays/break is copied over
+# that clone first (the request, rollout and form read the catalog and the
+# config from the checkout), and nothing is pushed but what the product
+# pushes. terragucci runs from this checkout's bundle in the tofu CI image on
+# the stack's network, where the repo's url (http://forgejo:3000) answers.
+#
+#   check.sh request <template> --name <n> [<request flag>...]
+#                                         terragucci request as the author;
+#                                         exits as it does (0 opened, 1 refused)
+#   check.sh rollout <module> [<version>] terragucci rollout --mode apply as the
+#                                         author; exits as it does (0 a wave
+#                                         opened or all applied, 3 waiting,
+#                                         1 stopped)
+#   check.sh templates-apps <jq>          terragucci templates apps --json's
+#                                         results pass jq -e
+#   check.sh tg-net [-i] <command>...     the command in such a clone (the
+#                                         MCP server agent-request starts)
+#   check.sh agent-request <tool> <json>  stack/mcp-client.mjs calls the tool on
+#                                         terragucci mcp --propose (without
+#                                         --propose under BREAK=1), with the
+#                                         author's token; 0 when the tool was
+#                                         listed and answered without an error
+#
+# behold (behold#1035, #1036; #1037 adds its own). Each starts behold serve
+# on the clone, with this checkout's terragucci first on PATH and the
+# author's token as FORGEJO_TOKEN, makes the call a person's browser makes
+# (same-origin, JSON), prints the answer, and stops behold. BEHOLD names the
+# behold command (default: behold on PATH), such as
+# "node ../behold/bin/behold.js" for a checkout of behold's
+# integration/self-service.
+#
+#   check.sh behold-request <template> <name> [--app <app>] [--version <v>] [--input <k>=<v> | <k>=<v>]...
+#                                         POST /api/templates/request; 0 on 202,
+#                                         1 naming the refusal's code otherwise
+#   check.sh behold-apps <app> [--addon <name>]...
+#                                         GET /api/templates/apps lists the app
+#                                         and each named add-on of it
+#   check.sh behold-upgrade <app> [<version>]
+#                                         POST /api/templates/upgrade; 0 on 202
+#                                         (behold dispatches terragucci-rollout.yml)
+#   check.sh behold-action <root> <address>
+#                                         POST /api/templates/action; 0 on 202
+#                                         (behold dispatches terragucci-action.yml)
+#   check.sh behold-history <root> <kind> terragucci audit writes the repo's
+#                                         audit.jsonl to the reports bucket in
+#                                         floci, and behold, serving it as its
+#                                         --terragucci source, lists exactly one
+#                                         <kind> entry for the root with result ok
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -88,6 +141,102 @@ wait_settled() {
 
 clone_main() { # dir
   git clone -q --single-branch --branch main "$(remote "$USER" "$TOKEN")" "$1" >&2
+}
+
+# ── templates: terragucci and behold as the product ─────────────────────────
+# shellcheck source=../mounted.sh
+. "$HERE/../mounted.sh"
+BUNDLE="$ROOT/packages/terragucci/dist/terragucci.mjs"
+AUTHOR="${TERRAGUCCI_FORGEJO_AUTHOR:-}"
+AUTHOR_TOKEN="${TERRAGUCCI_FORGEJO_AUTHOR_TOKEN:-}"
+
+break_overlay() { # -> the scenario's overlays/break under BREAK=1, else nothing
+  local dir="$HERE/scenarios/${TG_SCENARIO:?}/overlays/break"
+  [ -n "${BREAK:-}" ] && [ -d "$dir" ] && echo "$dir"
+  return 0
+}
+
+ci_image() { # binary -> its CI image tag
+  (cd "$ROOT" && npx tsx scripts/images.ts tags | awk -v n="$1" '$1 == n { print $2 }')
+}
+
+# tg_net [-i] <command>...: the command in a clone of main, in the tofu CI
+# image on the stack's network, as the author, with this checkout's bundle as
+# terragucci. The clone gets overlays/break under BREAK=1. Its stdout is the
+# command's; the clone's progress goes to stderr.
+tg_net() {
+  local -a tty=()
+  [ "${1:-}" = -i ] && { tty=(-i); shift; }
+  local image overlay
+  image="$(ci_image tofu)"
+  docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
+  [ -f "$BUNDLE" ] || { log "no $BUNDLE; run 'just build-cli' first"; return 1; }
+  [ -n "$AUTHOR_TOKEN" ] || { log "TERRAGUCCI_FORGEJO_AUTHOR_TOKEN is not set; harness.ts passes forgejo.env"; return 1; }
+  overlay="$(break_overlay)"
+  local -a mounts=(-v "$BUNDLE:/opt/tg/terragucci.mjs:ro")
+  [ -z "$overlay" ] || mounts+=(-v "$overlay:/break:ro")
+  run_copied --rm ${tty[@]+"${tty[@]}"} --network "$TG_NETWORK" "${mounts[@]}" \
+    -e "TERRAGUCCI_FORGEJO_TOKEN=$AUTHOR_TOKEN" -e "TG_CLONE=http://$AUTHOR:$AUTHOR_TOKEN@forgejo:3000/$REPO.git" -e "TG_AUTHOR=$AUTHOR" \
+    -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    --entrypoint sh "$image" -c 'mkdir -p /tmp/bin && printf "#!/bin/sh\nexec node /opt/tg/terragucci.mjs \"\$@\"\n" > /tmp/bin/terragucci && chmod +x /tmp/bin/terragucci && export PATH="/tmp/bin:$PATH" \
+      && git clone -q --branch main "$TG_CLONE" /tmp/repo >&2 && cd /tmp/repo \
+      && { git fetch -q origin chant/lifecycle:chant/lifecycle 2>/dev/null || true; } \
+      && git config user.name "$TG_AUTHOR" && git config user.email "$TG_AUTHOR@terragucci.local" \
+      && { [ ! -d /break ] || { cp -R /break/. . && echo "[check] overlays/break copied over the clone" >&2; }; } \
+      && exec "$@"' tg-net "$@"
+}
+
+# behold_up <dir> [serve flag...]: behold serve on the checkout in dir, on a free loopback port
+# (BEHOLD_URL), with this checkout's terragucci first on PATH. behold_down stops it.
+BEHOLD_PID=""
+behold_up() { # dir [serve flag...]
+  local dir="$1" shim i
+  shift
+  local -a behold
+  read -r -a behold <<<"${BEHOLD:-behold}"
+  command -v "${behold[0]}" >/dev/null 2>&1 || { log "no behold to run: set BEHOLD to the behold command, such as \"node <behold checkout>/bin/behold.js\""; return 1; }
+  [ -n "$AUTHOR_TOKEN" ] || { log "TERRAGUCCI_FORGEJO_AUTHOR_TOKEN is not set; harness.ts passes forgejo.env"; return 1; }
+  shim="$(dirname "$dir")/bin"
+  mkdir -p "$shim"
+  printf '#!/bin/sh\nexec node "%s" "$@"\n' "$BUNDLE" > "$shim/terragucci"
+  chmod +x "$shim/terragucci"
+  BEHOLD_PORT="${BEHOLD_PORT:-$(( 4700 + RANDOM % 200 ))}"
+  BEHOLD_URL="http://127.0.0.1:$BEHOLD_PORT"
+  PATH="$shim:$PATH" FORGEJO_TOKEN="$AUTHOR_TOKEN" FORGEJO_URL="$URL" \
+    "${behold[@]}" serve "$dir" --port "$BEHOLD_PORT" "$@" > "$(dirname "$dir")/behold.log" 2>&1 &
+  BEHOLD_PID=$!
+  trap behold_down EXIT
+  for i in $(seq 1 120); do
+    curl -fsS -o /dev/null "$BEHOLD_URL/api/project" 2>/dev/null && { log "behold serves $dir at $BEHOLD_URL"; return 0; }
+    kill -0 "$BEHOLD_PID" 2>/dev/null || break
+    sleep 1
+  done
+  log "behold did not serve within two minutes: $(tail -5 "$(dirname "$dir")/behold.log" 2>/dev/null)"
+  return 1
+}
+behold_down() {
+  [ -z "$BEHOLD_PID" ] || { kill "$BEHOLD_PID" 2>/dev/null || true; wait "$BEHOLD_PID" 2>/dev/null || true; BEHOLD_PID=""; }
+}
+# behold_call <method> <path> [json]: the call a person's browser makes. Sets
+# B_STATUS and B_BODY.
+behold_call() {
+  local out
+  out="$(mktemp "${TMPDIR:-/tmp}/tg-behold.XXXXXX")"
+  local -a body=()
+  [ -z "${3:-}" ] || body=(-H 'content-type: application/json' --data-binary "$3")
+  B_STATUS="$(curl -sS -o "$out" -w '%{http_code}' -X "$1" -H "Origin: $BEHOLD_URL" -H 'Sec-Fetch-Site: same-origin' ${body[@]+"${body[@]}"} "$BEHOLD_URL$2")" || B_STATUS=000
+  B_BODY="$(cat "$out")"
+  log "behold $1 $2: $B_STATUS $(printf '%s' "$B_BODY" | head -c 400)"
+}
+# behold_checkout -> a fresh clone of main for behold to serve, with overlays/break under BREAK=1
+behold_checkout() {
+  local work overlay
+  work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
+  git clone -q --single-branch --branch main "$URL/$REPO.git" "$work/repo" >&2
+  overlay="$(break_overlay)"
+  [ -z "$overlay" ] || { cp -R "$overlay/." "$work/repo/"; log "overlays/break copied over behold's checkout"; }
+  echo "$work/repo"
 }
 
 case "${1:-}" in
@@ -202,9 +351,15 @@ case "${1:-}" in
     ;;
   chant-approve)
     op="${2:?chant-approve <op> <gate>}"; gate="${3:?chant-approve <op> <gate>}"
-    who="$TERRAGUCCI_FORGEJO_REVIEWER"
+    who="$TERRAGUCCI_FORGEJO_REVIEWER"; who_token="$TERRAGUCCI_FORGEJO_REVIEWER_TOKEN"
+    # A BREAK arm whose overlays/break holds approve-as with "author" approves as the author, who asked.
+    overlay="$(break_overlay)"
+    if [ -n "$overlay" ] && [ "$(cat "$overlay/approve-as" 2>/dev/null)" = author ]; then
+      who="$AUTHOR"; who_token="$AUTHOR_TOKEN"
+      log "BREAK: $who, who asked, approves"
+    fi
     work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
-    git clone -q "$(remote "$who" "$TERRAGUCCI_FORGEJO_REVIEWER_TOKEN")" "$work/repo" >&2
+    git clone -q "$(remote "$who" "$who_token")" "$work/repo" >&2
     git -C "$work/repo" show-ref -q --verify refs/remotes/origin/chant/lifecycle \
       || { log "$REPO has no chant/lifecycle, so no gate is waiting"; exit 1; }
     git -C "$work/repo" branch -q chant/lifecycle origin/chant/lifecycle
@@ -267,5 +422,105 @@ case "${1:-}" in
       exit 1
     fi
     ;;
-  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> [workflow] | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | chant-approve <op> <gate> | rerun <workflow> [status] | plan-twice <root>" >&2; exit 2 ;;
+  tg-net)
+    # tg_net for a child process, such as the MCP server stack/mcp-client.mjs starts.
+    shift
+    tg_net "$@"
+    ;;
+  request)
+    shift
+    [ $# -ge 3 ] || { log "request <template> --name <n> [<request flag>...]"; exit 2; }
+    rc=0
+    tg_net terragucci request "$@" --requested-by "$AUTHOR" --json || rc=$?
+    log "terragucci request $* exited $rc"
+    exit "$rc"
+    ;;
+  rollout)
+    shift
+    [ $# -ge 1 ] || { log "rollout <module> [<version>]"; exit 2; }
+    rc=0
+    tg_net terragucci rollout "$@" --mode apply --json || rc=$?
+    log "terragucci rollout $* --mode apply exited $rc"
+    exit "$rc"
+    ;;
+  templates-apps)
+    filter="${2:?templates-apps <jq>}"
+    tg_net terragucci templates apps --json | jq -e ".results | $filter" >&2
+    ;;
+  agent-request)
+    tool="${2:?agent-request <tool> <json>}"; json="${3:?agent-request <tool> <json>}"
+    propose=(--propose)
+    [ -z "${BREAK:-}" ] || { propose=(); log "BREAK: the server starts without --propose"; }
+    rc=0
+    # The server is terragucci mcp in a clone, on the stack's network (check.sh tg-net); the client appends --propose.
+    (cd "$ROOT" && node stack/mcp-client.mjs ${propose[@]+"${propose[@]}"} call "$tool" "$json" -- \
+      bash "$HERE/check.sh" tg-net -i terragucci mcp) || rc=$?
+    exit "$rc"
+    ;;
+  behold-request)
+    template="${2:?behold-request <template> <name> [--app <app>] [--version <v>] [--input <k>=<v>]...}"; name="${3:?behold-request <template> <name> ...}"
+    shift 3
+    app=""; version=""; inputs='{}'
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --app) app="${2:?--app <app>}"; shift 2 ;;
+        --version) version="${2:?--version <v>}"; shift 2 ;;
+        --input) kv="${2:?--input <k>=<v>}"; shift 2; inputs="$(jq -c --arg k "${kv%%=*}" --arg v "${kv#*=}" '. + {($k): $v}' <<<"$inputs")" ;;
+        *=*) inputs="$(jq -c --arg k "${1%%=*}" --arg v "${1#*=}" '. + {($k): $v}' <<<"$inputs")"; shift ;;
+        *) log "behold-request: $1 is not --app, --version or an input <k>=<v>"; exit 2 ;;
+      esac
+    done
+    body="$(jq -nc --arg t "$template" --arg n "$name" --arg a "$app" --arg v "$version" --argjson i "$inputs" \
+      '{template: $t, name: $n, inputs: $i} + (if $a == "" then {} else {app: $a} end) + (if $v == "" then {} else {version: $v} end)')"
+    behold_up "$(behold_checkout)" || exit 1
+    behold_call GET /api/templates
+    behold_call POST /api/templates/request "$body"
+    [ "$B_STATUS" = 202 ] || { log "behold refused the request: $(jq -r '.code // "no code"' <<<"$B_BODY" 2>/dev/null)"; exit 1; }
+    ;;
+  behold-apps)
+    app="${2:?behold-apps <app> [--addon <name>]...}"; shift 2
+    addons='[]'
+    while [ $# -gt 0 ]; do
+      [ "$1" = --addon ] || { log "behold-apps: $1 is not --addon"; exit 2; }
+      addons="$(jq -c --arg a "${2:?--addon <name>}" '. + [$a]' <<<"$addons")"; shift 2
+    done
+    behold_up "$(behold_checkout)" || exit 1
+    behold_call GET /api/templates/apps
+    [ "$B_STATUS" = 200 ] || exit 1
+    jq -e --arg app "$app" --argjson addons "$addons" \
+      '.results | map(select(.app == $app)) | length == 1 and (.[0] as $r | $addons | all(. as $a | $r.addons | any(.name == $a)))' <<<"$B_BODY" >&2 \
+      || { log "behold's apps read does not list $app$( [ "$addons" = '[]' ] || echo " with $addons")"; exit 1; }
+    ;;
+  behold-upgrade)
+    app="${2:?behold-upgrade <app> [<version>]}"; version="${3:-}"
+    body="$(jq -nc --arg a "$app" --arg v "$version" '{app: $a} + (if $v == "" then {} else {version: $v} end)')"
+    behold_up "$(behold_checkout)" || exit 1
+    behold_call POST /api/templates/upgrade "$body"
+    [ "$B_STATUS" = 202 ] || { log "behold refused the upgrade: $(jq -r '.code // "no code"' <<<"$B_BODY" 2>/dev/null)"; exit 1; }
+    ;;
+  behold-action)
+    root="${2:?behold-action <root> <address>}"; address="${3:?behold-action <root> <address>}"
+    body="$(jq -nc --arg r "$root" --arg a "$address" '{root: $r, address: $a}')"
+    behold_up "$(behold_checkout)" || exit 1
+    behold_call POST /api/templates/action "$body"
+    [ "$B_STATUS" = 202 ] || { log "behold refused the action: $(jq -r '.code // "no code"' <<<"$B_BODY" 2>/dev/null)"; exit 1; }
+    ;;
+  behold-history)
+    root="${2:?behold-history <root> <kind>}"; kind="${3:?behold-history <root> <kind>}"
+    wait_settled || exit 1
+    prefix="hs-${TG_SCENARIO:?}"
+    # The audit record the scheduled audit job writes, written now from the repo's ledger.
+    tg_net terragucci audit --bucket s3://terragucci-reports --bucket-endpoint http://floci:4566 --bucket-prefix "$prefix" >&2 \
+      || { log "terragucci audit did not write the audit record"; exit 1; }
+    reports="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")/reports"
+    mkdir -p "$reports"
+    curl -fsS -o "$reports/audit.jsonl" "$FLOCI/terragucci-reports/$prefix/audit.jsonl" || { log "no $prefix/audit.jsonl in floci"; exit 1; }
+    project="$(head -1 "$reports/audit.jsonl" | jq -r '.project // empty')"
+    behold_up "$(behold_checkout)" --terragucci "$reports" ${project:+--terragucci-project "$project"} || exit 1
+    behold_call GET "/api/terragucci/timeline?root=$(jq -rn --arg r "$root" '$r | @uri')&fresh=1"
+    [ "$B_STATUS" = 200 ] || exit 1
+    jq -e --arg k "$kind" --arg r "$root" '[.entries[] | select(.kind == $k and (.roots | index($r)) and .result == "ok")] | length == 1' <<<"$B_BODY" >&2 \
+      || { log "behold's timeline for $root does not hold exactly one $kind entry with result ok"; exit 1; }
+    ;;
+  *) echo "usage: check.sh settle | main-runs <n> [status] | status <branch> <context> <state> | objects <bucket> <prefix> <jq> | no-objects <bucket> <prefix> | ledger-file <path> <jq> | branch-run <branch> <status> | job-running [match] | queue-estate <queue> <estate> | bucket-estate <bucket> <estate> | pr-run <branch> <status> [workflow] | review <branch> | ec2-running <region> <n> | cross-estate <vpc-cidr> <subnet-cidr> <producer> <consumer> | approve [gate] | chant-approve <op> <gate> | rerun <workflow> [status] | plan-twice <root> | request <template> --name <n> [flag...] | rollout <module> [<version>] | templates-apps <jq> | agent-request <tool> <json> | behold-request <template> <name> [--app <app>] [--version <v>] [<k>=<v>...] | behold-apps <app> [--addon <name>]... | behold-upgrade <app> [<version>] | behold-action <root> <address> | behold-history <root> <kind>" >&2; exit 2 ;;
 esac

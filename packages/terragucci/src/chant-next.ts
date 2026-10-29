@@ -99,6 +99,12 @@
  * ./sources.ts keeps only the lists and the refusals with them, and its own
  * reader and forms as the fallback.
  *
+ * Newer than the pin too (chant#4653, terragucci#1310): the terraform
+ * lexicon's day-2 action, `invokeAction` on its `action-ops` subpath (op
+ * `tf-action`), read into the state operations below when the installed chant
+ * has it. Without it `terragucci action` refuses, naming the chant it needs
+ * (./action.ts).
+ *
  * The types below are the part of chant's contract terragucci calls, written
  * out so the code compiles against a chant without them. A `@ts-ignore` marks an
  * `import()` of a subpath the pin lacks; scripts/cli-bundle.mjs stands
@@ -466,7 +472,7 @@ export interface ChantModuleCatalog {
 // ── ci-product (chant#4550) ────────────────────────────────────────────────
 
 /** A command a comment may name, as chant's words module lists them. */
-export type ChantProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent";
+export type ChantProductCommand = "plan" | "apply" | "lock" | "unlock" | "agent" | "action";
 
 /** A stage a product names in a status context and the note. */
 export type ChantProductStage = "plan" | "apply" | "record" | "check" | "drift" | "lock" | "approval" | "control";
@@ -1204,7 +1210,40 @@ export interface ChantStateOps {
   planCopy(r: ChantRootRun & { backendConfig: Record<string, string>; planFile: string; destroy?: boolean; lockTimeout?: string | false; init?: boolean }): Promise<{ planFile: string; json: unknown; summary: string; planDigest: string }>;
   applyPlanFile(r: ChantRootRun & { planFile: string; lockTimeout?: string | false }): Promise<void>;
   readGatedRequests(op: string, location?: { cwd?: string }): Promise<ChantGatedRequestRead[]>;
+  /** The terraform lexicon's day-2 action (`action-ops`, chant#4653); absent on a chant without it. */
+  invokeAction?: (input: ChantInvokeActionInput) => Promise<ChantInvokeActionResult>;
+  /** The action address `-invoke` takes, as the lexicon checks it. */
+  ACTION_ADDRESS?: RegExp;
 }
+
+/** What `invokeAction` takes (`InvokeActionInput`, chant#4653). */
+export interface ChantInvokeActionInput {
+  root: string;
+  dir: string;
+  binary?: string;
+  version?: string;
+  address: string;
+  requester: string;
+  rules: { mode: string; quorum?: readonly unknown[] };
+  commit?: string;
+  planFile?: string;
+  lockTimeout?: string | false;
+  env?: NodeJS.ProcessEnv;
+  exec?: ChantRootRun["exec"];
+  cwd?: string;
+  now?: string;
+  runId?: string;
+  expiry?: string;
+  anew?: boolean;
+}
+
+/** How an action call ended (`InvokeActionResult`, chant#4653). */
+export type ChantInvokeActionResult =
+  | { outcome: "refused"; code: "action-engine" | "action-address" | "unknown-action"; reason: string; exit: number }
+  | { outcome: "gated"; digest: string; subject: string; command: string; reason?: string; exit: number }
+  | { outcome: "spent"; digest: string; subject: string; exit: number }
+  | { outcome: "ok"; digest: string; subject: string; approvedBy: string; tail: string; recorded: boolean; exit: number }
+  | { outcome: "failed"; digest: string; subject: string; approvedBy: string; error: string; tail: string; recorded: boolean; exit: number };
 
 /** One row an apply holds (`LockRow`, chant#4552). */
 export interface ChantLockRow {
@@ -1247,15 +1286,20 @@ export interface ChantMcpTool {
   description: string;
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
   handler: (params: Record<string, unknown>) => Promise<unknown>;
-  readOnly?: boolean;
+  /** A tool that reads (chant#4555). */
+  readOnly?: true;
+  /** A tool that opens pull requests and comments, served only on the `--propose` tier (chant#4655). */
+  forgeWrite?: true;
 }
 
 /** chant's product tool hook (`ProductMcpHook`, chant#4555). */
 export interface ChantProductMcpHook {
   product: string;
-  tools(ctx: { cwd: string; readOnly: boolean }): ChantMcpTool[];
+  tools(ctx: { cwd: string; readOnly: boolean; propose?: boolean }): ChantMcpTool[];
   reportUrl?: string;
   readOnly?: boolean;
+  /** Serve the `forgeWrite` tools on the read-only server, as `--propose` does (chant#4655). */
+  propose?: boolean;
   instructions?: string;
 }
 
@@ -1263,6 +1307,10 @@ export interface ChantProductMcpHook {
 export interface ChantProductMcp {
   runChantInProcess(argv: string[], words: object, options?: { mcp?: ChantProductMcpHook }): Promise<number>;
   PRODUCT_MCP_HOOK_FLOOR: string;
+  /** Present on a chant whose `serve mcp --read-only --propose` serves `forgeWrite` product tools (chant#4655). */
+  PRODUCT_MCP_PROPOSE_FLOOR?: string;
+  /** The write words a `forgeWrite` tool's name may hold on that tier (chant#4655). */
+  PRODUCT_TOOL_PROPOSE_WORDS?: readonly string[];
 }
 
 /** chant core's changelog bump (`lifecycle/release-changelog`, chant#4597): pure, so the synchronous callers read it. */
@@ -1325,6 +1373,92 @@ export interface ChantAgentJob {
   productDriftAgent(words: object, op: string, options?: Record<string, unknown>): Record<string, unknown>;
   setActiveProductWords(words: object | undefined): unknown;
   generate: Record<"github" | "gitlab" | "forgejo", ChantOpGenerator>;
+}
+
+// ── template requests (chant#4651, #4652) ──────────────────────────────────
+
+/** An input's engine-neutral kind in template.yml/v1 (`TemplateInputKind`). */
+export type ChantTemplateInputKind = "string" | "number" | "bool" | "list" | "map" | "object";
+
+/** One input of a template (`TemplateInput`). */
+export interface ChantTemplateInput {
+  name: string;
+  kind: ChantTemplateInputKind;
+  of?: "string" | "number" | "bool";
+  label?: string;
+  description?: string;
+  default?: unknown;
+  required?: boolean;
+  sensitive?: boolean;
+}
+
+/** A parsed template.yml (`TemplateSpec`). */
+export interface ChantTemplateSpec {
+  $schema?: string;
+  contract: 1;
+  kind?: "app" | "addon";
+  description: string;
+  inputs: ChantTemplateInput[];
+}
+
+/** A template request, template-request/v1 (`TemplateRequest`). */
+export interface ChantTemplateRequest {
+  $schema: string;
+  contract: 1;
+  kind: "app" | "addon";
+  template: string;
+  version: string;
+  app: string;
+  addon?: string;
+  inputs: Record<string, unknown>;
+  /** Who asked, as the forge vouches for it: the run's actor. */
+  requestedBy: string;
+  /** Who the client says asked, shown as claimed; a chant without it leaves it out of the document. */
+  claimedBy?: string;
+  via: "form" | "mcp" | "cli";
+}
+
+/** One refusal of a request (`TemplateRequestRefusal`). */
+export interface ChantTemplateRequestRefusal {
+  code: string;
+  field: string;
+  reason: string;
+}
+
+/** chant core's template request (`@intentius/chant/template-request`, chant#4651). */
+export interface ChantTemplateRequests {
+  TEMPLATE_REQUEST_FLOOR: string;
+  makeTemplateRequest(input: Omit<ChantTemplateRequest, "$schema" | "contract">): ChantTemplateRequest;
+  checkTemplateRequest(
+    request: unknown,
+    catalog: ChantReleaseCatalogDoc,
+    templateSpec: ChantTemplateSpec,
+    options?: { component?: string; require?: "verified" | "signed" | "unsigned" },
+  ): { ok: true; request: ChantTemplateRequest } | { ok: false; refusals: ChantTemplateRequestRefusal[] };
+  requestBranch(request: Pick<ChantTemplateRequest, "template" | "app"> & Partial<Pick<ChantTemplateRequest, "kind" | "addon">>): string;
+  requestBody(request: ChantTemplateRequest, words?: object): string;
+  templateName(template: string): string;
+  parseTemplateSpec(text: string | unknown): ChantTemplateSpec;
+}
+
+/** One file of a rendered request, relative to the app's root (`RenderedFile`). */
+export interface ChantRenderedFile {
+  path: string;
+  text: string;
+}
+
+/** The terraform lexicon's template rendering (`@intentius/chant-lexicon-terraform/template`, chant#4652). */
+export interface ChantTemplateRender {
+  renderAppRoot(options: { request: ChantTemplateRequest; source: string; inputs: readonly ChantTemplateInput[]; outputs?: readonly { name: string; description?: string | null; sensitive?: boolean }[] }): ChantRenderedFile[];
+  /**
+   * An add-on's module call for an app's root, `addon-<name>.tf` (ruling C of chant#4642). A value
+   * `app.<output>` becomes `module.app.<output>`, and one naming an output the app module lacks throws
+   * with code `unknown-output`. Absent on a chant whose template module has only app roots.
+   */
+  renderAddonCall?(options: { request: ChantTemplateRequest; source: string; inputs: readonly ChantTemplateInput[]; appOutputs: readonly (string | { name: string })[] }): ChantRenderedFile;
+  terraformInputType(input: Pick<ChantTemplateInput, "kind" | "of">): string;
+  /** Thrown with a `code` and a `subject` when a request cannot become files. */
+  TemplateRenderError: new (...args: never[]) => Error & { code: string; subject: string };
 }
 
 // ── loading ────────────────────────────────────────────────────────────────
@@ -1474,7 +1608,17 @@ const loaders = {
     async () => {
       const ops: object = await import("@intentius/chant-lexicon-terraform/state-ops");
       const requests: object = await import("@intentius/chant/lifecycle/gated-request");
-      return { ...requests, ...ops };
+      // chant#4653: the day-2 action sits on its own subpath; a chant without it keeps the rest of the state operations.
+      const action: object = await (async () => {
+        try {
+          // @ts-ignore: the published pin has no action-ops subpath
+          const m: Record<string, unknown> = await import("@intentius/chant-lexicon-terraform/action-ops");
+          return typeof m.invokeAction === "function" ? { invokeAction: m.invokeAction, ...(m.ACTION_ADDRESS instanceof RegExp ? { ACTION_ADDRESS: m.ACTION_ADDRESS } : {}) } : {};
+        } catch {
+          return {};
+        }
+      })();
+      return { ...requests, ...ops, ...action };
     },
     (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests") ? (m as unknown as ChantStateOps) : undefined),
   ),
@@ -1552,6 +1696,16 @@ const loaders = {
     () => import("@intentius/chant/lifecycle/release-ledger"),
     (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
   ),
+  templateRequest: once<ChantTemplateRequests>(
+    // @ts-ignore: chant#4651's subpath, newer than the pin
+    () => import("@intentius/chant/template-request"),
+    (m) => (has(m, "makeTemplateRequest", "checkTemplateRequest", "requestBranch", "requestBody", "templateName", "parseTemplateSpec") && typeof m.TEMPLATE_REQUEST_FLOOR === "string" ? (m as unknown as ChantTemplateRequests) : undefined),
+  ),
+  templateRender: once<ChantTemplateRender>(
+    // @ts-ignore: chant#4652's subpath, newer than the pin
+    () => import("@intentius/chant-lexicon-terraform/template"),
+    (m) => (has(m, "renderAppRoot", "terraformInputType", "TemplateRenderError") ? (m as unknown as ChantTemplateRender) : undefined),
+  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -1610,6 +1764,11 @@ export const chantSourceFormsNow = (): ChantSourceForms | undefined => loaded("s
 export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
 /** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
 export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
+/** The terraform lexicon's day-2 action with the state operations it runs beside (chant#4653), or undefined on a chant without it. */
+export async function chantInvokeAction(): Promise<(ChantStateOps & Required<Pick<ChantStateOps, "invokeAction">>) | undefined> {
+  const ops = await chantStateOps();
+  return ops && typeof ops.invokeAction === "function" ? (ops as ChantStateOps & Required<Pick<ChantStateOps, "invokeAction">>) : undefined;
+}
 /** chant's recorded op-wave hold (chant#4623), or undefined on a chant whose hold writes no applied or finished line. */
 export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
 /** chant's reader of a gated request's stored proof (chant#4551, #4623), or undefined. */
@@ -1620,6 +1779,16 @@ export const chantGateWriters = (): Promise<ChantGateWriters | undefined> => loa
 export const chantLockRows = (): Promise<ChantLockRows | undefined> => load("lockRows");
 /** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
 export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load("productMcp");
+
+/**
+ * chant's product tool hook when its read-only server has the `--propose`
+ * tier (chant#4655), told by the `PRODUCT_MCP_PROPOSE_FLOOR` export; else
+ * undefined, and `terragucci mcp --propose` serves on terragucci's own server.
+ */
+export async function chantProposeMcp(): Promise<ChantProductMcp | undefined> {
+  const m = await chantProductMcp();
+  return m && typeof m.PRODUCT_MCP_PROPOSE_FLOOR === "string" ? m : undefined;
+}
 /** chant's changelog bump (chant#4597) as it already loaded, for the synchronous `bumpFor`. preloadChantNext loads it. */
 export const chantChangelogNow = (): ChantChangelog | undefined => loaded("changelog");
 /** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */
@@ -1668,6 +1837,11 @@ export function chantControlPipeline(forge: "github" | "gitlab" | "forgejo"): Pr
   return load(forge === "github" ? "controlPipelineGithub" : forge === "gitlab" ? "controlPipelineGitlab" : "controlPipelineForgejo");
 }
 
+/** chant core's template request (`@intentius/chant/template-request`, chant#4651), or undefined. */
+export const chantTemplateRequests = (): Promise<ChantTemplateRequests | undefined> => load("templateRequest");
+/** The terraform lexicon's template rendering (`@intentius/chant-lexicon-terraform/template`, chant#4652), or undefined. */
+export const chantTemplateRender = (): Promise<ChantTemplateRender | undefined> => load("templateRender");
+
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
  * Returns the function that puts the import back.
@@ -1691,5 +1865,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const holdRecord = await chantHoldRecord();
   const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof };
+  const templateRequest = await chantTemplateRequests();
+  const templateRender = await chantTemplateRender();
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

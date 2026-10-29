@@ -1,0 +1,131 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-behold-action",
+  "product": "terragucci",
+  "claim": "behold/action-button",
+  "title": "behold's action button asks for a day-2 action, the request waits for someone else's approval, the resume job runs it, and behold's timeline shows it",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-behold-action",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied orders's function",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "ask",
+      "do": "out-of-band",
+      "label": "behold's action button posts rotate on apps/orders to /api/templates/action",
+      "command": [
+        "stack/harness/check.sh",
+        "behold-action",
+        "apps/orders",
+        "module.app.action.aws_lambda_invoke.rotate"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "gated",
+      "do": "out-of-band",
+      "label": "the dispatched action workflow asked, and the request waits for an approval",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "gated": {
+            "op": "tf-action",
+            "status": "gated",
+            "count": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "approve",
+      "do": "out-of-band",
+      "label": "the reviewer, not the author who asked, approves the action's request",
+      "command": [
+        "stack/harness/check.sh",
+        "chant-approve",
+        "tf-action",
+        "apps/orders:module.app.action.aws_lambda_invoke.rotate"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "resume",
+      "do": "out-of-band",
+      "label": "the resume job runs the approved action as the person who asked",
+      "command": [
+        "stack/harness/check.sh",
+        "rerun",
+        "terragucci-resume.yml"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        },
+        {
+          "gated": {
+            "op": "tf-action",
+            "status": "ok",
+            "count": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "history",
+      "do": "out-of-band",
+      "label": "behold's timeline for apps/orders holds one action entry with result ok",
+      "command": [
+        "stack/harness/check.sh",
+        "behold-history",
+        "apps/orders",
+        "action"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "overlays/break's approve-as has chant-approve approve as the author, who asked; that approval does not count, the request stays gated, and the resume step's gated ok outcome does not hold"
+  }
+}

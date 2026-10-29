@@ -34,7 +34,7 @@ fi
 # Both files: floci, Forgejo and forgejo-runner are in the harness's or in
 # forge-fallback.yml (instance.sh), under the same names either way.
 tg_compose \
-  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile observability --profile observability-lite --profile blob --profile decide --profile demo \
+  --profile aws --profile forgejo --profile github --profile gitlab --profile fountain --profile registry --profile templates --profile observability --profile observability-lite --profile blob --profile decide --profile demo \
   down --remove-orphans
 
 # Without -v, compose keeps volumes: remove the anonymous ones it made here.

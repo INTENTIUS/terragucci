@@ -1,0 +1,9 @@
+# The CLI config the pipeline's jobs read (TF_CLI_CONFIG_FILE in terragucci.yml):
+# modules.harness.local, the host the catalog's addresses name, is served by
+# this repo's own files on the local Forgejo. Service discovery is skipped, so
+# no DNS name and no TLS certificate are needed, and no module read leaves the stack.
+host "modules.harness.local" {
+  services = {
+    "modules.v1" = "http://forgejo:3000/@REPO@/raw/branch/main/registry/v1/modules/"
+  }
+}

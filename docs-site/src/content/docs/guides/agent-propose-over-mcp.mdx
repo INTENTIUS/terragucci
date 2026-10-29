@@ -94,6 +94,7 @@ The agent's `plan_result` call on the pull request it opened:
 | `propose` of a branch with no local commit | an error |
 | `propose` of a branch origin has moved past | git's refusal: the push is never forced |
 | `propose` with the token's variable unset | an error naming the variable |
+| any tool with an argument it does not list, such as `token` | an error naming the argument: credentials come from the server's environment |
 | `approve`, `apply`, `override`, `merge`, or any tool not listed | an error: these belong to a person |
 
 ## Guard refusals

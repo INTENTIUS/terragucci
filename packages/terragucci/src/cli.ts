@@ -22,6 +22,9 @@
  *   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
  *   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
  *   terragucci modules consumers [--check] [--config <file>]
+ *   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   (the templates in the release catalog: each with the versions a request may name, their attestation, kind and form fields; read only)
+ *   terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   (the apps under templates.apps: each with its template, version, add-ons and the action blocks its modules declare; read only)
+ *   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   (open a pull request that adds an app's root from a template, or with --app one add-on's module call to that app's root)
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
@@ -51,6 +54,11 @@
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's or migration's digest on chant/lifecycle, then start its apply again with your token)
  *   terragucci approve export|unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a state export request, or the release of a state lock)
  *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
+ *   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a day-2 action's request; the requester's own approval never counts)
+ *   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   (run one Terraform action block of a root under a gated request: exit 3 while it waits, 0 once it ran, 1 on a refusal or a failed run; see action.ts)
+ *   terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci action` comment or the action workflow's dispatch; run by the generated action workflow)
+ *   terragucci action --from <file> [--forge forgejo]   (run the action the decision names and reply on its pull request; run by the generated action workflow)
+ *   terragucci action --resume [--dry-run] [--out <file>]   (run each action whose approval now stands, as the person who asked; run by the resume job)
  *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for, or an approved apply that was killed; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
@@ -79,10 +87,10 @@
  *   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]   (open a pull request with the drift agent's change, unless it touches a guarded path, and say so on the drift issue; run by the generated pipeline)
  *   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   (one table, filtered: chant's ledgers on chant/lifecycle (resources, snapshots, runs, gates, deploys, releases, cuts) or the reports bucket's (inventory, versions, changes, history, audit, edges); the "<sql>" form is deprecated)
  *   terragucci view [--export <dir> [--publish]] [--reports <src>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   (run the behold BEHOLD_PIN names with npx over the reports bucket: serve and open the browser, or export a static view; read-only)
- *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   (an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, read-only; with --propose it also pushes a branch, opens a pull request and reads its plan; credentials from the environment)
+ *   terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   (an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, read-only, and the templates in the release catalog; with --propose it also pushes a branch, opens a pull request, asks for an app or add-on from a template and reads the plan; credentials from the environment)
  *   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   (write wrappers for the binaries and a Claude Code hook that refuse an apply in a pipeline root; see guard.ts)
  *
- * `--json` on init, reconcile, plan, stage, rollout, config check, config identities, forge check and query prints one envelope
+ * `--json` on init, reconcile, plan, stage, rollout, config check, config identities, forge check, query, modules, templates and request prints one envelope
  * (see envelope.ts) instead of text.
  *
  * Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or
@@ -106,6 +114,8 @@ import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, che
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
+import { describeAction, noActionReply, readActionDecision, resumeActions, runAction } from "./action";
+import { poster } from "./forge";
 import { pollGitLabComments } from "./comment-gitlab";
 import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
@@ -151,6 +161,9 @@ import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
 import { describeCatalog, describeComponent, findComponent, readCatalog } from "./publish/catalog";
+import { describeTemplate, describeTemplates, findTemplate, listTemplates, readTemplatesCatalog, request as requestApp, REQUEST_VIA, templatesSettings, type RequestVia } from "./templates";
+import { loadHclParser } from "./rollout/parser";
+import { appRows, checkoutFiles, commitFiles, describeApps, findApps, onTemplate } from "./template-apps";
 import { describeStatus, setReleaseStatus, STATUS_WORDS, type StatusWord } from "./publish/status";
 import { PROJECT_CONSUMERS, projectConsumersDocument } from "./publish/consumers";
 import { pinChecker } from "./publish/require";
@@ -191,6 +204,9 @@ const USAGE = `usage:
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
+  terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   the templates in the release catalog, with the versions a request may name and their form fields; read only
+  terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   the apps made from templates, with their versions, add-ons and actions; read only
+  terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
@@ -228,16 +244,19 @@ const USAGE = `usage:
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   one table's rows, filtered: resources, snapshots, runs, gates, deploys, releases or cuts from chant/lifecycle, or inventory, versions, changes, history, audit or edges from the reports bucket ("<sql>" is deprecated)
   terragucci view [--export <dir> [--publish]] [--reports <dir|s3://<bucket>/<prefix>|https://...>] [--project <host/path>] [--port <n>] [--no-open] [--config <file>]   the repo's roots as one graph in behold, marked from the reports bucket, on your machine
-  terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   an MCP server on stdio: the estate, reports, state versions, audit trail and DORA figures, read-only; with --propose, push a branch and open a pull request too; credentials from the environment
+  terragucci mcp [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--propose]   an MCP server on stdio: the estate, reports, state versions, audit trail, DORA figures and templates, read-only; with --propose, push a branch, open a pull request and request from a template too; credentials from the environment
   terragucci guard [--config <file>] [--dir <dir>] [--no-hook]   refuse apply, destroy and -auto-approve in this repo's pipeline roots, for a coding agent's shell
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
   terragucci approve export <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a state export request
   terragucci approve unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve releasing a state lock
   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a pull request's ephemeral copy
-    (export, unlock and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
+  terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a day-2 action's request
+    (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
+  terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   run one Terraform action block under a gated request (exit 3 while it waits)
+  terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo] | --from <file> [--forge forgejo] | --resume [--dry-run] [--out <file>]   (run by the generated action workflow and resume job)
   terragucci ephemeral up --pr <n> [--head <sha>] [--base <ref>] [--binary <b>] [--config <file>]   (run by the generated pipeline)
   terragucci ephemeral down --pr <n> --reason closed|expired [--base <ref>] [--binary <b>] [--config <file>]
   terragucci ephemeral sweep [--base <ref>] [--binary <b>] [--config <file>]
@@ -247,7 +266,7 @@ const USAGE = `usage:
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing; 9 check-job refused, the job runs somewhere its environment does not allow (with a chant that has the code).
 
-init, reconcile, control init, plan, stage, rollout, respond, config check, config identities, forge check and query take --json: one envelope on stdout.
+init, reconcile, control init, plan, stage, rollout, respond, config check, config identities, forge check, query, modules, templates and request take --json: one envelope on stdout.
 
 Docs: https://intentius.io/terragucci/`;
 
@@ -311,7 +330,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -392,6 +411,16 @@ async function controlRecords(cwd: string, args: string[], flags: Record<string,
   throw new ConfigError("usage: terragucci control records init|import|put <project>|defaults|retire <project>|list|migrate");
 }
 
+/** The binary terragucci.yml names, when it names one and can be read. */
+async function configBinary(cwd: string): Promise<string | undefined> {
+  try {
+    const path = findConfig(cwd);
+    return path ? resolveRepo(await loadConfig(path)).binary : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function str(flags: Record<string, string | true>, k: string): string | undefined {
   const v = flags[k];
   if (v === true) throw new ConfigError(`--${k} needs a value`);
@@ -409,6 +438,28 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
     if (forge) out.add(forge);
   }
   return [...out];
+}
+
+/** Who `git config` says the person at this checkout is, for a request's requestedBy. */
+function gitUser(dir: string): string | undefined {
+  for (const key of ["user.email", "user.name"]) {
+    try {
+      const v = execFileSync("git", ["-C", dir, "config", key], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      if (v) return v;
+    } catch {
+      // not set
+    }
+  }
+  return undefined;
+}
+
+/** The commit a ref names in the checkout, or undefined. */
+function gitRevParse(dir: string, ref: string): string | undefined {
+  try {
+    return execFileSync("git", ["-C", dir, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The forge the repo's origin remote is on, when its host says. */
@@ -435,7 +486,8 @@ export async function main(argv: string[]): Promise<number> {
     return e.exit;
   };
   try {
-    if (json && !ENVELOPE_COMMANDS.includes(cmd)) throw new ConfigError(`--json is not available on ${cmd || "help"}`);
+    // `action --json` prints the action's own object (action.ts ActionJson), which behold and scripts read.
+    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
@@ -864,6 +916,97 @@ export async function main(argv: string[]): Promise<number> {
         console.log(describeComponent(component));
         return 0;
       }
+      case "templates": {
+        // The templates in the release catalog (./templates.ts): read only, and on any chant.
+        const [sub = "list", name] = args;
+        if (!["list", "show", "apps"].includes(sub) || (sub === "show" && !name) || (sub === "apps" && name)) throw new ConfigError("usage: terragucci templates [list | show <template> | apps [--template <t>] [--ref <ref>]] [--registry <url>] [--json] [--config <file>]");
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const registry = str(flags, "registry");
+        if (sub === "apps") {
+          // The apps' roots (./template-apps.ts): the checkout's, or one commit's with --ref. The catalog names templates and actions when it can be read.
+          const ref = str(flags, "ref");
+          let tree = checkoutFiles(cwd);
+          if (ref) {
+            const commit = gitRevParse(cwd, ref);
+            if (!commit) throw new ConfigError(`--ref ${ref} names no commit in this repository`);
+            tree = commitFiles(cwd, commit);
+          }
+          const roots = await findApps(tree, templatesSettings(settings).apps, await loadHclParser("terragucci templates apps reads the apps' roots"));
+          let catalog;
+          try {
+            catalog = await readTemplatesCatalog(cwd, settings, registry ? { registry } : {});
+          } catch (e) {
+            console.error(`terragucci: the release catalog could not be read (${(e as Error).message.split("\n", 1)[0]}), so templates are named by source and no actions are listed`);
+          }
+          const filter = str(flags, "template");
+          const rows = appRows(roots, catalog, templatesSettings(settings).require).filter((r) => !filter || onTemplate(r, filter));
+          if (json) return emit(envelope("templates", 0, rows));
+          console.log(describeApps(rows));
+          return 0;
+        }
+        const rows = listTemplates(await readTemplatesCatalog(cwd, settings, registry ? { registry } : {}), templatesSettings(settings).require);
+        if (sub === "list") {
+          if (json) return emit(envelope("templates", 0, rows));
+          console.log(describeTemplates(rows));
+          return 0;
+        }
+        const row = findTemplate(rows, name!);
+        if (!row) throw new ConfigError(`the catalog lists no template ${name} with a version a request may name; terragucci templates list names them`);
+        if (json) return emit(envelope("templates", 0, row));
+        console.log(describeTemplate(row));
+        return 0;
+      }
+      case "request": {
+        // An app's root from a template, as a pull request (./templates.ts); a refusal exits 1 and pushes nothing.
+        const [template] = args;
+        const name = str(flags, "name");
+        if (!template || !name || args.length > 1) throw new ConfigError("usage: terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--dry-run] [--json] [--config <file>]");
+        const app = str(flags, "app");
+        if (flags.app === true || app === "") throw new ConfigError("--app needs the name of the app the add-on goes into");
+        const claimedBy = str(flags, "claimed-by");
+        const via = (str(flags, "via") ?? "cli") as RequestVia;
+        if (!(REQUEST_VIA as readonly string[]).includes(via)) throw new ConfigError(`--via must be one of ${REQUEST_VIA.join(", ")}`);
+        const rawInputs: Record<string, string> = {};
+        for (const kv of repeated.input ?? []) {
+          const eq = kv.indexOf("=");
+          if (eq < 1) throw new ConfigError(`--input ${JSON.stringify(kv)} is not <name>=<value>`);
+          rawInputs[kv.slice(0, eq)] = kv.slice(eq + 1);
+        }
+        if (flags.input === true) throw new ConfigError("--input needs <name>=<value>");
+        let inputs: Record<string, unknown> | undefined;
+        const file = str(flags, "inputs-file");
+        if (file) {
+          let v: unknown;
+          try {
+            v = JSON.parse(readFileSync(file === "-" ? 0 : resolve(cwd, file), "utf-8"));
+          } catch (e) {
+            throw new ConfigError(`--inputs-file ${file} is not JSON (${(e as Error).message})`);
+          }
+          if (!v || typeof v !== "object" || Array.isArray(v)) throw new ConfigError(`--inputs-file ${file} must hold one JSON object, the inputs by name`);
+          inputs = v as Record<string, unknown>;
+        }
+        const path = str(flags, "config") ?? findConfig(cwd);
+        const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
+        const requestedBy = str(flags, "requested-by") || process.env.GITHUB_TRIGGERING_ACTOR || process.env.GITHUB_ACTOR || gitUser(cwd) || process.env.USER || "unknown";
+        const version = str(flags, "version");
+        const registry = str(flags, "registry");
+        const r = await requestApp({ cwd, settings, template, name, ...(app ? { app } : {}), ...(claimedBy ? { claimedBy } : {}), ...(version ? { version } : {}), ...(inputs ? { inputs } : {}), rawInputs, via, requestedBy, dryRun: flags["dry-run"] === true, ...(registry ? { registry } : {}) });
+        if (!r.ok) {
+          if (json) return emit(envelope("request", 1, { code: r.code, refusals: r.refusals }, r.refusals.map((x) => x.reason).join("; ")));
+          for (const x of r.refusals) console.error(`terragucci: refused (${x.code}): ${x.reason}`);
+          return 1;
+        }
+        if (r.dryRun) {
+          if (json) return emit(envelope("request", 0, { branch: r.branch, files: r.files }));
+          console.log([`would open a pull request from ${r.branch} adding:`, ...r.files.map((f) => `  ${f}`), "(dry run, nothing pushed)"].join("\n"));
+          return 0;
+        }
+        const out = { branch: r.branch, files: r.files, title: r.title, pull_request: r.pull_request, url: r.url, existing: r.existing };
+        if (json) return emit(envelope("request", 0, out));
+        console.log(`${r.existing ? "already open" : "opened"}: ${r.title}${r.url ? ` ${r.url}` : ` (#${r.pull_request})`}`);
+        return 0;
+      }
       case "verify-release": {
         const [module, version] = args;
         if (!module || !version) throw new ConfigError("usage: terragucci verify-release <module> <version> [--config <file>]");
@@ -951,7 +1094,7 @@ export async function main(argv: string[]): Promise<number> {
         const prompt = str(flags, "prompt");
         if (agent === "run" ? !out || !prompt : !layers || !out) throw new ConfigError(agent === "run" ? "comment --agent run needs --out <file> and --prompt <file>" : "comment needs --layers <a,b;c> and --out <file>");
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment's --forge is github or forgejo");
-        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, agent: agent as "off" | "on" | "run" });
+        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, agent: agent as "off" | "on" | "run", noAction: noActionReply(await configBinary(cwd)) });
         writeDecision(resolve(cwd, out!), decision);
         if (decision.go && decision.ask && prompt) writePrompt(resolve(cwd, prompt), { ask: decision.ask, pr: decision.pr!, head: decision.head!, user: decision.user!, policyDir });
         if (decision.fail) {
@@ -1066,6 +1209,57 @@ export async function main(argv: string[]): Promise<number> {
       case "unlock-state": {
         if (!args[0] || args.length > 1) throw new ConfigError("unlock-state takes one root: unlock-state <root>");
         const done = await unlockState(cwd, args[0], { ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), log: (l) => console.log(`terragucci unlock-state: ${l}`) });
+        return done.code;
+      }
+      case "action": {
+        const forge = str(flags, "forge") ?? "github";
+        if (forge !== "github" && forge !== "forgejo") throw new ConfigError("action's --forge is github or forgejo");
+        if (flags.decide === true) {
+          // The action workflow's first step: who asked and what, before any credential (comment.ts, action: "run").
+          const layers = str(flags, "layers");
+          const out = str(flags, "out");
+          if (!layers || !out) throw new ConfigError("action --decide needs --layers <a,b;c> and --out <file>");
+          const decision = await decideComment({ layers: parseLayers(layers), forge, action: "run" });
+          writeDecision(resolve(cwd, out), decision);
+          if (decision.fail) {
+            console.error(`terragucci action: failed, nothing runs: ${decision.reason}`);
+            return 1;
+          }
+          console.log(`terragucci action: ${decision.go ? "" : "nothing runs: "}${decision.reason}`);
+          return 0;
+        }
+        if (flags.resume === true) {
+          const done = await resumeActions(cwd, { dryRun: flags["dry-run"] === true, log: (l) => console.log(`terragucci action: ${l}`) });
+          const out = str(flags, "out");
+          if (out) writeFileSync(resolve(cwd, out), done.actions.map((a) => `${a.root} ${a.address}\n`).join(""));
+          return done.code;
+        }
+        const from = str(flags, "from");
+        let root = args[0];
+        let address = args[1];
+        let actor = str(flags, "actor");
+        let pr: number | undefined;
+        if (from) {
+          const d = readActionDecision(resolve(cwd, from));
+          if (!d.go || !d.root || !d.address) {
+            console.log(`terragucci action: nothing runs: ${d.reason}`);
+            return 0;
+          }
+          ({ root, address } = d);
+          actor = d.user ?? actor;
+          pr = d.pr;
+        } else if (args.length !== 2) throw new ConfigError("action takes a root and an action address: action <root> <address>");
+        const done = await runAction(cwd, { root: root!, address: address!, ...(actor ? { actor } : {}), ...(str(flags, "binary") ? { binary: str(flags, "binary") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}) });
+        const said = describeAction(done.json);
+        if (json) console.log(JSON.stringify(done.json));
+        else console.log(`terragucci action: ${said}`);
+        if (pr !== undefined) {
+          try {
+            await poster(forge, process.env).addComment(pr, `terragucci: ${said}`);
+          } catch (e) {
+            console.error(`terragucci action: could not reply on pull request ${pr}: ${(e as Error).message}`);
+          }
+        }
         return done.code;
       }
       case "ephemeral": {

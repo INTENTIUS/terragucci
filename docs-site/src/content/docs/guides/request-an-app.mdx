@@ -1,0 +1,82 @@
+---
+title: Request an app from a template
+description: Publish a module as a template, then open a pull request that adds an app's root from it, from a form, an agent or the command line.
+draft: true
+prompt: |
+  Read https://intentius.io/terragucci/guides/request-an-app/.
+  Run `npx terragucci templates list` and pick a template, then run `npx terragucci request <template> --name <app> --input <k>=<v> --dry-run` and show me the files it would add.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A person or an agent asks for an app from a template, and terragucci opens a pull request that adds the app's root. The pipeline then plans it like any other pull request, and it applies after a person approves and merges it.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| A module published to a registry with `modules.registry` ([Publish your modules](/terragucci/guides/publish-modules/)) | the release catalog beside the registry lists the templates |
+| A `template.yml` beside the module, and `modules.attest` | the file goes into the signed release, and by default a request takes only a signed or verified version |
+| `generate` in `terragucci.yml` ([Generate root files](/terragucci/guides/generate-root-files/)) | the new root gets its backend, provider and version files in the same pull request |
+| A forge token that can open pull requests, in the variable `token_env` names | the request workflow pushes the branch and opens the pull request with it |
+
+## Steps
+
+<Steps>
+
+1. Write `template.yml` beside the module. It names the inputs a form asks for, in order, each with a kind (`string`, `number`, `bool`, `list`, `map` or `object`). An input with a `default` is optional. A `sensitive` input is never asked: the app's root declares it as a sensitive variable for its own secret store.
+
+   ```yaml
+   contract: 1
+   kind: app
+   description: An S3 bucket for one app, with the roles that read it.
+   inputs:
+     - name: bucket_name
+       kind: string
+       label: Bucket name
+     - name: readers
+       kind: list
+       of: string
+       default: []
+   ```
+
+2. Publish the module. The release carries `template.yml`, and `terragucci templates list` shows the template with the versions a request may name.
+
+3. Set `templates` in `terragucci.yml` and run `npx terragucci init`. On GitHub and Forgejo it writes `terragucci-request.yml`, a workflow a form dispatches with `template`, `version`, `name` and `inputs`.
+
+   ```yaml
+   templates:
+     apps: apps/{name}
+     require: signed
+   ```
+
+4. Preview a request from a checkout:
+
+   ```bash
+   npx terragucci request acme/bucket/aws --name orders --input bucket_name=orders-data --dry-run
+   ```
+
+   It prints the branch, `request/bucket/orders`, and the files: `apps/orders/main.tf` and the files `generate` writes.
+
+5. Open it. Run the same command without `--dry-run`, or dispatch the request workflow. The pull request's body holds the request as a fenced `json` block, and running it again returns the same pull request.
+
+</Steps>
+
+## Add an add-on to an app
+
+An add-on is a second template, such as a cache or a database, whose `template.yml` says `kind: addon`. Name the app it joins with `--app`. The pull request then adds one module call to that app's root, in `addon-<name>.tf`, so the add-on shares the app's state and plan.
+
+An input can refer to one of the app module's outputs as `app.<output>`, which the file writes as `module.app.<output>`:
+
+```bash
+npx terragucci request acme/cache/aws --app orders --name cache --input subnet_ids=app.private_subnets --dry-run
+```
+
+The branch is `request/cache/orders/cache`, and `apps/orders/addon-cache.tf` is its only file. The workflow takes an add-on through its `app` input. To see what each app already has, run `npx terragucci templates apps`.
+
+## Refused requests
+
+The command exits 1 and pushes nothing, and `--json` prints the reason's code. A deprecated or yanked version is `not-active`, and one below `templates.require` is `unsigned`. Each kind of bad input has its own code. An app whose directory is on the default branch is `app-exists`. The add-on codes are listed with the others in the CLI reference. [The CLI reference](/terragucci/reference/cli/#request) lists every code.

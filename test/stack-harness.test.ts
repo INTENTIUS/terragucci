@@ -3,7 +3,7 @@
 // chant without the harness, the gate between them, the scenarios' lint, and
 // smoke.sh's verdicts as claim rows. Nothing here starts a container.
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -240,6 +240,45 @@ describe("the scenarios", () => {
     expect(msgs).toContain("no BREAK arm");
     expect(msgs).toContain("plan is not a step a terragucci pipeline completes");
     expect(msgs).toContain("no step expects anything");
+  });
+
+  it("plays each template scenario on the fixture registry, a product opening the pull request the driver merges", () => {
+    const index = readIndex();
+    const ids = ["tg-template-app", "tg-template-addon", "tg-agent-request", "tg-template-upgrade", "tg-behold-request", "tg-behold-addon", "tg-behold-action"];
+    const fixture = join(stack, "harness", "fixtures", "templates", "registry");
+    const catalog = JSON.parse(readFileSync(join(fixture, "catalog", "index.json"), "utf8")) as { components: { fields: { terraform: { address: string } }; versions: { version: string; attestation: { state: string } }[] }[] };
+    expect(catalog.components.map((c) => c.fields.terraform.address)).toEqual(["modules.harness.local/acme/bucket/aws", "modules.harness.local/acme/cache/aws", "modules.harness.local/acme/app/aws"]);
+    expect(catalog.components[0]!.versions.map((v) => `${v.version} ${v.attestation.state}`)).toEqual(["1.4.0 unsigned", "1.3.0 signed", "1.2.0 signed"]);
+    for (const v of ["1.2.0", "1.3.0", "1.4.0"]) {
+      expect(readFileSync(join(fixture, "v1", "modules", "acme", "bucket", "aws", v, "download"), "utf8")).toContain(`git::http://forgejo:3000/@REPO@.git//registry/src/bucket/${v}`);
+      expect(existsSync(join(fixture, "src", "bucket", v, "main.tf"))).toBe(true);
+    }
+    expect(readFileSync(join(fixture, "tofurc"), "utf8")).toContain('"modules.v1" = "http://forgejo:3000/@REPO@/raw/branch/main/registry/v1/modules/"');
+    expect(readFileSync(join(fixture, "terraformrc"), "utf8")).toContain('"modules.v1" = "http://template-registry:8080/@REPO@/v1/modules/"');
+    expect(readFileSync(join(stack, "docker-compose.yml"), "utf8")).toMatch(/template-registry:\n[\s\S]*?profiles: \[templates\][\s\S]*?\.\/harness\/template-registry\.mjs:\/srv\/template-registry\.mjs:ro/);
+    for (const id of ids) {
+      expect(index[id]?.fixtures, id).toEqual(["templates"]);
+      const doc = JSON.parse(readFileSync(scenarioPath(id), "utf8")) as { steps: Array<{ id: string; do: string; pull?: string; command?: string[] }> };
+      const awaited = doc.steps.filter((s) => s.do === "await-pull").map((s) => s.id);
+      // An action opens no pull request; every other template scenario's product opens one.
+      expect(awaited.length > 0, id).toBe(id !== "tg-behold-action");
+      for (const m of doc.steps.filter((s) => s.do === "merge")) expect(awaited, id).toContain(m.pull);
+      expect(doc.steps.some((s) => s.do === "open"), id).toBe(false);
+      const config = readFileSync(join(stack, "harness", "scenarios", id, "base", "terragucci.yml"), "utf8");
+      // OpenTofu reads the repo's registry files from Forgejo; Terraform needs the template-registry service's X-Terraform-Get.
+      const terraform = index[id]!.binary === "terraform";
+      expect(config, id).toContain(`TF_CLI_CONFIG_FILE: \${{ github.workspace }}/registry/${terraform ? "terraformrc" : "tofurc"}`);
+      expect(index[id]!.needs.includes("profile:templates"), id).toBe(terraform);
+      expect(config, id).toContain("dir: registry");
+    }
+    // A merge may name an await-pull step, and nothing else but an open.
+    const dir = mkdtempSync(join(tmpdir(), "tg-scenario-"));
+    const file = join(dir, "tg-awaits", "scenario.json");
+    execFileSync("mkdir", ["-p", join(dir, "tg-awaits", "base")]);
+    const steps = [{ id: "ask", do: "out-of-band", command: ["true"], expect: [{ exit: 0 }] }, { id: "pull", do: "await-pull", branch: "request/bucket/orders" }, { id: "m", do: "merge", pull: "pull" }, { id: "n", do: "merge", pull: "ask" }];
+    execFileSync("sh", ["-c", `cat > "${file}"`], { input: JSON.stringify({ $schema: "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json", contract: 1, id: "tg-awaits", product: "terragucci", claim: "c", tree: { base: "base" }, reportUrl: "s3://b/p", steps, break: { env: { BREAK: "1" } } }) });
+    const found = localFindings(file, { "tg-awaits": { binary: "tofu", needs: [], cites: [], fixtures: ["nope"] } });
+    expect(found.map((f) => `${f.at} ${f.message}`)).toEqual(["/tree/base index.json's fixture nope is not a directory of stack/harness/fixtures", "/steps/3/pull merge names ask, which is not an earlier open or await-pull step"]);
   });
 
   it("lints with the harness's own lint when chant has it, and its own otherwise", () => {

@@ -430,6 +430,27 @@
       ],
       "description": "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents."
     },
+    "templates": {
+      "type": "object",
+      "properties": {
+        "registry": {
+          "type": "string",
+          "pattern": "^https?://[^\\s/]+"
+        },
+        "apps": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))(?!.*//)(?!.*/$).*\\{name\\}"
+        },
+        "require": {
+          "enum": [
+            "signed",
+            "any"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "description": "Apps from templates: the registry whose catalog lists them, the path of a requested app's root, and the attestation a version needs."
+    },
     "gitlab": {
       "type": "object",
       "properties": {
@@ -2353,6 +2374,27 @@
             "op"
           ],
           "description": "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents."
+        },
+        "templates": {
+          "type": "object",
+          "properties": {
+            "registry": {
+              "type": "string",
+              "pattern": "^https?://[^\\s/]+"
+            },
+            "apps": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))(?!.*//)(?!.*/$).*\\{name\\}"
+            },
+            "require": {
+              "enum": [
+                "signed",
+                "any"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "description": "Apps from templates: the registry whose catalog lists them, the path of a requested app's root, and the attestation a version needs."
         },
         "gitlab": {
           "type": "object",

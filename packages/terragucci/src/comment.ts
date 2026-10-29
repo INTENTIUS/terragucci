@@ -15,7 +15,13 @@
  * pattern that has no shell syntax in it, and the root is also an exact member
  * of the roots the pipeline was written with.
  *
- * `/terragucci agent <ask>` is the one other command, and only where
+ * `/terragucci action <root> <address>` asks for a day-2 action (./action.ts):
+ * one Terraform `action` block of a root, run under a gated request. The
+ * root must be one the pipeline was written with and the address must be an
+ * action address; the action workflow reads the comment, and this job only
+ * answers it where the pipeline has no action workflow.
+ *
+ * `/terragucci agent <ask>` is the other command, and only where
  * `agent.comment` is set in terragucci.yml. Its ask is data: it goes into the
  * agent's prompt file and its commit message, never into a shell, and the
  * agent job (agent-comment.ts) gets no cloud credentials.
@@ -29,13 +35,13 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseProductComment } from "@intentius/chant/ci-product-words";
-import { productWords } from "./ci-words";
+import { commentProductWords, productWords } from "./ci-words";
 import { ConfigError } from "./config";
 import { poster, type Fetch } from "./forge";
 import { commentCell, leftOut } from "./import/guide";
 
 /** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
-export const COMMENT_COMMANDS = ["plan", "apply", "agent"] as const;
+export const COMMENT_COMMANDS = ["plan", "apply", "action", "agent"] as const;
 
 export const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
 export const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -52,7 +58,45 @@ export type ParsedComment =
   /** `/terragucci unlock`: release the root locks the pull request holds (`apply.when: pull-request`). */
   | { kind: "unlock" }
   | { kind: "agent"; ask: string }
+  /** `/terragucci action <root> <address>`: run one action block of the root under a gated request (./action.ts). */
+  | { kind: "action"; root: string; address: string }
   | { kind: "refused"; reason: string };
+
+/**
+ * An action address as `-invoke` takes it, the pattern of the terraform
+ * lexicon's `ACTION_ADDRESS` (chant#4653 action-ops.ts), written out so a
+ * comment is read the same on a chant without it: `action.<type>.<label>`
+ * after any number of `module.<name>.` steps, each with an optional instance
+ * key (`[0]`, `["a"]`).
+ */
+const ACTION_KEY = String.raw`\[(?:[0-9]+|"[A-Za-z0-9_-]+")\]`;
+export const ACTION_ADDRESS = new RegExp(String.raw`^(?:module\.[A-Za-z_][A-Za-z0-9_-]*(?:${ACTION_KEY})?\.)*action\.[a-z0-9_]+\.[A-Za-z_][A-Za-z0-9_-]*(?:${ACTION_KEY})?$`);
+
+/** A root as the action form names it: path segments, no leading dash, no shell or glob syntax (chant's member pattern). */
+const ACTION_ROOT = /^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/;
+
+/**
+ * The action form read by terragucci, for a chant whose comment grammar has
+ * no `action` command (before chant#4653): the same words and checks.
+ * Undefined when the comment is not `/terragucci action`.
+ */
+function ownActionForm(text: string): ParsedComment | undefined {
+  if (!/^\/terragucci[ \t]+action(?=[ \t]|$)/.test(text)) return undefined;
+  if (/[\r\n]/.test(text)) return { kind: "refused", reason: "a command is one line, and nothing else in the comment" };
+  const parts = text.split(/[ \t]+/);
+  if (parts.length !== 4) return { kind: "refused", reason: "`/terragucci action` takes a root and an action: `/terragucci action <root> <action>`" };
+  const [, , root, address] = parts as [string, string, string, string];
+  if (!ACTION_ROOT.test(root) || root.split("/").some((x) => x === "" || x === "." || x === "..")) return { kind: "refused", reason: "the root is a name or a path from the repository root" };
+  if (!/^[A-Za-z_][A-Za-z0-9_.\[\]"-]{0,299}$/.test(address)) return { kind: "refused", reason: "an action is an action address or name, with no spaces or shell characters" };
+  return { kind: "action", root, address };
+}
+
+/** An action form checked against the address pattern and, when given, the pipeline's roots. */
+function checkedAction(root: string, address: string, layers: readonly (readonly string[])[] | undefined): ParsedComment {
+  if (!ACTION_ADDRESS.test(address)) return { kind: "refused", reason: `\`${address}\` is not an action address: give action.<type>.<label>, after module.<name>. for an action in a module` };
+  if (layers && !allowRoot(root, layers)) return { kind: "refused", reason: `${root} is not a root of this repository. The roots are ${layers.flat().sort().map((r) => `\`${r}\``).join(", ")}.` };
+  return { kind: "action", root, address };
+}
 
 /**
  * Read a comment. Undefined when it is not addressed to terragucci. A comment
@@ -68,8 +112,17 @@ export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment
     const refused = fromAtlantis(text);
     if (refused !== undefined) return refused;
   }
-  const parsed = parseProductComment(productWords(), text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
+  // `action` is chant's command where the installed chant's grammar has it (chant#4653); before it, terragucci reads the form.
+  const words = commentProductWords();
+  if (!words) {
+    const own = ownActionForm(text);
+    if (own) return own.kind === "action" ? checkedAction(own.root, own.address, o.layers) : own;
+  }
+  const parsed = parseProductComment(words ?? productWords(), text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
   if (parsed === undefined) return undefined;
+  // The installed chant's parsed comment carries `action` only from chant#4653 on, so the check reads it through a widened type.
+  const asAction = parsed as unknown as { kind: string; member?: string; address?: string };
+  if (asAction.kind === "action" && asAction.member !== undefined && asAction.address !== undefined) return checkedAction(asAction.member, asAction.address, o.layers);
   if (parsed.kind === "plan") {
     // chant's grammar reads `--target`, `--refresh` and `--target-dependents` after the plan word (chant#4626, #4627, on chant
     // main); a terragucci re-plan plans whole roots, so it refuses them by name rather than drop them.
@@ -86,6 +139,8 @@ export const ATLANTIS_COMMENTS_ENV = "TG_ATLANTIS_COMMENTS";
 export interface ParseOptions {
   /** Read `atlantis plan` and `atlantis apply` too. */
   atlantis?: boolean;
+  /** The roots the pipeline was written with: an action naming any other root is refused. */
+  layers?: readonly (readonly string[])[];
 }
 
 /** The parse options a job's environment sets. */
@@ -140,6 +195,8 @@ export interface CommentDecision {
   sha?: string;
   base?: string;
   root?: string;
+  /** An action (`action: "run"`): the action's address, with `root` and `user`. */
+  address?: string;
   /** An agent comment: the pull request's head branch, the ask and who asked. */
   head?: string;
   ask?: string;
@@ -161,6 +218,14 @@ export interface CommentOptions {
    * the agent job, which reads agent comments only.
    */
   agent?: "off" | "on" | "run";
+  /** The reply to `/terragucci action` where the pipeline has no action workflow, such as the engine refusal of a root on OpenTofu. */
+  noAction?: string;
+  /**
+   * `run`: this is the action workflow's job (./action.ts), which reads
+   * `/terragucci action <root> <address>` comments and a dispatch's `root`
+   * and `address` inputs, and nothing else.
+   */
+  action?: "run";
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -195,7 +260,16 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   let parsed: ParsedComment;
   let number: number;
   let user: string;
-  if (dispatch) {
+  if (dispatch && o.action === "run") {
+    // The action workflow's dispatch (behold's button): root and address, read by the comment grammar as `/terragucci action <root> <address>`.
+    const ask = readActionDispatch(event.inputs, o.layers);
+    if ("error" in ask) return broke(ask.error);
+    const sender = event.sender?.login;
+    if (typeof sender !== "string" || !LOGIN.test(sender)) return stop("the dispatch has no usable sender");
+    parsed = ask.parsed;
+    number = 0;
+    user = sender;
+  } else if (dispatch) {
     if (o.agent === "run") return stop("an agent runs on a comment, not on a dispatch");
     const ask = readDispatch(event.inputs);
     if (ask === undefined) return stop("the dispatch names no pull request");
@@ -207,7 +281,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     user = sender;
   } else {
     if (event.action !== "created") return stop("not a new comment");
-    const read = parseComment(event.comment?.body, parseOptions(env));
+    const read = parseComment(event.comment?.body, { ...parseOptions(env), layers: o.layers });
     if (!read) return stop("the comment is not addressed to terragucci");
     const issue = event.issue?.number;
     if (!Number.isInteger(issue) || issue < 1) return stop("the comment has no issue number");
@@ -231,6 +305,8 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   };
   const forge = poster(o.forge ?? "github", env, doFetch);
   const reply = async (text: string): Promise<void> => {
+    // A dispatch names no pull request: its answer is the job's log.
+    if (number === 0) return void console.log(`terragucci: ${text}`);
     try {
       await forge.addComment(number, `terragucci: ${text}`);
     } catch (e) {
@@ -265,6 +341,16 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the ${dispatch ? "dispatch" : "comment"} is ignored`);
   }
 
+  // The action workflow answers an action comment, a refused one included, and leaves every other comment to the pipeline's jobs.
+  if (o.action === "run") {
+    if (parsed.kind === "refused") {
+      if (!dispatch && !/^\/terragucci[ \t]+action(?=\s|$)/.test(String(event.comment?.body ?? "").trim())) return stop("another job reads this comment");
+      await reply(parsed.reason);
+      return stop(parsed.reason);
+    }
+    if (parsed.kind !== "action") return stop("another job reads this comment");
+    return { go: true, reason: `run ${parsed.address} on ${parsed.root} for ${user}`, ...(number > 0 ? { pr: number } : {}), root: parsed.root, address: parsed.address, user };
+  }
   const agent = o.agent ?? "off";
   if (agent === "run") {
     // The agent job starts only for `/terragucci agent ` comments; a re-plan is the replan job's.
@@ -294,6 +380,12 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   }
   if (parsed.kind === "unlock") {
     const reason = "this repository applies after merge, so no pull request holds a lock and there is nothing to unlock";
+    await reply(reason);
+    return stop(reason);
+  }
+  // The action workflow reads `/terragucci action` (./action.ts); this job sees one only where the pipeline has none.
+  if (parsed.kind === "action") {
+    const reason = o.noAction ?? "this pipeline has no action workflow; run `terragucci init` again to write it";
     await reply(reason);
     return stop(reason);
   }
@@ -360,6 +452,20 @@ export function readDispatch(inputs: unknown): { pr: number; parsed: ParsedComme
   if (root !== undefined && root !== null && typeof root !== "string") return { error: "the dispatch's root input is a root path, like envs/dev/orders" };
   const parsed = typeof root === "string" && root.trim() !== "" ? parseComment(`/terragucci plan ${root.trim()}`)! : ({ kind: "plan" } as const);
   return { pr: Number(pr.trim()), parsed };
+}
+
+/**
+ * The action a dispatch of the action workflow asks for, from its `root` and
+ * `address` inputs, read by the comment grammar as `/terragucci action <root>
+ * <address>`, so a dispatch is checked as a comment is.
+ */
+export function readActionDispatch(inputs: unknown, layers?: readonly (readonly string[])[]): { parsed: ParsedComment } | { error: string } {
+  const i = inputs !== null && typeof inputs === "object" ? (inputs as Record<string, unknown>) : {};
+  const root = typeof i.root === "string" ? i.root.trim() : "";
+  const address = typeof i.address === "string" ? i.address.trim() : "";
+  if (root === "" || address === "") return { error: "the dispatch names a root and an action address: inputs root and address" };
+  if (/\s/.test(root) || /\s/.test(address)) return { parsed: { kind: "refused", reason: "a root and an action address have no spaces in them" } };
+  return { parsed: parseComment(`/terragucci action ${root} ${address}`, layers ? { layers } : {})! };
 }
 
 /** Write the decision where the job's script reads it. */

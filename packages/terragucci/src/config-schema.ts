@@ -14,6 +14,8 @@
 import {
   AGENT_COMMENT_KEYS,
   CONTROL_KEYS,
+  TEMPLATES_KEYS,
+  TEMPLATES_REQUIRE,
   CONTROL_NAME,
   CONTROL_REF,
   IMAGE_KEYS,
@@ -454,6 +456,14 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
         ref: pat(CONTROL_REF),
       }, { required: ["repo", "op"] }),
       description: "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents.",
+    },
+    templates: {
+      ...map(TEMPLATES_KEYS, {
+        registry: { type: "string", pattern: "^https?://[^\\s/]+" },
+        apps: { type: "string", pattern: "^(?!/)(?!.*(^|/)\\.\\.(/|$))(?!.*//)(?!.*/$).*\\{name\\}" },
+        require: enumOf(TEMPLATES_REQUIRE),
+      }),
+      description: "Apps from templates: the registry whose catalog lists them, the path of a requested app's root, and the attestation a version needs.",
     },
     gitlab: { ...map(TOKEN_PROTECTION_KEYS, { token: enumOf(TOKEN_PROTECTIONS) }), description: "GitLab only: how the project keeps its forge token." },
     runtime: { ...enumOf(RUNTIMES), description: "Where the stages run." },

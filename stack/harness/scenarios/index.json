@@ -137,5 +137,132 @@
       "chant#4586 ruling A (estate shape in place of the terralith core-set row)",
       "plywood (the Pulumi tree, later)"
     ]
+  },
+  "tg-action-run": {
+    "binary": "terraform",
+    "needs": [
+      "image:terraform",
+      "bucket:hs-tg-action-run-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "chant#4653 (tf-action)",
+      "chant#4650 (comment step, gated outcome)",
+      "terragucci#1310"
+    ]
+  },
+  "tg-template-app": {
+    "binary": "tofu",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-template-app-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1308 (request, the request workflow)",
+      "chant#4651 (template-request/v1)",
+      "chant#4652 (renderAppRoot)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
+  },
+  "tg-template-addon": {
+    "binary": "tofu",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-template-addon-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1309 (request --app)",
+      "chant#4652 (renderAddonCall)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
+  },
+  "tg-agent-request": {
+    "binary": "tofu",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-agent-request-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1311 (request_from_template)",
+      "chant#4655 (the --propose tier)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
+  },
+  "tg-template-upgrade": {
+    "binary": "tofu",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-template-upgrade-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1312 (template rollout, templates apps upgrade)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
+  },
+  "tg-behold-request": {
+    "binary": "tofu",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-behold-request-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "behold#1035 (Templates tab, POST /api/templates/request)",
+      "terragucci#1308 (the request workflow)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
+  },
+  "tg-behold-addon": {
+    "binary": "tofu",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-behold-addon-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "behold#1036 (Add an add-on, GET /api/templates/apps)",
+      "terragucci#1309 (the request workflow's app input)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
+  },
+  "tg-behold-action": {
+    "binary": "terraform",
+    "fixtures": [
+      "templates"
+    ],
+    "needs": [
+      "image:terraform",
+      "profile:templates",
+      "bucket:hs-tg-behold-action-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "behold#1037 (action buttons, POST /api/templates/action, the action history)",
+      "terragucci#1310 (the action workflow, approve action, the resume job)",
+      "chant#4653 (tf-action)",
+      "chant#4650 (gated outcome)"
+    ]
   }
 }
