@@ -462,7 +462,7 @@ CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-}"
 # report's reads (chant#4432), the lines between the Atmos demo's components. The compose job
 # image installs the same release. DEMO_CHANT_REPORT_REF names a commit of INTENTIUS/chant to
 # pack the terraform lexicon from instead.
-CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.55}"
+CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.57}"
 CHANT_REPORT_REF="${DEMO_CHANT_REPORT_REF:-}"
 
 # How long the driver holds a step so a viewer sees it, and each step's limit.

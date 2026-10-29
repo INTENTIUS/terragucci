@@ -12,7 +12,7 @@
 // through this plugin too, so the bin runs one copy of core, the installed one.
 //
 // A core subpath the installed chant does not export at all (`template-request`
-// on the 0.124.56 pin, chant#4651) resolves to nothing here and goes on to
+// on the 0.124.57 pin, chant#4651) resolves to nothing here and goes on to
 // scripts/chant-next-plugin.mjs, which stands in a module that throws.
 //
 // Used by scripts/cli-bundle.mjs and scripts/bundle-check.mjs.
