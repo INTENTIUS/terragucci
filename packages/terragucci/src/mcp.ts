@@ -37,12 +37,9 @@
  * ledger, the workspace graph), and chant makes the checks above: it refuses
  * to start with a tool named as a write, and serves no run tool.
  *
- * `--propose` moves onto chant's server too when chant has the propose tier
- * (`serve mcp --read-only --propose`, chant#4655): PROPOSE_TOOLS are then
- * contributed with `forgeWrite: true`, whose names chant lets hold `request`
- * or `propose` and no other write word. On an older chant, `--propose` keeps
- * terragucci's own server below, since its read-only server serves no tool
- * that writes.
+ * `--propose` runs on chant's server too (`serve mcp --read-only --propose`,
+ * chant#4655): PROPOSE_TOOLS are contributed with `forgeWrite: true`, whose
+ * names chant lets hold `request` or `propose` and no other write word.
  *
  * `templates` reads the release catalog's templates, and `request_from_template`
  * (with `--propose`) runs `terragucci request` with `via: mcp` (./templates.ts):
@@ -71,7 +68,7 @@ import { statesKey, type IndexEntry } from "./report/store";
 import { readLedger } from "./apply";
 import { waitingWaves } from "./approve";
 import { loadMcpSdk } from "./mcp-sdk";
-import { chantProductMcp, chantProposeMcp, type ChantMcpTool, type ChantProductMcp, type ChantProductMcpHook } from "./chant-next";
+import { chantProductMcp, type ChantMcpTool, type ChantProductMcp, type ChantProductMcpHook } from "./chant-next";
 import { findTemplate, listTemplates, readTemplatesCatalog, request, templatesSettings } from "./templates";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { version as VERSION } from "../package.json";
@@ -858,12 +855,12 @@ export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS, propo
 
 /**
  * The chant whose server `terragucci mcp` runs on, or undefined for
- * terragucci's own: any chant with the product tool hook, and with
- * `--propose` only one with the propose tier (chant#4655).
+ * terragucci's own: any chant with the product tool hook and its propose tier
+ * (chant#4655).
  */
 export async function chantServer(o: Pick<McpOptions, "propose" | "tools">): Promise<ChantProductMcp | undefined> {
   if (o.tools) return undefined;
-  return o.propose ? chantProposeMcp() : chantProductMcp();
+  return chantProductMcp();
 }
 
 /** `terragucci mcp`: serve on stdin and stdout (or `transport`, in tests) until the client closes them. */

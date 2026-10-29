@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { assertReadOnly, callTool, checkArgs, context, PROPOSE_TOOLS, PROPOSED_FOOTER, readOnlyStore, refusal, serve, TOOLS, type McpOptions, type Tool } from "../src/mcp";
-import { chantProductMcp, chantProposeMcp } from "../src/chant-next";
+import { chantProductMcp } from "../src/chant-next";
 import type { Fetch } from "../src/forge";
 import { buildReport } from "../src/report/build";
 import { StoreError, type ObjectStore } from "../src/report/object-store";
@@ -20,7 +20,7 @@ const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
 // terragucci's tools as `terragucci:<name>`; a tool it does not serve is unknown there.
 const CHANT_MCP = !!(await chantProductMcp());
 // Where it also has the propose tier (chant#4655), `--propose` serves on chant's server too.
-const CHANT_PROPOSE = !!(await chantProposeMcp());
+const CHANT_PROPOSE = CHANT_MCP;
 
 function memoryStore(objects: Map<string, string> = new Map()): ObjectStore & { objects: Map<string, string>; puts: number } {
   const s = {

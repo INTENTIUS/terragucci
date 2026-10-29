@@ -6,14 +6,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { chantTemplateRender, chantTemplateRequests, overrideChantNext, type ChantProductMcpHook } from "../src/chant-next";
+import { overrideChantNext, type ChantProductMcpHook } from "../src/chant-next";
 import { loadConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { mcp, productHook, PROPOSE_TOOLS, PROPOSED_FOOTER, serve, TOOLS, type McpOptions } from "../src/mcp";
 import { bareFrom, git, tmp, write } from "./helpers";
 
 const CATALOG = readFileSync(join(__dirname, "fixtures/templates/catalog.json"), "utf-8");
-const chantHas = Boolean((await chantTemplateRequests()) && (await chantTemplateRender()));
 
 const CONFIG = `forge: forgejo
 url: https://forge.test/acme/infra
@@ -107,7 +106,7 @@ describe("terragucci mcp: templates and request_from_template", () => {
     expect(one.fields.find((f: { name: string }) => f.name === "api_key")).toMatchObject({ sensitive: true });
   });
 
-  it.runIf(chantHas)("opens one pull request on request/bucket/orders with via: mcp and the propose footer, and a second call returns it as existing", async () => {
+  it("opens one pull request on request/bucket/orders with via: mcp and the propose footer, and a second call returns it as existing", async () => {
     const { bare, forge, o } = await requesting();
     const client = await connected(o);
     const args = { template: "acme/bucket/aws", name: "orders", inputs: { bucket_name: "orders-data" } };
@@ -127,7 +126,7 @@ describe("terragucci mcp: templates and request_from_template", () => {
     expect(forge.opened()).toHaveLength(1);
   });
 
-  it.runIf(chantHas)("carries claimed_by as the request's claimedBy beside the forge's requester", async () => {
+  it("carries claimed_by as the request's claimedBy beside the forge's requester", async () => {
     const { forge, o } = await requesting();
     const client = await connected(o);
     const r = await client.callTool({ name: "request_from_template", arguments: { template: "acme/bucket/aws", name: "orders", inputs: { bucket_name: "orders-data" }, claimed_by: "bob" } });
@@ -137,7 +136,7 @@ describe("terragucci mcp: templates and request_from_template", () => {
     expect(body).toContain('"claimedBy": "bob"');
   });
 
-  it.runIf(chantHas)("refuses a sensitive input with sensitive-input, and pushes no branch", async () => {
+  it("refuses a sensitive input with sensitive-input, and pushes no branch", async () => {
     const { bare, forge, o } = await requesting();
     const client = await connected(o);
     const r = await client.callTool({ name: "request_from_template", arguments: { template: "acme/bucket/aws", name: "orders", inputs: { bucket_name: "orders-data", api_key: "x" } } });
@@ -161,12 +160,13 @@ describe("terragucci mcp: templates and request_from_template", () => {
   });
 });
 
-/** A chant whose `serve mcp` serves the hook's tools as `terragucci:<name>` on `transport`, under chant's name; with `tier`, it has the propose tier. */
-function fakeChant(transport: Transport, tier: boolean) {
+/** A chant whose `serve mcp` serves the hook's tools as `terragucci:<name>` on `transport`, under chant's name. */
+function fakeChant(transport: Transport) {
   const seen: { argv: string[]; hook?: ChantProductMcpHook } = { argv: [] };
   const m = {
     PRODUCT_MCP_HOOK_FLOOR: "0.0.0",
-    ...(tier ? { PRODUCT_MCP_PROPOSE_FLOOR: "0.0.1", PRODUCT_TOOL_PROPOSE_WORDS: ["request", "propose"] } : {}),
+    PRODUCT_MCP_PROPOSE_FLOOR: "0.0.1",
+    PRODUCT_TOOL_PROPOSE_WORDS: ["request", "propose"],
     async runChantInProcess(argv: string[], _words: object, options?: { mcp?: ChantProductMcpHook }): Promise<number> {
       seen.argv = argv;
       seen.hook = options?.mcp;
@@ -183,9 +183,9 @@ function fakeChant(transport: Transport, tier: boolean) {
   return { m, seen };
 }
 
-async function startMcp(o: McpOptions, tier: boolean) {
+async function startMcp(o: McpOptions) {
   const [a, b] = InMemoryTransport.createLinkedPair();
-  const chant = fakeChant(a, tier);
+  const chant = fakeChant(a);
   const restore = overrideChantNext("productMcp", chant.m);
   const done = mcp({ ...o, transport: a });
   const client = new Client({ name: "test", version: "1" });
@@ -194,9 +194,9 @@ async function startMcp(o: McpOptions, tier: boolean) {
 }
 
 describe("terragucci mcp --propose: which server", () => {
-  it("runs on chant's server, with the forge tools declared forgeWrite, where chant has the propose tier", async () => {
+  it("runs on chant's server, with the forge tools declared forgeWrite", async () => {
     const { o } = await requesting();
-    const { client, chant, done, restore } = await startMcp(o, true);
+    const { client, chant, done, restore } = await startMcp(o);
     try {
       expect(client.getServerVersion()?.name).toBe("chant");
       const names = (await client.listTools()).tools.map((t) => t.name);
@@ -213,23 +213,9 @@ describe("terragucci mcp --propose: which server", () => {
     }
   });
 
-  it("keeps terragucci's own server where chant has the hook but not the tier", async () => {
-    const { o } = await requesting();
-    const { client, chant, done, restore } = await startMcp(o, false);
-    try {
-      expect(client.getServerVersion()?.name).toBe("terragucci");
-      expect(chant.seen.argv).toEqual([]);
-      expect((await client.listTools()).tools.map((t) => t.name)).toEqual(expect.arrayContaining(["templates", "request_from_template", "propose"]));
-    } finally {
-      await client.close();
-      await done;
-      restore();
-    }
-  });
-
   it("serves templates and no forge tool on chant's server without --propose", async () => {
     const { o } = await requesting(false);
-    const { client, chant, done, restore } = await startMcp(o, true);
+    const { client, chant, done, restore } = await startMcp(o);
     try {
       expect(client.getServerVersion()?.name).toBe("chant");
       const names = (await client.listTools()).tools.map((t) => t.name);

@@ -45,14 +45,6 @@ import { addonFile, addressWithoutHost, appRootPath, attestedFor, catalogVersion
 
 export { REQUESTS_FILE };
 
-/** The chant `terragucci request` needs, named in its refusal on an older one. */
-export const REQUEST_NEEDS_CHANT =
-  "terragucci request builds chant's template request (@intentius/chant/template-request) and renders the app's root with the terraform lexicon (@intentius/chant-lexicon-terraform/template), which the installed chant does not carry; it needs a chant release newer than 0.124.58 that has both";
-
-/** The chant an add-on request needs, named in its refusal on a chant whose template module renders app roots only. */
-export const ADDON_NEEDS_CHANT =
-  "terragucci request --app renders the add-on's module call with the terraform lexicon's renderAddonCall (@intentius/chant-lexicon-terraform/template), which the installed chant does not carry; it needs a chant release newer than 0.124.58 that has it";
-
 /** Where a request comes from. */
 export const REQUEST_VIA = ["form", "mcp", "cli"] as const;
 export type RequestVia = (typeof REQUEST_VIA)[number];
@@ -259,9 +251,6 @@ function typed(value: string, input: ChantTemplateInput | undefined): unknown {
   }
 }
 
-/** An add-on input's reference to the app module's output: `app.<output>`, which the render turns into `module.app.<output>`. */
-const APP_REF = /^app\.[A-Za-z_][A-Za-z0-9_-]*$/;
-
 function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], env: { ...(env ?? process.env), GIT_TERMINAL_PROMPT: "0" } }).trim();
 }
@@ -295,9 +284,8 @@ type Planned = { ok: true; files: Map<string, string>; title: string } | Extract
  */
 export async function request(o: RequestOptions): Promise<RequestResult> {
   const [core, render] = [await chantTemplateRequests(), await chantTemplateRender()];
-  if (!core || !render) throw new ConfigError(REQUEST_NEEDS_CHANT);
+  if (!core || !render) throw new ConfigError("chant's template request (@intentius/chant/template-request) or the terraform lexicon's template rendering (@intentius/chant-lexicon-terraform/template) did not load; reinstall @intentius/chant and @intentius/chant-lexicon-terraform");
   const addon = o.app !== undefined;
-  if (addon && !render.renderAddonCall) throw new ConfigError(ADDON_NEEDS_CHANT);
   const env = o.env ?? process.env;
   const log = o.log ?? ((l: string) => console.error(l));
   const shape = detectShape(o.cwd, o.settings);
@@ -335,11 +323,8 @@ export async function request(o: RequestOptions): Promise<RequestResult> {
     ...(claimedBy ? { claimedBy } : {}),
     via: o.via,
   });
-  // A chant whose request has no claimedBy drops it from the document; the ledger line still carries it.
-  if (claimedBy && req.claimedBy === undefined) log(`terragucci: the installed chant's template request has no claimedBy, so the pull request does not name ${claimedBy}`);
   const check = core.checkTemplateRequest(req, catalog, spec, { ...(component ? { component: component.name } : {}), require: t.require === "any" ? "unsigned" : "signed" });
-  // An add-on's `app.<output>` is a reference of any kind; the render checks the output exists.
-  const refusals = check.ok ? [] : check.refusals.filter((r) => !(addon && r.code === "input-type" && r.field.startsWith("inputs.") && typeof inputs[r.field.slice(7)] === "string" && APP_REF.test(inputs[r.field.slice(7)] as string)));
+  const refusals = check.ok ? [] : check.refusals;
   if (refusals.length > 0) return { ok: false, code: refusals[0]!.code, refusals };
   const checked = check.ok ? check.request : req;
 
@@ -429,7 +414,7 @@ async function planAddon(o: RequestOptions, files: TreeFiles, request: ChantTemp
   const pinned = catalogVersionOf(catalog, root.call);
   let rendered;
   try {
-    rendered = render.renderAddonCall!({ request, source: addressOf(component), inputs: spec.inputs, appOutputs: versionOutputs(pinned.version) });
+    rendered = render.renderAddonCall({ request, source: addressOf(component), inputs: spec.inputs, appOutputs: versionOutputs(pinned.version) });
   } catch (e) {
     if (!(e instanceof render.TemplateRenderError)) throw e;
     const unlisted = e.code === "unknown-output" && !pinned.version ? `; the catalog lists no outputs for ${root.call.source} ${root.call.version ?? "(no version)"}, the module the app calls` : "";
