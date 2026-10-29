@@ -2,7 +2,7 @@
 # terragucci writes this file from terragucci.yml, or from its defaults when
 # the repo has none. Change terragucci.yml and run `npx terragucci init`
 # rather than editing it here.
-# Every job runs in ghcr.io/intentius/terragucci-tofu:0.4.49-tofu1.13.1; init pins its digest once the image is published.
+# Every job runs in ghcr.io/intentius/terragucci-tofu:0.4.49-tofu1.13.1, pinned by digest.
 name: terragucci-request
 
 on:
@@ -49,7 +49,7 @@ jobs:
   request:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/intentius/terragucci-tofu:0.4.49-tofu1.13.1
+      image: ghcr.io/intentius/terragucci-tofu:0.4.49-tofu1.13.1@sha256:f3a33c6e61f4243d5ba5519830564ad911f5d61a0cb3b0b068c27a6096e6e190
     permissions:
       contents: write
       pull-requests: write
