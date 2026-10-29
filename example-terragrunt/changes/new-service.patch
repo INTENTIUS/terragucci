@@ -1,5 +1,5 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index d6034fe..a64cc59 100644
+index 0acf254..3135d57 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
 @@ -205,7 +205,7 @@ jobs:
@@ -164,12 +164,12 @@ index 0000000..2fcab74
 +  name = "ledger"
 +}
 diff --git a/terragucci.components.json b/terragucci.components.json
-index 0b929f0..652b3a3 100644
+index 420033e..65b3fb3 100644
 --- a/terragucci.components.json
 +++ b/terragucci.components.json
 @@ -2,9 +2,15 @@
    "schema": "terragucci.components/v1",
-   "generated_by": "terragucci 0.4.46",
+   "generated_by": "terragucci 0.4.47",
    "roots": {
 +    "live/dev/ledger": {
 +      "dir": "live/dev/ledger"
