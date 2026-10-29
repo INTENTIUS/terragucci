@@ -197,13 +197,23 @@ export function pinnedVersion(version: string | null): string | null {
   return v ? v : null;
 }
 
-/** The newest active version of a component above `pin`, or null: none is newer, or the pin is no plain version. */
-export function upgradeOf(component: ChantCatalogComponent | undefined, pin: string | null): string | null {
+/** Whether `templates.require` lets a version be requested or offered: `any` takes every version, `signed` refuses an unsigned one. */
+export function attestedFor(v: ChantCatalogVersion, require: "signed" | "any"): boolean {
+  return require === "any" || v.attestation.state !== "unsigned";
+}
+
+/**
+ * The newest active version of a component above `pin`, or null: none is
+ * newer, or the pin is no plain version. Under `templates.require: signed`
+ * (the default) an unsigned version is never the upgrade, as a request
+ * refuses it.
+ */
+export function upgradeOf(component: ChantCatalogComponent | undefined, pin: string | null, require: "signed" | "any" = "signed"): string | null {
   const at = pin ? parseSemver(pin) : undefined;
   if (!component || !at) return null;
   let best: { v: NonNullable<ReturnType<typeof parseSemver>>; text: string } | undefined;
   for (const x of component.versions) {
-    const v = x.status.state === "active" && x.version ? parseSemver(x.version) : undefined;
+    const v = x.status.state === "active" && x.version && attestedFor(x, require) ? parseSemver(x.version) : undefined;
     if (v && compareSemver(v, at) > 0 && (!best || compareSemver(v, best.v) > 0)) best = { v, text: x.version! };
   }
   return best?.text ?? null;
@@ -295,7 +305,7 @@ function templateOf(catalog: ChantReleaseCatalogDoc | undefined, call: ModuleCal
 }
 
 /** The rows `terragucci templates apps` prints; the catalog, when there is one, names each call's template and its actions. */
-export function appRows(roots: readonly AppRoot[], catalog: ChantReleaseCatalogDoc | undefined): AppRow[] {
+export function appRows(roots: readonly AppRoot[], catalog: ChantReleaseCatalogDoc | undefined, require: "signed" | "any" = "signed"): AppRow[] {
   return roots.map((r) => {
     const actions: AppAction[] = [];
     for (const call of [r.call, ...r.addons]) {
@@ -303,7 +313,7 @@ export function appRows(roots: readonly AppRoot[], catalog: ChantReleaseCatalogD
     }
     const marks = (call: ModuleCallRow) => {
       const { component, version } = catalogVersionOf(catalog, call);
-      return { upgrade: upgradeOf(component, pinnedVersion(call.version)), yanked: isYanked(version) };
+      return { upgrade: upgradeOf(component, pinnedVersion(call.version), require), yanked: isYanked(version) };
     };
     return {
       app: r.app,

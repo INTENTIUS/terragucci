@@ -940,7 +940,7 @@ export async function main(argv: string[]): Promise<number> {
             console.error(`terragucci: the release catalog could not be read (${(e as Error).message.split("\n", 1)[0]}), so templates are named by source and no actions are listed`);
           }
           const filter = str(flags, "template");
-          const rows = appRows(roots, catalog).filter((r) => !filter || onTemplate(r, filter));
+          const rows = appRows(roots, catalog, templatesSettings(settings).require).filter((r) => !filter || onTemplate(r, filter));
           if (json) return emit(envelope("templates", 0, rows));
           console.log(describeApps(rows));
           return 0;

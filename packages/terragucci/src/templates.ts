@@ -41,7 +41,7 @@ import { REQUESTS_FILE } from "./report/audit";
 import { forgeOf, worktree } from "./respond/change";
 import { loadHclParser } from "./rollout/parser";
 import { detectShape } from "./shape";
-import { addonFile, addressWithoutHost, appRootPath, catalogVersionOf, checkoutFiles, commitFiles, readAppRoot, versionOutputs, type TreeFiles } from "./template-apps";
+import { addonFile, addressWithoutHost, appRootPath, attestedFor, catalogVersionOf, checkoutFiles, commitFiles, readAppRoot, versionOutputs, type TreeFiles } from "./template-apps";
 
 export { REQUESTS_FILE };
 
@@ -137,7 +137,7 @@ export function versionTemplate(v: ChantCatalogVersion): ChantTemplateSpec | und
 
 /** Whether a version may be requested: active, a template, and attested as `require` asks. */
 export function requestable(v: ChantCatalogVersion, require: "signed" | "any"): boolean {
-  return v.status.state === "active" && v.version !== null && versionTemplate(v) !== undefined && (require === "any" || v.attestation.state !== "unsigned");
+  return v.status.state === "active" && v.version !== null && versionTemplate(v) !== undefined && attestedFor(v, require);
 }
 
 function fieldsOf(v: ChantCatalogVersion, spec: ChantTemplateSpec): TemplateField[] {

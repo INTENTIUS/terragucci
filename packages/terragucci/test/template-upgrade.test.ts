@@ -191,6 +191,61 @@ describe("terragucci templates apps: upgrade and yanked", () => {
   });
 });
 
+/** The fixture catalog with 1.4.0 published on top, active but unsigned. */
+function withUnsigned(): string {
+  const doc = JSON.parse(catalog()) as ChantReleaseCatalogDoc;
+  const bucket = doc.components.find((c) => c.name === "modules/bucket")!;
+  const v140 = structuredClone(bucket.versions.find((v) => v.version === "1.3.0")!);
+  v140.version = "1.4.0";
+  v140.digest = `sha256:${"5".repeat(64)}`;
+  v140.commit = "5".repeat(40);
+  v140.time = "2026-10-25T00:00:00Z";
+  v140.attestation = { state: "unsigned", verify: null, identity: null };
+  bucket.versions.unshift(v140);
+  bucket.latest = "1.4.0";
+  return JSON.stringify(doc, null, 2);
+}
+const UNSIGNED = { "registry/catalog/index.json": withUnsigned() };
+const REQUIRE_ANY = CONFIG.replace("templates: {}\n", "templates:\n  require: any\n");
+
+describe("templates.require: signed keeps an unsigned version from being an upgrade", () => {
+  it("templates apps offers the newest signed version, and the unsigned one only under require: any", async () => {
+    const signed = JSON.parse((await run(repo(UNSIGNED).dir, "templates", "apps", "--json")).out).results as { app: string; upgrade: string | null }[];
+    expect(signed.map((r) => r.upgrade)).toEqual(["1.3.0", "1.3.0", "1.3.0"]);
+    const any = JSON.parse((await run(repo(UNSIGNED, REQUIRE_ANY).dir, "templates", "apps", "--json")).out).results as { app: string; upgrade: string | null }[];
+    expect(any.map((r) => r.upgrade)).toEqual(["1.4.0", "1.4.0", "1.4.0"]);
+  }, 30_000);
+
+  it("a rollout with no version named moves to the newest signed version the catalog lists", async () => {
+    const { dir } = repo(UNSIGNED);
+    vi.stubGlobal("fetch", fakeForge().fetch);
+    const { code, out } = await run(dir, "rollout", "acme/bucket/aws", "--json");
+    expect(code).toBe(0);
+    const r = JSON.parse(out).results as Rollout & { to: string; discovered?: string };
+    expect(r.to).toBe("1.3.0");
+    expect(r.discovered).toBe("the release catalog");
+  }, 30_000);
+
+  it("a rollout to an unsigned version is refused under require: signed and opens nothing", async () => {
+    const { dir } = repo(UNSIGNED);
+    const forge = fakeForge();
+    vi.stubGlobal("fetch", forge.fetch);
+    vi.stubEnv("FORGE_TOKEN", "t0ken");
+    const { code, out, err } = await run(dir, "rollout", "acme/bucket/aws", "1.4.0", "--mode", "apply", "--json");
+    expect(code).toBe(1);
+    expect(`${out}\n${err}`).toContain("acme/bucket/aws 1.4.0 is unsigned");
+    expect(forge.pulls).toHaveLength(0);
+  }, 30_000);
+
+  it("under require: any the same rollout plans 1.4.0", async () => {
+    const { dir } = repo(UNSIGNED, REQUIRE_ANY);
+    vi.stubGlobal("fetch", fakeForge().fetch);
+    const { code, out } = await run(dir, "rollout", "acme/bucket/aws", "1.4.0", "--json");
+    expect(code).toBe(0);
+    expect((JSON.parse(out).results as { to: string }).to).toBe("1.4.0");
+  }, 30_000);
+});
+
 describe("rollout planning pieces", () => {
   it("names a hostless registry address on modules.registry's host", () => {
     expect(registryAliases("acme/bucket/aws", [{ modules: { registry: { dir: "registry", url: "https://modules.test", namespace: "acme" } as never } }])).toContain("modules.test/acme/bucket/aws");

@@ -1,0 +1,12 @@
+contract: 1
+kind: addon
+description: A cache bucket beside an app's bucket.
+inputs:
+  - name: cache_name
+    kind: string
+    label: Cache name
+    description: The cache bucket's name.
+  - name: origin_arn
+    kind: string
+    label: Origin
+    description: The ARN of the bucket the cache stands in front of.

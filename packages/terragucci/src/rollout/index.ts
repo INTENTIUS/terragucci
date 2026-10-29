@@ -44,7 +44,7 @@ import { appliedState, fetchForge, type ListedPullRequest, type RolloutForge } f
 import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locker } from "./lock";
 import { loadHclParser } from "./parser";
 import { moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
-import { appOf, changelogLines, movesYanked, templateContext, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
+import { appOf, changelogLines, movesYanked, templateContext, templateTarget, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
 import { planWaves, type Wave } from "./waves";
 
 export type RolloutKind = "module" | "provider";
@@ -560,6 +560,12 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
 
   let to = options.to;
   let discovered: string | undefined;
+  // A template's target passes the signing check a request makes (templates.require).
+  if (tmpl) {
+    const target = templateTarget(tmpl, to);
+    to = target.version;
+    if (target.from) discovered = target.from;
+  }
   if (!to) {
     const oci = new Set<string>();
     for (const p of [...projects.map((p) => p.settings), config.defaults ?? {}]) {

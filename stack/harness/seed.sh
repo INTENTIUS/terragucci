@@ -18,6 +18,11 @@
 # and the line's into (a directory of the base the tree goes in), lift (moves
 # inside the base, from:to, such as a tree's forgejo/.forgejo to .forgejo),
 # secrets and vars (the repo's Actions secrets and variables) shape the repo.
+# The line's fixtures name directories of stack/harness/fixtures/ copied into
+# the base first, with @REPO@ in each file read as the repo's <owner>/<name>:
+# templates is the fixture module registry the template scenarios read (its
+# catalog, the registry protocol's files and the modules, served by the repo's
+# own files on Forgejo).
 # A seed/ directory beside the scenario file is copied over the base before
 # terragucci init, for what a sourced tree lacks (terragucci.yml, a backend).
 # The line's recordStore names a choudoufu sidecar in the base whose s3
@@ -188,6 +193,13 @@ if [ -n "$sidecar" ]; then
   fi
   log "record store s3://$bucket on floci, owned by $account"
 fi
+while IFS= read -r fixture; do
+  [ -n "$fixture" ] || continue
+  [ -d "$HERE/fixtures/$fixture" ] || { log "fixture $fixture is not in stack/harness/fixtures"; exit 1; }
+  (cd "$HERE/fixtures/$fixture" && tar -cf - .) | (cd "$base" && tar -xf -)
+  while IFS= read -r f; do perl -pi -e 's#\@REPO\@#'"$repo"'#g' "$base/$f"; done < <(cd "$HERE/fixtures/$fixture" && find . -type f)
+  log "fixture $fixture copied into the base, served as $repo"
+done < <(jq -r '(.fixtures // [])[]' <<<"$entry")
 [ ! -d "$HERE/scenarios/$ID/seed" ] || cp -R "$HERE/scenarios/$ID/seed/." "$base/"
 if [ ! -d "$base/.forgejo/workflows" ]; then
   (cd "$base" && node "$ROOT/packages/terragucci/dist/terragucci.mjs" init >/dev/null) || { log "terragucci init failed in the base"; exit 1; }

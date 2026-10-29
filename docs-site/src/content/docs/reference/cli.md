@@ -337,7 +337,7 @@ Reads the release catalog of `templates.registry`, else of `modules.registry`, o
 
 `apps` lists the apps under `templates.apps`: each directory there whose root has a `module "app"` call. It reads the checkout, or with `--ref` that commit's files, so `--ref origin/main` reads the default branch. Each app has its `root`, the `template` and `version` its `module "app"` calls, its `addons` (each `module "<name>"` in an `addon-<name>.tf` file, with its `name`, `template` and `version`) and its `actions`: each `action` block the app's module and its add-ons' modules declare, with its `module`, `type`, `name` and its `address` in the app's root, such as `module.app.action.aws_lambda_invoke.rotate`. `publish` lists a module's `action` blocks in the version's catalog entry; with no catalog, or a version published without the list, `actions` is empty. `--template` keeps the apps on that template, as their own or an add-on's.
 
-From the catalog, an app or add-on also has `upgrade`, the newest active version above its `version` (null when there is none), which [`rollout`](#rollout) moves it to. `yanked` is true when the catalog marks its `version` as yanked.
+From the catalog, an app or add-on also has `upgrade`, the newest active version above its `version` that `templates.require` lets a request name, so never an unsigned one under `signed` (null when there is none), which [`rollout`](#rollout) moves it to. `yanked` is true when the catalog marks its `version` as yanked.
 
 ```json
 {"app":"orders","root":"apps/orders","template":"acme/bucket/aws","version":"1.2.0","upgrade":"1.3.0","yanked":false,"addons":[{"name":"cache","template":"acme/cache/aws","version":"0.3.0","upgrade":null,"yanked":false}],"actions":[{"module":"app","type":"aws_lambda_invoke","name":"rotate","address":"module.app.action.aws_lambda_invoke.rotate"}]}
@@ -368,7 +368,7 @@ terragucci rollout --provider <address> <version> [--from <version>] [--mode dry
 
 `--mode` defaults to `dry-run`, and neither mode runs `terraform apply`. See [Rolling out a module version](/terragucci/reference/stages/#rolling-out-a-module-version).
 
-A template is named by its address without the host, such as `acme/bucket/aws`. With `templates` set, a template's rollout names apps. Wave 1's pull request is titled like `Upgrade bucket to 1.3.0: orders (wave 1 of 2)`, and its body adds the catalog's changelog entries after the old pin. An app on a yanked version below the new one moves from that version, in the first wave after the canaries.
+A template is named by its address without the host, such as `acme/bucket/aws`. With `templates` set, a template's rollout names apps. Wave 1's pull request is titled like `Upgrade bucket to 1.3.0: orders (wave 1 of 2)`, and its body adds the catalog's changelog entries after the old pin. Under `templates.require: signed` a rollout to a version the catalog lists unsigned exits 1, and with no version named the rollout takes the newest signed active one. An app on a yanked version below the new one moves from that version, in the first wave after the canaries.
 
 The rollout workflow that `init` writes for `rollouts` is `.github/workflows/terragucci-rollout.yml`, or the same name under `.forgejo/workflows/`. Its `workflow_dispatch` takes the optional inputs `module` and `version`. Dispatched with `module`, it runs `terragucci rollout <module> [<version>] --mode apply`, where exit 3 does not fail the job. On its schedule it runs `terragucci respond rollout --mode apply`.
 

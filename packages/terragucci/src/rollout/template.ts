@@ -15,10 +15,10 @@
  * opens each later wave once the one before it merged and applied.
  */
 import type { ChantCatalogComponent } from "../chant-next";
-import type { ResolvedSettings } from "../config";
+import { ConfigError, type ResolvedSettings } from "../config";
 import { findComponent } from "../publish/catalog";
 import { compareSemver, parseSemver } from "../publish/semver";
-import { appNameOf, changelogBetween, type VersionChangelog } from "../template-apps";
+import { appNameOf, attestedFor, changelogBetween, type VersionChangelog } from "../template-apps";
 import { readTemplatesCatalog, templateAddress, templatesSettings, templateName, versionTemplate } from "../templates";
 
 export interface RolloutTemplate {
@@ -34,6 +34,8 @@ export interface TemplateContext extends RolloutTemplate {
   apps: string;
   /** Each version the catalog marks yanked, with its reason. */
   yanked: Map<string, string | null>;
+  /** `templates.require`: under `signed`, an unsigned version is no target. */
+  require: "signed" | "any";
 }
 
 /**
@@ -54,7 +56,32 @@ export async function templateContext(dir: string, settings: ResolvedSettings, m
   if (!component || !component.versions.some((v) => versionTemplate(v))) return {};
   const template = templateAddress(component);
   const yanked = new Map(component.versions.filter((v) => v.status.state === "yanked" && v.version).map((v) => [v.version!, v.status.reason]));
-  return { context: { template, name: templateName(template), component, apps: templatesSettings(settings).apps, yanked } };
+  const t = templatesSettings(settings);
+  return { context: { template, name: templateName(template), component, apps: t.apps, yanked, require: t.require } };
+}
+
+/**
+ * The version a template rollout moves its apps to, checked as a request is
+ * under `templates.require`: a named version the catalog lists unsigned is
+ * refused under `signed`, and with none named it is the newest active version
+ * that `require` lets a request name. So an unsigned version is never a
+ * rollout's target, nor the upgrade `templates apps` offers.
+ */
+export function templateTarget(context: TemplateContext, named: string | undefined): { version: string; from?: string } {
+  if (named !== undefined) {
+    const v = context.component.versions.find((x) => x.version === named);
+    if (v && !attestedFor(v, context.require)) {
+      throw new ConfigError(`${context.template} ${named} is unsigned, and templates.require: signed lets no app move to an unsigned version; sign and publish it again, or roll out a signed version`);
+    }
+    return { version: named };
+  }
+  let best: { v: NonNullable<ReturnType<typeof parseSemver>>; text: string } | undefined;
+  for (const x of context.component.versions) {
+    const v = x.status.state === "active" && x.version && attestedFor(x, context.require) ? parseSemver(x.version) : undefined;
+    if (v && (!best || compareSemver(v, best.v) > 0)) best = { v, text: x.version! };
+  }
+  if (!best) throw new ConfigError(`the release catalog lists no active version of ${context.template} that templates.require: ${context.require} lets an app move to; name the version to roll out`);
+  return { version: best.text, from: "the release catalog" };
 }
 
 /** Whether `version` is yanked and below `to`, so a root pinned to it moves in the rollout. */
