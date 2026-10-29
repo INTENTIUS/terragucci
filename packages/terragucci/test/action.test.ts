@@ -104,7 +104,7 @@ function repo(binary = "terraform"): { work: string; origin: string; bin: string
   write(work, { "apps/orders/main.tf": 'action "aws_lambda_invoke" "rotate" {}\n', "terragucci.yml": `binary: ${binary}\nforge: forgejo\nurl: http://forge.test/o/r\n` });
   git(work, "init", "-q", "-b", "main");
   git(work, "add", "-A");
-  git(work, "commit", "-q", "-m", "base");
+  git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base");
   git(work, "remote", "add", "origin", origin);
   git(work, "push", "-q", "origin", "main");
   const bin = join(dir, "bin", "terraform");
