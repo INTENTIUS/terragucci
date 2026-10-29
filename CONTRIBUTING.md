@@ -67,6 +67,8 @@ A release puts the CI images on GHCR and then `@intentius/terragucci` on npm. Th
 
 `scripts/release-preflight.sh` fetches main and the `ci/` tags, and refuses a commit with no `ci/green/<sha>`, one with `ci/revoked/<sha>`, and one whose package is at another version. The tags are a convenience: when main has no green commit (the tick has not run, or every recent commit changed a workflow and `CI_GREEN_TOKEN` is missing) it says so, and `TERRAGUCCI_RELEASE_SKIP_GREEN=1 just release-preflight <version> [<commit>]` releases main, or the commit given, without the check.
 
+EVIDENCE.md is updated with each release: run `just evidence` after the release's records are in `stack/evidence/` and commit the result with the release. The docs site does not show claims or their results; `just evidence-check` fails when EVIDENCE.md is out of date, and `just check-static` runs it.
+
 The tag starts the publish workflow too. At that point the digests are not recorded yet, so that run refuses and the step 4 dispatch publishes. A tag pushed after its digests are already on main publishes directly.
 
 The publish workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) runs the unit tests (`test` job) and, once they pass, builds the bundle and then:
@@ -302,20 +304,20 @@ just binary-claims terraform              # every core claim on Terraform, plain
 just binary-claims choudoufu waves,drift  # some of them on choudoufu
 ```
 
-`SMOKE_BINARY=terraform|choudoufu` keeps `stack/smoke.sh` to the claims in `BINARY_CLAIMS` and runs each on that binary: `stack/binary-tree.py` writes the claim's tree for it (`binary:`, and under choudoufu a `live` block per root with its records in `terragucci-smoke-records`, reached through a proxy of the claim's own, since choudoufu addresses the bucket virtual-hosted), and the stage runs use its CI image. The example claims (boot, report, drift) run on a copy of the example of the binary's own, `example-<binary>` with names under `shoptf-` or `shopcdf-`, so they never touch the example the other claims read. A row carries `binary: "terraform"` or `"choudoufu"`, sits after the OpenTofu row of the same claim, and shows in that binary's column of the validation page. A feature the binary cannot run is a config error with a claim of its own that proves the refusal, never a claim left out of `BINARY_CLAIMS`.
+`SMOKE_BINARY=terraform|choudoufu` keeps `stack/smoke.sh` to the claims in `BINARY_CLAIMS` and runs each on that binary: `stack/binary-tree.py` writes the claim's tree for it (`binary:`, and under choudoufu a `live` block per root with its records in `terragucci-smoke-records`, reached through a proxy of the claim's own, since choudoufu addresses the bucket virtual-hosted), and the stage runs use its CI image. The example claims (boot, report, drift) run on a copy of the example of the binary's own, `example-<binary>` with names under `shoptf-` or `shopcdf-`, so they never touch the example the other claims read. A row carries `binary: "terraform"` or `"choudoufu"`, sits after the OpenTofu row of the same claim, and shows in that binary's column of EVIDENCE.md. A feature the binary cannot run is a config error with a claim of its own that proves the refusal, never a claim left out of `BINARY_CLAIMS`.
 
 ### A claim's feature area
 
-The coverage grids on the validation page count each claim under a feature area from `docs-site/src/data/claim-areas.json`, keyed by claim name. The recorders rewrite `smoke.json` and `validation.json`, so the areas live in that file and not in the rows. A new claim in `CLAIMS`, `GITLAB_CLAIMS`, `stack/validation.sh` or `PROVE_CLAIMS` needs a line there, and `just test` fails until it has one (`test/claim-areas.test.ts`). A claim that sets the binary in its own config (`with binary: terraform` in its description, or a `cdf-` claim) also goes under `binary`, so its row counts in that binary's column. The grid's repo shape comes from the claim's prefix (`tg-`, `atmos-`, `terramate-`, `cdktn-`); `import/terragrunt-scale` counts as Terragrunt too.
+The coverage tables in EVIDENCE.md count each claim under a feature area from `stack/evidence/claim-areas.json`, keyed by claim name. The recorders rewrite `smoke.json` and `validation.json`, so the areas live in that file and not in the rows. A new claim in `CLAIMS`, `GITLAB_CLAIMS`, `stack/validation.sh` or `PROVE_CLAIMS` needs a line there, and `just test` fails until it has one (`test/claim-areas.test.ts`). A claim that sets the binary in its own config (`with binary: terraform` in its description, or a `cdf-` claim) also goes under `binary`, so its row counts in that binary's column. The repo shape comes from the claim's prefix (`tg-`, `atmos-`, `terramate-`, `cdktn-`); `import/terragrunt-scale` counts as Terragrunt too.
 
 ### Filling the coverage gaps
 
-`just coverage-gaps` lists what the validation page still lacks, and what fills each gap:
-- grid cells that are not proven, from the code the grids render with (`docs-site/src/data/coverage.ts`);
+`just coverage-gaps` lists what EVIDENCE.md still shows as not proven, and what fills each gap:
+- grid cells that are not proven, from the code `just evidence` renders them with (`stack/evidence/coverage.ts`);
 - claims a table defines with no recorded row;
 - captures under `docs-site/src/data/tutorial` that quote a command terragucci no longer prints.
 
-The page's "What is left" list shows the same cells, without the commands.
+EVIDENCE.md's "Not yet proven" list shows the same cells, without the commands.
 
 `just coverage-fill` with no step prints the plan. With steps it runs them in order, each holding one source:
 - `forgejo`
@@ -427,7 +429,7 @@ just sandbox prove --break         # the locking and report claims, each with it
 | `apply/groups` | `change groups`, `merge groups` | the prod group's apply job's token verifies against GitHub's keys and its subject is `repo:<owner>/<repo>:environment:prod`, which the prod apply role's trust admits and the dev one's refuses; the dev group's job's token names the environment `dev`, which the prod apply role's trust refuses; each job's `TERRAGUCCI_ROOT_ROLES` holds its own environment's apply role alone |
 | `forge/check` | `forge check --json --no-roots` on this machine, twice | with `prod` deploying from `main` alone it exits 0 and its `environment` and `deployment-branches` rows match (`custom: main`); with the rule removed it exits 1 and the `deployment-branches` row is a mismatch expecting `deploys from main only` and finding `any branch: no deployment branch rule`. The token is the sandbox's admin token, so this run does not show that the command needs no write scope; the Forgejo and GitLab claims do |
 
-No token is traded with AWS: the sandbox has no cloud account (the Forgejo claim `oidc/forgejo` does the trade). The report claims trade theirs with floci's STS, through the recorder, inside the job; floci takes any token, so the recorder's checks stand in for the trust a role's policy would check. One account drives the sandbox, so no claim comments as a non-writer or from a fork; those refusals are Forgejo claims. `--record docs-site/src/data/validation.json` writes each claim the run made as a `github.com` row, in place of that claim's last row and keeping its `break`, after the `github` rows.
+No token is traded with AWS: the sandbox has no cloud account (the Forgejo claim `oidc/forgejo` does the trade). The report claims trade theirs with floci's STS, through the recorder, inside the job; floci takes any token, so the recorder's checks stand in for the trust a role's policy would check. One account drives the sandbox, so no claim comments as a non-writer or from a fork; those refusals are Forgejo claims. `--record stack/evidence/validation.json` writes each claim the run made as a `github.com` row, in place of that claim's last row and keeping its `break`, after the `github` rows.
 
 `just sandbox prove --break` (or `BREAK=1`) runs the locking and report claims again, each on a sandbox whose property it proves is broken on purpose, as `BREAK=1` does for a smoke claim: the merge phase's `lock/comment`, `lock/comment-fmt` and `apply/serial`, the pull-request phase's `lock/apply` and `pr-apply/stale`, then the reports phase's `estate/job`, seeded by a plan with the keys, `report/keys` and `report/oidc`, from reset to reset. A claim that fails is the break `caught`, one that passes is `missed`, and so is one whose scenario could not be set up. With `--record FILE` each break goes into the `break` of its claim's `github.com` row, which the Locking and staleness page shows as proven once the claim also passes plain.
 

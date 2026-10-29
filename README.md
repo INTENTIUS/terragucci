@@ -20,7 +20,7 @@ Works with:
 - Platforms: roots on [HCP Terraform workspaces with local execution](https://intentius.io/terragucci/guides/coming-from-hcp-terraform-scalr-or-otf/) and [Spacelift stacks on your own backend](https://intentius.io/terragucci/guides/coming-from-spacelift-or-env-zero/) plan as they are
 - Also: [drift checks](https://intentius.io/terragucci/guides/turn-on-drift-checks/), [module publishing](https://intentius.io/terragucci/guides/publish-modules/) and [pinned rollouts](https://intentius.io/terragucci/guides/roll-out-a-module-version/)
 
-[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the four opt-in agent features (agent comment, drift agent, review and refused-wave summary) run a model. Every pipeline feature on the site is proven by a smoke claim on a local Forgejo; the per-forge claims list what is also proven on GitHub and GitLab ([validation](https://intentius.io/terragucci/reference/validation/)).
+[Pull request automation](https://intentius.io/terragucci/#pull-request-automation) lists what runs on a pull request (re-plans, locks, apply before merge, approvals) as plain CI jobs. Only the four opt-in agent features (agent comment, drift agent, review and refused-wave summary) run a model.
 
 ```bash
 npm i -D @intentius/terragucci
@@ -47,6 +47,8 @@ Never apply, approve (a pull request review or `terragucci approve`), override a
 ## Working on this repo
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+What the test stack checks, and how, is in [EVIDENCE.md](EVIDENCE.md).
 
 ## License
 

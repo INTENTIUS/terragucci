@@ -2,26 +2,23 @@
 // The home page's first choice: the repo shape as tiles, the binary and forge
 // as switches, and what you are leaving as a dropdown. The role doors sit right
 // under them. Two cards then say what works (with what carries over from the
-// tool you leave, and how many recorded checks prove each choice) and the
-// first step; a quiet line under them notes what differs on that pick. Every
-// list comes from src/data/rooms.ts and every count from src/data/coverage.ts,
-// so the picker, the rooms and the grids agree. The first pick is rendered on
-// the server, so the cards read the same without script.
+// tool you leave) and the first step; a quiet line under them notes what
+// differs on that pick. Every list comes from src/data/rooms.ts, so the picker
+// and the rooms agree. The first pick is rendered on the server, so the cards
+// read the same without script.
 import { BINARIES, FORGES, FROM, ROLES, ROOMS, SHAPES } from '../data/rooms';
-import { provenFor } from '../data/coverage';
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
 const shapes = SHAPES.filter((s) => s.picker !== false).map((s) => {
 	const r = ROOMS.find((x) => x.id === s.room)!;
-	return { ...s, title: r.title, works: r.works, differs: r.differs, first: r.first, proven: provenFor(s.label) };
+	return { ...s, title: r.title, works: r.works, differs: r.differs, first: r.first };
 });
-const binaries = BINARIES.map((b) => ({ ...b, proven: provenFor(b.label) }));
-const forges = FORGES.map((f) => ({ ...f, proven: provenFor(f.label) }));
+const binaries = BINARIES.map((b) => ({ ...b }));
+const forges = FORGES.map((f) => ({ ...f }));
 const data = { base, shapes, binaries, forges, from: FROM };
 const first = shapes[0];
 const taco = `${base}/brand/taco.svg`;
 const fromLabel = (label: string, id: string) => (id === 'none' ? 'You already use a CI script, or nothing' : `You already use ${label}`);
-const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, ${binaries[0].proven} on ${binaries[0].label} and ${forges[0].proven} on ${forges[0].label}. Each count covers one choice.`;
 ---
 <section class="tg-doors not-content" aria-label="Your setup" style={`--tg-taco: url(${taco}); --tg-diamond: url(${base}/brand/diamond.svg)`}>
 	<div class="tiles" role="group" aria-label="Your repo" style={`--tg-tiles: ${shapes.length}`}>
@@ -58,12 +55,11 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 				<p class="h from" data-carries-title></p>
 				<ul class="taco-list" data-carries-list></ul>
 			</div>
-			<p class="proof" data-proof>{firstProof} <a href={`${base}/reference/validation/`}>Validation</a></p>
 		</div>
 		<div class="card">
 			<p class="h">First step</p>
 			<a class="go" data-first href={`${base}${first.first.href}`}>{first.first.label}</a>
-			<p class="sub" data-more>Then read <a href={`${base}/for/${first.room}/`}>terragucci for {first.title}</a>: what you can count on, and the proof.</p>
+			<p class="sub" data-more>Then read <a href={`${base}/for/${first.room}/`}>terragucci for {first.title}</a>: what you can count on.</p>
 		</div>
 	</div>
 	<div class="notes" data-notes hidden>
@@ -77,9 +73,9 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	type Link = { label: string; href: string };
 	type Data = {
 		base: string;
-		shapes: { id: string; label: string; room: string; title: string; works: string[]; differs: string[]; first: Link; proven: number }[];
-		binaries: { id: string; label: string; adds: string[]; differs: string[]; href: string; proven: number }[];
-		forges: { id: string; label: string; differs: string[]; proven: number }[];
+		shapes: { id: string; label: string; room: string; title: string; works: string[]; differs: string[]; first: Link }[];
+		binaries: { id: string; label: string; adds: string[]; differs: string[]; href: string }[];
+		forges: { id: string; label: string; differs: string[] }[];
 		from: { id: string; label: string; first: Link; carries: string[] }[];
 	};
 	const key = 'tg-doors';
@@ -107,10 +103,6 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 			$('[data-carries]').hidden = !from.carries.length;
 			$('[data-carries-title]').textContent = `From ${from.label}`;
 			list('[data-carries-list]', from.carries);
-			$('[data-proof]').replaceChildren(
-				`Proven by recorded checks: ${shape.proven} for ${shape.id === 'plain' ? 'plain roots' : shape.label}, ${binary.proven} on ${binary.label} and ${forge.proven} on ${forge.label}. Each count covers one choice. `,
-				link('Validation', '/reference/validation/'),
-			);
 			const differs = [...shape.differs, ...binary.differs, ...forge.differs.map((d) => `${forge.label}: ${d}`)];
 			$('[data-notes]').hidden = !differs.length;
 			list('[data-differs]', differs);
@@ -120,7 +112,7 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 			go.textContent = first.label;
 			const pages: Node[] = ['Then read ', link(`terragucci for ${shape.title}`, `/for/${shape.room}/`)];
 			if (binary.href.startsWith('/for/')) pages.push(' and ', link(`for ${binary.label}`, binary.href));
-			$('[data-more]').replaceChildren(...pages, ': what you can count on, and the proof.');
+			$('[data-more]').replaceChildren(...pages, ': what you can count on.');
 			try {
 				localStorage.setItem(key, JSON.stringify(pick));
 			} catch {}
@@ -282,16 +274,6 @@ const firstProof = `Proven by recorded checks: ${first.proven} for plain roots, 
 	}
 	.h.from {
 		margin-top: 1rem;
-	}
-	.proof {
-		margin: 1rem 0 0;
-		padding-top: 0.75rem;
-		border-top: 1px solid var(--tg-rule);
-		font-size: var(--sl-text-xs);
-		color: var(--sl-color-gray-3);
-	}
-	.proof :global(a) {
-		color: var(--tg-accent);
 	}
 	.notes {
 		display: flex;

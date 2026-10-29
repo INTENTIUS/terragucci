@@ -138,10 +138,10 @@ const fillFor = (grid: Gap['grid'], col: Col, cell: Cell): { claims: string[]; f
 	}
 	if (cell.state === 'passes') {
 		return grid === 'forge' && col.label === 'GitHub'
-			? { claims: weak, fill: 'a BREAK variant in stack/sandbox-github.sh, then: just sandbox prove --break --record docs-site/src/data/validation.json' }
+			? { claims: weak, fill: 'a BREAK variant in stack/sandbox-github.sh, then: just sandbox prove --break --record stack/evidence/validation.json' }
 			: { claims: weak, fill: 'record the claims under BREAK=1: just claims <name>' };
 	}
-	if (grid === 'forge' && col.label === 'GitHub') return { claims: [], fill: 'a github.com claim in PROVE_CLAIMS (stack/sandbox-github.sh), then: just sandbox prove --record docs-site/src/data/validation.json' };
+	if (grid === 'forge' && col.label === 'GitHub') return { claims: [], fill: 'a github.com claim in PROVE_CLAIMS (stack/sandbox-github.sh), then: just sandbox prove --record stack/evidence/validation.json' };
 	if (grid === 'forge' && col.label === 'GitLab') return { claims: [], fill: "a GitLab claim in GITLAB_CLAIMS (stack/smoke-gitlab.sh), then: just gitlab-claims '<name>'" };
 	const prefix = SHAPE_PREFIX[col.label];
 	return { claims: [], fill: prefix ? `a claim named ${prefix}<name> in CLAIMS (stack/smoke.sh), then: just claims <name>` : 'a claim in CLAIMS (stack/smoke.sh), then: just claims <name>' };

@@ -19,8 +19,8 @@ Each level takes the one above it as its default and sets only what differs.
 | Level | Sets | Edited by | Wins over |
 |---|---|---|---|
 | terragucci's built-in defaults | `gate: on-destructive`, no drift, the forge's runtime, tips on ([Defaults with no file](/terragucci/reference/config/#defaults-with-no-file)) | nobody | nothing |
-| a control repo's `defaults` (`reconcile/tofu`, `estate/control`) | what every project shares; any key but `url` and `rollouts` | the control repo's reviewers | the built-in defaults |
-| a project's block in the control repo (`reconcile/mixed`) | what differs for one project | the control repo's reviewers | `defaults` |
+| a control repo's `defaults` | what every project shares; any key but `url` and `rollouts` | the control repo's reviewers | the built-in defaults |
+| a project's block in the control repo | what differs for one project | the control repo's reviewers | `defaults` |
 | the project's `terragucci.yml` | in a single repo, its settings; in a control repo, `reconcile` writes the keys the jobs read into it, and an own file whose value for such a key differs fails that project's reconcile, naming the key | the project's team | the levels above it, in a single repo |
 | globs per root | a version, identities, an environment, generated files, secrets, a policy override and approval rules for the roots each glob matches ([below](#keys-by-root-glob)) | whoever edits the level the key is set at | the key's value for the rest of the roots |
 | the tool's own inheritance | Terragrunt includes, Atmos imports and Terramate globals, which decide what the binary sees for each unit, instance or stack | the repo's team, as before | terragucci reads it and does not change it |
@@ -42,11 +42,11 @@ A glob's `*` matches within one path segment, `**` across segments (and `a/**` m
 
 | Key | When several globs match a root | A root no glob matches |
 |---|---|---|
-| `version` (map) (`init/root-pins`) | the first in the file's order | the root's version file, then an exact `required_version`, then the job's version |
-| `oidc.roles`, `oidc.gcp.roles`, `oidc.azure.roles` (`oidc/state-roles`, `oidc/cloud-roles`) | the first in the file's order | the job's plan and apply identities |
-| `terragrunt.credentials` (`oidc/terragrunt`) | the first in the file's order; a unit that sets its own `iam_role` keeps it | the unit's own configuration and the job's credentials |
+| `version` (map) | the first in the file's order | the root's version file, then an exact `required_version`, then the job's version |
+| `oidc.roles`, `oidc.gcp.roles`, `oidc.azure.roles` | the first in the file's order | the job's plan and apply identities |
+| `terragrunt.credentials` | the first in the file's order; a unit that sets its own `iam_role` keeps it | the unit's own configuration and the job's credentials |
 | `environments.<name>.roots` | refused: `config check` names a root two environments match, and a root given identities by both its environment and `oidc.roles` | the top-level `gate`, `oidc`, `runner` and `parallelism` |
-| `generate.dirs` (`generate/tofu`) | every match, in the file's order, each over the last; then `generate.roots` for the root's exact path | the repo-level `generate` keys |
+| `generate.dirs` | every match, in the file's order, each over the last; then `generate.roots` for the root's exact path | the repo-level `generate` keys |
 | `secrets[].roots` | every matching entry; `config check` refuses two entries that give one root the same variable | no values from a store |
 | `ephemeral.roots` | any match gets a copy | no copy |
 | `apply.branches` | refused: `config check` names a root two branches' globs match | applies from the default branch |
@@ -86,7 +86,7 @@ generate:
 </TabItem>
 <TabItem label="Terragrunt">
 
-A Terragrunt repo takes its roles from `terragrunt.credentials` (`oidc/terragrunt`), and its backends and versions from the units' own `remote_state` and pins (`init/terragrunt-root-pins`). The environments set each one's gate:
+A Terragrunt repo takes its roles from `terragrunt.credentials`, and its backends and versions from the units' own `remote_state` and pins. The environments set each one's gate:
 
 ```yaml
 terragrunt:
@@ -101,7 +101,7 @@ environments:
 </TabItem>
 <TabItem label="Atmos">
 
-An Atmos instance's root is `<stack>/<component>`, so globs over stacks give each one its roles (`oidc/atmos-roles`), and the stacks' own imports keep setting what the component sees:
+An Atmos instance's root is `<stack>/<component>`, so globs over stacks give each one its roles, and the stacks' own imports keep setting what the component sees:
 
 ```yaml
 oidc:
@@ -118,7 +118,7 @@ environments:
 
 ## Read at base
 
-These keys are read from the config at base, the applied commit's first parent for an apply and the target branch for a pull request's plan, so a pull request that edits one is decided by the default branch's value and its own edit takes effect once it merges (`approval/at-base`):
+These keys are read from the config at base, the applied commit's first parent for an apply and the target branch for a pull request's plan, so a pull request that edits one is decided by the default branch's value and its own edit takes effect once it merges:
 
 | Key | Decides |
 |---|---|

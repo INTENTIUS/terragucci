@@ -1,4 +1,4 @@
-# terragucci. The kit's lifecycle Ops are not implemented yet; see the status page.
+# terragucci. The kit's lifecycle Ops are not implemented yet; see EVIDENCE.md.
 
 default:
     @just --list
@@ -61,12 +61,20 @@ provider-test:
 chant-pipelines *args:
     node scripts/chant-pipelines.mjs {{args}}
 
+[doc("Write EVIDENCE.md from the records in stack/evidence and the harness scenarios. Updated with each release.")]
+evidence:
+    npx tsx scripts/evidence.ts
+
+[doc("Fail when EVIDENCE.md is not what `just evidence` writes.")]
+evidence-check:
+    npx tsx scripts/evidence.ts --check
+
 [doc("Fail when a tracked picture, video or PDF is not an LFS pointer, or a blob added since BASE is over 512 KB. With no arguments, the index against origin/main; diff-guard passes BASE HEAD.")]
 lfs-check *args:
     scripts/lfs-check.sh {{args}}
 
 [doc("Everything in check but the unit tests: typecheck, lint, the bundle, the provider, the docs, the tutorial, the rendered workflows, the chant examples' pipelines and the LFS check. CI's static job runs check-unit and lint-docs from it.")]
-check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines lfs-check
+check-static: typecheck lint bundle-check provider-test lint-docs tutorial-check ci-check chant-pipelines lfs-check evidence-check
 
 [doc("The typecheck, the bundle's shape and the provider's gofmt, vet and tests. CI's static job runs it and then lint-docs; the unit tests run in CI's test jobs (just test-shard).")]
 check-unit: typecheck bundle-check provider-test
@@ -273,9 +281,9 @@ validate forge="forgejo" claim="apply": build-cli
 validate-forge forge: build-cli
     stack/validation.sh run {{forge}}
 
-[doc("Boot each forge in turn, run its claims plain and broken, and write the record the validation page shows.")]
+[doc("Boot each forge in turn, run its claims plain and broken, and write the records EVIDENCE.md is made from.")]
 validation-record *forges:
-    stack/validation.sh record docs-site/src/data/validation.json {{forges}}
+    stack/validation.sh record stack/evidence/validation.json {{forges}}
 
 [doc("The example: up [--fresh], verify, change <scenario>, reset, down.")]
 example *args="up":
@@ -305,21 +313,21 @@ scale *args:
 gitlab-lab *args:
     stack/gitlab/gitlab.sh {{args}}
 
-[doc("What the validation page still lacks: grid cells not proven, claims with no recorded row, captures that quote a command terragucci no longer prints, and what fills each. Reads files only.")]
+[doc("What EVIDENCE.md still shows as not proven: grid cells not proven, claims with no recorded row, captures that quote a command terragucci no longer prints, and what fills each. Reads files only.")]
 coverage-gaps *args:
     npx tsx scripts/coverage-gaps.ts {{args}}
 
-[doc("Fill the validation page's gaps on demand, a source at a time: forgejo, terraform, choudoufu, gitlab, github, validation (--exclusive), or all. With no step it prints the plan.")]
+[doc("Fill the gaps EVIDENCE.md lists on demand, a source at a time: forgejo, terraform, choudoufu, gitlab, github, validation (--exclusive), or all. With no step it prints the plan.")]
 coverage-fill *steps:
     scripts/coverage-fill.sh {{steps}}
 
 [doc("Run the named smoke claims on the GitLab lab, plain and under BREAK=1, in parallel, and write their GitLab rows into smoke.json.")]
 gitlab-claims +names:
-    SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
+    SMOKE_FORGE=gitlab stack/smoke.sh --only "{{names}}" --record stack/evidence/smoke.json
 
 [doc("Run the core smoke claims on terraform or choudoufu, plain and under BREAK=1, in parallel, and write that binary's rows into smoke.json. Names pick some of them; none runs them all.")]
 binary-claims binary *names:
-    SMOKE_BINARY={{binary}} stack/smoke.sh {{ if names == "" { "" } else { "--only '" + names + "'" } }} --record docs-site/src/data/smoke.json
+    SMOKE_BINARY={{binary}} stack/smoke.sh {{ if names == "" { "" } else { "--only '" + names + "'" } }} --record stack/evidence/smoke.json
 
 [doc("Send a plan, a drift run and a waiting wave of the example to the observability profile, and print where the dashboards show them.")]
 see-runs:
@@ -331,19 +339,19 @@ grant +args:
 
 [doc("Run the named smoke claims, plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to run claims for a change you name.")]
 claims +names:
-    stack/smoke.sh --only "{{names}}" --record docs-site/src/data/smoke.json
+    stack/smoke.sh --only "{{names}}" --record stack/evidence/smoke.json
 
 [doc("Run the smoke claims the change since base can affect (stack/claims-affected.sh says why each), plain and under BREAK=1, in parallel, and write their rows into smoke.json. The way to prove a change.")]
 claims-affected base="origin/main":
-    stack/smoke.sh --affected {{base}} --record docs-site/src/data/smoke.json
+    stack/smoke.sh --affected {{base}} --record stack/evidence/smoke.json
 
 [doc("Run every smoke claim, or one. BREAK=1 breaks the property and the claim must print caught.")]
 smoke claim="":
     stack/smoke.sh {{claim}}
 
-[doc("Run every claim plain and under BREAK=1, and write the record the status page shows.")]
+[doc("Run every claim plain and under BREAK=1, and write the record EVIDENCE.md is made from.")]
 smoke-record:
-    stack/smoke.sh --record docs-site/src/data/smoke.json
+    stack/smoke.sh --record stack/evidence/smoke.json
 
 [doc("The real-AWS pilot: list, then delete, every bucket (with its objects), queue and table whose name starts with the run prefix. --list only lists; --all takes every tgsmoke- prefix.")]
 smoke-aws-cleanup *args:

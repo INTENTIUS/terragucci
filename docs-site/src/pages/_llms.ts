@@ -36,7 +36,6 @@ const ORDER = [
 	'reference/environment',
 	'reference/report',
 	'reference/runtimes',
-	'reference/validation',
 	'concepts/waves-and-approvals',
 	'concepts/why-plans-are-grouped',
 	'concepts/approvals-as-records',
@@ -67,7 +66,7 @@ export const PREAMBLE = `# terragucci
 
 > The whole Terraform lifecycle, handled: grouped plans on every pull request, applies in gated waves, drift reports, module publishing and rollouts, for Terraform, OpenTofu, choudoufu, Terragrunt, Atmos and CDK Terrain on GitHub, GitLab or Forgejo.
 
-Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci. The validation page (${SITE}/reference/validation/) lists the checks every generated pipeline passes.
+Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci.
 
 terragucci is built on chant (https://intentius.io/chant/), which keeps the approvals and records on \`chant/lifecycle\`. terragucci provisions databases as Terraform resources; SQL Yodeler (https://intentius.io/sql-yodeler/) manages the ClickHouse and Postgres schemas inside them, on the same approvals.
 

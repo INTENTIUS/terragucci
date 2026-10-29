@@ -11,8 +11,6 @@ export type Room = {
 	title: string;
 	/** One line: who the room is for. */
 	lede: string;
-	/** The CoverageGrid column that shows what is proven for this room, if one fits. */
-	column?: string;
 	works: string[];
 	differs: string[];
 	first: Link;
@@ -158,7 +156,6 @@ export const ROOMS: Room[] = [
 		id: 'plain-roots',
 		title: 'Terraform or OpenTofu roots',
 		lede: 'Directories of .tf files with their own state.',
-		column: 'OpenTofu',
 		works: [
 			'init finds every root and writes the pipeline for your forge',
 			'Each root runs its own pinned Terraform or OpenTofu version',
@@ -197,7 +194,6 @@ export const ROOMS: Room[] = [
 		id: 'terragrunt',
 		title: 'Terragrunt',
 		lede: 'A Terragrunt repo of units or explicit stacks, or one on Terragrunt Scale.',
-		column: 'Terragrunt',
 		works: [
 			'Each unit is a root, and dependency order decides the waves',
 			'A pull request plans the units of every layer it reaches, each on its upstream\'s planned outputs',
@@ -237,7 +233,6 @@ export const ROOMS: Room[] = [
 		id: 'atmos',
 		title: 'Atmos',
 		lede: 'An Atmos repo, where each component instance is a root in its own workspace.',
-		column: 'Atmos',
 		works: [
 			'Each component instance is a root, and dependencies.components decides the waves',
 			'A pull request plans the instances it changes and the ones that depend on them',
@@ -272,7 +267,6 @@ export const ROOMS: Room[] = [
 		id: 'terramate',
 		title: 'Terramate',
 		lede: 'A Terramate repo, where each stack is one root.',
-		column: 'Terramate',
 		works: [
 			'Stacks apply in waves ordered by their after and before',
 			'Only the stacks a change reaches, and those ordered after them, are planned',
@@ -308,7 +302,6 @@ export const ROOMS: Room[] = [
 		id: 'cdk-terrain',
 		title: 'CDK Terrain',
 		lede: 'A CDK Terrain app, synthesized in the pipeline before each plan.',
-		column: 'CDK Terrain',
 		works: [
 			'synth runs in the pipeline, then each pull request plans the stacks its change affects',
 			'Each apply wave synthesizes the stacks and applies behind its gate',
@@ -339,7 +332,6 @@ export const ROOMS: Room[] = [
 		id: 'choudoufu',
 		title: 'choudoufu',
 		lede: 'The OpenTofu fork for AWS and Kubernetes from the team behind terragucci, set with binary: choudoufu.',
-		column: 'choudoufu',
 		works: [
 			'One record per resource in an S3 bucket you own, each write conditional, with no lock table',
 			'Applies to different resources of one estate run at the same time; a killed apply leaves nothing to release',
@@ -386,16 +378,14 @@ export const ROOMS: Room[] = [
 			{ label: 'Threat model', href: '/reference/threat-model/' },
 			{ label: 'Policy', href: '/reference/policy/' },
 			{ label: 'The audit trail', href: '/reference/audit-trail/' },
-			{ label: 'Validation', href: '/reference/validation/' },
 		],
 	},
 	{
 		id: 'evaluate',
 		title: 'Evaluating terragucci',
-		lede: 'What terragucci does and proves, and what it leaves to your forge and your cloud.',
+		lede: 'What terragucci does, and what it leaves to your forge and your cloud.',
 		works: [
 			'Apache-2.0, with nothing to buy and no server to host',
-			'Every pipeline feature that runs on Forgejo is proven by a recorded check, listed by tool and forge',
 		],
 		differs: [],
 		first: { label: 'See a plan note in about 10 minutes', href: '/tutorial/' },
@@ -405,7 +395,6 @@ export const ROOMS: Room[] = [
 			{ label: 'Feature checklist', href: '/standards/tacos-guru/' },
 		],
 		reference: [
-			{ label: 'Validation', href: '/reference/validation/' },
 			{ label: 'Scale', href: '/reference/scale/' },
 		],
 	},

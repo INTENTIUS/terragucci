@@ -15,8 +15,8 @@
  *
  * A row is written only after the no-real-cloud scan said CLEAN (chant's
  * SafeRun), on a ledger of its own in the instance's state directory
- * (claims-ledger, op e2e-claim), and docs-site/src/data/e2e-claims.json is
- * rendered from it (renderClaims). smoke.json stays the page's scoreboard.
+ * (claims-ledger, op e2e-claim), and stack/evidence/e2e-claims.json is
+ * rendered from it (renderClaims). smoke.json stays EVIDENCE.md's source.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -28,7 +28,7 @@ import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath } fro
 const HERE = import.meta.dirname;
 const ROOT = resolve(HERE, "..", "..");
 const STATE = process.env.TG_STATE || join(ROOT, "stack", ".state");
-const CLAIMS_JSON = join(ROOT, "docs-site", "src", "data", "e2e-claims.json");
+const CLAIMS_JSON = join(ROOT, "stack", "evidence", "e2e-claims.json");
 
 /** What the stack needs of chant: the harness subpath, first in 0.124.56. */
 export const HARNESS_NEEDS = "a chant with @intentius/chant/e2e-harness (chant#4587; 0.124.56 or later)";

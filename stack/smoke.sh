@@ -1059,8 +1059,8 @@ run_queue() {
 # output for a public cloud answering, which fails the run (finish_run).
 # --record then writes each claim's row in the harness's row schema
 # (e2e-claim-row/v1) on a ledger in the state directory and renders
-# docs-site/src/data/e2e-claims.json from it (stack/harness/harness.ts
-# record), beside smoke.json, which stays the page's scoreboard.
+# stack/evidence/e2e-claims.json from it (stack/harness/harness.ts
+# record), beside smoke.json, which stays EVIDENCE.md's source.
 #
 # On a chant without the wrapper, runs start as before, smoke.json is written
 # as before, and no harness row is written: a line says which chant it needs.

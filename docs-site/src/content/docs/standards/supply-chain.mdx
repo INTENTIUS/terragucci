@@ -12,9 +12,9 @@ Every binary and image a job installs is pinned and checked before it runs, your
 
 | What a job runs | Comes from | Pinned by | Checked before it runs | Tightened by |
 |---|---|---|---|---|
-| the terragucci image | `ghcr.io/intentius/terragucci-<binary>`, or your own image built `FROM` it (`init/image`) | its digest, which `init` writes into the pipeline | the runner pulls it by that digest | [`image`](/terragucci/reference/config/#keys), to run your own build of it |
-| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu) | the image; a release the image does not carry, from the binary's releases | the image's tag, or a root's own pin ([Versions and pins](/terragucci/reference/versions-and-pins/)) | an installed release against its SHA256SUMS (`init/pinned-install`) | a pin per root |
-| Terragrunt and Atmos | Terragrunt's image for a Terragrunt repo, and the tools' releases for any other version | `terragrunt.version` and the units' own constraints; `atmos.version` (`init/atmos-version`) | SHA256SUMS | a pin |
+| the terragucci image | `ghcr.io/intentius/terragucci-<binary>`, or your own image built `FROM` it | its digest, which `init` writes into the pipeline | the runner pulls it by that digest | [`image`](/terragucci/reference/config/#keys), to run your own build of it |
+| OpenTofu, Terraform or [choudoufu](/terragucci/concepts/glossary/#choudoufu) | the image; a release the image does not carry, from the binary's releases | the image's tag, or a root's own pin ([Versions and pins](/terragucci/reference/versions-and-pins/)) | an installed release against its SHA256SUMS | a pin per root |
+| Terragrunt and Atmos | Terragrunt's image for a Terragrunt repo, and the tools' releases for any other version | `terragrunt.version` and the units' own constraints; `atmos.version` | SHA256SUMS | a pin |
 | Terramate | its releases | the release terragucci pins | its release's checksums | an upgrade of terragucci |
 | the policy engine | conftest's or OPA's releases | the release terragucci pins | a SHA-256 written into terragucci, never the release's own checksum file; an engine already on the runner's path is used as it is | your image, with the engine you vet |
 | cosign, with `modules.attest` | cosign's releases | the release terragucci pins | its release's checksums | |

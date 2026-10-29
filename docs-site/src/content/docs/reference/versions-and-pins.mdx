@@ -8,16 +8,16 @@ Every version a job runs is pinned in the repo and moved by a reviewed pull requ
 
 | What | The pin lives in | Moved by | Checked before it runs | Tip for a missing pin |
 |---|---|---|---|---|
-| terragucci | `@intentius/terragucci` in `package.json`, and the image tag in the pipeline, which carries the package version (`boot/tofu`) | `init` at the new version, in a pull request ([Upgrade terragucci](/terragucci/guides/upgrade-terragucci/)) | the image is pulled by its digest | |
-| the job image | the pipeline: `ghcr.io/intentius/terragucci-<binary>:<tag>@<digest>`, or the image [`image`](/terragucci/reference/config/#keys) names (`init/image`) | `init` | its digest; the pipeline's header says when it is pinned by digest | |
-| OpenTofu or Terraform, per root | the first of: `version` as a map of root globs, the root's `.opentofu-version` or `.terraform-version`, an exact `required_version` (`init/root-pins`) | a pull request by hand | a release the image does not carry is installed against the release's SHA256SUMS (`init/pinned-install`) | `TF003`, no `required_version` |
+| terragucci | `@intentius/terragucci` in `package.json`, and the image tag in the pipeline, which carries the package version | `init` at the new version, in a pull request ([Upgrade terragucci](/terragucci/guides/upgrade-terragucci/)) | the image is pulled by its digest | |
+| the job image | the pipeline: `ghcr.io/intentius/terragucci-<binary>:<tag>@<digest>`, or the image [`image`](/terragucci/reference/config/#keys) names | `init` | its digest; the pipeline's header says when it is pinned by digest | |
+| OpenTofu or Terraform, per root | the first of: `version` as a map of root globs, the root's `.opentofu-version` or `.terraform-version`, an exact `required_version` | a pull request by hand | a release the image does not carry is installed against the release's SHA256SUMS | `TF003`, no `required_version` |
 | [choudoufu](/terragucci/concepts/glossary/#choudoufu) | `version`, one release for every root; a map is refused | a pull request by hand | SHA256SUMS | |
-| Terragrunt | `terragrunt.version`, or an exact `terragrunt_version_constraint` in a unit's own `terragrunt.hcl` (`init/terragrunt-root-pins`) | a pull request by hand | SHA256SUMS | |
-| Atmos | `atmos.version`, else the release this terragucci pins (`init/atmos-version`) | a pull request by hand, or a terragucci upgrade | SHA256SUMS | |
+| Terragrunt | `terragrunt.version`, or an exact `terragrunt_version_constraint` in a unit's own `terragrunt.hcl` | a pull request by hand | SHA256SUMS | |
+| Atmos | `atmos.version`, else the release this terragucci pins | a pull request by hand, or a terragucci upgrade | SHA256SUMS | |
 | Terramate | the release this terragucci pins | a terragucci upgrade | its release's checksums | |
 | the policy engine | the conftest and OPA releases this terragucci pins | a terragucci upgrade | a SHA-256 written into terragucci; an engine already on the path is used as it is | |
-| providers | each root's `.terraform.lock.hcl` | `terragucci rollout --provider`, a wave at a time (`rollout/pins`) | the binary's `init` checks each provider package against the lock file's hashes | `TF002`, a provider with no version; `TF040`, no lock file; `terragucci-floating-range` |
-| registry modules | the call's `version` | `terragucci rollout` (`rollout/tofu`) | the binary's `init` | `TF004`, no `version`; `TF039`, a range |
+| providers | each root's `.terraform.lock.hcl` | `terragucci rollout --provider`, a wave at a time | the binary's `init` checks each provider package against the lock file's hashes | `TF002`, a provider with no version; `TF040`, no lock file; `terragucci-floating-range` |
+| registry modules | the call's `version` | `terragucci rollout` | the binary's `init` | `TF004`, no `version`; `TF039`, a range |
 | git and `oci://` modules | `?ref=` or `?tag=`, or the `oci://` tag | `terragucci rollout` | the binary's `init`, and with [`modules.require: attested`](/terragucci/guides/publish-modules/#require-attested-releases), the release's signature | `TF005`, no fixed `?ref=`; `TF038`, no tag or `latest` |
 | a Terragrunt unit's module | its `terraform.source` | a pull request by hand | the same as the module kind | `TF043` |
 | your own modules | a git tag `<module>/v<version>`, an `oci://` tag, or the registry's version list | `terragucci publish`, by the [version bump rules](/terragucci/reference/stages/#version-bump-rules) (`modules/publish`, `modules/version-bump`) | with `modules.attest`, a signed release in the release ledger | `terragucci-shared-module`, a local module ten or more roots include |
@@ -32,7 +32,7 @@ A version range is refused for a rollout and allowed through a registry, for two
 
 | Where | A range such as `~> 1.0` | Why |
 |---|---|---|
-| `terragucci rollout` | refused, with the tip `rollout-floating-pin` (`tips/tofu`) | a rollout moves one pin per wave, and a range has no one version to move; a range also takes a new version without a reviewed change |
+| `terragucci rollout` | refused, with the tip `rollout-floating-pin` | a rollout moves one pin per wave, and a range has no one version to move; a range also takes a new version without a reviewed change |
 | a module from your [registry](/terragucci/guides/publish-modules/#serve-a-module-registry) | resolved by the binary to the newest release in range (`modules/registry`) | the registry protocol serves a version list; pin one version where a reviewed change should move it |
 
 Under `modules.require: attested`, a pin that names no one release is refused, a range among them.

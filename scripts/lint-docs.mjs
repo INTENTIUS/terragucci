@@ -113,7 +113,7 @@ const missing = (what, expected, found, page) => {
   const known = new Set();
   for (const m of read("stack/smoke.sh").matchAll(/^([a-z0-9-]+\/[a-z0-9-]+)\|/gm)) known.add(m[1]);
   for (const reg of ["stack/validation.sh", "stack/sandbox-github.sh"]) for (const m of read(reg).matchAll(/^[a-z.]+\|([a-z0-9-]+\/[a-z0-9-]+)\|/gm)) known.add(m[1]);
-  for (const data of ["smoke.json", "validation.json"]) for (const row of JSON.parse(read(`docs-site/src/data/${data}`)).claims) known.add(row.claim);
+  for (const data of ["smoke.json", "validation.json"]) for (const row of JSON.parse(read(`stack/evidence/${data}`)).claims) known.add(row.claim);
   const areas = new Set([...known].map((c) => c.split("/")[0]));
   for (const file of collect(DOCS.slice(0, -1))) {
     const text = read(file);

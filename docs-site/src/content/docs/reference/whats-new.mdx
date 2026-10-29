@@ -329,7 +329,7 @@ terragucci now runs on chant 0.124.42 and uses chant's own versions of the CI fe
 | Pushes that change different roots apply at the same time; a root's own applies take turns at its state lock, and a superseded push stands down | [Applies side by side](/terragucci/reference/pipeline/#applies-side-by-side) |
 | With [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave waits only for a run changing one of its own resources | [Two applies of one estate](/terragucci/concepts/locking-and-staleness/#two-applies-of-one-estate) |
 | The choudoufu image runs choudoufu 0.24.0: a killed apply leaves records for the resources it finished | [Stock and choudoufu](/terragucci/concepts/locking-and-staleness/#stock-and-choudoufu) |
-| One page for every lock layer, from the backend's state lock to choudoufu, with the claims behind each by repo shape and forge | [Locking and staleness](/terragucci/concepts/locking-and-staleness/) |
+| One page for every lock layer, from the backend's state lock to choudoufu, by repo shape and forge | [Locking and staleness](/terragucci/concepts/locking-and-staleness/) |
 | A gated choudoufu wave whose approved apply was killed or failed applies the rest under the same approval, and the resume job finds a killed one | [Stopped applies](/terragucci/reference/pipeline/#stopped-applies) |
 | A choudoufu wave's run view shows each resource done, in flight or waiting while it applies, read from the estate's records | [Progress](/terragucci/concepts/waves-and-approvals/#progress) |
 
@@ -372,7 +372,6 @@ terragucci now runs on chant 0.124.42 and uses chant's own versions of the CI fe
 
 | What | Where |
 |---|---|
-| Terraform and choudoufu pass the core claims OpenTofu passes | [Validation](/terragucci/reference/validation/) |
 | Drift on a choudoufu root under live resource markers, from a normal plan | [Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots) |
 
 ## Agents and review

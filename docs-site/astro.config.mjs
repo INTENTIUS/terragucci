@@ -39,7 +39,8 @@ export default defineConfig({
 		'/getting-started/overview': '/terragucci/getting-started/',
 		'/getting-started/binaries': '/terragucci/guides/use-a-binary/',
 		'/getting-started/config': '/terragucci/reference/config/',
-		'/status': '/terragucci/reference/validation/',
+		'/status': '/terragucci/',
+		'/reference/validation': '/terragucci/',
 		'/guides/move-apply-to-fountain': '/terragucci/reference/runtimes/',
 		'/guides/agent-explain-a-plan': '/terragucci/reference/responses/',
 		'/guides/agent-drift-fixes': '/terragucci/guides/turn-on-drift-checks/',
@@ -117,14 +118,6 @@ export default defineConfig({
 						{ label: 'HCP Terraform, Scalr or OTF', slug: 'guides/coming-from-hcp-terraform-scalr-or-otf' },
 						{ label: 'Spacelift or env zero', slug: 'guides/coming-from-spacelift-or-env-zero' },
 						{ label: 'Terragrunt Scale', link: '/guides/use-terragrunt/#terragrunt-scale' },
-					],
-				},
-				{
-					label: 'Proof',
-					collapsed: true,
-					items: [
-						{ label: 'Validation', slug: 'reference/validation' },
-						{ label: 'Scale', slug: 'reference/scale' },
 					],
 				},
 				{
@@ -254,6 +247,7 @@ export default defineConfig({
 						{ label: 'Responses to pipeline events', slug: 'reference/responses' },
 						{ label: 'Traces and metrics', slug: 'reference/observability' },
 						{ label: 'Runtimes', slug: 'reference/runtimes' },
+						{ label: 'Scale', slug: 'reference/scale' },
 					],
 				},
 				{

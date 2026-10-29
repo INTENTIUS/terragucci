@@ -45,7 +45,7 @@
 #                                     for its claims and runs them, and the
 #                                     sandbox is reset after each; prints a
 #                                     verdict per claim; --record merges them
-#                                     into FILE (docs-site/src/data/validation.json)
+#                                     into FILE (stack/evidence/validation.json)
 #                                     --break (or BREAK=1): the locking and
 #                                     report claims alone (merge, pull-request
 #                                     and reports phases), each on a sandbox
@@ -495,7 +495,7 @@ HOLD="is held until someone policy.override lists lets it through"
 # prove and deleted by reset.
 AGENT_SECRET=SANDBOX_AGENT_TOKEN
 
-# forge|claim|what it shows, as the validation page lists them.
+# forge|claim|what it shows, as EVIDENCE.md lists them.
 PROVE_CLAIMS='github.com|affected/tofu|a pull request that changes one root plans that root alone, and its plan note covers it alone
 github.com|comment/plan|/terragucci plan on a pull request re-plans it in a run of its own, and the re-plan edits the plan note
 github.com|lock/comment|with locks: plan a pull request locks the root it plans, and a second one reaching that root fails terragucci/lock and is answered with the root and the holder
@@ -926,7 +926,7 @@ unrun() { # claim, what was seen
   if [ -z "$BREAK" ]; then put_verdict "$1" fail "$2"; else put_verdict "$1" missed "not run: $2"; fi
 }
 
-# The rows the validation page lists, for the verdicts so far, as prove.json.
+# The rows EVIDENCE.md lists, for the verdicts so far, as prove.json.
 # Each verdict rewrites it, so a run cut short by its timeout keeps the
 # verdicts it reached. Under BREAK a row carries the break (caught or
 # missed) and no verdict.
@@ -3201,7 +3201,7 @@ EOF
       [ "$result" = pass ] || [ "$result" = caught ] || rc=1
     done < "$WORK/verdicts"
     printf '  Took             %s minutes\n' "$(( ($(date +%s) - started + 59) / 60 ))"
-    # The rows the validation page lists, beside the local stack's: each
+    # The rows EVIDENCE.md lists, beside the local stack's: each
     # github.com row this run made replaces the one of its claim, keeping the
     # break its last BREAK run recorded, new ones follow, and the github.com
     # rows go after the GitHub rows. Under BREAK a row's break is written
