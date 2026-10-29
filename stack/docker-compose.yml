@@ -35,6 +35,7 @@
 #   gitlab    floci + GitLab CE + gitlab-runner
 #   fountain  floci + fountain + Postgres + a steward runner   runs the example's apply on a steward
 #   registry  an OCI registry with TLS, for tf-publish   used by the publish smoke claim
+#   templates the fixture module registry for Terraform  used by the template harness scenarios
 #   observability  an OpenTelemetry collector, Prometheus, Tempo and Grafana   used by the traces, metrics and dashboard smoke claims
 #   observability-lite  the collector, Prometheus and a small Tempo, with no Grafana   stack/demo.sh up starts it
 #   blob      Azurite and fake-gcs-server, the Azure Blob and GCS emulators   used by the blob-azure and blob-gcs smoke claims
@@ -143,6 +144,27 @@ services:
     networks:
       default:
         aliases: [registry]
+
+  # ── template registry ────────────────────────────────────────────────────
+  # The fixture module registry for Terraform's jobs in the template harness
+  # scenarios (stack/harness/template-registry.mjs): the registry protocol
+  # from a scenario repo's own files on Forgejo, with the X-Terraform-Get
+  # header Terraform reads. seed.sh starts it (profile:templates) for a
+  # scenario that needs it. It publishes no port.
+  template-registry:
+    image: public.ecr.aws/docker/library/node:22-bookworm-slim
+    container_name: ${TG_PROJECT:-terragucci}-template-registry
+    profiles: [templates]
+    command: ["node", "/srv/template-registry.mjs"]
+    environment:
+      FORGE: http://forgejo:3000
+      PORT: "8080"
+    volumes:
+      - ./harness/template-registry.mjs:/srv/template-registry.mjs:ro
+    restart: unless-stopped
+    networks:
+      default:
+        aliases: [template-registry]
 
   # ── blob ─────────────────────────────────────────────────────────────────
   # The reports bucket on the other two clouds. Azurite serves Blob Storage

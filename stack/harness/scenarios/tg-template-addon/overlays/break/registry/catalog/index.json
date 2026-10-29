@@ -364,6 +364,84 @@
           }
         }
       ]
+    },
+    {
+      "name": "modules/app",
+      "latest": "1.0.0",
+      "fields": {
+        "terraform": {
+          "address": "modules.harness.local/acme/app/aws"
+        }
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+          "commit": "7777777777777777777777777777777777777777",
+          "time": "2026-10-01T00:00:00Z",
+          "actor": "publisher",
+          "envs": [
+            "modules"
+          ],
+          "status": {
+            "state": "active",
+            "reason": null,
+            "replacement": null,
+            "actor": null,
+            "time": null
+          },
+          "changelog": {
+            "bump": null,
+            "entries": []
+          },
+          "attestation": {
+            "state": "signed",
+            "verify": null,
+            "identity": null
+          },
+          "consumers": [],
+          "fields": {
+            "terraform": {
+              "address": "modules.harness.local/acme/app/aws",
+              "inputs": [
+                {
+                  "name": "name",
+                  "type": "string",
+                  "required": true,
+                  "description": "The app's name, which its function and role are named after.",
+                  "sensitive": false
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "function_name",
+                  "description": "The app's function.",
+                  "sensitive": false
+                }
+              ],
+              "template": {
+                "contract": 1,
+                "kind": "app",
+                "description": "An app's function, with the day-2 action that rotates its key.",
+                "inputs": [
+                  {
+                    "name": "name",
+                    "kind": "string",
+                    "label": "App name",
+                    "description": "The app's name, which its function and role are named after."
+                  }
+                ]
+              },
+              "actions": [
+                {
+                  "type": "aws_lambda_invoke",
+                  "name": "rotate"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }

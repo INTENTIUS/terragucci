@@ -1,0 +1,8 @@
+contract: 1
+kind: app
+description: An app's function, with the day-2 action that rotates its key.
+inputs:
+  - name: name
+    kind: string
+    label: App name
+    description: The app's name, which its function and role are named after.
