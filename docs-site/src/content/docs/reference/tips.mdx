@@ -14,17 +14,17 @@ Code tips read the HCL itself. Those and the [shared-module tip](#terragucci-sha
 
 | Rule | The tip |
 |---|---|
-| [TF002](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002) | a provider with no version in `required_providers` |
-| [TF003](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003) | no `required_version` |
-| [TF004](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf004) | a registry module with no `version` |
-| [TF005](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf005) | a git module with no fixed `?ref=` |
-| [TF038](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf038) | an `oci://` module with no tag, or the `latest` tag |
-| [TF039](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf039) | a registry module with a version range |
-| [TF040](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040) | no committed `.terraform.lock.hcl` |
-| [TF041](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf041) | a Terragrunt `dependency` with `mock_outputs` whose allowed commands include `apply` or are not set |
-| [TF042](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf042) | a Terragrunt `dependency` that sets `skip_outputs` with `mock_outputs`, so every run reads the mocks |
-| [TF043](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf043) | a Terragrunt `terraform.source` with no version (a git ref, a `tfr` version or an `oci` tag) |
-| [TF044](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf044) | a Terragrunt config that keeps its state in a local backend |
+| [TF002](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002-provider-implied-by-the-root-has-no-required_providers-entry) | a provider with no version in `required_providers` |
+| [TF003](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003-root-modules-terraform-block-has-no-required_version) | no `required_version` |
+| [TF004](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf004-registry-sourced-module-block-has-no-version) | a registry module with no `version` |
+| [TF005](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf005-githg-module-source-is-unpinned-or-pinned-to-a-mutable-ref) | a git module with no fixed `?ref=` |
+| [TF038](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf038-an-oci-module-source-names-no-tag-or-digest-or-a-mutable-tag) | an `oci://` module with no tag, or the `latest` tag |
+| [TF039](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf039-a-registry-module-version-is-a-range) | a registry module with a version range |
+| [TF040](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040-a-root-has-no-committed-terraformlockhcl) | no committed `.terraform.lock.hcl` |
+| [TF041](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf041-a-terragrunt-dependency-lets-mock_outputs-stand-in-for-apply) | a Terragrunt `dependency` with `mock_outputs` whose allowed commands include `apply` or are not set |
+| [TF042](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf042-a-terragrunt-dependency-sets-skip_outputs-with-mock_outputs) | a Terragrunt `dependency` that sets `skip_outputs` with `mock_outputs`, so every run reads the mocks |
+| [TF043](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf043-a-terragrunt-terraformsource-names-no-version) | a Terragrunt `terraform.source` with no version (a git ref, a `tfr` version or an `oci` tag) |
+| [TF044](https://intentius.io/chant/lexicons/terraform/lint-rules/#tf044-a-terragrunt-config-keeps-state-in-a-local-backend) | a Terragrunt config that keeps its state in a local backend |
 
 ## Rollout tips
 

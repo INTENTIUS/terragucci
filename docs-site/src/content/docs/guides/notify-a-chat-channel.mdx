@@ -164,7 +164,7 @@ In Teams, the card's first button (Review and approve) opens the same page.
 
 A direct push gets no link, and neither does a refused wave or one the pull request's note has no digest for: no review of that head can approve those plans. The message then offers the approve command alone.
 
-After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-with-chant)). The wave finds the approving review of the head and records it on `chant/lifecycle` with `via: pr-review`, then applies.
+After the review, run the wave again: comment `/terragucci apply` on the pull request, or re-run the job ([Run the stage again](/terragucci/guides/approve-a-wave/#approve-from-a-checkout)). The wave finds the approving review of the head and records it on `chant/lifecycle` with `via: pr-review`, then applies.
 
 ## Send events to your own webhook
 
