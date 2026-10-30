@@ -107,12 +107,6 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Flags at run time | a step's `extra_args` | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml` |
 | A server or web UI | | the jobs run in your CI and write to your git and your bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 
-## Gaps
-
-These comment commands and settings have no terragucci counterpart, for the reasons in [left out on purpose](#left-out-on-purpose): `import` or `state rm` from a comment, passing a failed policy from a comment, approving from a comment, applying one root of a wave, and flags set at run time. Each row of that table names what to do instead.
-
-terragucci has no server or web UI. The plan note, the report artifact and `chant/lifecycle` take its place, and the jobs run in your CI.
-
 ## Next
 
 - [Get your first plan note](/terragucci/getting-started/) to add terragucci next to what you run now.
