@@ -5,7 +5,7 @@ import { buildReport } from "../src/report/build";
 import { renderHtml } from "../src/report/html";
 import { renderNote } from "../src/report/views";
 import { loadHclParser } from "../src/rollout/parser";
-import { FEW_ROOTS, HUNDREDS_OF_ROOTS, SHARED_MODULE_ROOTS, repoTips, type TipOptions } from "../src/tips";
+import { CODE_RULES, FEW_ROOTS, HUNDREDS_OF_ROOTS, RULE_ANCHORS, SHARED_MODULE_ROOTS, repoTips, type TipOptions } from "../src/tips";
 import { RUN, smallFixture } from "./report-fixtures";
 import { backend, bareFrom, tmp, write } from "./helpers";
 
@@ -40,10 +40,15 @@ describe("code tips come from chant's lint", () => {
     "modules/.terraform.lock.hcl": "# lock\n",
   });
 
+  it("every code rule has a chant heading id that starts with its own id", () => {
+    expect(Object.keys(RULE_ANCHORS).sort()).toEqual(Object.keys(CODE_RULES).sort());
+    for (const [rule, anchor] of Object.entries(RULE_ANCHORS)) expect(anchor).toMatch(new RegExp(`^${rule.toLowerCase()}-[a-z0-9_-]+$`));
+  });
+
   it("a bare root gets the provider, version and lock file tips, each naming its rule", async () => {
     expect(await rules(repo, ["bare"])).toEqual([["TF002", "bare"], ["TF003", "bare"], ["TF040", "bare"]]);
     const tips = await repoTips(repo, ["bare"], { settings: settings(), parser });
-    expect(tips[0]!.url).toBe("https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002");
+    expect(tips[0]!.url).toBe("https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002-provider-implied-by-the-root-has-no-required_providers-entry");
     expect(tips[0]!.message).toContain('Provider "aws"');
   });
 

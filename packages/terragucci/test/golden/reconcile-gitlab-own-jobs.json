@@ -36,37 +36,37 @@
             "rule": "TF002",
             "root": "app",
             "message": "Provider \"aws\" is used in root module \"app\" but has no `required_providers` entry in `required_providers`. Add `source` and `version` for it in the terraform block's `required_providers`, so a future provider release can't silently change behavior.",
-            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002"
+            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002-provider-implied-by-the-root-has-no-required_providers-entry"
           },
           {
             "rule": "TF003",
             "root": "app",
             "message": "Root module \"app\"'s terraform block has no `required_version`. Without it, an upgraded Terraform binary can change behavior with no version-check failure to flag it first. Add `required_version = \">= <lowest supported version>\"`.",
-            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003"
+            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003-root-modules-terraform-block-has-no-required_version"
           },
           {
             "rule": "TF040",
             "root": "app",
             "message": "Root module \"app\" uses provider \"aws\" but has no .terraform.lock.hcl beside its .tf files. Run `terraform init` and commit the file, so every init selects the same provider versions.",
-            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040"
+            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040-a-root-has-no-committed-terraformlockhcl"
           },
           {
             "rule": "TF002",
             "root": "network",
             "message": "Provider \"aws\" is used in root module \"network\" but has no `required_providers` entry in `required_providers`. Add `source` and `version` for it in the terraform block's `required_providers`, so a future provider release can't silently change behavior.",
-            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002"
+            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf002-provider-implied-by-the-root-has-no-required_providers-entry"
           },
           {
             "rule": "TF003",
             "root": "network",
             "message": "Root module \"network\"'s terraform block has no `required_version`. Without it, an upgraded Terraform binary can change behavior with no version-check failure to flag it first. Add `required_version = \">= <lowest supported version>\"`.",
-            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003"
+            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf003-root-modules-terraform-block-has-no-required_version"
           },
           {
             "rule": "TF040",
             "root": "network",
             "message": "Root module \"network\" uses provider \"aws\" but has no .terraform.lock.hcl beside its .tf files. Run `terraform init` and commit the file, so every init selects the same provider versions.",
-            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040"
+            "url": "https://intentius.io/chant/lexicons/terraform/lint-rules/#tf040-a-root-has-no-committed-terraformlockhcl"
           }
         ]
       }
