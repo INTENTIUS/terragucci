@@ -26,7 +26,7 @@ Every change runs the checks your `.pre-commit-config.yaml` already names. They 
 | You need | Why |
 |---|---|
 | a `.pre-commit-config.yaml` at the repo's root | pre-commit reads it; [pre-commit-terraform](https://github.com/antonbabenko/pre-commit-terraform) is the usual source of Terraform checks |
-| an image with `pre-commit` and the tools the file names | terragucci's image carries none of them. Build one `FROM` terragucci's and name it under `image.name`, as [Run the jobs in a prepared image](/terragucci/guides/run-in-a-prepared-image/) does for providers |
+| an image with `pre-commit` and the tools the file names | terragucci's image carries none of them. Build one `FROM` terragucci's and name it under `image.name` |
 
 ## Turn it on
 

@@ -246,7 +246,7 @@ The issuer is `https://token.actions.githubusercontent.com` on github.com and `h
 
 ## query
 
-`terragucci query <table> --json` prints the table read. For a ledger table, `results` is the document `chant ledger <table> --json` prints ([`ledger.schema.json`](https://intentius.io/chant/schemas/workspace/ledger/v1/ledger.schema.json)), with `source` added. A bucket table's `results` has the same fields but `$schema` and `contract`.
+`terragucci query <table> --json` prints the table read. For a ledger table, `results` is the document `chant ledger <table> --json` prints ([`ledger.schema.json`](https://github.com/INTENTIUS/chant/blob/main/packages/core/src/workspace/ledger.schema.json)), with `source` added. A bucket table's `results` has the same fields but `$schema` and `contract`.
 
 | `results` field | Holds |
 |---|---|

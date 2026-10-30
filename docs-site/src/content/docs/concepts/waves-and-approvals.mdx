@@ -310,7 +310,7 @@ On GitLab the shares take each other's place in the apply resource group, which 
 
 ## One apply job per identity
 
-With [`environments`](/terragucci/reference/config/#environments), or with [`oidc.roles`](/terragucci/reference/environment/#oidc) (or `oidc.gcp.roles`, `oidc.azure.roles`) that give the roots more than one set of identities, a wave of plain roots applies in one job per group of roots, so roots under different roles never share a job's token:
+With [`environments`](/terragucci/reference/config/#environments), or with [`oidc.roles`](/terragucci/reference/environment/#cloud-roles-over-oidc) (or `oidc.gcp.roles`, `oidc.azure.roles`) that give the roots more than one set of identities, a wave of plain roots applies in one job per group of roots, so roots under different roles never share a job's token:
 
 | Job | What it does |
 |---|---|
