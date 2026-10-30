@@ -249,6 +249,22 @@ pass:
 | Sensitive variables | not exported by the platform; recreated from their source |
 | Run history | stays on the platform |
 
+## Gaps
+
+Push, trigger and login policies have no counterpart. The pipeline plans what a pull request reaches and applies on merge, and sign-in is your forge's. `input.spacelift` has no counterpart in a plan policy.
+
+Tasks, the ad hoc commands run against a stack or environment, do not exist. A state change comes from an `import`, `removed` or `moved` block, or a migration, in a reviewed commit. Hooks do not run at a destroy or a task.
+
+Drift reconciliation is not done: the drift job reports and opens a pull request for drift on a literal, and never applies to put the code back.
+
+Blueprints and templates in the UI are replaced by a template request, which opens a pull request, and by a new root as a directory in a pull request.
+
+env zero's cost monitoring becomes an estimate per plan, not billed spend.
+
+`terragucci import` reads the repo's files and admin code, and does not read the platforms' APIs, so settings that live only on the platform are copied by hand. Run history stays on the platform, and sensitive variables are not exported, so each is recreated from its source.
+
+Access, which was spaces or RBAC, moves to your forge's permissions and your cloud IAM.
+
 ## Next
 
 - [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) for the forge settings.

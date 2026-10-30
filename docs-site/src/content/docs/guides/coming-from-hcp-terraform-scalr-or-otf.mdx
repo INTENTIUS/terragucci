@@ -318,6 +318,12 @@ A run task posts the plan to a service and waits for a pass or fail. A hook in [
 | Roots still on a `cloud` block | planned, but [migrations](/terragucci/guides/move-resources-between-roots/), [export](/terragucci/guides/export-a-state-version/), [state versions](/terragucci/guides/find-a-state-version/) and [ephemeral copies](/terragucci/guides/ephemeral-environments/) refuse them; on remote execution the job's `oidc` roles do not reach the run |
 | Run history | stays on the platform |
 
+## Gaps
+
+terragucci does not run Sentinel and has no equivalent of HCP Terraform Stacks. It has no workspace UI, so a new app comes from a template as a pull request. Run history stays on the platform. The [limits](#limits) table lists the rest.
+
+Teams and permissions move to your forge and your cloud IAM, and terragucci keeps no accounts of its own.
+
 ## Next
 
 - [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/) for the forge settings.
