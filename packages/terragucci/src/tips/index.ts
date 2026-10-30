@@ -62,6 +62,23 @@ export async function codeRules(env: NodeJS.ProcessEnv = process.env): Promise<R
 
 /** Where chant documents its terraform rules. */
 export const CHANT_RULES_URL = "https://intentius.io/chant/lexicons/terraform/lint-rules/";
+/**
+ * The heading id Starlight gives each rule's heading on that page (the heading text slugged, so
+ * "## TF002: provider implied ..." is #tf002-provider-implied-...). Update when chant renames a heading.
+ */
+export const RULE_ANCHORS: Readonly<Record<string, string>> = {
+  TF002: "tf002-provider-implied-by-the-root-has-no-required_providers-entry",
+  TF003: "tf003-root-modules-terraform-block-has-no-required_version",
+  TF004: "tf004-registry-sourced-module-block-has-no-version",
+  TF005: "tf005-githg-module-source-is-unpinned-or-pinned-to-a-mutable-ref",
+  TF038: "tf038-an-oci-module-source-names-no-tag-or-digest-or-a-mutable-tag",
+  TF039: "tf039-a-registry-module-version-is-a-range",
+  TF040: "tf040-a-root-has-no-committed-terraformlockhcl",
+  TF041: "tf041-a-terragrunt-dependency-lets-mock_outputs-stand-in-for-apply",
+  TF042: "tf042-a-terragrunt-dependency-sets-skip_outputs-with-mock_outputs",
+  TF043: "tf043-a-terragrunt-terraformsource-names-no-version",
+  TF044: "tf044-a-terragrunt-config-keeps-state-in-a-local-backend",
+};
 /** Where terragucci documents its own tips; each rule is a heading. */
 export const TIPS_URL = "https://intentius.io/terragucci/reference/tips/";
 
@@ -122,7 +139,7 @@ export interface TipOptions {
   releaseCatalogs?: readonly ChantReleaseCatalogDoc[] | { hosts: readonly string[] };
 }
 
-const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${rule.toLowerCase()}` });
+const codeTip = (rule: string, root: string, message: string): ReportTip => ({ rule, root, message, url: `${CHANT_RULES_URL}#${RULE_ANCHORS[rule]!}` });
 const ownTip = (rule: string, message: string, root?: string): ReportTip => ({ rule, ...(root !== undefined ? { root } : {}), message, url: `${TIPS_URL}#${rule}` });
 
 interface Call { source: string; version?: string }
