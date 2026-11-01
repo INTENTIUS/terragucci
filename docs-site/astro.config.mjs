@@ -80,7 +80,7 @@ export default defineConfig({
 				ThemeProvider: './src/components/ThemeProvider.astro',
 				ThemeSelect: './src/components/ThemeSelect.astro',
 			},
-			description: 'Sophisticated automation for Terraform.',
+			description: 'Terraform ops and governance.',
 			social: [
 				{ icon: 'github', label: 'GitHub', href: 'https://github.com/INTENTIUS/terragucci' },
 			],

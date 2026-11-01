@@ -26,25 +26,17 @@ export const PRODUCTS = [
 	{
 		id: 'chant',
 		name: 'chant',
-		oneLiner: 'Spec-native typed ops with per-resource locking.',
-		changes: 'You describe infrastructure in TypeScript, and chant builds the files each platform reads, such as CloudFormation templates, Kubernetes YAML and CI pipelines. Changes run as typed Ops that are checked before they apply. Each resource carries its own ownership marker, so two changes to different resources do not wait for each other.',
-		fits: 'terragucci and plywood are built on it. Use chant directly when you want to write the infrastructure itself in TypeScript.',
-		starts: {
-			tofu: `${IO}/chant/for/terraform-pulumi/`,
-			pulumiDiy: `${IO}/chant/for/terraform-pulumi/`,
-			fresh: `${IO}/chant/getting-started/quick-start/`,
-		},
-		first: {
-			needs: 'Node.js 24 or later',
-			cmd: ['npm install --save-dev @intentius/chant-lexicon-aws', 'npx chant init my-infra --lexicon aws'],
-			href: `${IO}/chant/getting-started/quick-start/`,
-		},
-		links: { docs: `${IO}/chant/`, source: `${GH}/chant`, evidence: null },
+		oneLiner: 'Cloud native ops and governance.',
+		changes: '',
+		fits: '',
+		starts: {},
+		first: null,
+		links: { docs: `${IO}/chant/getting-started/introduction/`, source: `${GH}/chant`, evidence: null },
 	},
 	{
 		id: 'terragucci',
 		name: 'terragucci',
-		oneLiner: 'Sophisticated automation for Terraform.',
+		oneLiner: 'Terraform ops and governance.',
 		changes: 'terragucci generates the plan and apply pipeline for your Terraform, OpenTofu and Terragrunt repos and runs it as jobs in your own CI, on GitHub, GitLab or Forgejo. A pull request gets one plan note for every root it touches, and an apply runs only the plan someone approved. There is no server to host.',
 		fits: 'Built on chant. It can run choudoufu as its engine.',
 		starts: {
@@ -64,7 +56,7 @@ export const PRODUCTS = [
 	{
 		id: 'plywood',
 		name: 'plywood',
-		oneLiner: 'Sophisticated automation for Pulumi.',
+		oneLiner: 'Pulumi ops and governance.',
 		changes: 'Pulumi previews and updates move into your pull requests and run as jobs in the CI you already have. Each stack a change reaches gets its own preview note, and an approval holds only for the exact preview it was shown. Your programs stay as they are, on the backend they use today.',
 		fits: 'Built on chant. It can run plunge as its engine.',
 		starts: {
@@ -82,9 +74,9 @@ export const PRODUCTS = [
 	{
 		id: 'choudoufu',
 		name: 'choudoufu',
-		oneLiner: 'OpenTofu with per-resource locking.',
-		changes: 'choudoufu is a build of OpenTofu that runs your configurations as they are. In place of one lock on the whole state, it keeps one record per resource and writes an ownership marker on each cloud object, so two applies of saved plans that change different resources run at the same time. The state file becomes a copy you can rebuild.',
-		fits: 'The engine terragucci can run, with binary: choudoufu. Built on chant.',
+		oneLiner: 'Per-resource locking for OpenTofu.',
+		changes: 'choudoufu is a build of OpenTofu. `choudoufu live-check` tells you offline whether your configuration runs as it is. In place of one lock on the whole state, it keeps one record per resource and writes an ownership marker on each cloud object, so two applies of saved plans that change different resources run at the same time. The state file becomes a copy you can rebuild.',
+		fits: "The engine terragucci can run, with binary: choudoufu. It uses chant's ownership markers, and chant can run it.",
 		starts: {
 			tofu: `${IO}/choudoufu/docs/use/migrate/`,
 			fresh: `${IO}/choudoufu/docs/use/start/`,
@@ -104,9 +96,9 @@ export const PRODUCTS = [
 	{
 		id: 'plunge',
 		name: 'plunge',
-		oneLiner: 'Pulumi with per-resource locking.',
+		oneLiner: 'Per-resource locking for Pulumi.',
 		changes: 'plunge is a fork of Pulumi with a drop-in CLI that runs your programs as they are. It keeps one record per resource in place of one state file per stack, and writes two ownership tags, its markers, on each cloud object. So two runs that change different resources of one stack do not wait for each other.',
-		fits: 'The engine plywood can run, with engine: plunge. Built on chant.',
+		fits: "The engine plywood can run, with engine: plunge. It uses chant's ownership markers, and chant can run it.",
 		starts: {
 			pulumiCloud: `${IO}/plunge/use/migrate/`,
 			pulumiDiy: `${IO}/plunge/use/migrate/`,
@@ -123,9 +115,9 @@ export const PRODUCTS = [
 	{
 		id: 'behold',
 		name: 'behold',
-		oneLiner: 'A spec-native control plane for cloud infrastructure.',
-		changes: 'behold draws an estate as one graph and colours whatever has drifted from what you declared. It only reads. A change goes out through an Op you already committed, behind the approval that Op carries.',
-		fits: 'Reads what chant records for terragucci and plywood.',
+		oneLiner: 'Visualize and control.',
+		changes: 'behold draws an estate as one graph and colours whatever has drifted from what you declared. On a chant project you can act from the graph, through Ops and their approvals.',
+		fits: 'Reads what chant records for terragucci, and Pulumi from stack exports.',
 		starts: {
 			tofu: `${IO}/behold/for/terraform/`,
 			fresh: `${IO}/behold/start/run-it/`,

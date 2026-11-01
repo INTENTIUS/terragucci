@@ -1,7 +1,7 @@
 {
   "name": "@intentius/terragucci",
   "version": "0.4.49",
-  "description": "Sophisticated automation for Terraform.",
+  "description": "Terraform ops and governance.",
   "license": "Apache-2.0",
   "type": "module",
   "repository": {
