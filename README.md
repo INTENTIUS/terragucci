@@ -2,7 +2,7 @@
 
 # terragucci
 
-Sophisticated automation for Terraform.
+Terraform ops and governance.
 
 Built on chant; can run choudoufu as its engine.
 

@@ -10,6 +10,12 @@
 // Styles use Starlight's tokens only, so the block takes each site's palette.
 import { PRODUCTS, STARTS } from '../data/products.mjs';
 
+// A mention of another Intentius project is a link.
+const PROJECT = /\b(behold|chant|choudoufu|plunge|plywood|terragucci)\b/;
+const PROJECTS = new Set(['behold', 'chant', 'choudoufu', 'plunge', 'plywood', 'terragucci']);
+const linked = (text: string, self: string) => text.split(PROJECT).map((part) =>
+	PROJECTS.has(part) && part !== self ? { name: part, href: `https://intentius.io/${part}/` } : part);
+
 interface Props {
 	id: string;
 	version?: string;
@@ -24,7 +30,7 @@ const starts = Object.entries(product.starts).map(([key, href]) => {
 	return { key, label: STARTS[key], href };
 });
 
-const lines = product.first.cmd.map((line) => {
+const lines = (product.first?.cmd ?? []).map((line) => {
 	if (!line.includes('{version}')) return line;
 	if (!version) throw new Error(`ProductHome: ${id} has {version} in its first command, so the site must pass version`);
 	return line.replaceAll('{version}', version);
@@ -36,10 +42,10 @@ const hid = `ph-${product.id}`;
 	<div class="art"><slot name="art" /></div>
 	<h1 id={`${hid}-name`} class="name">{product.name}</h1>
 	<p class="one">{product.oneLiner}</p>
-	<div class="text">
-		<p>{product.changes}</p>
-		<p>{product.fits}</p>
-	</div>
+	{(product.changes || product.fits) && <div class="text">
+		{product.changes && <p>{linked(product.changes, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>}
+		{product.fits && <p>{linked(product.fits, id).map((b) => typeof b === 'string' ? b : <a href={b.href}>{b.name}</a>)}</p>}
+	</div>}
 	{starts.length > 0 && (
 		<nav class="starts" aria-labelledby={`${hid}-starts`}>
 			<h2 id={`${hid}-starts`}>Where to start</h2>
@@ -48,12 +54,14 @@ const hid = `ph-${product.id}`;
 			</ul>
 		</nav>
 	)}
+	{product.first && (
 	<div class="first">
 		<h2 id={`${hid}-first`}>First command</h2>
 		<p class="needs">Needs: {product.first.needs}.</p>
 		<pre aria-labelledby={`${hid}-first`}><code>{lines.join('\n')}</code></pre>
 		<p><a href={product.first.href}>The full steps</a></p>
 	</div>
+	)}
 	<p class="links">
 		<a href={docs}>Docs</a>
 		<a href={source}>Source</a>
@@ -75,6 +83,7 @@ const hid = `ph-${product.id}`;
 	.one { margin: 0; font-size: var(--sl-text-lg); color: var(--sl-color-gray-2); }
 	.text p { margin: 0 0 0.75rem; color: var(--sl-color-gray-2); line-height: 1.6; }
 	h2 { margin: 0 0 0.5rem; font-size: var(--sl-text-base); color: var(--sl-color-white); }
+	.text p:last-child { margin-bottom: 0; }
 	.starts ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
 	.starts li { margin: 0; }
 	.starts a {

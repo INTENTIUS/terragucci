@@ -64,7 +64,7 @@ export async function pages() {
 
 export const PREAMBLE = `# terragucci
 
-> Sophisticated automation for Terraform.
+> Terraform ops and governance.
 
 Every page is true as written: a command or key on this site works as the page says. A key that \`terragucci config check\` refuses is not part of terragucci.
 
