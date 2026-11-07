@@ -121,7 +121,7 @@ describe("refusals: config check and init give the same one", () => {
     const attributed = write(tmp(), { ...ATMOS_REPO, "terragucci.yml": 'forge: forgejo\nbinary: tofu\ndrift: "0 6 * * *"\nrespond:\n  drift: attribute\n' });
     expect((await configCheck(attributed)).code).toBe(0);
     const r = await init(attributed, { atmos: stubAtmos(), dryRun: true });
-    expect(r.files[0].content).toContain("tf-drift");
+    expect(r.files.some((f) => f.content.includes("tf-drift"))).toBe(true);
   });
 
   it("an Atmos repo with rollouts or generate is refused in Atmos's words at config check and init", async () => {

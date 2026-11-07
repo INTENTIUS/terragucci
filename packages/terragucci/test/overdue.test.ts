@@ -2,7 +2,7 @@
 // says about its runs, and the plan note that says it is overdue.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkDriftSchedule, driftOverdue as overdue, driftRuns, pipelineAdded } from "../src/report/overdue";
+import { checkDriftSchedule, driftOverdue as overdue, driftRuns, driftWorkflowPath, pipelineAdded } from "../src/report/overdue";
 import type { Fetch, ForgeTarget } from "../src/forge";
 import { renderNote } from "../src/report/views";
 import { buildReport } from "../src/report/build";
@@ -72,6 +72,17 @@ describe("driftRuns", () => {
     ]);
     expect(await driftRuns(fetch, target("github"))).toEqual({ last: "2026-07-20T10:00:00Z", disabled: "disabled_inactivity" });
     expect(asked[0]).toBe("https://api.github.com/repos/acme/infra/actions/workflows/terragucci.yml");
+  });
+
+  it("asks about chant's drift Op workflow once the checkout has it (chant issue 4622)", async () => {
+    const repo = tmp();
+    expect(driftWorkflowPath(repo, "github")).toBe(".github/workflows/terragucci.yml");
+    write(repo, { ".github/workflows/terragucci-drift.yml": "name: terragucci-drift\n" });
+    expect(driftWorkflowPath(repo, "github")).toBe(".github/workflows/terragucci-drift.yml");
+    expect(driftWorkflowPath(repo, "forgejo")).toBe(".forgejo/workflows/terragucci.yml");
+    const { fetch, asked } = forge([["runs?event=schedule", { workflow_runs: [{ created_at: "2026-07-01T06:01:00Z" }] }]]);
+    await driftRuns(fetch, target("github"), driftWorkflowPath(repo, "github"));
+    expect(asked[0]).toBe("https://api.github.com/repos/acme/infra/actions/workflows/terragucci-drift.yml");
   });
 
   it("gitlab: the newest scheduled pipeline, and whether the project has an active schedule", async () => {

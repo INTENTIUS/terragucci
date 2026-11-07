@@ -19,7 +19,10 @@ import { fileAdded, overdueVerdict, type OverdueOp } from "@intentius/chant/op/s
 import type { ScheduledRuns } from "@intentius/chant/pr-forge";
 import type { ForgeName } from "../config";
 import { call, prForgeOf, type Fetch, type ForgeTarget } from "../forge";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { PIPELINE_PATHS, SCHEDULE_VAR } from "../render";
+import { CHANT_DRIFT_PATHS } from "../render-chant-drift";
 
 /** The name the drift job goes by in chant's verdict and the report. */
 export const DRIFT_OP = "tf-drift";
@@ -51,14 +54,24 @@ async function gitlabDriftRuns(fetch: Fetch, t: ForgeTarget): Promise<ScheduledR
   return { ...(last ? { last } : {}), ...(drift.length === 0 ? { noSchedule: true } : {}) };
 }
 
-/** Ask the forge when the drift job last ran. Throws when the forge will not say. */
-export async function driftRuns(fetch: Fetch, t: ForgeTarget): Promise<ScheduledRuns> {
-  if (t.forge === "gitlab") return gitlabDriftRuns(fetch, t);
-  return prForgeOf(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: PIPELINE_PATHS[t.forge].split("/").pop()! });
+/**
+ * The workflow file the drift job runs in: chant's drift Op workflow
+ * (`terragucci-drift.yml`, chant issue 4622) when the checkout has it, else
+ * the pipeline's, where a Forgejo repo with oidc keeps it.
+ */
+export function driftWorkflowPath(repo: string, forge: ForgeName): string {
+  if (forge !== "gitlab" && existsSync(join(repo, CHANT_DRIFT_PATHS[forge]))) return CHANT_DRIFT_PATHS[forge];
+  return PIPELINE_PATHS[forge];
 }
 
-/** When the pipeline file first appeared in the checkout's history (ISO 8601), if the history has it. */
-export const pipelineAdded = (repo: string, forge: ForgeName): string | undefined => fileAdded(repo, PIPELINE_PATHS[forge]);
+/** Ask the forge when the drift job last ran, from `workflow` on GitHub and Forgejo (the pipeline's by default). Throws when the forge will not say. */
+export async function driftRuns(fetch: Fetch, t: ForgeTarget, workflow: string = PIPELINE_PATHS[t.forge]): Promise<ScheduledRuns> {
+  if (t.forge === "gitlab") return gitlabDriftRuns(fetch, t);
+  return prForgeOf(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()! });
+}
+
+/** When the drift job's workflow file first appeared in the checkout's history (ISO 8601), if the history has it. */
+export const pipelineAdded = (repo: string, forge: ForgeName): string | undefined => fileAdded(repo, driftWorkflowPath(repo, forge));
 
 /**
  * chant's verdict on the drift job. chant's GitLab line for a missing
@@ -79,7 +92,7 @@ export function driftOverdue(cron: string, forge: ForgeName, runs: ScheduledRuns
 export async function checkDriftSchedule(repo: string, cron: string, target: ForgeTarget, fetch: Fetch, now: Date, log: (line: string) => void): Promise<OverdueOp | undefined> {
   let runs: ScheduledRuns;
   try {
-    runs = await driftRuns(fetch, target);
+    runs = await driftRuns(fetch, target, driftWorkflowPath(repo, target.forge));
   } catch (e) {
     log(`drift schedule: the forge did not say when the drift job last ran, so it is not checked: ${(e as Error).message.split("\n")[0]}`);
     return undefined;
