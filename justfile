@@ -396,23 +396,11 @@ diff-guard base="origin/main" head="HEAD":
     scripts/diff-guard.sh {{base}} {{head}}
     scripts/lfs-check.sh {{base}} {{head}}
 
-[doc("Move the package and the images' version labels to VERSION, and regenerate the Dockerfiles, both examples' pipelines and patches, and the cli-json goldens with the bare new tags.")]
+[doc("Move the package and the images' version labels to VERSION, and regenerate the Dockerfiles, both examples' pipelines and patches, and the cli-json goldens with the new tags. A release then runs the publish workflow with VERSION.")]
 version-bump version:
     npx tsx scripts/release.ts bump {{version}}
 
-[doc("Record this version's image digests from GHCR (checked against the images workflow's RUN log when given) and regenerate the same files pinned by digest.")]
-record-digests run="":
-    npx tsx scripts/release.ts digests {{ if run == "" { "" } else { "--run " + run } }}
-
-[doc("Name the commit a release tags:the newest on main that passed CI (chant ci last-green), at VERSION. TERRAGUCCI_RELEASE_SKIP_GREEN=1 skips the green check.")]
-release-preflight version commit="":
-    scripts/release-preflight.sh {{version}} {{commit}}
-
-[doc("Create each VERSION's GitHub release on its existing tag, with its notes from the Changes page's \"In <version>\" section; the newest named is marked latest. --dry-run prints the notes.")]
-github-release *versions:
-    node scripts/github-release.mjs {{versions}}
-
-[doc("Build the terragucci CLI into one bundled file, as a release does.")]
+[doc("Build the terragucci CLI into one bundled file. A release's build reads CHANT_RELEASE_DIGESTS and pins the images by digest.")]
 build-cli:
     node scripts/build-cli.mjs
 

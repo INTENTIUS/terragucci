@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// scripts/diff-guard.sh, scripts/release-preflight.sh and scripts/ci-red on
+// scripts/diff-guard.sh and scripts/ci-red on
 // throwaway repos.
 const SCRIPTS = join(import.meta.dirname, "..", "scripts");
 const ENV = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
@@ -113,54 +113,6 @@ describe("lfs-check", () => {
     // Under the limit, or on main itself, it passes.
     expect(run(dir, "lfs-check.sh", ["main", pr], { LFS_CHECK_MAX: String(700 * 1024) }).status).toBe(0);
     expect(run(dir, "lfs-check.sh", ["main", "main"]).status).toBe(0);
-  });
-});
-
-describe("release-preflight", () => {
-  const setup = () => {
-    const origin = tmp();
-    git(origin, "init", "-q", "--bare", "-b", "main");
-    const dir = repo();
-    git(dir, "remote", "add", "origin", origin);
-    const pkg = (v: string) => ({ "packages/terragucci/package.json": JSON.stringify({ version: v }) });
-    const a = commit(dir, pkg("0.3.1"), "a");
-    const b = commit(dir, pkg("0.3.2"), "bump");
-    git(dir, "push", "-q", "origin", "main");
-    return { dir, a, b };
-  };
-  const tag = (dir: string, name: string, sha: string) => {
-    git(dir, "tag", "-a", "-m", name, `ci/${name}/${sha}`, sha);
-    git(dir, "push", "-q", "origin", `ci/${name}/${sha}`);
-  };
-
-  it("names the newest green commit at the version, and the tag commands", () => {
-    const { dir, b } = setup();
-    tag(dir, "green", b);
-    const r = run(dir, "release-preflight.sh", ["0.3.2"]);
-    expect(r.status).toBe(0);
-    expect(r.out).toContain(`git tag v0.3.2 ${b} && git push origin v0.3.2`);
-  });
-
-  it("refuses a green commit at another version, a revoked one, and one with no tag; the skip variable releases it", () => {
-    const { dir, a, b } = setup();
-    tag(dir, "green", a);
-    expect(run(dir, "release-preflight.sh", ["0.3.2"]).out).toMatch(/at 0\.3\.1, not 0\.3\.2/);
-    expect(run(dir, "release-preflight.sh", ["0.3.2", b]).out).toMatch(/has no ci\/green tag/);
-    tag(dir, "green", b);
-    tag(dir, "revoked", b);
-    expect(run(dir, "release-preflight.sh", ["0.3.2", b])).toMatchObject({ status: 1, out: expect.stringContaining(`ci/revoked/${b}`) });
-    expect(run(dir, "release-preflight.sh", ["0.3.2", b], { TERRAGUCCI_RELEASE_SKIP_GREEN: "1" })).toMatchObject({ status: 0 });
-  });
-
-  it("says why when main has no green commit, and releases main with the skip variable", () => {
-    const { dir, b } = setup();
-    const r = run(dir, "release-preflight.sh", ["0.3.2"]);
-    expect(r.status).toBe(1);
-    expect(r.out).toContain("no commit among main's last 200 has a ci/green tag");
-    expect(r.out).toContain("TERRAGUCCI_RELEASE_SKIP_GREEN=1");
-    const s = run(dir, "release-preflight.sh", ["0.3.2"], { TERRAGUCCI_RELEASE_SKIP_GREEN: "1" });
-    expect(s.status).toBe(0);
-    expect(s.out).toContain(`git tag v0.3.2 ${b}`);
   });
 });
 

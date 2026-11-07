@@ -6,7 +6,6 @@ name: chant-ci-green
 on:
   workflow_run:
     workflows:
-      - "publish"
       - "terragucci"
     types:
       - completed

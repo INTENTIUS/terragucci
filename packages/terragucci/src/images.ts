@@ -7,8 +7,19 @@
  */
 // A named import, so the bundle carries the version and not the whole package.json.
 import { version as VERSION } from "../package.json";
-import digests from "./image-digests.json" with { type: "json" };
 import type { Binary } from "./config";
+
+/**
+ * The images' digests, keyed by `<repository>:<tag>`. The release's build
+ * (scripts/build-cli.mjs with `CHANT_RELEASE_DIGESTS`, chant issue 4657)
+ * defines it from the archives the release's cut built; any other build of
+ * the bundle, and the tests, have none, so `init` writes the tags bare.
+ */
+declare const __TERRAGUCCI_IMAGE_DIGESTS__: Record<string, string> | undefined;
+const digests: Record<string, string> = typeof __TERRAGUCCI_IMAGE_DIGESTS__ !== "undefined" ? __TERRAGUCCI_IMAGE_DIGESTS__ : {};
+
+/** The four CI images a release builds and publishes, by name. */
+export const ciImages = ["tofu", "terraform", "terragrunt", "choudoufu"] as const;
 
 export const REGISTRY = "ghcr.io/intentius";
 
