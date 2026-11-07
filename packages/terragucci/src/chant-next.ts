@@ -84,7 +84,7 @@
  * chant#4624; ./check-job.ts), its audit log reader and known-writes table
  * (`ci-audit`, chant#4632; ./respond/attribute.ts, ./state-writers.ts), and
  * the op entry's after-plan hook with `opWavePlanPath` (chant#4614; the step
- * wave in ./apply.ts). And at the 0.124.73 pin: chant core's forge and
+ * wave in ./apply.ts). And at the 0.124.74 pin: chant core's forge and
  * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
  * check` calls (./identities.ts), and its notify relay (`notify-relay`,
  * chant#4611), whose signature checks, principal mapping and button
