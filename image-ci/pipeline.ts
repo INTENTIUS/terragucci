@@ -6,7 +6,7 @@
  * `just ci` renders this into .github/workflows/images.yml. The check job
  * builds all four images natively on an amd64 and an arm64 runner, runs each
  * image's tools, and holds each to its size budget. A release builds and
- * pushes them itself (publish/pipeline.ts, chant.config.ts `release`).
+ * pushes them itself (chant.config.ts `release`, rendered to publish.yml).
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";

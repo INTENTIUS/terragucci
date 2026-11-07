@@ -17,7 +17,7 @@ lint:
     set -uo pipefail
     logs="$(mktemp -d -t terragucci-lint-XXXX)"
     trap 'rm -rf "$logs"' EXIT
-    dirs=(ci pages image-ci publish images ci-red diff-guard observability scale)
+    dirs=(ci pages image-ci images ci-red diff-guard observability scale)
     for d in "${dirs[@]}"; do
       ( npx chant lint "$d" >"$logs/$d.log" 2>&1; echo $? >"$logs/$d.rc" ) &
     done
@@ -90,7 +90,8 @@ ci:
     npx chant build ci -o .github/workflows/ci.yml --format yaml
     npx chant build pages -o .github/workflows/pages.yml --format yaml
     npx chant build image-ci -o .github/workflows/images.yml --format yaml
-    npx chant build publish -o .github/workflows/publish.yml --format yaml
+    # The release workflow, from release.workflow in chant.config.ts (chant issue 4751).
+    npx chant release workflow --forge github
     npx chant build ci-red -o .github/workflows/ci-red.yml --format yaml
     npx chant build diff-guard -o .github/workflows/diff-guard.yml --format yaml
     npx chant build scale -o .github/workflows/scale.yml --format yaml
@@ -148,13 +149,15 @@ ci-check:
         return 1
       fi
     }
-    workflows=("ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "publish:.github/workflows/publish.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml")
+    workflows=("ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml")
     for pair in "${workflows[@]}"; do
       src="${pair%%:*}"
       render "$src" npx chant build "$src" -o "$out/$src.yml" --format yaml
     done
     # The green tick, from chant.workspace.json and the committed workflows.
     render green npx chant ci workflow --token-secret CI_GREEN_TOKEN --output "$out/chant-ci-green.yml"
+    # The release workflow, from release.workflow in chant.config.ts.
+    render release npx chant release workflow --forge github --output "$out/publish.yml"
     # The Dockerfiles: the docker lexicon writes them beside its (empty) compose output.
     mkdir "$out/images"
     render images npx chant build images -o "$out/images/compose.yml" --format yaml
@@ -174,6 +177,13 @@ ci-check:
       # chant names --output in the file's first line; the committed file was written without it.
       sed '1s# --output [^ ]*##' "$out/chant-ci-green.yml" >"$out/chant-ci-green.norm.yml"
       same .github/workflows/chant-ci-green.yml "$out/chant-ci-green.norm.yml" chant.workspace.json || rc=1
+    else
+      rc=1
+    fi
+    if rendered release; then
+      # chant names --output in the file's first line; the committed file was written without it.
+      sed '1s# --output [^ ]*##' "$out/publish.yml" >"$out/publish.norm.yml"
+      same .github/workflows/publish.yml "$out/publish.norm.yml" "chant.config.ts's release.workflow" || rc=1
     else
       rc=1
     fi

@@ -1,5 +1,6 @@
 import type { ChantConfig } from "@intentius/chant";
 import { ciImages, REGISTRY, imageTag } from "./packages/terragucci/src/images";
+import { NPM_TRUSTED_PUBLISHING_MIN, NPM_VERSION } from "./workflows/shared";
 
 /** The Changes page a GitHub release takes its notes from: its `## In <version>` section. */
 const CHANGES = "docs-site/src/content/docs/reference/whats-new.mdx";
@@ -26,6 +27,27 @@ export default {
   // The cut compiles one environment, `release`, which builds nothing but this root's workflows.
   environments: ["release"],
   release: {
+    // .github/workflows/publish.yml, from `chant release workflow` (chant issues 4656 and 4751): one run, started by
+    // hand with the version. The gate names the newest green commit at or below the dispatched one, the cut builds the
+    // images and the bundle that pins them and pushes the release/<version> tag, and the publish job builds the images
+    // again, checks them against the cut's digests and publishes. npm's trusted publisher is configured for publish.yml.
+    workflow: {
+      trigger: "dispatch",
+      gate: "last-green",
+      install: "npm ci",
+      build: "node scripts/build-cli.mjs",
+      chant: "npx chant",
+      // GHCR: the oci target pushes with this run's token.
+      permissions: { packages: "write" },
+      env: { OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" },
+      setup: [
+        // QEMU, so an amd64 runner builds the arm64 half of each image.
+        { uses: "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0", with: { platforms: "arm64" } },
+        // npm trusted publishing needs npm 11.5.1 or later.
+        { run: `have="$(npm --version)"; if [ "$(printf '%s\\n' "${NPM_TRUSTED_PUBLISHING_MIN}" "$have" | sort -V | head -n1)" != "${NPM_TRUSTED_PUBLISHING_MIN}" ]; then npm install -g npm@${NPM_VERSION}; fi; npm --version` },
+      ],
+      file: ".github/workflows/publish.yml",
+    },
     images: ciImages.map((name) => ({ name, build: `scripts/release-image.sh ${name}`, archive: `dist/images/${name}.tar` })),
     publish: [
       ...ciImages.map((name) => ({
