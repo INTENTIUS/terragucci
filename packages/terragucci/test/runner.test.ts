@@ -80,7 +80,9 @@ describe("runner", () => {
     expect(jobs.plan.tags).toEqual(["docker"]);
     expect(jobs["apply-wave-1"].tags).toEqual(["prod", "docker"]);
     expect(jobs.ephemeral.tags).toEqual(["prod", "docker"]);
-    expect(jobs.drift.tags).toEqual(["drift-runner"]);
+    // The drift job is chant's Op in the included file (chant issue 4753), on the drift stage's runner.
+    expect(jobs.drift).toBeUndefined();
+    expect(jobsOf(out.extra!.find((f) => f.path === ".gitlab/terragucci-drift.yml")!.content)["terragucci-drift"].tags).toEqual(["drift-runner"]);
     expect(jobs.comments.tags).toEqual(["docker"]);
     // One runner for every job.
     for (const job of Object.values(jobsOf(render("gitlab", { runner: "shared" }).content))) expect(job.tags).toEqual(["shared"]);

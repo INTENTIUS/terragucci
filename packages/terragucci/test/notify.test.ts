@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { verifyWebhook } from "@intentius/chant/notify-verify";
 import { driftNotice, notify, notifyDrift, readOutcome, replanUrl, runUrl, slackDrift, slackMessage, teamsDrift, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
 import { applyScript, renderPipeline } from "../src/render";
-import { tmp, validate, write } from "./helpers";
+import { driftOp, tmp, validate, write } from "./helpers";
 
 // chant's chant.notify/v1, which the package ships as @intentius/terragucci/notify.schema.json.
 const NOTIFY_SCHEMA = JSON.parse(readFileSync(createRequire(import.meta.url).resolve("@intentius/chant/notify.schema.json"), "utf-8"));
@@ -227,14 +227,13 @@ describe("notify: drift", () => {
   });
 
   it.each(["github", "forgejo", "gitlab"] as const)("%s: the drift job gets the chat secrets, never the webhook's, and posts after the stage", (forge) => {
-    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, drift: "0 6 * * *", notify: { slack: "CHAT_SLACK", webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }).content;
-    const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-    const job = forge === "gitlab" ? doc.drift : doc.jobs.drift;
-    const env = forge === "gitlab" ? job.variables : job.env;
+    // The drift job is chant's Op (terragucci#1305): its job carries the variables, its script the notify line.
+    const op = driftOp(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, drift: "0 6 * * *", notify: { slack: "CHAT_SLACK", webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }), forge)!;
+    const env = forge === "gitlab" ? op.job.variables : op.job.env;
     expect(env.TERRAGUCCI_SLACK_WEBHOOK).toBe(forge === "gitlab" ? "$CHAT_SLACK" : "${{ secrets.CHAT_SLACK }}");
     expect(env.TERRAGUCCI_WEBHOOK).toBeUndefined();
-    expect(text).toContain("terragucci notify drift --report terragucci-report || true");
-    const quiet = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, drift: "0 6 * * *", notify: { webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }).content;
-    expect(quiet).not.toContain("terragucci notify drift");
+    expect(op.script).toContain("terragucci notify drift --report terragucci-report || true");
+    const quiet = driftOp(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, drift: "0 6 * * *", notify: { webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }), forge)!;
+    expect(quiet.script).not.toContain("terragucci notify drift");
   });
 });

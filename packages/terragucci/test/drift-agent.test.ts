@@ -249,53 +249,15 @@ describe("pushDriftChange", () => {
 
 describe("the drift agent's jobs", () => {
   const agent = agentDriftInput(validateConfig({ drift: "0 6 * * *", respond: { drift: "off" }, agent: { ...base, drift: { max_turns: 12, timeout: 20 } }, policy: { path: "rego" } }, "t"))!;
-  const withAgent = (forge: "github" | "forgejo"): Record<string, any> =>
-    body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, drift: "0 6 * * *", respond: { drift: "off" }, agentDrift: agent }).content);
 
-  it("are off unless agent.drift is set", () => {
-    const doc = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond: { drift: "off" } }).content);
-    expect(doc.jobs["drift-agent"]).toBeUndefined();
-    expect(doc.jobs.drift.outputs).toBeUndefined();
-    expect(JSON.stringify(doc.jobs.drift)).not.toContain("issue.json");
-  });
-
-  it.each(["github", "forgejo"] as const)("%s: run after the drift job when it opened the issue, on the commit it planned", (forge) => {
-    const doc = withAgent(forge);
-    expect(doc.jobs.drift.outputs).toEqual({ agent: "${{ steps.drift.outputs.agent }}", issue: "${{ steps.drift.outputs.issue }}" });
-    const step = doc.jobs.drift.steps.find((s: { id?: string }) => s.id === "drift");
-    expect(step.run).toContain("terragucci-report/issue.json >>\"$GITHUB_OUTPUT\"");
-    expect(doc.jobs["drift-agent"].needs).toBe("drift");
-    expect(doc.jobs["drift-agent"].if).toBe("needs.drift.outputs.agent == '1'");
-    expect(doc.jobs["drift-agent"]["timeout-minutes"]).toBe(20);
-    expect(doc.jobs["drift-agent-push"].needs).toEqual(["drift", "drift-agent"]);
-    expect(doc.jobs["drift-agent-push"].env.TG_ISSUE).toBe("${{ needs.drift.outputs.issue }}");
-    for (const name of ["drift-agent", "drift-agent-push"]) {
-      const checkout = doc.jobs[name].steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
-      expect(checkout.with).toEqual({ ref: "${{ github.sha }}", "persist-credentials": false });
-    }
-    const prompt = doc.jobs["drift-agent"].steps.find((s: { name?: string }) => s.name === "Write the agent's prompt from the drift report").run as string;
-    expect(prompt).toContain("terragucci drift-agent prompt --report /tmp/terragucci-agent/drift --out /tmp/terragucci-agent/prompt.md --policy-dir 'rego'");
-    expect(doc.jobs["drift-agent-push"].steps.at(-1).run).toContain(`terragucci drift-agent push --forge ${forge} --change /tmp/terragucci-agent/change --policy-dir 'rego'`);
-  });
-
-  it.each(["github", "forgejo"] as const)("%s: the agent's job holds no forge write token and no cloud role, and only the push job holds the agent's token", (forge) => {
-    const doc = withAgent(forge);
-    for (const name of ["drift-agent", "drift-agent-push"]) {
-      const job = JSON.stringify(doc.jobs[name]);
-      expect(job, name).not.toContain(OIDC.plan_role);
-      expect(job, name).not.toContain("id-token");
-      expect(job, name).not.toContain("github.token");
-      // Forgejo's runner ignores permissions, and the dialect drops them.
-      if (forge === "github") expect(doc.jobs[name].permissions, name).toEqual({ contents: "read" });
-    }
-    expect(JSON.stringify(doc.jobs["drift-agent"])).not.toContain("AGENT_FORGE_TOKEN");
-    expect(doc.jobs["drift-agent-push"].env.TG_TOKEN).toBe("${{ secrets.AGENT_FORGE_TOKEN }}");
-    const run = doc.jobs["drift-agent"].steps.find((s: { name?: string }) => s.name === "Run the agent on the drift");
-    expect(run.env.ANTHROPIC_API_KEY).toBe("${{ secrets.ANTHROPIC_API_KEY }}");
-    expect(run.env.TG_AGENT_MAX_TURNS).toBe("12");
-    // The step drops the runner's own token variables, which Forgejo sets whatever permissions say.
-    expect(run.run).toContain("unset GITHUB_TOKEN FORGEJO_TOKEN GITEA_TOKEN");
-    expect(JSON.stringify(doc.jobs["drift-agent-push"])).not.toContain("ANTHROPIC_API_KEY");
+  it.each(["github", "forgejo"] as const)("%s: ride chant's agent job on the drift Op, and the pipeline writes none of its own (terragucci#1305)", (forge) => {
+    const out = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, drift: "0 6 * * *", respond: { drift: "off" }, agentDrift: agent });
+    expect(out.content).not.toContain("drift-agent:");
+    expect(out.content).not.toContain("drift-agent-push:");
+    const spec = JSON.parse(out.extra!.find((f) => f.path === ".chant/ops/terragucci-drift.spec.json")!.content);
+    expect(spec.ops[0].agent).toMatchObject({ on: "drift", maxTurns: 12, timeout: 20 });
+    // The run exits with chant's drift code when it opened the issue, which starts the agent's jobs.
+    expect(out.extra!.find((f) => f.path === ".chant/ops/terragucci-drift.sh")!.content).toContain("rc=2");
   });
 
   it("is refused on GitLab, without a drift schedule, and beside the codified drift pull request", () => {
@@ -305,8 +267,8 @@ describe("the drift agent's jobs", () => {
     expect(() => renderPipeline({ ...input, forge: "github", drift: "0 6 * * *", agentDrift: agent })).toThrow(/agent.drift opens the drift pull request itself/);
   });
 
-  it("the drift script keeps the stage's exit code after writing the outputs", () => {
-    const s = driftScript("tofu", layers, "forgejo", undefined, {}, undefined, false, true);
+  it("the drift script keeps the stage's exit code after deciding chant's drift code", () => {
+    const s = driftScript("tofu", layers, "forgejo", undefined, {}, undefined, false, "chant");
     expect(s).toContain("rc=$?");
     expect(s.trim().endsWith('exit "$rc"')).toBe(true);
   });

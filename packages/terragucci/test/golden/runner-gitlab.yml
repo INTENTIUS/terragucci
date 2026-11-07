@@ -3,6 +3,8 @@
 # the repo has none. Change terragucci.yml and run `npx terragucci init`
 # rather than editing it here.
 # Every job runs in img:1; init pins its digest once the image is published.
+include:
+  - local: .gitlab/terragucci-drift.yml
 stages:
   - build
   - test
@@ -357,37 +359,6 @@ publish:
       PUBLISH
   tags:
     - docker
-
-drift:
-  stage: drift
-  image:
-    name: img:1
-  variables:
-    TF_IN_AUTOMATION: '1'
-    TF_INPUT: '0'
-    TG_TOKEN: '$GITLAB_TOKEN'
-    TG_SHA: '$CI_COMMIT_SHA'
-    TG_BRANCH: '$CI_DEFAULT_BRANCH'
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "ephemeral"'
-  script:
-    - |
-      bash <<'DRIFT' || exit $?
-      set +e -uo pipefail
-      terragucci stage tf-drift --out terragucci-report --binary tofu --forge gitlab --layers 'network;app,cache' --report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html"
-      rc=$?
-      export GITLAB_TOKEN="$TG_TOKEN"
-      git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
-      if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary tofu || true; fi
-      exit "$rc"
-      DRIFT
-  artifacts:
-    name: terragucci-report-drift
-    when: always
-    paths:
-      - terragucci-report/
-  tags:
-    - drift-runner
 
 comments:
   stage: comments

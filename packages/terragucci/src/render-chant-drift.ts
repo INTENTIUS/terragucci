@@ -1,6 +1,6 @@
 /**
  * The scheduled drift job as a chant drift Op (terragucci#1305, chant
- * issues 4616 and 4622). On GitHub, and on Forgejo without oidc, init writes:
+ * issues 4616, 4622 and 4753). On every forge, init writes:
  *
  *   .chant/ops/terragucci-drift.sh         the drift step's script (render.ts
  *                                          `driftScript`, after the install
@@ -15,7 +15,9 @@
  *                                          step, and with agent.drift chant's
  *                                          drift agent (`productDriftAgent`)
  *   .github/workflows/terragucci-drift.yml chant's Op generator's workflow
- *                                          (or .forgejo/workflows/): the drift
+ *                                          (or .forgejo/workflows/, or
+ *                                          .gitlab/terragucci-drift.yml, which
+ *                                          .gitlab-ci.yml includes): the drift
  *                                          job, and with agent.drift the agent
  *                                          and push jobs, which run when the
  *                                          drift job exits with chant's
@@ -31,12 +33,13 @@
  * on drift as terragucci's own job did. The drift agent's runs go on the
  * ledger under op `terragucci-drift`.
  *
- * GitLab, and Forgejo with oidc, keep terragucci's own drift job: chant's
- * GitLab Op job has no named id_tokens or cache, and its Forgejo job no
- * enable-openid-connect (chant issue 4753).
+ * On GitLab the Op's job carries the drift stage's id_tokens, a Terragrunt
+ * repo's cache and terragucci's schedule rule (`gitlab` on the spec, chant
+ * issue 4753), so no project adds a variable to its drift schedule. On
+ * Forgejo with oidc chant's job sets enable-openid-connect itself.
  */
 import type { AgentCommentInput } from "./agent-comment";
-import { chantAgentJobNow, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
+import { chantOpGeneratorNow, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import type { ForgeName } from "./config";
 import { chantAgentOptions } from "./render-chant-agent";
@@ -46,10 +49,14 @@ export const CHANT_DRIFT_OP = "terragucci-drift";
 export const CHANT_DRIFT_SPEC_FILE = ".chant/ops/terragucci-drift.spec.json";
 export const CHANT_DRIFT_SCRIPT_FILE = ".chant/ops/terragucci-drift.sh";
 export const CHANT_DRIFT_OP_FILE = "ops/terragucci-drift.op.ts";
-export const CHANT_DRIFT_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
+export const CHANT_DRIFT_PATHS: Record<ForgeName, string> = {
   github: ".github/workflows/terragucci-drift.yml",
   forgejo: ".forgejo/workflows/terragucci-drift.yml",
+  gitlab: ".gitlab/terragucci-drift.yml",
 };
+
+/** The stage the drift Op's GitLab job runs in, which terragucci's own stages list keeps. */
+export const CHANT_DRIFT_GITLAB_STAGE = "drift";
 
 /** chant's `drift` exit code (chant#4553), which starts the drift agent's jobs. */
 export const CHANT_DRIFT_EXIT = 2;
@@ -84,7 +91,7 @@ export function chantDriftOpFile(roots: readonly string[], marker: string): stri
 }
 
 export interface ChantDriftInput {
-  forge: Exclude<ForgeName, "gitlab">;
+  forge: ForgeName;
   image: string;
   schedule: string;
   /** The drift step's script, exiting `drift` when it opened the issue. */
@@ -105,29 +112,36 @@ export interface ChantDriftInput {
   roots?: readonly string[];
   marker: string;
   runner?: unknown;
+  /** GitLab: the drift stage's id_tokens, a Terragrunt repo's cache, and the rule that picks drift's schedule (chant issue 4753). */
+  gitlab?: { idTokens?: Record<string, unknown>; cache?: unknown; scheduleRule: string };
 }
 
 /** The drift Op's files, or undefined when the installed chant has no Op generator. */
-export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob | undefined = chantAgentJobNow()): { path: string; content: string }[] | undefined {
+export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob | undefined = chantOpGeneratorNow()): { path: string; content: string }[] | undefined {
   if (!chant) return undefined;
   let agent: object | undefined;
   if (i.agent) {
     const { name: _name, ...settings } = chantAgentOptions(i.agent);
     agent = chant.productDriftAgent(TERRAGUCCI_WORDS, CHANT_DRIFT_OP, settings);
   }
+  const gitlab = i.forge === "gitlab";
+  // GitLab has no permissions block: the script keeps the drift issue with the project's token, and the id_tokens are the spec's own.
+  const variables = gitlab ? { ...i.workflowEnv, ...i.jobEnv } : i.jobEnv;
   const spec: ChantScheduledOpSpec = {
     name: CHANT_DRIFT_OP,
     trigger: { kind: "cron", schedule: i.schedule },
     // The script keeps the drift issue itself; the mode names the token's scopes.
-    findingMode: i.pullRequest ? "pull-request" : "issue",
-    ...(Object.keys(i.jobEnv).length ? { variables: i.jobEnv } : {}),
-    permissions: { ...(i.pullRequest ? { issues: "write" as const } : {}), ...(i.oidc ? { "id-token": "write" as const } : {}) },
+    findingMode: gitlab ? "report" : i.pullRequest ? "pull-request" : "issue",
+    ...(Object.keys(variables).length ? { variables } : {}),
+    ...(gitlab ? {} : { permissions: { ...(i.pullRequest ? { issues: "write" as const } : {}), ...(i.oidc ? { "id-token": "write" as const } : {}) } }),
     ...(i.runner !== undefined ? { runner: i.runner } : {}),
     ...(i.setup && i.setup.length ? { setup: i.setup } : {}),
     artifacts: i.artifacts,
     ...(agent ? { agent } : {}),
+    ...(gitlab && i.gitlab ? { gitlab: { ...(i.gitlab.idTokens && Object.keys(i.gitlab.idTokens).length ? { idTokens: i.gitlab.idTokens } : {}), ...(i.gitlab.cache !== undefined ? { cache: i.gitlab.cache } : {}), scheduleRule: i.gitlab.scheduleRule } } : {}),
   };
-  const options = { image: i.image, runCommand: ["bash", CHANT_DRIFT_SCRIPT_FILE], ...(Object.keys(i.workflowEnv).length ? { variables: i.workflowEnv } : {}) };
+  // On GitLab a file-level variables block would reach every job of the including pipeline, so the job carries them all.
+  const options = { image: i.image, runCommand: ["bash", CHANT_DRIFT_SCRIPT_FILE], ...(gitlab ? { opsStage: CHANT_DRIFT_GITLAB_STAGE } : Object.keys(i.workflowEnv).length ? { variables: i.workflowEnv } : {}) };
   const was = chant.setActiveProductWords(TERRAGUCCI_WORDS);
   let yaml: string | undefined;
   try {

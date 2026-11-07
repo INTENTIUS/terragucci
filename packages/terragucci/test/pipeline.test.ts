@@ -12,7 +12,7 @@ import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-commen
 import { agentRunScript } from "../src/render-agent";
 import { applyScript, AWS_CLI, forgejoSkipLevels, stageTokens, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
-import { git, tmp } from "./helpers";
+import { driftOp, git, tmp } from "./helpers";
 
 // A describe that tests the repo-wide scope (one apply at a time, by group, resource group or lock tag) sets it here.
 const scope = vi.hoisted(() => ({ value: undefined as undefined | "repo" | "root" | "resource" }));
@@ -1185,11 +1185,13 @@ describe("credentials", () => {
   });
 
   it("github: with a drift schedule the note jobs read the drift job's runs, and without one they do not", () => {
-    const drift = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *" }).content);
+    const out = renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *" });
+    const drift = body(out.content);
     expect(drift.jobs["plan-note"].permissions.actions).toBe("read");
     expect(drift.jobs["replan-note"].permissions.actions).toBe("read");
     expect(drift.jobs.plan.permissions.actions).toBeUndefined();
-    expect(drift.jobs.drift.permissions.actions).toBeUndefined();
+    // The drift job is chant's Op in a workflow of its own (terragucci#1305), which reads no runs.
+    expect(driftOp(out, "github")!.text).not.toContain("actions: read");
     expect(body(render("github")).jobs["plan-note"].permissions.actions).toBeUndefined();
   });
 
@@ -2284,17 +2286,18 @@ describe("the rollout job", () => {
   });
 
   it("gitlab: the rollouts schedule runs the rollout job, and drift leaves that schedule's pipelines alone", () => {
-    const doc = body(renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *" }).content);
+    const out = renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *" });
+    const doc = body(out.content);
     expect(doc.rollout.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "rollouts"' }]);
     expect(doc.rollout.script.join("\n")).toContain("terragucci respond rollout --mode apply");
     expect(doc.rollout.variables.GIT_DEPTH).toBe("0");
-    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
     expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
   });
 
   it("gitlab: with apply.resume too, drift leaves both the resume and the rollouts schedules alone", () => {
-    const doc = body(renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *", resume: 10 }).content);
-    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+    const out = renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *", resume: 10 });
+    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
   });
 
   it("github: with apply.resume too, the rollout workflow sits beside the resume workflow", () => {
@@ -2305,22 +2308,26 @@ describe("the rollout job", () => {
 });
 
 describe("the drift stage", () => {
-  const withDrift = (forge: ForgeName, oidc?: typeof OIDC): string =>
-    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, drift: "0 6 * * *" }).content;
+  const withDrift = (forge: ForgeName, oidc?: typeof OIDC) =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, drift: "0 6 * * *" });
 
   it.each(FORGES)("%s: no drift job unless drift names a schedule", (forge) => {
     expect(render(forge)).not.toContain("tf-drift");
   });
 
-  it.each(["github", "forgejo"] as const)("%s: a scheduled run, or a manual one, runs drift and neither push job", (forge) => {
-    const doc = body(withDrift(forge));
-    expect(doc.on.schedule).toEqual([{ cron: "0 6 * * *" }]);
-    expect(doc.on.workflow_dispatch).toBeDefined();
-    expect(doc.jobs.drift.if).toBe("github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')");
+  it.each(["github", "forgejo"] as const)("%s: a scheduled run, or a manual one, runs drift's own workflow and neither push job", (forge) => {
+    const out = withDrift(forge);
+    const doc = body(out.content);
+    // The drift job is chant's Op in a workflow of its own (terragucci#1305): the pipeline keeps no drift cron.
+    expect(doc.on.schedule).toBeUndefined();
+    expect(doc.jobs.drift).toBeUndefined();
+    const op = driftOp(out, forge)!;
+    expect(op.text).toContain("cron: '0 6 * * *'");
+    expect(op.text).toContain("workflow_dispatch");
     expect(doc.jobs["apply-wave-1"].if).toContain("github.event_name == 'push'");
     expect(doc.jobs.check.if).toContain("github.event_name == 'push'");
     expect(doc.jobs.plan.if).toContain("pull_request");
-    const run = doc.jobs.drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    const run = op.script;
     expect(run).toContain("terragucci stage tf-drift");
     expect(run).toContain("--forge " + forge);
     // It reads; nothing in it applies. The drift response's apply mode opens a pull request.
@@ -2328,10 +2335,10 @@ describe("the drift stage", () => {
   });
 
   it("github: drift writes its issue and its pull request, and takes the read-only role", () => {
-    const text = withDrift("github", OIDC);
-    const drift = body(text).jobs.drift;
-    expect(drift.permissions).toEqual({ contents: "write", issues: "write", "pull-requests": "write", "id-token": "write" });
-    const run = drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    const op = driftOp(withDrift("github", OIDC), "github")!;
+    // chant's Op workflow asks for the scopes: the drift issue and pull request, and the OIDC token.
+    for (const scope of ["contents: write", "issues: write", "pull-requests: write", "id-token: write"]) expect(op.text).toContain(scope);
+    const run = op.script;
     expect(run).toContain(OIDC.plan_role);
     expect(run).not.toContain(OIDC.apply_role);
   });
@@ -2385,11 +2392,17 @@ describe("the drift stage", () => {
   });
 
   it("gitlab: drift runs for scheduled pipelines other than the comments schedule's, and check and apply skip them", () => {
-    const doc = body(withDrift("gitlab"));
-    expect(doc.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
+    const out = withDrift("gitlab");
+    const doc = body(out.content);
+    // The drift job is chant's Op in an included file (chant issue 4753), with terragucci's schedule rule.
+    expect(out.content).toContain("include:\n  - local: .gitlab/terragucci-drift.yml\n");
+    expect(doc.stages).toContain("drift");
+    const op = driftOp(out, "gitlab")!;
+    expect(op.job.stage).toBe("drift");
+    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
     expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
     expect(doc["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
-    expect(doc.drift.script.join("\n")).toContain("terragucci stage tf-drift");
+    expect(op.script).toContain("terragucci stage tf-drift");
   });
 });
 
@@ -2426,7 +2439,8 @@ describe("the comments job (GitLab)", () => {
     for (const job of ["apply-wave-1", "apply-wave-2", "tips", "publish"]) expect(doc[job].rules[0].if, job).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"');
     expect(doc.plan.rules[0].if).toContain("merge_request_event");
     const both = withComments({ drift: "0 6 * * *" });
-    expect(both.drift.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
+    const op = driftOp(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, comments: "*/5 * * * *", drift: "0 6 * * *" }), "gitlab")!;
+    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
     expect(both.comments.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE == "comments"');
   });
 
@@ -2436,20 +2450,27 @@ describe("the comments job (GitLab)", () => {
 });
 
 describe("report storage keys", () => {
-  const withReports = (forge: ForgeName, reports: { bucket: string; role?: string }): string =>
-    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", reports }).content;
+  const withReportsOut = (forge: ForgeName, reports: { bucket: string; role?: string }) =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", reports });
+  const withReports = (forge: ForgeName, reports: { bucket: string; role?: string }): string => {
+    const out = withReportsOut(forge, reports);
+    return [out.content, ...(out.extra ?? []).map((f) => f.content)].join("\n");
+  };
   const KEYS = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"];
-  const WRITERS = ["plan", "drift"];
 
   it.each(["github", "forgejo"] as const)("%s: with a bucket and no role, the jobs that write reports map the key secrets, and no other job does", (forge) => {
-    const doc = body(withReports(forge, { bucket: "s3://r" }));
-    for (const job of WRITERS) for (const k of KEYS) expect(doc.jobs[job].env[k]).toBe(`\${{ secrets.${k} }}`);
+    const out = withReportsOut(forge, { bucket: "s3://r" });
+    const doc = body(out.content);
+    const drift = driftOp(out, forge)!.job;
+    for (const k of KEYS) expect(doc.jobs.plan.env[k]).toBe(`\${{ secrets.${k} }}`);
+    for (const k of KEYS) expect(drift.env[k]).toBe(`\${{ secrets.${k} }}`);
     for (const job of ["check", "apply-wave-1", "apply-wave-2"]) for (const k of KEYS) expect(doc.jobs[job].env?.[k]).toBeUndefined();
   });
 
   it.each(["github", "forgejo"] as const)("%s: with reports.role the key secrets are not mapped", (forge) => {
-    const doc = body(withReports(forge, { bucket: "s3://r", role: "arn:aws:iam::123456789012:role/terragucci-reports" }));
-    for (const job of WRITERS) for (const k of KEYS) expect(doc.jobs[job].env?.[k]).toBeUndefined();
+    const out = withReportsOut(forge, { bucket: "s3://r", role: "arn:aws:iam::123456789012:role/terragucci-reports" });
+    for (const k of KEYS) expect(body(out.content).jobs.plan.env?.[k]).toBeUndefined();
+    for (const k of KEYS) expect(driftOp(out, forge)!.job.env?.[k]).toBeUndefined();
   });
 
   it.each(FORGES)("%s: with no bucket no key secret is mapped", (forge) => {
@@ -2465,20 +2486,24 @@ describe("telemetry headers secret", () => {
   const withHeaders = (forge: ForgeName): string =>
     renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS" }).content;
 
-  const withDrift = (forge: ForgeName): string =>
-    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS", drift: "0 6 * * *", publish: true }).content;
-  const SENDERS = ["plan", "apply-wave-1", "apply-wave-2", "drift"];
+  const withDrift = (forge: ForgeName) =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, headersSecret: "OTLP_HEADERS", drift: "0 6 * * *", publish: true });
+  const SENDERS = ["plan", "apply-wave-1", "apply-wave-2"];
 
   it.each(["github", "forgejo"] as const)("%s: the secret is on the jobs that send telemetry alone", (forge) => {
-    const doc = body(withDrift(forge));
+    const out = withDrift(forge);
+    const doc = body(out.content);
     expect(doc.env?.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
     for (const job of SENDERS) expect(doc.jobs[job].env.OTEL_EXPORTER_OTLP_HEADERS).toBe("${{ secrets.OTLP_HEADERS }}");
+    expect(driftOp(out, forge)!.job.env.OTEL_EXPORTER_OTLP_HEADERS).toBe("${{ secrets.OTLP_HEADERS }}");
     for (const job of ["check", "publish"]) expect(doc.jobs[job].env?.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
   });
 
   it("gitlab: the CI/CD variable is on the jobs that send telemetry alone", () => {
-    const doc = body(withDrift("gitlab"));
+    const out = withDrift("gitlab");
+    const doc = body(out.content);
     for (const job of SENDERS) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
+    expect(driftOp(out, "gitlab")!.job.variables.OTEL_EXPORTER_OTLP_HEADERS).toBe("$OTLP_HEADERS");
     for (const job of ["check", "publish"]) expect(doc[job].variables.OTEL_EXPORTER_OTLP_HEADERS).toBeUndefined();
   });
 
@@ -2505,8 +2530,11 @@ describe("telemetry headers secret", () => {
 });
 
 describe("respond steps", () => {
-  const withRespond = (forge: ForgeName, respond?: Record<string, string>): string =>
-    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", ...(respond ? { respond } : {}) }).content;
+  /** The pipeline and its extra files, the drift Op's script among them. */
+  const withRespond = (forge: ForgeName, respond?: Record<string, string>): string => {
+    const out = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", ...(respond ? { respond } : {}) });
+    return [out.content, ...(out.extra ?? []).map((f) => f.content)].join("\n");
+  };
 
   it.each(FORGES)("%s: triage, the refused wave, drift and fmt run by default", (forge) => {
     const text = withRespond(forge);
@@ -2544,38 +2572,38 @@ describe("decide token on the plan jobs", () => {
 
   it.each(["github", "forgejo"] as const)("%s: the drift job maps the secret when drift attributes, and not otherwise", (forge) => {
     const render = (respond: Record<string, string>) =>
-      renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, decideTokenEnv: "JEV_API_KEY", drift: "0 6 * * *", respond }).content;
-    expect(body(render({ drift: "attribute" })).jobs.drift.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
-    expect(body(render({ drift: "pull-request" })).jobs.drift.env.JEV_API_KEY).toBeUndefined();
-    expect(body(render({ drift: "attribute" })).jobs.plan.env.JEV_API_KEY).toBeUndefined();
+      renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, decideTokenEnv: "JEV_API_KEY", drift: "0 6 * * *", respond });
+    expect(driftOp(render({ drift: "attribute" }), forge)!.job.env.JEV_API_KEY).toBe("${{ secrets.JEV_API_KEY }}");
+    expect(driftOp(render({ drift: "pull-request" }), forge)!.job.env.JEV_API_KEY).toBeUndefined();
+    expect(body(render({ drift: "attribute" }).content).jobs.plan.env.JEV_API_KEY).toBeUndefined();
   });
 
   it.each(["github", "forgejo"] as const)("%s: the drift job installs the AWS CLI before tf-drift when drift attributes, and not otherwise", (forge) => {
     const render = (respond: Record<string, string>) =>
-      renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond }).content;
-    const steps = body(render({ drift: "attribute" })).jobs.drift.steps as { name?: string; run?: string }[];
-    const at = steps.findIndex((s) => s.name?.startsWith("Install the AWS CLI"));
-    expect(at).toBeGreaterThan(0);
-    expect(steps[at + 1].run).toContain("terragucci stage tf-drift");
-    expect(steps[at].run).toContain("if ! command -v aws");
-    expect(steps[at].run).toContain(`awscli-exe-linux-$arch-${AWS_CLI.version}.zip`);
-    expect(steps[at].run).toContain(AWS_CLI.sha256.x86_64);
-    expect(steps[at].run).toContain(AWS_CLI.sha256.aarch64);
-    expect(steps[at].run).toContain("sha256sum -c");
-    expect(steps[at].run).toContain('>> "$GITHUB_PATH"');
-    expect(render({ drift: "pull-request" })).not.toContain("AWS CLI");
-    expect(render({})).not.toContain("AWS CLI");
-    expect(body(render({ drift: "attribute" })).jobs.plan.steps.some((s: { name?: string }) => s.name?.startsWith("Install the AWS CLI"))).toBe(false);
+      renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond });
+    // The drift Op's script installs the AWS CLI, onto its own shell's PATH, before tf-drift reads with it.
+    const script = driftOp(render({ drift: "attribute" }), forge)!.script;
+    expect(script.indexOf("if ! command -v aws")).toBeGreaterThanOrEqual(0);
+    expect(script.indexOf("if ! command -v aws")).toBeLessThan(script.indexOf("terragucci stage tf-drift"));
+    expect(script).toContain(`awscli-exe-linux-$arch-${AWS_CLI.version}.zip`);
+    expect(script).toContain(AWS_CLI.sha256.x86_64);
+    expect(script).toContain(AWS_CLI.sha256.aarch64);
+    expect(script).toContain("sha256sum -c");
+    expect(script).toContain('export PATH="$dir/bin:$PATH"');
+    expect(script).not.toContain("GITHUB_PATH");
+    expect(driftOp(render({ drift: "pull-request" }), forge)!.script).not.toContain("command -v aws");
+    expect(driftOp(render({}), forge)!.script).not.toContain("command -v aws");
+    expect(body(render({ drift: "attribute" }).content).jobs.plan.steps.some((s: { name?: string }) => s.name?.startsWith("Install the AWS CLI"))).toBe(false);
   });
 
   it("gitlab: the drift job installs the AWS CLI before tf-drift when drift attributes, and not otherwise", () => {
     const render = (respond: Record<string, string>) =>
-      renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond }).content;
-    const script = (body(render({ drift: "attribute" })).drift.script as string[]);
-    expect(script.findIndex((l) => l.includes("command -v aws"))).toBeGreaterThanOrEqual(0);
-    expect(script.findIndex((l) => l.includes("command -v aws"))).toBeLessThan(script.findIndex((l) => l.includes("terragucci stage tf-drift")));
-    expect(script.join("\n")).toContain('export PATH="$dir/bin:$PATH"');
-    expect(render({ drift: "pull-request" })).not.toContain("command -v aws");
+      renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond });
+    const script = driftOp(render({ drift: "attribute" }), "gitlab")!.script;
+    expect(script.indexOf("command -v aws")).toBeGreaterThanOrEqual(0);
+    expect(script.indexOf("command -v aws")).toBeLessThan(script.indexOf("terragucci stage tf-drift"));
+    expect(script).toContain('export PATH="$dir/bin:$PATH"');
+    expect(driftOp(render({ drift: "pull-request" }), "gitlab")!.script).not.toContain("command -v aws");
   });
 
   it("gitlab: the CI/CD variable is already in every job, so nothing is mapped", () => {
@@ -2614,8 +2642,9 @@ describe("GCP and Azure credentials", () => {
   const GCP = { workload_identity_provider: PROVIDER, plan_service_account: "plan-ro@shop.iam.gserviceaccount.com", apply_service_account: "apply-rw@shop.iam.gserviceaccount.com" };
   const AZURE = { tenant_id: "tenant-1", subscription_id: "sub-1", plan_client_id: "client-plan", apply_client_id: "client-apply" };
   const CLOUDS = { gcp: GCP, azure: AZURE };
-  const renderWith = (forge: ForgeName, oidc: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
-    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, ...extra } as never).content;
+  const renderWithOut = (forge: ForgeName, oidc: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, ...extra } as never);
+  const renderWith = (forge: ForgeName, oidc: Record<string, unknown>, extra: Record<string, unknown> = {}): string => renderWithOut(forge, oidc, extra).content;
 
   it.each(FORGES)("%s: plan holds the plan service account and client, apply the apply ones, check neither", (forge) => {
     const doc = body(renderWith(forge, CLOUDS));
@@ -2660,9 +2689,11 @@ describe("GCP and Azure credentials", () => {
   });
 
   it("gitlab: an id_token per cloud, each with its audience, on plan, apply and drift", () => {
-    const doc = body(renderWith("gitlab", CLOUDS, { drift: "0 6 * * *" }));
+    const out = renderWithOut("gitlab", CLOUDS, { drift: "0 6 * * *" });
+    const doc = body(out.content);
     const want = { TERRAGUCCI_OIDC_GCP: { aud: `https://iam.googleapis.com/${PROVIDER}` }, TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchange" } };
-    for (const j of ["plan", "apply-wave-1", "drift"]) expect(doc[j].id_tokens).toEqual(want);
+    for (const j of ["plan", "apply-wave-1"]) expect(doc[j].id_tokens).toEqual(want);
+    expect(driftOp(out, "gitlab")!.job.id_tokens).toEqual(want);
     expect(doc.check.id_tokens).toBeUndefined();
     expect(doc.plan.script.join("\n")).toContain('printf \'%s\' "$TERRAGUCCI_OIDC_GCP" >"$TERRAGUCCI_GCP_TOKEN_FILE"');
     expect(doc.plan.script.join("\n")).toContain('printf \'%s\' "$TERRAGUCCI_OIDC_AZURE" >"$ARM_OIDC_TOKEN_FILE_PATH"');
@@ -2673,8 +2704,10 @@ describe("GCP and Azure credentials", () => {
   });
 
   it("gitlab: the Azure id_token carries oidc.azure.audience, as GitHub's and Forgejo's token request does", () => {
-    const doc = body(renderWith("gitlab", { azure: { ...AZURE, audience: "api://AzureADTokenExchangeUSGov" } }, { drift: "0 6 * * *" }));
-    for (const j of ["plan", "apply-wave-1", "drift"]) expect(doc[j].id_tokens).toEqual({ TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
+    const out = renderWithOut("gitlab", { azure: { ...AZURE, audience: "api://AzureADTokenExchangeUSGov" } }, { drift: "0 6 * * *" });
+    const doc = body(out.content);
+    for (const j of ["plan", "apply-wave-1"]) expect(doc[j].id_tokens).toEqual({ TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
+    expect(driftOp(out, "gitlab")!.job.id_tokens).toEqual({ TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
   });
 
   it.each(FORGES)("%s: drift takes the plan identities", (forge) => {

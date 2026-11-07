@@ -7,7 +7,7 @@ import { findRootsWithReasons } from "../src/detect";
 import { applyScript, commentApplyScript, driftScript, planFilesScript, planScript, renderPipeline, synthScript } from "../src/render";
 import { runStage } from "../src/report/stage";
 import { compareSynthesized, localModules, synthAffected, treeDigest } from "../src/synth";
-import { git, tmp, write } from "./helpers";
+import { driftOp, git, tmp, write } from "./helpers";
 
 const SYNTH = "npm ci && npx cdktn synth";
 const layers = [["cdktf.out/stacks/dev", "cdktf.out/stacks/prod"]];
@@ -87,11 +87,12 @@ describe("synth: roots a command writes", () => {
     const base = { forge: "forgejo" as const, binary: "tofu" as const, version: "1.13.1", image: "img:1", layers, env: {}, synth: SYNTH, drift: "0 6 * * *" };
     expect(() => renderPipeline(base)).toThrow(/respond\.drift: the drift pull request/);
     expect(() => renderPipeline({ ...base, drift: undefined, rollouts: "*/15 * * * *" })).toThrow(/rollouts: a rollout moves a pin/);
-    const text = renderPipeline({ ...base, respond: { drift: "attribute" } }).content;
+    // The drift job is chant's Op (terragucci#1305): its script is the drift step's.
+    const text = driftOp(renderPipeline({ ...base, respond: { drift: "attribute" } }), "forgejo")!.script;
     expect(text).toContain("terragucci stage tf-drift");
     expect(text).not.toContain("terragucci respond drift");
     expect(text).toContain(`terragucci: no drift pull request: ${SYNTH_DRIFT_PR_SHORT}`);
-    expect(renderPipeline({ ...base, synth: undefined }).content).toContain("terragucci respond drift");
+    expect(driftOp(renderPipeline({ ...base, synth: undefined }), "forgejo")!.script).toContain("terragucci respond drift");
   });
 
   it("finds no roots when the command has not run", async () => {

@@ -85,7 +85,7 @@ A chat front end or a script can re-plan without a comment. On GitHub and Forgej
 
 | Input | Value |
 |---|---|
-| `pr` | the pull request's number; left empty, the dispatch runs the drift job where `drift:` is set |
+| `pr` | the pull request's number. Drift runs by hand from its own workflow, `terragucci-drift.yml` ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)) |
 | `root` | optional: one root path, read by the comment grammar |
 
 The re-plan runs the same checks as `/terragucci plan [root]` and updates the same note and status.

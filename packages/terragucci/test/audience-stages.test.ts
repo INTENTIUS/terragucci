@@ -31,7 +31,8 @@ const render = (forge: PipelineInput["forge"], oidc: PipelineInput["oidc"], extr
 /** The pipeline and its extra files, each parsed on its own, with their jobs (GitHub, Forgejo) or entries (GitLab) in one document. */
 const rendered = (forge: PipelineInput["forge"], oidc: PipelineInput["oidc"], extra: Partial<PipelineInput> = {}): Record<string, any> => {
   const r = renderPipeline(input(forge, oidc, extra));
-  const docs = [r.content, ...(r.extra ?? []).map((e) => e.content)].map(body);
+  // The workflow files only: the drift Op's script (.chant/ops/terragucci-drift.sh) and spec are not YAML jobs.
+  const docs = [r.content, ...(r.extra ?? []).filter((e) => /\.ya?ml$/.test(e.path)).map((e) => e.content)].map(body);
   if (forge === "gitlab") return Object.assign({}, ...docs);
   return { ...docs[0], jobs: Object.assign({}, ...docs.map((d) => d.jobs ?? {})) };
 };
@@ -81,7 +82,8 @@ describe("oidc.audience as a map: GitLab", () => {
     const aud = (job: string): unknown => doc[job].id_tokens;
     expect(aud("plan")).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.plan } });
     for (const j of ["apply-wave-1", "apply-wave-2", "ephemeral", "ephemeral-sweep"]) expect(aud(j), j).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.apply } });
-    expect(aud("drift")).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.drift } });
+    // The drift job is chant's Op (terragucci#1305), with the drift stage's id_token (chant issue 4753).
+    expect(aud("terragucci-drift")).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.drift } });
     expect(doc.check.id_tokens).toBeUndefined();
     // GitLab's jobs read their token from id_tokens; none asks the forge for one or restarts.
     expect(JSON.stringify(doc)).not.toMatch(/tg oidc|TG_NO_OIDC_REQUEST/);
@@ -101,8 +103,10 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
   it("each job's step asks for its stage's audience, first, and restarts without the token-request variables", () => {
     const doc = rendered(forge, MAP, { ephemeral: { roots: ["app"] } as never });
     const want: Record<string, string> = { plan: AUD.plan, replan: AUD.plan, "apply-wave-1": AUD.apply, "apply-wave-2": AUD.apply, "apply-comment": AUD.apply, ephemeral: AUD.apply, drift: AUD.drift };
+    // The drift job is chant's Op (terragucci#1305): its token request is in the script the Op's step runs.
+    const driftScript = renderPipeline(input(forge, MAP, { ephemeral: { roots: ["app"] } as never })).extra!.find((e) => e.path === ".chant/ops/terragucci-drift.sh")!.content;
     for (const [job, aud] of Object.entries(want)) {
-      const steps = runs(doc, job);
+      const steps = job === "drift" ? [driftScript] : runs(doc, job);
       expect(steps.length, job).toBeGreaterThan(0);
       for (const run of steps) {
         const asks = [...run.matchAll(/tg oidc "\$TERRAGUCCI_OIDC_FILE" '([^']*)'/g)].map((m) => m[1]);
@@ -126,7 +130,8 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
     expect(runs(pr, "confirm").join("\n")).toContain(`tg oidc "$TERRAGUCCI_OIDC_FILE" '${AUD.apply}'`);
     expect(runs(pr, "confirm").join("\n")).toContain(PLAN);
     const r = renderPipeline(input(forge, MAP, { resume: 15, ephemeral: { roots: ["app"] } as never }));
-    const extra = (r.extra ?? []).map((e) => e.content).join("\n");
+    // The resume and the sweep workflows; the drift Op's files, which take the drift audience, are tested above.
+    const extra = (r.extra ?? []).filter((e) => !e.path.includes("terragucci-drift")).map((e) => e.content).join("\n");
     expect(extra.match(/tg oidc "\$TERRAGUCCI_OIDC_FILE" '([^']*)'/g)?.every((l) => l.includes(AUD.apply))).toBe(true);
     expect(extra).toContain("TG_NO_OIDC_REQUEST=1");
   });

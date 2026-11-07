@@ -186,8 +186,8 @@ import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
-import { chantDriftExitLines, chantDriftFiles } from "./render-chant-drift";
-import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, driftAgentJobs, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
+import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
+import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { commentLine, productPipelineJobs, type CiProductCommand } from "@intentius/chant/ci-product";
@@ -273,6 +273,15 @@ export const PIPELINE_PATHS: Record<ForgeName, string> = {
  * the apply. A stage no job is in does not show in the pipeline.
  */
 export const GL_DEFAULT_STAGES = { before: ["build", "test"], after: ["deploy"] };
+
+/** Why drift needs chant's Op generator: the drift job is a chant drift Op on every forge (terragucci#1305, chant issue 4622). */
+export const CHANT_DRIFT_NEEDS_OP = "the drift job is a chant drift Op, and the installed chant has no Op generator; install the chant release terragucci pins";
+
+/** `stages` with `stage` after the last of `after` the list holds, else first. */
+export function insertStage(stages: readonly string[], stage: string, after: readonly string[]): string[] {
+  const at = Math.max(-1, ...after.map((s) => stages.indexOf(s)));
+  return [...stages.slice(0, at + 1), stage, ...stages.slice(at + 1)];
+}
 
 export interface PipelineInput {
   forge: ForgeName;
@@ -644,9 +653,10 @@ const RESPOND_DIR = "terragucci-respond";
 const sh = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** The step that puts a pinned version the image does not carry on the path. */
-export function installScript(binary: Binary | Tool, version: string, forge: ForgeName): string {
+export function installScript(binary: Binary | Tool, version: string, forge: ForgeName, sameShell = false): string {
   const dir = `dir="$(terragucci install ${binary} ${version})"`;
-  return forge === "gitlab" ? `${dir}\nexport PATH="$dir:$PATH"` : `${dir}\necho "$dir" >> "$GITHUB_PATH"`;
+  // In a script that goes on to use it (GitLab's job, the drift Op's script), the PATH of this shell; else the next steps'.
+  return forge === "gitlab" || sameShell ? `${dir}\nexport PATH="$dir:$PATH"` : `${dir}\necho "$dir" >> "$GITHUB_PATH"`;
 }
 
 /** The AWS CLI v2 release the drift job installs when attribution needs it, with each build's sha256 (the zips also verify against the AWS CLI team's PGP signature). */
@@ -664,7 +674,7 @@ export const AWS_CLI = {
  * downloads the zip and `unzip` comes from apt. The zip must match the pinned
  * sha256 for the runner's architecture before it is unpacked.
  */
-export function awsCliScript(forge: ForgeName): string {
+export function awsCliScript(forge: ForgeName, sameShell = false): string {
   const url = `https://awscli.amazonaws.com/awscli-exe-linux-$arch-${AWS_CLI.version}.zip`;
   return [
     "if ! command -v aws >/dev/null 2>&1; then",
@@ -678,7 +688,8 @@ export function awsCliScript(forge: ForgeName): string {
     '  echo "$sum  $dir/awscliv2.zip" | sha256sum -c -',
     '  unzip -q "$dir/awscliv2.zip" -d "$dir"',
     '  "$dir/aws/install" --install-dir "$dir/aws-cli" --bin-dir "$dir/bin"',
-    forge === "gitlab" ? '  export PATH="$dir/bin:$PATH"' : '  echo "$dir/bin" >> "$GITHUB_PATH"',
+    // In a script that goes on to use it (GitLab's job, the drift Op's script), the PATH of this shell; else the next steps'.
+    forge === "gitlab" || sameShell ? '  export PATH="$dir/bin:$PATH"' : '  echo "$dir/bin" >> "$GITHUB_PATH"',
     "fi",
   ].join("\n");
 }
@@ -2247,7 +2258,7 @@ export function publishScript(forge: ForgeName): string {
  * -refresh-only, writes the plan report, and keeps the drift issue. A root
  * that cannot be refreshed fails the job; drift alone does not.
  */
-export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent: boolean | "chant" = false): string {
+export function driftScript(binary: Binary, layers: string[][], forge: ForgeName = "github", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, pullRequest?: { tokenEnv?: string }, notify = false, agent: false | "chant" = false): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -2271,7 +2282,7 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
     // With agent.drift, the step's outputs say whether this run opened the drift issue, and which; the drift-agent jobs run when it did.
     // On chant's drift Op (terragucci#1305) the run exits with chant's drift code instead, which starts chant's agent jobs.
-    ...(agent === true ? [`node -e '${DRIFT_ISSUE_JS}' ${REPORT_DIR}/${DRIFT_ISSUE_FILE} >>"$GITHUB_OUTPUT"`] : agent === "chant" ? chantDriftExitLines(DRIFT_ISSUE_JS, `${REPORT_DIR}/${DRIFT_ISSUE_FILE}`) : []),
+    ...(agent === "chant" ? chantDriftExitLines(DRIFT_ISSUE_JS, `${REPORT_DIR}/${DRIFT_ISSUE_FILE}`) : []),
     ...(report.synth && !pullRequest ? [`echo "terragucci: no drift pull request: ${report.synth === ATMOS_WRITE ? ATMOS_DRIFT_PR_SHORT : SYNTH_DRIFT_PR_SHORT}"`] : []),
     // With notify, drift goes to Slack and Teams with a Re-plan button; a webhook that fails never fails the job.
     ...(notify ? [`terragucci notify drift --report ${REPORT_DIR} || true`] : []),
@@ -2873,19 +2884,32 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         script: [...(input.attest ? [installScript("cosign", COSIGN_VERSION, forge)] : []), ...script(bash("PUBLISH", publishScript(forge)))],
       } as never) as never);
     }
-    if (drift) {
-      jobs.set("drift", new GitLabJob({
-        stage: "drift",
-        image: jobImage,
-        variables: { ...gitlabEnv, ...driftNotifyEnv },
-        // The comments, resume and rollouts schedules' pipelines carry TERRAGUCCI_SCHEDULE=comments, resume or rollouts; any other schedule, with or without a variable, is drift's.
-        rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}${ephemeral ? ` && $${SCHEDULE_VAR} != "ephemeral"` : ""}` })],
-        ...idTokens("drift"),
-        ...(tg ? forgeCache("gitlab") : {}),
-        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), bash("DRIFT", driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify))],
-        artifacts: { name: `${REPORT_DIR}-drift`, when: "always", paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] },
-      } as never) as never);
-    }
+    // terragucci#1305 and chant issues 4622 and 4753: the drift job is a chant drift Op in a file of its own, which
+    // .gitlab-ci.yml includes. It keeps the drift stage's id_tokens, a Terragrunt repo's cache and the rule that picks
+    // drift's schedule, so no project adds a variable to its drift schedule.
+    const driftRule = `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}${ephemeral ? ` && $${SCHEDULE_VAR} != "ephemeral"` : ""}`;
+    const glDrift = drift
+      ? chantDriftFiles({
+          forge,
+          image,
+          schedule: drift,
+          script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify)].join("\n"),
+          workflowEnv: {},
+          jobEnv: definedEnv({ ...gitlabEnv, ...driftNotifyEnv }),
+          pullRequest: Boolean(driftPr),
+          oidc: Boolean(oidc),
+          artifacts: [{ name: `${REPORT_DIR}-drift`, paths: [`${REPORT_DIR}/`, ...(agentDrift ? [`${RESPOND_DIR}/`] : [])] }],
+          ...(!input.atmos && !input.terramate && !tg ? { roots: layers.flat() } : {}),
+          marker: MARKER,
+          ...(runnerOf(input.runner, "drift") !== undefined ? { runner: runnerOf(input.runner, "drift") } : {}),
+          gitlab: {
+            ...((idTokens("drift") as { id_tokens?: Record<string, unknown> }).id_tokens ? { idTokens: (idTokens("drift") as { id_tokens: Record<string, unknown> }).id_tokens } : {}),
+            ...(tg ? { cache: (forgeCache("gitlab") as { cache: unknown }).cache } : {}),
+            scheduleRule: driftRule,
+          },
+        })
+      : undefined;
+    if (drift && !glDrift) throw new RenderError(`drift: ${CHANT_DRIFT_NEEDS_OP}`);
     if (rollouts) {
       // The rollouts schedule's pipelines: continue every rollout in flight, from the default branch, with the project's token.
       jobs.set("rollout", new GitLabJob({
@@ -2994,23 +3018,28 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     }
     placeJobs(jobs, input.runner, forge, groupRunners);
     const out = text(gitlabSerializer.serialize(jobs)).replace(/^stages:\n((?: {2}- .*\n)+)/, (_, list: string) => {
-      const ours = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
+      const listed = list.trimEnd().split("\n").map((l) => l.replace(/^ {2}- /, ""));
+      // The drift Op's job is in the included file; its stage keeps the place terragucci's drift job had, after publish.
+      const ours = glDrift && !listed.includes(CHANT_DRIFT_GITLAB_STAGE) ? insertStage(listed, CHANT_DRIFT_GITLAB_STAGE, ["check", "plan", "apply", "tips", "publish"]) : listed;
       return `${emitYAMLEntry("stages", [...GL_DEFAULT_STAGES.before, ...ours, ...GL_DEFAULT_STAGES.after])}\n`;
     });
     // The agent's jobs on chant's job are in a file of their own, included here; they share the comments stage.
-    const agentInclude = chantAgent ? `include:\n  - local: ${CHANT_AGENT_PATHS.gitlab}\n` : "";
-    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + agentInclude + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs, ...(chantAgent ? { extra: chantAgent.files } : {}) };
+    const included = [...(chantAgent ? [CHANT_AGENT_PATHS.gitlab] : []), ...(glDrift ? [CHANT_DRIFT_PATHS.gitlab] : [])];
+    const agentInclude = included.length ? `include:\n${included.map((f) => `  - local: ${f}\n`).join("")}` : "";
+    const glExtra = [...(chantAgent ? chantAgent.files : []), ...(glDrift ?? [])];
+    return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + agentInclude + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs, ...(glExtra.length ? { extra: glExtra } : {}) };
   }
 
   // terragucci#1305 and chant issue 4622: the drift job is a chant drift Op in a workflow of its own, keeping the drift report
   // (and respond.drift: agent's input) as artifacts, with a Terragrunt repo's cache as a setup step and attribution's AWS CLI
-  // install in its script. Forgejo with oidc keeps terragucci's job: chant's Forgejo job sets no enable-openid-connect (chant issue 4753).
-  const chantDrift = drift && !(forge === "forgejo" && oidc)
+  // install in its script. On Forgejo with oidc chant's job sets enable-openid-connect (chant issue 4753).
+  const chantDrift = drift
     ? chantDriftFiles({
         forge,
         image,
         schedule: drift,
-        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift ? "chant" : false)].join("\n"),
+        // The pinned binaries and the AWS CLI are installed in the script that runs them, so they go on this shell's PATH.
+        script: [...installs.map((i) => installScript(i.tool, i.version, forge, true)), ...(awsStep ? [awsCliScript(forge, true)] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift ? "chant" : false)].join("\n"),
         workflowEnv: jobEnv,
         jobEnv: definedEnv({ ...passed, TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv, ...driftDecideEnv, ...reportKeyEnv(forge, input.reports), ...driftNotifyEnv }),
         pullRequest: Boolean(driftPr),
@@ -3042,7 +3071,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // ephemeral: the same events apply a pull request's copy of the ephemeral roots and destroy it on close.
       ...(locksPlan || ephemeral ? { pull_request_target: { types: ["opened", "reopened", "synchronize", "closed"] } } : {}),
       ...(drift && !chantDrift ? { schedule: [{ cron: drift }] } : {}),
-      // A dispatch with pr re-plans that pull request as `/terragucci plan [root]` does (comment.ts); with drift set, one without pr runs the drift job.
+      // A dispatch with pr re-plans that pull request as `/terragucci plan [root]` does (comment.ts). The drift job is dispatched from terragucci-drift.yml.
       workflow_dispatch: { inputs: REPLAN_INPUTS },
     },
     env: jobEnv,
@@ -3504,39 +3533,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ],
     } as never) as never);
   }
-  if (drift && !chantDrift) {
-    // Reads every root, so it takes the plan job's read-only role, and writes only the issue.
-    entities.set("drift", new Job({
-      "runs-on": "ubuntu-latest",
-      container: { image },
-      if: "github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')",
-      permissions: { contents: driftPr ? "write" : "read", issues: "write", ...(driftPr ? { "pull-requests": "write" } : {}), ...(oidc ? { "id-token": "write" } : {}) },
-      ...openid(Boolean(oidc)),
-      ...(input.agentDrift ? { outputs: { agent: "${{ steps.drift.outputs.agent }}", issue: "${{ steps.drift.outputs.issue }}" } } : {}),
-      env: {
-        ...passed,
-        TG_TOKEN: "${{ github.token }}",
-        TG_SHA: "${{ github.sha }}",
-        ...headersEnv,
-        ...driftDecideEnv,
-        ...reportKeyEnv(forge, input.reports),
-        ...driftNotifyEnv,
-      },
-      steps: [
-        ...steps(new Step({ ...(input.agentDrift ? { id: "drift" } : {}), name: `Plan every ${what} against what exists, and keep the drift issue`, shell: "bash", run: driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift !== undefined) }), true, false, awsStep),
-        new Step({
-          name: "Keep the drift report",
-          if: "always()",
-          uses: uploadArtifact(forge),
-          with: { name: `${REPORT_DIR}-drift`, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" },
-        }),
-        ...(agentDrift
-          ? [new Step({ name: "Keep the agent input", if: "always()", uses: uploadArtifact(forge), with: { name: `${RESPOND_DIR}-drift`, path: `${RESPOND_DIR}/`, "if-no-files-found": "ignore" } })]
-          : []),
-      ],
-    } as never) as never);
-  }
-  if (drift && input.agentDrift && !chantDrift) for (const [name, job] of driftAgentJobs(forge, image, input.agentDrift, `${REPORT_DIR}-drift`)) entities.set(name, job);
+  if (drift && !chantDrift) throw new RenderError(`drift: ${CHANT_DRIFT_NEEDS_OP}`);
   if (forge === "forgejo") deferDeepSkips(entities);
   // Every workflow file goes through here, so its jobs run where runner places them.
   const serialize = (jobs: Map<string, never>): string => {

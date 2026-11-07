@@ -1456,6 +1456,28 @@ const loaders = {
       return typeof m.CI_AGENT_FLOOR === "string" && has(m, "productPipelineJobs", "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
     },
   ),
+  // The drift job is a chant drift Op on every forge (terragucci#1305, chant issues 4622 and 4753): the Op generators and
+  // the drift agent's spec, apart from agentJob, which also decides whether agent.comment rides chant's job.
+  opGenerator: once<ChantAgentJob>(
+    async () => {
+      const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
+      const words: Record<string, unknown> = await import("@intentius/chant/ci-product-words");
+      const github: Record<string, unknown> = await import("@intentius/chant-lexicon-github/components/generate-op-pipeline");
+      const gitlab: Record<string, unknown> = await import("@intentius/chant-lexicon-gitlab/components/generate-op-pipeline");
+      const forgejo: Record<string, unknown> = await import("@intentius/chant-lexicon-forgejo/components/generate-op-pipeline");
+      return {
+        CI_AGENT_FLOOR: product.CI_AGENT_FLOOR,
+        productPipelineJobs: product.productPipelineJobs,
+        productDriftAgent: product.productDriftAgent,
+        setActiveProductWords: words.setActiveProductWords,
+        generate: { github: github.generateGithubOpPipeline, gitlab: gitlab.generateGitlabOpPipeline, forgejo: forgejo.generateForgejoOpPipeline },
+      };
+    },
+    (m) => {
+      const g = m.generate as Record<string, unknown> | undefined;
+      return has(m, "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
+    },
+  ),
   holdRecord: once<ChantHoldRecord>(
     () => import("@intentius/chant/lifecycle/gated-request"),
     // chant#4623's feature-detect: an op-wave hold with `record: true` gets chant's applied and finished lines and keeps its attachment.
@@ -1570,6 +1592,9 @@ export const chantAgentRuns = (): Promise<ChantAgentRuns | undefined> => load("a
 export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
 /** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
 export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJob");
+/** chant's Op generators, which the drift job is written with (terragucci#1305), once loaded. */
+export const chantOpGenerator = (): Promise<ChantAgentJob | undefined> => load("opGenerator");
+export const chantOpGeneratorNow = (): ChantAgentJob | undefined => loaded("opGenerator");
 
 /**
  * Load the parts synchronous code reads, once, before a command runs. cli.ts
@@ -1620,10 +1645,11 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
+  const opGenerator = await chantOpGenerator();
   const holdRecord = await chantHoldRecord();
   const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
