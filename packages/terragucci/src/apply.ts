@@ -542,28 +542,7 @@ function fetchLifecycle(repo: string): boolean {
   if (!heads.stdout.trim()) return false;
   const f = git(repo, ["fetch", "-q", "origin", `+refs/heads/${LIFECYCLE}:${REMOTE_REF}`]);
   if (f.status !== 0) throw new ConfigError(`cannot fetch ${LIFECYCLE}, so the gate cannot be decided: ${f.stderr.trim()}`);
-  catchUpLocalLedger(repo);
   return true;
-}
-
-/**
- * Bring the checkout's own chant/lifecycle up to what was just fetched, when
- * that loses nothing: it is missing, or behind. chant's writers append to the
- * local branch and push it with a lease on REMOTE_REF, so a local branch left
- * behind a REMOTE_REF this fetch moved would push over every record made since
- * it was last read (an approval made elsewhere between two runs). A local
- * branch with records origin does not have is left alone, for chant to settle.
- */
-function catchUpLocalLedger(repo: string): void {
-  const tip = git(repo, ["rev-parse", "--verify", "-q", `${REMOTE_REF}^{commit}`]).stdout.trim();
-  if (!tip) return;
-  const local = git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${LIFECYCLE}^{commit}`]).stdout.trim();
-  if (local === tip) return;
-  if (local && git(repo, ["merge-base", "--is-ancestor", local, tip]).status !== 0) return;
-  // A checked-out chant/lifecycle is never moved under its work tree.
-  if (git(repo, ["symbolic-ref", "-q", "HEAD"]).stdout.trim() === `refs/heads/${LIFECYCLE}`) return;
-  // With the old value, a writer that moved the branch since is never undone.
-  git(repo, ["update-ref", `refs/heads/${LIFECYCLE}`, tip, local || "0".repeat(tip.length)]);
 }
 
 /** The gate ledger as `chant/lifecycle` on origin holds it now: the waves' gates, or with `path` another op's file. */
