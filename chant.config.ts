@@ -20,6 +20,11 @@ export default {
   // building this root project alone.
   rootOnly: true,
 
+  // The declarations chant builds from this root when no directory is named: the release cut's compile (chant release
+  // compile) reads them. Without it the build loads every .ts in the repo, scripts included, and a script that runs on
+  // load (scripts/coverage-gaps.ts --json) prints and exits in the compile's place.
+  sourceDir: "ci",
+
   // The release (CONTRIBUTING.md, Releasing): chant's cut builds the four CI images as OCI
   // archives and records their digests, the bundle pins them (scripts/build-cli.mjs reads
   // CHANT_RELEASE_DIGESTS), and chant's publish pushes the images, publishes the package and
