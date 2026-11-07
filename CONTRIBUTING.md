@@ -60,19 +60,19 @@ The history on main starts at one commit, "terragucci, from 0.4.38", made on 202
 A release is one run of the publish workflow, on chant's release block (`release` in `chant.config.ts`). It builds the four CI images, publishes them to GHCR, publishes `@intentius/terragucci` to npm with the images pinned by digest, and makes the GitHub release. The release's label is the package version.
 
 1. Run `just version-bump <version>` and merge the result to main. It sets the version in `packages/terragucci/package.json` and `package-lock.json`, renders the five images' Dockerfiles with the new version label, and regenerates both examples' pipelines, their patches and the cli-json goldens. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`). Add the `## In <version>` section to the Changes page (`docs-site/src/content/docs/reference/whats-new.mdx`) in the same pull request or before it.
-2. Once CI has tagged that commit green, start the publish workflow with the version: `gh workflow run publish.yml -f version=<version>`.
+2. Once CI has tagged that commit green, start the publish workflow with the version: `gh workflow run publish.yml -f label=<version>`.
 
-The workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) has three jobs:
+`chant release workflow` writes `.github/workflows/publish.yml` from `release.workflow` in `chant.config.ts` (`just ci`). It has three jobs:
 
-- gate: names the newest commit at or below main's head with a `ci/green/<sha>` tag (`chant ci last-green`), and refuses one whose package is at another version. Nothing is tagged before it passes.
-- cut: `chant release cut <version> --at <commit>` builds each image with `scripts/release-image.sh` as a two-platform OCI archive (`dist/images/<name>.tar`) and records its digest, then builds the bundle with those digests (`scripts/build-cli.mjs` reads `CHANT_RELEASE_DIGESTS`, refuses a label that is not the package version, and writes `dist/image-digests.json`). The cut pushes `chant/lifecycle`, and the job pushes the `release/<version>` tag it made.
+- gate: names the newest commit at or below main's head with a `ci/green/<sha>` tag (`chant ci last-green`). Nothing is tagged before it passes.
+- cut: `chant release cut <version> --at <commit>` builds each image with `scripts/release-image.sh` as a two-platform OCI archive (`dist/images/<name>.tar`) and records its digest, then builds the bundle with those digests (`scripts/build-cli.mjs` reads `CHANT_RELEASE_DIGESTS`, refuses a label that is not the package version, so a version `just version-bump` did not set stops the cut before anything is tagged, and writes `dist/image-digests.json`). The cut pushes `chant/lifecycle`, and the job pushes the `release/<version>` tag it made.
 - publish: `chant release images <version>` builds the images again from the commit and refuses one whose digest is not the one the cut recorded; the bundle is built again with the recorded digests; `chant release publish <version> --yes` pushes each image to `ghcr.io/intentius/terragucci-<name>` under its version tag, publishes the package (its plan refuses a `dist/image-digests.json` naming a digest the release did not build), and makes the GitHub release on `release/<version>`, marked latest, with its notes from the Changes page's `## In <version>` section.
 
 The two builds of an image must give the same archive. `scripts/release-image.sh` runs `docker buildx build --provenance=false --sbom=false --output type=oci,rewrite-timestamp=true` with `SOURCE_DATE_EPOCH` from the commit, and the images write no logs or caches that carry the time of the build (`images/images.ts`). apt reads the Debian mirror when it builds, so a mirror that moves between the two jobs makes the publish refuse the image with `publish-artifact-digest-mismatch`; start the workflow again. A publish that stopped part way resumes from the record on `chant/lifecycle` and publishes nothing twice. `npx chant release publish <version>` without `--yes` prints what it would publish, the GitHub release's notes included.
 
 EVIDENCE.md is updated with each release: run `just evidence` after the release's records are in `stack/evidence/` and commit the result with the release. The docs site does not show claims or their results; `just evidence-check` fails when EVIDENCE.md is out of date, and `just check-static` runs it.
 
-The publish workflow is declared here rather than written by `chant release workflow`, which cannot yet give the publish job `packages: write` and the GHCR credentials or install QEMU (chant issue 4751).
+`release.workflow` gives the cut and publish jobs QEMU for the arm64 half of each image, the publish job `packages: write` and the GHCR credentials the oci target reads (this run's token), and npm 11.5.1 or later.
 
 It publishes with npm trusted publishing: npm accepts the job's GitHub OIDC token (the workflow has `id-token: write`), so no npm token is stored anywhere, and the package carries a provenance statement for the run. Trusted publishing needs npm 11.5.1 or later; the workflow installs the npm pinned as `NPM_VERSION` in `workflows/shared.ts` when the Node 24 it gets bundles an older one.
 
@@ -101,7 +101,7 @@ just ci-check    # fail if a committed workflow differs from its declaration
 | `ci/pipeline.ts` | `.github/workflows/ci.yml` |
 | `pages/pipeline.ts` | `.github/workflows/pages.yml` |
 | `image-ci/pipeline.ts` | `.github/workflows/images.yml` |
-| `publish/pipeline.ts` | `.github/workflows/publish.yml` |
+| `release.workflow` in `chant.config.ts` | `.github/workflows/publish.yml`, written by `chant release workflow` |
 | `ci-red/pipeline.ts` | `.github/workflows/ci-red.yml` |
 | `diff-guard/pipeline.ts` | `.github/workflows/diff-guard.yml` |
 | `images/images.ts` | `images/Dockerfile.*` |
