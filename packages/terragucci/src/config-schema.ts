@@ -429,13 +429,14 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
         webhook: secret,
         webhook_key: secret,
         relay: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$" },
+        relay_key: secret,
       }, {
         minProperties: 1,
-        dependentRequired: { webhook: ["webhook_key"], webhook_key: ["webhook"] },
+        dependentRequired: { webhook: ["webhook_key"], webhook_key: ["webhook"], relay: ["relay_key"], relay_key: ["relay"] },
         if: { required: ["relay"] },
         then: { anyOf: [{ required: ["slack"] }, { required: ["teams"] }] },
       }),
-      description: "The secrets holding Slack, Teams or webhook addresses, and the relay's name.",
+      description: "The secrets holding Slack, Teams or webhook addresses, the relay's name, and the secret holding the key its buttons are signed with.",
     },
     cost: {
       anyOf: [{ const: true }, map(COST_KEYS, { key_secret: secret, command: nonBlank, approve_above: { type: "number", minimum: 0 } })],

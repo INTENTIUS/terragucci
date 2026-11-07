@@ -211,7 +211,7 @@ After the review, run the wave again: comment `/terragucci apply` on the pull re
 
 The event carries the wave's outcome as the stage wrote it, in `detail` ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
 
-To approve from a chat click, [`terragucci relay`](/terragucci/guides/approve-from-chat/) does it without this event: the buttons carry the wave and its digest, and the relay checks who clicked.
+To approve from a chat click, [`terragucci relay`](/terragucci/guides/approve-from-chat/) does it without this event: the buttons carry the wave and its digest, signed with the relay key, and the relay checks who clicked.
 
 ## Next
 

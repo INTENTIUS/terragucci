@@ -3740,13 +3740,17 @@ chat_approve() { # slack|teams, [lambda]
   # The approver's line in the signers file also lists their chat ids.
   echo "smoke-approver,slack:TSMOKE/UAPPROVER,teams:00000000-0000-0000-0000-00000000a001 $(cut -d' ' -f1,2 "$work/approver.pub")" > "$work/tree/.chant/allowed_signers"
   if [ "$app" = slack ]; then
-    printf 'apply:\n  resume: 5\nnotify:\n  slack: CHAT_HOOK\n  relay: terragucci\n' >> "$work/tree/terragucci.yml"
+    printf 'apply:\n  resume: 5\nnotify:\n  slack: CHAT_HOOK\n  relay: terragucci\n  relay_key: RELAY_KEY\n' >> "$work/tree/terragucci.yml"
   else
-    printf 'apply:\n  resume: 5\nnotify:\n  teams: CHAT_HOOK\n  relay: terragucci\n' >> "$work/tree/terragucci.yml"
+    printf 'apply:\n  resume: 5\nnotify:\n  teams: CHAT_HOOK\n  relay: terragucci\n  relay_key: RELAY_KEY\n' >> "$work/tree/terragucci.yml"
   fi
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
   api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "http://$stand:8790/$app" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/CHAT_HOOK" \
     || { log "could not set the CHAT_HOOK secret"; drop_work "$work"; return 1; }
+  # The relay key signs the buttons in the pipeline, and the relay checks them with it.
+  relay_key="smoke-relay-key-$STAMP-$RANDOM"
+  api -o /dev/null -H 'content-type: application/json' -X PUT -d "$(jq -cn --arg d "$relay_key" '{data: $d}')" "$URL/api/v1/repos/$repo/actions/secrets/RELAY_KEY" \
+    || { log "could not set the RELAY_KEY secret"; drop_work "$work"; return 1; }
   stand_in_up "$work" "$stand" 8790 MODE=webhook || { stand_in_down; drop_work "$work"; return 1; }
   sha="$(push_tree "$work/tree" "$repo" main "$claim: two waves")" || rc=1
   [ $rc = 0 ] && { wait_run "$repo" "$sha" || rc=1; }
@@ -3768,19 +3772,19 @@ chat_approve() { # slack|teams, [lambda]
     secret="smoke-relay-$STAMP-$RANDOM"
     [ "$app" = teams ] && secret="$(printf '%s' "$secret" | base64)"
     if [ "$app" = slack ]; then
-      relay_up "$repo" "$name" "SLACK_SIGNING_SECRET=$secret" "TERRAGUCCI_RELAY_SLACK_RESPONSE=http://$stand:8790/" || rc=1
+      relay_up "$repo" "$name" "CHANT_RELAY_KEY=$relay_key" "SLACK_SIGNING_SECRET=$secret" "TERRAGUCCI_RELAY_SLACK_RESPONSE=http://$stand:8790/" || rc=1
     else
-      relay_up "$repo" "$name" "TEAMS_WEBHOOK_SECRET=$secret" || rc=1
+      relay_up "$repo" "$name" "CHANT_RELAY_KEY=$relay_key" "TEAMS_WEBHOOK_SECRET=$secret" || rc=1
     fi
   fi
   # The click: the approver's, or under BREAK a user no line of the signers file lists.
   if [ $rc = 0 ]; then
     if [ "$app" = slack ]; then
       who=UAPPROVER; [ -z "${BREAK:-}" ] || who=UMALLORY
-      jq -e --arg d "$digest" '.blocks[1].elements | map(.action_id) == ["terragucci-approve", "terragucci-decline"] and (.[0].value | fromjson) == {wave: 1, plan: $d}' <<<"$msg" >/dev/null \
-        || { log "the Slack message has no Approve and Decline buttons for wave 1 and $digest: $(jq -c '.blocks // null' <<<"$msg")"; rc=1; }
+      jq -e '.blocks[1].elements | map(.action_id) == ["chant-approve", "chant-decline"] and (.[0].value | length > 0)' <<<"$msg" >/dev/null \
+        || { log "the Slack message has no signed Approve and Decline buttons: $(jq -c '.blocks // null' <<<"$msg")"; rc=1; }
       body="payload=$(jq -cn --arg u "$who" --arg v "$(jq -r '.blocks[1].elements[0].value' <<<"$msg")" --arg r "http://$stand:8790/response" \
-        '{type: "block_actions", user: {id: $u, username: ("smoke-" + $u), team_id: "TSMOKE"}, team: {id: "TSMOKE"}, actions: [{action_id: "terragucci-approve", value: $v}], response_url: $r, container: {message_ts: "1700000000.000100"}}' | jq -sRr @uri)"
+        '{type: "block_actions", user: {id: $u, username: ("smoke-" + $u), team_id: "TSMOKE"}, team: {id: "TSMOKE"}, actions: [{action_id: "chant-approve", value: $v}], response_url: $r, container: {message_ts: "1700000000.000100"}}' | jq -sRr @uri)"
       ts="$(date +%s)"
       sig="v0=$(printf 'v0:%s:%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$secret" | sed 's/^.* //')"
       relay_post POST /slack application/x-www-form-urlencoded "$body" "X-Slack-Request-Timestamp: $ts" "X-Slack-Signature: $sig" || rc=1
@@ -3788,9 +3792,10 @@ chat_approve() { # slack|teams, [lambda]
       reply="$(curl -fsS "$STANDIN_CTL/_requests" | jq -r '[.[] | select(.method == "POST" and .path == "/response")] | last | .body | select(.thread_ts == "1700000000.000100") | .text // empty')"
     else
       who=00000000-0000-0000-0000-00000000a001; [ -z "${BREAK:-}" ] || who=00000000-0000-0000-0000-00000000bad0
-      jq -e --arg d "$digest" '.attachments[0].content.body | last | .text | contains("reply @terragucci approve wave-1 " + $d)' <<<"$msg" >/dev/null \
-        || { log "the Teams card does not give the reply that approves wave 1 for $digest"; rc=1; }
-      body="$(jq -cn --arg u "$who" --arg d "$digest" '{type: "message", id: "1700000000100", text: ("<at>terragucci</at> approve wave-1 " + $d), from: {id: "29:smoke", name: "Smoke Approver", aadObjectId: $u}}')"
+      # The card's reply carries the reference the pipeline signed with the relay key.
+      ref="$(jq -r '.attachments[0].content.body | last | .text' <<<"$msg" | grep -o 'reply @terragucci approve [^ ]*' | head -1 | sed 's/.* //; s/\.$//')"
+      [ -n "$ref" ] || { log "the Teams card does not give the reply that approves wave 1"; rc=1; }
+      body="$(jq -cn --arg u "$who" --arg r "$ref" '{type: "message", id: "1700000000100", text: ("<at>terragucci</at> approve " + $r), from: {id: "29:smoke", name: "Smoke Approver", aadObjectId: $u}}')"
       sig="HMAC $(printf '%s' "$body" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(printf '%s' "$secret" | base64 -d | od -An -tx1 | tr -d ' \n')" -binary | base64)"
       relay_post POST /teams application/json "$body" "Authorization: $sig" || rc=1
       code="${RELAY_CODE:-}"

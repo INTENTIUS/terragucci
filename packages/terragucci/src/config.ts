@@ -664,11 +664,13 @@ export interface ProjectSettings {
    * incoming webhook, and a generic webhook's address with the key that
    * signs its body. An apply job whose wave waits, is refused or fails posts
    * to each (notify.ts), and the drift job posts drift to Slack and Teams.
-   * `relay` names the customer's relay (relay.ts): a waiting wave's Slack
-   * message gets Approve and Decline buttons, its Teams card the reply
-   * `@<relay> approve wave-<k> <digest>`.
+   * `relay` names the customer's relay (relay-host.ts) and `relay_key` the
+   * secret holding the key it checks buttons with: a waiting wave's Slack
+   * message gets chant's Approve and Decline buttons, its Teams card the
+   * reply `@<relay> approve <reference>`, each signed with that key
+   * (chant#4611).
    */
-  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string; relay_key?: string };
   /**
    * Cost estimates per root in the plan note: Infracost on the customer's
    * own key (`key_secret`, default INFRACOST_API_KEY), or a `command` that
@@ -1244,10 +1246,12 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
           // The relay's name, as Teams shows its outgoing webhook: not a secret.
           if (typeof v !== "string" || !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(v)) problems.push(`${where}.notify.relay must name your relay as your Teams outgoing webhook is named, such as terragucci`);
           else if (n.slack === undefined && n.teams === undefined) problems.push(`${where}.notify.relay needs notify.slack or notify.teams: the buttons go on their messages`);
+          else if (n.relay_key === undefined) problems.push(`${where}.notify.relay needs notify.relay_key, the secret holding the key the buttons are signed with, which the relay holds as CHANT_RELAY_KEY`);
         }
-        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
+        else if (typeof v !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) problems.push(`${where}.notify.${k} must name the secret that holds the ${k === "webhook_key" ? "key that signs the webhook's body, such as WEBHOOK_KEY; never the key" : k === "relay_key" ? "key the relay's buttons are signed with, such as RELAY_KEY; never the key" : `webhook, such as ${k.toUpperCase()}_WEBHOOK_URL; never the address`} itself`);
       }
       // A generic webhook is always signed, so its receiver can tell terragucci's posts from anyone's.
+      if (n.relay_key !== undefined && n.relay === undefined) problems.push(`${where}.notify.relay_key goes with notify.relay: the key signs the relay's buttons`);
       if ((n.webhook === undefined) !== (n.webhook_key === undefined)) problems.push(`${where}.notify.webhook and notify.webhook_key go together: the key signs every body posted to the webhook`);
     }
   }
@@ -1422,7 +1426,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
 }
 
 /** The settings of `notify`, `policy`, `oidc`, `telemetry`, `gitlab`, `cost`, `pass` and `agent`. */
-export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay"];
+export const NOTIFY_KEYS = ["slack", "teams", "webhook", "webhook_key", "relay", "relay_key"];
 export const POLICY_KEYS = ["engine", "path", "namespace", "input", "source", "override", "outcomes", "agents"];
 export const SOURCES_KEYS = ["modules", "providers", "proxies"];
 /** The settings of one `sources.proxies` entry. */

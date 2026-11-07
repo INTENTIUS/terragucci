@@ -330,6 +330,7 @@ After the checks the change's providers, modules and external data sources run w
 |---|---|
 | Each request is verified: Slack's signing secret over the timestamp and the body, within five minutes; the Teams outgoing webhook's HMAC over the body | anyone else posting a click, and a Slack click replayed later |
 | The chat user maps to a principal only through their line of the signers file on the default branch, which a reviewed merge changes | an unlisted chat user approving, and a pull request adding its author's chat id to pass its own wave |
+| Each button and Teams reply carries the wave and its digest signed with the relay key, which only the pipeline and the relay hold, and is refused after a day | a click or reply naming a wave or digest the pipeline did not post |
 | The approval names the digest the message showed, and only a wave waiting for that digest takes it | a click approving plans that moved after the message |
 | Under `approval: sealed` the relay records nothing | a relay, or whoever holds its token, releasing a sealed gate |
 | The token is approve-only: the relay refuses one that administers the repo or may push to the default branch, and on GitLab one with the `api` scope; it uses the token only to fetch the repo and push `chant/lifecycle`, and starts no job | a stolen relay token merging, applying or changing settings |
@@ -338,8 +339,8 @@ After the checks the change's providers, modules and external data sources run w
 | It does not stop | Because |
 |---|---|
 | A stolen chat account approving as its owner | the chat platform's login is the identity the relay checks |
-| Whoever holds the relay's token or its secrets writing approval lines in any listed name | under `ledger` and `pr-review` an approval line is the relay's word, as any writer's is; `sealed` does not count them |
-| A Teams reply replayed while the same digest still waits | Teams signs the body with no timestamp; the replay approves only that digest, in the same person's name |
+| Whoever holds the relay's token, its key or its secrets writing approval lines in any listed name | under `ledger` and `pr-review` an approval line is the relay's word, as any writer's is; `sealed` does not count them |
+| A Teams reply replayed within a day while the same digest still waits | Teams signs the body with no timestamp, and the reply's reference holds for a day; the replay approves only that digest, in the same person's name |
 | A Slack retry within five minutes | the second click finds the wave approved and records nothing |
 
 The relay's token pushes `chant/lifecycle` like any approver's, so it is one more writer the [approval modes](#approval-modes) account for.
