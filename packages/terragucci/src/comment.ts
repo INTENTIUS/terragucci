@@ -121,6 +121,8 @@ export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment
   const parsed = parseProductComment(words ?? productWords(), text, o.atlantis ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {});
   if (parsed === undefined) return undefined;
   if (parsed.kind === "action") return checkedAction(parsed.member, parsed.address, o.layers);
+  // chant's commit job (chant issue 4722) answers a word the words map onto `commit`; terragucci's words map none.
+  if (parsed.kind === "commit") return { kind: "refused", reason: `\`/terragucci ${parsed.word}\` is not a terragucci command` };
   if (parsed.kind === "plan") {
     // chant's grammar reads `--target`, `--refresh` and `--target-dependents` after the plan word (chant#4626, #4627, on chant
     // main); a terragucci re-plan plans whole roots, so it refuses them by name rather than drop them.
