@@ -28,374 +28,50 @@
  * compared to DORA's performance tiers: infrastructure ships less often than
  * an application does.
  */
-import { DORA_FILE, DORA_MIN_SPAN_SECONDS, DORA_WEEKS, DRIFT_WINDOW_SECONDS, duration, median, spanLabel, weekStart } from "@intentius/chant/ci-estate";
-import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { METRIC } from "../dashboards/names";
+import {
+  buildRecordDelivery,
+  deliveryGauges,
+  doraMetricNames,
+  recordDriftIncidents,
+  DORA_FILE,
+  DORA_MIN_SPAN_SECONDS,
+  DORA_WEEKS,
+  DRIFT_WINDOW_SECONDS,
+  duration,
+  median,
+  spanLabel,
+  weekStart,
+  type DeliveryGauge,
+  type DeliveryRecordSource,
+  type Dora,
+  type DoraMetrics,
+  type DriftIncident,
+} from "@intentius/chant/ci-estate";
 import type { AuditEntry } from "./audit";
 import { esc } from "./html";
 import type { IndexEntry } from "./store";
 
 export const DORA_SCHEMA = "terragucci.dora/v1";
 
-// The window, the drift window, the shortest span, the file's name, and the
-// week, median, span and duration helpers are chant's (`@intentius/chant/ci-estate`,
-// chant#4612), which builds the same metrics from the ledger.
+// The metrics are chant's (`@intentius/chant/ci-estate`, chant#4612): `buildRecordDelivery`
+// reads terragucci's index rows and audit trail, and the ledger path (../estate.ts) reads
+// the workspace ledger. The window, the helpers and the gauges are chant's too.
 export { DORA_FILE, DORA_MIN_SPAN_SECONDS, DORA_WEEKS, DRIFT_WINDOW_SECONDS, duration, median, spanLabel, weekStart };
+export type { Dora, DoraLeadTime, DoraMetrics, DoraProject, DoraWeek } from "@intentius/chant/ci-estate";
 
-export interface DoraLeadTime {
-  /** Applied waves whose first plan was found. */
-  changes: number;
-  /** Medians in seconds; null when no change counts. */
-  median_seconds: number | null;
-  /** From the first plan to the wave reaching its gate, or to the apply when no gate held it. */
-  before_gate_seconds: number | null;
-  /** From the gate asking for an approval to the approval. */
-  at_gate_seconds: number | null;
-  /** From the approval to the wave applied. */
-  after_gate_seconds: number | null;
-}
-
-export interface DoraWeek {
-  /** The Monday the week starts on, YYYY-MM-DD. */
-  week: string;
-  deployments: number;
-  applies: number;
-  /** Failed applies and applied waves followed by drift. */
-  failures: number;
-  lead_time_seconds: number | null;
-  restore_seconds: number | null;
-}
-
-export interface DoraMetrics {
-  /** Applied waves in the window, and per week over span_seconds. */
-  deployments: number;
-  per_week: number;
-  /** What per_week divides by: from now (the estate run's time) back to the oldest apply on record, or to the window's start when the history is older; at least DORA_MIN_SPAN_SECONDS. With no apply on record, the window. */
-  span_seconds: number;
-  lead_time: DoraLeadTime;
-  change_failure: { applies: number; failed: number; drifted: number; rate: number | null };
-  /** Incidents restored in the window and their median; open ones are still failing or drifted. */
-  restore: { restored: number; open: number; median_seconds: number | null; apply_restored: number; drift_restored: number };
-  /** Oldest week first. */
-  trend: DoraWeek[];
-}
-
-export interface DoraProject extends DoraMetrics {
-  project: string;
-}
-
-export interface Dora {
-  schema: typeof DORA_SCHEMA;
-  generated: string;
-  weeks: number;
-  /** The first Monday the window holds, and when it ends. */
-  window: { from: string; to: string };
-  drift_window_seconds: number;
-  /** Whether audit.jsonl was read. Without it there are no applies, so only drift counts. */
-  audit: boolean;
-  estate: DoraMetrics;
-  projects: DoraProject[];
-}
+const WORDS = { product: "terragucci" } as const;
 
 /** One project's records, as the estate command read them. */
-export interface DoraSource {
-  project: string;
-  /** Its index rows. */
-  rows: IndexEntry[];
-}
+export type DoraSource = DeliveryRecordSource;
 
-const at = (iso: string): number => Date.parse(iso) || 0;
-const secs = (from: number, to: number): number => Math.max(0, Math.round((to - from) / 1000));
-
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
-
-/** An applied or failed wave, from its apply entry. */
-interface Apply {
-  project: string;
-  at: number;
-  applied: boolean;
-  gate: string;
-  digest: string | null;
-  commit?: string;
-  roots: string[];
-  failed: string[];
-  approval?: string;
-}
-
-/** A change's lead time, ending when its wave applied. */
-interface Lead {
-  project: string;
-  at: number;
-  total: number;
-  before: number;
-  gate: number;
-  after: number;
-}
-
-/** A failure that was restored, when it was. */
-interface Restore {
-  project: string;
-  at: number;
-  seconds: number;
-  kind: "apply" | "drift";
-}
-
-/** A failed change: a failed apply, or an applied wave that drifted. */
-interface Failure {
-  project: string;
-  at: number;
-}
-
-/** Apply entries that applied or failed, each once, oldest first. A waiting wave is not an apply yet; a refused one is the gate working. */
-function appliesOf(entries: AuditEntry[]): Apply[] {
-  const seen = new Set<string>();
-  const out: Apply[] = [];
-  for (const e of entries) {
-    if (e.kind !== "apply" || (e.result !== "applied" && e.result !== "failed") || seen.has(e.id)) continue;
-    seen.add(e.id);
-    const d = e.detail ?? {};
-    out.push({
-      project: e.project,
-      at: at(e.at),
-      applied: e.result === "applied",
-      gate: e.what,
-      digest: e.digest,
-      ...(typeof d.commit === "string" ? { commit: d.commit } : {}),
-      roots: strings(d.roots),
-      failed: strings(d.failed),
-      ...(typeof d.approval === "string" ? { approval: d.approval } : {}),
-    });
-  }
-  return out.sort((a, b) => a.at - b.at);
-}
-
-/**
- * The lead time of an applied wave. Its plan is the tf-plan row of the same
- * commit, or the one whose wave set digests hold the wave's digest (a pull
- * request's head, planned before the merge commit applied); the change
- * starts at the first plan of that row's pull request.
- */
-function leadOf(a: Apply, plans: IndexEntry[], requests: AuditEntry[], approvals: Map<string, AuditEntry>): Lead | undefined {
-  const before = plans.filter((r) => at(r.finished) <= a.at);
-  const matched = before
-    .filter((r) => (a.commit !== undefined && r.commit === a.commit) || (a.digest !== null && (r.wave_digests ?? []).some((d) => samePlanDigest(d, a.digest!))))
-    .sort((x, y) => at(y.finished) - at(x.finished))[0];
-  if (!matched) return undefined;
-  const pr = matched.pull_request;
-  const first = pr ? Math.min(...before.filter((r) => r.pull_request === pr).map((r) => at(r.finished))) : at(matched.finished);
-  const asked = requests
-    .filter((q) => q.project === a.project && q.what === a.gate && a.digest !== null && q.digest !== null && samePlanDigest(q.digest, a.digest) && at(q.at) <= a.at)
-    .map((q) => at(q.at))
-    .sort((x, y) => x - y)[0];
-  const approved = a.approval ? approvals.get(a.approval) : undefined;
-  const ok = approved ? Math.min(Math.max(at(approved.at), asked ?? first), a.at) : undefined;
-  if (asked === undefined) return { project: a.project, at: a.at, total: secs(first, a.at), before: secs(first, a.at), gate: 0, after: 0 };
-  const gateEnd = ok ?? asked;
-  return { project: a.project, at: a.at, total: secs(first, a.at), before: secs(first, Math.max(first, asked)), gate: secs(asked, gateEnd), after: secs(gateEnd, a.at) };
-}
-
-/** Failed applies, each restored by the next apply that applied every root it failed on. A failure of roots already failing joins that incident. */
-function applyRestores(applies: Apply[]): { restored: Restore[]; open: number } {
-  const restored: Restore[] = [];
-  const open = new Map<string, { start: number; roots: Set<string> }>();
-  for (const a of applies) {
-    if (!a.applied) {
-      const roots = (a.failed.length ? a.failed : a.roots).filter((r) => !open.has(r));
-      if (roots.length === 0) continue;
-      const incident = { start: a.at, roots: new Set(roots) };
-      for (const r of roots) open.set(r, incident);
-      continue;
-    }
-    for (const r of a.roots) {
-      const incident = open.get(r);
-      if (!incident) continue;
-      open.delete(r);
-      incident.roots.delete(r);
-      if (incident.roots.size === 0) restored.push({ project: a.project, at: a.at, seconds: secs(incident.start, a.at), kind: "apply" });
-    }
-  }
-  return { restored, open: new Set(open.values()).size };
-}
-
-/** Drift as one incident: when it was first found, on which roots (empty for any root), and when a check first found none. */
-interface DriftIncident {
-  since: number;
-  roots: Set<string>;
-  closed?: number;
-}
-
-/**
- * The project's drift incidents, from its tf-drift rows oldest first. A row
- * carries when its drift was first found (`drift_since`), and a row that
- * cleared drift names it (`drift_cleared`), since a later check of the same
- * commit replaces the row that found it. A row written before those fields
- * existed opens drift at its own time and a clean row closes it.
- */
-export function driftIncidents(drifts: IndexEntry[]): DriftIncident[] {
-  const incidents = new Map<number, DriftIncident>();
-  const get = (since: number): DriftIncident => {
-    let i = incidents.get(since);
-    if (!i) incidents.set(since, (i = { since, roots: new Set() }));
-    return i;
-  };
-  let open: number | undefined;
-  for (const r of [...drifts].sort((x, y) => at(x.finished) - at(y.finished))) {
-    if ((r.changed ?? 0) > 0) {
-      const since = r.drift_since ? at(r.drift_since) : (open ?? at(r.finished));
-      for (const x of r.drifted_roots ?? []) get(since).roots.add(x);
-      open = since;
-    } else if (r.drift_cleared) {
-      const i = get(at(r.drift_cleared.since));
-      for (const x of r.drift_cleared.roots) i.roots.add(x);
-      i.closed = Math.min(i.closed ?? Infinity, at(r.finished));
-      if (open === i.since) open = undefined;
-    } else if (open !== undefined) {
-      const i = get(open);
-      i.closed ??= at(r.finished);
-      open = undefined;
-    }
-  }
-  return [...incidents.values()].sort((a, b) => a.since - b.since);
-}
-
-/** Drift found, restored by the next drift check that found none. */
-function driftRestores(project: string, incidents: DriftIncident[]): { restored: Restore[]; open: number } {
-  const restored = incidents.filter((i) => i.closed !== undefined).map((i) => ({ project, at: i.closed!, seconds: secs(i.since, i.closed!), kind: "drift" as const }));
-  return { restored, open: incidents.filter((i) => i.closed === undefined).length };
-}
-
-/**
- * Applied waves whose roots drifted within the window, before another apply
- * of those roots. Drift that names no roots matches any root of the project.
- */
-function driftedApplies(applies: Apply[], incidents: DriftIncident[]): Set<Apply> {
-  const out = new Set<Apply>();
-  for (const a of applies) {
-    if (!a.applied) continue;
-    const hit = incidents.some((i) => {
-      const t = i.since;
-      if (t < a.at || t - a.at > DRIFT_WINDOW_SECONDS * 1000) return false;
-      const shared = i.roots.size ? a.roots.filter((x) => i.roots.has(x)) : a.roots;
-      // A later apply of a root before the drift was found is the one the drift follows.
-      return shared.some((x) => !applies.some((b) => b !== a && b.applied && b.at > a.at && b.at <= t && b.roots.includes(x)));
-    });
-    if (hit) out.add(a);
-  }
-  return out;
-}
-
-/** What one project's records hold, every time in the record. */
-interface Events {
-  applies: Apply[];
-  leads: Lead[];
-  failures: Failure[];
-  /** Applied waves whose roots drifted. */
-  drifted: Set<Apply>;
-  restores: Restore[];
-  open: number;
-}
-
-function eventsOf(source: DoraSource, entries: AuditEntry[]): Events {
-  const mine = entries.filter((e) => e.project === source.project);
-  const applies = appliesOf(mine);
-  const rows = source.rows.filter((r) => r.project === source.project);
-  const plans = rows.filter((r) => r.stage === "tf-plan");
-  const incidents = driftIncidents(rows.filter((r) => r.stage === "tf-drift"));
-  const requests = mine.filter((e) => e.kind === "approval-requested");
-  const approvals = new Map(mine.filter((e) => e.kind === "approval").map((e) => [e.id, e]));
-  const leads = applies.filter((a) => a.applied).flatMap((a) => leadOf(a, plans, requests, approvals) ?? []);
-  const drifted = driftedApplies(applies, incidents);
-  const failures = applies.filter((a) => !a.applied || drifted.has(a)).map((a) => ({ project: a.project, at: a.at }));
-  const ar = applyRestores(applies);
-  const dr = driftRestores(source.project, incidents);
-  return { applies, leads, failures, drifted, restores: [...ar.restored, ...dr.restored], open: ar.open + dr.open };
-}
-
-const merge = (all: Events[]): Events => ({
-  applies: all.flatMap((e) => e.applies),
-  leads: all.flatMap((e) => e.leads),
-  failures: all.flatMap((e) => e.failures),
-  drifted: new Set(all.flatMap((e) => [...e.drifted])),
-  restores: all.flatMap((e) => e.restores),
-  open: all.reduce((n, e) => n + e.open, 0),
-});
-
-const WEEK_SECONDS = 7 * 86400;
-
-/**
- * The span a deployment rate covers: `now`, the run's clock, back to the
- * later of the oldest apply on record and the window's start, at least a day.
- * A project younger than the window is not divided by weeks it did not exist
- * for, and one that stopped deploying is still divided by the time since.
- * With no apply on record, the window itself.
- */
-function spanOf(all: Apply[], from: number, now: number): number {
-  const start = all.length ? Math.max(from, Math.min(...all.map((a) => a.at))) : from;
-  return Math.max(DORA_MIN_SPAN_SECONDS, secs(start, now));
-}
-
-/** The metrics over the window, and a row per week. Counts are of what happened in the window; open incidents are as of now. */
-function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
-  const inside = <T extends { at: number }>(xs: T[]): T[] => xs.filter((x) => x.at >= from && x.at <= now);
-  const applies = inside(ev.applies);
-  const deployments = applies.filter((a) => a.applied).length;
-  const failed = applies.filter((a) => !a.applied).length;
-  const drift = applies.filter((a) => ev.drifted.has(a)).length;
-  const leads = inside(ev.leads);
-  const restores = inside(ev.restores);
-  const span = spanOf(ev.applies, from, now);
-  const trend: DoraWeek[] = [];
-  for (let w = 0; w < DORA_WEEKS; w++) {
-    const start = from + w * 7 * 86400 * 1000;
-    const end = start + 7 * 86400 * 1000;
-    const of = <T extends { at: number }>(xs: T[]): T[] => xs.filter((x) => x.at >= start && x.at < end);
-    trend.push({
-      week: new Date(start).toISOString().slice(0, 10),
-      deployments: of(applies).filter((a) => a.applied).length,
-      applies: of(applies).length,
-      failures: of(inside(ev.failures)).length,
-      lead_time_seconds: median(of(leads).map((l) => l.total)),
-      restore_seconds: median(of(restores).map((r) => r.seconds)),
-    });
-  }
-  return {
-    deployments,
-    per_week: Math.round(((deployments * WEEK_SECONDS) / span) * 100) / 100,
-    span_seconds: span,
-    lead_time: {
-      changes: leads.length,
-      median_seconds: median(leads.map((l) => l.total)),
-      before_gate_seconds: median(leads.map((l) => l.before)),
-      at_gate_seconds: median(leads.map((l) => l.gate)),
-      after_gate_seconds: median(leads.map((l) => l.after)),
-    },
-    change_failure: { applies: applies.length, failed, drifted: drift, rate: applies.length ? Math.round(((failed + drift) / applies.length) * 1e6) / 1e6 : null },
-    restore: {
-      restored: restores.length,
-      open: ev.open,
-      median_seconds: median(restores.map((r) => r.seconds)),
-      apply_restored: restores.filter((r) => r.kind === "apply").length,
-      drift_restored: restores.filter((r) => r.kind === "drift").length,
-    },
-    trend,
-  };
+/** Drift as incidents, from a project's tf-drift index rows. */
+export function driftIncidents(drifts: readonly IndexEntry[]): DriftIncident[] {
+  return recordDriftIncidents(drifts);
 }
 
 /** The metrics of every project and of the estate. `entries` is the audit record, undefined when there is none. */
-export function buildDora(sources: DoraSource[], entries: AuditEntry[] | undefined, now: Date): Dora {
-  const end = now.getTime();
-  const from = weekStart(end) - (DORA_WEEKS - 1) * 7 * 86400 * 1000;
-  const events = sources.map((s) => eventsOf(s, entries ?? []));
-  return {
-    schema: DORA_SCHEMA,
-    generated: now.toISOString(),
-    weeks: DORA_WEEKS,
-    window: { from: new Date(from).toISOString(), to: now.toISOString() },
-    drift_window_seconds: DRIFT_WINDOW_SECONDS,
-    audit: entries !== undefined,
-    estate: metricsOf(merge(events), from, end),
-    projects: sources.map((s, i) => ({ project: s.project, ...metricsOf(events[i], from, end) })),
-  };
+export function buildDora(sources: readonly DoraSource[], entries: readonly AuditEntry[] | undefined, now: Date): Dora {
+  return buildRecordDelivery(sources, entries, { words: WORDS, now, stages: { plan: "tf-plan", drift: "tf-drift" } });
 }
 
 const rate = (r: number | null): string => (r === null ? "none" : `${Math.round(r * 1000) / 10}%`);
@@ -430,34 +106,10 @@ ${weeks.join("\n")}
 }
 
 /** The gauges `terragucci estate` sends, per project and for the estate (project `*`). */
-export interface DoraGauge {
-  name: string;
-  unit: string;
-  description: string;
-  value: number;
-  attributes: Record<string, string>;
-}
+export type DoraGauge = DeliveryGauge;
 
-export const DORA_METRIC = {
-  deployments: METRIC.doraDeployments,
-  leadTime: METRIC.doraLeadTime,
-  failureRate: METRIC.doraFailureRate,
-  restore: METRIC.doraRestore,
-} as const;
+export const DORA_METRIC = doraMetricNames(WORDS);
 
 export function doraGauges(dora: Dora): DoraGauge[] {
-  const out: DoraGauge[] = [];
-  const of = (project: string, m: DoraMetrics): void => {
-    const a = { project };
-    out.push({ name: DORA_METRIC.deployments, unit: "", description: `Applied waves per week over the newest ${spanLabel(m.span_seconds)}, the span the history covers in the ${dora.weeks}-week window.`, value: m.per_week, attributes: a });
-    const l = m.lead_time;
-    for (const [segment, v] of [["total", l.median_seconds], ["before_gate", l.before_gate_seconds], ["at_gate", l.at_gate_seconds], ["after_gate", l.after_gate_seconds]] as const) {
-      if (v !== null) out.push({ name: DORA_METRIC.leadTime, unit: "s", description: "Median lead time from a change's first plan to its wave applied, and its split.", value: v, attributes: { ...a, segment } });
-    }
-    if (m.change_failure.rate !== null) out.push({ name: DORA_METRIC.failureRate, unit: "", description: "Failed applies and applied waves followed by drift, over all applies.", value: m.change_failure.rate, attributes: a });
-    if (m.restore.median_seconds !== null) out.push({ name: DORA_METRIC.restore, unit: "s", description: "Median time from a failed apply or drift found to restored.", value: m.restore.median_seconds, attributes: a });
-  };
-  of("*", dora.estate);
-  for (const p of dora.projects) of(p.project, p);
-  return out;
+  return deliveryGauges(dora, WORDS);
 }
