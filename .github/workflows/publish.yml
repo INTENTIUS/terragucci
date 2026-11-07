@@ -58,7 +58,7 @@ jobs:
           platforms: "arm64"
       - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
-      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - run: rc=0; git ls-remote --exit-code --heads origin chant/lifecycle >/dev/null || rc=$?; if [ "$rc" = 0 ]; then git fetch origin chant/lifecycle:chant/lifecycle; elif [ "$rc" != 2 ]; then exit "$rc"; fi
       - run: |
           git config user.name "chant release"
           git config user.email "chant-release@localhost"
