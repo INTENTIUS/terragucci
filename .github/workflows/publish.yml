@@ -65,6 +65,16 @@ jobs:
           npx chant release cut "$CHANT_RELEASE_LABEL" --at "$CHANT_RELEASE_COMMIT" --yes --build 'node scripts/build-cli.mjs' --json > "$RUNNER_TEMP/chant-cut.json"
           tag="$(node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.tag?.name??""))' "$RUNNER_TEMP/chant-cut.json")"
           if [ -n "$tag" ]; then git push origin "refs/tags/$tag"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chant-release-images
+          path: |
+            dist/images/tofu.tar
+            dist/images/terraform.tar
+            dist/images/terragrunt.tar
+            dist/images/choudoufu.tar
+          if-no-files-found: error
+          retention-days: 1
   publish:
     needs: [gate, cut]
     runs-on: ubuntu-latest
@@ -87,7 +97,11 @@ jobs:
       - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
       - run: git fetch origin chant/lifecycle:chant/lifecycle
-      - run: npx chant release images "$CHANT_RELEASE_LABEL" -o .chant/release-digests.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chant-release-images
+          path: dist/images
+      - run: npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json
       - run: echo "CHANT_RELEASE_DIGESTS=$PWD/.chant/release-digests.json" >> "$GITHUB_ENV"
       - run: node scripts/build-cli.mjs
       - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
