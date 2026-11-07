@@ -1,13 +1,12 @@
 /**
- * terragucci's CI images (terragucci#19), published on a release tag and built
- * and checked by hand (workflow_dispatch). The build and size check are not
- * unit tests, so they no longer run on pull requests or pushes to main.
+ * terragucci's CI images (terragucci#19), built and checked by hand
+ * (workflow_dispatch). The build and size check are not unit tests, so they
+ * do not run on pull requests or pushes to main.
  *
  * `just ci` renders this into .github/workflows/images.yml. The check job
  * builds all four images natively on an amd64 and an arm64 runner, runs each
- * image's tools, and holds each to its size budget. The publish job runs only
- * for a `v*` tag and does not wait for the check (it builds the images itself): it pushes both platforms to GHCR with provenance and an
- * SBOM, and prints each image's digest for the release to record.
+ * image's tools, and holds each to its size budget. A release builds and
+ * pushes them itself (publish/pipeline.ts, chant.config.ts `release`).
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
@@ -16,7 +15,6 @@ import { CHECKOUT, SETUP_NODE, NODE_VERSION, installJust } from "../workflows/sh
 export const workflow = new Workflow({
   name: "images",
   on: {
-    push: { tags: ["v*"] },
     workflow_dispatch: {},
   },
   permissions: { contents: "read" },
@@ -31,7 +29,6 @@ const SETUP = [
 ];
 
 export const check = new Job({
-  if: "github.event_name == 'workflow_dispatch'",
   name: "check (${{ matrix.platform }})",
   "runs-on": "${{ matrix.runner }}",
   timeoutMinutes: 30,
@@ -48,33 +45,5 @@ export const check = new Job({
     ...SETUP,
     new Step({ name: "Build the images", run: "just images ${{ matrix.platform }}" }),
     new Step({ name: "Run each image's tools and check its size", run: "just images-check ${{ matrix.platform }}" }),
-  ],
-});
-
-export const publish = new Job({
-  if: "startsWith(github.ref, 'refs/tags/v')",
-  "runs-on": "ubuntu-latest",
-  timeoutMinutes: 45,
-  // The only job that writes: images to this repository's packages.
-  permissions: { contents: "read", packages: "write" },
-  steps: [
-    ...SETUP,
-    new Step({ name: "Build the bundle", run: "just build-cli" }),
-    new Step({
-      name: "Log in to GHCR",
-      env: { GH_TOKEN: "${{ github.token }}" },
-      run: 'echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin',
-    }),
-    new Step({
-      name: "Push both platforms, with provenance and an SBOM",
-      run: [
-        "set -eu",
-        "docker buildx create --use --name terragucci",
-        "npx tsx scripts/images.ts tags | while read -r name ref; do",
-        '  docker buildx build --push --platform linux/amd64,linux/arm64 --provenance=true --sbom=true -f "images/Dockerfile.$name" -t "$ref" .',
-        '  echo "$ref $(docker buildx imagetools inspect "$ref" --format \'{{json .Manifest.Digest}}\' | tr -d \'"\')"',
-        "done",
-      ].join("\n"),
-    }),
   ],
 });

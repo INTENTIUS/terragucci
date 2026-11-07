@@ -82,9 +82,13 @@ const finalStage = (name: string, description: string) => ({
   // OTLP endpoint set fails ("Current requires cgo or $USER set") when it finds
   // neither. These defaults hold for any uid and any entrypoint; a forge that sets
   // its own USER or HOME wins, and /tmp is writable for every uid.
-  env: ["USER=terragucci", "HOME=/tmp"],
+  // A release builds each image twice, in its cut and again in its publish job, and the two
+  // archives must match byte for byte (chant issue 4657). Node's compile cache and npm's debug
+  // logs are named and filled differently by every build, so neither is written.
+  env: ["USER=terragucci", "HOME=/tmp", "NODE_DISABLE_COMPILE_CACHE=1", "npm_config_logs_max=0"],
   run: [
-    "apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*",
+    // apt's and dpkg's logs and ldconfig's cache carry the time of the build, so they go with the lists.
+    "apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/cache/ldconfig/aux-cache",
     // A job often runs as another user than the one who owns its checkout (on
     // github.com the job is root and the runner's user owns the workspace), and
     // git then refuses every command there ("dubious ownership"). The system
@@ -95,7 +99,7 @@ const finalStage = (name: string, description: string) => ({
     "git config --system --add safe.directory '*'",
     // The HCL parser the tips and rollouts read with. /usr/local/node_modules is on the
     // bundle's module path, so `terragucci` finds it with no further setup.
-    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} && npm cache clean --force`,
+    `npm install --prefix /usr/local --no-save --omit=dev --no-audit --no-fund @cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]} && npm cache clean --force && rm -rf /tmp/.npm`,
     // chant, whose bin a wave job runs (`chant run wave`) and approve and the relay
     // record through: its one-file wave runtime from the release the package pins
     // (npm checks the tarball's integrity), with a `chant` on the path that runs it.
@@ -105,7 +109,7 @@ const finalStage = (name: string, description: string) => ({
       `tar -xzf intentius-chant-${pkg.dependencies["@intentius/chant"]}.tgz package/dist/wave-runtime.mjs`,
       "install -D -m 0644 package/dist/wave-runtime.mjs /opt/chant/wave-runtime.mjs",
       `printf '#!/bin/sh\\nexec node /opt/chant/wave-runtime.mjs "$@"\\n' > /usr/local/bin/chant && chmod 0755 /usr/local/bin/chant`,
-      "rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force",
+      "rm -rf /tmp/package /tmp/intentius-chant-*.tgz && npm cache clean --force && rm -rf /tmp/.npm",
     ].join(" && "),
   ],
   copy: [

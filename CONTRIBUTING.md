@@ -38,7 +38,7 @@ just images-check       # run each image's tools and hold it to images/budget.js
 
 Each image's system git config marks every directory safe (`safe.directory = *`), because a job often runs as another user than the one who owns its checkout: on github.com a container job is root and the runner's user owns the workspace. `just images-check` runs git both ways round in each image, root in a checkout uid 1001 owns and uid 1001 in one root owns, including a fetch from a local remote, and the smoke claim `init/foreign-checkout` plans the example as root on a checkout uid 1001 owns. Both test the images built from this tree, so run `just images` first.
 
-The images workflow builds and checks them on amd64 and arm64 for every change, and pushes them to GHCR only for a `v*` tag, which waits for an explicit go. A release then records each pushed digest in `packages/terragucci/src/image-digests.json` before the npm package is built, so `init` pins the images by digest.
+The images workflow builds and checks them on amd64 and arm64 when started by hand. A release builds and pushes them itself (below), and only the release's bundle pins them by digest; a bundle built from a tree names them by tag.
 
 ### The decision service image
 
@@ -57,26 +57,22 @@ The client is `packages/terragucci/src/decide/` (`decide`, `isConfident`, `summa
 
 The history on main starts at one commit, "terragucci, from 0.4.38", made on 2026-10-20 when the earlier history was squashed to keep clones small. The changes before it are in pull requests #1 to #1194, and release tags and GitHub releases start at v0.4.39.
 
-A release puts the CI images on GHCR and then `@intentius/terragucci` on npm. The npm package must name the images by digest, and the digests exist only after the images are pushed, so the order is fixed:
+A release is one run of the publish workflow, on chant's release block (`release` in `chant.config.ts`). It builds the four CI images, publishes them to GHCR, publishes `@intentius/terragucci` to npm with the images pinned by digest, and makes the GitHub release. The release's label is the package version.
 
-1. Run `just version-bump <version>` and merge the result to main. It sets the version in `packages/terragucci/package.json` and `package-lock.json`, renders the five images' Dockerfiles with the new version label, and regenerates both examples' pipelines, their patches and the cli-json goldens. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`), and `image-digests.json` has no digest for the new tags yet, so `init` writes them bare and the bump commit passes CI as it is. `just release-preflight <version>` then names the newest green commit at that version (`chant ci last-green`, never a hand-picked commit) and prints the `git tag v<version> <sha> && git push origin v<version>` to run.
-2. The images workflow runs on the tag. Its publish job pushes the four images to GHCR and prints each reference with its digest.
-3. Run `just record-digests <run id>` with the images workflow's run on the tag (`gh run list --workflow images.yml --branch v<version>`), and merge the result to main. It reads each reference `npx tsx scripts/images.ts tags` prints from GHCR, refuses when one is missing or its digest is not the one the run printed, writes them to `packages/terragucci/src/image-digests.json` in place of the earlier release's, moves `stack/sandbox-github.sh` to the new release, and regenerates the same files as step 1, now pinned by digest. Without a run id it takes GHCR's digests alone.
-4. Run the publish workflow on main: `gh workflow run publish.yml --ref main` (its `ref` input defaults to main; pass `-f ref=<ref>` to publish another one).
-5. Run `just github-release <version>` once npm has the version. It creates the GitHub release on the existing tag `v<version>` (`gh release create --verify-tag`, so it never creates or moves a tag), titled with the version and marked latest, with its notes from the `## In <version>` section of the Changes page that step 3 merged. The Changes page links this release. A version whose release exists is left as it is; `--dry-run` prints the notes.
+1. Run `just version-bump <version>` and merge the result to main. It sets the version in `packages/terragucci/package.json` and `package-lock.json`, renders the five images' Dockerfiles with the new version label, and regenerates both examples' pipelines, their patches and the cli-json goldens. Image tags carry the package version (`imageTag` in `packages/terragucci/src/images.ts`). Add the `## In <version>` section to the Changes page (`docs-site/src/content/docs/reference/whats-new.mdx`) in the same pull request or before it.
+2. Once CI has tagged that commit green, start the publish workflow with the version: `gh workflow run publish.yml -f version=<version>`.
 
-`scripts/release-preflight.sh` fetches main and the `ci/` tags, and refuses a commit with no `ci/green/<sha>`, one with `ci/revoked/<sha>`, and one whose package is at another version. The tags are a convenience: when main has no green commit (the tick has not run, or every recent commit changed a workflow and `CI_GREEN_TOKEN` is missing) it says so, and `TERRAGUCCI_RELEASE_SKIP_GREEN=1 just release-preflight <version> [<commit>]` releases main, or the commit given, without the check.
+The workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) has three jobs:
+
+- gate: names the newest commit at or below main's head with a `ci/green/<sha>` tag (`chant ci last-green`), and refuses one whose package is at another version. Nothing is tagged before it passes.
+- cut: `chant release cut <version> --at <commit>` builds each image with `scripts/release-image.sh` as a two-platform OCI archive (`dist/images/<name>.tar`) and records its digest, then builds the bundle with those digests (`scripts/build-cli.mjs` reads `CHANT_RELEASE_DIGESTS`, refuses a label that is not the package version, and writes `dist/image-digests.json`). The cut pushes `chant/lifecycle`, and the job pushes the `release/<version>` tag it made.
+- publish: `chant release images <version>` builds the images again from the commit and refuses one whose digest is not the one the cut recorded; the bundle is built again with the recorded digests; `chant release publish <version> --yes` pushes each image to `ghcr.io/intentius/terragucci-<name>` under its version tag, publishes the package (its plan refuses a `dist/image-digests.json` naming a digest the release did not build), and makes the GitHub release on `release/<version>`, marked latest, with its notes from the Changes page's `## In <version>` section.
+
+The two builds of an image must give the same archive. `scripts/release-image.sh` runs `docker buildx build --provenance=false --sbom=false --output type=oci,rewrite-timestamp=true` with `SOURCE_DATE_EPOCH` from the commit, and the images write no logs or caches that carry the time of the build (`images/images.ts`). apt reads the Debian mirror when it builds, so a mirror that moves between the two jobs makes the publish refuse the image with `publish-artifact-digest-mismatch`; start the workflow again. A publish that stopped part way resumes from the record on `chant/lifecycle` and publishes nothing twice. `npx chant release publish <version>` without `--yes` prints what it would publish, the GitHub release's notes included.
 
 EVIDENCE.md is updated with each release: run `just evidence` after the release's records are in `stack/evidence/` and commit the result with the release. The docs site does not show claims or their results; `just evidence-check` fails when EVIDENCE.md is out of date, and `just check-static` runs it.
 
-The tag starts the publish workflow too. At that point the digests are not recorded yet, so that run refuses and the step 4 dispatch publishes. A tag pushed after its digests are already on main publishes directly.
-
-The publish workflow (`publish/pipeline.ts`, rendered to `.github/workflows/publish.yml`) runs the unit tests (`test` job) and, once they pass, builds the bundle and then:
-
-- skips with a notice when npm already has this version;
-- on a tag, fails unless the tag is `v` plus the package version;
-- fails unless every image reference this version's bundle names has a `sha256:` digest in `image-digests.json`, and that digest is in the built bundle;
-- runs `npm publish --provenance --access public` from `packages/terragucci`.
+The publish workflow is declared here rather than written by `chant release workflow`, which cannot yet give the publish job `packages: write` and the GHCR credentials or install QEMU (chant issue 4751).
 
 It publishes with npm trusted publishing: npm accepts the job's GitHub OIDC token (the workflow has `id-token: write`), so no npm token is stored anywhere, and the package carries a provenance statement for the run. Trusted publishing needs npm 11.5.1 or later; the workflow installs the npm pinned as `NPM_VERSION` in `workflows/shared.ts` when the Node 24 it gets bundles an older one.
 

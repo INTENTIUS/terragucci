@@ -34,8 +34,18 @@ const cleanStage = () => rmSync(stage, { recursive: true, force: true });
 process.on("exit", cleanStage);
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
 
+// A release's build (chant issue 4657): the cut built the four CI images first and
+// names their digests in the file CHANT_RELEASE_DIGESTS points at, { "<name>": "sha256:..." }.
+// The bundle carries them as `init`'s table, keyed by each image's reference at this
+// version, and dist/image-digests.json carries the same table for the npm target's `pins`.
+// Any other build has no table, and `init` writes the tags bare.
+const digests = releaseDigests();
+// A build outside a release leaves no table from an earlier release's build behind.
+if (!digests) rmSync(join(dist, "image-digests.json"), { force: true });
+const base = options(pkg);
 const result = await build({
-  ...options(pkg),
+  ...base,
+  define: { ...(base.define ?? {}), ...(digests ? { __TERRAGUCCI_IMAGE_DIGESTS__: JSON.stringify(digests) } : {}) },
   outfile: join(stage, "terragucci.mjs"),
   sourcemap: "linked",
   // bundle-check reads this to refuse a denied input (terragucci#87).
@@ -49,6 +59,17 @@ const metaDir = join(root, "node_modules/.cache/terragucci");
 mkdirSync(metaDir, { recursive: true });
 writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
+if (digests) {
+  // The npm target's `pins` reads this file; the publish plan refuses a digest the release did not build.
+  const bundled = readFileSync(join(stage, "terragucci.mjs"), "utf-8");
+  for (const [ref, digest] of Object.entries(digests)) {
+    if (!bundled.includes(digest)) {
+      console.error(`the bundle does not carry ${ref}@${digest}`);
+      process.exit(1);
+    }
+  }
+  writeFileSync(join(stage, "image-digests.json"), `${JSON.stringify(digests, null, 2)}\n`);
+}
 
 // The registry edge function (`terragucci registry edge`, terragucci#1287): chant's
 // terraform lexicon function as a Cloudflare Worker and a Lambda@Edge handler,
@@ -151,3 +172,35 @@ for (const [name, v] of largest) console.log(`    ${String(v.bytesInOutput).padS
 
 const kb = (p) => Math.round(statSync(p).size / 1024);
 console.log(`  ✓ dist/terragucci.mjs ${kb(join(dist, "terragucci.mjs"))} KB, dist/types.d.ts ${kb(join(dist, "types.d.ts"))} KB`);
+
+/** The release's image digests as `init`'s table, or undefined outside a release build. */
+function releaseDigests() {
+  const file = process.env.CHANT_RELEASE_DIGESTS;
+  if (!file) return undefined;
+  const { version } = JSON.parse(readFileSync(join(pkg, "package.json"), "utf-8"));
+  // The release's label is the version: `just version-bump` set it on main before the cut.
+  const label = process.env.CHANT_RELEASE_LABEL;
+  if (label && label !== version) {
+    console.error(`the release is labelled ${label}, and packages/terragucci/package.json is at ${version}; run just version-bump ${label} and cut the merged commit`);
+    process.exit(1);
+  }
+  const named = JSON.parse(readFileSync(file, "utf-8"));
+  const table = {};
+  for (const [name, tag] of Object.entries(imageTags(version))) {
+    const digest = named[name];
+    if (typeof digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
+      console.error(`${file} has no digest for the ${name} image, which the release builds`);
+      process.exit(1);
+    }
+    table[`ghcr.io/intentius/terragucci-${name}:${tag}`] = digest;
+  }
+  return table;
+}
+
+/** Each CI image's tag at `version`, as imageTag in packages/terragucci/src/images.ts gives it. */
+function imageTags(version) {
+  const src = readFileSync(join(pkg, "src/images.ts"), "utf-8");
+  const tool = (k) => new RegExp(`${k}: "([^"]+)"`).exec(src)[1];
+  const [tofu, terraform, terragrunt, choudoufu] = ["tofu", "terraform", "terragrunt", "choudoufu"].map(tool);
+  return { tofu: `${version}-tofu${tofu}`, terraform: `${version}-tf${terraform}`, terragrunt: `${version}-tg${terragrunt}-tofu${tofu}`, choudoufu: `${version}-choudoufu${choudoufu}` };
+}
