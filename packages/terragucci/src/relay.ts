@@ -38,24 +38,31 @@
  * and push chant/lifecycle, and starts no job: the pipeline's resume job
  * (`apply.resume`) applies the wave once the approval stands.
  *
- * With chant core's relay installed (`@intentius/chant/notify-relay`,
- * chant#4611, ./chant-next.ts), the Slack and Teams signature checks and the
- * chat user's principal are chant's, and a button chant's notify posted
- * (a reference signed with `CHANT_RELAY_KEY`) is decided by chant's
- * `decideRelayClick` over this relay's ledger. terragucci's own buttons
+ * The Slack and Teams signature checks and the chat user's principal are
+ * chant core's (`@intentius/chant/notify-relay`, chant#4611), and a button
+ * chant's notify posted (a reference signed with `CHANT_RELAY_KEY`) is
+ * decided by chant's `decideRelayClick` over this relay's ledger. terragucci's own buttons
  * carry the wave and digest, which chant's relay does not read, so their
  * clicks are still decided here. chant's relay refuses a gate that asks a
  * decision point; this relay answers the question instead, for either kind
  * of button, as before.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantNotifyRelay, type ChantNotifyRelay, type ChantRelayDeps } from "./chant-next";
+import {
+  decideRelayClick,
+  relayPrincipalFor,
+  SLACK_RESPONSE_PREFIXES,
+  slackRelayClick,
+  teamsRelayClick,
+  verifySlackRequest,
+  verifyTeamsRequest,
+  type RelayDeps as ChantRelayDeps,
+} from "@intentius/chant/notify-relay";
 import { productWords } from "./ci-words";
 import { APPLY_OP, readLedger, waveGate, writeWaveRecord, type GateLedger, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
@@ -84,44 +91,7 @@ export const RELAY_ENV = {
 } as const;
 
 export const DEFAULT_RELAY_PRINCIPAL = "terragucci-relay";
-/** Slack's own: hooks.slack.com, and GovSlack's. */
-export const SLACK_RESPONSE_PREFIXES = ["https://hooks.slack.com/", "https://hooks.slack-gov.com/"];
-/** How old a Slack request may be, as Slack's own verification advises. */
-const SLACK_WINDOW_S = 5 * 60;
-
-// ── signatures ───────────────────────────────────────────────────────────
-
-const header = (h: Record<string, string | undefined>, name: string): string | undefined => h[name] ?? h[name.toLowerCase()];
-
-const same = (a: string, b: string): boolean => {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-};
-
-/** `v0=<hex>`: Slack's signature of a request, HMAC-SHA256 of `v0:<timestamp>:<raw body>` with the app's signing secret. */
-export const slackSignature = (secret: string, timestamp: string, raw: string): string => `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${raw}`).digest("hex")}`;
-
-/** Why a Slack request is refused, or null when its signature verifies and it is recent. */
-export function verifySlack(headers: Record<string, string | undefined>, raw: string, secret: string, now: number = Date.now()): string | null {
-  if (!secret) return `${RELAY_ENV.slackSecret} is empty, so no Slack request can be verified`;
-  const ts = header(headers, "x-slack-request-timestamp") ?? "";
-  const sig = header(headers, "x-slack-signature") ?? "";
-  if (!/^\d+$/.test(ts) || !sig) return "the request is not signed";
-  if (Math.abs(now / 1000 - Number(ts)) > SLACK_WINDOW_S) return "the request is more than five minutes old";
-  return same(sig, slackSignature(secret, ts, raw)) ? null : "the signature does not verify";
-}
-
-/** `HMAC <base64>`: a Teams outgoing webhook's signature, HMAC-SHA256 of the raw body with the key Teams gave (base64). */
-export const teamsSignature = (secret: string, raw: string): string => `HMAC ${createHmac("sha256", Buffer.from(secret, "base64")).update(raw).digest("base64")}`;
-
-/** Why a Teams request is refused, or null when its signature verifies. */
-export function verifyTeams(headers: Record<string, string | undefined>, raw: string, secret: string): string | null {
-  if (!secret) return `${RELAY_ENV.teamsSecret} is empty, so no Teams request can be verified`;
-  const auth = header(headers, "authorization") ?? "";
-  if (!auth.startsWith("HMAC ")) return "the request is not signed";
-  return same(auth, teamsSignature(secret, raw)) ? null : "the signature does not verify";
-}
+export { SLACK_RESPONSE_PREFIXES };
 
 // ── clicks ───────────────────────────────────────────────────────────────
 
@@ -207,26 +177,14 @@ export function teamsClick(raw: string): Click | { error: string } {
 
 // ── who clicked ──────────────────────────────────────────────────────────
 
-const CHAT_ID = /^(slack|teams):/;
-const norm = (s: string): string => s.normalize("NFKC").trim().toLowerCase();
 
 /**
  * The principal a chat user maps to: the signers file line that lists the
  * chat id gives the line's first principal that is not a chat id. Undefined
  * when no line lists it, or lines listing it name different principals.
  */
-export function principalFor(signers: GateSigners, chatUser: string, chant?: ChantNotifyRelay): string | undefined {
-  if (chant) return chant.relayPrincipalFor(signers.signers, chatUser);
-  const id = norm(chatUser);
-  const lines = new Map<number, string[]>();
-  for (const s of signers.signers) lines.set(s.line, [...(lines.get(s.line) ?? []), norm(s.principal)]);
-  const found = new Set<string>();
-  for (const principals of lines.values()) {
-    if (!principals.includes(id)) continue;
-    const p = principals.find((x) => !CHAT_ID.test(x));
-    if (p) found.add(p);
-  }
-  return found.size === 1 ? [...found][0] : undefined;
+export function principalFor(signers: GateSigners, chatUser: string): string | undefined {
+  return relayPrincipalFor(signers.signers, chatUser);
 }
 
 // ── deciding ─────────────────────────────────────────────────────────────
@@ -255,13 +213,13 @@ const resumeLine = (resume: number | undefined): string =>
   resume ? `The resume job applies it within ${resume} minutes.` : "Run its job again, or comment /terragucci apply on its pull request, to apply it.";
 
 /** Decide a click and record what it approves. Never throws: an error is the answer's text. */
-export async function decideClick(click: Click, deps: RelayDeps, chant?: ChantNotifyRelay): Promise<Answer> {
+export async function decideClick(click: Click, deps: RelayDeps): Promise<Answer> {
   // A Re-plan button is a link; Slack still tells the relay it was clicked.
   if (click.action === "replan") return { ok: true, text: "" };
   const gate = waveGate(click.wave!);
   try {
     const rule = await deps.rule();
-    const principal = principalFor(rule.signers, click.chatUser, chant);
+    const principal = principalFor(rule.signers, click.chatUser);
     if (!principal) {
       return { ok: false, text: `Refused: ${click.display} (${click.chatUser}) is not mapped to a principal in ${rule.signersPath} on the default branch, so nothing was ${click.action === "approve" ? "approved" : "declined"}. A maintainer adds ${click.chatUser} to that person's line.` };
     }
@@ -346,12 +304,11 @@ function chantTeamsReply(raw: string): boolean {
   }
 }
 
-/** A chant button's click, decided by chant's relay over this relay's ledger; undefined when chant's relay is not installed. */
-async function chantAnswer(chant: ChantNotifyRelay | undefined, app: Click["app"], raw: string, settings: RelaySettings, deps: RelayDeps): Promise<{ answer?: Answer; error?: string; responseUrl?: string; thread?: string; who?: string; action?: string } | undefined> {
-  if (!chant) return undefined;
-  const click = app === "slack" ? chant.slackRelayClick(raw) : chant.teamsRelayClick(raw);
+/** A chant button's click, decided by chant's relay over this relay's ledger. */
+async function chantAnswer(app: Click["app"], raw: string, settings: RelaySettings, deps: RelayDeps): Promise<{ answer?: Answer; error?: string; responseUrl?: string; thread?: string; who?: string; action?: string }> {
+  const click = app === "slack" ? slackRelayClick(raw) : teamsRelayClick(raw);
   if ("error" in click) return { error: click.error };
-  const a = await chant.decideRelayClick(click, { ...(settings.key ? { key: settings.key } : {}) }, chantRelayDeps(deps, app, productWords()));
+  const a = await decideRelayClick(click, { ...(settings.key ? { key: settings.key } : {}) }, chantRelayDeps(deps, app, productWords()));
   return { answer: { ok: a.ok, text: a.text }, ...(click.responseUrl ? { responseUrl: click.responseUrl } : {}), ...(click.thread ? { thread: click.thread } : {}), who: click.chatUser, action: click.action };
 }
 
@@ -391,18 +348,17 @@ export async function handleRelay(req: RelayRequest, settings: RelaySettings, de
   const path = req.path.split("?")[0]!;
   if (req.method === "GET" && path === "/healthz") return plain(200, "ok");
   if (req.method !== "POST" || (path !== "/slack" && path !== "/teams")) return plain(404, "not found");
-  const chant = await chantNotifyRelay();
   if (path === "/slack") {
-    const refused = chant ? chant.verifySlackRequest(req.headers, req.body, settings.slackSecret) : verifySlack(req.headers, req.body, settings.slackSecret ?? "");
+    const refused = verifySlackRequest(req.headers, req.body, settings.slackSecret);
     if (refused) {
       log(`slack: refused a request: ${refused}`);
       return plain(401, refused);
     }
-    const viaChant = chantSlackButton(req.body) ? await chantAnswer(chant, "slack", req.body, settings, deps) : undefined;
+    const viaChant = chantSlackButton(req.body) ? await chantAnswer("slack", req.body, settings, deps) : undefined;
     if (viaChant?.error) return plain(400, viaChant.error);
     const click: Click | { error: string } = viaChant ? { app: "slack", chatUser: viaChant.who!, display: viaChant.who!, action: viaChant.action === "decline" ? "decline" : "approve", ...(viaChant.responseUrl ? { responseUrl: viaChant.responseUrl } : {}), ...(viaChant.thread ? { thread: viaChant.thread } : {}) } : slackClick(req.body);
     if ("error" in click) return plain(400, click.error);
-    const answer = viaChant?.answer ?? (await decideClick(click, deps, chant));
+    const answer = viaChant?.answer ?? (await decideClick(click, deps));
     log(`slack: ${click.chatUser} ${click.action}${click.wave ? ` wave-${click.wave}` : ""}${viaChant ? " (chant's button)" : ""}: ${answer.text || "a link"}`);
     if (answer.text && click.responseUrl) {
       const allowed = settings.slackResponse ?? SLACK_RESPONSE_PREFIXES;
@@ -418,12 +374,12 @@ export async function handleRelay(req: RelayRequest, settings: RelaySettings, de
     }
     return plain(200, "");
   }
-  const refused = chant ? chant.verifyTeamsRequest(req.headers, req.body, settings.teamsSecret) : verifyTeams(req.headers, req.body, settings.teamsSecret ?? "");
+  const refused = verifyTeamsRequest(req.headers, req.body, settings.teamsSecret);
   if (refused) {
     log(`teams: refused a request: ${refused}`);
     return plain(401, refused);
   }
-  const viaChant = chantTeamsReply(req.body) ? await chantAnswer(chant, "teams", req.body, settings, deps) : undefined;
+  const viaChant = chantTeamsReply(req.body) ? await chantAnswer("teams", req.body, settings, deps) : undefined;
   if (viaChant?.error) return json(200, { type: "message", text: viaChant.error });
   if (viaChant?.answer) {
     log(`teams: ${viaChant.who} ${viaChant.action} (chant's reference): ${viaChant.answer.text}`);
@@ -431,7 +387,7 @@ export async function handleRelay(req: RelayRequest, settings: RelaySettings, de
   }
   const click = teamsClick(req.body);
   if ("error" in click) return json(200, { type: "message", text: click.error });
-  const answer = await decideClick(click, deps, chant);
+  const answer = await decideClick(click, deps);
   log(`teams: ${click.chatUser} ${click.action} wave-${click.wave}: ${answer.text}`);
   return json(200, { type: "message", text: answer.text });
 }
