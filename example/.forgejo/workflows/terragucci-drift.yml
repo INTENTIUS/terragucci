@@ -17,7 +17,7 @@ concurrency:
 jobs:
   terragucci-drift:
     runs-on: docker
-    container: ghcr.io/intentius/terragucci-tofu:0.4.50-tofu1.13.1
+    container: ghcr.io/intentius/terragucci-tofu:0.4.51-tofu1.13.1
     env:
       TG_TOKEN: '${{ github.token }}'
       TG_SHA: '${{ github.sha }}'
