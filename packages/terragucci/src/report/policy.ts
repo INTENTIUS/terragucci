@@ -31,13 +31,12 @@
  * is the directory inside that repo. The key itself is still read at the
  * base, so a pull request cannot point it at another repo or ref.
  *
- * With chant core's shared policy source installed
- * (`@intentius/chant/policy-source`, chant#4613), `policy.source` and
- * `policy.path` map onto chant's `ci.policy.source` (`ciPolicySource`) and
- * chant fetches it. Without it, or for a source chant's settings check
- * refuses, terragucci fetches it itself.
+ * `policy.source` and `policy.path` map onto chant's `ci.policy.source`
+ * (`policySourceOf` in ../config.ts), and chant core fetches it
+ * (`@intentius/chant/policy-source`, chant#4613).
  */
-import { chantPolicySourceNow, type ChantGatePolicySource, type ChantPolicySource, type ChantWorkspaceTree } from "../chant-next";
+import { fetchGatePolicySource } from "@intentius/chant/policy-source";
+import type { WorkspaceTree } from "@intentius/chant/workspace/tree";
 import type { PolicyReview } from "../review-agent";
 import type { Actor } from "../actor";
 import { spawn, spawnSync } from "node:child_process";
@@ -45,7 +44,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { CONFIG_NAMES, loadConfig, parsePolicySource, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
+import { CONFIG_NAMES, loadConfig, policySourceOf, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
 import {
   conftestFindings as chantConftestFindings,
   gatePolicyArgv,
@@ -648,86 +647,17 @@ export function shownUrl(url: string): string {
 }
 
 /**
- * Fetch `policy.source` at its ref into a temporary directory: the settings
- * with `path` pointing at the policy directory inside it, and the commit
- * read. A tag or branch is fetched alone; a commit the server does not hand
- * out by itself is found after fetching every branch and tag. The job's own
- * git credentials, if any, reach the repo. A source that cannot be fetched,
- * or has no such directory at that ref, is an error that fails every root.
+ * Fetch `policy.source` at its ref through chant (chant#4613), and copy its
+ * policy directory into a temporary directory: the settings with `path`
+ * pointing at it, and the commit read. A source that cannot be fetched, or
+ * has no such directory at that ref, is an error that fails every root.
  */
 export function fetchPolicySource(policy: PolicySettings, from: TrustedPolicy["from"]): TrustedPolicy {
-  const source = parsePolicySource(policy.source ?? "");
   const own: TrustedPolicy = { policy, from, cleanup: () => {} };
-  if (!source) return { ...own, error: `policy.source ${policy.source} is not git+https://<host>/<path>@<ref>` };
-  const shown = `${shownUrl(source.url)}@${source.ref}`;
-  const chant = chantPolicySourceNow();
-  const viaChant = chant ? fetchThroughChant(chant, policy, from, shown) : undefined;
-  if (viaChant) return viaChant;
-  const dest = mkdtempSync(join(tmpdir(), "terragucci-policysource-"));
-  const cleanup = () => rmSync(dest, { recursive: true, force: true });
-  const fail = (why: string): TrustedPolicy => {
-    cleanup();
-    return { ...own, error: `could not read the policy from ${shown}: ${why.split(source.url).join(shownUrl(source.url))}` };
-  };
-  const quiet = ["-c", "advice.detachedHead=false", "-c", "init.defaultBranch=main"];
-  const g = (...args: string[]) => gitOut(dest, [...quiet, ...args]);
-  if (g("init", "-q").status !== 0) return fail("git init failed");
-  let fetched = g("fetch", "-q", "--depth", "1", source.url, source.ref);
-  let commit = fetched.status === 0 ? g("rev-parse", "--verify", "FETCH_HEAD^{commit}").stdout.trim() : "";
-  if (!commit) {
-    fetched = g("fetch", "-q", source.url, "+refs/heads/*:refs/remotes/source/*", "+refs/tags/*:refs/tags/*");
-    if (fetched.status !== 0) return fail(fetched.stderr.trim().split("\n").pop() ?? `git fetch exited ${fetched.status}`);
-    commit = g("rev-parse", "--verify", "--quiet", `${source.ref}^{commit}`).stdout.trim();
-    if (!commit) return fail(`${source.ref} is not a tag, branch or commit there`);
-  }
-  if (g("checkout", "-q", "--detach", commit).status !== 0) return fail(`could not check out ${commit}`);
-  const path = (policy.path ?? "policy").replace(/^\.\//, "");
-  const dir = join(dest, path);
-  if (!existsSync(dir) || !statSync(dir).isDirectory()) return fail(`the policy directory ${policy.path ?? "policy"} does not exist at ${source.ref}`);
-  return { policy: { ...policy, path: dir }, from, sourceCommit: commit, cleanup };
-}
-
-/**
- * terragucci's `policy.source` and `policy.path` as chant's `ci.policy.source`
- * (chant#4613): `git+https://host/path@ref` is `{ repo: "https://host/path",
- * ref, path }`. Undefined when `policy.source` is unset or not that shape.
- */
-export function ciPolicySource(policy: Pick<PolicySettings, "source" | "path">): ChantGatePolicySource | undefined {
-  const source = parsePolicySource(policy.source ?? "");
-  return source ? { repo: source.url, ref: source.ref, path: (policy.path ?? "policy").replace(/^\.\//, "").replace(/\/+$/, "") } : undefined;
-}
-
-/** Copy the tree under `dir` into `dest`; the file count. */
-function copyTree(tree: ChantWorkspaceTree, dir: string, dest: string): number {
-  let count = 0;
-  for (const e of tree.list(dir) ?? []) {
-    const at = `${dir}/${e.name}`;
-    if (e.type === "dir") count += copyTree(tree, at, join(dest, e.name));
-    else {
-      mkdirSync(dest, { recursive: true });
-      writeFileSync(join(dest, e.name), tree.bytes ? tree.bytes(at) : tree.read(at));
-      count++;
-    }
-  }
-  return count;
-}
-
-/**
- * `policy.source` fetched by chant (chant#4613), its Rego directory copied
- * into a temporary directory as terragucci's own fetch leaves it. Undefined
- * when chant's settings check refuses the source, so terragucci's own fetch
- * runs instead.
- */
-function fetchThroughChant(chant: ChantPolicySource, policy: PolicySettings, from: TrustedPolicy["from"], shown: string): TrustedPolicy | undefined {
-  const ci = ciPolicySource(policy);
-  if (!ci) return undefined;
-  try {
-    chant.assertGatePolicySource("policy.source", ci);
-  } catch {
-    return undefined;
-  }
-  const own: TrustedPolicy = { policy, from, cleanup: () => {} };
-  const got = chant.fetchGatePolicySource(ci);
+  const ci = policySourceOf(policy);
+  if (!ci) return { ...own, error: `policy.source ${policy.source} is not git+https://<host>/<path>@<ref>` };
+  const shown = `${shownUrl(ci.repo)}@${ci.ref}`;
+  const got = fetchGatePolicySource(ci);
   if ("error" in got) return { ...own, error: `could not read the policy from ${shown}: ${got.error.replace(/^ci\.policy\.source: could not read \S+: /, "")}` };
   const path = ci.path ?? "policy";
   if (got.tree.stat(path) !== "dir") {
@@ -741,6 +671,24 @@ function fetchThroughChant(chant: ChantPolicySource, policy: PolicySettings, fro
     got.cleanup();
   }
   return { policy: { ...policy, path: join(dest, path) }, from, sourceCommit: got.source.commit, cleanup: () => rmSync(dest, { recursive: true, force: true }) };
+}
+
+/** terragucci's `policy.source` and `policy.path` as chant's `ci.policy.source` (chant#4613). */
+export const ciPolicySource = policySourceOf;
+
+/** Copy the tree under `dir` into `dest`; the file count. */
+function copyTree(tree: WorkspaceTree, dir: string, dest: string): number {
+  let count = 0;
+  for (const e of tree.list(dir) ?? []) {
+    const at = `${dir}/${e.name}`;
+    if (e.type === "dir") count += copyTree(tree, at, join(dest, e.name));
+    else {
+      mkdirSync(dest, { recursive: true });
+      writeFileSync(join(dest, e.name), tree.bytes ? tree.bytes(at) : tree.read(at));
+      count++;
+    }
+  }
+  return count;
 }
 
 function gitOut(repo: string, args: string[]): { status: number | null; stdout: string; stderr: string } {

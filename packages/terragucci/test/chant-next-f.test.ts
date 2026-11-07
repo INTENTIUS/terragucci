@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildLedgerEstate } from "@intentius/chant/ci-estate";
 import { parseLedger, type ResolutionRecord } from "../src/apply";
-import { chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
+import { chantOpStandDown, overrideChantNext } from "../src/chant-next";
 import { wavesStepSpec, waveCallArgv } from "../src/chant-waves";
 import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
@@ -19,7 +19,6 @@ import { ciPolicySource, fetchPolicySource } from "../src/report/policy";
 import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
-const policySource = await chantPolicySource();
 const standDown = await chantOpStandDown();
 
 let restore: (() => void)[] = [];
@@ -193,25 +192,20 @@ describe("policy source", () => {
     expect(ciPolicySource({})).toBeUndefined();
   });
 
-  it.runIf(policySource)("fetches a local source through chant into the same shape as terragucci's own fetch", () => {
+  it("fetches a local source through chant into a temporary directory it removes", () => {
     const src = tmp();
     git(src, "init", "-q", "-b", "main");
     write(src, { "rego/deny.rego": "package main\ndeny[msg] { false; msg := \"x\" }\n" });
     git(src, "add", ".");
     git(src, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "rules");
     const commit = execFileSync("git", ["-C", src, "rev-parse", "HEAD"], { encoding: "utf-8" }).trim();
-    const policy = { source: `git+file://${src}@main`, path: "rego" };
-    const viaChant = fetchPolicySource(policy, "base");
-    restore.push(overrideChantNext("policySource", null));
-    const own = fetchPolicySource(policy, "base");
+    const viaChant = fetchPolicySource({ source: `git+file://${src}@main`, path: "rego" }, "base");
     try {
       expect(viaChant.error).toBeUndefined();
       expect(viaChant.sourceCommit).toBe(commit);
-      expect(own.sourceCommit).toBe(commit);
-      expect(readFileSync(join(viaChant.policy.path!, "deny.rego"), "utf-8")).toBe(readFileSync(join(own.policy.path!, "deny.rego"), "utf-8"));
+      expect(readFileSync(join(viaChant.policy.path!, "deny.rego"), "utf-8")).toContain("package main");
     } finally {
       viaChant.cleanup();
-      own.cleanup();
     }
     expect(existsSync(viaChant.policy.path!)).toBe(false);
   });
