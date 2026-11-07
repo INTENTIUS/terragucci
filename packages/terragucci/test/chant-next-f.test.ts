@@ -5,8 +5,9 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildLedgerEstate } from "@intentius/chant/ci-estate";
 import { parseLedger, type ResolutionRecord } from "../src/apply";
-import { chantCiEstate, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
+import { chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
 import { wavesStepSpec, waveCallArgv } from "../src/chant-waves";
 import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
@@ -18,7 +19,6 @@ import { ciPolicySource, fetchPolicySource } from "../src/report/policy";
 import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
-const ciEstate = await chantCiEstate();
 const policySource = await chantPolicySource();
 const standDown = await chantOpStandDown();
 
@@ -170,7 +170,7 @@ describe("ledger estate", () => {
       },
       dora: { schema: "terragucci.dora/v1", generated: T(5), audit: true, source: "ledger", estate: { deployments: 0 }, projects: [] },
       overdue: [],
-    });
+    } as unknown as Parameters<typeof mergeLedgerEstate>[1]);
     expect(p.source).toBe("ledger");
     expect(p.totals).toMatchObject({ waiting: 1, overdue: 1, resources: 3 });
     expect(p.projects[0]!.inventory?.resources).toBe(3);
@@ -178,8 +178,8 @@ describe("ledger estate", () => {
     expect(p.projects[0]!.overdue).toHaveLength(1);
   });
 
-  it.runIf(ciEstate)("builds terragucci's schemas from an empty ledger, with no wave records to switch on", () => {
-    const e = ciEstate!.buildLedgerEstate({ load: { runs: [], gates: [], applies: [], pr_envs: [] }, words: productWords(), project: "infra", members: ["infra"] });
+  it("builds terragucci's schemas from an empty ledger, with no wave records to switch on", () => {
+    const e = buildLedgerEstate({ load: { runs: [], gates: [], applies: [], pr_envs: [] }, words: productWords(), project: "infra", members: ["infra"] });
     expect([e.estate.schema, e.dora.schema, e.dora.audit]).toEqual(["terragucci.estate/v1", "terragucci.dora/v1", false]);
   });
 });

@@ -76,8 +76,7 @@
  * on the lexicon's `registry` subpath, which `sources.proxies` matches and
  * `require` reads through; without them a source through a proxy is matched
  * as written.
- * Newer than the pin too (terragucci#1282 part f): chant core's ledger estate (`ci-estate`, chant#4612), which ./estate.ts
- * builds on once the ledger holds wave run records; its shared policy source
+ * Newer than the pin too (terragucci#1282 part f): chant core's shared policy source
  * (`policy-source`, chant#4613), which fetches `policy.source`
  * (./report/policy.ts); and the op-wave stand-down on `op` (chant#4581),
  * told apart by its exports, which ./apply.ts and the step spec use.
@@ -91,7 +90,9 @@
  * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
  * check` calls (./identities.ts), and its notify relay (`notify-relay`,
  * chant#4611), whose signature checks, principal mapping and button
- * decisions ./relay.ts uses.
+ * decisions ./relay.ts uses, and its ledger estate (`ci-estate`, chant#4612),
+ * which ./estate.ts builds on once the ledger holds wave run records and
+ * whose helpers ./report/dora.ts uses.
  *
  * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
  * sources a root uses (`usedSources`, `lockedProviders`) and their forms
@@ -865,44 +866,6 @@ export interface ChantRegistryProxies {
 
 // ── part f: forge check, relay, estate, policy source, stand-down ─────────
 
-/** The delivery metrics, as chant's `buildDelivery` writes `dora.json` (terragucci's shape, plus `source`). */
-export interface ChantDora {
-  schema: string;
-  generated: string;
-  audit: boolean;
-  source: "ledger";
-  estate: { deployments: number } & Record<string, unknown>;
-  projects: ({ project: string } & Record<string, unknown>)[];
-}
-
-/** A member's section of chant's ledger estate (`EstateProject` in `@intentius/chant/ci-estate`). */
-export interface ChantEstateProject {
-  project: string;
-  status: "ok" | "no-index";
-  drift?: object;
-  apply?: { commit: string; waves: object[] };
-  waiting: { project: string; wave: number; commit: string; since: string; age_seconds: number; gate?: string }[];
-  drifted: number;
-  failed: number;
-  overdue?: object[];
-  ephemeral?: object[];
-}
-
-/** chant's ledger estate (`LedgerEstate`): the page, its delivery metrics and the overdue checks. */
-export interface ChantLedgerEstate {
-  estate: { schema: string; generated: string; source: "ledger"; totals: { overdue: number } & Record<string, number | undefined>; projects: ChantEstateProject[]; recent: object[] };
-  dora: ChantDora;
-  overdue: object[];
-}
-
-/** chant core's estate page, overdue checks and delivery metrics (`@intentius/chant/ci-estate`, chant#4612). */
-export interface ChantCiEstate {
-  buildLedgerEstate(input: { load: unknown; words?: object; now?: Date; members?: readonly string[]; project?: string; schedules?: readonly { op: string; cron: string; members?: string[] }[] }): ChantLedgerEstate;
-  readEstateLedger(cwd: string, members?: readonly string[]): Promise<unknown>;
-  deliveryGauges(dora: ChantDora, words?: object): { name: string; unit: string; description: string; value: number; attributes: Record<string, string> }[];
-  CI_ESTATE_FLOOR: string;
-}
-
 /** `ci.policy.source` (`GatePolicySource` in `@intentius/chant/policy-source`). */
 export interface ChantGatePolicySource {
   repo: string;
@@ -1439,11 +1402,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
   ),
-  ciEstate: once<ChantCiEstate>(
-    () => import("@intentius/chant/ci-estate"),
-    // chant#4612's own feature-detect: buildLedgerEstate present means the rest is too.
-    (m) => (has(m, "buildLedgerEstate", "readEstateLedger", "deliveryGauges") && typeof m.CI_ESTATE_FLOOR === "string" ? (m as unknown as ChantCiEstate) : undefined),
-  ),
   policySource: once<ChantPolicySource>(
     () => import("@intentius/chant/policy-source"),
     (m) => (has(m, "assertGatePolicySource", "fetchGatePolicySource") && typeof m.CI_POLICY_SOURCE_FLOOR === "string" ? (m as unknown as ChantPolicySource) : undefined),
@@ -1650,8 +1608,6 @@ export async function preloadChantNext(): Promise<void> {
   await load("releaseRead");
 }
 
-/** chant core's ledger estate and delivery metrics (chant#4612), or undefined. */
-export const chantCiEstate = (): Promise<ChantCiEstate | undefined> => load("ciEstate");
 /** chant core's shared policy source (chant#4613), or undefined. */
 export const chantPolicySource = (): Promise<ChantPolicySource | undefined> => load("policySource");
 /** The policy source as it already loaded, for the synchronous fetch in ./report/policy.ts. cli.ts loads it first. */
@@ -1691,7 +1647,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [compose, composeRun, state, planShape, objectStore, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
-  const [ciEstate, policySource, opStandDown] = [await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
+  const [policySource, opStandDown] = [await chantPolicySource(), await chantOpStandDown()];
   const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
@@ -1700,5 +1656,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
