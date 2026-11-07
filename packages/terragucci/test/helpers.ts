@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll } from "vitest";
+import { parseYAML } from "@intentius/chant/yaml";
 
 // Every dir tmp() made in this test file, removed once the file's tests are done.
 // A browser a test started can still be writing its profile, so removal retries
@@ -103,3 +104,20 @@ export function validate(schema: Json, value: unknown, at = "$", root: Json = sc
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Json = Record<string, any>;
+
+/**
+ * The drift job of a rendered pipeline, now a chant drift Op in a file of its
+ * own on every forge (terragucci#1305, chant issues 4622 and 4753): the Op's
+ * job, its script (.chant/ops/terragucci-drift.sh) and its spec. undefined
+ * when the pipeline has no drift.
+ */
+export function driftOp(out: { extra?: { path: string; content: string }[] }, forge: "github" | "forgejo" | "gitlab"): { job: Record<string, any>; script: string; spec: Record<string, any>; text: string } | undefined {
+  const file = (p: string) => out.extra?.find((f) => f.path === p)?.content;
+  const yml = file(forge === "gitlab" ? ".gitlab/terragucci-drift.yml" : `.${forge === "github" ? "github" : "forgejo"}/workflows/terragucci-drift.yml`);
+  if (yml === undefined) return undefined;
+  const doc = parseYAML(yml.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+  const job = forge === "gitlab" ? doc["terragucci-drift"] : doc.jobs["terragucci-drift"];
+  const script = file(".chant/ops/terragucci-drift.sh") ?? "";
+  const spec = JSON.parse(file(".chant/ops/terragucci-drift.spec.json") ?? "{}");
+  return { job, script, spec, text: `${yml}\n${script}` };
+}

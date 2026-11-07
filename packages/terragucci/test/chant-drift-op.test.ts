@@ -33,7 +33,7 @@ const input = { forge: "github" as const, binary: "tofu" as const, version: "1.1
 
 describe("the drift job as a chant drift Op", () => {
   it("moves the drift job onto chant's Op, with chant's drift agent, when chant has the job", () => {
-    restore = overrideChantNext("agentJob", fakeAgentJob());
+    restore = overrideChantNext("opGenerator", fakeAgentJob());
     const out = renderPipeline(input);
     expect(out.content).not.toContain("drift-agent-push:");
     expect(out.content).not.toMatch(/^ {2}drift:$/m);
@@ -49,10 +49,29 @@ describe("the drift job as a chant drift Op", () => {
     expect(script).not.toContain("GITHUB_OUTPUT");
   });
 
-  it("keeps terragucci's job on Forgejo with oidc, which chant's Op cannot ask a token for", () => {
-    restore = overrideChantNext("agentJob", fakeAgentJob());
-    const out = renderPipeline({ ...input, forge: "forgejo", oidc: { role_arn: "arn:aws:iam::123456789012:role/plan", region: "us-east-1" } as never });
-    expect(out.content).toContain("drift-agent-push:");
+  it("moves the drift job on Forgejo with oidc too, whose job chant gives an OIDC token (chant issue 4753)", () => {
+    const out = renderPipeline({ ...input, forge: "forgejo", oidc: { plan_role: "arn:aws:iam::123456789012:role/plan", apply_role: "arn:aws:iam::123456789012:role/apply", region: "us-east-1" } as never });
+    expect(out.content).not.toContain("drift-agent-push:");
+    expect(out.content).not.toMatch(/^ {2}drift:$/m);
+    const workflow = out.extra!.find((f) => f.path === CHANT_DRIFT_PATHS.forgejo)!.content;
+    expect(workflow).toContain("enable-openid-connect: true");
+  });
+
+  it("moves the drift job on GitLab, with the drift stage's id_tokens, a Terragrunt repo's cache and terragucci's schedule rule (chant issue 4753)", () => {
+    const oidc = { plan_role: "arn:aws:iam::123456789012:role/plan", apply_role: "arn:aws:iam::123456789012:role/apply", region: "us-east-1", audience: { drift: "drift-aud" } };
+    const out = renderPipeline({ ...plain, forge: "gitlab", oidc, resume: 10, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } } as never);
+    expect(out.content).toContain(`include:\n  - local: ${CHANT_DRIFT_PATHS.gitlab}\n`);
+    expect(out.content).not.toMatch(/^drift:$/m);
+    const spec = specOf(out).ops[0];
+    expect(spec.findingMode).toBe("report");
+    expect(spec.permissions).toBeUndefined();
+    expect(spec.gitlab).toEqual({
+      idTokens: { TERRAGUCCI_OIDC: { aud: "drift-aud" } },
+      cache: [{ key: "terragucci-terragrunt", paths: [".terragrunt-cache/"] }],
+      scheduleRule: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume"',
+    });
+    expect(specOf(out).options).toMatchObject({ opsStage: "drift", runCommand: ["bash", CHANT_DRIFT_SCRIPT_FILE] });
+    expect(specOf(out).options.variables).toBeUndefined();
   });
 
   it("asks for pull request scopes with respond.drift: pull-request, and id-token with oidc", () => {
@@ -66,7 +85,7 @@ describe("the drift job as a chant drift Op", () => {
   const scriptOf = (out: ReturnType<typeof renderPipeline>) => out.extra!.find((f) => f.path === CHANT_DRIFT_SCRIPT_FILE)!.content;
 
   it("moves the drift job without agent.drift too, keeping the drift report as an artifact and a green run on drift (chant issue 4622)", () => {
-    restore = overrideChantNext("agentJob", fakeAgentJob());
+    restore = overrideChantNext("opGenerator", fakeAgentJob());
     const out = renderPipeline(plain);
     expect(out.content).not.toMatch(/^ {2}drift:$/m);
     expect(out.content).not.toContain("cron: '0 6 * * *'");
@@ -79,7 +98,7 @@ describe("the drift job as a chant drift Op", () => {
   });
 
   it("keeps respond.drift: agent's input as a second artifact, and installs attribution's AWS CLI in the script", () => {
-    restore = overrideChantNext("agentJob", fakeAgentJob());
+    restore = overrideChantNext("opGenerator", fakeAgentJob());
     const agentOut = renderPipeline({ ...plain, respond: { drift: "agent" as const } });
     expect(specOf(agentOut).ops[0].artifacts).toEqual([
       { name: "terragucci-report-drift", paths: ["terragucci-report/"] },
@@ -91,7 +110,7 @@ describe("the drift job as a chant drift Op", () => {
   });
 
   it("runs a Terragrunt repo's drift on the Op with its cache as a setup step, and writes no TerraformWatchOp file for units", () => {
-    restore = overrideChantNext("agentJob", fakeAgentJob());
+    restore = overrideChantNext("opGenerator", fakeAgentJob());
     const out = renderPipeline({ ...plain, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } });
     expect(out.content).not.toMatch(/^ {2}drift:$/m);
     const setup = specOf(out).ops[0].setup;

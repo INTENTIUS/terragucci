@@ -8,7 +8,7 @@ import type { Fetch } from "../src/forge";
 import { renderPipeline, resumeCron, resumeScript } from "../src/render";
 import { originOf, resumable, resumeAfterApproval, resumeStep, resumeWithChant } from "../src/resume";
 import { appendLifecycle, type GateLedger } from "../src/apply";
-import { git, tmp } from "./helpers";
+import { driftOp, git, tmp } from "./helpers";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 8, 12, m)).toISOString();
 const pending = (gate: string, digest: string, m: number, extra: Record<string, unknown> = {}) => ({ version: 1 as const, kind: "pending" as const, op: "tf-apply", gate, timestamp: T(m), expiresAt: T(m + 2880), planDigest: digest, ...extra });
@@ -254,10 +254,11 @@ describe("apply.resume in the pipeline", () => {
   });
 
   it("gitlab: a resume job for the pipeline schedule TERRAGUCCI_SCHEDULE=resume, which drift's job sits out", () => {
-    const d = doc(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "always", resume: 15, drift: "0 6 * * *" }).content);
+    const out = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "always", resume: 15, drift: "0 6 * * *" });
+    const d = doc(out.content);
     expect(d.resume.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "resume"' }]);
     expect(JSON.stringify(d.resume.script)).toContain("terragucci resume --forge gitlab");
-    expect(d.drift.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "resume"');
+    expect(driftOp(out, "gitlab")!.job.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "resume"');
     expect(d["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
   });
 

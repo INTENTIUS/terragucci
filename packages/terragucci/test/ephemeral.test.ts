@@ -23,7 +23,7 @@ import { ledgerEntries, PR_ENV_RECORDS_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { buildEstate, renderEstateHtml } from "../src/report/estate";
 import type { Fetch } from "../src/forge";
-import { git, tmp, write } from "./helpers";
+import { driftOp, git, tmp, write } from "./helpers";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 0, 1, 0, m)).toISOString();
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
@@ -423,13 +423,14 @@ describe("the ephemeral jobs", () => {
   });
 
   it("on GitLab the merge request's pipeline applies its copy, and a schedule sweeps the expired and the closed", () => {
-    const doc = body(pipeline("gitlab", { drift: "0 6 * * *" }).content);
+    const out = pipeline("gitlab", { drift: "0 6 * * *" });
+    const doc = body(out.content);
     expect(doc.ephemeral.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' }]);
     const script = JSON.stringify(doc.ephemeral.script);
     expect(script).toContain("terragucci ephemeral up --pr \\\"$CI_MERGE_REQUEST_IID\\\"");
     expect(script).toContain('--base \\"origin/${CI_DEFAULT_BRANCH}\\"');
     expect(doc["ephemeral-sweep"].rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "ephemeral"' }]);
-    expect(doc.drift.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "ephemeral"');
+    expect(driftOp(out, "gitlab")!.job.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "ephemeral"');
   });
 
   it("renders as before without it, renders in a Terragrunt repo and with synth, and is refused on GitLab with a protected token", () => {

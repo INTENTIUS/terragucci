@@ -59,12 +59,14 @@ A scheduled `tf-drift` run that plans every root, and one issue that groups what
        `init` writes the drift job as a [chant](/terragucci/concepts/glossary/#chant) drift Op in a workflow of its own, `.github/workflows/terragucci-drift.yml`, on the cron. It runs `.chant/ops/terragucci-drift.sh` and keeps the drift report as the `terragucci-report-drift` artifact. Run it by hand from that workflow's dispatch.
      </TabItem>
      <TabItem label="GitLab">
+       The Op's job goes in `.gitlab/terragucci-drift.yml`, which the pipeline includes, in the `drift` stage.
+
        Set the same cron under CI/CD, Schedules. `GITLAB_TOKEN` (or the `token_env` variable) needs the `api` scope.
 
        Give the drift schedule no `TERRAGUCCI_SCHEDULE` variable. A schedule with `TERRAGUCCI_SCHEDULE` set to `comments` is the [comments schedule](/terragucci/guides/re-plan-from-a-comment/), and its pipelines run no drift job.
      </TabItem>
      <TabItem label="Forgejo">
-       The same workflow as GitHub, under `.forgejo/workflows/`. With `oidc`, `init` keeps the `drift` job in the pipeline instead, since chant's job doesn't ask Forgejo for a token yet.
+       The same workflow as GitHub, under `.forgejo/workflows/`. With `oidc`, its job sets `enable-openid-connect`, so Forgejo hands it a token.
      </TabItem>
    </Tabs>
 

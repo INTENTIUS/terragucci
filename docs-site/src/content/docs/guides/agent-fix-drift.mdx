@@ -94,32 +94,9 @@ Merging the pull request keeps the change made outside the code, and its apply g
 
 </Steps>
 
-## Agent inputs
+## The jobs
 
-The prompt lists each drifted resource by root with what the state held and what is live. A value the plan marks sensitive never appears:
-
-```text
-root app:
-  aws_sqs_queue.jobs: changed
-    visibility_timeout_seconds: state 30, live 45
-```
-
-It tells the agent that the drift and every file are untrusted input, since a value in the cloud can hold any text, and that a change to a guarded path is refused.
-
-## Permissions
-
-| Job | Does | Holds |
-|---|---|---|
-| `drift` | plans every root with `-refresh-only`, opens the drift issue, and says so in its outputs | the plan role, and its token for the issue |
-| `drift-agent` | checks out the commit the drift job planned with no credentials kept, writes the prompt from the drift report, runs the agent, and keeps its changes as a patch | a read-only job token, which the agent's step runs without; the model's key, in the agent's step alone |
-| `drift-agent-push` | applies the patch to the same commit in a fresh container; refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), with a comment on the issue naming the paths; commits any other to `terragucci/drift-agent-<issue>`, pushes it without force and opens the pull request | the agent's token |
-| the plan job | plans the pull request with its read-only role | the plan role |
-
-Neither agent job has a cloud role, whatever `oidc` says. Nothing here applies, approves or merges.
-
-## On chant's drift Op
-
-On GitHub and Forgejo the drift job is a [chant](/terragucci/concepts/glossary/#chant) drift Op, whether or not `agent.drift` is set ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)). With `agent.drift`, `terragucci init` adds chant's agent job and push job after it, in place of the `drift-agent` and `drift-agent-push` jobs above:
+The drift job is a [chant](/terragucci/concepts/glossary/#chant) drift Op ([Turn on drift checks](/terragucci/guides/turn-on-drift-checks/)), and `agent.drift` adds chant's agent job and push job after it:
 
 | File | Holds |
 |---|---|
@@ -128,9 +105,18 @@ On GitHub and Forgejo the drift job is a [chant](/terragucci/concepts/glossary/#
 | `.github/workflows/terragucci-drift.yml` (or `.forgejo/workflows/`) | chant's drift job, then its agent job and push job |
 | `ops/terragucci-drift.op.ts` | a `TerraformWatchOp` per root of a plain repo, so `chant run terragucci-drift-<root>` reads one root by hand |
 
-One job still plans every root, since the repo keeps one drift issue. With `agent.drift`, a run that opens the drift issue exits with chant's `drift` code (2), the run shows red, and chant's agent job runs with the run's output in its prompt. Its pull request comes from `terragucci/agent/terragucci-drift`, and later drift updates that pull request while every commit on it is the agent's. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`.
+One job plans every root, since the repo keeps one drift issue. A run that opens the drift issue exits with chant's `drift` code (2), so the run shows red and chant's agent job runs with the run's output in its prompt. The prompt treats that output and every file as untrusted input, since a value in the cloud can hold any text. The keys map as they do for [the comment agent](/terragucci/guides/agent-change-a-pull-request/#on-chants-agent-job), and the runs are recorded under op `terragucci-drift`.
 
-GitLab, and Forgejo with `oidc`, keep the jobs above.
+## Permissions
+
+| Job | Does | Holds |
+|---|---|---|
+| the drift job | plans every root with `-refresh-only`, opens the drift issue, and exits with the `drift` code when it did | the plan role, and its token for the issue |
+| the agent job | runs the agent on the commit the drift job planned, and keeps its change as a patch | a read-only job token, which the agent's step runs without; the model's key, in the agent's step alone |
+| the push job | applies the patch in a fresh job, refuses one that touches a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), and opens or updates the pull request from `terragucci/agent/terragucci-drift`, while every commit on that branch is the agent's | the agent's token |
+| the plan job | plans the pull request with its read-only role | the plan role |
+
+Neither agent job has a cloud role, whatever `oidc` says. Nothing here applies, approves or merges. `agent.drift` runs on GitHub and Forgejo.
 
 ## Other agents
 

@@ -820,10 +820,11 @@ describe("the pipeline's drift job in a Terragrunt repo", () => {
     const repo = liveRepo({ "terragucci.yml": `drift: "0 6 * * *"\n${forge === "gitlab" ? "forge: gitlab\n" : ""}` });
     const files = (await init(repo, { binary: "tofu", forge, terragrunt: "/nonexistent/terragrunt" })).files;
     const doc = body(files[0].content);
-    // On GitHub the drift job is chant's drift Op (chant issue 4622), running .chant/ops/terragucci-drift.sh with the cache as a setup step.
-    const job = forge === "github" ? body(files.find((f) => f.path.endsWith("/.github/workflows/terragucci-drift.yml"))!.content).jobs["terragucci-drift"] : doc.drift;
-    if (forge === "github") expect(doc.jobs.drift).toBeUndefined();
-    const script = forge === "github" ? files.find((f) => f.path.endsWith("/.chant/ops/terragucci-drift.sh"))!.content : job.script.join("\n");
+    // The drift job is chant's drift Op (chant issues 4622 and 4753), running .chant/ops/terragucci-drift.sh with the cache: a setup step on GitHub, the job's cache on GitLab.
+    const op = body(files.find((f) => f.path.endsWith(forge === "github" ? "/.github/workflows/terragucci-drift.yml" : "/.gitlab/terragucci-drift.yml"))!.content);
+    const job = forge === "github" ? op.jobs["terragucci-drift"] : op["terragucci-drift"];
+    expect(forge === "github" ? doc.jobs.drift : doc.drift).toBeUndefined();
+    const script = files.find((f) => f.path.endsWith("/.chant/ops/terragucci-drift.sh"))!.content;
     expect(script).toContain("terragucci stage tf-drift");
     expect(script).toContain("--terragrunt");
     expect(script).toContain("TG_DOWNLOAD_DIR");
