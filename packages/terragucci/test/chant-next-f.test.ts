@@ -1,5 +1,5 @@
-// terragucci#1282 part f: chant's forge check contract (chant#4608, called directly since the 0.124.58 pin), notify words and relay (chant#4610,
-// #4611), ledger estate (chant#4612), shared policy source (chant#4613) and op-wave stand-down (chant#4581). Each
+// terragucci#1282 part f: chant's forge check contract (chant#4608, called directly since the 0.124.58 pin), notify words (chant#4610;
+// the relay is chant's own since #4611, ./relay.test.ts), ledger estate (chant#4612), shared policy source (chant#4613) and op-wave stand-down (chant#4581). Each
 // case stands a module in for chant's, makes it missing, or runs only when the installed chant has it.
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, readFileSync } from "node:fs";
@@ -13,7 +13,6 @@ import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
 import { configIdentities, forgeCheckContract } from "../src/identities";
 import { HEADER_PREFIX, NOTIFY_SOURCE } from "../src/notify";
-import { chantRelayDeps, principalFor, type RelayDeps } from "../src/relay";
 import type { Estate } from "../src/report/estate";
 import { ciPolicySource, fetchPolicySource } from "../src/report/policy";
 import { gateSigners } from "./sshsig";
@@ -89,60 +88,7 @@ describe("forge check", () => {
   });
 });
 
-// ── relay ───────────────────────────────────────────────────────────────
-
-const KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
-const SIGNERS = `alice@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\n`;
-const D = "jcs1-sha256:" + "a".repeat(64);
 const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
-const pendingLine = (extra: object = {}) => JSON.stringify({ version: 1, kind: "pending", op: "tf-apply", gate: "wave-1", timestamp: T(1), expiresAt: T(49), planDigest: D, ...extra }) + "\n";
-
-function relayDeps(o: { mode?: "ledger" | "sealed"; question?: boolean } = {}): RelayDeps & { recorded: ResolutionRecord[]; answered: string[] } {
-  const recorded: ResolutionRecord[] = [];
-  const answered: string[] = [];
-  return {
-    recorded,
-    answered,
-    principal: "terragucci-relay",
-    rule: async () => ({ mode: o.mode ?? "ledger", signers: gateSigners(SIGNERS), signersPath: ".chant/allowed_signers" }),
-    ledger: () => parseLedger(pendingLine(o.question ? { answer: { id: "q-1" } } : {})),
-    record: (r) => void recorded.push(r),
-    answer: async (id) => {
-      answered.push(id);
-      return { answered: true };
-    },
-    now: () => new Date(T(5)),
-  };
-}
-
-describe("relay deps for chant's buttons", () => {
-  const words = TERRAGUCCI_WORDS as never;
-
-  it("names the waiting wave for its digest, and records the approval as terragucci's own relay does", async () => {
-    const deps = relayDeps();
-    const d = chantRelayDeps(deps, "slack", words);
-    expect(await d.pending(D)).toEqual([{ op: "tf-apply", gate: "wave-1", digest: D }]);
-    expect((await d.signers()).path).toBe(".chant/allowed_signers");
-    expect(await d.approve({ op: "tf-apply", gate: "wave-1", digest: D, actor: "alice@acme.com", relayedBy: "terragucci-relay" })).toEqual({ ok: true });
-    expect(deps.recorded[0]).toMatchObject({ gate: "wave-1", resolvedBy: "alice@acme.com", relayedBy: "terragucci-relay", planDigest: D, via: "slack" });
-  });
-
-  it("answers a decision point's question, which chant's relay would refuse", async () => {
-    const deps = relayDeps({ question: true });
-    expect(await chantRelayDeps(deps, "teams", words).approve({ op: "tf-apply", gate: "wave-1", digest: D, actor: "alice@acme.com", relayedBy: "terragucci-relay" })).toEqual({ ok: true });
-    expect(deps.answered).toEqual(["q-1"]);
-    expect(deps.recorded).toEqual([]);
-  });
-
-  it("refuses under sealed approval", async () => {
-    const r = await chantRelayDeps(relayDeps({ mode: "sealed" }), "slack", words).approve({ op: "tf-apply", gate: "wave-1", digest: D, actor: "alice@acme.com", relayedBy: "terragucci-relay" });
-    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/sealed/) });
-  });
-
-  it("maps a chat user to a principal through chant's mapping", () => {
-    expect(principalFor(gateSigners(SIGNERS), "slack:T1/U1")).toBe("alice@acme.com");
-  });
-});
 
 // ── estate ──────────────────────────────────────────────────────────────
 

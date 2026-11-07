@@ -1,7 +1,7 @@
 /**
  * A wave gate that asks a decision point (`apply.point`, which chant's op
- * waves ask: ./src/point-gate.ts), answered from chat through the relay
- * (./src/relay.ts), against the chant bin terragucci installs: the question
+ * waves ask: ./src/point-gate.ts), answered from chat through chant's relay
+ * (`terragucci relay`, ./src/relay-host.ts), against the chant bin terragucci installs: the question
  * is held on chant/lifecycle, a chat approval answers it, the answer shows in
  * `chant workspace records`, and the wave passes on it. An agent's approval
  * does not meet a human quorum, and an answer over MCP or ACP is refused.
@@ -14,7 +14,10 @@ import { applyWave, EXIT, readLedger } from "../src/apply";
 import { chantCommand } from "../src/chant-bin";
 import { pointQuestions } from "../src/point-gate";
 import { resumable } from "../src/resume";
-import { decideClick, workspace, workspaceDeps, type Click } from "../src/relay";
+import { relayToken } from "@intentius/chant/notify";
+import { decideRelayClick } from "@intentius/chant/notify-relay";
+import { checkoutRelayDeps } from "@intentius/chant/cli/handlers/notify-relay";
+import { relayCheckout } from "../src/relay-host";
 import { createWorkspaceTools } from "@intentius/chant/cli/mcp/workspace-tools";
 import { resetGateOrigin, setGateOrigin } from "@intentius/chant/lifecycle/gate-origin";
 import { git, tmp, write } from "./helpers";
@@ -90,7 +93,15 @@ function repo(): { dir: string; origin: string; job: string } {
 const wave = (job: string, bin: string, outcome: string) =>
   applyWave(job, { wave: 1, layers: [["envs/prod"]], binary: bin, gate: "always", env: { ...process.env, CI: "true", TG_OUTCOME_JSON: outcome, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
 
-const click = (user: string, plan: string): Click => ({ app: "slack", chatUser: user, display: user, action: "approve", wave: 1, plan });
+const RELAY_KEY = "relay-key-for-tests";
+/** A click on chant's Approve button for wave 1's plans, signed with the relay key as notify signs it. */
+const click = (user: string, plan: string) => ({
+  app: "slack" as const,
+  chatUser: user,
+  display: user,
+  action: "approve" as const,
+  token: relayToken(RELAY_KEY, { id: "e1", source: "terragucci", at: new Date().toISOString(), gate: "wave-1", digest: plan }),
+});
 
 const chantJson = (cwd: string, ...args: string[]): any => {
   let out: string;
@@ -141,18 +152,22 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
       }
     }
 
-    // The relay, in its own workspace: an agent's click does not answer the question.
-    const relay = workspace(origin);
-    const deps = workspaceDeps(relay, "main", "terragucci-relay");
-    const bot = await decideClick(click("slack:T1/B1", D), deps);
+    // chant's relay, in its own checkout of the default branch, as `terragucci relay` runs it: an agent's click does not answer the question.
+    const relay = relayCheckout(origin, "main");
+    const deps = checkoutRelayDeps(relay, "terragucci-relay");
+    const here = process.cwd();
+    process.chdir(relay);
+    let bot, alice;
+    try {
+      bot = await decideRelayClick(click("slack:T1/B1", D), { key: RELAY_KEY }, deps);
+      // A person's click answers it, relayed by the relay.
+      alice = await decideRelayClick(click("slack:T1/U1", D), { key: RELAY_KEY }, deps);
+    } finally {
+      process.chdir(here);
+    }
     expect(bot.ok).toBe(false);
     expect(bot.text).toContain("quorum-not-met");
-    expect(bot.text).toContain("holds the agent role");
-
-    // A person's click answers it, relayed by the relay.
-    const alice = await decideClick(click("slack:T1/U1", D), deps);
     expect(alice).toMatchObject({ ok: true });
-    expect(alice.text).toContain(`decision point question ${id} answered yes by alice@acme.com, relayed by terragucci-relay`);
 
     // The answer record shows in chant workspace records, read from a fresh clone, which fetches chant/lifecycle itself.
     const reader = join(dir, "reader");

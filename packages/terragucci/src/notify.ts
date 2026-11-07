@@ -17,10 +17,13 @@
  * `X-Terragucci-Timestamp`). It is never posted unsigned.
  *
  * It only tells people. Nothing here approves, applies or merges. With
- * `notify.relay` set, a waiting wave's Slack message carries Approve and
- * Decline buttons, and its Teams card the reply that does the same; a click
- * reaches the customer's own relay (./relay.ts), which checks who clicked
- * and records the approval on chant/lifecycle. A webhook that does not
+ * `notify.relay` set and its key in the job, a waiting wave's Slack message
+ * carries chant's Approve and Decline buttons, and its Teams card the reply
+ * that does the same, each signed with the relay key (chant#4611). A click
+ * reaches the customer's own relay, `terragucci relay`, which is chant's
+ * `chant notify relay` (./relay-host.ts): it checks who clicked and records
+ * the approval on chant/lifecycle, or answers the decision point the gate
+ * asks. A webhook that does not
  * answer is logged and never fails the job; its address, a secret, is never
  * printed.
  *
@@ -29,10 +32,10 @@
  * the page where a person runs the drift check again with their own forge
  * login.
  */
-import { ciRun, makeNotifyEvent, sendNotify, type NotifyConfig, type NotifyDelivery, type NotifyEvent, type SendNotifyOptions } from "@intentius/chant/notify";
+import { ciRun, makeNotifyEvent, sendNotify, slackRelayActions, teamsRelayReply, type NotifyConfig, type NotifyDelivery, type NotifyEvent, type RelayButtons, type SendNotifyOptions } from "@intentius/chant/notify";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { OUTCOME_SCHEMA, type WaveOutcome } from "./apply";
+import { OUTCOME_SCHEMA, waveGate, type WaveOutcome } from "./apply";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 
 /** What the wave did. */
@@ -47,9 +50,10 @@ export const WEBHOOK_KEY_ENV = "TERRAGUCCI_WEBHOOK_KEY";
 /** `notify.relay`: the relay's name, which a waiting wave's message offers buttons (Slack) or a reply (Teams) for. */
 export const RELAY_NAME_ENV = "TERRAGUCCI_RELAY";
 
-/** The Slack buttons' action ids, which the relay reads. */
-export const APPROVE_ACTION = "terragucci-approve";
-export const DECLINE_ACTION = "terragucci-decline";
+/** `notify.relay_key`: the variable the job holds the relay key in, which signs the buttons (chant's `notify.relay` on the sending side). */
+export const RELAY_KEY_ENV = "TERRAGUCCI_RELAY_KEY";
+
+/** The drift notice's Re-plan button: a link, which opens the page that runs the drift check again. */
 export const REPLAN_ACTION = "terragucci-replan";
 
 export interface WaveNotice {
@@ -152,33 +156,21 @@ export function headline(n: WaveNotice): string {
 
 const rootsText = (n: WaveNotice): string => (n.roots.length > 0 ? n.roots.join(", ") : "see the run");
 
-/** What a relay button carries: the wave and the digest it approves, and nothing else. */
-export interface ButtonValue {
-  wave: number;
-  plan: string;
-}
-
-/** A Slack button. `value` is what the relay reads back; `url` makes it a link that opens a page. */
+/** A Slack button. `url` makes it a link that opens a page. */
 function slackButton(text: string, action: string, o: { value?: string; url?: string; style?: "primary" | "danger" }): Record<string, unknown> {
   return { type: "button", action_id: action, text: { type: "plain_text", text }, ...(o.value ? { value: o.value } : {}), ...(o.url ? { url: o.url } : {}), ...(o.style ? { style: o.style } : {}) };
 }
 
 /**
- * A Slack incoming webhook's body: one mrkdwn text. With a relay, a waiting
- * wave's message also carries the text as a block and Approve and Decline
- * buttons, whose value names the wave and the digest the message showed.
+ * A Slack incoming webhook's body: one mrkdwn text. With the relay's signed
+ * button value (`relay`, which chant's sendNotify passes for a waiting wave
+ * when the relay key is set), the text as a block and chant's Approve and
+ * Decline buttons.
  */
-export function slackMessage(n: WaveNotice): { text: string; blocks?: Record<string, unknown>[] } {
+export function slackMessage(n: WaveNotice, relay?: RelayButtons): { text: string; blocks?: Record<string, unknown>[] } {
   const text = slackText(n);
-  if (!n.relay || !n.digest || n.event !== "waiting") return { text };
-  const value = JSON.stringify({ wave: n.wave, plan: n.digest } satisfies ButtonValue);
-  return {
-    text,
-    blocks: [
-      { type: "section", text: { type: "mrkdwn", text } },
-      { type: "actions", block_id: "terragucci", elements: [slackButton("Approve", APPROVE_ACTION, { value, style: "primary" }), slackButton("Decline", DECLINE_ACTION, { value, style: "danger" })] },
-    ],
-  };
+  if (!n.relay || !relay || n.event !== "waiting") return { text };
+  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, slackRelayActions(relay)] };
 }
 
 function slackText(n: WaveNotice): string {
@@ -194,11 +186,11 @@ function slackText(n: WaveNotice): string {
     ].join("\n");
 }
 
-/** The Teams reply that approves or declines a waiting wave through the relay's outgoing webhook. */
-export const teamsReply = (n: Pick<WaveNotice, "relay" | "wave" | "digest">, action: "approve" | "decline"): string => `@${n.relay} ${action} wave-${n.wave} ${n.digest}`;
+/** The Teams reply that approves or declines a waiting wave through the relay's outgoing webhook: a mention of the relay, then chant's reply. */
+export const teamsReply = (n: Pick<WaveNotice, "relay">, relay: RelayButtons, action: "approve" | "decline"): string => `@${n.relay} ${teamsRelayReply(relay, action)}`;
 
 /** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card. Its actions open the pull request's review page, under pr-review, and the run. */
-export function teamsMessage(n: WaveNotice): Record<string, unknown> {
+export function teamsMessage(n: WaveNotice, relay?: RelayButtons): Record<string, unknown> {
   const facts = [
     { title: "Wave", value: String(n.wave) },
     ...(n.review ? [{ title: "Review and approve", value: `pull request ${n.review.pr}, then run the wave again: ${n.review.url}` }] : []),
@@ -222,8 +214,8 @@ export function teamsMessage(n: WaveNotice): Record<string, unknown> {
             { type: "TextBlock", text: headline(n), weight: "Bolder", wrap: true },
             { type: "FactSet", facts },
             // Teams has no button that reaches a relay without a registered bot, so the card gives the reply its outgoing webhook reads.
-            ...(n.relay && n.digest && n.event === "waiting"
-              ? [{ type: "TextBlock", wrap: true, text: `Approve here: reply ${teamsReply(n, "approve")}. Decline: reply ${teamsReply(n, "decline")}.` }]
+            ...(n.relay && relay && n.event === "waiting"
+              ? [{ type: "TextBlock", wrap: true, text: `Approve here: reply ${teamsReply(n, relay, "approve")}. Decline: reply ${teamsReply(n, relay, "decline")}.` }]
               : []),
           ],
           ...(n.review || n.run ? { actions: [...(n.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: n.review.url }] : []), ...(n.run ? [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] : [])] } : {}),
@@ -253,7 +245,8 @@ export function webhookEvent(n: WaveNotice, env: NodeJS.ProcessEnv = process.env
       event: n.event,
       summary: summary(n),
       project: n.project,
-      wave: { number: n.wave },
+      // The gate lets chant sign the relay's buttons for a waiting wave (chant#4611).
+      wave: { number: n.wave, gate: waveGate(n.wave) },
       targets: n.roots,
       ...(digest ? { digest } : {}),
       ...(n.event === "waiting" ? { approve: { command: n.approve, ...(n.review ? { review: n.review } : {}) } } : {}),
@@ -279,6 +272,8 @@ function targets(env: NodeJS.ProcessEnv, webhook: boolean): NotifyConfig {
     ...(webhook && env[WEBHOOK_ENV] ? { webhook: WEBHOOK_ENV, key: WEBHOOK_KEY_ENV } : {}),
     ...(env[SLACK_WEBHOOK_ENV] ? { slack: SLACK_WEBHOOK_ENV } : {}),
     ...(env[TEAMS_WEBHOOK_ENV] ? { teams: TEAMS_WEBHOOK_ENV } : {}),
+    // notify.relay: chant signs the buttons with the key this variable holds.
+    ...(env[RELAY_NAME_ENV]?.trim() ? { relay: RELAY_KEY_ENV } : {}),
   };
 }
 
@@ -299,7 +294,7 @@ export async function notify(n: WaveNotice, env: NodeJS.ProcessEnv = process.env
   const config = targets(env, true);
   if (!config.webhook && !config.slack && !config.teams) return [`no webhook: ${SLACK_WEBHOOK_ENV}, ${TEAMS_WEBHOOK_ENV} and ${WEBHOOK_ENV} are empty`];
   const event = webhookEvent(n, env, opts.now !== undefined ? new Date(opts.now * 1000) : new Date());
-  return send(config, event, { slack: () => slackMessage(n), teams: () => teamsMessage(n) }, headline(n), env, opts);
+  return send(config, event, { slack: (_e, relay) => slackMessage(n, relay), teams: (_e, relay) => teamsMessage(n, relay) }, headline(n), env, opts);
 }
 
 // ── drift ────────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ notify:
   webhook: WEBHOOK_URL
   webhook_key: WEBHOOK_KEY
   relay: terragucci
+  relay_key: RELAY_KEY
 cost:
   key_secret: INFRACOST_API_KEY
   approve_above: 100

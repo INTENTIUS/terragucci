@@ -114,6 +114,7 @@ What reads a root's state where it is (the version an apply records, `state expo
 | `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
 | `notify.webhook` | none | a webhook's address for the JSON event; the apply jobs get it as `TERRAGUCCI_WEBHOOK` |
 | `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the apply jobs get it as `TERRAGUCCI_WEBHOOK_KEY` |
+| `notify.relay_key` | none, required with `notify.relay` | the key the relay's buttons are signed with; the apply jobs get it as `TERRAGUCCI_RELAY_KEY`, and the relay holds the same key as `CHANT_RELAY_KEY` |
 
 The drift job also gets `notify.slack` and `notify.teams`. The apply jobs get `notify.relay`, a name rather than a secret, as `TERRAGUCCI_RELAY`.
 
@@ -156,12 +157,13 @@ No step gets a value. The binary holds it, as it holds a value from `pass.secret
 
 ## The relay
 
-[`terragucci relay`](/terragucci/guides/approve-from-chat/) reads these from its own environment, in your cloud. No generated job gets them.
+[`terragucci relay`](/terragucci/guides/approve-from-chat/) reads these from its own environment, in your cloud. No generated job gets them. It serves chant's relay, `chant notify relay`, which also reads `CHANT_RELAY_MAX_AGE` (the oldest button it accepts, a day by default).
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `TERRAGUCCI_RELAY_REPO` | none, required | the repo's https clone address, with no credential in it |
 | `TERRAGUCCI_RELAY_TOKEN` | none, required | the approve-only token; the relay refuses to start with a token that administers the repo, may push to its default branch, or on GitLab has the `api` scope |
+| `CHANT_RELAY_KEY` | none, required | the key the buttons are signed with, the same key as the pipeline's `notify.relay_key`; a button not signed with it is refused |
 | `TERRAGUCCI_RELAY_FORGE` | read from the host | `github`, `gitlab` or `forgejo`, for a host other than github.com and gitlab.com |
 | `TERRAGUCCI_RELAY_PRINCIPAL` | `terragucci-relay` | the name each approval records as `relayedBy` |
 | `SLACK_SIGNING_SECRET` | none | the Slack app's signing secret; without it the relay refuses every Slack request |

@@ -73,7 +73,7 @@ packages/terragucci/src/config-schema.ts   init/config-ts init/role-refused oidc
 packages/terragucci/src/terragucci.schema.json init/config-ts
 packages/terragucci/src/generate-config.ts generate/tofu reconcile/tofu generate/terragrunt generate/terragrunt-init
 packages/terragucci/src/notify.ts         notify/chat notify/webhook chat/*
-packages/terragucci/src/relay.ts          chat/lambda chat/slack chat/teams
+packages/terragucci/src/relay-host.ts        chat/lambda chat/slack chat/teams
 packages/terragucci/src/unlock.ts         state/unlock state/gcs-unlock state/azurerm-unlock
 packages/terragucci/src/cloud-identity.ts oidc/state-roles oidc/atmos-roles oidc/cloud-roles security/replan-apply-role apply/groups apply/check-job identities/trust-policy oidc/terragrunt
 packages/terragucci/src/state-access.ts   oidc/state-roles oidc/atmos-roles oidc/cloud-roles

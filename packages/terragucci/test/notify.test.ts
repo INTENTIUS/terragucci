@@ -6,6 +6,7 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { verifyWebhook } from "@intentius/chant/notify-verify";
+import { readRelayToken } from "@intentius/chant/notify";
 import { driftNotice, notify, notifyDrift, readOutcome, replanUrl, runUrl, slackDrift, slackMessage, teamsDrift, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
 import { applyScript, renderPipeline } from "../src/render";
 import { tmp, validate, write } from "./helpers";
@@ -164,18 +165,34 @@ describe("notify: chat webhooks for a wave", () => {
 });
 
 describe("notify: the relay's buttons", () => {
-  it("with notify.relay, a waiting wave's Slack message carries Approve and Decline, each naming the wave and digest", () => {
+  it("with notify.relay and the relay's signed value, a waiting wave's Slack message carries chant's Approve and Decline, and its Teams card chant's reply", () => {
     const n = waveNotice("waiting", 2, { result: waiting, reportDir: report(), env: { ...ENV, TERRAGUCCI_RELAY: "terragucci" } });
     expect(n.relay).toBe("terragucci");
-    const m = slackMessage(n);
+    const relay = { token: "signed-ref" };
+    const m = slackMessage(n, relay);
     expect(m.text).toBe(slackMessage({ ...n, relay: undefined }).text);
     const actions = m.blocks?.[1] as any;
-    expect(actions.elements.map((e: any) => [e.action_id, e.text.text, JSON.parse(e.value)])).toEqual([
-      ["terragucci-approve", "Approve", { wave: 2, plan: "jcs1-sha256:ab" }],
-      ["terragucci-decline", "Decline", { wave: 2, plan: "jcs1-sha256:ab" }],
+    expect(actions.elements.map((e: any) => [e.action_id, e.text.text, e.value])).toEqual([
+      ["chant-approve", "Approve", "signed-ref"],
+      ["chant-decline", "Decline", "signed-ref"],
     ]);
-    const card = (teamsMessage(n) as any).attachments[0].content;
-    expect(card.body.at(-1).text).toBe("Approve here: reply @terragucci approve wave-2 jcs1-sha256:ab. Decline: reply @terragucci decline wave-2 jcs1-sha256:ab.");
+    const card = (teamsMessage(n, relay) as any).attachments[0].content;
+    expect(card.body.at(-1).text).toBe("Approve here: reply @terragucci approve signed-ref. Decline: reply @terragucci decline signed-ref.");
+    // With no signed value (the key is not set), no buttons.
+    expect(slackMessage(n).blocks).toBeUndefined();
+  });
+
+  it("posts the button chant signed with the relay key, naming the wave's gate and the digest", async () => {
+    const n = waveNotice("waiting", 2, { result: waiting, reportDir: report(), env: { ...ENV, TERRAGUCCI_RELAY: "terragucci" } });
+    const sent: { url: string; body: string }[] = [];
+    const fetch = (async (url: string, init: { body: string }) => {
+      sent.push({ url, body: init.body });
+      return { ok: true, status: 200, text: async () => "" };
+    }) as any;
+    await notify(n, { ...ENV, TERRAGUCCI_RELAY: "terragucci", TERRAGUCCI_RELAY_KEY: "k", TERRAGUCCI_SLACK_WEBHOOK: "https://hooks.slack.test/x" }, { fetch, attempts: 1 });
+    const value = JSON.parse(sent[0]!.body).blocks[1].elements[0].value;
+    expect(readRelayToken("k", value)).toMatchObject({ ok: true, ref: { gate: "wave-2", digest: "jcs1-sha256:ab" } });
+    expect(readRelayToken("other", value).ok).toBe(false);
   });
 
   it("a refused or failed wave, or one with no relay, gets no buttons", () => {
@@ -184,17 +201,20 @@ describe("notify: the relay's buttons", () => {
     expect(slackMessage(waveNotice("refused", 2, { result: refused, reportDir: report(), env: { ...ENV, TERRAGUCCI_RELAY: "terragucci" } })).blocks).toBeUndefined();
   });
 
-  it("takes notify.relay as a name beside slack or teams", () => {
-    expect(validateConfig({ notify: { slack: "S", relay: "terragucci" } }, "t").notify).toEqual({ slack: "S", relay: "terragucci" });
+  it("takes notify.relay as a name beside slack or teams, with the secret holding its key", () => {
+    expect(validateConfig({ notify: { slack: "S", relay: "terragucci", relay_key: "RK" } }, "t").notify).toEqual({ slack: "S", relay: "terragucci", relay_key: "RK" });
+    expect(() => validateConfig({ notify: { slack: "S", relay: "terragucci" } }, "t")).toThrow(/notify.relay needs notify.relay_key/);
+    expect(() => validateConfig({ notify: { slack: "S", relay_key: "RK" } }, "t")).toThrow(/relay_key goes with notify.relay/);
     expect(() => validateConfig({ notify: { webhook: "H", webhook_key: "K", relay: "terragucci" } }, "t")).toThrow(/notify.relay needs notify.slack or notify.teams/);
     expect(() => validateConfig({ notify: { slack: "S", relay: "<at>x</at>" } }, "t")).toThrow(/notify.relay must name your relay/);
   });
 
-  it.each(["github", "forgejo", "gitlab"] as const)("%s: the apply jobs get the relay's name as a plain value", (forge) => {
-    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, notify: { slack: "CHAT_SLACK", relay: "terragucci" } }).content;
+  it.each(["github", "forgejo", "gitlab"] as const)("%s: the apply jobs get the relay's name as a plain value, and its key from the secret", (forge) => {
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, notify: { slack: "CHAT_SLACK", relay: "terragucci", relay_key: "RELAY_KEY" } }).content;
     const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
     const job = forge === "gitlab" ? doc["apply-wave-1"] : doc.jobs["apply-wave-1"];
     expect((forge === "gitlab" ? job.variables : job.env).TERRAGUCCI_RELAY).toBe("terragucci");
+    expect((forge === "gitlab" ? job.variables : job.env).TERRAGUCCI_RELAY_KEY).toBe(forge === "gitlab" ? "$RELAY_KEY" : "${{ secrets.RELAY_KEY }}");
   });
 });
 

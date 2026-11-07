@@ -612,7 +612,7 @@ const unique = <T>(xs: T[]): T[] => [...new Set(xs)];
 /** The variables the apply jobs read: pass, the cost key and the notify secrets. */
 export function applyVariables(s: ProjectSettings): string[] {
   const cost = s.cost === undefined ? [] : [s.cost === true ? COST_KEY_SECRET : (s.cost.key_secret ?? COST_KEY_SECRET)];
-  const notify = s.notify ? [s.notify.slack, s.notify.teams, s.notify.webhook, s.notify.webhook_key].filter((x): x is string => typeof x === "string") : [];
+  const notify = s.notify ? [s.notify.slack, s.notify.teams, s.notify.webhook, s.notify.webhook_key, s.notify.relay_key].filter((x): x is string => typeof x === "string") : [];
   return unique([...(s.pass?.secrets ?? []), ...(s.pass?.vars ?? []), ...cost, ...notify]);
 }
 

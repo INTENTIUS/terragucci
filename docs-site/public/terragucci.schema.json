@@ -306,6 +306,10 @@
         "relay": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
+        },
+        "relay_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         }
       },
       "additionalProperties": false,
@@ -316,6 +320,12 @@
         ],
         "webhook_key": [
           "webhook"
+        ],
+        "relay": [
+          "relay_key"
+        ],
+        "relay_key": [
+          "relay"
         ]
       },
       "if": {
@@ -337,7 +347,7 @@
           }
         ]
       },
-      "description": "The secrets holding Slack, Teams or webhook addresses, and the relay's name."
+      "description": "The secrets holding Slack, Teams or webhook addresses, the relay's name, and the secret holding the key its buttons are signed with."
     },
     "cost": {
       "anyOf": [
@@ -2259,6 +2269,10 @@
             "relay": {
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
+            },
+            "relay_key": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
             }
           },
           "additionalProperties": false,
@@ -2269,6 +2283,12 @@
             ],
             "webhook_key": [
               "webhook"
+            ],
+            "relay": [
+              "relay_key"
+            ],
+            "relay_key": [
+              "relay"
             ]
           },
           "if": {
@@ -2290,7 +2310,7 @@
               }
             ]
           },
-          "description": "The secrets holding Slack, Teams or webhook addresses, and the relay's name."
+          "description": "The secrets holding Slack, Teams or webhook addresses, the relay's name, and the secret holding the key its buttons are signed with."
         },
         "cost": {
           "anyOf": [

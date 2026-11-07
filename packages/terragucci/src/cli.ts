@@ -180,7 +180,7 @@ import { StoreError } from "./report/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";
-import { startRelay } from "./relay";
+import { startRelay } from "./relay-host";
 import { mcp } from "./mcp";
 import { describeGuard, writeGuard } from "./guard";
 import { describeQuery, describeTable, isSql, query, readTable, SQL_DEPRECATED } from "./query";
@@ -238,7 +238,7 @@ const USAGE = `usage:
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
   terragucci notify drift [--report <dir>]
   terragucci notify unrecorded [--audit <dir>]
-  terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks; settings from TERRAGUCCI_RELAY_* in the environment
+  terragucci relay [--port <n>]   serve Slack and Teams Approve and Decline clicks through chant's relay; settings from TERRAGUCCI_RELAY_* and CHANT_RELAY_KEY in the environment
   terragucci drift-agent prompt --report <dir> --out <file> [--policy-dir <dir>]
   terragucci drift-agent push --change <dir> [--forge github|forgejo] [--policy-dir <dir>]
   terragucci query <table> [--where <field><op><value>]... [--since <time>] [--at <rev>] [--config <file>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--json]   one table's rows, filtered: resources, snapshots, runs, gates, deploys, releases or cuts from chant/lifecycle, or inventory, versions, changes, history, audit or edges from the reports bucket ("<sql>" is deprecated)
@@ -1406,9 +1406,8 @@ export async function main(argv: string[]): Promise<number> {
       case "relay": {
         const port = Number(str(flags, "port") ?? process.env.PORT ?? 8080);
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("terragucci relay --port takes a port number");
-        await startRelay({ port });
-        // Serves until the process is stopped.
-        return await new Promise<number>(() => {});
+        // chant's relay serves until the process is stopped.
+        return await startRelay({ port });
       }
       case "post": {
         const forge = str(flags, "forge") ?? process.env.TG_FORGE ?? "github";

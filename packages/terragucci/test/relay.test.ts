@@ -1,191 +1,27 @@
+/**
+ * `terragucci relay` (./src/relay-host.ts): the host's approve-only token
+ * check and checkout, and chant's relay (chant#4611) deciding a click over a
+ * repo laid out as terragucci lays it out.
+ */
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseLedger, type GateLedger, type ResolutionRecord } from "../src/apply";
-import { slackSignature, teamsSignature } from "@intentius/chant/notify-relay";
-import { checkToken, decideClick, gitAuthEnv, handleRelay, principalFor, relayRepo, slackClick, teamsClick, workspaceDeps, type Click, type RelayDeps } from "../src/relay";
-import { gateSigners } from "./sshsig";
+import { relayToken } from "@intentius/chant/notify";
+import { decideRelayClick } from "@intentius/chant/notify-relay";
+import { checkoutRelayDeps } from "@intentius/chant/cli/handlers/notify-relay";
+import { parseLedger } from "../src/apply";
+import { TERRAGUCCI_WORDS } from "../src/ci-words";
+import { chantRelayEnv, checkToken, gitAuthEnv, relayCheckout, relayRepo } from "../src/relay-host";
 import { git, tmp, write } from "./helpers";
 
 const KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 const SIGNERS = `alice@acme.com,slack:T1/U1,teams:0000-aaaa ssh-ed25519 ${KEY}\nbob@acme.com ssh-ed25519 ${KEY}\n`;
-const T = (h: number): string => new Date(Date.UTC(2026, 0, 1, h)).toISOString();
+// Hours from an hour ago: chant counts a pending fact only until it expires.
+const T = (h: number): string => new Date(Date.now() - 3600_000 + h * 3600_000).toISOString();
 const pending = (gate: string, digest: string, h: number) => ({ version: 1, kind: "pending", op: "tf-apply", gate, timestamp: T(h), expiresAt: T(h + 48), planDigest: digest });
 const jsonl = (...lines: unknown[]) => lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
 const D = "jcs1-sha256:" + "a".repeat(64);
-const D2 = "jcs1-sha256:" + "b".repeat(64);
-
-function deps(o: { mode?: "ledger" | "pr-review" | "sealed"; ledger?: GateLedger; resume?: number; answer?: RelayDeps["answer"] } = {}): RelayDeps & { recorded: ResolutionRecord[]; answered: [string, string][] } {
-  const recorded: ResolutionRecord[] = [];
-  const answered: [string, string][] = [];
-  return {
-    recorded,
-    answered,
-    answer: async (id, by) => {
-      answered.push([id, by]);
-      return o.answer ? o.answer(id, by) : { answered: true };
-    },
-    principal: "terragucci-relay",
-    rule: async () => ({ mode: o.mode ?? "ledger", signers: gateSigners(SIGNERS), signersPath: ".chant/allowed_signers", ...(o.resume ? { resume: o.resume } : {}) }),
-    ledger: () => o.ledger ?? parseLedger(jsonl(pending("wave-1", D, 1))),
-    record: (r) => void recorded.push(r),
-    now: () => new Date(T(5)),
-  };
-}
-
-const slackBody = (user: string, action: string, value: unknown = { wave: 1, plan: D }): string =>
-  new URLSearchParams({
-    payload: JSON.stringify({ type: "block_actions", user: { id: user, username: "alice", team_id: "T1" }, team: { id: "T1" }, actions: [{ action_id: action, value: JSON.stringify(value) }], response_url: "https://hooks.slack.com/actions/T1/1/x", container: { message_ts: "1700000000.0001" } }),
-  }).toString();
-
-describe("relay: clicks", () => {
-  it("reads a Slack button click: the user, the action, the wave and digest, and where to reply", () => {
-    expect(slackClick(slackBody("U1", "terragucci-approve"))).toEqual({ app: "slack", chatUser: "slack:T1/U1", display: "alice", action: "approve", wave: 1, plan: D, responseUrl: "https://hooks.slack.com/actions/T1/1/x", thread: "1700000000.0001" });
-    expect(slackClick(slackBody("U1", "terragucci-decline"))).toMatchObject({ action: "decline" });
-    expect(slackClick(slackBody("U1", "someone-else"))).toEqual({ error: "the button someone-else is not terragucci's" });
-    expect(slackClick(slackBody("U1", "terragucci-approve", { wave: 0, plan: D }))).toEqual({ error: "the button names no wave and digest" });
-    expect(slackClick("payload=" + encodeURIComponent(JSON.stringify({ type: "view_submission" })))).toEqual({ error: "a Slack view_submission payload is not a button click" });
-  });
-
-  it("reads a Teams reply, its mention and markup dropped", () => {
-    const body = JSON.stringify({ type: "message", text: `<at>terragucci</at>&nbsp;approve wave-2 ${D}`, from: { id: "29:x", name: "Alice", aadObjectId: "0000-aaaa" } });
-    expect(teamsClick(body)).toEqual({ app: "teams", chatUser: "teams:0000-aaaa", display: "Alice", action: "approve", wave: 2, plan: D });
-    expect(teamsClick(JSON.stringify({ text: "<at>terragucci</at> please approve", from: { aadObjectId: "x" } }))).toMatchObject({ error: expect.stringMatching(/approve wave-<k> <digest>/) });
-  });
-
-  it("maps a chat user to the principal on the signers file line that lists them, and nobody else", () => {
-    const signers = gateSigners(SIGNERS);
-    expect(principalFor(signers, "slack:T1/U1")).toBe("alice@acme.com");
-    expect(principalFor(signers, "teams:0000-AAAA")).toBe("alice@acme.com");
-    expect(principalFor(signers, "slack:T1/U2")).toBeUndefined();
-    expect(principalFor(gateSigners(), "slack:T1/U1")).toBeUndefined();
-    // One chat id on two people's lines maps to neither.
-    expect(principalFor(gateSigners(SIGNERS + `carol@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\n`), "slack:T1/U1")).toBeUndefined();
-  });
-});
-
-describe("relay: deciding a click", () => {
-  const approveClick: Click = { app: "slack", chatUser: "slack:T1/U1", display: "alice", action: "approve", wave: 1, plan: D };
-
-  it("records an approval of exactly the digest waiting, as the mapped principal, relayed by the relay", async () => {
-    const d = deps({ resume: 5 });
-    const a = await decideClick(approveClick, d);
-    expect(a.ok).toBe(true);
-    expect(d.recorded).toEqual([{ version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice@acme.com", relayedBy: "terragucci-relay", timestamp: T(5), planDigest: D, via: "slack" }]);
-    expect(a.text).toBe(`wave-1 approved by alice@acme.com, relayed by terragucci-relay, for ${D} and no other plans. The resume job applies it within 5 minutes.`);
-  });
-
-  it("refuses an unmapped user, and records nothing", async () => {
-    const d = deps();
-    const a = await decideClick({ ...approveClick, chatUser: "slack:T1/U9", display: "mallory" }, d);
-    expect(a.ok).toBe(false);
-    expect(a.text).toMatch(/^Refused: mallory \(slack:T1\/U9\) is not mapped to a principal in \.chant\/allowed_signers/);
-    expect(d.recorded).toEqual([]);
-  });
-
-  it("approves nothing when the plans moved past the digest the message showed", async () => {
-    const d = deps({ ledger: parseLedger(jsonl(pending("wave-1", D, 1), pending("wave-1", D2, 2))) });
-    const a = await decideClick(approveClick, d);
-    expect(a).toEqual({ ok: false, text: `Not approved: wave-1 does not wait for ${D}; it waits for ${D2}. The plans moved since this message, or they were approved already. Read the plans waiting, then approve their digest.` });
-    expect(d.recorded).toEqual([]);
-  });
-
-  it("under approval: sealed, records nothing: only the approver's own key seals", async () => {
-    const d = deps({ mode: "sealed" });
-    const a = await decideClick(approveClick, d);
-    expect(a.ok).toBe(false);
-    expect(a.text).toContain(`terragucci approve wave-1 --plan ${D} --sign`);
-    expect(d.recorded).toEqual([]);
-  });
-
-  const Q = "prod-apply-0123456789ab";
-  const asking = (): GateLedger => parseLedger(jsonl({ ...pending("wave-1", D, 1), answer: { point: "prod-apply", id: Q, path: `answers/${Q}.md` } }));
-
-  it("answers the decision point question the wave waits on, as the mapped principal, and records no approval", async () => {
-    const d = deps({ ledger: asking(), resume: 5 });
-    const a = await decideClick(approveClick, d);
-    expect(d.answered).toEqual([[Q, "alice@acme.com"]]);
-    expect(d.recorded).toEqual([]);
-    expect(a).toEqual({ ok: true, text: `wave-1: decision point question ${Q} answered yes by alice@acme.com, relayed by terragucci-relay, for ${D} and no other plans. The resume job applies it within 5 minutes.` });
-  });
-
-  it("says so when chant does not count the answer, such as an agent's toward a human quorum", async () => {
-    const refusal = "quorum-not-met: prod-apply needs 1 person to answer, and 0 count; not counted: bot@acme.com, who holds the agent role";
-    const d = deps({ ledger: asking(), answer: async () => ({ error: refusal }) });
-    const a = await decideClick(approveClick, d);
-    expect(a).toEqual({ ok: false, text: `Not approved: wave-1 asks a decision point, and its question ${Q} was not answered for alice@acme.com: ${refusal}` });
-    expect(d.recorded).toEqual([]);
-  });
-
-  it("a question for plans that moved since the message is not answered", async () => {
-    const d = deps({ ledger: parseLedger(jsonl({ ...pending("wave-1", D2, 1), answer: { point: "prod-apply", id: Q, path: `answers/${Q}.md` } })) });
-    expect((await decideClick(approveClick, d)).ok).toBe(false);
-    expect(d.answered).toEqual([]);
-  });
-
-  it("a decline records nothing and names who declined", async () => {
-    const d = deps();
-    const a = await decideClick({ ...approveClick, action: "decline" }, d);
-    expect(a).toEqual({ ok: true, text: `wave-1 declined by alice@acme.com for ${D}. Nothing was approved; the wave keeps waiting, and applies only once someone approves its plans.` });
-    expect(d.recorded).toEqual([]);
-  });
-});
-
-describe("relay: HTTP", () => {
-  const secret = "slack-secret";
-  const signed = (body: string) => {
-    const ts = String(Math.floor(Date.now() / 1000));
-    return { "x-slack-request-timestamp": ts, "x-slack-signature": slackSignature(secret, ts, body) };
-  };
-  const recorder = () => {
-    const posts: { url: string; body: any }[] = [];
-    const f = (async (url: string, init?: { body?: string }) => {
-      posts.push({ url, body: JSON.parse(init?.body ?? "null") });
-      return { ok: true, status: 200, json: async () => ({}), text: async () => "" };
-    }) as any;
-    return { posts, f };
-  };
-
-  it("refuses a request it cannot verify with 401, and records nothing", async () => {
-    const d = deps();
-    const body = slackBody("U1", "terragucci-approve");
-    const r = await handleRelay({ method: "POST", path: "/slack", headers: { ...signed(body), "x-slack-signature": "v0=00" }, body }, { slackSecret: secret }, d);
-    expect(r.status).toBe(401);
-    expect(d.recorded).toEqual([]);
-  });
-
-  it("answers a Slack click in the message's thread, through Slack's response_url", async () => {
-    const d = deps();
-    const { posts, f } = recorder();
-    const body = slackBody("U9", "terragucci-approve");
-    const r = await handleRelay({ method: "POST", path: "/slack", headers: signed(body), body }, { slackSecret: secret }, d, f);
-    expect(r.status).toBe(200);
-    expect(posts).toHaveLength(1);
-    expect(posts[0]!.url).toBe("https://hooks.slack.com/actions/T1/1/x");
-    expect(posts[0]!.body).toMatchObject({ response_type: "in_channel", replace_original: false, thread_ts: "1700000000.0001" });
-    expect(posts[0]!.body.text).toMatch(/^Refused: alice \(slack:T1\/U9\)/);
-    expect(d.recorded).toEqual([]);
-  });
-
-  it("posts no reply to a response_url that is not Slack's", async () => {
-    const { posts, f } = recorder();
-    const body = slackBody("U1", "terragucci-decline");
-    const lines: string[] = [];
-    await handleRelay({ method: "POST", path: "/slack", headers: signed(body), body }, { slackSecret: secret, slackResponse: ["https://elsewhere/"] }, deps(), f, (l) => void lines.push(l));
-    expect(posts).toEqual([]);
-    expect(lines.at(-1)).toMatch(/not Slack's/);
-  });
-
-  it("answers a Teams reply in the reply Teams posts", async () => {
-    const key = Buffer.from("k".repeat(32)).toString("base64");
-    const d = deps();
-    const body = JSON.stringify({ type: "message", text: `<at>terragucci</at> approve wave-1 ${D}`, from: { name: "Alice", aadObjectId: "0000-aaaa" } });
-    const r = await handleRelay({ method: "POST", path: "/teams", headers: { authorization: teamsSignature(key, body) }, body }, { teamsSecret: key }, d);
-    expect(r.status).toBe(200);
-    expect(JSON.parse(r.body)).toEqual({ type: "message", text: expect.stringMatching(/^wave-1 approved by alice@acme\.com, relayed by terragucci-relay/) });
-    expect(d.recorded[0]).toMatchObject({ resolvedBy: "alice@acme.com", via: "teams" });
-  });
-});
+const RELAY_KEY = "relay-key-for-tests";
 
 describe("relay: the token", () => {
   const forge = (routes: Record<string, unknown>, headers: Record<string, string> = {}) =>
@@ -228,14 +64,22 @@ describe("relay: the token", () => {
   });
 });
 
-describe("relay: over a repo", () => {
-  it("reads the signers and the mode from the default branch, and pushes the approval to chant/lifecycle", async () => {
+describe("relay: the host's settings", () => {
+  it("maps terragucci's principal and Slack response names onto chant's, and listens on every interface", () => {
+    expect(chantRelayEnv({ TERRAGUCCI_RELAY_PRINCIPAL: "acme-relay", TERRAGUCCI_RELAY_SLACK_RESPONSE: "https://hooks.slack.com/" }, 8080)).toEqual({ CHANT_RELAY_PRINCIPAL: "acme-relay", CHANT_RELAY_PORT: "8080", CHANT_RELAY_HOST: "0.0.0.0", CHANT_RELAY_SLACK_RESPONSE: "https://hooks.slack.com/" });
+    expect(chantRelayEnv({}, 9000)).toMatchObject({ CHANT_RELAY_PRINCIPAL: "terragucci-relay", CHANT_RELAY_PORT: "9000" });
+    expect(() => chantRelayEnv({ TERRAGUCCI_RELAY_PRINCIPAL: "a\nb" }, 1)).toThrow(/one principal on one line/);
+  });
+});
+
+describe("relay: chant's relay over terragucci's repo", () => {
+  it("approves exactly the wave waiting for the signed digest, as the mapped principal, relayed by the relay, and nothing twice", async () => {
     const dir = tmp("tg-relay-");
     const origin = join(dir, "origin.git");
     execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
     const main = join(dir, "main");
     git(dir, "init", "-q", "-b", "main", main);
-    write(main, { "terragucci.yml": "binary: tofu\napply:\n  resume: 5\n", ".chant/allowed_signers": SIGNERS });
+    write(main, { "terragucci.yml": "binary: tofu\n", ".chant/allowed_signers": SIGNERS });
     git(main, "add", "-A");
     git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main");
     git(main, "push", "-q", origin, "main");
@@ -245,17 +89,33 @@ describe("relay: over a repo", () => {
     git(life, "add", "-A");
     git(life, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger");
     git(life, "push", "-q", origin, "chant/lifecycle");
-    const ws = join(dir, "ws");
-    git(dir, "init", "-q", ws);
-    git(ws, "remote", "add", "origin", origin);
 
-    const d = workspaceDeps(ws, "main", "terragucci-relay");
-    expect(await d.rule()).toMatchObject({ mode: "ledger", signersPath: ".chant/allowed_signers", resume: 5 });
-    const a = await decideClick({ app: "slack", chatUser: "slack:T1/U1", display: "alice", action: "approve", wave: 1, plan: D }, d);
-    expect(a.ok).toBe(true);
-    const lines = parseLedger(git(dir, "--git-dir", origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
-    expect(lines.resolutions).toMatchObject([{ gate: "wave-1", resolvedBy: "alice@acme.com", relayedBy: "terragucci-relay", planDigest: D, via: "slack" }]);
-    // The wave no longer waits, so a second click approves nothing.
-    expect((await decideClick({ app: "slack", chatUser: "slack:T1/U1", display: "alice", action: "approve", wave: 1, plan: D }, d)).ok).toBe(false);
+    const checkout = relayCheckout(origin, "main");
+    const deps = checkoutRelayDeps(checkout, "terragucci-relay");
+    const click = (user: string) => ({
+      app: "slack" as const,
+      chatUser: user,
+      display: user,
+      action: "approve" as const,
+      token: relayToken(RELAY_KEY, { id: "e1", source: TERRAGUCCI_WORDS.notify.source, at: new Date().toISOString(), gate: "wave-1", digest: D }),
+    });
+    const prev = { name: process.env.GIT_AUTHOR_NAME, email: process.env.GIT_AUTHOR_EMAIL, cwd: process.cwd() };
+    Object.assign(process.env, { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" });
+    // As relay-host.ts runs it: in the checkout. chant's approve writes and pushes the ledger of the process's directory (chant#4760).
+    process.chdir(checkout);
+    try {
+      // A chat user no signers line lists is refused, and nothing is recorded.
+      expect((await decideRelayClick(click("slack:T1/U9"), { key: RELAY_KEY }, deps)).ok).toBe(false);
+      const a = await decideRelayClick(click("slack:T1/U1"), { key: RELAY_KEY }, deps);
+      expect(a).toMatchObject({ ok: true });
+      const lines = parseLedger(git(dir, "--git-dir", origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
+      expect(lines.resolutions).toMatchObject([{ gate: "wave-1", resolvedBy: "alice@acme.com", relayedBy: "terragucci-relay", planDigest: D }]);
+      // A button not signed with the relay key approves nothing.
+      expect((await decideRelayClick(click("slack:T1/U1"), { key: "another-key" }, deps)).ok).toBe(false);
+    } finally {
+      process.chdir(prev.cwd);
+      process.env.GIT_AUTHOR_NAME = prev.name;
+      process.env.GIT_AUTHOR_EMAIL = prev.email;
+    }
   });
 });

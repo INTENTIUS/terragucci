@@ -316,7 +316,7 @@ export interface PipelineInput {
   /** A Terramate repo: every job installs this Terramate release, which its synth (`terragucci terramate generate`) runs. */
   terramate?: { version: string };
   /** `notify`: the secrets holding a Slack or Teams incoming webhook, or a generic webhook and its signing key, which the apply jobs post a waiting, refused or failed wave to. */
-  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string };
+  notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string; relay_key?: string };
   /** `cost`: the secret holding the estimator's key, whether the jobs install Infracost (no `cost.command`), and whether `cost.approve_above` can make a wave wait. */
   cost?: { keySecret: string; install: boolean; approveAbove?: boolean };
   env: Record<string, string>;
@@ -2527,7 +2527,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // notify: the apply jobs post a waiting, refused or failed wave to the webhooks, read from the secrets the key names.
   const notifyOn = input.notify ? { notify: true } : {};
   const notifyEnv = Object.fromEntries(
-    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"], ["webhook", "TERRAGUCCI_WEBHOOK"], ["webhook_key", "TERRAGUCCI_WEBHOOK_KEY"]] as const)
+    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"], ["webhook", "TERRAGUCCI_WEBHOOK"], ["webhook_key", "TERRAGUCCI_WEBHOOK_KEY"], ["relay_key", "TERRAGUCCI_RELAY_KEY"]] as const)
       .filter(([k]) => input.notify?.[k])
       .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
   );
