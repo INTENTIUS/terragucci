@@ -53,11 +53,12 @@ export const workflow = new Workflow({
 const COMMIT = "${{ needs.gate.outputs.commit }}";
 
 /** Checkout (full history, for chant's trunk and green checks) and Node, with no npm cache: a release builds from what npm ci resolves now. */
-const setup = (ref?: string) => [
-  Checkout({ ...(ref ? { ref } : {}), fetchDepth: 0, defaults: { step: { uses: CHECKOUT } } }).step,
-  SetupNode({ nodeVersion: NODE_VERSION, registryUrl: "https://registry.npmjs.org", defaults: { step: { uses: SETUP_NODE } } }).step,
-  new Step({ name: "Install dependencies", run: "npm ci" }),
-];
+const checkoutHead = Checkout({ fetchDepth: 0, defaults: { step: { uses: CHECKOUT } } }).step;
+const checkoutCommit = Checkout({ ref: COMMIT, fetchDepth: 0, defaults: { step: { uses: CHECKOUT } } }).step;
+const setupNode = SetupNode({ nodeVersion: NODE_VERSION, registryUrl: "https://registry.npmjs.org", defaults: { step: { uses: SETUP_NODE } } }).step;
+const install = new Step({ name: "Install dependencies", run: "npm ci" });
+const setupHead = [checkoutHead, setupNode, install];
+const setupCommit = [checkoutCommit, setupNode, install];
 
 const fetchLedger = [
   new Step({ name: "Fetch the ci tags", run: "git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'" }),
@@ -75,7 +76,7 @@ export const gate = new Job({
   timeoutMinutes: 10,
   outputs: { commit: "${{ steps.green.outputs.commit }}" },
   steps: [
-    ...setup(),
+    ...setupHead,
     fetchLedger[0],
     new Step({
       name: "Name the newest green commit",
@@ -98,7 +99,7 @@ export const cut = new Job({
   timeoutMinutes: 60,
   env: { CHANT_RELEASE_COMMIT: COMMIT },
   steps: [
-    ...setup(COMMIT),
+    ...setupCommit,
     ...fetchLedger,
     binfmt,
     new Step({
@@ -122,7 +123,7 @@ export const publish = new Job({
   // The oci target's credentials: this run's token, which packages: write lets push to GHCR.
   env: { OCI_USERNAME: "${{ github.actor }}", OCI_PASSWORD: "${{ github.token }}" },
   steps: [
-    ...setup(COMMIT),
+    ...setupCommit,
     new Step({
       name: `Use npm ${NPM_TRUSTED_PUBLISHING_MIN} or later, which trusted publishing needs`,
       run: [
