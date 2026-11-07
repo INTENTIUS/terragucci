@@ -4,7 +4,7 @@
 
 1 to add, 2 to change, 1 to destroy across 1 root
 
-<!-- terragucci:waves {"head":"4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d","waves":[{"number":1,"digest":"jcs1-sha256:208d6ecbc6978c9acd4214d67128f9cb7257be6fac123a58dab879133f5a0f6c","waits":true}]} -->
+<!-- terragucci:waves {"head":"4f1a9c0e2b7d8a1c3e5f7a9b0c2d4e6f8a1b3c5d","waves":[{"number":1,"digest":"jcs1-sha256:b39dd05955a69442d86c13620e8bacf11a2c1f495fcf7218a1b7b946217a4b50","waits":true}]} -->
 
 **Destroys, replacements, refusals, imports and forgets (1):**
 
@@ -12,7 +12,7 @@
 
 | Wave | Roots | Digest of its changes | When it applies |
 |---|---|---|---|
-| 1 | 1 | `jcs1-sha256:208d6ecbc6978c9acd4214d67128f9cb7257be6fac123a58dab879133f5a0f6c` | waits for an approval: `terragucci approve wave-1 --plan jcs1-sha256:208d6ecbc6978c9acd4214d67128f9cb7257be6fac123a58dab879133f5a0f6c` |
+| 1 | 1 | `jcs1-sha256:b39dd05955a69442d86c13620e8bacf11a2c1f495fcf7218a1b7b946217a4b50` | waits for an approval: `terragucci approve wave-1 --plan jcs1-sha256:b39dd05955a69442d86c13620e8bacf11a2c1f495fcf7218a1b7b946217a4b50` |
 
 #### [Group a3f78a4b3796](report.html#group-a3f78a4b3796): 1 instance of `aws_s3_bucket_acl.logs`, change, on every run
 
