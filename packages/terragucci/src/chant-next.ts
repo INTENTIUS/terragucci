@@ -76,9 +76,7 @@
  * on the lexicon's `registry` subpath, which `sources.proxies` matches and
  * `require` reads through; without them a source through a proxy is matched
  * as written.
- * Newer than the pin too (terragucci#1282 part f): chant core's forge and
- * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
- * check` calls (./forge-check.ts); its notify relay (`notify-relay`,
+ * Newer than the pin too (terragucci#1282 part f): chant core's notify relay (`notify-relay`,
  * chant#4611), whose signature checks and principal mapping ./relay.ts
  * uses; its ledger estate (`ci-estate`, chant#4612), which ./estate.ts
  * builds on once the ledger holds wave run records; its shared policy source
@@ -91,7 +89,9 @@
  * chant#4624; ./check-job.ts), its audit log reader and known-writes table
  * (`ci-audit`, chant#4632; ./respond/attribute.ts, ./state-writers.ts), and
  * the op entry's after-plan hook with `opWavePlanPath` (chant#4614; the step
- * wave in ./apply.ts).
+ * wave in ./apply.ts). And at the 0.124.58 pin: chant core's forge and
+ * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
+ * check` calls (./identities.ts).
  *
  * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
  * sources a root uses (`usedSources`, `lockedProviders`) and their forms
@@ -865,93 +865,6 @@ export interface ChantRegistryProxies {
 
 // ── part f: forge check, relay, estate, policy source, stand-down ─────────
 
-/** A forge check row (`CheckRow` in `@intentius/chant/forge-check`, chant#4608). */
-export interface ChantCheckRow {
-  where: "github" | "gitlab" | "forgejo" | "aws" | "gcp" | "azure" | "pulumi";
-  check: string;
-  subject: string;
-  expected: string;
-  found: string;
-  status: "match" | "mismatch" | "unknown" | "not-checked";
-}
-
-/** The repository a forge check names (`ForgeCheckRepository`). */
-export interface ChantForgeCheckRepository {
-  host: string;
-  path: string;
-  defaultBranch: string;
-  ownerId?: string;
-  repoId?: string;
-}
-
-/** A job's OIDC token, as the contract holds it (`JobToken`). */
-export interface ChantJobToken {
-  issuer: string;
-  subject: string;
-  pattern: boolean;
-  claims: Record<string, string>;
-  placeholders: string[];
-}
-
-/** One job of the contract (`ForgeCheckJob`). */
-export interface ChantForgeCheckJob {
-  name: string;
-  identity: "plan" | "apply";
-  token: ChantJobToken;
-  forgeEnvironment?: string;
-  runner?: { labels: string[]; group?: string };
-  aws?: { roles: string[]; audience: string };
-  gcp?: { provider: string; audience: string };
-  azure?: { clientIds: string[]; audience: string };
-}
-
-/** The forge check's contract (`ForgeCheckContract`). */
-export interface ChantForgeCheckContract {
-  forge: "github" | "gitlab" | "forgejo";
-  repository: ChantForgeCheckRepository;
-  jobs: ChantForgeCheckJob[];
-  protectedBranches?: string[];
-  requiredStatuses?: string[];
-  gitlabVariables?: string[];
-}
-
-/** The forge to read (`ForgeTarget` in `@intentius/chant/pr-forge`). */
-export interface ChantForgeCheckTarget {
-  kind: "github" | "gitlab" | "forgejo";
-  apiBase: string;
-  repo: string;
-  host: string;
-  token: string;
-  tokenSource: string;
-  tokenHeader?: "PRIVATE-TOKEN" | "JOB-TOKEN";
-}
-
-/** The fetch chant's forge check reads through (`ForgeFetch`). */
-export type ChantForgeFetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
-
-/** The forge check's result (`ForgeCheckResult`): `<product>.forge-check/v1`. */
-export interface ChantForgeCheckResult {
-  schema: string;
-  file?: string;
-  forge: "github" | "gitlab" | "forgejo";
-  repository: ChantForgeCheckRepository;
-  rows: ChantCheckRow[];
-  counts: Record<ChantCheckRow["status"], number>;
-  ok: boolean;
-}
-
-/** chant core's forge and trust-policy check (`@intentius/chant/forge-check`, chant#4608). */
-export interface ChantForgeCheck {
-  forgeCheck(
-    input: { target: ChantForgeCheckTarget; contract: ChantForgeCheckContract | ((live: { defaultBranch?: string; path?: string; ownerId?: string; repoId?: string }) => ChantForgeCheckContract); requireClouds?: boolean; words?: object; file?: string },
-    deps: { fetch: ChantForgeFetch; env: Record<string, string | undefined>; readFile?: (path: string) => string | undefined; now?: () => Date },
-  ): Promise<ChantForgeCheckResult>;
-  readRepository(fetch: ChantForgeFetch, t: ChantForgeCheckTarget): Promise<{ ok: true; value: { defaultBranch?: string; path?: string; ownerId?: string; repoId?: string } } | { ok: false; status: number | undefined; why: string }>;
-  readOnly(fetch: ChantForgeFetch, command?: string): ChantForgeFetch;
-  describeForgeCheck(r: ChantForgeCheckResult): string;
-  forgeCheckExit(r: ChantForgeCheckResult): number;
-}
-
 /** A click read from a verified chat request (`RelayClick` in `@intentius/chant/notify-relay`). */
 export interface ChantRelayClick {
   app: "slack" | "teams";
@@ -1566,10 +1479,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
   ),
-  forgeCheck: once<ChantForgeCheck>(
-    () => import("@intentius/chant/forge-check"),
-    (m) => (has(m, "forgeCheck", "readRepository", "readOnly", "describeForgeCheck", "forgeCheckExit") ? (m as unknown as ChantForgeCheck) : undefined),
-  ),
   notifyRelay: once<ChantNotifyRelay>(
     () => import("@intentius/chant/notify-relay"),
     (m) => (has(m, "verifySlackRequest", "verifyTeamsRequest", "relayPrincipalFor", "slackRelayClick", "teamsRelayClick", "decideRelayClick") && typeof m.RELAY_ENV === "object" ? (m as unknown as ChantNotifyRelay) : undefined),
@@ -1785,10 +1694,6 @@ export async function preloadChantNext(): Promise<void> {
   await load("releaseRead");
 }
 
-/** chant core's forge and trust-policy check (chant#4608), or undefined. */
-export const chantForgeCheck = (): Promise<ChantForgeCheck | undefined> => load("forgeCheck");
-/** The forge check as it already loaded, for `describeForgeCheck`. */
-export const chantForgeCheckNow = (): ChantForgeCheck | undefined => loaded("forgeCheck");
 /** chant core's notify relay (chant#4611), or undefined. */
 export const chantNotifyRelay = (): Promise<ChantNotifyRelay | undefined> => load("notifyRelay");
 /** chant core's ledger estate and delivery metrics (chant#4612), or undefined. */
@@ -1832,7 +1737,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [compose, composeRun, state, planShape, objectStore, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
-  const [forgeCheck, notifyRelay, ciEstate, policySource, opStandDown] = [await chantForgeCheck(), await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
+  const [notifyRelay, ciEstate, policySource, opStandDown] = [await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
   const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
@@ -1841,5 +1746,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, forgeCheck: !!forgeCheck, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

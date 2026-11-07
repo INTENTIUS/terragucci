@@ -1,20 +1,13 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { overrideChantNext } from "../src/chant-next";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
 import type { Fetch } from "../src/forge";
-import { assertReadOnly, celNarrowerOrEqual, compareTrust, forgeCheck, readOnly, ReadOnlyError, trustJobs, type CheckRow, type ForgeCheckDeps } from "../src/forge-check";
-import { configIdentities } from "../src/identities";
+import { configIdentities, forgeCheck, type CheckRow, type ForgeCheckDeps } from "../src/identities";
 import { tmp } from "./helpers";
 
-// These cases and the provider's goldens hold terragucci's own check, the fallback on a chant without
-// `forge-check` (chant#4608); test/chant-next-f.test.ts compares it with chant's.
-let restoreForgeCheck: () => void = () => {};
-beforeAll(() => {
-  restoreForgeCheck = overrideChantNext("forgeCheck", null);
-});
-afterAll(() => restoreForgeCheck());
+// `terragucci forge check` is terragucci's contract read by chant core's check (`@intentius/chant/forge-check`,
+// chant#4608); these cases and the provider's goldens hold what terragucci prints from it.
 
 // A usage error exits 1 under chant's exit-code table (chant#4553), 2 before it.
 const USAGE = 1;
@@ -96,27 +89,6 @@ afterEach(() => {
 });
 
 describe("read-only", () => {
-  it("lets GET and HEAD through and refuses every other method", () => {
-    expect(() => assertReadOnly("https://api.github.com/repos/a/b", "GET")).not.toThrow();
-    expect(() => assertReadOnly("https://api.github.com/repos/a/b", "HEAD")).not.toThrow();
-    for (const m of ["PUT", "PATCH", "DELETE", "POST"]) expect(() => assertReadOnly("https://api.github.com/repos/a/b/environments/prod", m, "{}")).toThrow(ReadOnlyError);
-  });
-
-  it("allows an AWS Query action only when it is a named read, as GET or POST", () => {
-    expect(() => assertReadOnly("https://iam.amazonaws.com/?Action=GetRole&RoleName=x&Version=2010-05-08", "GET")).not.toThrow();
-    expect(() => assertReadOnly("https://iam.amazonaws.com/", "POST", "Action=GetRole&RoleName=x&Version=2010-05-08")).not.toThrow();
-    expect(() => assertReadOnly("https://iam.amazonaws.com/?Action=UpdateAssumeRolePolicy&RoleName=x", "GET")).toThrow(ReadOnlyError);
-    expect(() => assertReadOnly("https://iam.amazonaws.com/", "POST", "Action=UpdateAssumeRolePolicy&RoleName=x&PolicyDocument=%7B%7D")).toThrow(ReadOnlyError);
-    expect(() => assertReadOnly("https://iam.amazonaws.com/?Action=DeleteRole", "POST", "Action=GetRole")).toThrow(ReadOnlyError);
-    expect(() => assertReadOnly("https://api.github.com/graphql", "POST", JSON.stringify({ query: "mutation" }))).toThrow(ReadOnlyError);
-  });
-
-  it("never sends a refused request", async () => {
-    const inner = vi.fn<Fetch>();
-    await expect(readOnly(inner)("https://gitlab.com/api/v4/projects/1/variables", { method: "POST", body: "{}" })).rejects.toThrow(ReadOnlyError);
-    expect(inner).not.toHaveBeenCalled();
-  });
-
   it("checks a whole setup with GET requests to the forge and a GetRole form POST to IAM alone", async () => {
     const dir = fixture("github-aws");
     const { fetch, calls } = recorded(await githubSetup(dir));
@@ -252,6 +224,8 @@ describe("forge check on GitLab and GCP", () => {
   const setup = async (dir: string): Promise<Record<string, Answer>> => ({
     [GL]: ok({ id: 9, path_with_namespace: "acme/platform/infra", default_branch: "trunk" }),
     [`${GL}/protected_environments?per_page=100`]: ok([{ name: "production", deploy_access_levels: [{ access_level: 40 }] }, { name: "staging", deploy_access_levels: [] }]),
+    // chant's check asks the default branch to be protected on GitLab too.
+    [`${GL}/protected_branches?per_page=100`]: ok([{ name: "trunk" }]),
     [`${GL}/runners?tag_list=docker%2Cprod&per_page=100`]: ok([{ id: 11, description: "prod runner" }]),
     [`${GL}/runners?tag_list=docker%2Clinux&per_page=100`]: ok([{ id: 12, description: "shared" }]),
     ["https://gitlab.example.com/api/v4/runners/11"]: ok({ id: 11, access_level: "ref_protected" }),
@@ -382,30 +356,6 @@ describe("forge check on Azure", () => {
     expect(bad.found).toContain("wider: any-branch: issuer https://token.actions.githubusercontent.com subject repo:acme/infra:ref:refs/heads/feature");
     a[graph(prodApply)] = status(403);
     expect(row((await run(dir, a)).rows, "azure", "trust", prodApply).found).toContain("Application.Read.All");
-  });
-});
-
-describe("conditions and trust, in parts", () => {
-  it("compares CEL conditions as terms of conjuncts", () => {
-    expect(celNarrowerOrEqual("a == 'x' && b == 'y'", "a == 'x'")).toBe(true);
-    expect(celNarrowerOrEqual("a=='x'", "a == 'x' && b == 'y'")).toBe(false);
-    expect(celNarrowerOrEqual("(a == 'x' || c == 'z') && b == 'y'", "(a == 'x') || (c == 'z')")).toBe(true);
-    expect(celNarrowerOrEqual("a == 'x' || d == 'w'", "a == 'x'")).toBe(false);
-    expect(celNarrowerOrEqual("a == 'x && y'", "a == 'x && y'")).toBe(true);
-  });
-
-  it("finds a statement's jobs and compares them with a live document", () => {
-    const policy = JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Federated: "arn:aws:iam::111111111111:oidc-provider/gitlab.com" }, Action: "sts:AssumeRoleWithWebIdentity", Condition: { StringEquals: { "gitlab.com:aud": "plan" }, StringLike: { "gitlab.com:sub": "project_path:a/b:ref_type:branch:ref:*" } } }] });
-    const jobs = trustJobs(policy);
-    expect(jobs).toEqual([{ provider: "gitlab.com", sub: "project_path:a/b:ref_type:branch:ref:*", like: true, aud: "plan" }]);
-    expect(compareTrust(JSON.parse(policy), jobs, "111111111111").problems).toEqual([]);
-    const narrower = JSON.parse(policy);
-    narrower.Statement[0].Condition.StringLike["gitlab.com:sub"] = "project_path:a/b:ref_type:branch:ref:feature-*";
-    // Narrower than the pattern, so nothing wider; but the pull request jobs' pattern is not admitted.
-    expect(compareTrust(narrower, jobs, "111111111111").problems).toEqual(["does not admit sub project_path:a/b:ref_type:branch:ref:* (like) aud plan"]);
-    const other = JSON.parse(policy);
-    other.Statement[0].Principal.Federated = "arn:aws:iam::222222222222:oidc-provider/gitlab.com";
-    expect(compareTrust(other, jobs, "111111111111").problems[0]).toContain("in account 222222222222");
   });
 });
 

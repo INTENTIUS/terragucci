@@ -55,10 +55,23 @@ import { dirname } from "node:path";
 import { atmosInstances, describeStacks } from "./atmos";
 import { globMatch, findRoots, hostOfRemote } from "./detect";
 import { settingsForRoot, withEnvironmentRoles, type RootSettings } from "./environments";
-import { ConfigError, FORGES, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type EnvironmentSettings, type ForgeName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSettings, type RunnerSpec } from "./config";
+import { ConfigError, COST_KEY_SECRET, FORGES, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, type EnvironmentSettings, type ForgeName, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSettings, type RunnerSpec } from "./config";
 import { AZURE_AUDIENCE, gcpAudience, runnerOf, stageAudience } from "./render";
 import { applyGroups, cloudDeclaration, environmentApplyRunner, rootIdentity } from "./cloud-identity";
 import { CLOUDS, type Cloud, type CloudIdentityDeclaration } from "@intentius/chant/ci-identity";
+import {
+  describeForgeCheck as chantDescribeForgeCheck,
+  forgeCheck as chantForgeCheck,
+  readOnly,
+  readRepository,
+  type CheckRow,
+  type ForgeCheckContract,
+  type ForgeCheckJob,
+  type ForgeCheckResult as ChantForgeCheckResult,
+} from "@intentius/chant/forge-check";
+import type { ForgeTarget as ChantForgeTarget } from "@intentius/chant/pr-forge";
+import { productWords } from "./ci-words";
+import { apiBase, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
 import { detectShape } from "./shape";
 import { detectTerragrunt, walkUnits } from "./terragrunt";
 
@@ -556,4 +569,133 @@ export async function configIdentities(path: string, file: string, flags: Config
   const roots = flags.noRoots ? null : await foundRoots(dirname(path), settings);
   const terragrunt = settings.terragrunt !== undefined || (!flags.noRoots && detectTerragrunt(dirname(path)) !== undefined);
   return identities(settings, roots, { ...opts, repoDir: dirname(path), ...(terragrunt ? { terragrunt } : {}) });
+}
+
+// ── forge check ──────────────────────────────────────────────────────────────
+
+/**
+ * `terragucci forge check`: the identities contract next to the live forge and
+ * cloud setup, one row per expected setting. chant core reads the forge and the
+ * clouds (`@intentius/chant/forge-check`), read-only; terragucci gives it the
+ * contract built from these identities and prints the result under its own
+ * schema, `terragucci.forge-check/v1`.
+ */
+export const FORGE_CHECK_SCHEMA = "terragucci.forge-check/v1";
+
+export type { CheckRow };
+
+/** What `forge check` returns: chant's rows with the repository as `config identities` names it (`default_branch`). */
+export interface ForgeCheckResult {
+  schema: string;
+  file: string;
+  forge: ForgeName;
+  repository: Identities["repository"];
+  rows: CheckRow[];
+  counts: ChantForgeCheckResult["counts"];
+  ok: boolean;
+}
+
+export interface ForgeCheckFlags extends ConfigIdentitiesFlags {
+  requireClouds?: boolean;
+}
+
+export interface ForgeCheckDeps {
+  fetch: Fetch;
+  env: NodeJS.ProcessEnv;
+  /** Reads the AWS shared credentials file; undefined when there is none. */
+  readFile?: (path: string) => string | undefined;
+  now?: () => Date;
+}
+
+const unique = <T>(xs: T[]): T[] => [...new Set(xs)];
+
+/** The variables the apply jobs read: pass, the cost key and the notify secrets. */
+export function applyVariables(s: ProjectSettings): string[] {
+  const cost = s.cost === undefined ? [] : [s.cost === true ? COST_KEY_SECRET : (s.cost.key_secret ?? COST_KEY_SECRET)];
+  const notify = s.notify ? [s.notify.slack, s.notify.teams, s.notify.webhook, s.notify.webhook_key].filter((x): x is string => typeof x === "string") : [];
+  return unique([...(s.pass?.secrets ?? []), ...(s.pass?.vars ?? []), ...cost, ...notify]);
+}
+
+/**
+ * The contract chant's check reads, from terragucci's identities: a job per
+ * stage present in each entry, with its token, forge environment, runner and
+ * identities per cloud. Only the apply stage counts as an apply job. On GitHub
+ * `protectedBranches: []` asks for no protected-branch row; elsewhere the
+ * default branch and each `apply.branches` branch are the branches to protect.
+ */
+export function forgeCheckContract(c: Identities, s: ProjectSettings): ForgeCheckContract {
+  const stages = c.environments.flatMap((e) => IDENTITY_STAGES.flatMap((stage) => (e.stages[stage] ? [{ entry: e.name, stage, st: e.stages[stage]! }] : [])));
+  const jobs: ForgeCheckJob[] = stages.map(({ entry, stage, st }) => {
+    const aws = st.aws ? unique([st.aws.role, ...Object.values(st.aws.root_roles)].filter((r): r is string => !!r)) : [];
+    const azure = st.azure ? unique([st.azure.client_id, ...Object.values(st.azure.root_client_ids)]) : [];
+    return {
+      name: `${entry} ${stage}`,
+      identity: stage === "apply" ? "apply" : "plan",
+      token: { issuer: st.token.issuer, subject: st.token.subject, pattern: st.token.subject_pattern, claims: st.token.claims, placeholders: st.token.placeholders },
+      ...(st.forge_environment ? { forgeEnvironment: st.forge_environment } : {}),
+      ...(st.runner ? { runner: { labels: st.runner.labels, ...(st.runner.group ? { group: st.runner.group } : {}) } } : {}),
+      ...(st.aws && aws.length ? { aws: { roles: aws, audience: st.aws.audience } } : {}),
+      ...(st.gcp ? { gcp: { provider: st.gcp.workload_identity_provider, audience: st.gcp.audience } } : {}),
+      ...(st.azure ? { azure: { clientIds: azure, audience: st.azure.audiences[0] ?? AZURE_AUDIENCE } } : {}),
+    } as ForgeCheckJob;
+  });
+  const r = c.repository;
+  return {
+    forge: c.forge,
+    repository: { host: r.host, path: r.path, defaultBranch: r.default_branch, ...(r.owner_id ? { ownerId: r.owner_id } : {}), ...(r.repo_id ? { repoId: r.repo_id } : {}) },
+    jobs,
+    protectedBranches: c.forge === "github" ? [] : unique([r.default_branch, ...Object.keys(s.apply?.branches ?? {})]),
+    ...(c.forge === "gitlab" ? { gitlabVariables: applyVariables(s) } : {}),
+  };
+}
+
+/** The forge's address: the config's url, or https://<host>. */
+function originOf(settings: ProjectSettings, host: string): string {
+  if (settings.url) {
+    try {
+      return new URL(settings.url).origin;
+    } catch {
+      // Not a URL: the host it names.
+    }
+  }
+  return `https://${host}`;
+}
+
+/**
+ * `forge check` over the config at `path`: the contract, with the live default
+ * branch (and on Forgejo the numeric ids the token's subject holds), read by
+ * chant next to what the forge and each configured cloud answer.
+ */
+export async function forgeCheck(path: string, file: string, flags: ForgeCheckFlags, deps: ForgeCheckDeps): Promise<ForgeCheckResult> {
+  const { requireClouds, ...idFlags } = flags;
+  const first = await configIdentities(path, file, idFlags);
+  const config = await loadConfig(path);
+  const settings: ProjectSettings = config.projects ? resolveProject(config, idFlags.project!) : resolveRepo(config);
+  const forge = first.forge;
+  const tokenSource = settings.token_env ?? DEFAULT_TOKEN_ENV[forge];
+  const own: ForgeTarget = { forge, origin: originOf(settings, first.repository.host), path: first.repository.path, token: deps.env[tokenSource] ?? "" };
+  const target: ChantForgeTarget = { kind: forge, apiBase: apiBase(own), repo: own.path, host: first.repository.host, token: own.token, tokenSource, ...(forge === "gitlab" ? { tokenHeader: "PRIVATE-TOKEN" as const } : {}) };
+  // The subjects hold the live default branch and Forgejo's ids, so the repository is read before the contract is built.
+  const repo = await readRepository(readOnly(deps.fetch, "terragucci forge check"), target);
+  const live = repo.ok ? repo.value : {};
+  const contract = await configIdentities(path, file, {
+    ...idFlags,
+    ...(idFlags.defaultBranch ?? live.defaultBranch ? { defaultBranch: idFlags.defaultBranch ?? live.defaultBranch } : {}),
+    ...(idFlags.ownerId ?? live.ownerId ? { ownerId: idFlags.ownerId ?? live.ownerId } : {}),
+    ...(idFlags.repoId ?? live.repoId ? { repoId: idFlags.repoId ?? live.repoId } : {}),
+  });
+  const r = await chantForgeCheck(
+    { target, contract: forgeCheckContract(contract, settings), words: productWords(), file: contract.file, ...(requireClouds ? { requireClouds: true } : {}) },
+    { fetch: deps.fetch, env: deps.env, ...(deps.readFile ? { readFile: deps.readFile } : {}), ...(deps.now ? { now: deps.now } : {}) },
+  );
+  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows, counts: r.counts, ok: r.ok };
+}
+
+/** The exit code: 1 on a mismatch, or a cloud left unchecked with --require-clouds; 0 otherwise. */
+export const forgeCheckExit = (r: ForgeCheckResult): number => (r.ok ? 0 : 1);
+
+/** The table `forge check` prints without --json, and a line of counts: chant's. */
+export function describeForgeCheck(r: ForgeCheckResult): string {
+  const { default_branch, owner_id, repo_id, ...repository } = r.repository;
+  return chantDescribeForgeCheck({ ...r, repository: { ...repository, defaultBranch: default_branch, ...(owner_id ? { ownerId: owner_id } : {}), ...(repo_id ? { repoId: repo_id } : {}) } });
 }

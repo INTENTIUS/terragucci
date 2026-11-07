@@ -4628,9 +4628,8 @@ claim_forge/check() {
   # recorder of the claim's own (the config's url and AWS_ENDPOINT_URL_IAM
   # point at it), and every request it recorded must be a GET or HEAD to
   # Forgejo, and a GetRole to floci, which forge check sends as a form POST.
-  # BREAK: forge check runs a bundle whose trust comparison takes a live
-  # wildcard sub as within a literal one whenever it matches it, so the role
-  # that trusts repo:* reports a match.
+  # BREAK: forge check runs a bundle that reports each mismatch chant's check
+  # finds as a match, so the role that trusts repo:* reports a match.
   log() { echo "[smoke forge-check] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -4642,7 +4641,7 @@ claim_forge/check() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      forge-check.ts '  if (!expectedLike) return false;' '  if (!expectedLike) return likeMatch(v.value, expected);' \
+      identities.ts '  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows, counts: r.counts, ok: r.ok };' '  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows.map((x) => (x.status === "mismatch" ? { ...x, status: "match" as const } : x)), counts: r.counts, ok: true };' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   fimg="$(tg_forge_image floci)"

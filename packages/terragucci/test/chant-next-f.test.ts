@@ -1,4 +1,4 @@
-// terragucci#1282 part f: the switches onto chant's forge check (chant#4608), notify words and relay (chant#4610,
+// terragucci#1282 part f: chant's forge check contract (chant#4608, called directly since the 0.124.58 pin), notify words and relay (chant#4610,
 // #4611), ledger estate (chant#4612), shared policy source (chant#4613) and op-wave stand-down (chant#4581). Each
 // case stands a module in for chant's, makes it missing, or runs only when the installed chant has it.
 import { execFileSync } from "node:child_process";
@@ -6,13 +6,11 @@ import { cpSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseLedger, type ResolutionRecord } from "../src/apply";
-import { chantCiEstate, chantForgeCheck, chantNotifyRelay, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
+import { chantCiEstate, chantNotifyRelay, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
 import { wavesStepSpec, waveCallArgv } from "../src/chant-waves";
 import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
-import type { Fetch } from "../src/forge";
-import { forgeCheck, forgeCheckContract, type CheckRow } from "../src/forge-check";
-import { configIdentities } from "../src/identities";
+import { configIdentities, forgeCheckContract } from "../src/identities";
 import { HEADER_PREFIX, NOTIFY_SOURCE } from "../src/notify";
 import { chantRelayDeps, type RelayDeps } from "../src/relay";
 import type { Estate } from "../src/report/estate";
@@ -20,7 +18,6 @@ import { ciPolicySource, fetchPolicySource } from "../src/report/policy";
 import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
-const forgeChecker = await chantForgeCheck();
 const relay = await chantNotifyRelay();
 const ciEstate = await chantCiEstate();
 const policySource = await chantPolicySource();
@@ -49,15 +46,6 @@ const FIXTURES = join(__dirname, "fixtures", "identities");
 type Answer = { status: number; body: unknown };
 const ok = (body: unknown): Answer => ({ status: 200, body });
 
-function recorded(answers: Record<string, Answer>): Fetch {
-  return async (url, init) => {
-    const role = /Action=GetRole&RoleName=([^&]+)/.exec(`${url}?${init?.body ?? ""}`)?.[1];
-    const a = answers[role ? `role:${decodeURIComponent(role)}` : url] ?? { status: 404, body: { message: "Not Found" } };
-    const text = typeof a.body === "string" ? a.body : JSON.stringify(a.body);
-    return { ok: a.status >= 200 && a.status < 300, status: a.status, json: async () => JSON.parse(text), text: async () => text };
-  };
-}
-
 const getRole = (name: string, policy: unknown): Answer =>
   ok(`<GetRoleResponse><GetRoleResult><Role><AssumeRolePolicyDocument>${encodeURIComponent(JSON.stringify(policy))}</AssumeRolePolicyDocument><RoleName>${name}</RoleName></Role></GetRoleResult></GetRoleResponse>`);
 
@@ -81,8 +69,6 @@ async function githubFixture(): Promise<{ dir: string; answers: Record<string, A
   };
 }
 
-const ENV = { GITHUB_TOKEN: "t", AWS_ACCESS_KEY_ID: "AKIAEXAMPLE", AWS_SECRET_ACCESS_KEY: "secret", AWS_SHARED_CREDENTIALS_FILE: "/nonexistent" };
-const key = (r: CheckRow) => `${r.where} ${r.check} ${r.subject} ${r.status}`;
 
 describe("forge check", () => {
   it("maps each present stage onto a contract job, with no protected-branch rows asked on GitHub", async () => {
@@ -102,18 +88,6 @@ describe("forge check", () => {
     const gitlab = forgeCheckContract({ ...c, forge: "gitlab" }, { apply: { branches: { release: {} } } as never, pass: { secrets: ["DEPLOY_KEY"] } as never });
     expect(gitlab.protectedBranches).toEqual(["main", "release"]);
     expect(gitlab.gitlabVariables).toEqual(["DEPLOY_KEY"]);
-  });
-
-  it.runIf(forgeChecker)("gives the rows terragucci's own check gives, under terragucci's schema, with defaultBranch", async () => {
-    const { dir, answers } = await githubFixture();
-    const run = () => forgeCheck(join(dir, "terragucci.yml"), "terragucci.yml", { repo: "acme/infra" }, { fetch: recorded(answers), env: ENV, readFile: () => undefined });
-    const viaChant = await run();
-    restore.push(overrideChantNext("forgeCheck", null));
-    const own = await run();
-    expect(viaChant.schema).toBe("terragucci.forge-check/v1");
-    expect((viaChant.repository as { defaultBranch?: string }).defaultBranch).toBe("main");
-    expect(viaChant.rows.map(key).sort()).toEqual(own.rows.map(key).sort());
-    expect(viaChant.ok).toBe(own.ok);
   });
 });
 
