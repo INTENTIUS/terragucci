@@ -170,6 +170,7 @@ import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { tradeCommand } from "./oidc-trade";
 import { detectShape } from "./shape";
+import { formatTree } from "./fmt";
 import { configIdentities, describeForgeCheck, describeIdentities, forgeCheck, forgeCheckExit } from "./identities";
 import type { Fetch } from "./forge";
 import { renderText } from "./report/views";
@@ -260,7 +261,8 @@ const USAGE = `usage:
   terragucci ephemeral down --pr <n> --reason closed|expired [--base <ref>] [--binary <b>] [--config <file>]
   terragucci ephemeral sweep [--base <ref>] [--binary <b>] [--config <file>]
   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
-  terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
+  terragucci respond plan|wave-refused|apply-failed|drift|tips|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
+  terragucci fmt [--binary <b>] [--terragrunt]   format the working tree (run by chant's commit job after a check finds formatting)
   terragucci respond rollout [--mode dry-run|apply]   continue every rollout in flight
 
 Exit codes: 0 done; 1 one or more projects or roots failed; 2 a usage or config error; 3 waiting on an approval; 4 a wave's plans changed after its approval, so it applied nothing; 9 check-job refused, the job runs somewhere its environment does not allow (with a chant that has the code).
@@ -1428,6 +1430,21 @@ export async function main(argv: string[]): Promise<number> {
         const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}), ...(str(flags, "agent-login") ? { agentLogin: str(flags, "agent-login") } : {}) });
         for (const line of said) console.log(line);
         return 0;
+      }
+      case "fmt": {
+        // chant's commit job (chant#4749) runs this after a check finds formatting, and commits what it changed.
+        const binary = str(flags, "binary") ?? "terraform";
+        const listed = formatTree({ binary, cwd, ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+        console.log(listed.length ? `terragucci fmt: ${binary} formatted ${listed.join(", ")}` : `terragucci fmt: ${binary} found nothing to format`);
+        return 0;
+      }
+      case "commit": {
+        // chant's commit job (chant#4722, #4749): its jobs run `terragucci commit prepare|run|land`, which chant answers in terragucci's words.
+        const sub = args[0];
+        if (sub !== "prepare" && sub !== "run" && sub !== "land") throw new ConfigError("commit is prepare, run or land, the steps of chant's commit job");
+        const chant = await chantProductMcp();
+        if (!chant) throw new ConfigError("commit is chant's commit job, and the installed chant has no product runtime");
+        return chant.runChantInProcess(["commit", ...argv.slice(argv.indexOf("commit") + 1)], TERRAGUCCI_WORDS);
       }
       case "agent": {
         const sub = args[0];

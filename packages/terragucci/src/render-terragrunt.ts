@@ -27,6 +27,7 @@
  * `iam_role` keeps it, and Terragrunt gets the token to assume it with.
  * terragucci never sets `TG_IAM_ASSUME_ROLE`.
  */
+import { FMT_FINDING } from "./fmt";
 import { excludeFilter, TERRAGRUNT_DISCOVERY_EXCLUDES } from "@intentius/chant-lexicon-terraform/terragrunt/units";
 import type { Binary, ForgeName, RolePair } from "./config";
 import type { Tool } from "./install";
@@ -100,8 +101,9 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
     "set -eu",
     cacheExports(),
     // The modules units call are plain Terraform: the binary formats them, Terragrunt formats its own files.
-    `${binary} fmt -check -recursive -diff .`,
-    "terragrunt hcl fmt --check --diff --no-color",
+    // Formatting found exits FMT_FINDING, which starts chant's commit job (chant#4749).
+    `${binary} fmt -check -recursive -diff . || exit ${FMT_FINDING}`,
+    `terragrunt hcl fmt --check --diff --no-color || exit ${FMT_FINDING}`,
     // With `generate` set, terragucci.hcl must be what terragucci generate writes, and every unit must include it.
     ...(tg.generate ? ["terragucci generate --check"] : []),
     // With image.mirror set, the image's provider mirror must cover every lock file: a gap warns once, then fails.

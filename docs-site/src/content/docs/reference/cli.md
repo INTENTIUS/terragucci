@@ -372,10 +372,18 @@ A template is named by its address without the host, such as `acme/bucket/aws`. 
 
 The rollout workflow that `init` writes for `rollouts` is `.github/workflows/terragucci-rollout.yml`, or the same name under `.forgejo/workflows/`. Its `workflow_dispatch` takes the optional inputs `module` and `version`. Dispatched with `module`, it runs `terragucci rollout <module> [<version>] --mode apply`, where exit 3 does not fail the job. On its schedule it runs `terragucci respond rollout --mode apply`.
 
+## fmt
+
+```bash
+terragucci fmt [--binary <b>] [--terragrunt]
+```
+
+Formats the working tree and commits nothing: the binary's `fmt -recursive .`, and with `--terragrunt` also `terragrunt hcl fmt`. The pipeline's `fmt` job is chant's commit job, which runs this after a check finds formatting, then commits and pushes the change ([`respond.fmt`](/terragucci/reference/responses/)). The job's steps run as `terragucci commit prepare|run|land`, which chant answers.
+
 ## respond
 
 ```bash
-terragucci respond plan|wave-refused|apply-failed|drift|tips|fmt|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
+terragucci respond plan|wave-refused|apply-failed|drift|tips|publish|rollout|version-bump|description [--mode dry-run|apply] [flags]
 terragucci respond rollout [--mode dry-run|apply]
 ```
 
@@ -389,7 +397,7 @@ terragucci respond rollout [--mode dry-run|apply]
 | `--log` | `apply-failed` | the apply log; `-` reads standard input |
 | `--root`, `--import` | `drift` | one root, and `<address>=<id>` for a resource the state does not hold |
 | `--platform` | `tips` | lock file platforms, comma separated |
-| `--branch` | `fmt`, `tips` | `fmt`: the branch to format; the default branch is refused. `tips` with `--report`: the branch the `moved` blocks' pull request goes into; default the default branch |
+| `--branch` | `tips` | with `--report`: the branch the `moved` blocks' pull request goes into; default the default branch |
 | `--module`, `--version` | `publish` | the module, and the release |
 | `--module`, `--since` | `version-bump` | one module, and the ref to count changes from for a module with no release tag |
 | `--title`, `--description` | `description` | the pull request's title and description; by default read from the job's event |

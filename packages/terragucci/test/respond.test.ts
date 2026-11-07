@@ -1,3 +1,4 @@
+import { formatTree } from "../src/fmt";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -410,25 +411,25 @@ describe("respond: running a response", () => {
     expect(existsSync(join(repo, "app/terragucci_imports.tf"))).toBe(false);
   });
 
-  it.skipIf(!TOFU)("fmt commits to the pull request's branch and refuses the default branch", async () => {
-    const { repo, bare } = checkout({ "app/main.tf": 'locals {\n    a   = 1\n}\n' });
-    git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");
-    const forge = forgejo();
-    await expect(respond("fmt", repo, { branch: "main", mode: "apply", fetch: forge.fetch, binary: "tofu" })).rejects.toThrow(/default branch/);
-    const dry = await respond("fmt", repo, { branch: "feature", binary: "tofu" });
-    expect(dry.text).toBe("feature: would commit tofu fmt on app/main.tf");
-    const r = await respond("fmt", repo, { branch: "feature", mode: "apply", fetch: forge.fetch, binary: "tofu" });
-    expect(r.text).toBe("feature: committed tofu fmt on app/main.tf");
-    expect(git(bare, "show", "feature:app/main.tf")).toBe("locals {\n  a = 1\n}\n");
-    expect(git(bare, "log", "-1", "--format=%s", "feature").trim()).toBe("style: tofu fmt");
-    expect(git(bare, "rev-parse", "main")).not.toBe(git(bare, "rev-parse", "feature"));
+  it("respond fmt says the pipeline's fmt is chant's commit job now (chant#4749)", async () => {
+    const { repo } = checkout({ "app/main.tf": "locals {}\n" });
+    await expect(respond("fmt", repo, { branch: "feature", binary: "tofu" })).rejects.toThrow(/chant's commit job/);
+  });
+});
+
+describe("terragucci fmt: the working tree only (chant#4749)", () => {
+  it.skipIf(!TOFU)("formats every Terraform file, modules included, and commits nothing", () => {
+    const { repo } = checkout({ "app/main.tf": "locals {\n    a   = 1\n}\n", "modules/vpc/main.tf": "locals {\n    b   = 2\n}\n" });
+    const head = git(repo, "rev-parse", "HEAD");
+    const listed = formatTree({ binary: "tofu", cwd: repo });
+    expect(listed.sort()).toEqual(["app/main.tf", "modules/vpc/main.tf"]);
+    expect(readFileSync(join(repo, "modules/vpc/main.tf"), "utf-8")).toBe("locals {\n  b = 2\n}\n");
+    expect(git(repo, "rev-parse", "HEAD")).toBe(head);
   });
 
-  it("fmt in a Terragrunt repo runs terragrunt hcl fmt too, and commits the .hcl files it changed", async () => {
-    const { repo, bare } = checkout({ "root.hcl": "", "live/app/terragrunt.hcl": 'inputs = {\n    a   = 1\n}\n' });
-    git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");
+  it("in a Terragrunt repo runs terragrunt hcl fmt too, and names a formatter that fails or cannot run", () => {
+    const { repo } = checkout({ "live/app/terragrunt.hcl": "inputs = {\n    a   = 1\n}\n" });
     const dir = tmp();
-    // The binary finds nothing to format; Terragrunt's hcl fmt rewrites the unit's file, as the real one would.
     const bin = join(dir, "tofu");
     writeFileSync(bin, "#!/bin/sh\nexit 0\n");
     const tg = join(dir, "terragrunt");
@@ -436,27 +437,13 @@ describe("respond: running a response", () => {
     chmodSync(bin, 0o755);
     chmodSync(tg, 0o755);
     const env = { ...process.env, TERRAGUCCI_TERRAGRUNT: tg };
-    const dry = await respond("fmt", repo, { branch: "feature", binary: bin, env });
-    expect(dry.text).toBe("feature: would commit terragrunt hcl fmt on live/app/terragrunt.hcl");
-    expect(git(bare, "show", "feature:live/app/terragrunt.hcl")).toContain("    a   = 1");
-    const r = await respond("fmt", repo, { branch: "feature", mode: "apply", fetch: forgejo().fetch, binary: bin, env });
-    expect(r.text).toBe("feature: committed terragrunt hcl fmt on live/app/terragrunt.hcl");
-    expect(git(bare, "show", "feature:live/app/terragrunt.hcl")).toBe("inputs = {\n  a = 1\n}\n");
-    expect(git(bare, "log", "-1", "--format=%s", "feature").trim()).toBe("style: terragrunt hcl fmt");
-    // A Terragrunt that fails is named, not taken for formatted.
+    formatTree({ binary: bin, terragrunt: true, cwd: repo, env });
+    expect(readFileSync(join(repo, "live/app/terragrunt.hcl"), "utf-8")).toBe("inputs = {\n  a = 1\n}\n");
     writeFileSync(tg, "#!/bin/sh\necho 'Error: invalid HCL' >&2\nexit 1\n");
-    await expect(respond("fmt", repo, { branch: "feature", binary: bin, env })).rejects.toThrow(/feature: terragrunt hcl fmt failed:\nError: invalid HCL/);
-  });
-
-  it("fmt names a binary that cannot run, and a file fmt cannot parse, instead of calling the branch formatted", async () => {
-    const { repo } = checkout({ "app/main.tf": "locals {\n" });
-    git(repo, "push", "-q", "origin", "HEAD:refs/heads/feature");
-    const dir = tmp();
-    await expect(respond("fmt", repo, { branch: "feature", binary: join(dir, "missing") })).rejects.toThrow(/respond fmt could not run .*missing/);
-    const bin = join(dir, "tofu");
+    expect(() => formatTree({ binary: bin, terragrunt: true, cwd: repo, env })).toThrow(/terragrunt hcl fmt failed:\nError: invalid HCL/);
+    expect(() => formatTree({ binary: join(dir, "missing"), cwd: repo })).toThrow(/fmt could not run .*missing/);
     writeFileSync(bin, "#!/bin/sh\necho 'Error: Unclosed configuration block' >&2\nexit 2\n");
-    chmodSync(bin, 0o755);
-    await expect(respond("fmt", repo, { branch: "feature", binary: bin })).rejects.toThrow(/feature: .*tofu fmt failed:\nError: Unclosed configuration block/);
+    expect(() => formatTree({ binary: bin, cwd: repo })).toThrow(/tofu fmt failed:\nError: Unclosed configuration block/);
   });
 });
 

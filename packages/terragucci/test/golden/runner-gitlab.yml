@@ -31,8 +31,11 @@ check:
   script:
     - |
       unset TG_TOKEN TG_MERGE_TOKEN CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+      mkdir -p .chant/commit
+      set +e
+      (
       set -eu
-      tofu fmt -check -recursive -diff .
+      tofu fmt -check -recursive -diff . || exit 3
       failed=0
       tg_check() {
         dir="$1"
@@ -65,11 +68,18 @@ check:
       done
       terragucci check-policy || failed=1
       exit "$failed"
+      )
+      code=$?
+      if [ "$code" -eq 3 ]; then echo "CHANT_COMMIT_FINDING=1" >.chant/commit/finding.env; else echo "CHANT_COMMIT_FINDING=0" >.chant/commit/finding.env; fi
+      exit "$code"
   artifacts:
     name: terragucci-check
     when: always
     paths:
       - terragucci-check/
+      - .chant/commit/finding.env
+    reports:
+      dotenv: .chant/commit/finding.env
   tags:
     - docker
 
@@ -77,23 +87,77 @@ fmt:
   stage: check
   image:
     name: img:1
-  needs:
-    - check
+  resource_group: fmt
+  timeout: '25 minutes'
   variables:
-    TF_IN_AUTOMATION: '1'
-    TF_INPUT: '0'
-    TG_TOKEN: '$GITLAB_TOKEN'
+    CHANT_COMMIT_NAME: terragucci-fmt
+    CHANT_COMMIT_ON: check
+    CHANT_COMMIT_COMMAND: '["terragucci","fmt","--binary","tofu"]'
+    CHANT_COMMIT_ALLOWED: '[]'
+    CHANT_COMMIT_ALLOWED_FILES: '["*.tf","*.tofu","*.tfvars","*.hcl"]'
+    CHANT_COMMIT_FINDINGS: '3'
+    CHANT_COMMIT_MAX_RUNS: '3'
+    CHANT_COMMIT_TIMEOUT: '10'
+    CHANT_COMMIT_ENV: local
+    GIT_DEPTH: '0'
   rules:
     - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
-      when: on_failure
+      when: always
+  needs:
+    - job: check
+      artifacts: true
   script:
+    - if [ "${CHANT_COMMIT_FINDING:-0}" != "1" ]; then echo "the check found nothing, so terragucci-fmt does not run"; exit 0; fi
     - |
-      bash <<'FMT' || exit $?
-      set -u
-      export GITLAB_TOKEN="$TG_TOKEN"
-      git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
-      terragucci respond fmt --mode apply --binary tofu --branch "$CI_COMMIT_BRANCH" || true
-      FMT
+      case "$CI_COMMIT_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
+      git -c protocol.version=2 fetch -q --no-tags origin "+$CI_COMMIT_SHA:refs/chant/commit-head"
+    - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+    - git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - npx --no-install terragucci commit prepare --forge gitlab --output .chant/commit
+    - npx --no-install terragucci commit run --forge gitlab --output .chant/commit
+  artifacts:
+    when: always
+    paths:
+      - .chant/commit
+    expire_in: '7 days'
+  tags:
+    - docker
+
+fmt-push:
+  stage: check
+  image:
+    name: img:1
+  resource_group: fmt-push
+  variables:
+    CHANT_COMMIT_NAME: terragucci-fmt
+    CHANT_COMMIT_ON: check
+    CHANT_COMMIT_COMMAND: '["terragucci","fmt","--binary","tofu"]'
+    CHANT_COMMIT_ALLOWED: '[]'
+    CHANT_COMMIT_ALLOWED_FILES: '["*.tf","*.tofu","*.tfvars","*.hcl"]'
+    CHANT_COMMIT_FINDINGS: '3'
+    CHANT_COMMIT_MAX_RUNS: '3'
+    CHANT_COMMIT_TIMEOUT: '10'
+    CHANT_COMMIT_ENV: local
+    GIT_DEPTH: '0'
+  rules:
+    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+      when: always
+  needs:
+    - job: fmt
+      artifacts: true
+  script:
+    - if [ ! -f .chant/commit/decision.json ]; then echo "terragucci-fmt did not run"; exit 0; fi
+    - |
+      case "$CI_COMMIT_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
+      git -c protocol.version=2 fetch -q --no-tags origin "+$CI_COMMIT_SHA:refs/chant/commit-head"
+    - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+    - git remote set-url origin "$CI_SERVER_URL/$CI_PROJECT_PATH.git"
+    - export CHANT_GITLAB_TOKEN="$GITLAB_TOKEN"
+    - chant_auth="$(printf 'oauth2:%s' "$GITLAB_TOKEN" | base64 | tr -d '\n')"
+    - 'export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"'
+    - unset chant_auth
+    - npx --no-install terragucci commit land --forge gitlab --output .chant/commit
   tags:
     - docker
 
