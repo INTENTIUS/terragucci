@@ -14,6 +14,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertGatePolicySource, type GatePolicySource } from "@intentius/chant/policy-source";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { parseReportsBucket, type BucketRef } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
@@ -1974,7 +1975,7 @@ function checkPolicy(p: unknown, where: string, problems: string[], mode?: unkno
   if (p.path !== undefined && (typeof p.path !== "string" || p.path === "" || p.path.startsWith("/") || p.path.split("/").includes(".."))) {
     problems.push(`${where}.path must be a directory inside the repo, such as policy`);
   }
-  if (p.source !== undefined && !(typeof p.source === "string" && parsePolicySource(p.source))) {
+  if (p.source !== undefined && !(typeof p.source === "string" && policySourceOf({ source: p.source }))) {
     problems.push(`${where}.source must be a git repo and a ref, git+https://<host>/<path>@<ref>, such as git+https://github.com/acme/policy.git@v1`);
   }
   if (p.namespace !== undefined && !(typeof p.namespace === "string" && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(p.namespace))) {
@@ -2016,30 +2017,31 @@ function checkSourceProxies(v: unknown, where: string, problems: string[]): void
   });
 }
 
-/** Where a shared policy is fetched from: the git URL and the ref. */
-export interface PolicySource {
-  url: string;
-  ref: string;
-}
-
 /**
- * Split `git+<scheme>://<host>/<path>@<ref>` into the URL git fetches and
- * the ref. The ref is what follows the last `@` after the host, so a user
- * name in the URL (`git+https://ci@host/...`) stays in the URL. https and
- * http (a forge on a private network) and file (a repo on the job's disk).
- * Undefined when it is not that shape.
+ * `policy.source` and `policy.path` as chant's `ci.policy.source`
+ * (`@intentius/chant/policy-source`, chant#4613), which fetches it. terragucci
+ * writes the source as `git+<scheme>://<host>/<path>@<ref>`, with https, http
+ * (a forge on a private network) or file (a repo on the job's disk); the ref
+ * is what follows the last `@` after the host, so a user name in the URL
+ * (`git+https://ci@host/...`) stays in the URL. chant's settings check decides
+ * whether the repo and the ref are valid. Undefined when `policy.source` is
+ * unset or not that shape.
  */
-export function parsePolicySource(source: string): PolicySource | undefined {
+export function policySourceOf(policy: { source?: string; path?: string }): GatePolicySource | undefined {
+  const source = policy.source ?? "";
   const m = /^git\+(https?|file):\/\//.exec(source);
   if (!m) return undefined;
   const rest = source.slice(4);
-  const hostEnd = rest.indexOf("/", m[1].length + 3);
+  const hostEnd = rest.indexOf("/", m[1]!.length + 3);
   const at = rest.lastIndexOf("@");
-  if (hostEnd < 0 || at <= hostEnd) return undefined;
-  const url = rest.slice(0, at);
-  const ref = rest.slice(at + 1);
-  if (url.length <= hostEnd + 1 || !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(ref) || ref.includes("..") || /\s/.test(url)) return undefined;
-  return { url, ref };
+  if (hostEnd < 0 || at <= hostEnd + 1) return undefined;
+  const repoRef = { repo: rest.slice(0, at), ref: rest.slice(at + 1) };
+  try {
+    assertGatePolicySource("policy.source", repoRef);
+  } catch {
+    return undefined;
+  }
+  return { ...repoRef, path: (policy.path ?? "policy").replace(/^\.\//, "").replace(/\/+$/, "") };
 }
 
 export const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

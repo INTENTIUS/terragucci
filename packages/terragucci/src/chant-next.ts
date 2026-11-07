@@ -76,9 +76,7 @@
  * on the lexicon's `registry` subpath, which `sources.proxies` matches and
  * `require` reads through; without them a source through a proxy is matched
  * as written.
- * Newer than the pin too (terragucci#1282 part f): chant core's shared policy source
- * (`policy-source`, chant#4613), which fetches `policy.source`
- * (./report/policy.ts); and the op-wave stand-down on `op` (chant#4581),
+ * Newer than the pin too (terragucci#1282 part f): the op-wave stand-down on `op` (chant#4581),
  * told apart by its exports, which ./apply.ts and the step spec use.
  *
  * Imported directly since the pin moved to chant 0.124.56, which carries
@@ -92,7 +90,9 @@
  * chant#4611), whose signature checks, principal mapping and button
  * decisions ./relay.ts uses, and its ledger estate (`ci-estate`, chant#4612),
  * which ./estate.ts builds on once the ledger holds wave run records and
- * whose helpers ./report/dora.ts uses.
+ * whose helpers ./report/dora.ts uses, and its shared policy source
+ * (`policy-source`, chant#4613), which fetches `policy.source`
+ * (./report/policy.ts).
  *
  * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
  * sources a root uses (`usedSources`, `lockedProviders`) and their forms
@@ -866,28 +866,6 @@ export interface ChantRegistryProxies {
 
 // ── part f: forge check, relay, estate, policy source, stand-down ─────────
 
-/** `ci.policy.source` (`GatePolicySource` in `@intentius/chant/policy-source`). */
-export interface ChantGatePolicySource {
-  repo: string;
-  ref: string;
-  path?: string;
-}
-
-/** A tree chant read at a commit (`WorkspaceTree`). */
-export interface ChantWorkspaceTree {
-  stat(path: string): "file" | "dir" | undefined;
-  list(path: string): { name: string; type: "file" | "dir" }[] | undefined;
-  read(path: string): string;
-  bytes?(path: string): Uint8Array;
-}
-
-/** chant core's shared policy source (`@intentius/chant/policy-source`, chant#4613). */
-export interface ChantPolicySource {
-  assertGatePolicySource(where: string, raw: unknown): void;
-  fetchGatePolicySource(source: ChantGatePolicySource, opts?: { tmp?: string }): { source: { repo: string; ref: string; commit: string; path: string }; tree: ChantWorkspaceTree; cleanup: () => void } | { error: string };
-  CI_POLICY_SOURCE_FLOOR: string;
-}
-
 /** A newer commit on the run's branch (`OpWaveNewerCommit`). */
 export interface ChantNewerCommit {
   branch: string;
@@ -1402,10 +1380,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
   ),
-  policySource: once<ChantPolicySource>(
-    () => import("@intentius/chant/policy-source"),
-    (m) => (has(m, "assertGatePolicySource", "fetchGatePolicySource") && typeof m.CI_POLICY_SOURCE_FLOOR === "string" ? (m as unknown as ChantPolicySource) : undefined),
-  ),
   opStandDown: once<ChantOpStandDown>(
     // `op` is on the pin; the stand-down (chant#4581) is told apart by its exports.
     () => import("@intentius/chant/op"),
@@ -1602,16 +1576,11 @@ export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJo
  * calls it.
  */
 export async function preloadChantNext(): Promise<void> {
-  await chantPolicySource();
   await chantOpStandDown();
   await load("changelog");
   await load("releaseRead");
 }
 
-/** chant core's shared policy source (chant#4613), or undefined. */
-export const chantPolicySource = (): Promise<ChantPolicySource | undefined> => load("policySource");
-/** The policy source as it already loaded, for the synchronous fetch in ./report/policy.ts. cli.ts loads it first. */
-export const chantPolicySourceNow = (): ChantPolicySource | undefined => loaded("policySource");
 /** chant's op-wave stand-down (chant#4581), or undefined. */
 export const chantOpStandDown = (): Promise<ChantOpStandDown | undefined> => load("opStandDown");
 /** The stand-down as it already loaded, for the synchronous spec builder in ./chant-waves.ts. cli.ts loads it first. */
@@ -1647,7 +1616,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [compose, composeRun, state, planShape, objectStore, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
-  const [policySource, opStandDown] = [await chantPolicySource(), await chantOpStandDown()];
+  const [opStandDown] = [await chantOpStandDown()];
   const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
@@ -1656,5 +1625,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

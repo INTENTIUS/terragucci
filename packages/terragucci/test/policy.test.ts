@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { parsePolicySource, validateConfig } from "../src/config";
+import { policySourceOf, validateConfig } from "../src/config";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkPlan, checkPlans, fetchPolicySource, governingPolicy, shownUrl, hcpPolicySet, namespaceProblem, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, redactVerdict, resolvePolicySettings, sensitiveTexts, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
@@ -580,11 +580,11 @@ function sourceRepo(): { dir: string; first: string } {
 
 describe("policy.source", () => {
   it("is a git URL and a ref, and the config refuses anything else", () => {
-    expect(parsePolicySource("git+https://github.com/acme/policy.git@v1")).toEqual({ url: "https://github.com/acme/policy.git", ref: "v1" });
-    expect(parsePolicySource("git+https://ci@git.example.com/acme/policy@release/2")).toEqual({ url: "https://ci@git.example.com/acme/policy", ref: "release/2" });
-    expect(parsePolicySource("git+file:///srv/policy.git@abc123")).toEqual({ url: "file:///srv/policy.git", ref: "abc123" });
+    expect(policySourceOf({ source: "git+https://github.com/acme/policy.git@v1" })).toEqual({ repo: "https://github.com/acme/policy.git", ref: "v1", path: "policy" });
+    expect(policySourceOf({ source: "git+https://ci@git.example.com/acme/policy@release/2", path: "./rego/" })).toEqual({ repo: "https://ci@git.example.com/acme/policy", ref: "release/2", path: "rego" });
+    expect(policySourceOf({ source: "git+file:///srv/policy.git@abc123" })).toEqual({ repo: "file:///srv/policy.git", ref: "abc123", path: "policy" });
     for (const bad of ["https://github.com/acme/policy@v1", "git+https://github.com/acme/policy", "git+https://github.com@v1", "git+ssh://git@github.com/acme/policy@v1", "git+https://h/p@-v1", "git+https://h/p@a..b"]) {
-      expect(parsePolicySource(bad)).toBeUndefined();
+      expect(policySourceOf({ source: bad })).toBeUndefined();
     }
     expect(validateConfig({ policy: { source: "git+https://github.com/acme/policy.git@v1", path: "rego" } }, "t").policy).toEqual({ source: "git+https://github.com/acme/policy.git@v1", path: "rego" });
     expect(() => validateConfig({ policy: { source: "https://github.com/acme/policy" } }, "t")).toThrow(/policy.source must be a git repo and a ref/);
