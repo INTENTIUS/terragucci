@@ -39,15 +39,16 @@ const render = (forge: ForgeName, oidc?: typeof OIDC): string =>
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
 
 describe("the fmt job under locks: plan", () => {
-  it.each(["github", "forgejo"] as const)("%s: after its formatting commit, which starts no run, it answers the pull request's lock", (forge) => {
-    const fmt = (locksPlan: boolean) => body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ...(locksPlan ? { locksPlan } : {}) } as never).content).jobs.fmt;
-    const on = fmt(true);
+  it.each(["github", "forgejo"] as const)("%s: after chant's commit job pushes the formatting, which starts no run, its push job answers the pull request's lock", (forge) => {
+    const push = (locksPlan: boolean) => body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ...(locksPlan ? { locksPlan } : {}) } as never).content).jobs["fmt-push"];
+    const on = push(true);
     expect(on.steps.at(-1).run).toContain("terragucci pr-lock --layers");
+    expect(on.env.TG_TOKEN).toBe("${{ github.token }}");
     // Forgejo's dialect drops permissions: its job token has them all.
-    if (forge === "github") expect(on.permissions).toEqual({ contents: "write", statuses: "write", "pull-requests": "write" });
-    const off = fmt(false);
+    if (forge === "github") expect(on.permissions).toMatchObject({ contents: "write", statuses: "write", "pull-requests": "write" });
+    const off = push(false);
     expect(JSON.stringify(off)).not.toContain("pr-lock");
-    if (forge === "github") expect(off.permissions).toEqual({ contents: "write" });
+    if (forge === "github") expect(off.permissions.statuses).toBeUndefined();
   });
 });
 
@@ -123,7 +124,8 @@ describe("the check job", () => {
   it("gitlab: the same script, the report as an artifact, the history in the clone", () => {
     const doc = body(render("gitlab"));
     expect(doc.check.script.join("\n")).toContain('tg_check "$dir"; then echo 0 >"$tgtmp/$n.rc"');
-    expect(doc.check.artifacts).toEqual({ name: "terragucci-check", when: "always", paths: ["terragucci-check/"] });
+    // With respond.fmt on (the default), the check also keeps the finding dotenv that starts chant's commit job (chant#4749).
+    expect(doc.check.artifacts).toEqual({ name: "terragucci-check", when: "always", paths: ["terragucci-check/", ".chant/commit/finding.env"], reports: { dotenv: ".chant/commit/finding.env" } });
     expect(doc.check.variables).toMatchObject({ TG_BRANCH: "$CI_DEFAULT_BRANCH" });
     expect(doc.check.variables.GIT_DEPTH).toBeUndefined();
     const withPolicy = body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, policy: true }).content);
@@ -636,7 +638,7 @@ describe("locks: plan", () => {
     // Pushes, plans and applies do not run on the new trigger: every other job names its own event or needs check.
     for (const [name, j] of Object.entries(doc.jobs) as [string, any][]) {
       if (name === "pr-lock") continue;
-      expect(String(j.if ?? "") + String(j.needs ?? ""), name).toMatch(/event_name == '(push|pull_request|issue_comment|pull_request_review|schedule)'|check|apply-wave|confirm|replan/);
+      expect(String(j.if ?? "") + String(j.needs ?? ""), name).toMatch(/event_name == '(push|pull_request|issue_comment|pull_request_review|schedule)'|check|apply-wave|confirm|replan|fmt/);
     }
     if (forge === "forgejo") expect(doc.concurrency.group).toContain("github.event_name == 'pull_request_target' && format('lock-{0}', github.event.pull_request.number)");
   });
@@ -1448,12 +1450,12 @@ describe("the plan stage", () => {
     const doc = body(render("gitlab"));
     expect(doc.plan.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
     expect(doc.plan.script.join("\n")).toContain('tg note "$note"');
-    // The check holds no token of its own and drops the ones GitLab hands it; the fmt job pushes the formatting.
+    // The check holds no token of its own and drops the ones GitLab hands it; chant's commit job pushes the formatting (chant#4749).
     expect(doc.check.variables.TG_TOKEN).toBeUndefined();
     expect(doc.check.script.join("\n").split("\n")[0]).toBe(`unset ${["TG_TOKEN", "TG_MERGE_TOKEN", ...FORGE_TOKEN_VARS].join(" ")}`);
     expect(doc.check.after_script).toBeUndefined();
-    expect(doc.fmt).toMatchObject({ stage: "check", needs: ["check"], variables: { TG_TOKEN: "$GITLAB_TOKEN" } });
-    expect(doc.fmt.rules[0].when).toBe("on_failure");
+    expect(doc.fmt).toMatchObject({ stage: "check", needs: [{ job: "check", artifacts: true }] });
+    expect(doc["fmt-push"].script.join("\n")).toContain('export CHANT_GITLAB_TOKEN="$GITLAB_TOKEN"');
     expect(doc.comments).toBeUndefined();
   });
 
@@ -2541,12 +2543,15 @@ describe("respond steps", () => {
     expect(text).toContain('terragucci respond apply-failed --log "$log"');
     expect(text).toContain("terragucci respond wave-refused --wave 1");
     expect(text).toContain("terragucci respond drift --mode apply");
-    expect(text).toContain("terragucci respond fmt --mode apply");
+    // fmt is chant's commit job (chant#4749): it runs terragucci fmt after a check that found formatting.
+    expect(text).toContain("terragucci commit prepare");
+    expect(text).toContain('"terragucci","fmt","--binary","tofu"');
   });
 
   it.each(FORGES)("%s: a response set to off is not in the pipeline", (forge) => {
     const text = withRespond(forge, { "apply-failed": "off", "wave-refused": "off", drift: "off", fmt: "off", tips: "off" });
     expect(text).not.toContain("terragucci respond");
+    expect(text).not.toContain("terragucci commit");
   });
 
   it("a wave waiting at a gate (exit 3) gets no response", () => {
@@ -2863,17 +2868,26 @@ describe("no forge token where the change's code runs", () => {
     expect(note.steps.at(-1).run).toContain(`terragucci plan-note --forge ${forge} --report terragucci-report`);
   });
 
-  it.each(["github", "forgejo"] as const)("%s: the formatting is committed by a job of its own after a failed check", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: chant's commit job formats and commits after a check that found formatting, and the check holds no token", (forge) => {
     const doc = body(render(forge));
+    // The check exits 3 for formatting and says so as its finding output; it holds no token that pushes.
+    expect(doc.jobs.check.outputs.finding).toBe("${{ steps.check.outputs.finding }}");
+    expect(doc.jobs.check.steps.at(-1).run).toContain(`fmt -check -recursive -diff . || exit 3`);
+    expect(doc.jobs.check.steps.at(-1).run).toContain(`if [ "$code" -eq 3 ]; then echo "finding=true" >>"$GITHUB_OUTPUT"; fi`);
+    expect(JSON.stringify(doc.jobs.check)).not.toContain("terragucci commit");
+    // The commit job follows the check's finding, fetches the pushed commit, and runs terragucci fmt with no token.
     expect(doc.jobs.fmt.needs).toBe("check");
-    expect(doc.jobs.fmt.if).toContain("needs.check.result == 'failure' && github.event_name == 'push'");
-    expect(doc.jobs.fmt.env.TG_TOKEN).toBe("${{ github.token }}");
-    expect(doc.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply");
-    expect(JSON.stringify(doc.jobs.check)).not.toContain("respond fmt");
+    expect(doc.jobs.fmt.if).toBe("always() && needs.check.outputs.finding == 'true'");
+    expect(doc.jobs.fmt.env.CHANT_COMMIT_COMMAND).toBe(JSON.stringify(["terragucci", "fmt", "--binary", "tofu"]));
+    expect(doc.jobs.fmt.env.CHANT_COMMIT_ALLOWED_FILES).toBe(JSON.stringify(["*.tf", "*.tofu", "*.tfvars", "*.hcl"]));
+    expect(JSON.stringify(doc.jobs.fmt)).toContain("PUSHED_SHA");
+    // The push job pushes with the job's own token.
+    expect(doc.jobs["fmt-push"].needs).toBe("fmt");
+    expect(JSON.stringify(doc.jobs["fmt-push"])).toContain("npx --no-install terragucci commit land");
     expect(body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: { fmt: "off" } }).content).jobs.fmt).toBeUndefined();
-    // A Terragrunt repo gets the job too: respond fmt runs terragrunt hcl fmt beside the binary's.
+    // A Terragrunt repo: terragucci fmt runs terragrunt hcl fmt too, after the install step.
     const tg = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["live/a"]], env: {}, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }] } }).content);
-    expect(tg.jobs.fmt.steps.at(-1).run).toContain("terragucci respond fmt --mode apply --binary tofu");
+    expect(tg.jobs.fmt.env.CHANT_COMMIT_COMMAND).toBe(JSON.stringify(["terragucci", "fmt", "--binary", "tofu", "--terragrunt"]));
     expect(tg.jobs.fmt.steps.map((x: { name?: string }) => x.name)).toContain("Install terragrunt 0.99.0");
   });
 

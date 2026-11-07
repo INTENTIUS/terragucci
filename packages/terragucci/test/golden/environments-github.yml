@@ -41,6 +41,7 @@ jobs:
       TG_BRANCH: '${{ github.event.repository.default_branch }}'
     outputs:
       report_0: '${{ steps.check.outputs.report_0 }}'
+      finding: '${{ steps.check.outputs.finding }}'
     steps:
       - name: Check out the change
         shell: bash
@@ -77,8 +78,10 @@ jobs:
           chant_report="$PWD/terragucci-check"
           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to plan-note.md, plan-status.txt, drift-schedule.json, report.json; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on plan-note.md, plan-status.txt, drift-schedule.json, report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
           trap chant_handover EXIT
+          set +e
+          (
           set -eu
-          tofu fmt -check -recursive -diff .
+          tofu fmt -check -recursive -diff . || exit 3
           failed=0
           tg_check() {
             dir="$1"
@@ -111,6 +114,10 @@ jobs:
           done
           terragucci check-policy || failed=1
           exit "$failed"
+          )
+          code=$?
+          if [ "$code" -eq 3 ]; then echo "finding=true" >>"$GITHUB_OUTPUT"; fi
+          exit "$code"
   check-report:
     runs-on: ubuntu-latest
     container:
@@ -532,23 +539,138 @@ jobs:
           set -u
           terragucci plan-note --forge github --report terragucci-report --plan-result "${TG_PLAN_RESULT:-}" ${TG_ROOT:+--root "$TG_ROOT"}
   fmt:
+    needs: check
+    if: always() && needs.check.outputs.finding == 'true'
     runs-on: ubuntu-latest
     container:
       image: img:1
-    needs: check
-    if: always() && needs.check.result == 'failure' && github.event_name == 'push' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      CHANT_COMMIT_NAME: terragucci-fmt
+      CHANT_COMMIT_ON: check
+      CHANT_COMMIT_COMMAND: '["terragucci","fmt","--binary","tofu"]'
+      CHANT_COMMIT_ALLOWED: '[]'
+      CHANT_COMMIT_ALLOWED_FILES: '["*.tf","*.tofu","*.tfvars","*.hcl"]'
+      CHANT_COMMIT_FINDINGS: '3'
+      CHANT_COMMIT_MAX_RUNS: '3'
+      CHANT_COMMIT_TIMEOUT: '10'
+      CHANT_COMMIT_ENV: local
+    outputs:
+      report_0: '${{ steps.chant-commit.outputs.report_0 }}'
+    steps:
+      - name: Check out the target branch's commit and the pushed commit
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+          PUSHED_SHA: '${{ github.sha }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="$GITHUB_REF"
+          want="$GITHUB_SHA"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+          case "$PUSHED_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
+          git -c protocol.version=2 fetch -q --no-tags origin "+$PUSHED_SHA:refs/chant/commit-head"
+      - name: Decide whether the command runs
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: npx --no-install terragucci commit prepare --forge github --output .chant/commit
+      - id: chant-commit
+        name: Run the command
+        run: |
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+          chant_report="$PWD/.chant/commit"
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["decision.json","rc","change.patch"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant-commit: the report is too large to hand to the next job, even cut to decision.json, rc, change.patch; it hands on none of it")}else console.error("chant-commit: the report is too large to hand to the next job whole; it hands on decision.json, rc, change.patch")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant-commit: the report could not be handed to the next job" >&2; }
+          trap chant_handover EXIT
+          npx --no-install terragucci commit run --forge github --output .chant/commit
+  fmt-push:
+    needs: fmt
+    if: always() && needs.fmt.result == 'success'
+    runs-on: ubuntu-latest
+    container:
+      image: img:1
     permissions:
       contents: write
+      pull-requests: write
+      issues: write
     env:
-      TG_TOKEN: '${{ github.token }}'
+      CHANT_COMMIT_NAME: terragucci-fmt
+      CHANT_COMMIT_ON: check
+      CHANT_COMMIT_COMMAND: '["terragucci","fmt","--binary","tofu"]'
+      CHANT_COMMIT_ALLOWED: '[]'
+      CHANT_COMMIT_ALLOWED_FILES: '["*.tf","*.tofu","*.tfvars","*.hcl"]'
+      CHANT_COMMIT_FINDINGS: '3'
+      CHANT_COMMIT_MAX_RUNS: '3'
+      CHANT_COMMIT_TIMEOUT: '10'
+      CHANT_COMMIT_ENV: local
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Commit the formatting
-        shell: bash
+      - name: Check out the target branch's commit and the pushed commit
+        env:
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+          PUSHED_SHA: '${{ github.sha }}'
+        run: |
+          set -eu
+          git config --global --add safe.directory "$PWD" 2>/dev/null || true
+          [ -d .git ] || git init -q .
+          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+            unset chant_auth
+          fi
+          ref="$GITHUB_REF"
+          want="$GITHUB_SHA"
+          case "$ref" in
+            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
+            refs/tags/*) target="$ref" ;;
+            refs/*) target="refs/remotes/${ref#refs/}" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
+          esac
+          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
+          case "$ref" in
+            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
+            *) git checkout -q --force --detach "$target" ;;
+          esac
+          case "$PUSHED_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
+          git -c protocol.version=2 fetch -q --no-tags origin "+$PUSHED_SHA:refs/chant/commit-head"
+      - name: Take the change from the commit job
         run: |
           set -u
-          export GITHUB_TOKEN="$TG_TOKEN"
-          terragucci respond fmt --mode apply --binary tofu --branch "$GITHUB_REF_NAME" || true
+          node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the fmt job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the fmt job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the fmt job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the fmt job")' .chant/commit <<'END_OF_REPORT'
+          ${{ toJSON(needs.fmt.outputs.report_0) }}
+          END_OF_REPORT
+      - name: Push the change to the pull request
+        env:
+          CHANT_COMMIT_TOKEN: '${{ github.token }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+        run: |
+          chant_auth="$(printf 'x-access-token:%s' "$CHANT_COMMIT_TOKEN" | base64 | tr -d '\n')"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
+          unset chant_auth
+          npx --no-install terragucci commit land --forge github --output .chant/commit
   apply-comment:
     runs-on: ubuntu-latest
     container:

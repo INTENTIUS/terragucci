@@ -135,7 +135,7 @@ With [`locks: plan`](/terragucci/reference/config/#plan-locks), `init` adds one 
 |---|---|
 | the default branch's workflow and checkout; `contents: write` (to push `_locks/tf-apply.json` to `chant/lifecycle`), `statuses: write`, `pull-requests: write` | a checkout of the pull request, a cloud role, an OIDC token, a run of the binary or Terragrunt |
 
-It reads the change as data from git: the diff, and in a Terragrunt repo each unit's `terragrunt.hcl`. A fork's pull request takes no lock. A head that moved since the event is locked as the forge has it now. The `fmt` job commits formatting with its own token, and that push starts no run. With `locks: plan` the `fmt` job therefore runs the same step itself and answers the lock on the formatted head, for which it gets `statuses: write` and `pull-requests: write`. Under `apply.when: merge` the lock gates nothing by itself: require `terragucci/lock` in branch protection to hold the merge.
+It reads the change as data from git: the diff, and in a Terragrunt repo each unit's `terragrunt.hcl`. A fork's pull request takes no lock. A head that moved since the event is locked as the forge has it now. The `fmt-push` job pushes the formatting with the job's own token, and that push starts no run. With `locks: plan` the `fmt-push` job therefore runs the same step itself after the push and answers the lock on the formatted head, for which it gets `statuses: write`. Under `apply.when: merge` the lock gates nothing by itself: require `terragucci/lock` in branch protection to hold the merge.
 
 ### Pull request code access
 
@@ -398,7 +398,7 @@ In a Terragrunt repo the same jobs run Terragrunt:
 | Job | Runs |
 |---|---|
 | check | the binary's `fmt -check -recursive -diff .` (for the modules units call), `terragrunt hcl fmt --check` and `terragrunt hcl validate --inputs`, then the policy tests when `policy` is set |
-| fmt | after a branch's check fails, the binary's `fmt` and `terragrunt hcl fmt`, pushed to the branch as one commit (`respond.fmt`) |
+| fmt, fmt-push | after a check finds formatting, chant's commit job runs `terragucci fmt` (the binary's `fmt` and `terragrunt hcl fmt`) and pushes the change to the pull request's branch (`respond.fmt`) |
 | plan | `terragucci stage tf-plan`, one `terragrunt run --all` per wave |
 | apply | `terragucci stage tf-apply --terragrunt`, one job per dependency layer: plans its units with `terragrunt run --all`, gates on their set digest, applies exactly those saved plans with a second `run --all`. The last job runs with `--rest`, so a layer added after `init` applies there, behind its own gate. With `waves.jobs` a wide layer's job decides and its share jobs apply with `run --all --filter`; when the last layer splits, an `apply-rest` job after its shares runs with `--rest` |
 

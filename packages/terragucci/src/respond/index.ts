@@ -226,7 +226,8 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
     const proposed = await propose(repo, settings, tips.proposals, { mode, env, fetch: o.fetch });
     r = { text: [...tips.left, ...proposed.map(said)].join("\n") || "no tip to fix", proposals: proposed };
   } else if (ev === "fmt") {
-    r = await fmt(repo, settings, binary(), mode, o, env);
+    // chant#4749: the pipeline's fmt is chant's commit job, which runs `terragucci fmt` and commits what it changed.
+    throw new ConfigError("respond fmt is chant's commit job now: the pipeline runs `terragucci fmt` after a check finds formatting, and chant commits it; run `terragucci fmt` to format here");
   } else if (ev === "publish") {
     const notes = findModules(repo, settings.modules?.path ?? "modules/*")
       .filter((m) => !o.module || m.rel === o.module.replace(/\/+$/, ""))
@@ -371,46 +372,3 @@ async function driftUnits(repo: string, binary: string, o: RespondOptions, env: 
   return d;
 }
 
-// ── fmt ──────────────────────────────────────────────────────────────────────
-
-async function fmt(repo: string, settings: ResolvedSettings, binary: string, mode: string, o: RespondOptions, env: NodeJS.ProcessEnv) {
-  const branch = o.branch ?? env.GITHUB_HEAD_REF ?? env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME;
-  if (!branch) throw new ConfigError("respond fmt needs --branch, the pull request's branch");
-  if (mode === "apply" && branch === (await defaultBranch(o.fetch ?? (globalThis.fetch as unknown as Fetch), forgeOf(repo, settings, env)))) {
-    throw new ConfigError(`${branch} is the default branch; fmt commits only to a pull request's branch`);
-  }
-  git(repo, ["fetch", "-q", "origin", branch]);
-  const tree = worktree(repo, "FETCH_HEAD");
-  try {
-    const f = spawnSync(binary, ["fmt", "-recursive", "-list=true", ...(mode === "apply" ? [] : ["-check"])], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv(env) });
-    if (f.error) throw new ConfigError(`respond fmt could not run ${binary}: ${f.error.message}`);
-    const listed = f.stdout.split("\n").filter(Boolean);
-    // -check exits non-zero when it lists a file; non-zero with nothing listed
-    // is a file fmt could not parse, which is not "already formatted".
-    if (f.status !== 0 && listed.length === 0) throw new ConfigError(`${branch}: ${binary} fmt failed:\n${tail(f.stderr || f.stdout)}`);
-    const tools = listed.length ? [`${binary} fmt`] : [];
-    let files = listed;
-    // A Terragrunt repo's own files are HCL the binary does not read: terragrunt hcl fmt formats them, in this
-    // throwaway checkout, and git names what it changed.
-    if (detectShape(tree.dir, settings).engine === "terragrunt") {
-      const terragrunt = env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-      const h = spawnSync(terragrunt, ["hcl", "fmt", "--no-color"], { cwd: tree.dir, encoding: "utf-8", env: binaryEnv({ ...env, TG_NON_INTERACTIVE: "true" }) });
-      if (h.error) throw new ConfigError(`respond fmt could not run ${terragrunt}: ${h.error.message}`);
-      if (h.status !== 0) throw new ConfigError(`${branch}: terragrunt hcl fmt failed:\n${tail(h.stderr || h.stdout)}`);
-      const changed = git(tree.dir, ["diff", "--name-only"]).split("\n").filter((p) => p.endsWith(".hcl"));
-      if (changed.length) tools.push("terragrunt hcl fmt");
-      files = [...new Set([...files, ...changed])];
-    }
-    files.sort();
-    const data = { branch, files };
-    const what = tools.join(" and ");
-    if (files.length === 0) return { text: `${branch}: already formatted`, data };
-    if (mode !== "apply") return { text: `${branch}: would commit ${what} on ${files.join(", ")}`, data };
-    git(tree.dir, ["add", "-A"]);
-    git(tree.dir, [...IDENTITY, "commit", "-q", "--no-verify", "-m", `style: ${what}`]);
-    git(tree.dir, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
-    return { text: `${branch}: committed ${what} on ${files.join(", ")}`, data };
-  } finally {
-    tree.done();
-  }
-}

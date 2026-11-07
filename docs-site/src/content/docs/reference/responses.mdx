@@ -60,7 +60,6 @@ terragucci respond drift --mode apply
 terragucci respond drift --root envs/prod/orders --import aws_sqs_queue.extra=https://sqs.us-east-1.amazonaws.com/123456789012/extra --mode apply
 terragucci respond tips --mode apply
 terragucci respond tips --report terragucci-report --branch my-change --mode apply
-terragucci respond fmt --branch my-change --mode apply
 terragucci respond publish --module modules/network
 terragucci respond version-bump --module modules/network --mode apply
 terragucci respond rollout modules/network 1.4.0 --mode apply
@@ -178,7 +177,7 @@ terragucci respond description --report terragucci-report --title "retag email" 
 
 Under [`synth`](/terragucci/guides/plan-cdk-terrain-stacks/#stack-edits) the tips job runs the command first, and only the canary tip opens: the other two would edit files the command writes.
 
-`fmt` runs on request and pushes one commit to the pull request's branch, and refuses the default branch. In a Terragrunt repo it runs `terragrunt hcl fmt` beside the binary's `fmt`, and the commit is `style: terragrunt hcl fmt` when only `.hcl` files moved. The generated pipeline's `fmt` job runs it after a failed check, so the check job holds no token that pushes.
+`fmt` is [chant](/terragucci/concepts/glossary/#chant)'s commit job ([chant#4749](https://github.com/INTENTIUS/chant/issues/4749)). When the check finds formatting it exits 3, and the commit job runs `terragucci fmt` on the pull request's head, which runs the binary's `fmt -recursive .` and, in a Terragrunt repo, `terragrunt hcl fmt`. chant commits the change and pushes it to the pull request's branch. It may change only `.tf`, `.tofu`, `.tfvars` and `.hcl` files, never CI or chant's files, and it pushes at most three formatting commits to one pull request. It does nothing on a head whose plan is already approved, or on a branch with no open pull request. The check job holds no token that pushes. On GitHub and Forgejo the push uses the job's own token. On GitLab it uses `GITLAB_TOKEN`, or `token_env`. Run `terragucci fmt` to format a checkout by hand.
 
 Release notes cover the commits that touched a module between its last two tags, breaking changes first.
 
