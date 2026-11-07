@@ -1,14 +1,24 @@
 ---
-title: Changes in 0.4.49
-description: "terragucci 0.4.49, released 2026-10-29."
+title: Changes in 0.4.50
+description: "terragucci 0.4.50, released 2026-11-07."
 ---
 
-Release `0.4.49` is on npm as `@intentius/terragucci@0.4.49`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.49) lists every change.
+Release `0.4.50` is on npm as `@intentius/terragucci@0.4.50`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.50) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.49 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.50 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.50
+
+On chant 0.124.73, the drift check, the formatting commit, the chat relay and the release itself run as chant's jobs, so terragucci no longer writes its own.
+
+- The drift check is chant's drift Op in a workflow of its own on every forge. Run `init` and merge what it writes; a run that finds drift without `agent.drift` now stays green.
+- The formatting commit is chant's commit job. It starts only when the check finds formatting (exit 3), and it never pushes to a head whose plan is already approved.
+- Approving from chat needs `notify.relay_key` set to the variable that holds the relay key ([approve from chat](/terragucci/guides/approve-from-chat/)). A Teams reply is now `approve <reference>`.
+- `dora.json` is built by chant with the same fields and values.
+- A release is cut and published by chant in one run, under the tag `release/<version>`.
 
 ## In 0.4.49
 
