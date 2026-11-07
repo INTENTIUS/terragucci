@@ -62,7 +62,7 @@ import { liveEstate, rootSecrets } from "../tips/secrets";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf, type Drifted } from "../respond/drift";
-import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, pipelineAdded } from "./overdue";
+import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, driftWorkflowPath, pipelineAdded } from "./overdue";
 import { DRIFT_ISSUE_FILE } from "../drift-agent";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
@@ -2277,7 +2277,7 @@ async function finish(
   }
   if (stage === "tf-plan" && agentLoginWarning(settings.agent) && report.waves.some((w) => w.waits === true)) notices.push(`The agent's account isn't excluded from approving this change: set agent.login to the login agent.token_env's token acts as.`);
   // Without a token the stage asks as a reader, which only a public repo answers; the note job asks again with its token.
-  let leftSchedule: { cron: string; added?: string } | undefined;
+  let leftSchedule: { cron: string; workflow: string; added?: string } | undefined;
   if (!drift && typeof settings.drift === "string") {
     const token = options.token ?? env.TG_TOKEN;
     const forge = options.forge ?? settings.forge;
@@ -2289,7 +2289,7 @@ async function finish(
     }
     if (!token && reader && reader.forge !== "gitlab") {
       const added = pipelineAdded(repo, reader.forge);
-      leftSchedule = { cron: settings.drift, ...(added ? { added } : {}) };
+      leftSchedule = { cron: settings.drift, workflow: driftWorkflowPath(repo, reader.forge), ...(added ? { added } : {}) };
     }
   }
   // A waiting wave's command in the note asks for --sign when the repo seals its approvals.

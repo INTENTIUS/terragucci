@@ -187,25 +187,31 @@ describe("the drift job a Terragrunt repo's pipeline writes", () => {
     return r;
   };
 
+  // The drift job is chant's drift Op (chant issue 4622): its workflow, and the script it runs.
+  const driftOf = async (config: string) => {
+    const files = (await init(live(config), { binary: "tofu", forge: "github", terragrunt: "/nonexistent/terragrunt" })).files;
+    const workflow = body(files.find((f) => f.path.endsWith("/.github/workflows/terragucci-drift.yml"))!.content);
+    return { job: workflow.jobs["terragucci-drift"], permissions: workflow.permissions, script: files.find((f) => f.path.endsWith("/.chant/ops/terragucci-drift.sh"))!.content, pipeline: body(files[0]!.content) };
+  };
+
   it("with respond.drift at its default, opens the drift pull request after the stage, with the job's token and write access", async () => {
-    const doc = body((await init(live(""), { binary: "tofu", forge: "github", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
-    const script = doc.jobs.drift.steps.map((s: any) => s.run).filter(Boolean).join("\n");
+    const { script, permissions, pipeline } = await driftOf("");
+    expect(pipeline.jobs.drift).toBeUndefined();
     expect(script).toContain("terragucci stage tf-drift");
     expect(script).toContain("terragucci respond drift --mode apply --binary tofu");
-    expect(doc.jobs.drift.permissions).toMatchObject({ contents: "write", "pull-requests": "write" });
+    expect(permissions).toMatchObject({ contents: "write", "pull-requests": "write" });
   });
 
   it("with respond.drift: attribute, installs the aws CLI and hands the job the decision service's key", async () => {
-    const doc = body((await init(live("respond:\n  drift: attribute\ndecide:\n  backend: laya\n  url: http://decide:8790\n  token_env: DECIDE_KEY\n"), { binary: "tofu", forge: "github", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
-    const steps = doc.jobs.drift.steps;
-    expect(steps.map((s: any) => s.run ?? "").join("\n")).toMatch(/awscli|aws --version|awscliv2/);
-    expect(JSON.stringify(doc.jobs.drift)).toContain("DECIDE_KEY");
+    const { script, job } = await driftOf("respond:\n  drift: attribute\ndecide:\n  backend: laya\n  url: http://decide:8790\n  token_env: DECIDE_KEY\n");
+    expect(script).toMatch(/awscli|aws --version|awscliv2/);
+    expect(JSON.stringify(job)).toContain("DECIDE_KEY");
   });
 
   it("with respond.drift: off, writes neither", async () => {
-    const doc = body((await init(live("respond:\n  drift: off\n"), { binary: "tofu", forge: "github", terragrunt: "/nonexistent/terragrunt" })).files[0].content);
-    expect(doc.jobs.drift.steps.map((s: any) => s.run ?? "").join("\n")).not.toContain("terragucci respond drift");
-    expect(doc.jobs.drift.permissions.contents).toBe("read");
+    const { script, permissions } = await driftOf("respond:\n  drift: off\n");
+    expect(script).not.toContain("terragucci respond drift");
+    expect(permissions.contents).toBe("read");
   });
 });
 

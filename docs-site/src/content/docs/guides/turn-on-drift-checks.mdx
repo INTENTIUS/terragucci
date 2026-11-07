@@ -56,7 +56,7 @@ A scheduled `tf-drift` run that plans every root, and one issue that groups what
 
    <Tabs syncKey="forge">
      <TabItem label="GitHub">
-       `init` adds a `drift` job with the cron. A `workflow_dispatch` with no `pr` input runs it by hand.
+       `init` writes the drift job as a [chant](/terragucci/concepts/glossary/#chant) drift Op in a workflow of its own, `.github/workflows/terragucci-drift.yml`, on the cron. It runs `.chant/ops/terragucci-drift.sh` and keeps the drift report as the `terragucci-report-drift` artifact. Run it by hand from that workflow's dispatch.
      </TabItem>
      <TabItem label="GitLab">
        Set the same cron under CI/CD, Schedules. `GITLAB_TOKEN` (or the `token_env` variable) needs the `api` scope.
@@ -64,7 +64,7 @@ A scheduled `tf-drift` run that plans every root, and one issue that groups what
        Give the drift schedule no `TERRAGUCCI_SCHEDULE` variable. A schedule with `TERRAGUCCI_SCHEDULE` set to `comments` is the [comments schedule](/terragucci/guides/re-plan-from-a-comment/), and its pipelines run no drift job.
      </TabItem>
      <TabItem label="Forgejo">
-       The same job and trigger as GitHub.
+       The same workflow as GitHub, under `.forgejo/workflows/`. With `oidc`, `init` keeps the `drift` job in the pipeline instead, since chant's job doesn't ask Forgejo for a token yet.
      </TabItem>
    </Tabs>
 

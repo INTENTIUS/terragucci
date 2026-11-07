@@ -87,9 +87,9 @@ export function withNotice(body: string, line: string): string {
 async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: Fetch, log: (l: string) => void): Promise<string | undefined> {
   const file = join(o.report, DRIFT_SCHEDULE_FILE);
   if (!existsSync(file)) return undefined;
-  let left: { cron?: unknown; added?: unknown };
+  let left: { cron?: unknown; added?: unknown; workflow?: unknown };
   try {
-    left = JSON.parse(readFileSync(file, "utf-8")) as { cron?: unknown; added?: unknown };
+    left = JSON.parse(readFileSync(file, "utf-8")) as { cron?: unknown; added?: unknown; workflow?: unknown };
   } catch {
     return undefined;
   }
@@ -98,7 +98,9 @@ async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: 
   const target = targetFromEnv(o.forge, env, env.TG_TOKEN);
   if (!target) return undefined;
   try {
-    const found = driftOverdue(left.cron, o.forge, await driftRuns(doFetch, target), added, o.now ?? new Date());
+    // The plan job names the drift job's workflow file (chant's drift Op's, chant issue 4622); a file written before names none.
+    const workflow = typeof left.workflow === "string" && /^\.(github|forgejo)\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/.test(left.workflow) ? left.workflow : undefined;
+    const found = driftOverdue(left.cron, o.forge, await driftRuns(doFetch, target, ...(workflow ? [workflow] : [])), added, o.now ?? new Date());
     if (found) log(found.message);
     return found?.message;
   } catch (e) {

@@ -1,36 +1,39 @@
 /**
- * The scheduled drift job as a chant drift Op, so `agent.drift` rides chant's
- * agent job (terragucci#1305, chant#4616). With a chant that has the job
- * (./chant-next.ts `chantAgentJob`), on GitHub and Forgejo, init writes:
+ * The scheduled drift job as a chant drift Op (terragucci#1305, chant
+ * issues 4616 and 4622). On GitHub, and on Forgejo without oidc, init writes:
  *
- *   .chant/ops/terragucci-drift.sh         the drift step's script, the one
- *                                          terragucci's own drift job runs
- *                                          (render.ts `driftScript`), so the
- *                                          drift report, the drift issue,
- *                                          respond.drift and notify keep
- *                                          their fields
+ *   .chant/ops/terragucci-drift.sh         the drift step's script (render.ts
+ *                                          `driftScript`, after the install
+ *                                          lines), so the drift report, the
+ *                                          drift issue, respond.drift and
+ *                                          notify keep their fields
  *   .chant/ops/terragucci-drift.spec.json  one scheduled Op on drift's cron,
- *                                          running that script, with chant's
+ *                                          running that script, keeping the
+ *                                          drift report (and respond.drift:
+ *                                          agent's input) as artifacts, with a
+ *                                          Terragrunt repo's cache as a setup
+ *                                          step, and with agent.drift chant's
  *                                          drift agent (`productDriftAgent`)
  *   .github/workflows/terragucci-drift.yml chant's Op generator's workflow
  *                                          (or .forgejo/workflows/): the drift
- *                                          job, then the agent job and the
- *                                          push job, which run when the drift
- *                                          job exits with chant's `drift` code
+ *                                          job, and with agent.drift the agent
+ *                                          and push jobs, which run when the
+ *                                          drift job exits with chant's
+ *                                          `drift` code
  *   ops/terragucci-drift.op.ts             a TerraformWatchOp per root of a
  *                                          plain repo, so `chant run
  *                                          terragucci-drift-<root>` reads one
  *                                          root by hand
  *
  * The Op runs every root in one job, as before, since the repo keeps one
- * drift issue. The script exits with chant's `drift` code (2) when the run
- * opened the drift issue, which is when terragucci's own drift agent ran.
- * The drift agent's runs go on the ledger under op `terragucci-drift`.
+ * drift issue. With agent.drift the script exits with chant's `drift` code
+ * (2) when the run opened the drift issue; without it, the run stays green
+ * on drift as terragucci's own job did. The drift agent's runs go on the
+ * ledger under op `terragucci-drift`.
  *
- * Without the job, or where the Op cannot carry what the drift job needs
- * (GitLab, Forgejo with oidc, a Terragrunt repo's cache step, respond.drift
- * agent or attribute), terragucci's own drift job and its drift-agent jobs
- * (./render-agent.ts) are rendered as before.
+ * GitLab, and Forgejo with oidc, keep terragucci's own drift job: chant's
+ * GitLab Op job has no named id_tokens or cache, and its Forgejo job no
+ * enable-openid-connect (chant issue 4753).
  */
 import type { AgentCommentInput } from "./agent-comment";
 import { chantAgentJobNow, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
@@ -92,19 +95,26 @@ export interface ChantDriftInput {
   /** respond.drift: pull-request opens a pull request from the drift job. */
   pullRequest: boolean;
   oidc: boolean;
-  /** `agent.drift`'s settings. */
-  agent: AgentCommentInput;
+  /** `agent.drift`'s settings, when it is set. */
+  agent?: AgentCommentInput;
+  /** What the job keeps after its run: the drift report, and respond.drift: agent's input (chant issue 4622). */
+  artifacts: { name: string; paths: string[] }[];
+  /** Steps before the script, such as a Terragrunt repo's cache. */
+  setup?: Record<string, unknown>[];
   /** The roots of a plain repo, for the TerraformWatchOp file; absent for another shape. */
   roots?: readonly string[];
   marker: string;
   runner?: unknown;
 }
 
-/** The drift Op's files, or undefined when the installed chant has no agent job. */
+/** The drift Op's files, or undefined when the installed chant has no Op generator. */
 export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob | undefined = chantAgentJobNow()): { path: string; content: string }[] | undefined {
   if (!chant) return undefined;
-  const { name: _name, ...settings } = chantAgentOptions(i.agent);
-  const agent = chant.productDriftAgent(TERRAGUCCI_WORDS, CHANT_DRIFT_OP, settings);
+  let agent: object | undefined;
+  if (i.agent) {
+    const { name: _name, ...settings } = chantAgentOptions(i.agent);
+    agent = chant.productDriftAgent(TERRAGUCCI_WORDS, CHANT_DRIFT_OP, settings);
+  }
   const spec: ChantScheduledOpSpec = {
     name: CHANT_DRIFT_OP,
     trigger: { kind: "cron", schedule: i.schedule },
@@ -113,7 +123,9 @@ export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob | undef
     ...(Object.keys(i.jobEnv).length ? { variables: i.jobEnv } : {}),
     permissions: { ...(i.pullRequest ? { issues: "write" as const } : {}), ...(i.oidc ? { "id-token": "write" as const } : {}) },
     ...(i.runner !== undefined ? { runner: i.runner } : {}),
-    agent,
+    ...(i.setup && i.setup.length ? { setup: i.setup } : {}),
+    artifacts: i.artifacts,
+    ...(agent ? { agent } : {}),
   };
   const options = { image: i.image, runCommand: ["bash", CHANT_DRIFT_SCRIPT_FILE], ...(Object.keys(i.workflowEnv).length ? { variables: i.workflowEnv } : {}) };
   const was = chant.setActiveProductWords(TERRAGUCCI_WORDS);
@@ -124,7 +136,7 @@ export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob | undef
     chant.setActiveProductWords(was as object | undefined);
   }
   if (!yaml) return undefined;
-  const header = `${i.marker} The drift job is a chant drift Op (terragucci#1305), from ${CHANT_DRIFT_SPEC_FILE}: edit terragucci.yml's drift and agent.drift and run terragucci init.\n`;
+  const header = `${i.marker} The drift job is a chant drift Op (terragucci#1305), from ${CHANT_DRIFT_SPEC_FILE}: edit terragucci.yml's drift${i.agent ? " and agent.drift" : ""} and run terragucci init.\n`;
   return [
     { path: CHANT_DRIFT_SCRIPT_FILE, content: `#!/usr/bin/env bash\n${i.marker}\n${i.script}\n` },
     { path: CHANT_DRIFT_SPEC_FILE, content: JSON.stringify({ ops: [spec], options }, null, 2) + "\n" },

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { chantAgentJob } from "../src/chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, validateConfig, type ForgeName } from "../src/config";
 import { jobStage, renderPipeline, RenderError, type PipelineInput } from "../src/render";
@@ -27,6 +28,11 @@ const PASS = { secrets: ["TF_VAR_db_password"], vars: ["TF_VAR_region"] };
 const RICH: Partial<PipelineInput> = { drift: "0 6 * * *", resume: 10, ephemeral: { sweep: 30 }, publish: true, respond: { tips: "on" } };
 
 describe("runner", () => {
+  // init loads chant's agent job, whose Op generator writes the drift job (chant issue 4622); the render reads it as loaded.
+  beforeAll(async () => {
+    await chantAgentJob();
+  });
+
   it("unset, the pipeline is the one it always was", () => {
     for (const forge of ["github", "forgejo"] as const) {
       expect(render(forge, RICH).content).toBe(render(forge, { ...RICH, runner: undefined }).content);
@@ -50,13 +56,15 @@ describe("runner", () => {
     expect(jobs["apply-wave-2"]["runs-on"]).toEqual(["self-hosted", "prod"]);
     expect(jobs["apply-comment"]["runs-on"]).toEqual(["self-hosted", "prod"]);
     expect(jobs.ephemeral["runs-on"]).toEqual(["self-hosted", "prod"]);
-    expect(jobs.drift["runs-on"]).toBe("drift-runner");
+    // The drift job is chant's drift Op in a workflow of its own, on the drift stage's runner.
+    expect(jobs.drift).toBeUndefined();
     expect(jobs.check["runs-on"]).toEqual(["self-hosted", "linux"]);
     expect(jobs["plan-note"]["runs-on"]).toEqual(["self-hosted", "linux"]);
     // The workflows beside the pipeline: resume applies, the sweep destroys.
-    const extra = Object.fromEntries((out.extra ?? []).map((f) => [f.path, jobsOf(f.content)]));
+    const extra = Object.fromEntries((out.extra ?? []).filter((f) => f.path.endsWith(".yml")).map((f) => [f.path, jobsOf(f.content)]));
     expect(extra[".github/workflows/terragucci-resume.yml"].resume["runs-on"]).toEqual(["self-hosted", "prod"]);
     expect(extra[".github/workflows/terragucci-ephemeral.yml"].sweep["runs-on"]).toEqual(["self-hosted", "prod"]);
+    expect(extra[".github/workflows/terragucci-drift.yml"]["terragucci-drift"]["runs-on"]).toBe("drift-runner");
   });
 
   it("github: a runner group, with labels or without", () => {
@@ -97,10 +105,13 @@ describe("pass", () => {
       const out = render(forge, { ...RICH, pass: PASS });
       const jobs = jobsOf(out.content);
       const holders = Object.entries(jobs).filter(([, j]) => j.env?.TF_VAR_db_password).map(([n]) => n).sort();
-      expect(holders).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "drift", "ephemeral", "plan", "replan"]);
+      expect(holders).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "ephemeral", "plan", "replan"]);
+      // The drift job is chant's drift Op (chant issue 4622), whose job gets them as the spec's variables.
+      const drift = (out.extra ?? []).find((f) => f.path === `.${forge}/workflows/terragucci-drift.yml`)!;
+      expect(jobsOf(drift.content)["terragucci-drift"].env.TF_VAR_db_password).toBe("${{ secrets.TF_VAR_db_password }}");
       expect(jobs.plan.env.TF_VAR_db_password).toBe("${{ secrets.TF_VAR_db_password }}");
       expect(jobs.plan.env.TF_VAR_region).toBe("${{ vars.TF_VAR_region }}");
-      for (const f of out.extra ?? []) for (const job of Object.values(jobsOf(f.content))) if (job.env?.TG_TOKEN && !f.path.includes("rollout")) expect(job.env.TF_VAR_db_password).toBe("${{ secrets.TF_VAR_db_password }}");
+      for (const f of (out.extra ?? []).filter((x) => x.path.endsWith(".yml"))) for (const job of Object.values(jobsOf(f.content))) if (job.env?.TG_TOKEN && !f.path.includes("rollout")) expect(job.env.TF_VAR_db_password).toBe("${{ secrets.TF_VAR_db_password }}");
       // The check job runs a branch's code, a fork's too, and plans nothing: it gets none.
       expect(jobs.check.env?.TF_VAR_db_password).toBeUndefined();
       expect(jobs.publish.env?.TF_VAR_db_password).toBeUndefined();

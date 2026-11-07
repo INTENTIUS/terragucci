@@ -3002,22 +3002,26 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     return { path: PIPELINE_PATHS.gitlab, content: header(image, input.imageFromConfig) + agentInclude + out + ownJobsYAML(input.ownJobs, [...jobs.keys()], forge), applyJobs: renderedApplyJobs, ...(chantAgent ? { extra: chantAgent.files } : {}) };
   }
 
-  // terragucci#1305: with agent.drift and chant's agent job, the drift job is a chant drift Op in a workflow of its own.
-  // GitLab, Forgejo with oidc, a Terragrunt repo (its cache step) and respond.drift agent or attribute keep terragucci's job.
-  const chantDrift = drift && input.agentDrift && !tg && !agentDrift && !awsStep && !(forge === "forgejo" && oidc)
+  // terragucci#1305 and chant issue 4622: the drift job is a chant drift Op in a workflow of its own, keeping the drift report
+  // (and respond.drift: agent's input) as artifacts, with a Terragrunt repo's cache as a setup step and attribution's AWS CLI
+  // install in its script. Forgejo with oidc keeps terragucci's job: chant's Forgejo job sets no enable-openid-connect (chant issue 4753).
+  const chantDrift = drift && !(forge === "forgejo" && oidc)
     ? chantDriftFiles({
         forge,
         image,
         schedule: drift,
-        script: [...(installStep ? [installStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, "chant")].join("\n"),
+        script: [...(installStep ? [installStep] : []), ...(awsStep ? [awsStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift ? "chant" : false)].join("\n"),
         workflowEnv: jobEnv,
         jobEnv: definedEnv({ ...passed, TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv, ...driftDecideEnv, ...reportKeyEnv(forge, input.reports), ...driftNotifyEnv }),
         pullRequest: Boolean(driftPr),
         oidc: Boolean(oidc),
-        agent: input.agentDrift,
-        ...(!input.atmos && !input.terramate ? { roots: layers.flat() } : {}),
+        ...(input.agentDrift ? { agent: input.agentDrift } : {}),
+        artifacts: [{ name: `${REPORT_DIR}-drift`, paths: [`${REPORT_DIR}/`] }, ...(agentDrift ? [{ name: `${RESPOND_DIR}-drift`, paths: [`${RESPOND_DIR}/`] }] : [])],
+        ...(tg ? { setup: [forgeCache(forge)] } : {}),
+        ...(!input.atmos && !input.terramate && !tg ? { roots: layers.flat() } : {}),
         marker: MARKER,
-        ...(input.runner !== undefined ? { runner: input.runner } : {}),
+        // The drift stage's runner (runner.drift, else runner.default), as terragucci's own drift job took it.
+        ...(runnerOf(input.runner, "drift") !== undefined ? { runner: runnerOf(input.runner, "drift") } : {}),
       })
     : undefined;
   const sameRepo = "github.event.pull_request.head.repo.full_name == github.repository";

@@ -362,8 +362,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const declText = existsSync(declFile) ? readFileSync(declFile, "utf-8") : undefined;
   const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
   // chant's agent job (chant#4616): with it, agent.comment's jobs are chant's, in a workflow of their own (./render-chant-agent.ts).
-  // terragucci#1305: with it, agent.drift's drift job is a chant drift Op (./render-chant-drift.ts).
-  if (agentCommentInput(settings) || (settings.drift && agentDriftInput(settings))) await chantAgentJob();
+  // terragucci#1305 and chant issue 4622: the drift job is a chant drift Op (./render-chant-drift.ts), agent.drift or not.
+  if (agentCommentInput(settings) || settings.drift) await chantAgentJob();
   // terragucci#1303: a plain repo's apply on chant's terraform-apply step. Each root is a terraform.roots entry of chant.config.ts,
   // and the step's spec is written once beside the pipeline, where each wave job reads its rules at base.
   const plainRoots = !tgMode && !atmos && !terramate;

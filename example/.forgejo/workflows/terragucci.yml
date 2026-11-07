@@ -13,8 +13,6 @@ on:
   issue_comment:
     types:
       - created
-  schedule:
-    - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       pr:
@@ -884,29 +882,3 @@ jobs:
           set -u
           export FORGEJO_TOKEN="$TG_TOKEN"
           terragucci respond tips --mode apply --binary tofu || true
-  drift:
-    runs-on: docker
-    container:
-      image: ghcr.io/intentius/terragucci-tofu:0.4.49-tofu1.13.1
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr == '')
-    env:
-      TG_TOKEN: '${{ github.token }}'
-      TG_SHA: '${{ github.sha }}'
-    steps:
-      - uses: https://code.forgejo.org/actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Plan every root against what exists, and keep the drift issue
-        shell: bash
-        run: |
-          set +e -uo pipefail
-          terragucci stage tf-drift --out terragucci-report --binary tofu --forge forgejo --layers 'envs/dev/platform,envs/prod/platform,envs/staging/platform;envs/dev/email,envs/dev/orders,envs/dev/payments,envs/dev/search,envs/prod/email,envs/prod/orders,envs/prod/payments,envs/prod/search,envs/staging/email,envs/staging/orders,envs/staging/payments,envs/staging/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          rc=$?
-          export FORGEJO_TOKEN="$TG_TOKEN"
-          if [ "$rc" -eq 0 ]; then terragucci respond drift --mode apply --binary tofu || true; fi
-          exit "$rc"
-      - name: Keep the drift report
-        if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1
-        with:
-          name: terragucci-report-drift
-          path: terragucci-report/
-          if-no-files-found: ignore
