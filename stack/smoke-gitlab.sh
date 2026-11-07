@@ -3133,8 +3133,8 @@ gitlab_claim_forge/check() {
   # read_api alone, and GitLab must refuse that token a write.
   # What this cannot show: a protected environment on Premium, and a match
   # or mismatch for it; the row is unknown here by design.
-  # BREAK: forge check runs a bundle that takes every runner's access level
-  # as protected, so the runner that takes any ref reports a match.
+  # BREAK: forge check runs a bundle that reports each mismatch chant's check
+  # finds as a match, so the runner that takes any ref reports a match.
   log() { echo "[smoke gitlab forge-check] $*" >&2; }
   gl_load || return 1
   build_cli || return 1
@@ -3144,7 +3144,7 @@ gitlab_claim_forge/check() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      forge-check.ts '      else if (d.value.access_level !== "ref_protected") open.push(' '      else if (false && d.value.access_level !== "ref_protected") open.push(' \
+      identities.ts '  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows, counts: r.counts, ok: r.ok };' '  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows.map((x) => (x.status === "mismatch" ? { ...x, status: "match" as const } : x)), counts: r.counts, ok: true };' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   project="$(gl_project forge-check)" || { drop_work "$work"; return 1; }

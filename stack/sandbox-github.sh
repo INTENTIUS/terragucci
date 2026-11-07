@@ -2840,14 +2840,13 @@ fc_row() { # name, check -> the row for the environment
 # environment and deployment-branches rows a match; then the rule is removed
 # (any branch may deploy), and it must exit 1 with the deployment-branches row
 # a mismatch expecting deploys from main only and finding any branch.
-# BREAK: the bundle takes any deployment branch rule as the default branch
-# alone, so the widened environment reports a match.
+# BREAK: the bundle reports each mismatch chant's check finds as a match, so
+# the widened environment reports a match and the check exits 0.
 claim_forge_check() {
   local code row wrong=""
   if [ -n "$BREAK" ]; then
     break_bundle "$WORK/fc-break.mjs" \
-      forge-check.ts '"any branch: no deployment branch rule", "mismatch"' '"any branch: no deployment branch rule", "match"' \
-      forge-check.ts '      const ok = list.length === 1 && list[0]!.name === branch && list[0]!.type !== "tag";' '      const ok = true;' \
+      identities.ts '  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows, counts: r.counts, ok: r.ok };' '  return { schema: r.schema, file: contract.file, forge, repository: contract.repository, rows: r.rows.map((x) => (x.status === "mismatch" ? { ...x, status: "match" as const } : x)), counts: r.counts, ok: true };' \
       || { unrun forge/check "the BREAK bundle did not build"; return 0; }
   fi
   jq -n '{deployment_branch_policy: {protected_branches: false, custom_branch_policies: true}}' \
