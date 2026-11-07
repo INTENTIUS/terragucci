@@ -28,6 +28,7 @@
  * compared to DORA's performance tiers: infrastructure ships less often than
  * an application does.
  */
+import { DORA_FILE, DORA_MIN_SPAN_SECONDS, DORA_WEEKS, DRIFT_WINDOW_SECONDS, duration, median, spanLabel, weekStart } from "@intentius/chant/ci-estate";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { METRIC } from "../dashboards/names";
 import type { AuditEntry } from "./audit";
@@ -36,17 +37,10 @@ import type { IndexEntry } from "./store";
 
 export const DORA_SCHEMA = "terragucci.dora/v1";
 
-/** How many weeks the metrics cover, the current one included. */
-export const DORA_WEEKS = 8;
-
-/** An applied wave whose roots drift within this long counts as a failed change. */
-export const DRIFT_WINDOW_SECONDS = 7 * 86400;
-
-/** The shortest span a deployment rate divides by, so one apply does not read as thousands a week. */
-export const DORA_MIN_SPAN_SECONDS = 86400;
-
-/** The file beside the estate page. */
-export const DORA_FILE = "dora.json";
+// The window, the drift window, the shortest span, the file's name, and the
+// week, median, span and duration helpers are chant's (`@intentius/chant/ci-estate`,
+// chant#4612), which builds the same metrics from the ledger.
+export { DORA_FILE, DORA_MIN_SPAN_SECONDS, DORA_WEEKS, DRIFT_WINDOW_SECONDS, duration, median, spanLabel, weekStart };
 
 export interface DoraLeadTime {
   /** Applied waves whose first plan was found. */
@@ -112,20 +106,6 @@ export interface DoraSource {
 
 const at = (iso: string): number => Date.parse(iso) || 0;
 const secs = (from: number, to: number): number => Math.max(0, Math.round((to - from) / 1000));
-
-/** The Monday, 00:00 UTC, of the week `t` falls in. */
-export function weekStart(t: number): number {
-  const d = new Date(t);
-  const day = (d.getUTCDay() + 6) % 7;
-  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day);
-}
-
-export function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const s = [...values].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
-}
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
@@ -354,14 +334,6 @@ function spanOf(all: Apply[], from: number, now: number): number {
   return Math.max(DORA_MIN_SPAN_SECONDS, secs(start, now));
 }
 
-/** "32 hours", "9 days", "8 weeks", "7.4 weeks": a span as the page names it. */
-export function spanLabel(seconds: number): string {
-  const unit = (n: number, one: string): string => `${n} ${n === 1 ? one : `${one}s`}`;
-  if (seconds < 72 * 3600) return unit(Math.max(1, Math.round(seconds / 3600)), "hour");
-  if (seconds < 2 * WEEK_SECONDS) return unit(Math.round(seconds / 86400), "day");
-  return unit(Math.round((seconds / WEEK_SECONDS) * 10) / 10, "week");
-}
-
 /** The metrics over the window, and a row per week. Counts are of what happened in the window; open incidents are as of now. */
 function metricsOf(ev: Events, from: number, now: number): DoraMetrics {
   const inside = <T extends { at: number }>(xs: T[]): T[] => xs.filter((x) => x.at >= from && x.at <= now);
@@ -424,18 +396,6 @@ export function buildDora(sources: DoraSource[], entries: AuditEntry[] | undefin
     estate: metricsOf(merge(events), from, end),
     projects: sources.map((s, i) => ({ project: s.project, ...metricsOf(events[i], from, end) })),
   };
-}
-
-/** "3d 4h", "2h 10m", "5m", "40s": how long, to two units. */
-export function duration(seconds: number | null): string {
-  if (seconds === null) return "none";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m`;
-  return `${seconds}s`;
 }
 
 const rate = (r: number | null): string => (r === null ? "none" : `${Math.round(r * 1000) / 10}%`);
