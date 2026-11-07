@@ -6,19 +6,18 @@ import { cpSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseLedger, type ResolutionRecord } from "../src/apply";
-import { chantCiEstate, chantNotifyRelay, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
+import { chantCiEstate, chantOpStandDown, chantPolicySource, overrideChantNext } from "../src/chant-next";
 import { wavesStepSpec, waveCallArgv } from "../src/chant-waves";
 import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
 import { configIdentities, forgeCheckContract } from "../src/identities";
 import { HEADER_PREFIX, NOTIFY_SOURCE } from "../src/notify";
-import { chantRelayDeps, type RelayDeps } from "../src/relay";
+import { chantRelayDeps, principalFor, type RelayDeps } from "../src/relay";
 import type { Estate } from "../src/report/estate";
 import { ciPolicySource, fetchPolicySource } from "../src/report/policy";
 import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
-const relay = await chantNotifyRelay();
 const ciEstate = await chantCiEstate();
 const policySource = await chantPolicySource();
 const standDown = await chantOpStandDown();
@@ -141,8 +140,8 @@ describe("relay deps for chant's buttons", () => {
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/sealed/) });
   });
 
-  it.runIf(relay)("maps a chat user to the same principal as terragucci's own mapping", () => {
-    expect(relay!.relayPrincipalFor(gateSigners(SIGNERS).signers, "slack:T1/U1")).toBe("alice@acme.com");
+  it("maps a chat user to a principal through chant's mapping", () => {
+    expect(principalFor(gateSigners(SIGNERS), "slack:T1/U1")).toBe("alice@acme.com");
   });
 });
 

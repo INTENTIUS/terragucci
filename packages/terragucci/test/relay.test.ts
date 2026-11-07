@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseLedger, type GateLedger, type ResolutionRecord } from "../src/apply";
-import { checkToken, decideClick, gitAuthEnv, handleRelay, principalFor, relayRepo, slackClick, slackSignature, teamsClick, teamsSignature, verifySlack, verifyTeams, workspaceDeps, type Click, type RelayDeps } from "../src/relay";
+import { slackSignature, teamsSignature } from "@intentius/chant/notify-relay";
+import { checkToken, decideClick, gitAuthEnv, handleRelay, principalFor, relayRepo, slackClick, teamsClick, workspaceDeps, type Click, type RelayDeps } from "../src/relay";
 import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
@@ -37,31 +37,6 @@ const slackBody = (user: string, action: string, value: unknown = { wave: 1, pla
   new URLSearchParams({
     payload: JSON.stringify({ type: "block_actions", user: { id: user, username: "alice", team_id: "T1" }, team: { id: "T1" }, actions: [{ action_id: action, value: JSON.stringify(value) }], response_url: "https://hooks.slack.com/actions/T1/1/x", container: { message_ts: "1700000000.0001" } }),
   }).toString();
-
-describe("relay: signatures", () => {
-  const now = 1_700_000_000_000;
-  const ts = String(now / 1000);
-  it("verifies Slack's v0 signature over the timestamp and the raw body, within five minutes", () => {
-    const body = "payload=%7B%7D";
-    const sig = slackSignature("s3cret", ts, body);
-    expect(sig).toBe(`v0=${createHmac("sha256", "s3cret").update(`v0:${ts}:${body}`).digest("hex")}`);
-    expect(verifySlack({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, body, "s3cret", now)).toBeNull();
-    expect(verifySlack({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, body + "x", "s3cret", now)).toMatch(/does not verify/);
-    expect(verifySlack({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, body, "s3cret", now + 301_000)).toMatch(/five minutes/);
-    expect(verifySlack({}, body, "s3cret", now)).toMatch(/not signed/);
-    expect(verifySlack({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, body, "", now)).toMatch(/SLACK_SIGNING_SECRET is empty/);
-  });
-
-  it("verifies a Teams outgoing webhook's HMAC with the base64 key Teams gave", () => {
-    const secret = Buffer.from("teams-key-32-bytes-long-enough!!").toString("base64");
-    const body = JSON.stringify({ text: "hi" });
-    const auth = teamsSignature(secret, body);
-    expect(auth).toBe(`HMAC ${createHmac("sha256", Buffer.from(secret, "base64")).update(body).digest("base64")}`);
-    expect(verifyTeams({ authorization: auth }, body, secret)).toBeNull();
-    expect(verifyTeams({ authorization: auth }, body.replace("hi", "ho"), secret)).toMatch(/does not verify/);
-    expect(verifyTeams({}, body, secret)).toMatch(/not signed/);
-  });
-});
 
 describe("relay: clicks", () => {
   it("reads a Slack button click: the user, the action, the wave and digest, and where to reply", () => {

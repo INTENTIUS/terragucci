@@ -76,9 +76,7 @@
  * on the lexicon's `registry` subpath, which `sources.proxies` matches and
  * `require` reads through; without them a source through a proxy is matched
  * as written.
- * Newer than the pin too (terragucci#1282 part f): chant core's notify relay (`notify-relay`,
- * chant#4611), whose signature checks and principal mapping ./relay.ts
- * uses; its ledger estate (`ci-estate`, chant#4612), which ./estate.ts
+ * Newer than the pin too (terragucci#1282 part f): chant core's ledger estate (`ci-estate`, chant#4612), which ./estate.ts
  * builds on once the ledger holds wave run records; its shared policy source
  * (`policy-source`, chant#4613), which fetches `policy.source`
  * (./report/policy.ts); and the op-wave stand-down on `op` (chant#4581),
@@ -91,7 +89,9 @@
  * the op entry's after-plan hook with `opWavePlanPath` (chant#4614; the step
  * wave in ./apply.ts). And at the 0.124.58 pin: chant core's forge and
  * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
- * check` calls (./identities.ts).
+ * check` calls (./identities.ts), and its notify relay (`notify-relay`,
+ * chant#4611), whose signature checks, principal mapping and button
+ * decisions ./relay.ts uses.
  *
  * Newer than the pin too (chant#3924): the terraform lexicon's reading of the
  * sources a root uses (`usedSources`, `lockedProviders`) and their forms
@@ -865,46 +865,6 @@ export interface ChantRegistryProxies {
 
 // ── part f: forge check, relay, estate, policy source, stand-down ─────────
 
-/** A click read from a verified chat request (`RelayClick` in `@intentius/chant/notify-relay`). */
-export interface ChantRelayClick {
-  app: "slack" | "teams";
-  chatUser: string;
-  display: string;
-  action: "approve" | "decline";
-  token: string;
-  responseUrl?: string;
-  thread?: string;
-}
-
-/** A standing pending fact chant's relay may approve (`RelayPending`). */
-export interface ChantRelayPending {
-  op: string;
-  gate: string;
-  digest: string;
-  environment?: string;
-}
-
-/** What chant's relay reads and writes (`RelayDeps`). */
-export interface ChantRelayDeps {
-  signers(): Promise<{ signers: ReadonlyArray<{ principal: string; line: number }>; path: string }>;
-  pending(digest: string): Promise<ChantRelayPending[]>;
-  approve(input: { op: string; gate: string; digest: string; environment?: string; actor: string; relayedBy: string }): Promise<{ ok: true } | { ok: false; error: string }>;
-  principal: string;
-  words: ChantProductWords;
-  now?: () => Date;
-}
-
-/** chant core's notify relay (`@intentius/chant/notify-relay`, chant#4611). */
-export interface ChantNotifyRelay {
-  verifySlackRequest(headers: Record<string, string | undefined>, raw: string, secret: string | undefined, now?: number): string | null;
-  verifyTeamsRequest(headers: Record<string, string | undefined>, raw: string, secret: string | undefined): string | null;
-  relayPrincipalFor(signers: ReadonlyArray<{ principal: string; line: number }>, chatUser: string): string | undefined;
-  slackRelayClick(raw: string): ChantRelayClick | { error: string };
-  teamsRelayClick(raw: string): ChantRelayClick | { error: string };
-  decideRelayClick(click: ChantRelayClick, settings: { key?: string; maxAgeSeconds?: number }, deps: ChantRelayDeps): Promise<{ ok: boolean; outcome: string; text: string; op?: string; gate?: string; principal?: string }>;
-  RELAY_ENV: { key: string; maxAge: string };
-}
-
 /** The delivery metrics, as chant's `buildDelivery` writes `dora.json` (terragucci's shape, plus `source`). */
 export interface ChantDora {
   schema: string;
@@ -1479,10 +1439,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
   ),
-  notifyRelay: once<ChantNotifyRelay>(
-    () => import("@intentius/chant/notify-relay"),
-    (m) => (has(m, "verifySlackRequest", "verifyTeamsRequest", "relayPrincipalFor", "slackRelayClick", "teamsRelayClick", "decideRelayClick") && typeof m.RELAY_ENV === "object" ? (m as unknown as ChantNotifyRelay) : undefined),
-  ),
   ciEstate: once<ChantCiEstate>(
     () => import("@intentius/chant/ci-estate"),
     // chant#4612's own feature-detect: buildLedgerEstate present means the rest is too.
@@ -1694,8 +1650,6 @@ export async function preloadChantNext(): Promise<void> {
   await load("releaseRead");
 }
 
-/** chant core's notify relay (chant#4611), or undefined. */
-export const chantNotifyRelay = (): Promise<ChantNotifyRelay | undefined> => load("notifyRelay");
 /** chant core's ledger estate and delivery metrics (chant#4612), or undefined. */
 export const chantCiEstate = (): Promise<ChantCiEstate | undefined> => load("ciEstate");
 /** chant core's shared policy source (chant#4613), or undefined. */
@@ -1737,7 +1691,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const [compose, composeRun, state, planShape, objectStore, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
-  const [notifyRelay, ciEstate, policySource, opStandDown] = [await chantNotifyRelay(), await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
+  const [ciEstate, policySource, opStandDown] = [await chantCiEstate(), await chantPolicySource(), await chantOpStandDown()];
   const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
@@ -1746,5 +1700,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, notifyRelay: !!notifyRelay, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, ciEstate: !!ciEstate, policySource: !!policySource, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
