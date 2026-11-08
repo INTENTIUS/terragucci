@@ -40,6 +40,26 @@ export function chantConfigRoots(text: string): Set<string> | undefined {
   }
 }
 
+/** The `terraform.binary` of chant.config.ts text whose default export is one JSON object; undefined when it names none or is not. */
+export function chantConfigBinary(text: string): string | undefined {
+  const at = text.indexOf("export default ");
+  if (at < 0) return undefined;
+  try {
+    const binary = (JSON.parse(text.slice(at + "export default ".length).trim().replace(/;\s*$/, "")) as { terraform?: { binary?: unknown } }).terraform?.binary;
+    return typeof binary === "string" && binary ? binary : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The roots and the binary chant.config.ts at `repo`'s root declares, or why they cannot be read. */
+export function declaredTerraformConfig(repo: string): { roots: Set<string>; binary?: string } | { why: string } {
+  const read = declaredTerraformRoots(repo);
+  if ("why" in read) return read;
+  const binary = chantConfigBinary(readFileSync(join(repo, CHANT_CONFIG), "utf-8"));
+  return { ...read, ...(binary ? { binary } : {}) };
+}
+
 /** The roots chant.config.ts at `repo`'s root declares, or why none can be read. */
 export function declaredTerraformRoots(repo: string): { roots: Set<string> } | { why: string } {
   const path = join(repo, CHANT_CONFIG);

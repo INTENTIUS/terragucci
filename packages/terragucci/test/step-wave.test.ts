@@ -5,13 +5,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave } from "../src/apply";
-import type { ChantAfterPlanRun } from "../src/chant-next";
+import { applyWave, parseLedger } from "../src/apply";
+import type { OpWaveAfterPlanRun as ChantAfterPlanRun } from "@intentius/chant/op";
 import { CHANT_CONFIG, CHANT_CONFIG_MARKER, chantConfigRoots, chantConfigText, chantConfigWrittenByTerragucci, declaredTerraformRoots } from "../src/chant-config";
 import { committedSpecAt, waveCallArgv, WAVES_SPEC, wavesSpecText, wavesStepSpec } from "../src/chant-waves";
 import { renderPipeline } from "../src/render";
 import { git, tmp, write } from "./helpers";
-import { setup } from "./apply-helpers";
+import { setup, STEP_FAKE } from "./apply-helpers";
 
 const op = vi.hoisted(() => ({ fake: undefined as { runOpWave(o: unknown): Promise<unknown> } | undefined }));
 vi.mock("@intentius/chant/op", async (real: () => Promise<Record<string, unknown>>) => {
@@ -44,7 +44,7 @@ function fakeChant(work: string, seen: ChantAfterPlanRun[], specs: object[]) {
         writeFileSync(join(work, path), JSON.stringify({ planDigest: `sha256:${target}`, member: target, artifact: { planFile: "tfplan", planJson }, changeSet: { entries: [{ action: "create" }] } }));
       }
       for (const { target } of runs) {
-        const r: ChantAfterPlanRun = { wave: o.wave, waveName: `wave-${o.wave}`, job: "wave", target, planDigest: `sha256:${target}`, plan: `.chant/op-waves/${o.spec.name}/wave-${o.wave}/${target}.plan.json`, planJson: join(work, target, "tfplan.json"), empty: false, destructive: false };
+        const r: ChantAfterPlanRun = { spec: o.spec.name, op: o.spec.name, runOp: o.spec.name, policy: [], cwd: work, wave: o.wave, waveName: `wave-${o.wave}`, job: "wave", target, planDigest: `sha256:${target}`, plan: `.chant/op-waves/${o.spec.name}/wave-${o.wave}/${target}.plan.json`, planJson: join(work, target, "tfplan.json"), empty: false, destructive: false };
         seen.push(r);
         await o.afterPlan!.run(r);
       }
@@ -89,31 +89,86 @@ describe("the spec, written once (terragucci#1303)", () => {
 });
 
 describe("a wave on chant's step (terragucci#1303)", () => {
-  it("plans through the step and builds the wave's report from chant's plans, once per root, in order", async () => {
-    const { work, bin } = setup({ [CHANT_CONFIG]: chantConfigText(["a"]) });
-    const seen: ChantAfterPlanRun[] = [];
-    const specs: object[] = [];
-    op.fake = fakeChant(work, seen, specs) as typeof op.fake;
+  /** A repo whose chant.config.ts names tofu, with the step's fake tofu, run from its own directory as a job is. */
+  function onStep(files: Record<string, string> = {}, config = chantConfigText(["a"], "tofu")) {
+    const s = setup({ [CHANT_CONFIG]: config, ...files });
+    writeFileSync(s.bin, STEP_FAKE);
+    // chant's step looks for chant.config.ts from the process's directory, which is the repo in a job.
+    vi.spyOn(process, "cwd").mockReturnValue(s.work);
+    return s;
+  }
+  const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: { ...process.env } });
+  const decl = (hooks?: object): string => `${JSON.stringify({ name: "t", schema: 1, minReader: "0.102.0", members: [], ...(hooks ? { ci: { hooks } } : {}) }, null, 2)}\n`;
+  const sh = (run: string): string[] => ["sh", "-c", run];
+  const quiet = (): string[] => {
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
-    const code = await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: { ...process.env } });
-    expect(code).toBe(0);
-    expect(seen.map((r) => r.target)).toEqual(["a"]);
-    expect(specs[0]).toMatchObject({ step: { kind: "terraform-apply", root: "{target}" } });
+    return lines;
+  };
+
+  it("plans and applies each root through the step, with the binary the job plans with, and builds the wave's report from chant's plans", async () => {
+    const { work, bin, log } = onStep();
+    const lines = quiet();
+    expect(await applyWave(work, opts(bin))).toBe(0);
     expect(lines).toContain("a: Plan: 1 to add, 0 to change, 0 to destroy.");
+    // The root's own calls; the job asks its binary's version from its own directory.
+    const calls = readFileSync(`${log}.calls`, "utf-8").trim().split("\n").filter((l) => l.startsWith("a "));
+    expect(calls.map((l) => l.split(" ").slice(0, 2).join(" "))).toEqual(["a init", "a plan", "a show", "a apply", "a output", "a show"]);
+    // The last: the applied state, where the report reads the values the plan left unknown.
+    expect(calls[5]).toBe("a show -json -no-color");
+    expect(calls[1]).toContain("-out=chant.tfplan");
+    expect(readFileSync(log, "utf-8")).toContain("applied a");
+    const spec = JSON.parse(readFileSync(join(work, WAVES_SPEC), "utf-8"));
+    expect(spec.step).toMatchObject({ kind: "terraform-apply", root: "{target}", dir: "{target}" });
     const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
     expect(report.roots.map((r: { path: string }) => r.path)).toEqual(["a"]);
+    expect(report.roots[0].binary).toMatchObject({ name: "tofu" });
   });
 
-  it("keeps terragucci's calls, and says why, when chant.config.ts names no root", async () => {
+  it("keeps terragucci's calls, and says why, when chant.config.ts names another binary than the roots plan with", async () => {
+    const { work, bin, log } = onStep({}, chantConfigText(["a"]));
+    const lines = quiet();
+    expect(await applyWave(work, opts(bin))).toBe(0);
+    expect(lines.find((l) => l.includes("not chant's terraform-apply step"))).toContain("chant.config.ts names the binary terraform, and a plans with tofu");
+    // terragucci's own plan writes its plan file in the job's work directory, not chant's in the root.
+    expect(readFileSync(`${log}.calls`, "utf-8")).not.toContain("chant.tfplan");
+    expect(readFileSync(log, "utf-8")).toContain("applied a");
+  });
+
+  it("keeps terragucci's calls, and says why, when chant.config.ts is missing", async () => {
     const { work, bin } = setup();
-    const seen: ChantAfterPlanRun[] = [];
-    op.fake = fakeChant(work, seen, []) as typeof op.fake;
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
-    await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: { ...process.env } });
-    expect(seen).toEqual([]);
+    const lines = quiet();
+    await applyWave(work, opts(bin));
     expect(lines.find((l) => l.includes("not chant's terraform-apply step"))).toContain("chant.config.ts is missing");
     expect(existsSync(join(work, WAVES_SPEC))).toBe(true);
+  });
+
+  it("runs ci.hooks around init, plan and apply, as terragucci's own plan did, and a failed hook stops the wave before anything applies", async () => {
+    const echo = (moment: string) => [{ command: sh(`echo ${moment} >> "$TG_REPO/order"`), perRun: true }];
+    const hooks = { before: { observe: echo("before-observe"), plan: echo("before-plan"), apply: echo("before-apply") }, after: { plan: echo("after-plan"), apply: echo("after-apply") } };
+    const ok = onStep({ "chant.workspace.json": decl(hooks) });
+    const lines = quiet();
+    expect(await applyWave(ok.work, opts(ok.bin))).toBe(0);
+    expect(lines.some((l) => l.includes("not chant's terraform-apply step"))).toBe(false);
+    const order = ["before-observe", "before-plan", "after-plan", "before-apply", "after-apply"];
+    expect(readFileSync(join(ok.work, "order"), "utf-8").trim().split("\n")).toEqual(order);
+    const report = JSON.parse(readFileSync(join(ok.work, "terragucci-report", "report.json"), "utf-8"));
+    expect(report.roots[0].steps.map((s: { when: string }) => s.when)).toEqual(order);
+
+    const bad = onStep({ "chant.workspace.json": decl({ after: { plan: [{ command: sh("exit 1"), perRun: true }] } }) });
+    expect(await applyWave(bad.work, opts(bad.bin))).toBe(1);
+    expect(existsSync(bad.log)).toBe(false);
+  });
+
+  it("holds the wave for an approval under gate: never when a hook that asks for one fails", async () => {
+    const { work, origin, bin, log } = onStep({ "chant.workspace.json": decl({ before: { plan: [{ name: "verify", command: sh("exit 1"), perRun: true, onFailure: "approve" }] } }) });
+    const lines = quiet();
+    expect(await applyWave(work, opts(bin))).toBe(3);
+    expect(existsSync(log)).toBe(false);
+    expect(lines).toContain("wave 1 of 1: a: hook verify asks for an approval, so the gate holds this wave");
+    const ledger = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
+    expect(ledger.pending).toHaveLength(1);
+    const report = JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
+    expect(report.waves[0]).toMatchObject({ approval: "waiting", held_by_steps: ["a"] });
   });
 });

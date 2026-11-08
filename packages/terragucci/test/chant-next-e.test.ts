@@ -44,7 +44,7 @@ describe("the op-wave step contract", () => {
     const spec = wavesStepSpec(input) as unknown as Record<string, any>;
     expect(spec.name).toBe("tf-apply");
     expect(spec.gateName).toBe("wave-{k}");
-    expect(spec.step).toEqual({ kind: "terraform-apply", root: "{target}" });
+    expect(spec.step).toEqual({ kind: "terraform-apply", root: "{target}", dir: "{target}" });
     expect(spec.planWave).toBeUndefined();
     expect(spec.applyWave).toBeUndefined();
     expect(spec.holds.policy).toBe(true);
@@ -62,8 +62,8 @@ describe("the op-wave step contract", () => {
   });
 
   it("says why a repo keeps the call back", () => {
-    expect(waveStepProblems({ roots: ["a"], declaredRoots: new Set(["a"]) })).toEqual([]);
-    expect(waveStepProblems({ roots: ["a", "b"], declaredRoots: new Set(["a"]), terragrunt: true })).toHaveLength(2);
+    expect(waveStepProblems({})).toEqual([]);
+    expect(waveStepProblems({ terragrunt: true, composed: true })).toHaveLength(2);
   });
 });
 

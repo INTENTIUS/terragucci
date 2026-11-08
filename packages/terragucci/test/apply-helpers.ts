@@ -26,6 +26,26 @@ esac
 exit 0
 `;
 
+/**
+ * A fake tofu for chant's terraform-apply step, which runs the binary in the
+ * root's directory: plan writes the root into the plan file, show -json
+ * prints $PLANS/<root>.json, apply logs the root, and each call goes to
+ * $LOG.calls.
+ */
+export const STEP_FAKE = `#!/usr/bin/env bash
+if [[ "$1" == -chdir=* ]]; then dir="\${1#-chdir=}"; shift; else dir="$PWD"; fi
+root="$(basename "$dir")"
+echo "$root $*" >> "$LOG.calls"
+case "$1" in
+  plan) for a in "$@"; do case "$a" in -out=*) o="\${a#-out=}"; case "$o" in /*) ;; *) o="$dir/$o" ;; esac; echo "$root" > "$o" ;; esac; done; echo "Plan: 1 to add" ;;
+  show) f="\${@: -1}"; case "$f" in /*) ;; *) f="$dir/$f" ;; esac; if [ -f "$f" ]; then cat "$PLANS/$(cat "$f").json"; else echo '{"values":{}}'; fi ;;
+  apply) echo "applied $root" >> "$LOG"; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+  output) echo "{}" ;;
+  version) echo '{"terraform_version":"1.8.0"}' ;;
+esac
+exit 0
+`;
+
 /** `files` are committed on main, the base the seal rule reads. */
 export function setup(files: Record<string, string> = {}): { work: string; origin: string; bin: string; log: string } {
   const dir = tmp("tg-wave-");
