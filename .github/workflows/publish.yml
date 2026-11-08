@@ -43,7 +43,6 @@ jobs:
       CHANT_RELEASE_COMMIT: ${{ needs.gate.outputs.commit }}
       OCI_USERNAME: "${{ github.actor }}"
       OCI_PASSWORD: "${{ github.token }}"
-      GITHUB_TOKEN: "${{ github.token }}"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -80,9 +79,9 @@ jobs:
     needs: [gate, cut]
     runs-on: ubuntu-latest
     env:
+      GITHUB_TOKEN: ${{ github.token }}
       OCI_USERNAME: "${{ github.actor }}"
       OCI_PASSWORD: "${{ github.token }}"
-      GITHUB_TOKEN: "${{ github.token }}"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
