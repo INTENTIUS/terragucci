@@ -94,15 +94,17 @@ describe("terragucci mcp: templates and request_from_template", () => {
     const proposing = (await (await connected({ ...o, propose: true })).listTools()).tools;
     expect(proposing.map((t) => t.name)).toEqual(expect.arrayContaining(["templates", "request_from_template"]));
     const req = proposing.find((t) => t.name === "request_from_template")!;
-    // chant's tools/list carries no annotations yet (chant#4823); the tool still declares them.
-    expect(PROPOSE_TOOLS.find((t) => t.name === "request_from_template")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(req.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(req.inputSchema.required).toEqual(["template", "name"]);
   });
 
   it("templates answers with the document templates list --json prints", async () => {
     const { o } = await requesting(false);
     const client = await connected(o);
-    const rows = JSON.parse(said(await client.callTool({ name: "templates", arguments: {} })));
+    const listed = await client.callTool({ name: "templates", arguments: {} });
+    // chant sends an array result as structuredContent.items (chant#4822); the text block still holds the array.
+    const rows = (listed.structuredContent as { items: { template: string; kind: string }[] }).items;
+    expect(JSON.parse(said(listed))).toEqual(rows);
     expect(rows.map((r: { template: string; kind: string }) => `${r.template}:${r.kind}`)).toEqual(["acme/bucket/aws:app", "acme/cache/aws:addon"]);
     const one = JSON.parse(said(await client.callTool({ name: "templates", arguments: { template: "acme/bucket/aws" } })));
     expect(one).toMatchObject({ template: "acme/bucket/aws", kind: "app", latest: "1.2.0" });

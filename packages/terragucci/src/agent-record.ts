@@ -29,7 +29,7 @@ import type { Actor } from "./actor";
 import { AGENT_RUNS_FILE } from "./report/audit";
 import type { Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
-import { agentRunRecordInput, type AgentTrigger } from "@intentius/chant/ci-agent";
+import { agentRunRecordInput } from "@intentius/chant/ci-agent";
 import { pushLifecycleReport } from "@intentius/chant/lifecycle/git";
 import { appendRunRecord } from "@intentius/chant/lifecycle/run-ledger";
 
@@ -57,8 +57,8 @@ const AGENT_TRIGGER: Readonly<Record<AgentFeature, string>> = { "agent.comment":
 export function chantAgentRunInput(r: AgentRunRecord, started: string, gitSha?: string): Parameters<typeof agentRunRecordInput>[0] {
   const result = r.result === "posted" || r.result === "summarized" ? "opened" : r.result;
   return {
-    // chant's AgentTrigger names its own job's two triggers; the review and the refused-wave summary keep their word.
-    settings: { name: AGENT_OPS[r.feature], on: AGENT_TRIGGER[r.feature] as AgentTrigger, env: "local" },
+    // A run record's trigger is chant's word or the product's own (chant#4817): the review and the refused-wave summary keep theirs.
+    settings: { name: AGENT_OPS[r.feature], on: AGENT_TRIGGER[r.feature], env: "local" },
     started,
     ended: r.timestamp,
     result,

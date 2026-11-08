@@ -91,6 +91,12 @@ const connected = (o: McpOptions): Promise<Client> => chantClient(o);
 
 const body = (r: object): any => JSON.parse(((r as { content: unknown }).content as { text: string }[])[0].text);
 const said = (r: object): string => ((r as { content: unknown }).content as { text: string }[])[0].text;
+/** An array result, as chant sends it in `structuredContent` (chant#4822); the text block still holds the array. */
+const items = (r: object): any[] => {
+  const rows = (r as { structuredContent: { items: unknown[] } }).structuredContent.items;
+  expect(rows).toEqual(body(r));
+  return rows;
+};
 
 describe("terragucci mcp", () => {
   it("lists only tools that read, none named for a write", async () => {
@@ -98,11 +104,9 @@ describe("terragucci mcp", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "report", "run_view", "state_versions", "templates", "waiting"]);
     for (const t of tools) expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
-    // Each declares itself read-only and takes no argument it does not list (checkArgs refuses any other).
-    for (const t of TOOLS) {
-      expect(t.annotations ?? { readOnlyHint: true }).toMatchObject({ readOnlyHint: true });
-      expect(t.inputSchema.additionalProperties).toBe(false);
-    }
+    // Each is listed read-only, idempotent and closed-world, as terragucci's own server listed them, and takes no argument it does not list (checkArgs refuses any other).
+    for (const t of tools) expect(t.annotations, t.name).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    for (const t of TOOLS) expect(t.inputSchema.additionalProperties).toBe(false);
   });
 
   it("reads a root's last apply: the newest tf-apply wave that ran it", async () => {
@@ -122,12 +126,12 @@ describe("terragucci mcp", () => {
     const client = await connected(options(bucket()));
     expect(body(await client.callTool({ name: "estate", arguments: {} })).schema).toBe("terragucci.estate/v1");
     expect(body(await client.callTool({ name: "dora", arguments: {} })).estate.deployments).toBe(2);
-    const rows = body(await client.callTool({ name: "index", arguments: { stage: "tf-apply", limit: 1 } }));
+    const rows = items(await client.callTool({ name: "index", arguments: { stage: "tf-apply", limit: 1 } }));
     expect(rows).toHaveLength(1);
     const one = body(await client.callTool({ name: "report", arguments: { path: rows[0].report, root: "envs/dev/orders" } }));
     expect(one.run.commit).toBe("b".repeat(40));
     expect(one.root.path).toBe("envs/dev/orders");
-    const mine = body(await client.callTool({ name: "index", arguments: { project: PROJECT } }));
+    const mine = items(await client.callTool({ name: "index", arguments: { project: PROJECT } }));
     expect(mine.map((r: { report: string }) => r.report)).toEqual(rows.length ? [rows[0].report, expect.stringContaining("a".repeat(40))] : []);
     const states = body(await client.callTool({ name: "state_versions", arguments: { root: "envs/dev/orders" } }));
     expect(states.roots.map((r: { root: string }) => r.root)).toEqual(["envs/dev/orders"]);
@@ -275,8 +279,9 @@ describe("terragucci mcp --propose", () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "plan_result", "propose", "report", "request_from_template", "request_plan", "run_view", "state_versions", "templates", "waiting"]);
     for (const t of tools) expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
-    // chant's tools/list carries no annotations yet (chant#4823); the tools still declare them.
-    expect(PROPOSE_TOOLS.find((t) => t.name === "propose")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(tools.find((t) => t.name === "propose")?.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
+    // plan_result reads, but it is served on the propose tier as a forgeWrite tool, and chant lists the hint from that.
+    expect(tools.find((t) => t.name === "plan_result")?.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true });
     for (const name of ["approve", "apply", "override", "merge"]) {
       const r = await client.callTool({ name, arguments: {} });
       expect(r.isError, name).toBe(true);

@@ -75,13 +75,16 @@ interface InputSchema {
   additionalProperties: false;
 }
 
-/** What a client is told a tool does; a tool without them reads. */
+/** What a client is told a tool does; a tool without them reads (READ_ANNOTATIONS). */
 export interface ToolAnnotations {
   readOnlyHint: boolean;
   destructiveHint: boolean;
   idempotentHint: boolean;
   openWorldHint: boolean;
 }
+
+/** A read tool's annotations, as terragucci's own server listed them: it reads, again and again, only terragucci's bucket. */
+const READ_ANNOTATIONS: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
 export interface Tool {
   name: string;
@@ -758,6 +761,8 @@ export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS, propo
     description: t.description,
     inputSchema: { type: "object" as const, properties: t.inputSchema.properties, ...(t.inputSchema.required ? { required: t.inputSchema.required } : {}) },
     ...kind,
+    // chant lists readOnlyHint and destructiveHint from `kind` (chant#4823); the other two come from here.
+    annotations: t.annotations ?? READ_ANNOTATIONS,
     handler: async (params: Record<string, unknown>) => t.run(checkArgs(t, params), ctx),
   });
   return {

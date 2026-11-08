@@ -1002,6 +1002,8 @@ export interface ChantMcpTool {
   readOnly?: true;
   /** A tool that opens pull requests and comments, served only on the `--propose` tier (chant#4655). */
   forgeWrite?: true;
+  /** MCP's hints; chant sets readOnlyHint and destructiveHint from the two above (chant#4823). */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
 }
 
 /** chant's product tool hook (`ProductMcpHook`, chant#4555). */
