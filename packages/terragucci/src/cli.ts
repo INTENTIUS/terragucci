@@ -5,9 +5,9 @@
  *   terragucci import atlantis|digger|spacelift|env0 [<file>] [--forge f] [--apply-when merge|pull-request] [--force] [--dry-run]
  *   terragucci import terragrunt-scale [<dir>] [--force] [--dry-run]
  *   terragucci import hcp|otf|scalr [--hostname h] [--organization o] [--environment e] [--repo owner/name] [--forge f] [--force] [--dry-run]
- *   terragucci control records init|import|put <project>|defaults|retire <project>|list|migrate   the control repo's projects and defaults as chant workspace records
+ *   terragucci control records import|put <project>|defaults|retire <project>|list   the control repo's projects and defaults, as chant's entries on its chant/lifecycle
  *   terragucci control init [--forge github|gitlab|forgejo] [--config <file>] [--dry-run] [--force]   write the control repo's job that runs a member's dependents when the member's pipeline dispatches to it
-  terragucci control records init|import [--config <file>]|put <host/owner/name> --settings <file|-> [--estate a,b]|defaults --settings <file|->|retire <host/owner/name>|list|migrate   (the control repo's projects and defaults as chant workspace records, or on its chant/lifecycle once migrate moves them there; --dry-run on the writes)
+  terragucci control records import [--config <file>]|put <host/owner/name> --settings <file|-> [--estate a,b]|defaults --settings <file|->|retire <host/owner/name>|list   (the control repo's projects and defaults, as chant's entries on its chant/lifecycle; --dry-run on the writes)
   terragucci reconcile --config <file> [--mode dry-run|apply] [--project <key>]
  *   terragucci generate [--check] [--dry-run] [--config <file>]
  *   terragucci estate [--config <file>] [--out <dir>] [--link-hours <n>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>]
@@ -146,7 +146,7 @@ import { plan } from "./plan";
 import { describeChecks, describePublish, findModules, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
 import { chantControlPipelineFile } from "./control-repo";
-import { configFromEntries, hasControlEntries, importControlConfigAt, initRecords, KIND_FILE, LEDGER_PATH, migrateRecords, putEntryAt, readEntriesAt, retireEntryAt } from "./control-records";
+import { configFromEntries, hasControlEntries, importControlConfigAt, LEDGER_PATH, putEntryAt, readEntriesAt, retireEntryAt } from "./control-records";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { MARKER } from "./render";
 import { describeEstate, estate } from "./estate";
@@ -349,11 +349,11 @@ async function recordReview(cwd: string, dir: string, forge: "github" | "forgejo
   await recordOutcome({ feature: "review.agent", cwd, change: dir, forge, env: process.env, result: posted.posted ? "posted" : "failed", reason: posted.reason }, { ledger: existsSync(join(cwd, ".git")) });
 }
 
-/** A control repo's config: its records when it has them (terragucci control records init), else its config file. Both is refused, so a project has one place. */
+/** A control repo's config: the entries on its chant/lifecycle when it has them, else its config file. Both is refused, so a project has one place. */
 async function controlConfig(cwd: string, flagPath: string | undefined): Promise<TerragucciConfig | undefined> {
   const path = flagPath ?? findConfig(cwd);
   if (flagPath === undefined && (await hasControlEntries(cwd))) {
-    if (path) throw new ConfigError(`${cwd} keeps its projects in records (${KIND_FILE}) and also has ${basename(path)}; keep one, and move the file's projects into records with \`terragucci control records import\``);
+    if (path) throw new ConfigError(`${cwd} keeps its projects as entries (${LEDGER_PATH}) and also has ${basename(path)}; keep one, and move the file's projects into entries with \`terragucci control records import\``);
     return configFromEntries(await readEntriesAt(cwd));
   }
   return path ? loadConfig(resolve(path)) : undefined;
@@ -375,41 +375,29 @@ async function controlRecords(cwd: string, args: string[], flags: Record<string,
     return 0;
   };
   const verb = args[0];
-  if (verb === "init") {
-    const r = initRecords(cwd);
-    return done("control records init", r, [...(r.written.length ? r.written.map((w) => `${w}: written`) : ["nothing to write"]), ...r.notes.map((n) => `  ${n}`)].join("\n"));
-  }
   if (verb === "import") {
     const path = str(flags, "config") ?? findConfig(cwd);
     if (!path) throw new ConfigError("import needs the control repo's terragucci.yml, or --config <file>");
-    const r = await importControlConfigAt(cwd, await loadConfig(resolve(path)), undefined, dryRun);
-    return done("control records import", r, r.map((x) => `${x.entry}: ${x.status}${x.path ? ` (${x.path})` : ""}`).join("\n") + (dryRun ? "\n(dry run, nothing written)" : `\nThe records are the store now: delete ${basename(path)} so the repo keeps its projects in one place.`));
+    const r = await importControlConfigAt(cwd, await loadConfig(resolve(path)), dryRun);
+    return done("control records import", r, r.map((x) => `${x.entry}: ${x.status}${x.path ? ` (${x.path})` : ""}`).join("\n") + (dryRun ? "\n(dry run, nothing written)" : `\nThe entries are on chant/lifecycle (${LEDGER_PATH}): push it with \`git push origin chant/lifecycle\`, then delete ${basename(path)} so the repo keeps its projects in one place.`));
   }
   if (verb === "put" || verb === "defaults") {
     const project = verb === "put" ? args[1] : undefined;
     if (verb === "put" && !project) throw new ConfigError("usage: terragucci control records put <host/owner/name> --settings <file|-> [--estate a,b]");
     const estate = str(flags, "estate");
-    const r = await putEntryAt(cwd, { entry: verb === "put" ? "project" : "defaults", ...(project ? { project } : {}), settings: settingsOf(), ...(estate !== undefined ? { estates: estate.split(",").map((e) => e.trim()).filter(Boolean) } : {}) }, undefined, dryRun);
+    const r = await putEntryAt(cwd, { entry: verb === "put" ? "project" : "defaults", ...(project ? { project } : {}), settings: settingsOf(), ...(estate !== undefined ? { estates: estate.split(",").map((e) => e.trim()).filter(Boolean) } : {}) }, dryRun);
     return done("control records put", r, `${project ?? "defaults"}: ${r.status}${r.path ? ` (${r.path})` : ""}${dryRun ? " (dry run, nothing written)" : ""}`);
   }
   if (verb === "retire") {
     if (!args[1]) throw new ConfigError("usage: terragucci control records retire <host/owner/name>");
-    const r = await retireEntryAt(cwd, args[1], undefined, dryRun);
+    const r = await retireEntryAt(cwd, args[1], dryRun);
     return done("control records retire", r, `${args[1]}: retired (${r.path})${dryRun ? " (dry run, nothing written)" : ""}`);
   }
   if (verb === "list") {
     const entries = await readEntriesAt(cwd);
-    return done("control records list", entries, entries.map((e) => `${e.id}  ${e.project ?? "defaults"}${e.estates.length ? `  estates: ${e.estates.join(", ")}` : ""}`).join("\n") || "no active records");
+    return done("control records list", entries, entries.map((e) => `${e.id}  ${e.project ?? "defaults"}${e.estates.length ? `  estates: ${e.estates.join(", ")}` : ""}`).join("\n") || "no active entries");
   }
-  if (verb === "migrate") {
-    // The record files onto the control repo's ledger, chant/lifecycle (chant#4568), through chant's importControlConfig.
-    const r = await migrateRecords(cwd, undefined, dryRun);
-    const tail = dryRun
-      ? "(dry run, nothing written)"
-      : `The entries are on chant/lifecycle (${LEDGER_PATH}), and terragucci reads them there from now on. Push it with \`git push origin chant/lifecycle\`, then delete ${r.files.length} record file(s) under ${KIND_FILE.split("/").slice(0, -1).join("/")}.`;
-    return done("control records migrate", r, [...r.results.map((x) => `${x.entry}: ${x.status}`), tail].join("\n"));
-  }
-  throw new ConfigError("usage: terragucci control records init|import|put <project>|defaults|retire <project>|list|migrate");
+  throw new ConfigError("usage: terragucci control records import|put <project>|defaults|retire <project>|list");
 }
 
 /** The binary terragucci.yml names, when it names one and can be read. */
@@ -1533,7 +1521,7 @@ export async function main(argv: string[]): Promise<number> {
       case "control": {
         // The control repo's pipeline: the job a member's dispatch starts, which runs that member's dependents (./control-repo.ts).
         if (args[0] === "records") return controlRecords(cwd, args.slice(1), flags, json, emit);
-        if (args[0] !== "init") throw new ConfigError("usage: terragucci control init [--forge github|gitlab|forgejo] [--dry-run] | terragucci control records init|import|put|defaults|retire|list|migrate");
+        if (args[0] !== "init") throw new ConfigError("usage: terragucci control init [--forge github|gitlab|forgejo] [--dry-run] | terragucci control records import|put|defaults|retire|list");
         const cfg = await controlConfig(cwd, str(flags, "config"));
         if (!cfg?.projects || Object.keys(cfg.projects).length === 0) throw new ConfigError("control init needs a control repo that lists projects, in terragucci.yml or in records");
         const forge = (str(flags, "forge") as ForgeName | undefined) ?? cfg.forge ?? originForge(cwd);

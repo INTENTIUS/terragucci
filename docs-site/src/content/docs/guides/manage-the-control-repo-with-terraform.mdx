@@ -9,7 +9,7 @@ prompt: |
 
 ## Result
 
-A Terraform or OpenTofu configuration that reads, from a repo's `terragucci.yml`, what its jobs present to a cloud, and checks the live forge and cloud setup against it. The provider writes nothing: a [control repo](/terragucci/concepts/control-repo/) keeps its projects and defaults as [chant](/terragucci/concepts/glossary/#chant) workspace records, which `terragucci control records` writes.
+A Terraform or OpenTofu configuration that reads, from a repo's `terragucci.yml`, what its jobs present to a cloud, and checks the live forge and cloud setup against it. The provider writes nothing: a [control repo](/terragucci/concepts/control-repo/) keeps its projects and defaults as [chant](/terragucci/concepts/glossary/#chant)'s entries on its [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), which `terragucci control records` writes.
 
 ## Before you start
 

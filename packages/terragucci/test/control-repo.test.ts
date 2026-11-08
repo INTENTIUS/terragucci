@@ -221,28 +221,33 @@ describe("control: every path that completes an apply tells the control repo, on
 describe("control: the tf-plan job reads the control repo (#753)", () => {
   const withControl = (c: ControlSettings, forge: "github" | "gitlab" | "forgejo") => renderPipeline({ ...input, forge, control: resolveControl(c, "svc") } as never).content;
   for (const forge of ["github", "forgejo"] as const) {
-    it(`${forge}: plan and re-plan check the control repo out, pinned and read-only, and name its directory`, () => {
+    it(`${forge}: plan and re-plan read only the control repo's chant/lifecycle, with chant's step`, () => {
       const d = doc(withControl(control, forge));
       for (const job of ["plan", "replan"]) {
-        const step = d.jobs[job].steps.find((s: any) => s.name?.startsWith("Check out the control repo"));
-        expect(step.uses).toMatch(/actions\/checkout@[0-9a-f]{40}$/);
-        expect(step.with).toMatchObject({ repository: "acme/control", path: ".terragucci-control", "persist-credentials": false });
-        expect(step.with.token).toBe("${{ secrets.TERRAGUCCI_CONTROL_READ_TOKEN || github.token }}");
-        expect(JSON.stringify(step)).not.toContain("TERRAGUCCI_CONTROL_TOKEN");
+        const steps = d.jobs[job].steps.filter((s: any) => JSON.stringify(s).includes("acme/control"));
+        expect(steps).toHaveLength(1);
+        expect(steps[0].run).toContain("+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle");
+        expect(steps[0].run).toContain("CHANT_CONTROL_DIR=");
+        expect(steps[0].env.CHANT_CONTROL_READ_TOKEN).toBe("${{ secrets.TERRAGUCCI_CONTROL_READ_TOKEN || github.token }}");
+        expect(JSON.stringify(steps[0])).not.toContain("TERRAGUCCI_CONTROL_TOKEN");
       }
-      expect((d.jobs.plan.env ?? d.env).TERRAGUCCI_CONTROL_DIR ?? d.jobs.plan.env.TERRAGUCCI_CONTROL_DIR).toBe("${{ github.workspace }}/.terragucci-control");
+      expect(JSON.stringify(d)).not.toContain("TERRAGUCCI_CONTROL_DIR");
+      expect(JSON.stringify(d)).not.toContain(".terragucci-control");
     });
     it(`${forge}: read_token_env names the secret, and nothing is added without control`, () => {
       expect(withControl({ ...control, read_token_env: "CTRL_READ" }, forge)).toContain("secrets.CTRL_READ ||");
       expect(renderPipeline({ ...input, forge } as never).content).not.toContain("terragucci-control");
     });
   }
-  it("gitlab: the plan job clones the control repo with the read variable or the job token", () => {
+  it("gitlab: the plan job fetches the control repo's chant/lifecycle with the read variable or the job token", () => {
     const d = doc(withControl({ ...control, repo: "gitlab.com/acme/control" }, "gitlab"));
-    expect(d.plan.variables.TERRAGUCCI_CONTROL_DIR).toBe("$CI_PROJECT_DIR/.terragucci-control");
+    expect(d.plan.variables.TERRAGUCCI_CONTROL_DIR).toBeUndefined();
     const text = d.plan.script.join("\n");
-    expect(text).toContain("git clone --quiet --depth 1");
-    expect(text).toContain("${TERRAGUCCI_CONTROL_READ_TOKEN:-${CI_JOB_TOKEN:-}}@gitlab.com/acme/control.git");
+    expect(text).toContain('CHANT_CONTROL_READ_TOKEN="${TERRAGUCCI_CONTROL_READ_TOKEN:-}"');
+    expect(text).toContain("CI_JOB_TOKEN");
+    expect(text).toContain("'https://gitlab.com/acme/control.git' '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle'");
+    expect(text).not.toContain("git clone");
+    expect(text).not.toContain(".terragucci-control");
   });
   it("refuses a read token that is the dispatch token", () => {
     expect(() => validateConfig({ control: { ...control, read_token_env: "TERRAGUCCI_CONTROL_TOKEN" } }, "config")).toThrow(/dispatch token/);

@@ -1,9 +1,9 @@
 // Package provider is the terragucci Terraform and OpenTofu provider. It has
 // data sources only: they run `terragucci config identities --json` and
 // `terragucci forge check --json` over a local terragucci.yml and pass the
-// values through. The control repo's projects and defaults live in chant
-// workspace records (terragucci control records), so the provider no longer
-// writes them.
+// values through. The control repo's projects and defaults are chant's
+// entries on its chant/lifecycle (terragucci control records), so the
+// provider no longer writes them.
 package provider
 
 import (
@@ -38,7 +38,7 @@ func (p *terragucciProvider) Metadata(_ context.Context, _ provider.MetadataRequ
 
 func (p *terragucciProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Reads what terragucci computes for a repo: the identities its jobs present and the trust each cloud needs, and a forge check. It writes nothing; a control repo's projects and defaults are chant workspace records, written with `terragucci control records`.",
+		Description: "Reads what terragucci computes for a repo: the identities its jobs present and the trust each cloud needs, and a forge check. It writes nothing; a control repo's projects and defaults are chant's entries on its chant/lifecycle, written with `terragucci control records`.",
 		Attributes: map[string]schema.Attribute{
 			"terragucci_path": schema.StringAttribute{
 				Optional:    true,

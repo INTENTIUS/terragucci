@@ -1,9 +1,9 @@
 // The control repo on chant core (chant#4568). The entries are lines of `_control/entries.jsonl` on the control
-// repo's chant/lifecycle, the member's dispatch is chant's script, and `control records migrate` moves the record
-// files onto the ledger. A case stands a fake in for chant's control module with vi.mock, or runs on the real one.
+// repo's chant/lifecycle, and the member's dispatch is chant's script. A case stands a fake in for chant's control
+// module with vi.mock, or runs on the real one.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChantCiControl, ChantControlEntry, ChantControlLedgerPort } from "../src/chant-next";
-import { initRecords, LEDGER_PATH, migrateRecords, putEntryAt, readEntriesAt, retireEntryAt, validateSettings, type ChantRunner } from "../src/control-records";
+import { importControlConfigAt, LEDGER_PATH, putEntryAt, readEntriesAt, retireEntryAt, validateSettings } from "../src/control-records";
 import { controlCloneScript, dispatchScript, resolveControl } from "../src/control-repo";
 import { git, tmp } from "./helpers";
 
@@ -64,24 +64,16 @@ function fakeControl(lines: string[] = []): { chant: ChantCiControl; calls: stri
 const entryLine = (project: string): string =>
   JSON.stringify({ id: "ctl-001", entry: "project", project, settings: {}, estates: ["net"], digest: "d1", at: "2026-10-27T00:00:00Z" });
 
-/** File records as chant's `workspace records` answers for them. */
-const fileRun = (): ChantRunner => () => ({
-  status: 0,
-  stdout: JSON.stringify({ records: [{ id: "ctl-001", state: "active", valid: true, digest: "f1", path: "terragucci/records/ctl-001.md", data: { entry: "project", project: "github.com/acme/app", settings: {}, estates: ["net"] } }] }),
-  stderr: "",
-});
-
 const control = { repo: "github.com/acme/control", op: "deploy" };
 
 describe("control entries on the ledger", () => {
-  it("keeps the record files while the ledger has no entries", async () => {
+  it("reads an empty ledger as no entries, and writes the first one there", async () => {
     const { chant, calls } = fakeControl();
     stand.in = chant;
     const dir = tmp();
-    initRecords(dir);
-    const entries = await readEntriesAt(dir, fileRun());
-    expect(entries[0]!.path).toBe("terragucci/records/ctl-001.md");
-    expect(calls).toEqual([]);
+    expect(await readEntriesAt(dir)).toEqual([]);
+    expect((await putEntryAt(dir, { entry: "project", project: "github.com/acme/web", settings: {} })).path).toBe(LEDGER_PATH);
+    expect(calls).toEqual(["read validate=yes", "put github.com/acme/web product=terragucci dryRun=false"]);
   });
 
   it("reads, writes and retires on the ledger once it has entries", async () => {
@@ -90,20 +82,19 @@ describe("control entries on the ledger", () => {
     const dir = tmp();
     const entries = await readEntriesAt(dir);
     expect(entries).toEqual([{ id: "ctl-001", path: LEDGER_PATH, digest: "d1", entry: "project", project: "github.com/acme/app", settings: {}, estates: ["net"] }]);
-    expect((await putEntryAt(dir, { entry: "project", project: "github.com/acme/web", settings: {} }, undefined, true)).path).toBe(LEDGER_PATH);
+    expect((await putEntryAt(dir, { entry: "project", project: "github.com/acme/web", settings: {} }, true)).path).toBe(LEDGER_PATH);
     expect((await retireEntryAt(dir, "github.com/acme/app")).status).toBe("updated");
     expect(calls).toEqual(["read validate=yes", "put github.com/acme/web product=terragucci dryRun=true", "retire github.com/acme/app"]);
   });
 
-  it("moves the record files onto the ledger with their estates", async () => {
+  it("imports a terragucci.yml-shaped config onto the ledger", async () => {
     const { chant, calls } = fakeControl();
     stand.in = chant;
     const dir = tmp();
-    initRecords(dir);
-    const r = await migrateRecords(dir, fileRun());
-    expect(r.results.map((x) => [x.entry, x.status])).toEqual([["github.com/acme/app", "created"]]);
-    expect(r.files).toEqual(["terragucci/records/ctl-001.md"]);
-    expect(calls).toEqual([`import github.com/acme/app estates={"github.com/acme/app":["net"]}`]);
+    const out = await importControlConfigAt(dir, { defaults: { gate: "always" }, projects: { "github.com/acme/web": {} } });
+    expect(out.map((o) => [o.entry, o.status, o.path])).toEqual([["github.com/acme/web", "created", LEDGER_PATH]]);
+    expect(calls).toEqual(["import github.com/acme/web estates={}"]);
+    await expect(importControlConfigAt(dir, {})).rejects.toThrow(/lists projects/);
   });
 
   it("checks an entry's settings with terragucci's config", () => {
@@ -111,15 +102,18 @@ describe("control entries on the ledger", () => {
     expect(validateSettings("project", "not a key", {}).length).toBeGreaterThan(0);
   });
 
-  it("moves records onto a real control repo's chant/lifecycle and reads them back", async () => {
+  it("writes, amends and retires on a real control repo's chant/lifecycle and reads them back", async () => {
     const dir = tmp();
     git(dir, "init", "-q", "-b", "main");
     git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init");
-    initRecords(dir);
-    await migrateRecords(dir, fileRun());
+    expect(await readEntriesAt(dir)).toEqual([]);
+    expect((await putEntryAt(dir, { entry: "project", project: "github.com/acme/app", settings: { binary: "tofu" }, estates: ["net"] })).status).toBe("created");
+    expect((await putEntryAt(dir, { entry: "project", project: "github.com/acme/app", settings: { binary: "terraform" } })).status).toBe("updated");
+    await putEntryAt(dir, { entry: "project", project: "github.com/acme/web", settings: {} });
+    await retireEntryAt(dir, "github.com/acme/web");
     expect(git(dir, "show", "chant/lifecycle:_control/entries.jsonl")).toContain("github.com/acme/app");
     const entries = await readEntriesAt(dir);
-    expect(entries.map((e) => [e.project, e.estates, e.path])).toEqual([["github.com/acme/app", ["net"], LEDGER_PATH]]);
+    expect(entries.map((e) => [e.project, e.settings, e.estates, e.path])).toEqual([["github.com/acme/app", { binary: "terraform" }, ["net"], LEDGER_PATH]]);
   });
 });
 
