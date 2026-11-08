@@ -475,12 +475,12 @@ terragucci reads `origin/<branch>`, and the checkout needs that ref fetched. `TG
 
 ### The engines
 
-terragucci downloads a missing engine once per job and refuses one whose SHA-256 differs from the pinned one.
+terragucci downloads a missing engine once per job, at the release chant pins, and refuses one whose SHA-256 differs from the pinned one.
 
 | Engine | Packages read | Pinned version | `tf-check` runs |
 |---|---|---|---|
-| `conftest` | every package, unless `namespace` names one | 0.71.0 | `conftest verify` |
-| `opa` | `main` and the packages one level under it, or `terraform.policies` and its packages with `input: hcp`, unless `namespace` names another | 1.21.1 | `opa test` |
+| `conftest` | every package, unless `namespace` names one | 0.71.1 | `conftest verify` |
+| `opa` | `main` and the packages one level under it, or `terraform.policies` and its packages with `input: hcp`, unless `namespace` names another | 1.21.4 | `opa test` |
 
 Offline jobs need the engine installed; drift runs and provisional Terragrunt previews skip the check.
 
