@@ -1,5 +1,6 @@
 /** The marker a plan note carries its waves in, for `approval: pr-review` (../review.ts), and the Terragrunt previews a gate compares with (../tg-preview.ts). */
 import { approveLine } from "@intentius/chant/ci-product-words";
+import { planNoteMarker } from "@intentius/chant/pr-plan-note";
 import { productWords, TERRAGUCCI_WORDS } from "../ci-words";
 import type { NotePreview } from "../tg-preview";
 
@@ -27,10 +28,9 @@ export interface NoteWaves {
   previews?: NotePreview[];
 }
 
-/** The marker line for a plan note, an HTML comment the note's reader never sees. */
+/** The marker line for a plan note, an HTML comment the note's reader never sees: chant's `planNoteMarker` under terragucci's name. */
 export function noteMarker(w: NoteWaves): string {
-  // No `<` or `>` in the JSON, so nothing in it ends the comment.
-  return `<!-- ${WAVES_MARKER} ${JSON.stringify(w).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")} -->`;
+  return planNoteMarker(WAVES_MARKER, w);
 }
 
 /** The marker of a comment body, or undefined. */
