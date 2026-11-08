@@ -32,14 +32,14 @@
 import { terragucciStatus } from "./ci-words";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { poster, type Fetch } from "./forge";
+import { jobReads, poster, type Fetch } from "./forge";
 import { FORGED, PLAN_MARK, PLAN_NOTE_FILE, PLAN_STATUS_FILE, planStatus, ROOTS_LINE } from "./plan-note-gitlab";
 import { DRIFT_SCHEDULE_FILE, driftOverdue, driftRuns } from "./report/overdue";
 
 export { DRIFT_SCHEDULE_FILE };
 import { targetFromEnv } from "./report/drift";
 import { pullInvolvement, sameLogin } from "./involved";
-import { approvalStatus, forgeCalls } from "./review";
+import { approvalStatus } from "./review";
 
 /** How the note says the drift job is overdue (chant's overdueVerdict, report/overdue.ts). */
 const OVERDUE = "Op `tf-drift` is overdue:";
@@ -123,9 +123,9 @@ export async function notCountingNotice(reportText: string | undefined, pr: numb
   }
   if (!waits) return undefined;
   try {
-    const calls = forgeCalls(env, doFetch);
-    const raw = await calls.get(`repos/${calls.repo}/pulls/${pr}`);
-    const inv = await pullInvolvement({ forge, calls, pr: { number: pr, head: sha, ...(typeof raw?.user?.login === "string" ? { author: raw.user.login } : {}) }, env, fetch: doFetch, ...(agentLogin ? { agentLogin } : {}) });
+    const reads = jobReads(forge, env, doFetch);
+    const raw = await reads.pullRequest(pr);
+    const inv = await pullInvolvement({ forge, reads, pr: { number: pr, head: sha, ...(raw?.author ? { author: raw.author } : {}) }, env, fetch: doFetch, ...(agentLogin ? { agentLogin } : {}) });
     // Logins only: an address from a commit is not repeated on the pull request.
     const named: { who: string; why: string }[] = [];
     for (const p of inv.people) if (!p.who.includes("@") && !named.some((n) => sameLogin(n.who, p.who))) named.push(p);

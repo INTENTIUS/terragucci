@@ -121,7 +121,8 @@ describe("resumeStep", () => {
 
   it("on GitHub and Forgejo applies at the default branch's commit, naming the pull request that made it", async () => {
     const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t" };
-    const { fetch } = forge({ [`GET repos/acme/infra/commits/${SHA}/pulls`]: [{ number: 12, head: { sha: "e".repeat(40) }, merge_commit_sha: SHA, merged_at: T(0) }] });
+    const merged = { number: 12, head: { sha: "e".repeat(40) }, merge_commit_sha: SHA, merged_at: T(0) };
+    const { fetch } = forge({ [`GET repos/acme/infra/commits/${SHA}/pulls`]: [merged], "GET repos/acme/infra/pulls/12": merged });
     expect(await resumeStep({ ledger: approved, forge: "github", sha: SHA, env, now: T(6), fetch })).toMatchObject({ kind: "apply", sha: SHA, pr: 12, waves: [{ wave: 2 }] });
     // A direct push: no pull request, the apply still runs.
     const none = forge({});

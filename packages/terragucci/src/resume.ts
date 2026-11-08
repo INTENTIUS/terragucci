@@ -59,7 +59,7 @@ import { chantCommand } from "./chant-bin";
 import { MIGRATE_OP } from "./migrate";
 import { APPLY_OP, runOf, type GateLedger, type PendingRecord } from "./apply";
 import { forgeLiveness, type Liveness } from "./apply-rows";
-import { forgeCalls, pullOf } from "./review";
+import { jobForge, pullOf } from "./review";
 import { forgejoForge } from "@intentius/chant/pr-forge";
 import type { Fetch } from "./forge";
 
@@ -140,7 +140,7 @@ export async function resumeStep(o: { ledger: GateLedger; migrations?: GateLedge
   if (waves.length === 0) return { kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" };
   let pr: number | undefined;
   try {
-    pr = (await pullOf(forgeCalls(o.env, o.fetch), { ...o.env, TG_PR: "" }, o.sha))?.number;
+    pr = (await pullOf(jobForge(o.forge, o.env, o.fetch), { ...o.env, TG_PR: "" }, o.sha))?.number;
   } catch {
     // A reply needs the pull request; the apply does not.
   }

@@ -177,7 +177,7 @@ describe("a wave behind its gate", () => {
           "repos/acme/infra/pulls/7/commits": [],
           "repos/acme/infra/pulls/7/reviews": reviews,
           "repos/acme/infra/collaborators/alice/permission": { permission: "write" },
-          "repos/acme/infra/issues/7/comments": [{ body: noteMarker({ head, waves: [{ number: 1, digest, waits: true }] }) }],
+          "repos/acme/infra/issues/7/comments": [{ id: 1, body: noteMarker({ head, waves: [{ number: 1, digest, waits: true }] }) }],
         };
         return (path! in body ? { ok: true, status: 200, json: async () => body[path!], text: async () => JSON.stringify(body[path!]) } : { ok: false, status: 404, json: async () => ({}), text: async () => "{}" }) as never;
       };

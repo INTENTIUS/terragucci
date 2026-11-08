@@ -438,7 +438,7 @@ describe("rollout of a provider", () => {
 describe("the forge", () => {
   it("reads a Forgejo pull request by branch, its merge commit, and the apply job's newest status", async () => {
     const answers: Record<string, unknown> = {
-      "/api/v1/repos/acme/infra/pulls?state=all&limit=50&page=1": [
+      "/api/v1/repos/acme/infra/pulls?state=all&sort=recentupdate&limit=50&page=1": [
         { html_url: "u/1", number: 1, state: "closed", merged: true, merge_commit_sha: "abc", body: "b", head: { ref: "w1" } },
         { html_url: "u/2", number: 2, state: "open", body: "", head: { ref: "other" } },
       ],
@@ -463,11 +463,11 @@ describe("the forge", () => {
     expect(appliedState([{ name: "terragucci / check (push)", state: "success" }], "x")).toBe("pending");
   });
 
-  it("reads an empty Forgejo repo, whose pull request list answers 404, as having none, and throws on any other 404", async () => {
-    const forge = (empty: boolean) => {
+  it("reads a Forgejo repo whose pull request list answers 404 (an empty one) as having none, and throws when the repo is not there", async () => {
+    const forge = (there: boolean) => {
       const fetch: Fetch = async (url) => {
-        const repo = url.endsWith("/api/v1/repos/acme/infra");
-        return { ok: repo, status: repo ? 200 : 404, json: async () => ({ empty }), text: async () => (repo ? "" : "The target couldn't be found.") };
+        const repo = there && url.endsWith("/api/v1/repos/acme/infra");
+        return { ok: repo, status: repo ? 200 : 404, json: async () => ({ empty: true }), text: async () => (repo ? JSON.stringify({ empty: true }) : "The target couldn't be found.") };
       };
       return fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
     };
@@ -478,15 +478,15 @@ describe("the forge", () => {
   it("lists the pull requests from a prefix's branches, newest update first, on GitHub and GitLab", async () => {
     const answers: Record<string, unknown> = {
       "https://api.github.com/repos/acme/infra/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1": [
-        { html_url: "g/2", title: "t2", state: "closed", merged_at: "2026-01-01T00:00:00Z", body: "b2", head: { ref: "terragucci/rollout/x-1.4.0/wave-1" } },
-        { html_url: "g/1", title: "t1", state: "open", body: null, head: { ref: "feature" } },
+        { html_url: "g/2", number: 2, title: "t2", state: "closed", merged_at: "2026-01-01T00:00:00Z", body: "b2", head: { ref: "terragucci/rollout/x-1.4.0/wave-1" } },
+        { html_url: "g/1", number: 1, title: "t1", state: "open", body: null, head: { ref: "feature" } },
       ],
       "https://gitlab.example.com/api/v4/projects/acme%2Finfra/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&page=1": [
-        { web_url: "l/1", title: "t", state: "opened", description: "d", source_branch: "terragucci/rollout/x-1.4.0/wave-2" },
-        { web_url: "l/0", title: "t", state: "closed", description: "d", source_branch: "terragucci/rollout/x-1.4.0/wave-1" },
+        { web_url: "l/1", iid: 1, title: "t", state: "opened", description: "d", source_branch: "terragucci/rollout/x-1.4.0/wave-2" },
+        { web_url: "l/0", iid: 0, title: "t", state: "closed", description: "d", source_branch: "terragucci/rollout/x-1.4.0/wave-1" },
       ],
     };
-    const fetch: Fetch = async (url) => ({ ok: true, status: 200, json: async () => answers[url], text: async () => "" });
+    const fetch: Fetch = async (url) => ({ ok: true, status: 200, json: async () => answers[url], text: async () => JSON.stringify(answers[url] ?? []) });
     const gh = fetchForge(fetch, { forge: "github", origin: "https://github.com", path: "acme/infra", token: "" });
     expect(await gh.listPullRequests("terragucci/rollout/")).toEqual([{ branch: "terragucci/rollout/x-1.4.0/wave-1", url: "g/2", title: "t2", state: "merged", body: "b2" }]);
     const gl = fetchForge(fetch, { forge: "gitlab", origin: "https://gitlab.example.com", path: "acme/infra", token: "" });

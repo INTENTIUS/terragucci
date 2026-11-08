@@ -1,10 +1,10 @@
 /**
  * What a rollout asks each project's forge: the newest pull request from a
  * wave's branch in any state, opening one, and the checks on the commit a
- * merge made. GitHub, GitLab and Forgejo answer through their own APIs, with
- * the same `fetch` the rest of terragucci uses.
+ * merge made, through chant's forge client and reads, with the same `fetch`
+ * the rest of terragucci uses.
  */
-import { call, commitStatuses, defaultBranch, ForgeError, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "../forge";
+import { commitStatuses, defaultBranch, openPullRequest, prForgeOf, readsOf, type Fetch, type ForgeTarget } from "../forge";
 
 export interface WavePullRequest {
   url: string;
@@ -62,101 +62,20 @@ const STATE: Record<string, CommitCheck["state"]> = {
 
 const checkState = (s: string | undefined): CommitCheck["state"] => STATE[s ?? ""] ?? "pending";
 
-/** Keep the newest entry per name, by id. */
-function newest<T extends { id?: number }>(items: T[], name: (t: T) => string): T[] {
-  const best = new Map<string, T>();
-  for (const it of items) {
-    const n = name(it);
-    const had = best.get(n);
-    if (!had || (it.id ?? 0) > (had.id ?? 0)) best.set(n, it);
-  }
-  return [...best.values()];
-}
-
 export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
-  const get = (path: string) => call(fetch, t, "GET", path);
-  const id = encodeURIComponent(t.path);
+  const reads = readsOf(t, fetch);
   return {
     defaultBranch: () => defaultBranch(fetch, t),
 
     async findPullRequest(branch) {
-      if (t.forge === "gitlab") {
-        const list = (await get(`/projects/${id}/merge_requests?state=all&source_branch=${encodeURIComponent(branch)}&order_by=created_at&sort=desc`)) as Array<{
-          web_url: string;
-          state: string;
-          description?: string | null;
-          merge_commit_sha?: string | null;
-          squash_commit_sha?: string | null;
-          sha?: string;
-        }>;
-        const mr = list[0];
-        if (!mr) return null;
-        const state = mr.state === "merged" ? "merged" : mr.state === "opened" ? "open" : "closed";
-        // A fast-forward merge makes no merge commit; the head is then what main points at.
-        const sha = mr.merge_commit_sha ?? mr.squash_commit_sha ?? mr.sha;
-        return { url: mr.web_url, state, body: mr.description ?? "", ...(state === "merged" && sha ? { mergeCommit: sha } : {}) };
-      }
-      type Pull = { html_url: string; number: number; state: string; merged?: boolean; merged_at?: string | null; merge_commit_sha?: string | null; body?: string | null; head?: { ref?: string } };
-      let found: Pull[] = [];
-      if (t.forge === "github") {
-        const owner = t.path.split("/")[0];
-        found = (await get(`/repos/${t.path}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=10`)) as Pull[];
-      } else {
-        // Forgejo has no head filter on the list; read pages until one comes back short.
-        for (let page = 1; page <= 20; page++) {
-          let list: Pull[];
-          try {
-            list = (await get(`/repos/${t.path}/pulls?state=all&limit=50&page=${page}`)) as Pull[];
-          } catch (e) {
-            // Forgejo answers 404 for the pull requests of an empty repo, and
-            // for a moment after its first push; that repo has none.
-            if (!(e instanceof ForgeError && e.status === 404 && ((await get(`/repos/${t.path}`)) as { empty?: boolean }).empty === true)) throw e;
-            list = [];
-          }
-          found.push(...list.filter((p) => p.head?.ref === branch));
-          if (list.length < 50) break;
-        }
-      }
-      const pr = found.sort((a, b) => b.number - a.number)[0];
+      const pr = (await reads.pullRequestsFrom(branch, { limit: LIST_LIMIT }))[0];
       if (!pr) return null;
-      const merged = pr.merged === true || !!pr.merged_at;
-      const state = merged ? "merged" : pr.state === "open" ? "open" : "closed";
-      return { url: pr.html_url, state, body: pr.body ?? "", ...(merged && pr.merge_commit_sha ? { mergeCommit: pr.merge_commit_sha } : {}) };
+      return { url: pr.url ?? "", state: pr.state, body: pr.body, ...(pr.mergeCommit ? { mergeCommit: pr.mergeCommit } : {}) };
     },
 
     async listPullRequests(prefix) {
-      const out: ListedPullRequest[] = [];
-      if (t.forge === "gitlab") {
-        for (let page = 1; page <= LIST_LIMIT / 100; page++) {
-          const list = (await get(`/projects/${id}/merge_requests?state=all&order_by=updated_at&sort=desc&per_page=100&page=${page}`)) as Array<{ web_url: string; title?: string; state: string; description?: string | null; source_branch?: string }>;
-          for (const mr of list) {
-            if (!mr.source_branch?.startsWith(prefix)) continue;
-            out.push({ branch: mr.source_branch, url: mr.web_url, title: mr.title ?? "", state: mr.state === "merged" ? "merged" : mr.state === "opened" ? "open" : "closed", body: mr.description ?? "" });
-          }
-          if (list.length < 100) break;
-        }
-        return out;
-      }
-      type Pull = { html_url: string; title?: string; state: string; merged?: boolean; merged_at?: string | null; body?: string | null; head?: { ref?: string } };
-      const size = t.forge === "github" ? 100 : 50;
-      for (let page = 1; page <= LIST_LIMIT / size; page++) {
-        let list: Pull[];
-        try {
-          list = (await get(t.forge === "github" ? `/repos/${t.path}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=${page}` : `/repos/${t.path}/pulls?state=all&sort=recentupdate&limit=50&page=${page}`)) as Pull[];
-        } catch (e) {
-          // Forgejo answers 404 for the pull requests of an empty repo.
-          if (!(t.forge === "forgejo" && e instanceof ForgeError && e.status === 404 && ((await get(`/repos/${t.path}`)) as { empty?: boolean }).empty === true)) throw e;
-          list = [];
-        }
-        for (const pr of list) {
-          const branch = pr.head?.ref;
-          if (!branch?.startsWith(prefix)) continue;
-          const merged = pr.merged === true || !!pr.merged_at;
-          out.push({ branch, url: pr.html_url, title: pr.title ?? "", state: merged ? "merged" : pr.state === "open" ? "open" : "closed", body: pr.body ?? "" });
-        }
-        if (list.length < size) break;
-      }
-      return out;
+      const listed = await reads.pullRequestsFrom(prefix, { prefix: true, limit: LIST_LIMIT });
+      return listed.map((pr) => ({ branch: pr.head, url: pr.url ?? "", title: pr.title, state: pr.state, body: pr.body }));
     },
 
     async createPullRequest(pr) {
@@ -165,13 +84,10 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
 
     async commitChecks(sha) {
       const checks: CommitCheck[] = [];
-      if (t.forge === "github") {
-        const runs = (await get(`/repos/${t.path}/commits/${sha}/check-runs?per_page=100`)) as { check_runs?: Array<{ id?: number; name: string; status: string; conclusion?: string | null }> };
-        for (const r of newest(runs.check_runs ?? [], (r) => r.name)) {
-          checks.push({ name: r.name, state: r.status === "completed" ? (STATE[r.conclusion ?? ""] ?? "failure") : "pending" });
-        }
+      // GitHub's check runs, newest per name, and each status's newest, through chant's client (chant#4554, chant#4809).
+      for (const r of await reads.checkRuns(sha)) {
+        checks.push({ name: r.name, state: r.status === "completed" ? (STATE[r.conclusion ?? ""] ?? "failure") : "pending" });
       }
-      // Each status's newest, through chant's client (chant#4554).
       for (const st of await commitStatuses(prForgeOf(t, fetch), sha)) checks.push({ name: st.context, state: checkState(st.state) });
       return checks;
     },

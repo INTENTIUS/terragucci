@@ -8,6 +8,7 @@
  * prForgeOf, for a target built here. What they say stays with terragucci.
  */
 import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
+import { forgeReadsFor, forgejoReads, githubReads, gitlabReads, type ForgeReads } from "@intentius/chant/pr-forge-reads";
 import { ConfigError, type ForgeName } from "./config";
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
@@ -59,7 +60,13 @@ function headers(t: ForgeTarget): Record<string, string> {
   return h;
 }
 
-/** One API call; a status other than 2xx throws a ForgeError naming it. */
+/**
+ * One API call; a status other than 2xx throws a ForgeError naming it. Only
+ * the GitLab comment jobs (./comment-gitlab.ts, ./comment-apply-gitlab.ts),
+ * which wait on chant's GitLab comment jobs (chant issue 4785), and the GitLab
+ * drift schedule read (./report/overdue.ts) still call it; every other read
+ * goes through chant's client and reads.
+ */
 export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(`${apiBase(t)}${path}`, { method, headers: headers(t), body: body === undefined ? undefined : JSON.stringify(body) });
   if (!res.ok) throw new ForgeError(`${method} ${path} on ${t.origin} answered ${res.status}: ${(await res.text()).slice(0, 300)}`, res.status);
@@ -124,6 +131,30 @@ export function prForgeOf(t: ForgeTarget, fetch?: Fetch): PrForge {
   if (t.forge === "gitlab") return gitlabForge({ ...common, project: t.path });
   if (t.forge === "forgejo") return forgejoForge({ ...common, repo: t.path });
   return githubForge({ ...common, repo: t.path });
+}
+
+/**
+ * chant's reads (`@intentius/chant/pr-forge-reads`) for a target terragucci
+ * built itself: the token's user, a pull request in any state, the pull
+ * requests from a branch, notes, check runs, commits, a collaborator's
+ * permission and the open pull requests.
+ */
+export function readsOf(t: ForgeTarget, fetch?: Fetch): ForgeReads {
+  const host = new URL(t.origin).host.toLowerCase();
+  const common = { apiBase: apiBase(t), ...(t.token ? { token: t.token } : {}), host, ...(fetch ? { fetch } : {}) };
+  if (t.forge === "gitlab") return gitlabReads({ ...common, project: t.path });
+  if (t.forge === "forgejo") return forgejoReads({ ...common, repo: t.path });
+  return githubReads({ ...common, repo: t.path });
+}
+
+/** chant's reads for the forge a job runs on, with the job's TG_TOKEN (or the variable `tokenEnv` names), as poster builds its client. */
+export function jobReads(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, tokenEnv = "TG_TOKEN"): ForgeReads {
+  try {
+    return forgeReadsFor(forgeTargetFromEnv(env, { kind, tokenEnv }), fetch);
+  } catch (e) {
+    if (e instanceof ForgeEnvironmentError) throw new ConfigError(e.message);
+    throw e;
+  }
 }
 
 /** The environment variable a forge's token is read from when the config names none. */

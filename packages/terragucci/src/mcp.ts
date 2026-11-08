@@ -46,7 +46,7 @@
 import { execFileSync } from "node:child_process";
 import { BRANCH, parseComment } from "./comment";
 import { ConfigError, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "./config";
-import { call, DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
+import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, prForgeOf, readsOf, type Fetch, type ForgeTarget } from "./forge";
 import { PLAN_MARK } from "./plan-note-gitlab";
 import { forgeOf } from "./respond/change";
 import { clients, parseIndex } from "./estate";
@@ -441,14 +441,11 @@ function needToken(f: Forge): void {
 
 const pullNumber = { type: "integer", description: "The pull request's number (the merge request's iid on GitLab).", minimum: 1 } as const;
 
-/** A pull request's state and head, from the forge. */
+/** A pull request's state and head, from the forge, by chant's reads. */
 export async function pullHead(f: Forge, n: number): Promise<{ state: "open" | "closed" | "merged"; sha: string; branch: string; url?: string }> {
-  if (f.target.forge === "gitlab") {
-    const m = (await call(f.fetch, f.target, "GET", `/projects/${encodeURIComponent(f.target.path)}/merge_requests/${n}`)) as { state?: string; sha?: string; source_branch?: string; web_url?: string };
-    return { state: m.state === "opened" ? "open" : m.state === "merged" ? "merged" : "closed", sha: m.sha ?? "", branch: m.source_branch ?? "", ...(m.web_url ? { url: m.web_url } : {}) };
-  }
-  const p = (await call(f.fetch, f.target, "GET", `/repos/${f.target.path}/pulls/${n}`)) as { state?: string; merged?: boolean; head?: { sha?: string; ref?: string }; html_url?: string };
-  return { state: p.state === "open" ? "open" : p.merged ? "merged" : "closed", sha: p.head?.sha ?? "", branch: p.head?.ref ?? "", ...(p.html_url ? { url: p.html_url } : {}) };
+  const p = await readsOf(f.target, f.fetch).pullRequest(n);
+  if (!p) throw new ToolError(`${f.target.forge === "gitlab" ? "merge request" : "pull request"} ${n} was not found on ${f.target.origin}`);
+  return { state: p.state, sha: p.headSha ?? "", branch: p.head, ...(p.url ? { url: p.url } : {}) };
 }
 
 /** A tf-plan report cut to what an agent acts on: each root's status and policy verdict, the policy check, and whether each wave's gate will hold it. */
@@ -652,9 +649,8 @@ export const PROPOSE_TOOLS: Tool[] = [
 export async function forgeActor(f: Forge, env: NodeJS.ProcessEnv): Promise<string> {
   let why = "";
   try {
-    const u = (await call(f.fetch, f.target, "GET", "/user")) as { login?: unknown; username?: unknown } | undefined;
-    const login = f.target.forge === "gitlab" ? u?.username : u?.login;
-    if (typeof login === "string" && login) return login;
+    const login = (await readsOf(f.target, f.fetch).tokenUser())?.login;
+    if (login) return login;
     why = "GET /user named no user";
   } catch (e) {
     why = (e as Error).message;

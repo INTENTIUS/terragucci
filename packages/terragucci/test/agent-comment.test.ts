@@ -134,7 +134,7 @@ function setupPush(opts: { patch?: Record<string, string>; rc?: string; moved?: 
   const f: Fetch = async (url, init) => {
     const path = url.replace("https://forge.test/api/v1/", "");
     // The agent's token acts as agent-bot, which the commit's Pushed-by trailer names.
-    if (path === "user") return { ok: true, status: 200, json: async () => ({ login: "agent-bot" }), text: async () => "" } as never;
+    if (path === "user") return { ok: true, status: 200, json: async () => ({ login: "agent-bot" }), text: async () => JSON.stringify({ login: "agent-bot" }) } as never;
     sent.push({ path, body: init?.body ? JSON.parse(init.body) : undefined });
     return { ok: true, status: 201, json: async () => ({}), text: async () => "" } as never;
   };

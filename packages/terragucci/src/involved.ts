@@ -25,8 +25,10 @@
  */
 import { spawnSync } from "node:child_process";
 import { findConfig, loadConfig } from "./config";
+import { ForgeApiError } from "@intentius/chant/pr-forge";
+import { forgejoReads, githubReads, gitlabReads, type ForgeReads, type PullRequestCommit } from "@intentius/chant/pr-forge-reads";
 import type { Fetch } from "./forge";
-import type { ForgeCalls, ReviewedPull } from "./review";
+import type { ReviewedPull } from "./review";
 
 /** One commit of a change, as git or the forge gives it. */
 export interface ChangeCommit {
@@ -214,50 +216,30 @@ export function gitChange(repo: string, base: string | undefined, head: string):
   return { commits };
 }
 
-/** A pull request's commits as GitHub and Forgejo list them (`pulls/:n/commits`). */
-export function forgeCommits(list: unknown): ChangeCommit[] {
-  const out: ChangeCommit[] = [];
-  for (const c of Array.isArray(list) ? list : []) {
-    const sha = typeof c?.sha === "string" ? c.sha : undefined;
-    if (!sha) continue;
-    const s = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
-    const entry: ChangeCommit = { sha, message: s(c?.commit?.message) ?? "" };
-    const ae = s(c?.commit?.author?.email);
-    const ce = s(c?.commit?.committer?.email);
-    const al = s(c?.author?.login);
-    const cl = s(c?.committer?.login);
-    if (ae) entry.authorEmail = ae;
-    if (ce) entry.committerEmail = ce;
-    if (al) entry.authorLogin = al;
-    if (cl) entry.committerLogin = cl;
-    out.push(entry);
-  }
-  return out;
-}
-
-/** A merge request's commits as GitLab lists them (`merge_requests/:iid/commits`). */
-export function gitlabCommits(list: unknown): ChangeCommit[] {
-  const out: ChangeCommit[] = [];
-  for (const c of Array.isArray(list) ? list : []) {
-    const sha = typeof c?.id === "string" ? c.id : undefined;
-    if (!sha) continue;
-    out.push({ sha, message: typeof c?.message === "string" ? c.message : "", ...(typeof c?.author_email === "string" ? { authorEmail: c.author_email } : {}), ...(typeof c?.committer_email === "string" ? { committerEmail: c.committer_email } : {}) });
-  }
-  return out;
+/** A pull request's commits as chant's reads give them (`pullRequestCommits`). */
+export function changeCommits(list: readonly PullRequestCommit[]): ChangeCommit[] {
+  return list.map((c) => ({
+    sha: c.sha,
+    message: c.message,
+    ...(c.author.email ? { authorEmail: c.author.email } : {}),
+    ...(c.committer.email ? { committerEmail: c.committer.email } : {}),
+    ...(c.author.login ? { authorLogin: c.author.login } : {}),
+    ...(c.committer.login ? { committerLogin: c.committer.login } : {}),
+  }));
 }
 
 /** The user a token acts as, from the forge's `GET /user`: GitHub's and Forgejo's `login`, GitLab's `username`. */
 export async function tokenUser(o: { which: string; forge: "github" | "forgejo" | "gitlab"; api: string | undefined; token: string | undefined; fetch?: Fetch }): Promise<TokenUser> {
   if (!o.token) return { which: o.which, unknown: "this job does not hold it" };
   if (!o.api) return { which: o.which, unknown: "this job does not know the forge's API address" };
+  // chant's reads ask `GET /user` alone here, so the repository they are built for is not read.
+  const opts = { apiBase: o.api, token: o.token, ...(o.fetch ? { fetch: o.fetch } : {}) };
+  const reads = o.forge === "gitlab" ? gitlabReads({ ...opts, project: "-" }) : o.forge === "forgejo" ? forgejoReads({ ...opts, repo: "-/-" }) : githubReads({ ...opts, repo: "-/-" });
   try {
-    const headers: Record<string, string> = o.forge === "gitlab" ? { "private-token": o.token } : { authorization: `token ${o.token}` };
-    const r = await (o.fetch ?? (fetch as unknown as Fetch))(`${o.api.replace(/\/+$/, "")}/user`, { method: "GET", headers });
-    if (!r.ok) return { which: o.which, unknown: `GET /user answered ${r.status}` };
-    const u = (await r.json()) as { login?: unknown; username?: unknown };
-    const login = o.forge === "gitlab" ? u?.username : u?.login;
-    return typeof login === "string" && login ? { which: o.which, login } : { which: o.which, unknown: "GET /user named no user" };
+    const u = await reads.tokenUser();
+    return u ? { which: o.which, login: u.login } : { which: o.which, unknown: "GET /user named no user" };
   } catch (e) {
+    if (e instanceof ForgeApiError) return { which: o.which, unknown: `GET /user answered ${e.status}` };
     return { which: o.which, unknown: `GET /user failed (${(e as Error).message})` };
   }
 }
@@ -293,7 +275,8 @@ export async function tokenUsers(o: { forge: "github" | "forgejo" | "gitlab"; en
  */
 export async function pullInvolvement(o: {
   forge: "github" | "forgejo" | "gitlab";
-  calls?: ForgeCalls;
+  /** chant's reads of the forge, which list the pull request's commits. */
+  reads?: ForgeReads;
   pr?: ReviewedPull;
   env: NodeJS.ProcessEnv;
   fetch?: Fetch;
@@ -304,9 +287,9 @@ export async function pullInvolvement(o: {
 }): Promise<Involved> {
   const notes: string[] = [];
   const commits: ChangeCommit[] = [];
-  if (o.pr && o.calls) {
+  if (o.pr && o.reads) {
     try {
-      commits.push(...(o.forge === "gitlab" ? gitlabCommits(await o.calls.get(`${o.calls.repo}/merge_requests/${o.pr.number}/commits?per_page=100`)) : forgeCommits(await o.calls.get(`repos/${o.calls.repo}/pulls/${o.pr.number}/commits?per_page=100&limit=50`))));
+      commits.push(...changeCommits(await o.reads.pullRequestCommits(o.pr.number)));
     } catch (e) {
       notes.push(`the commits of ${o.forge === "gitlab" ? "merge request" : "pull request"} ${o.pr.number} could not be read from the forge (${(e as Error).message})`);
     }

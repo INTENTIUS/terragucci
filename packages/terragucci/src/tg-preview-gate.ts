@@ -14,7 +14,7 @@ import { runFacts } from "./report/stage";
 import type { Fetch } from "./forge";
 import type { NoteWaves } from "./report/marker";
 import type { ReportChange, ReportWavePreview } from "./report/schema";
-import { forgeCalls, gitlabCalls, gitlabReviews, noteWavesOf, pullOf } from "./review";
+import { gitlabReviews, jobForge, noteWavesOf, pullOf } from "./review";
 import { previewDifferences } from "./tg-preview";
 
 /** What a wave's gate says of the preview: the report's comparison, and the lines it prints. */
@@ -40,16 +40,16 @@ export async function gatePreview(o: {
   let note: NoteWaves | undefined;
   try {
     if (o.forge === "gitlab") {
-      const got = await gitlabReviews(gitlabCalls(o.env, o.fetch), o.sha, o.env);
+      const got = await gitlabReviews(jobForge("gitlab", o.env, o.fetch), o.sha, o.env);
       if (!got) return { lines: [] };
       pr = got.pr.number;
       note = got.note;
     } else {
-      const f = forgeCalls(o.env, o.fetch);
+      const f = jobForge(o.forge, o.env, o.fetch);
       const pull = await pullOf(f, o.env, o.sha);
       if (!pull) return { lines: [] };
       pr = pull.number;
-      note = await noteWavesOf(f, pull);
+      note = await noteWavesOf(f.reads, pull);
     }
   } catch (e) {
     // No forge to ask (a run on a laptop): nothing to compare with.

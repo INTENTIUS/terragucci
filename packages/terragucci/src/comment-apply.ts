@@ -56,7 +56,8 @@ import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
 import { agentSettingsAt, pullInvolvement, type Involved } from "./involved";
-import { commitStatuses, poster, type Fetch } from "./forge";
+import type { OpenPullRequest } from "@intentius/chant/pr-forge";
+import { commitStatuses, jobReads, poster, type Fetch } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
 
@@ -170,7 +171,7 @@ export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyC
   } else {
     let permission: unknown;
     try {
-      permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
+      permission = await jobReads("github", env, doFetch).permission(user);
     } catch (e) {
       return broke(`could not read ${user}'s permission, so nothing is applied (${(e as Error).message})`);
     }
@@ -642,16 +643,18 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   // starts no run), answers the lock of the branch's open pull request on its new head.
   if (typeof event.ref === "string" && event.ref.startsWith("refs/heads/") && !event.pull_request && !event.comment) {
     const branch = event.ref.slice("refs/heads/".length);
-    let open: any;
+    let open: OpenPullRequest[];
     try {
-      open = await call("GET", `repos/${repo}/pulls?state=open&per_page=100&limit=50`);
+      open = await jobReads(o.forge ?? "github", env, doFetch).openPullRequests();
     } catch (e) {
       return broke(`could not list the open pull requests (${(e as Error).message})`);
     }
-    const from = (Array.isArray(open) ? open : []).filter((p: any) => p?.head?.ref === branch && p?.head?.repo?.full_name === repo && Number.isInteger(p?.number));
+    const from = open.filter((p) => p.head === branch && !p.fork);
     if (from.length === 0) return stop(`no open pull request comes from ${branch}`);
     const said: string[] = [];
-    for (const p of from) said.push((await lockHead(p, p.number, replyOn(p.number))).reason);
+    // lockHead reads a pull request as the event gives it.
+    const asEvent = (p: OpenPullRequest) => ({ number: p.number, state: "open", head: { ref: p.head, sha: p.headSha, repo: { full_name: repo } }, base: { ref: p.base }, ...(p.author ? { user: { login: p.author } } : {}) });
+    for (const p of from) said.push((await lockHead(asEvent(p), p.number, replyOn(p.number))).reason);
     return stop(said.join("; "));
   }
 
@@ -691,7 +694,7 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
   } else {
     let permission: unknown;
     try {
-      permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
+      permission = await jobReads("github", env, doFetch).permission(user);
     } catch (e) {
       return broke(`could not read ${user}'s permission, so no lock moves (${(e as Error).message})`);
     }
@@ -734,7 +737,7 @@ async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
 
   // approved counts the forge's rule, and never the run's own token or someone who had a hand in the change (./involved.ts).
   const approvers = async (): Promise<PrApproverFilter> => {
-    const involved = await pullInvolvement({ forge: i.forge ?? "github", calls: { repo: repoName, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) }, pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}), ...(await agentSettingsAt(i.repo ?? process.cwd())) });
+    const involved = await pullInvolvement({ forge: i.forge ?? "github", reads: jobReads(i.forge ?? "github", i.env ?? process.env, i.fetch), pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}), ...(await agentSettingsAt(i.repo ?? process.cwd())) });
     for (const line of involved.notes) console.log(`terragucci: ${line}`);
     return approverFilter(involved);
   };
@@ -815,7 +818,7 @@ export async function mergePullRequest(o: MergeOptions): Promise<string> {
   if (pr?.head?.sha !== o.sha) throw new Error(`pull request ${o.pr} moved after it applied (its head is now ${short(String(pr?.head?.sha))})`);
   if (pr?.head?.repo?.full_name !== repo) throw new Error(`pull request ${o.pr} comes from a fork`);
   // approved counts as the apply's decision did: chant's prApproved under approverFilter, read with the job's own token.
-  const involved = await pullInvolvement({ forge: o.forge ?? "github", calls: { repo, get: (p) => get(p.replace(`repos/${repo}/`, "")), post: async () => null }, pr: { number: o.pr, head: o.sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
+  const involved = await pullInvolvement({ forge: o.forge ?? "github", reads: jobReads(o.forge ?? "github", env, doFetch), pr: { number: o.pr, head: o.sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
   for (const line of involved.notes) console.log(`terragucci: ${line}`);
   const forge = poster(o.forge ?? "github", env, doFetch, "TG_TOKEN");
   if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether pull request ${o.pr} is approved`);
