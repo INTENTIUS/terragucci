@@ -18,6 +18,9 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 - A pull request's ephemeral copy is planned, applied and destroyed by chant's pull request environments of Terraform roots, with the same state key suffix and records. An azurerm copy's location is now recorded as `az://<account>/<container>/<key>`; copies recorded before are still destroyed.
 - terragucci reads pull requests and who may comment through chant's forge reads. On GitHub, a comment whose author's permission the job's token cannot read is ignored as one without write access; the job no longer fails on it. A rollout no longer takes a pull request from a fork for one of its waves.
 - On GitLab the overdue drift check asks chant which schedules are drift's, by the drift job's own rule. That rule now always leaves out the `comments`, `resume`, `rollouts` and `ephemeral` schedules, whichever of those the config turns on.
+- More waves plan and apply through chant's `terraform-apply` step. The step now takes the keys that used to keep a wave back: `secrets`, `oidc.roles`, `sources` and `cost`, as well as `ci.hooks`, the policy's overrides and its outcomes. It also takes choudoufu, reads of another root's state and a job per identity.
+- On the step each root runs the binary `chant.config.ts` names, found beside the job's binary or the version the root pins. A root that plans with another binary keeps terragucci's own plan, and the job says why. So does a wave under `approval: pr-review` or `approval_rules`.
+- A wave on the step plans its roots one at a time. Each root's plan file is `chant.tfplan` in its own directory.
 
 ## In 0.4.53
 

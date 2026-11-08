@@ -101,7 +101,7 @@ The approval mode decides what else `init` writes.
 
 ### chant.config.ts and the waves' spec
 
-In a repo of plain roots, `init` also writes two files for chant. `chant.config.ts` at the repo's root names each root under `terraform.roots`, keyed by its path. `.chant/op-waves/tf-apply.spec.json` holds the apply waves' rules, which each wave job reads at the commit before the one it applies. Commit both with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root.
+In a repo of plain roots, `init` also writes two files for chant. `chant.config.ts` at the repo's root names each root under `terraform.roots`, keyed by its path. `.chant/op-waves/tf-apply.spec.json` holds the apply waves' rules, which each wave job reads at the commit before the one it applies. Commit both with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root. A wave job runs the binary `terraform.binary` names there; when a root plans with another one, the wave plans and applies it through terragucci's own calls and the job says why.
 
 ### The components file
 

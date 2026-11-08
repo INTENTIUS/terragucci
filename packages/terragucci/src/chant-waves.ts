@@ -141,6 +141,8 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
     step: {
       kind: "terraform-apply",
       root: "{target}",
+      // A root with no terraform.roots entry plans its own directory (chant#4842).
+      dir: "{target}",
       ...(input.lockTimeout !== undefined ? { lockTimeout: input.lockTimeout } : {}),
       ...(input.cone ? { cone: input.cone } : {}),
     },
@@ -157,17 +159,14 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
 
 /**
  * Why a repo's apply cannot run on chant's step contract yet, one reason
- * each; empty when it can. The step needs each root in chant.config.ts's
- * `terraform.roots` (the capability's `root` is that key), and plans the runs
- * a spec lists, so a Terragrunt repo's discovered waves and a composed run
- * keep the call back.
+ * each; empty when it can. The step plans the runs a spec lists one by one,
+ * so a Terragrunt repo's discovered waves and a composed run keep the call
+ * back.
  */
-export function waveStepProblems(o: { terragrunt?: boolean; composed?: boolean; declaredRoots?: ReadonlySet<string>; roots: readonly string[] }): string[] {
+export function waveStepProblems(o: { terragrunt?: boolean; composed?: boolean }): string[] {
   const out: string[] = [];
   if (o.terragrunt) out.push("a Terragrunt repo finds its units when it plans, and a step plans the runs the spec lists");
   if (o.composed) out.push("waves.compose plans the wave's roots as one run, which the step does not");
-  const missing = o.roots.filter((r) => !o.declaredRoots?.has(r));
-  if (missing.length) out.push(`chant.config.ts declares no terraform.roots entry for ${missing.join(", ")}, and the step names a root by that key`);
   return out;
 }
 

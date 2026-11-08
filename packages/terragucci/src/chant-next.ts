@@ -577,50 +577,6 @@ export interface ChantWaveCapabilities {
   registry: { has(kind: string): boolean; kinds?(): string[] };
 }
 
-/** One planned run, as chant's after-plan hook in the wave's process hands it (chant#4614). */
-export interface ChantAfterPlanRun {
-  wave: number;
-  waveName: string;
-  job: "wave" | "decide" | "share" | "group";
-  target: string;
-  planDigest: string;
-  /** The run's plan file, relative to the job's directory. */
-  plan: string;
-  /** The engine's plan document (`show -json`), when the plan names one. */
-  planJson?: string;
-  empty: boolean;
-  destructive: boolean;
-  changeSet?: { entries: { action: string }[] };
-}
-
-/** A policy row on chant's run record (chant#4614). */
-export interface ChantPolicyRow {
-  source: string;
-  result: "passed" | "warned" | "denied" | "held";
-  rules: string[];
-  reason?: string;
-}
-
-/** chant's op-wave job run in this process with after-plan hooks (`@intentius/chant/op`, chant#4614). */
-export interface ChantAfterPlan {
-  runOpWave(options: {
-    spec: object;
-    specFile: string;
-    wave: number;
-    decide?: boolean;
-    share?: number;
-    group?: string;
-    base?: string;
-    cwd?: string;
-    log?: (line: string) => void;
-    capabilities?: unknown;
-    hookExec?: (argv: string[], cwd: string, env?: Record<string, string>) => Promise<number>;
-    afterPlan?: { name: string; onFailure?: "fail" | "approve"; run(r: ChantAfterPlanRun): Promise<{ policy?: ChantPolicyRow[]; files?: string[] } | void> | { policy?: ChantPolicyRow[]; files?: string[] } | void };
-  }): Promise<import("@intentius/chant/op").RunOpWaveResult>;
-  opWavePlanPath(spec: { name: string }, wave: number, target: string): string;
-  spawnExecAsync(argv: string[], cwd: string, env?: Record<string, string>): Promise<number>;
-}
-
 // ── release catalog (terragucci#1297, chant#4595-#4599) ───────────────────
 
 /** A version's status in the catalog. */
