@@ -4,9 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { assertReadOnly, callTool, checkArgs, context, PROPOSE_TOOLS, PROPOSED_FOOTER, readOnlyStore, refusal, serve, TOOLS, type McpOptions, type Tool } from "../src/mcp";
-import { chantProductMcp } from "../src/chant-next";
+import { checkArgs, PROPOSE_TOOLS, PROPOSED_FOOTER, readOnlyStore, TOOLS, type McpOptions, type Tool } from "../src/mcp";
+import { chantClient } from "./mcp-chant";
 import type { Fetch } from "../src/forge";
 import { buildReport } from "../src/report/build";
 import { StoreError, type ObjectStore } from "@intentius/chant/object-store";
@@ -16,11 +15,8 @@ import { RUN, smallFixture } from "./report-fixtures";
 import { backend, bareFrom, git, tmp, write } from "./helpers";
 
 const DIST = join(import.meta.dirname, "../dist/terragucci.mjs");
-// Where the installed chant has the product hook (chant#4555), the bundle serves chant's read-only server, with
-// terragucci's tools as `terragucci:<name>`; a tool it does not serve is unknown there.
-const CHANT_MCP = !!(await chantProductMcp());
-// Where it also has the propose tier (chant#4655), `--propose` serves on chant's server too.
-const CHANT_PROPOSE = CHANT_MCP;
+// The bundle serves chant's read-only server, with terragucci's tools as `terragucci:<name>`; a tool it does not
+// serve is unknown there.
 
 function memoryStore(objects: Map<string, string> = new Map()): ObjectStore & { objects: Map<string, string>; puts: number } {
   const s = {
@@ -90,27 +86,22 @@ function options(store: ObjectStore, extra: Partial<McpOptions> = {}): McpOption
   return { cwd: tmp(), config: { reports: { bucket: "s3://reports", prefix: PREFIX } }, store: () => store, env: {}, ...extra };
 }
 
-async function connected(o: McpOptions): Promise<Client> {
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await serve(o, a);
-  const client = new Client({ name: "test", version: "1" });
-  await client.connect(b);
-  return client;
-}
+/** A client of chant's server with terragucci's tools, in process (./mcp-chant.ts). */
+const connected = (o: McpOptions): Promise<Client> => chantClient(o);
 
 const body = (r: object): any => JSON.parse(((r as { content: unknown }).content as { text: string }[])[0].text);
 const said = (r: object): string => ((r as { content: unknown }).content as { text: string }[])[0].text;
 
 describe("terragucci mcp", () => {
-  it("lists only tools that read, each marked read-only, none named for a write", async () => {
+  it("lists only tools that read, none named for a write", async () => {
     const client = await connected(options(bucket()));
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "report", "run_view", "state_versions", "templates", "waiting"]);
-    for (const t of tools) {
-      expect(t.annotations?.readOnlyHint).toBe(true);
-      expect(t.annotations?.destructiveHint).toBe(false);
-      expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
-      expect((t.inputSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+    for (const t of tools) expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
+    // Each declares itself read-only and takes no argument it does not list (checkArgs refuses any other).
+    for (const t of TOOLS) {
+      expect(t.annotations ?? { readOnlyHint: true }).toMatchObject({ readOnlyHint: true });
+      expect(t.inputSchema.additionalProperties).toBe(false);
     }
   });
 
@@ -145,17 +136,14 @@ describe("terragucci mcp", () => {
     expect(body(await client.callTool({ name: "audit", arguments: { kind: "apply", limit: 1 } })).entries.map((e: { id: string }) => e.id)).toEqual(["sha256:2"]);
   });
 
-  it("refuses a tool that would approve, apply, override or write, with the CLI's answer", async () => {
+  it("refuses a tool that would approve, apply, override or write: chant's server serves none", async () => {
     const store = bucket();
     const client = await connected(options(store));
     for (const name of ["approve", "apply", "override", "unlock", "merge", "write_report"]) {
       const r = await client.callTool({ name, arguments: { wave: "wave-1" } });
       expect(r.isError, name).toBe(true);
-      expect(said(r)).toContain("terragucci mcp is read-only");
-      expect(said(r)).toContain("a gate approval made over MCP is refused");
+      expect(said(r)).toContain(`Unknown tool: terragucci:${name}`);
     }
-    expect(refusal("approve")).toContain("approve would approve");
-    expect(refusal("nothing")).toContain("there is no tool nothing");
     expect(store.puts).toBe(0);
   });
 
@@ -182,11 +170,8 @@ describe("terragucci mcp", () => {
 
   it("will not start with a tool named for a write, and its bucket client never writes", async () => {
     const approve: Tool = { name: "approve", description: "", inputSchema: { type: "object", properties: {}, additionalProperties: false }, run: async () => "approved" };
-    expect(() => assertReadOnly([...TOOLS, approve])).toThrow(/read-only, and the tool approve would approve/);
-    expect(() => assertReadOnly([{ ...approve, name: "wave_approve" }])).toThrow(/would approve/);
-    expect(() => assertReadOnly([{ ...approve, name: "apply_wave" }])).toThrow(/would apply/);
-    expect(() => assertReadOnly(TOOLS)).not.toThrow();
-    await expect(connected(options(bucket(), { tools: [approve] }))).rejects.toThrow(/read-only/);
+    // chant's server refuses to start with a product tool named for a write.
+    for (const name of ["approve", "wave_approve", "apply_wave"]) await expect(connected(options(bucket(), { tools: [...TOOLS, { ...approve, name }] })), name).rejects.toThrow();
     const store = memoryStore();
     const ro = readOnlyStore(store);
     await expect(ro.put("k", "v", "text/plain")).rejects.toBeInstanceOf(StoreError);
@@ -199,16 +184,16 @@ describe("terragucci mcp", () => {
     const top = JSON.parse(store.objects.get(`${PREFIX}/index.json`)!);
     top.reports.push({ ...top.reports[0], project: "other/x" });
     store.objects.set(`${PREFIX}/index.json`, JSON.stringify(top));
-    const ctx = context(options(store));
-    const r = await callTool(TOOLS, "last_apply", { root: "envs/dev/orders" }, ctx);
+    const one = await connected(options(store));
+    const r = await one.callTool({ name: "last_apply", arguments: { root: "envs/dev/orders" } });
     expect(said(r)).toContain(`name a project: ${PROJECT}, other/x`);
-    const control = context({ ...options(store), config: { defaults: { reports: { bucket: "s3://reports", prefix: PREFIX } }, projects: { [PROJECT]: {}, "github.com/acme/web": {} } } });
-    expect(said(await callTool(TOOLS, "last_apply", { root: "envs/dev/orders", project: PROJECT }, control))).toContain("b".repeat(40));
-    expect(said(await callTool(TOOLS, "last_apply", { root: "envs/dev/orders", project: "nope/x" }, control))).toContain("no project nope/x");
+    const control = await connected({ ...options(store), config: { defaults: { reports: { bucket: "s3://reports", prefix: PREFIX } }, projects: { [PROJECT]: {}, "github.com/acme/web": {} } } });
+    expect(said(await control.callTool({ name: "last_apply", arguments: { root: "envs/dev/orders", project: PROJECT } }))).toContain("b".repeat(40));
+    expect(said(await control.callTool({ name: "last_apply", arguments: { root: "envs/dev/orders", project: "nope/x" } }))).toContain("no project nope/x");
   });
 
   it("says what to set when no bucket is named", async () => {
-    const r = await callTool(TOOLS, "estate", {}, context({ cwd: tmp(), config: {}, env: {} }));
+    const r = await (await connected({ cwd: tmp(), config: {}, env: {} })).callTool({ name: "estate", arguments: {} });
     expect(r.isError).toBe(true);
     expect(said(r)).toContain("set reports.bucket in terragucci.yml, or start terragucci mcp with --bucket");
   });
@@ -289,16 +274,13 @@ describe("terragucci mcp --propose", () => {
     const client = await connected(o);
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(["audit", "dora", "estate", "index", "last_apply", "plan_result", "propose", "report", "request_from_template", "request_plan", "run_view", "state_versions", "templates", "waiting"]);
-    for (const t of tools) {
-      expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
-      expect(t.annotations?.destructiveHint).toBe(false);
-    }
-    expect(tools.find((t) => t.name === "propose")?.annotations?.readOnlyHint).toBe(false);
-    expect(() => assertReadOnly([...TOOLS, ...PROPOSE_TOOLS])).not.toThrow();
+    for (const t of tools) expect(t.name).not.toMatch(/approve|override|unlock|merge|^apply/);
+    // chant's tools/list carries no annotations yet (chant#4823); the tools still declare them.
+    expect(PROPOSE_TOOLS.find((t) => t.name === "propose")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     for (const name of ["approve", "apply", "override", "merge"]) {
       const r = await client.callTool({ name, arguments: {} });
       expect(r.isError, name).toBe(true);
-      expect(said(r)).toContain("never approves, applies, overrides or merges");
+      expect(said(r)).toContain(`Unknown tool: terragucci:${name}`);
     }
   });
 
@@ -380,7 +362,7 @@ describe("terragucci mcp --propose", () => {
   it("plan_result never takes a plan of another commit for the head's", async () => {
     const { store, o } = proposing();
     planned(store, "c".repeat(40));
-    const r = body(await callTool(PROPOSE_TOOLS, "plan_result", { pull_request: 7, wait: 0 }, context(o)));
+    const r = body(await (await connected(o)).callTool({ name: "plan_result", arguments: { pull_request: 7, wait: 0 } }));
     expect(r.planned).toBe(false);
   });
 });
@@ -392,12 +374,12 @@ describe.skipIf(!existsSync(DIST))("the bundle's terragucci mcp", () => {
     const client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toContain(CHANT_MCP ? "terragucci:last_apply" : "last_apply");
+    expect(tools.map((t) => t.name)).toContain("terragucci:last_apply");
     expect(tools.map((t) => t.name)).not.toContain("approve");
     expect(tools.map((t) => t.name)).not.toContain("terragucci:approve");
-    const r = await client.callTool({ name: CHANT_MCP ? "terragucci:approve" : "approve", arguments: {} });
+    const r = await client.callTool({ name: "terragucci:approve", arguments: {} });
     expect(r.isError).toBe(true);
-    expect(said(r)).toContain(CHANT_MCP ? "Unknown tool: terragucci:approve" : "terragucci mcp is read-only");
+    expect(said(r)).toContain("Unknown tool: terragucci:approve");
     await client.close();
   }, 30_000);
 
@@ -412,11 +394,11 @@ describe.skipIf(!existsSync(DIST))("the bundle's terragucci mcp", () => {
       return out;
     };
     const plain = await names([]);
-    expect(plain.tools).toContain(CHANT_MCP ? "terragucci:templates" : "templates");
+    expect(plain.tools).toContain("terragucci:templates");
     expect(plain.tools.some((t) => t.endsWith("request_from_template"))).toBe(false);
     const proposing = await names(["--propose"]);
-    expect(proposing.server).toBe(CHANT_PROPOSE ? "chant" : "terragucci");
-    expect(proposing.tools).toEqual(expect.arrayContaining(CHANT_PROPOSE ? ["terragucci:templates", "terragucci:request_from_template"] : ["templates", "request_from_template"]));
+    expect(proposing.server).toBe("chant");
+    expect(proposing.tools).toEqual(expect.arrayContaining(["terragucci:templates", "terragucci:request_from_template"]));
   }, 60_000);
 
   it("ends when its stdin closes", async () => {

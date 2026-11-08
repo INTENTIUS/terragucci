@@ -1018,16 +1018,6 @@ export interface ChantProductMcpHook {
   instructions?: string;
 }
 
-/** chant's in-process CLI with the product tool hook (`@intentius/chant/ci-product`, chant#4555). */
-export interface ChantProductMcp {
-  runChantInProcess(argv: string[], words: object, options?: { mcp?: ChantProductMcpHook }): Promise<number>;
-  PRODUCT_MCP_HOOK_FLOOR: string;
-  /** The chant from which `serve mcp --read-only --propose` serves `forgeWrite` product tools (chant#4655). */
-  PRODUCT_MCP_PROPOSE_FLOOR: string;
-  /** The write words a `forgeWrite` tool's name may hold on that tier (chant#4655). */
-  PRODUCT_TOOL_PROPOSE_WORDS: readonly string[];
-}
-
 /** chant core's release record reader (`lifecycle/release-ledger`'s `parseReleaseLedger`), for a ledger read from another remote. */
 export interface ChantReleaseRead {
   releaseLedgerLines(text: string | null): string[];
@@ -1261,11 +1251,6 @@ const loaders = {
     },
     (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests", "invokeAction") && m.ACTION_ADDRESS instanceof RegExp ? (m as unknown as ChantStateOps) : undefined),
   ),
-  productMcp: once<ChantProductMcp>(
-    () => import("@intentius/chant/ci-product"),
-    (m) => (has(m, "runChantInProcess") && typeof m.PRODUCT_MCP_HOOK_FLOOR === "string" && typeof m.PRODUCT_MCP_PROPOSE_FLOOR === "string" ? (m as unknown as ChantProductMcp) : undefined),
-  ),
-
   agentJob: once<ChantAgentJob>(
     async () => {
       const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
@@ -1394,8 +1379,6 @@ export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("sta
 export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
 /** chant's reader of a gated request's stored proof (chant#4551, #4623), or undefined. */
 export const chantRequestProof = (): Promise<ChantRequestProof | undefined> => load("requestProof");
-/** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
-export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load("productMcp");
 
 /** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */
 export const chantReleaseReadNow = (): ChantReleaseRead | undefined => loaded("releaseRead");
@@ -1444,12 +1427,12 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [opStandDown] = [await chantOpStandDown()];
-  const [stateOps, productMcp, releaseRead] = [await chantStateOps(), await chantProductMcp(), await load("releaseRead")];
+  const [stateOps, releaseRead] = [await chantStateOps(), await load("releaseRead")];
   const agentJob = await chantAgentJob();
   const opGenerator = await chantOpGenerator();
   const holdRecord = await chantHoldRecord();
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
