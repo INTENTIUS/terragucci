@@ -6,14 +6,20 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { verifyWebhook } from "@intentius/chant/notify-verify";
-import { readRelayToken } from "@intentius/chant/notify";
-import { driftNotice, notify, notifyDrift, readOutcome, replanUrl, runUrl, slackDrift, slackMessage, teamsDrift, teamsMessage, waveNotice, webhookEvent } from "../src/notify";
+import { readRelayToken, slackMessage as chantSlack, teamsMessage as chantTeams, type RelayButtons } from "@intentius/chant/notify";
+import { driftEvent, driftNotice, messageWords, notify, notifyDrift, readOutcome, replanUrl, runUrl, waveChat, waveNotice, webhookEvent, type DriftNotice, type WaveNotice } from "../src/notify";
 import { applyScript, renderPipeline } from "../src/render";
 import { driftOp, tmp, validate, write } from "./helpers";
 
 // chant's chant.notify/v1, which the package ships as @intentius/terragucci/notify.schema.json.
 const NOTIFY_SCHEMA = JSON.parse(readFileSync(createRequire(import.meta.url).resolve("@intentius/chant/notify.schema.json"), "utf-8"));
 const quick = { sleep: async () => {} };
+
+// The messages notify posts: chant's renderers on a wave's chat event, or on the drift event, in terragucci's message words.
+const slackMessage = (n: WaveNotice, relay?: RelayButtons) => chantSlack(waveChat(n), relay, messageWords(n.relay)) as { text: string; blocks?: unknown[] };
+const teamsMessage = (n: WaveNotice, relay?: RelayButtons) => chantTeams(waveChat(n), relay, messageWords(n.relay));
+const slackDrift = (n: DriftNotice) => chantSlack(driftEvent(n), undefined, messageWords()) as { text: string; blocks?: unknown[] };
+const teamsDrift = (n: DriftNotice) => chantTeams(driftEvent(n), undefined, messageWords());
 
 const ENV = { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "42" };
 const waiting: WaveOutcome = { schema: "terragucci.outcome/v1", status: "waiting", exit: 3, wave: 2, roots: ["envs/prod/app", "envs/prod/db"], line: "wave 2 waits: terragucci approve wave-2 --plan jcs1-sha256:ab", set_digest: "jcs1-sha256:ab", approval: "waiting", approval_mode: "ledger", approve_command: "terragucci approve wave-2 --plan jcs1-sha256:ab" };

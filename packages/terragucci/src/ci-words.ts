@@ -37,7 +37,21 @@ export const TERRAGUCCI_WORDS = {
   adoptMarkers: ["<!-- terragucci:waves -->"],
   bin: "npx --no-install terragucci",
   // chant#4610: the source and header prefix terragucci's webhooks have always carried, and its wave label.
-  notify: { source: "terragucci", wave: "wave {k}", headers: "x-terragucci" },
+  notify: {
+    source: "terragucci",
+    wave: "wave {k}",
+    headers: "x-terragucci",
+    // chant#4818: the labels of the Slack and Teams messages, and the drift notice's Re-plan button.
+    message: {
+      targets: "Roots",
+      noTargets: "see the run",
+      reason: "Outcome",
+      again: "run the wave again",
+      wave: "Wave",
+      teamsReport: false,
+      rerun: { label: "Re-plan", action: "terragucci-replan", block: "terragucci-drift" },
+    },
+  },
 };
 
 let checked: CiProductWords | undefined;
