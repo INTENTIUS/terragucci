@@ -108,16 +108,16 @@ export interface Shape {
  * choudoufu pins the OpenTofu language it forks in required_version, not a
  * release of its own; it has no `test`; under live resource markers it
  * refuses the refresh-only plan drift runs, so drift plans such a root in
- * full (`refreshOnlyOnLiveRoots`, liveDrift in ./report/drift.ts); and its applies are kept apart
- * per resource, where every other binary's are kept apart per root by the
- * backend's state lock (`applyScope`, ./apply-rows.ts). Its plan answers a
+ * full (`refreshOnlyOnLiveRoots`, liveDrift in ./report/drift.ts). How its
+ * applies are kept apart is the terraform lexicon's grain (`applyScope`,
+ * ./apply-rows.ts). Its plan answers a
  * `terraform_estate_outputs` read from another estate's plan
  * (`estateOutputsFrom`, ./estate-planned.ts).
  */
-export const BINARY: Record<Binary, { releaseInRequiredVersion: boolean; test: boolean; refreshOnlyOnLiveRoots: boolean; applyScope: "resource" | "root"; estateOutputsFrom: boolean }> = {
-  tofu: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root", estateOutputsFrom: false },
-  terraform: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, applyScope: "root", estateOutputsFrom: false },
-  choudoufu: { releaseInRequiredVersion: false, test: false, refreshOnlyOnLiveRoots: false, applyScope: "resource", estateOutputsFrom: true },
+export const BINARY: Record<Binary, { releaseInRequiredVersion: boolean; test: boolean; refreshOnlyOnLiveRoots: boolean; estateOutputsFrom: boolean }> = {
+  tofu: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, estateOutputsFrom: false },
+  terraform: { releaseInRequiredVersion: true, test: true, refreshOnlyOnLiveRoots: true, estateOutputsFrom: false },
+  choudoufu: { releaseInRequiredVersion: false, test: false, refreshOnlyOnLiveRoots: false, estateOutputsFrom: true },
 };
 
 /** Whether drift plans a root under live resource markers in full, since the binary refuses a refresh-only plan there. */

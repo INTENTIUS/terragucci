@@ -13,6 +13,7 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 ## In 0.4.54
 
 - Every record terragucci writes on `chant/lifecycle`, such as a state export, a lock release, a migration, an agent run or a template request, goes through chant's ledger writer. In a checkout with no remote the record stays on the local branch, where the command used to fail.
+- A choudoufu wave holds its resources only through chant's row leases, in `_locks/rows/pr-apply.json`; `_locks/apply-rows.json` is no longer read or written. Whether a holding run is gone is chant's answer too: a holder that keeps a heartbeat is judged by it, and `CHANT_LOCK_STALE` and `CHANT_FORGE_TOKEN` are read before `TG_LOCK_STALE` and `TG_TOKEN`.
 
 ## In 0.4.53
 
