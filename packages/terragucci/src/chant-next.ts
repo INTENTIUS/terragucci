@@ -1169,21 +1169,8 @@ function once<T>(load: () => Promise<unknown>, pick: (m: Record<string, unknown>
 const has = (m: Record<string, unknown>, ...names: string[]): boolean => names.every((n) => typeof m[n] === "function");
 
 const loaders = {
-  compose: once<ChantCompose>(
-    () => import("@intentius/chant-lexicon-terraform/compose"),
-    (m) => (has(m, "compositionFor", "moduleNames", "readOrder") ? (m as unknown as ChantCompose) : undefined),
-  ),
-  composeRun: once<ChantComposeRun>(
-    // One subpath at a time, for the reason inTurn gives.
-    async () => {
-      const run: object = await import("@intentius/chant-lexicon-terraform/compose/run");
-      const estate: object = await import("@intentius/chant-lexicon-terraform/compose/estate");
-      const root: object = await import("@intentius/chant-lexicon-terraform/compose/root");
-      const slice: object = await import("@intentius/chant-lexicon-terraform/compose/slice");
-      return { ...slice, ...root, ...estate, ...run };
-    },
-    (m) => (has(m, "ComposedRun", "EstateRun", "writeEstateRoot", "moduleValues") ? (m as unknown as ChantComposeRun) : undefined),
-  ),
+
+
   state: once<ChantState>(
     () => import("@intentius/chant-lexicon-terraform/state"),
     (m) => (has(m, "takeLocksWithSources", "SourceLockedError", "StateLockedError") ? (m as unknown as ChantState) : undefined),
@@ -1342,10 +1329,6 @@ function loaded<K extends ChantNextPart>(part: K): Awaited<ReturnType<(typeof lo
   return (settled.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>> | undefined;
 }
 
-/** chant's composition (`/compose`), or undefined when the installed chant has none. */
-export const chantCompose = (): Promise<ChantCompose | undefined> => load("compose");
-/** chant's composed and estate runs (`/compose/run`, `/compose/estate`, `/compose/root`, `/compose/slice`), or undefined. */
-export const chantComposeRun = (): Promise<ChantComposeRun | undefined> => load("composeRun");
 /** chant's lock code (`/state`), or undefined. */
 export const chantState = (): Promise<ChantState | undefined> => load("state");
 /** chant's plan shape (`/plan-shape`), or undefined. */
@@ -1423,7 +1406,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, checkHooks, bucketCheck, tf046, moduleCatalog, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantOpWaveStep(), chantWaveCapabilities()]);
+  const [state, planShape, checkHooks, bucketCheck, tf046, moduleCatalog, opWaveStep, waveCapabilities] = await Promise.all([chantState(), chantPlanShape(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [opStandDown] = [await chantOpStandDown()];
@@ -1434,5 +1417,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
