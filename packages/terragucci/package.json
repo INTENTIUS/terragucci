@@ -1,6 +1,6 @@
 {
   "name": "@intentius/terragucci",
-  "version": "0.4.52",
+  "version": "0.4.53",
   "description": "Terraform ops and governance.",
   "license": "Apache-2.0",
   "type": "module",
