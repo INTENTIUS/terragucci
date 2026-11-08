@@ -1,6 +1,6 @@
 /**
  * chant's release catalog and the terraform lexicon's registry catalog parts,
- * imported directly: the pin (0.124.76) carries both. The shapes are the
+ * imported directly: the pin (0.124.77) carries both. The shapes are the
  * looser interfaces in ./chant-next.ts, which the rest of terragucci is typed against.
  */
 import * as changelog from "@intentius/chant/lifecycle/release-changelog";
