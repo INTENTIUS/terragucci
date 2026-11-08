@@ -7,9 +7,9 @@ import { stateObject, stateVersion } from "../src/backend";
 import { copyBackend, unitBackend } from "../src/ephemeral";
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
-import { currentSerial, gitlabState, hasVersion, isGitLabAddress, probeLock, readVersion, releaseLock, shownUrl, suffixedGitLabAddress, type GitLabFetch } from "../src/gitlab-state";
+import type { GitLabFetch } from "@intentius/chant-lexicon-terraform/state/gitlab";
 import type { BinaryExec } from "../src/migrate";
-import type { S3Fetch } from "../src/report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { stateAddress } from "../src/state-address";
 import { lockDigest, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { chantGated, exportRecords, exportRequest, unlockRecords } from "./gated-helpers";
@@ -67,58 +67,6 @@ const ENV = { TF_HTTP_PASSWORD: "job-token" };
 const initialised = (config: Record<string, unknown>): string => write(tmp(), { ".terraform/terraform.tfstate": JSON.stringify({ version: 3, backend: { type: "http", config, hash: 1 } }) });
 
 describe("GitLab-managed state", () => {
-  it("is an http backend whose address is a project's state API, read from the block, else the TF_HTTP_ variables", () => {
-    expect(isGitLabAddress(ADDRESS)).toBe(true);
-    expect(isGitLabAddress("https://gitlab.test/group/gitlab/api/v4/projects/group%2Fapp/terraform/state/net/")).toBe(true);
-    expect(isGitLabAddress("https://state.example.com/net")).toBe(false);
-    expect(isGitLabAddress(`${ADDRESS}/lock`)).toBe(false);
-    expect(isGitLabAddress("not a url")).toBe(false);
-    const s = gitlabState(CONFIG, ENV)!;
-    expect(s).toMatchObject({ address: ADDRESS, name: "app", lockAddress: `${ADDRESS}/lock`, unlockAddress: `${ADDRESS}/lock`, lockMethod: "POST", unlockMethod: "DELETE" });
-    expect(s.auth).toBe(`Basic ${Buffer.from("gitlab-ci-token:job-token").toString("base64")}`);
-    // An empty block: everything from the job's variables, as the binary reads them.
-    const fromEnv = gitlabState({}, { TF_HTTP_ADDRESS: `${API}/my%20state`, TF_HTTP_LOCK_ADDRESS: `${API}/my%20state/lock`, TF_HTTP_USERNAME: "u", TF_HTTP_PASSWORD: "p" })!;
-    expect(fromEnv).toMatchObject({ name: "my state", lockAddress: `${API}/my%20state/lock`, lockMethod: "LOCK" });
-    expect(fromEnv.unlockAddress).toBeUndefined();
-    expect(gitlabState({ address: "https://state.example.com/net" }, {})).toBeUndefined();
-    expect(shownUrl("https://u:secret@gitlab.test/api/v4/projects/42/terraform/state/app?x=1")).toBe(ADDRESS);
-  });
-
-  it("suffixes the state name of an address and of its lock", () => {
-    expect(suffixedGitLabAddress(ADDRESS, "pr-7")).toBe(`${API}/app-pr-7`);
-    expect(suffixedGitLabAddress(`${ADDRESS}/lock`, "pr-7")).toBe(`${API}/app-pr-7/lock`);
-    expect(suffixedGitLabAddress(`${ADDRESS}/`, "pr-7")).toBe(`${API}/app-pr-7`);
-    expect(suffixedGitLabAddress("https://state.example.com/net", "pr-7")).toBeUndefined();
-  });
-
-  it("reads the serial, checks and reads a version by serial, with the backend's credentials", async () => {
-    const g = gitlab();
-    const s = gitlabState(CONFIG, ENV)!;
-    expect(await currentSerial(s, g.fetch)).toEqual({ serial: 2, lineage: "L" });
-    expect(await hasVersion(s, "1", g.fetch)).toBe(true);
-    expect(await hasVersion(s, "9", g.fetch)).toBe(false);
-    expect(g.seen.at(-1)).toMatchObject({ method: "HEAD", url: `${ADDRESS}/versions/9` });
-    expect(await readVersion(s, "1", g.fetch)).toBe(V(1, "secret-1"));
-    expect(await readVersion(s, "9", g.fetch)).toBeUndefined();
-    expect(await currentSerial(gitlabState({ ...CONFIG, address: `${API}/none` }, ENV)!, g.fetch)).toBeUndefined();
-    await expect(currentSerial(gitlabState(CONFIG, { TF_HTTP_PASSWORD: "wrong" })!, g.fetch)).rejects.toThrow(/answered 401 .* TF_HTTP_PASSWORD/);
-  });
-
-  it("reads who holds the lock by asking for it, and gives back one it took", async () => {
-    const g = gitlab();
-    const s = gitlabState(CONFIG, ENV)!;
-    expect(await probeLock(s, g.fetch)).toBeUndefined();
-    expect(g.locks.size).toBe(0);
-    expect(g.seen.map((x) => x.method)).toEqual(["POST", "DELETE"]);
-    g.locks.set("app", JSON.stringify({ ID: "held-1", Who: "root", Created: T(5) }));
-    expect(JSON.parse((await probeLock(s, g.fetch))!)).toEqual({ ID: "held-1", Who: "root", Created: T(5) });
-    await expect(releaseLock(s, "other", g.fetch)).rejects.toThrow(/another lock holds the state/);
-    expect(g.locks.has("app")).toBe(true);
-    await releaseLock(s, "held-1", g.fetch);
-    expect(g.locks.has("app")).toBe(false);
-    await expect(probeLock(gitlabState({ address: ADDRESS }, ENV)!, g.fetch)).rejects.toThrow(/names no lock_address/);
-  });
-
   it("is where a root's state is, and its version is the serial GitLab holds", async () => {
     const g = gitlab();
     const dir = initialised(CONFIG);

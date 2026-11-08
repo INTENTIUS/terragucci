@@ -35,7 +35,7 @@ import { auditEntries, clients, readChangesOf, readEdgesOf, readInventoryOf, rea
 import type { AuditEntry } from "./report/audit";
 import { buildHistory, type ChangeRow } from "./report/history";
 import type { Inventory } from "./report/inventory";
-import type { ObjectStore, StoreFetch } from "./report/object-store";
+import type { ObjectStore, StoreFetch } from "@intentius/chant/object-store";
 import type { StateEdges } from "./report/state-edges";
 import { changesKey, edgesKey, inventoryKey, versionsKey } from "./report/store";
 import type { Versions } from "./report/versions";

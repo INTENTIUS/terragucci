@@ -16,7 +16,7 @@ import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
 import type { Report } from "../report/schema";
 import { storeFromEnv } from "../report/bucket";
-import type { S3Fetch } from "../report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { copyToRun } from "../report/store";
 import { forgeOf, git, propose, worktree, type Proposed } from "./change";
 import { IDENTITY } from "../reconcile";

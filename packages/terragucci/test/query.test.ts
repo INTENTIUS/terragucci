@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config";
 import { describeQuery, describeTable, isSql, query, QUERY_TABLES, readTable, runQuery, type QueryOptions } from "../src/query";
-import type { ObjectStore } from "../src/report/object-store";
+import type { ObjectStore } from "@intentius/chant/object-store";
 import { changesKey, edgesKey, inventoryKey, versionsKey } from "../src/report/store";
 
 const PREFIX = "tg";

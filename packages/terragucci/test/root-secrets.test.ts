@@ -16,7 +16,7 @@ import { redactPlan, sensitiveStrings } from "../src/report/redact";
 import { scrubPlanText } from "../src/report/plan-text";
 import { settingsChanged } from "../src/affected";
 import { REDACTED } from "../src/report/schema";
-import type { StoreFetch } from "../src/report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 
 const DEV_PLAN = "arn:aws:iam::111111111111:role/dev-plan";
 const PROD_PLAN = "arn:aws:iam::222222222222:role/prod-plan";

@@ -74,7 +74,7 @@ import {
   type AuditProject,
   type AuditSummary,
 } from "./report/audit";
-import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
+import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore, type StoreFetch } from "@intentius/chant/object-store";
 import type { Report } from "./report/schema";
 import { runFacts } from "./report/stage";
 import { readStateVersions, type StateVersions } from "./report/state-versions";

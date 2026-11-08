@@ -7,7 +7,7 @@ import { stateObject, stateStore, stateVersion, type StoredState } from "../src/
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
 import { MIGRATE_LEDGER, OVERRIDE_FILE, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
-import type { StoreFetch } from "../src/report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { lockDigest, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { chantGated, exportRecords, exportRequest, migrationRecord, unlockRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { buildReport, planFiles, type RootInput } from "../src/report/build";
 import { addToChanges, changeRows, type ChangeRow } from "../src/report/history";
 import { markPerpetual, PERPETUAL_WAVES } from "../src/report/perpetual";
-import type { S3Fetch } from "../src/report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import type { Report } from "../src/report/schema";
 import { markRecurring } from "../src/report/stage";
 import { changesKey } from "../src/report/store";

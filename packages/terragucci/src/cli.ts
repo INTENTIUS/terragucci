@@ -177,7 +177,7 @@ import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
 import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
 import { exportState } from "./export";
-import { StoreError } from "./report/object-store";
+import { StoreError } from "@intentius/chant/object-store";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";

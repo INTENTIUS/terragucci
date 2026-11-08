@@ -13,7 +13,7 @@
  * A sensitive variable's value is never read: the API gives none, and a value
  * a server sends anyway is dropped here.
  */
-import type { StoreFetch } from "../report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { tfeClient, type ApiResource } from "../state-source";
 import type { PlatformRead, PlatformVar, PlatformWorkspace } from "./workspaces";
 

@@ -9,7 +9,7 @@ import { assertReadOnly, callTool, checkArgs, context, PROPOSE_TOOLS, PROPOSED_F
 import { chantProductMcp } from "../src/chant-next";
 import type { Fetch } from "../src/forge";
 import { buildReport } from "../src/report/build";
-import { StoreError, type ObjectStore } from "../src/report/object-store";
+import { StoreError, type ObjectStore } from "@intentius/chant/object-store";
 import type { Report } from "../src/report/schema";
 import { addToIndex, indexEntry, runPath } from "../src/report/store";
 import { RUN, smallFixture } from "./report-fixtures";

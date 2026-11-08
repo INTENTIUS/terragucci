@@ -102,7 +102,7 @@ import {
 import { applyLayers, backendBlock, findRoots, globMatch } from "./detect";
 import { detectShape, type Shape } from "./shape";
 import { prForgeOf, type Fetch } from "./forge";
-import { isGitLabAddress, shownUrl, suffixedGitLabAddress } from "./gitlab-state";
+import { isGitLabAddress, shownUrl, suffixedGitLabAddress } from "@intentius/chant-lexicon-terraform/state/gitlab";
 import { unitPlace } from "./migrate";
 import { RootBinaries } from "./pins";
 import { storeFromEnv } from "./report/bucket";

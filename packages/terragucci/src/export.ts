@@ -27,7 +27,7 @@
  * (bucket versioning), gcs (object versioning, a version is a generation),
  * azurerm (blob versioning, or the snapshots an apply's version record
  * takes when the backend sets `snapshot = true`), and GitLab-managed states
- * (./gitlab-state.ts), whose version id is the serial. A GitLab request with
+ * (the terraform lexicon's gitlabStore), whose version id is the serial. A GitLab request with
  * `--version` checks it with a HEAD; one without reads the current state for
  * its serial, which GitLab answers no other way, and keeps nothing else of
  * it. It refuses roots with a `cloud` block. A Terragrunt unit is prepared the way a
@@ -54,8 +54,8 @@ import { isStored, READS_VERSIONS, stateObject, stateStore, type StateObject } f
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
 import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
-import { currentSerial, hasVersion, readVersion } from "./gitlab-state";
-import type { StoreFetch } from "./report/object-store";
+import { gitlabStore } from "@intentius/chant-lexicon-terraform/state/gitlab";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { sealRefusal } from "./seal";
 import { chantStateOps, opMessage, requestRules } from "./gated-request";
 
@@ -214,6 +214,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
     const gl = object.gitlab;
     const fetchFn = options.fetch ?? (globalThis.fetch as unknown as StoreFetch);
     location = object.location;
+    const state = gitlabStore(gl, fetchFn as never, "terragucci");
     const gitlab = async <T>(call: () => Promise<T>): Promise<T> => {
       try {
         return await call();
@@ -222,15 +223,15 @@ export async function exportState(repo: string, options: ExportOptions): Promise
       }
     };
     if (!version) {
-      const now = await gitlab(() => currentSerial(gl, fetchFn));
+      const now = await gitlab(() => state.serial());
       if (!now) throw new ConfigError(`state export: ${location} holds no state`);
       version = String(now.serial);
     } else if (!/^\d+$/.test(version)) {
       throw new ConfigError(`state export: ${root}'s state is GitLab-managed, whose versions are serials; --version ${version} is not one`);
-    } else if (!(await gitlab(() => hasVersion(gl, version!, fetchFn)))) {
+    } else if (!(await gitlab(() => state.hasVersion(version!)))) {
       throw new ConfigError(`state export: ${location} has no version ${version}; GitLab keeps no version with that serial`);
     }
-    download = (v) => gitlab(() => readVersion(gl, v, fetchFn));
+    download = (v) => gitlab(() => state.readVersion(v));
   } else {
     if (!isStored(object)) throw new ConfigError(`state export: ${root}'s state is a local file, ${(object as { path: string }).path}, which keeps no versions; export reads a version of an s3, gcs or azurerm state by its id`);
     const store = await stateStore(object, options.fetch);

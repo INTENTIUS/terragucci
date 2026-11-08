@@ -1,14 +1,13 @@
-import { createHmac, createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
+import { createPublicKey, createVerify, generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
 import { estate } from "../src/estate";
-import { AzureBlobClient, azureFromEnv, blobSas, sharedKey, AZURE_VERSION } from "../src/report/azure-blob";
-import { ownStore, storeFromEnv } from "../src/report/bucket";
+import { AzureBlobClient, azureFromEnv, AZURE_VERSION, GcsClient, gcsFromEnv, StoreConflict, StoreError, type StoreFetch, S3Client } from "@intentius/chant/object-store";
+import { STORE_WORDS } from "../src/report/object-store";
+import { storeFromEnv } from "../src/report/bucket";
 import { buildReport } from "../src/report/build";
-import { GcsClient, gcsFromEnv, signedUrl } from "../src/report/gcs";
-import { parseReportsBucket, StoreConflict, StoreError, type StoreFetch } from "../src/report/object-store";
-import { S3Client } from "../src/report/s3";
+import { parseReportsBucket } from "../src/report/object-store";
 import { updateIndex, indexEntry, uploadReport, writeReportDir } from "../src/report/store";
 import { RUN, smallFixture } from "./report-fixtures";
 import { tmp, write } from "./helpers";
@@ -82,15 +81,15 @@ describe("reports.bucket", () => {
   it("picks the client from the scheme and the identity from the job's environment", () => {
     const dir = tmp();
     write(dir, { "token": "forge-token", "gcp.json": "{}" });
-    // storeFromEnv hands back a store that goes through chant's client when the installed chant has one (#1282 part b); ownStore is the client it checks with first, and the fallback.
+    // storeFromEnv hands back chant's client for the scheme.
     const s3Env = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
-    expect(ownStore({ bucket: "s3://b" }, s3Env)).toBeInstanceOf(S3Client);
+    expect(storeFromEnv({ bucket: "s3://b" }, s3Env)).toBeInstanceOf(S3Client);
     expect(storeFromEnv({ bucket: "s3://b" }, s3Env).location).toBe("s3://b");
     const gcsEnv = { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "gcp.json") };
-    expect(ownStore({ bucket: "gs://acme-reports" }, gcsEnv)).toBeInstanceOf(GcsClient);
+    expect(storeFromEnv({ bucket: "gs://acme-reports" }, gcsEnv)).toBeInstanceOf(GcsClient);
     expect(storeFromEnv({ bucket: "gs://acme-reports" }, gcsEnv).location).toBe("gs://acme-reports");
     const azEnv = { ARM_TENANT_ID: "t", ARM_CLIENT_ID: "c", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") };
-    expect(ownStore({ bucket: "az://acmereports/terragucci" }, azEnv)).toBeInstanceOf(AzureBlobClient);
+    expect(storeFromEnv({ bucket: "az://acmereports/terragucci" }, azEnv)).toBeInstanceOf(AzureBlobClient);
     expect(storeFromEnv({ bucket: "az://acmereports/terragucci" }, azEnv).location).toBe("az://acmereports/terragucci");
     expect(() => storeFromEnv({ bucket: "az://acmereports/terragucci" }, {})).toThrow(/give the job oidc.azure \(it sets ARM_TENANT_ID, ARM_CLIENT_ID and ARM_OIDC_TOKEN_FILE_PATH\), or set AZURE_STORAGE_KEY/);
     expect(() => storeFromEnv({ bucket: "gs://acme-reports" }, {})).toThrow(/give the job oidc.gcp \(it sets GOOGLE_APPLICATION_CREDENTIALS\)/);
@@ -99,48 +98,6 @@ describe("reports.bucket", () => {
 });
 
 describe("Azure Blob Storage", () => {
-  it("defaults the endpoint to the account's, an account key wins over OIDC, and AZURE_AUTHORITY_HOST moves Entra ID", () => {
-    const oidc = { ARM_TENANT_ID: "tenant", ARM_CLIENT_ID: "client", ARM_OIDC_TOKEN_FILE_PATH: "/tmp/t" };
-    expect(azureFromEnv({ account: "acme", container: "c" }, oidc)).toEqual({ account: "acme", container: "c", endpoint: "https://acme.blob.core.windows.net", oidc: { tenantId: "tenant", clientId: "client", tokenFile: "/tmp/t", authority: "https://login.microsoftonline.com" } });
-    expect(azureFromEnv({ account: "acme", container: "c" }, { ...oidc, AZURE_AUTHORITY_HOST: "https://login.microsoftonline.us/" })).toMatchObject({ oidc: { authority: "https://login.microsoftonline.us" } });
-    expect(azureFromEnv({ account: "devstoreaccount1", container: "c", endpoint: "http://azurite:10000/devstoreaccount1/" }, { ...oidc, AZURE_STORAGE_KEY: "k" })).toEqual({ account: "devstoreaccount1", container: "c", endpoint: "http://azurite:10000/devstoreaccount1", accountKey: "k" });
-  });
-
-  it("signs Shared Key over the documented string-to-sign, with the emulator's path and the query on lines of their own", () => {
-    const headers = { "x-ms-date": "Wed, 07 Oct 2026 12:00:00 GMT", "x-ms-version": AZURE_VERSION, "x-ms-blob-type": "BlockBlob", "content-type": "application/json", "content-length": "2", "if-none-match": "*" };
-    const auth = sharedKey("devstoreaccount1", AZURITE_KEY, "PUT", "http://azurite:10000/devstoreaccount1/reports/a/index.json?comp=x&B=2", headers);
-    const toSign = [
-      "PUT", "", "", "2", "", "application/json", "", "", "", "*", "", "",
-      "x-ms-blob-type:BlockBlob",
-      "x-ms-date:Wed, 07 Oct 2026 12:00:00 GMT",
-      `x-ms-version:${AZURE_VERSION}`,
-      "/devstoreaccount1/devstoreaccount1/reports/a/index.json",
-      "b:2",
-      "comp:x",
-    ].join("\n");
-    expect(auth).toBe(`SharedKey devstoreaccount1:${createHmac("sha256", Buffer.from(AZURITE_KEY, "base64")).update(toSign).digest("base64")}`);
-    // A zero length is signed as empty.
-    expect(sharedKey("a", AZURITE_KEY, "PUT", "https://a.blob.core.windows.net/c/k", { "content-length": "0" })).toBe(sharedKey("a", AZURITE_KEY, "PUT", "https://a.blob.core.windows.net/c/k", {}));
-  });
-
-  it("a SAS is the 2020-12-06 layout: a service SAS with the account key, a user delegation SAS with the key's fields", () => {
-    const at = { account: "acme", container: "terragucci", endpoint: "https://acme.blob.core.windows.net" };
-    const se = new Date("2026-10-08T12:00:00Z");
-    const service = new URLSearchParams(blobSas(at, "reports/estate.html", se, { accountKey: AZURITE_KEY }));
-    expect(Object.fromEntries([...service].filter(([k]) => k !== "sig"))).toEqual({ sv: AZURE_VERSION, sr: "b", sp: "r", se: "2026-10-08T12:00:00Z", spr: "https" });
-    const serviceSign = ["r", "", "2026-10-08T12:00:00Z", "/blob/acme/terragucci/reports/estate.html", "", "", "https", AZURE_VERSION, "b", "", "", "", "", "", "", ""].join("\n");
-    expect(service.get("sig")).toBe(createHmac("sha256", Buffer.from(AZURITE_KEY, "base64")).update(serviceSign).digest("base64"));
-
-    const key = { oid: "oid-1", tid: "tid-1", start: "2026-10-07T12:00:00Z", expiry: "2026-10-08T12:00:00Z", service: "b", version: AZURE_VERSION, value: Buffer.from("delegation").toString("base64") };
-    const ud = new URLSearchParams(blobSas(at, "reports/estate.html", se, { key }));
-    expect(Object.fromEntries([...ud].filter(([k]) => k !== "sig"))).toEqual({ sv: AZURE_VERSION, sr: "b", sp: "r", se: "2026-10-08T12:00:00Z", spr: "https", skoid: "oid-1", sktid: "tid-1", skt: key.start, ske: key.expiry, sks: "b", skv: AZURE_VERSION });
-    const udSign = ["r", "", "2026-10-08T12:00:00Z", "/blob/acme/terragucci/reports/estate.html", "oid-1", "tid-1", key.start, key.expiry, "b", AZURE_VERSION, "", "", "", "", "https", AZURE_VERSION, "b", "", "", "", "", "", "", ""].join("\n");
-    expect(udSign.split("\n")).toHaveLength(24);
-    expect(ud.get("sig")).toBe(createHmac("sha256", Buffer.from("delegation")).update(udSign).digest("base64"));
-    // Over plain http (an emulator) the link names no protocol.
-    expect(new URLSearchParams(blobSas({ ...at, endpoint: "http://azurite:10000/acme" }, "k", se, { accountKey: AZURITE_KEY })).get("spr")).toBeNull();
-  });
-
   it("with the job's OIDC identity: one client assertion at Entra ID, a bearer on every request, and a user delegation key for the link", async () => {
     const dir = tmp();
     write(dir, { token: "forge-oidc-token\n" });
@@ -160,7 +117,7 @@ describe("Azure Blob Storage", () => {
       expect(init.headers["x-ms-version"]).toBe(AZURE_VERSION);
       return store.fetch(url, init);
     };
-    const client = new AzureBlobClient(azureFromEnv({ account: "acme", container: "terragucci" }, { ARM_TENANT_ID: "tenant-1", ARM_CLIENT_ID: "client-1", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") }), fake);
+    const client = new AzureBlobClient(azureFromEnv({ account: "acme", container: "terragucci", ...STORE_WORDS }, { ARM_TENANT_ID: "tenant-1", ARM_CLIENT_ID: "client-1", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") }), fake);
     const report = buildReport({ run: RUN, roots: smallFixture() });
     const out = tmp();
     writeReportDir(out, report, new Map());
@@ -195,24 +152,12 @@ describe("Azure Blob Storage", () => {
 
     const dir = tmp();
     write(dir, { token: "t" });
-    const refused = new AzureBlobClient(azureFromEnv({ account: "acme", container: "c" }, { ARM_TENANT_ID: "t", ARM_CLIENT_ID: "c1", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") }), recorder(() => ({ status: 400, body: JSON.stringify({ error: "invalid_client", error_description: "AADSTS700213: No matching federated identity record found.\r\nTrace ID: x" }) })).fetch);
+    const refused = new AzureBlobClient(azureFromEnv({ account: "acme", container: "c", ...STORE_WORDS }, { ARM_TENANT_ID: "t", ARM_CLIENT_ID: "c1", ARM_OIDC_TOKEN_FILE_PATH: join(dir, "token") }), recorder(() => ({ status: 400, body: JSON.stringify({ error: "invalid_client", error_description: "AADSTS700213: No matching federated identity record found.\r\nTrace ID: x" }) })).fetch);
     await expect(refused.get("index.json")).rejects.toThrow("Entra ID refused the OIDC token for client c1: 400 invalid_client: AADSTS700213: No matching federated identity record found.");
   });
 });
 
 describe("Google Cloud Storage", () => {
-  it("builds the V4 canonical request and string-to-sign of Google's conformance tests (googleapis/conformance-tests, storage/v1, Emulator host)", async () => {
-    let signed = "";
-    const url = await signedUrl("https://xyz.googleapis.com", "test-bucket", "test-object", GCS_KEY.client_email, 10, new Date("2019-02-01T09:00:00Z"), async (s) => {
-      signed = s;
-      return Buffer.from("ab", "hex");
-    });
-    expect(signed).toBe("GOOG4-RSA-SHA256\n20190201T090000Z\n20190201/auto/storage/goog4_request\n4f6f519cc03e25d19fcd476d7a45bffcccdba33d10e00214a0f2debc204e2386");
-    expect(url).toBe(
-      "https://xyz.googleapis.com/test-bucket/test-object?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=test-iam-credentials%40dummy-project-id.iam.gserviceaccount.com%2F20190201%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20190201T090000Z&X-Goog-Expires=10&X-Goog-SignedHeaders=host&X-Goog-Signature=ab",
-    );
-  });
-
   it("with the job's OIDC identity: STS, then the service account, then the JSON API on generations; the link is signed through signBlob", async () => {
     const dir = tmp();
     write(dir, {
@@ -255,7 +200,7 @@ describe("Google Cloud Storage", () => {
       expect(init.headers.authorization).toBe("Bearer sa-token");
       return store.fetch(url, init);
     };
-    const client = new GcsClient(gcsFromEnv({ bucket: "acme-reports" }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "creds.json") }), fake);
+    const client = new GcsClient(gcsFromEnv({ bucket: "acme-reports", ...STORE_WORDS }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "creds.json") }), fake);
     const report = buildReport({ run: RUN, roots: smallFixture() });
     const out = tmp();
     writeReportDir(out, report, new Map());
@@ -287,7 +232,7 @@ describe("Google Cloud Storage", () => {
       const u = new URL(q.url);
       return q.method === "POST" ? (u.searchParams.get("name") ?? undefined) : decodeURIComponent(u.pathname.split("/o/")[1] ?? "");
     }, "generation");
-    const client = new GcsClient(gcsFromEnv({ bucket: "b", endpoint: "http://gcs:4443/" }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "key.json") }), store.fetch);
+    const client = new GcsClient(gcsFromEnv({ bucket: "b", endpoint: "http://gcs:4443/", ...STORE_WORDS }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "key.json") }), store.fetch);
     expect((await client.put("a/index.json", "{}", "application/json")).etag).toBe("1");
     await expect(client.put("a/index.json", "{}", "application/json", { ifNoneMatch: "*" })).rejects.toThrow(StoreConflict);
     await expect(client.put("a/index.json", "{}", "application/json", { ifMatch: "7" })).rejects.toThrow(StoreConflict);
@@ -305,7 +250,7 @@ describe("Google Cloud Storage", () => {
   it("a credentials file that impersonates no service account writes, but cannot sign a link", async () => {
     const dir = tmp();
     write(dir, { token: "t", "c.json": JSON.stringify({ type: "external_account", audience: "a", subject_token_type: "urn:ietf:params:oauth:token-type:jwt", token_url: "https://sts.googleapis.com/v1/token", credential_source: { file: join(dir, "token") } }) });
-    const client = new GcsClient(gcsFromEnv({ bucket: "b" }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "c.json") }), recorder(() => ({ status: 200 })).fetch);
+    const client = new GcsClient(gcsFromEnv({ bucket: "b", ...STORE_WORDS }, { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "c.json") }), recorder(() => ({ status: 200 })).fetch);
     await expect(client.presign("k", 60)).rejects.toThrow(/impersonates none/);
   });
 });

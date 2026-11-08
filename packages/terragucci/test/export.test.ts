@@ -8,7 +8,7 @@ import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE } from "../src/repo
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import type { BinaryExec } from "../src/migrate";
-import type { S3Fetch } from "../src/report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { main } from "../src/cli";
 import { appliedFile, chantGated, chantRequestDigest, exportRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";

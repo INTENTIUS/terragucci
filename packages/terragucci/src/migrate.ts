@@ -70,7 +70,7 @@ import { binaryEnv, terragruntExec } from "./binary-env";
 import { isStored, READS_VERSIONS, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
-import type { S3Fetch } from "./report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { sealRefusal } from "./seal";
 import { chantStateOps, opMessage, requestRules, syncLocalLedger } from "./gated-request";

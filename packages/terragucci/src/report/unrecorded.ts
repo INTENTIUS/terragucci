@@ -27,7 +27,7 @@
 import type { StateVersionList } from "../backend";
 import type { StateWriters } from "../state-writers";
 import { AUDIT_SCHEMA, sha, type AuditEntry } from "./audit";
-import type { ObjectVersion } from "./object-store";
+import type { ObjectVersion } from "@intentius/chant/object-store";
 import type { StateVersions } from "./state-versions";
 
 /** How long a version waits before it is judged: a wave applies, and then uploads its report, within this. */

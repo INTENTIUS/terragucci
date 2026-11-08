@@ -6,7 +6,7 @@ import { writeLedger } from "../src/apply";
 import { MIGRATE_LEDGER, runMigrations, type BinaryExec } from "../src/migrate";
 import { buildReport } from "../src/report/build";
 import { addToEstates, ESTATES_SCHEMA, rosterKey, rosterOf, stockEstate, uploadRosters, waveRosters, type Roster } from "../src/report/roster";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { validate, type Json } from "../../../scripts/schema-check";
 import { plan, RUN } from "./report-fixtures";
 import { tmp, write } from "./helpers";

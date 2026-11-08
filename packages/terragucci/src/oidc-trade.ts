@@ -37,7 +37,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CLOUD_TARGETS_ENV, TRADE_JS, TRADE_SPEC_ENV, idTokenVar, resolveCloudIdentity, tradeIdentities, type Cloud, type CloudIdentityDeclaration, type CloudIdentityRule, type CloudTradeSpec } from "@intentius/chant/ci-identity";
-import { StoreError } from "./report/object-store";
+import { StoreError } from "@intentius/chant/object-store";
 import { rolesFromEnv, ROOT_GCP_ENV } from "./cloud-identity";
 import { ROLES_ENV } from "./terragrunt";
 

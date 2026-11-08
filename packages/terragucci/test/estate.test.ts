@@ -5,7 +5,7 @@ import { describeEstate, estate } from "../src/estate";
 import { buildReport } from "../src/report/build";
 import type { Report } from "../src/report/schema";
 import { age, buildEstate, readInlineEstate, renderEstateHtml, type ProjectIndex } from "../src/report/estate";
-import { presign, S3Client, type S3Fetch } from "../src/report/s3";
+import { presign, S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { addToIndex, capIndex, INDEX_DESTROYS, INDEX_ROWS, indexEntry, renderIndexHtml, type IndexEntry } from "../src/report/store";
 import { plan, rc, RUN, smallFixture } from "./report-fixtures";
 import { tmp } from "./helpers";

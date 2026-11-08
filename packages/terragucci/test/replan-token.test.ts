@@ -15,8 +15,8 @@ import { REPLAN_AZURE_WARNING, dropForgeTokens, LEFTOVER_SWEEP, OIDC_REQUEST_VAR
 import { awsRoles, stsEndpoint, trade, tradeCommand, type ChantTrade } from "../src/oidc-trade";
 import { CLOUD_TARGETS_ENV, type Cloud, type CloudTargetsFile, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV, tradedVars } from "../src/cloud-identity";
-import { s3FromEnv } from "../src/report/s3";
-import { gcsFromEnv } from "../src/report/gcs";
+import { s3FromEnv, gcsFromEnv } from "@intentius/chant/object-store";
+import { STORE_WORDS } from "../src/report/object-store";
 import { authProviderOutput, ROLES_ENV } from "../src/terragrunt";
 
 const PLAN = "arn:aws:iam::111111111111:role/plan-ro";
@@ -401,12 +401,12 @@ describe("what reads the traded credentials", () => {
   });
 
   it("reports.role writes with its traded keys", () => {
-    const t = s3FromEnv({ bucket: "s3://r", role: "arn:aws:iam::111111111111:role/reports" }, tradedEnv());
+    const t = s3FromEnv({ bucket: "s3://r", role: "arn:aws:iam::111111111111:role/reports", ...STORE_WORDS }, tradedEnv());
     expect(t).toMatchObject({ accessKeyId: "AK-rep", secretAccessKey: "SK-rep", sessionToken: "ST-rep" });
   });
 
   it("a gs:// bucket takes the job's traded token and signs as its service account", () => {
-    const t = gcsFromEnv({ bucket: "b" }, { ...tradedEnv(), GOOGLE_OAUTH_ACCESS_TOKEN: "tok-plan" });
+    const t = gcsFromEnv({ bucket: "b", ...STORE_WORDS }, { ...tradedEnv(), GOOGLE_OAUTH_ACCESS_TOKEN: "tok-plan" });
     expect(t).toMatchObject({ accessToken: "tok-plan", signAs: "plan@p.iam.gserviceaccount.com" });
   });
 

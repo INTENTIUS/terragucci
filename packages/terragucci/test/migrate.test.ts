@@ -29,7 +29,7 @@ import {
   type StateResource,
 } from "../src/migrate";
 import { ledgerEntries, MIGRATE_DONE_FILE, MIGRATE_LEDGER_FILE } from "../src/report/audit";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { tmp, write } from "./helpers";
 import { overrideChantNext } from "../src/chant-next";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";

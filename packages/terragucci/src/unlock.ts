@@ -47,13 +47,13 @@ import { appendPending, decideGate, readLedger, writeLedger, type GateLedger, ty
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { isStored, stateObject, stateStore, type StateObject, type StoredState } from "./backend";
-import { probeLock, releaseLock, shownUrl, type GitLabFetch } from "./gitlab-state";
+import { shownUrl, type GitLabFetch, gitlabStore } from "@intentius/chant-lexicon-terraform/state/gitlab";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "./detect";
 import { detectShape } from "./shape";
 import { forgeLiveRuns, possibleHolders, type LiveRun } from "@intentius/chant/state-unlock";
 import { apiBase, DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
-import type { StoreFetch } from "./report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { forgeOf } from "./respond/change";
 import { sealRefusal } from "./seal";
 import { asyncExec, chantStateOps, opMessage, requestRules, type ChantStateOps } from "./gated-request";
@@ -186,14 +186,14 @@ interface HeldLock {
  * A lock the backend keeps in the store (an s3 lock file, a gcs lock object,
  * an azurerm lease) is read from the store (./backend.ts) and released by the
  * binary's `force-unlock`. GitLab's lock is read by asking for it
- * (./gitlab-state.ts: a free one is taken and released at once) and released
+ * (the terraform lexicon's gitlabStore: a free one is taken and released at once) and released
  * by its ID on the unlock address, which GitLab refuses when another lock
  * holds the state.
  */
 async function heldLock(rel: string, object: ReturnType<typeof lockedObject>, binary: string, dir: string, env: NodeJS.ProcessEnv, exec: NonNullable<UnlockOptions["exec"]>, options: UnlockOptions, chant?: ChantStateOps): Promise<HeldLock> {
   if ("gitlab" in object) {
     const gl = object.gitlab;
-    const fetchFn = (options.s3Fetch ?? globalThis.fetch) as unknown as GitLabFetch;
+    const state = gitlabStore(gl, (options.s3Fetch ?? globalThis.fetch) as unknown as GitLabFetch, "terragucci");
     const location = shownUrl(gl.lockAddress!);
     const asked = async <T>(call: () => Promise<T>): Promise<T> => {
       try {
@@ -205,12 +205,12 @@ async function heldLock(rel: string, object: ReturnType<typeof lockedObject>, bi
     return {
       location,
       read: async () => {
-        const text = await asked(() => probeLock(gl, fetchFn));
+        const text = await asked(() => state.probeLock());
         return text === undefined ? undefined : { text };
       },
       release: async (id) => {
-        await asked(() => releaseLock(gl, id, fetchFn));
-        const after = await asked(() => probeLock(gl, fetchFn));
+        await asked(() => state.releaseLock(id));
+        const after = await asked(() => state.probeLock());
         if (after && parseLockInfo(after)?.ID === id) throw new ConfigError(`${rel}: GitLab released lock ${id}, and ${location} still holds it`);
       },
     };

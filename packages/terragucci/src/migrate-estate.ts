@@ -80,7 +80,7 @@ import {
 import { MigrationProgress, PROGRESS_FLAG, takesProgressJson } from "./migrate-progress";
 import { detectShape } from "./shape";
 import { rosterOf, type RosterFacts } from "./report/roster";
-import type { S3Target } from "./report/s3";
+import type { S3Target } from "@intentius/chant/object-store";
 
 /** One resource instance a retag moves: its address in both roots, the estates, and the live resource the markers are on. */
 export interface Retag {

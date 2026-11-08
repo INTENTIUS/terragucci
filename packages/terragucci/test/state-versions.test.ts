@@ -6,7 +6,7 @@ import { estate } from "../src/estate";
 import { reportEntry } from "../src/report/audit";
 import { buildReport } from "../src/report/build";
 import { buildEstate, readInlineEstate, renderEstateHtml } from "../src/report/estate";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import type { Report, ReportStateVersion } from "../src/report/schema";
 import { addToStateVersions, readStateVersions, STATE_VERSIONS_KEPT, STATES_SCHEMA, stateRecords, type StateRecord } from "../src/report/state-versions";
 import { uploadReport, writeReportDir } from "../src/report/store";

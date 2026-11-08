@@ -20,7 +20,7 @@ import { checkedSources, checkRootPins, governingModules } from "../src/publish/
 import { testFiles, testModule, type TestRunner } from "../src/publish/test";
 import { newestPublished, registryAliases } from "../src/rollout/discover";
 import { moduleCalls, movePins } from "../src/rollout/pins";
-import { StoreConflict } from "../src/report/object-store";
+import { StoreConflict } from "@intentius/chant/object-store";
 import { init } from "../src/init";
 import { git, tmp, write } from "./helpers";
 import { keyPair, testSigner } from "./signer";

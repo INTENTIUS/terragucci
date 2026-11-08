@@ -24,7 +24,7 @@ import { RUN_SCHEMA, runSkeleton, withWave } from "../src/report/run-view";
 import { EDGES_SCHEMA } from "../src/report/state-edges";
 import { ESTATES_SCHEMA } from "../src/report/roster";
 import { VERSIONS_SCHEMA } from "../src/report/versions";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import type { Report } from "../src/report/schema";
 import { copyToRun, INDEX_DESTROYS, INDEX_SCHEMA, runPath, uploadReport, VIEWS_DIR, writeReportDir } from "../src/report/store";
 import { unknownKeywords, validate, type Json } from "../../../scripts/schema-check";

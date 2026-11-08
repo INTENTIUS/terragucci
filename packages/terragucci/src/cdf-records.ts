@@ -17,8 +17,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { liveBody } from "./detect";
-import { encodeStrict, xmlText, type StoreFetch } from "./report/object-store";
-import { assumeRoleWithWebIdentity, s3FromEnv, sign, type S3Credentials } from "./report/s3";
+import { encodeStrict, xmlText, type StoreFetch, assumeRoleWithWebIdentity, s3FromEnv, sign, type S3Credentials } from "@intentius/chant/object-store";
+import { STORE_WORDS } from "./report/object-store";
 
 /** Where an estate's records are: an S3 bucket, a directory, or a store this module does not read. */
 export type RecordStore =
@@ -110,7 +110,7 @@ function localRecords(store: Extract<RecordStore, { kind: "local" }>): Records {
 }
 
 async function s3Records(store: Extract<RecordStore, { kind: "s3" }>, env: NodeJS.ProcessEnv, fetchFn: StoreFetch): Promise<Records> {
-  const target = s3FromEnv({ bucket: store.bucket }, store.region ? { ...env, AWS_REGION: store.region } : env);
+  const target = s3FromEnv({ bucket: store.bucket, ...STORE_WORDS }, store.region ? { ...env, AWS_REGION: store.region } : env);
   const creds: S3Credentials = "webIdentity" in target ? await assumeRoleWithWebIdentity(target.webIdentity, fetchFn) : target;
   const base = target.endpoint ? `${target.endpoint}/${encodeStrict(store.bucket)}` : `https://${store.bucket}.s3.${target.region}.amazonaws.com/`;
   const out: Records = new Map();

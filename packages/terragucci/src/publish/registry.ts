@@ -38,7 +38,7 @@ import {
 } from "@intentius/chant-lexicon-terraform/registry";
 import { ConfigError, REGISTRY_NAME, type RegistrySettings } from "../config";
 import { storeFromEnv } from "../report/bucket";
-import { StoreConflict, type ObjectStore } from "../report/object-store";
+import { StoreConflict, type ObjectStore } from "@intentius/chant/object-store";
 import type { Fetch } from "./oci";
 import type { Semver } from "./semver";
 
