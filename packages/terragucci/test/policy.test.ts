@@ -1,12 +1,11 @@
 // The opt-in `policy:` key: conftest or OPA over each root's plan JSON, with a
 // fake engine so no binary is needed.
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { policySourceOf, validateConfig } from "../src/config";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkPlan, checkPlans, fetchPolicySource, governingPolicy, shownUrl, hcpPolicySet, namespaceProblem, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, redactVerdict, resolvePolicySettings, sensitiveTexts, CONFTEST_SHA256, OPA_SHA256, OPA_VERSION, type PolicyExec } from "../src/report/policy";
+import { checkPlan, checkPlans, fetchPolicySource, governingPolicy, shownUrl, hcpPolicySet, namespaceProblem, trustedPolicy, conftestFindings, conftestViolations, describeVerdict, engineBinary, hcpRun, opaFindings, opaViolations, policyInput, redactVerdict, resolvePolicySettings, sensitiveTexts, type PolicyExec } from "../src/report/policy";
 import { REDACTED } from "../src/report/schema";
 import { buildReport } from "../src/report/build";
 import { renderNote } from "../src/report/views";
@@ -230,23 +229,14 @@ describe("redaction", () => {
 });
 
 describe("engineBinary", () => {
-  it("uses conftest from the path, and refuses a download that misses its pinned digest", async () => {
+  it("uses the engine on the path, else chant's pinned release, refusing a download that misses its sha256", async () => {
     const onPath: PolicyExec = async () => ({ status: 0, stdout: "", stderr: "" });
     expect(await engineBinary({}, tmp(), { exec: onPath })).toBe("conftest");
     const absent: PolicyExec = async () => ({ status: null, stdout: "", stderr: "ENOENT" });
-    await expect(engineBinary({}, tmp(), { exec: absent, cache: tmp(), arch: "x64", download: async () => Buffer.from("not conftest") })).rejects.toThrow(/does not match its pinned digest/);
-    expect(CONFTEST_SHA256.x86_64).toMatch(/^[0-9a-f]{64}$/);
-    expect(createHash("sha256").update("x").digest("hex")).toHaveLength(64);
-  });
-
-  it("fetches opa on demand from its pinned release, and refuses a download that misses the digest", async () => {
-    const absent: PolicyExec = async () => ({ status: null, stdout: "", stderr: "ENOENT" });
     let url = "";
     const download = async (u: string) => ((url = u), Buffer.from("not opa"));
-    await expect(engineBinary({ engine: "opa" }, tmp(), { exec: absent, cache: tmp(), arch: "arm64", download })).rejects.toThrow(/opa .* does not match its pinned digest/);
-    expect(url).toBe(`https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_arm64_static`);
-    expect(OPA_SHA256.x86_64).toMatch(/^[0-9a-f]{64}$/);
-    expect(OPA_SHA256.arm64).toMatch(/^[0-9a-f]{64}$/);
+    await expect(engineBinary({ engine: "opa" }, tmp(), { exec: absent, cache: tmp(), arch: "arm64", download })).rejects.toThrow(/opa .* does not match its pinned sha256/);
+    expect(url).toMatch(/\/opa_linux_arm64_static$/);
   });
 });
 

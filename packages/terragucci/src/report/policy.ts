@@ -40,8 +40,7 @@ import type { WorkspaceTree } from "@intentius/chant/workspace/tree";
 import type { PolicyReview } from "../review-agent";
 import type { Actor } from "../actor";
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { CONFIG_NAMES, loadConfig, policySourceOf, resolveProject, resolveRepo, type PolicyEngine, type PolicyInput, type PolicySettings, type TerragucciConfig } from "../config";
@@ -52,6 +51,7 @@ import {
   type GatePolicyFindings,
   type GatePolicySettings,
 } from "@intentius/chant/gate-policy";
+import { policyEngineBinary } from "@intentius/chant/policy-engine";
 import { binaryEnv } from "../binary-env";
 import { redactPlan } from "./redact";
 import { REDACTED, type ReportPolicy, type ReportRootPolicy } from "./schema";
@@ -64,22 +64,6 @@ export interface PolicyRun {
 }
 
 export type PolicyExec = (file: string, args: string[], cwd: string) => Promise<PolicyRun>;
-
-export const CONFTEST_VERSION = "0.71.0";
-
-/** SHA-256 of the Linux release archives, from the release's checksums.txt, so a download is checked against a pin and not against itself. */
-export const CONFTEST_SHA256: Record<string, string> = {
-  x86_64: "765dfefdf0730693d7541ea0147e10d530a54ed257bbfec055ff34c837ffdf72",
-  arm64: "542f255081cfab9919cba327d3c4014fd46d6ee3f0441c634b14b1465e9469d9",
-};
-
-export const OPA_VERSION = "1.21.1";
-
-/** SHA-256 of the static Linux builds, from the release's `.sha256` files. OPA ships a bare binary, not an archive. */
-export const OPA_SHA256: Record<string, string> = {
-  x86_64: "668506eb17a2eaa1fce6cc0d1f42ef85125d4ac5bda5fc74d1152d0c77145031",
-  arm64: "9a1f3625529c6f01240fe68286dde06aa0b23c5253da700ac48f4d943ff8a4de",
-};
 
 /** Runs the policy engine, and in `check-root` the binary's validate and live-check, with the job's environment less its forge tokens. */
 export const defaultPolicyExec: PolicyExec = (file, args, cwd) =>
@@ -113,55 +97,31 @@ export interface PolicyVerdict {
 
 export interface PolicyOptions {
   exec?: PolicyExec;
-  /** Fetches a release archive. Default: Node's fetch. */
-  download?: (url: string) => Promise<Buffer>;
-  /** Where an engine installed on demand is kept. Default: the temp directory. */
+  /** Fetches a release file. Default: Node's fetch. */
+  download?: (url: string) => Promise<Uint8Array>;
+  /** Where an engine installed on demand is kept. Default: chant's tool cache. */
   cache?: string;
-  /** The platform, for the release archive. Default: this process's. */
+  /** The CPU of the Linux release to fetch. Default: this process's platform. */
   arch?: string;
 }
 
-/** The engine's executable: the one on the path, or conftest or OPA fetched once and checked against its pinned digest. */
+/**
+ * The engine's executable: the one on the path, else conftest or OPA at
+ * chant's pinned release, fetched once and checked against its sha256
+ * (`@intentius/chant/policy-engine`, chant#4774). The path is asked through
+ * `exec`, so the probe runs as the engine does.
+ */
 export async function engineBinary(policy: PolicySettings, repo: string, options: PolicyOptions = {}): Promise<string> {
   const exec = options.exec ?? defaultPolicyExec;
   const name = policy.engine ?? "conftest";
   const onPath = await exec(name, name === "opa" ? ["version"] : ["--version"], repo);
   if (onPath.status === 0) return name;
-  const arch = (options.arch ?? process.arch) === "arm64" ? "arm64" : "x86_64";
-  const dir = join(options.cache ?? tmpdir(), `terragucci-${name}-${name === "opa" ? OPA_VERSION : CONFTEST_VERSION}-${arch}`);
-  const bin = join(dir, name);
-  if (existsSync(bin)) return bin;
-  const archive = name === "conftest";
-  const version = archive ? CONFTEST_VERSION : OPA_VERSION;
-  const asset = archive ? `conftest_${CONFTEST_VERSION}_Linux_${arch}.tar.gz` : `opa_linux_${arch === "arm64" ? "arm64" : "amd64"}_static`;
-  const url = archive
-    ? `https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/${asset}`
-    : `https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/${asset}`;
-  const body = await (options.download ?? fetchBytes)(url);
-  const sum = createHash("sha256").update(body).digest("hex");
-  if (sum !== (archive ? CONFTEST_SHA256 : OPA_SHA256)[arch]) throw new Error(`${name} ${version} from ${url} does not match its pinned digest (got ${sum}); not running it`);
-  const work = mkdtempSync(join(tmpdir(), `terragucci-${name}-`));
-  try {
-    writeFileSync(join(work, asset), body);
-    if (archive) {
-      const untar = await exec("tar", ["-xzf", join(work, asset), "-C", work, "conftest"], work);
-      if (untar.status !== 0) throw new Error(`could not unpack conftest: ${untar.stderr.trim()}`);
-    } else {
-      renameSync(join(work, asset), join(work, "opa"));
-    }
-    mkdirSync(dir, { recursive: true });
-    renameSync(join(work, name), bin);
-    chmodSync(bin, 0o755);
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
-  return bin;
-}
-
-async function fetchBytes(url: string): Promise<Buffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+  return policyEngineBinary(name, {
+    pinnedOnly: true,
+    ...(options.download ? { download: options.download } : {}),
+    ...(options.cache ? { cache: options.cache } : {}),
+    ...(options.arch ? { platform: options.arch === "arm64" ? "linux-arm64" : "linux-x64" } : {}),
+  });
 }
 
 export { DENY_RULE, HOLD_RULE, WARN_RULE } from "@intentius/chant/gate-policy";
