@@ -16,13 +16,14 @@
 import { spawnSync } from "node:child_process";
 import { chantStateOps, type ChantGatedStateOpResult, type ChantRootRun, type ChantStateOps } from "./chant-next";
 import type { ApprovalRule } from "./approval";
+import type { GatedRequestRules } from "@intentius/chant/lifecycle/gated-request";
 
 export { chantStateOps };
 export type { ChantGatedStateOpResult, ChantStateOps };
 
 /** The rules a request is decided by: the mode at base and `approval_rules` as chant's quorum. */
-export function requestRules(rule: Pick<ApprovalRule, "mode" | "approvalRules">): { mode: string; quorum?: readonly unknown[] } {
-  return { mode: rule.mode, ...(rule.approvalRules?.length ? { quorum: rule.approvalRules } : {}) };
+export function requestRules(rule: Pick<ApprovalRule, "mode" | "approvalRules">): GatedRequestRules {
+  return { mode: rule.mode as GatedRequestRules["mode"], ...(rule.approvalRules?.length ? { quorum: rule.approvalRules as unknown as GatedRequestRules["quorum"] } : {}) };
 }
 
 /** terragucci's synchronous exec, as the lexicon's operations take one. */

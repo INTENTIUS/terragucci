@@ -8,7 +8,8 @@ import type { Fetch } from "../src/forge";
 import { ledgerEntries, UNLOCK_DONE_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { S3Fetch } from "@intentius/chant/object-store";
-import { lockDigest, parseLockInfo, parseUnlocks, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { parseLockInfo } from "@intentius/chant/state-unlock";
+import { UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { appliedFile, appliedLines, chantGated } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -21,23 +22,6 @@ const ENV = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK", AWS_REGION: 
 const KEY = "state/app.tfstate.tflock";
 const LOCATION = "s3://state/app.tfstate.tflock";
 const lockText = (id: string, created: string) => JSON.stringify({ ID: id, Operation: "OperationTypeApply", Info: "", Who: "runner@job-1", Version: "1.13.1", Created: created, Path: "state/app.tfstate" });
-
-describe("parseLockInfo", () => {
-  it("reads the lock the binary writes, and nothing without an ID", () => {
-    expect(parseLockInfo(lockText("abc", T(1)))).toMatchObject({ ID: "abc", Operation: "OperationTypeApply", Who: "runner@job-1", Created: T(1) });
-    expect(parseLockInfo("{}")).toBeUndefined();
-    expect(parseLockInfo('{"ID": ""}')).toBeUndefined();
-    expect(parseLockInfo("not json")).toBeUndefined();
-  });
-
-  it("binds the digest to the root, the lock's location and its ID", () => {
-    const d = lockDigest("app", LOCATION, "abc");
-    expect(d).toMatch(/^jcs1-sha256:[0-9a-f]{64}$/);
-    expect(lockDigest("app", LOCATION, "abc")).toBe(d);
-    expect(lockDigest("app", LOCATION, "abd")).not.toBe(d);
-    expect(lockDigest("web", LOCATION, "abc")).not.toBe(d);
-  });
-});
 
 /** A forge answering its run listings from `runs` by status, recording each URL asked. */
 function forge(runs: Array<Record<string, unknown>>, failing = false) {
@@ -134,7 +118,7 @@ describe("unlockState", () => {
     const w = world();
     w.bucket.objects.set(KEY, lockText("lock-1", T(10)));
     const r = await run(w, forge([{ id: 41, status: "running", started: T(5), html_url: "http://forge.test/o/r/actions/runs/41" }]));
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(5);
     expect(r.alive?.map((a) => a.id)).toEqual(["41"]);
     expect(r.lines.join("\n")).toContain("run 41 (running, began");
     expect(w.bucket.objects.has(KEY)).toBe(true);
@@ -149,13 +133,12 @@ describe("unlockState", () => {
     const f = forge([{ id: 42, status: "running", started: T(20) }]);
     const first = await run(w, f, { now: T(30) });
     expect(first.code).toBe(3);
-    const digest = chantOps ? first.digest! : lockDigest("app", LOCATION, "lock-1");
+    const digest = first.digest!;
     expect(first.command).toBe(`terragucci approve unlock app --plan ${digest}`);
     expect(w.bucket.objects.has(KEY)).toBe(true);
     const pending = JSON.parse(lifecycle(w.origin, UNLOCK_LEDGER).trim());
     expect(pending).toMatchObject({ kind: "pending", op: "tf-unlock", gate: "app", planDigest: digest });
-    if (chantOps) expect(pending.request).toMatchObject({ kind: "unlock", subject: "app", by: "dana", fields: { location: LOCATION, id: "lock-1" } });
-    else expect(pending.neverOverMcp).toBe(true);
+    expect(pending.request).toMatchObject({ kind: "unlock", subject: "app", by: "dana", fields: { location: LOCATION, id: "lock-1" } });
     expect(pending.description).toContain("lock-1");
 
     // Run again with no approval: still waiting on the same digest, and the pending fact is not written twice.
@@ -167,17 +150,12 @@ describe("unlockState", () => {
     expect(done.code).toBe(0);
     expect(w.bucket.objects.has(KEY)).toBe(false);
     expect(w.calls.find((c) => c[0] === "force-unlock")).toEqual(["force-unlock", "-force", "-no-color", "lock-1"]);
-    const recordFile = chantOps ? appliedFile("tf-unlock") : UNLOCK_DONE_FILE;
-    if (chantOps) {
-      // chant spends the approval before the release, and its finished line says who released which lock.
-      const { applied, finished } = appliedLines(lifecycle(w.origin, recordFile));
-      expect(applied).toEqual([expect.objectContaining({ gate: "app", planDigest: digest, approvedBy: "lee" })]);
-      expect(finished).toEqual([expect.objectContaining({ gate: "app", planDigest: digest, result: "applied", detail: expect.objectContaining({ by: "dana", location: LOCATION, lock_id: "lock-1", locked_by: "runner@job-1", locked_at: T(10), approved_by: "lee", live_runs: 1 }) })]);
-      expect(lifecycle(w.origin, UNLOCK_DONE)).toBe("");
-    } else {
-      const [record] = parseUnlocks(lifecycle(w.origin, UNLOCK_DONE));
-      expect(record).toMatchObject({ kind: "unlock", gate: "app", root: "app", location: LOCATION, planDigest: digest, approvedBy: "lee", releasedBy: "dana", liveRuns: 1, lock: { ID: "lock-1", Who: "runner@job-1", Created: T(10) } });
-    }
+    const recordFile = appliedFile("tf-unlock");
+    // chant spends the approval before the release, and its finished line says who released which lock.
+    const { applied, finished } = appliedLines(lifecycle(w.origin, recordFile));
+    expect(applied).toEqual([expect.objectContaining({ gate: "app", planDigest: digest, approvedBy: "lee" })]);
+    expect(finished).toEqual([expect.objectContaining({ gate: "app", planDigest: digest, result: "applied", detail: expect.objectContaining({ by: "dana", location: LOCATION, lock_id: "lock-1", locked_by: "runner@job-1", locked_at: T(10), approved_by: "lee", live_runs: 1 }) })]);
+    expect(lifecycle(w.origin, UNLOCK_DONE)).toBe("");
 
     // The audit trail reads the release from the ledger's history.
     const log = execFileSync("git", ["--git-dir", w.origin, "log", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", "chant/lifecycle", "--", recordFile], { encoding: "utf-8" });
@@ -190,10 +168,10 @@ describe("unlockState", () => {
     w.bucket.objects.set(KEY, lockText("lock-1", T(10)));
     const asked = await run(w, forge([]), { now: T(30) });
     expect(asked.code).toBe(3);
-    await approve(w.work, chantOps ? asked.digest! : lockDigest("app", LOCATION, "lock-1"), T(32));
+    await approve(w.work, asked.digest!, T(32));
     // The forge now lists a run that began before the lock: one a runner picked up again.
     const r = await run(w, forge([{ id: 43, status: "running", started: T(9) }]), { now: T(33) });
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(5);
     expect(w.bucket.objects.has(KEY)).toBe(true);
     expect(lifecycle(w.origin, UNLOCK_DONE)).toBe("");
   });
@@ -203,19 +181,14 @@ describe("unlockState", () => {
     w.bucket.objects.set(KEY, lockText("lock-1", T(10)));
     const asked = await run(w, forge([]), { now: T(30) });
     expect(asked.code).toBe(3);
-    await approve(w.work, chantOps ? asked.digest! : lockDigest("app", LOCATION, "lock-1"), T(32));
+    await approve(w.work, asked.digest!, T(32));
     // The lock was released by other means and a new one taken since.
     w.bucket.objects.set(KEY, lockText("lock-2", T(40)));
     const r = await run(w, forge([]), { now: T(41) });
-    if (chantOps) {
-      // chant's request binds the lock's ID: lock-2 is a request of its own, which waits for its own approval.
-      expect(r.code).toBe(3);
-      expect(r.digest).not.toBe(asked.digest);
-      expect(r.command).toBe(`terragucci approve unlock app --plan ${r.digest}`);
-    } else {
-      expect(r.code).toBe(4);
-      expect(r.lines.join("\n")).toContain("the release of another lock");
-    }
+    // chant's request binds the lock's ID: lock-2 is a request of its own, which waits for its own approval.
+    expect(r.code).toBe(3);
+    expect(r.digest).not.toBe(asked.digest);
+    expect(r.command).toBe(`terragucci approve unlock app --plan ${r.digest}`);
     expect(w.calls.some((c) => c[0] === "force-unlock")).toBe(false);
     expect(w.bucket.objects.get(KEY)).toContain("lock-2");
   });

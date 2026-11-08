@@ -11,7 +11,7 @@ import type { GitLabFetch } from "@intentius/chant-lexicon-terraform/state/gitla
 import type { BinaryExec } from "../src/migrate";
 import type { S3Fetch } from "@intentius/chant/object-store";
 import { stateAddress } from "../src/state-address";
-import { lockDigest, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { chantGated, exportRecords, exportRequest, unlockRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -169,7 +169,7 @@ describe("state export of GitLab-managed state", () => {
     await exportState(r.work, { root: "app", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, now: T(0), log: () => {} });
     expect(exportRequest(JSON.parse(show(r.work, EXPORT_LEDGER).trim())).version_id).toBe("2");
     await expect(exportState(r.work, { root: "app", version: "9", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/has no version 9/);
-    await expect(exportState(r.work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/versions are serials/);
+    await expect(exportState(r.work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/has no version v1/);
     await expect(exportState(r.work, { root: "app", actor: "alice", env: { TF_HTTP_PASSWORD: "wrong" }, exec: r.exec, fetch: g.fetch, log: () => {} })).rejects.toThrow(/state export: GitLab answered 401/);
   });
 });
@@ -197,7 +197,7 @@ describe("unlock-state of GitLab-managed state", () => {
     const first = await run(r, g, T(30));
     expect(first.code).toBe(3);
     // chant's digest is over its request; terragucci's own binds the root, the lock's location and its ID.
-    const digest = chantOps ? first.digest! : lockDigest("app", `${ADDRESS}/lock`, "lock-1");
+    const digest = first.digest!;
     expect(first.digest).toBe(digest);
     expect(first.command).toBe(`terragucci approve unlock app --plan ${digest}`);
     expect(g.locks.has("app")).toBe(true);

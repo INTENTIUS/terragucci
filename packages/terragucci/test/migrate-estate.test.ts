@@ -267,13 +267,9 @@ describe("a move between two estates", () => {
     const { line: done, text } = migrationRecord(work, "carve-jobs");
     expect(done).toMatchObject({ gate: "carve-jobs", result: "applied", change: "retag" });
     const retags = [{ address: "aws_sqs_queue.jobs", from_estate: "mono", to_estate: "team", live_id: "q-jobs" }];
-    if (chantOps) {
-      // chant's finished line keeps flat facts; the retags are in the proof the approval bound, stored as the request's attachment.
-      const proof = JSON.parse(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${rec.digest.replace(/:/g, "_")}.json`));
-      expect(proof).toMatchObject({ name: "carve-jobs", change: "retag", retags });
-    } else {
-      expect(done).toMatchObject({ retags });
-    }
+    // chant's finished line keeps flat facts; the retags are in the proof the approval bound, stored as the request's attachment.
+    const proof = JSON.parse(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${rec.digest.replace(/:/g, "_")}.json`));
+    expect(proof).toMatchObject({ name: "carve-jobs", change: "retag", retags });
     expect(() => revertMigration("carve-jobs", text)).toThrow(/moves migration the other way/);
   });
 
@@ -288,7 +284,7 @@ describe("a move between two estates", () => {
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
     // Refused against the approved digest; on chant's gate the new proof is a new request, compared with the approved request's stored proof.
     expect(again.code).toBe(4);
-    if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
+    expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(liveOf(work).find((l) => l.id === "q-other")?.estate).toBe("mono");
   });
 
@@ -465,7 +461,7 @@ describe("adopting a state into an estate", () => {
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} });
     // Refused against the approved digest; on chant's gate the new proof is a new request, compared with the approved request's stored proof.
     expect(again.code).toBe(4);
-    if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
+    expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(liveOf(work).every((l) => l.estate === undefined)).toBe(true);
   });
 

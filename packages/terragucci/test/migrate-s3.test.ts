@@ -32,7 +32,7 @@ const chantOps = await chantGated();
  * Either way nothing is written.
  */
 const expectMovedAfterApproval = (run: { code: number; records: { digest: string; moved?: string[] }[] }, approved: string, moved: string[]) => {
-  if (chantOps) expect(run.records[0]!.digest).not.toBe(approved);
+  expect(run.records[0]!.digest).not.toBe(approved);
   expect(run.code).toBe(4);
   expect(run.records[0]!.moved).toEqual(moved);
 };
@@ -196,7 +196,7 @@ describe("a backend move", () => {
     expect(w.locks.size).toBe(0);
     expect(second.records[0]!.roots[0]!.after.version_id).toBe(w.latest("state/new/app.tfstate")!.id);
     expect(migrationRecord(work, "move-app").line).toMatchObject({ change: "backends", roots: [{ root: "app", source: "s3://state/old/app.tfstate", source_version: old }] });
-    expect(git(origin, "show", `chant/lifecycle:${chantOps ? appliedFile("tf-migrate") : MIGRATE_DONE}`)).not.toContain("secret-");
+    expect(git(origin, "show", `chant/lifecycle:${appliedFile("tf-migrate")}`)).not.toContain("secret-");
   });
 
   it("refuses when the state it moves from moved after the approval, and when the new backend holds a state already", async () => {

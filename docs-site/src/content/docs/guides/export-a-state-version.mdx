@@ -57,7 +57,7 @@ A Terragrunt unit exports the same way: name the unit, such as `terragucci state
    state export: wrote /tmp/terragucci-export-Xb3k/envs_dev_app.3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY.tfstate: envs/dev/app's state, s3://acme-state/dev/app.tfstate version 3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY, approved by bob
    ```
 
-   The file is mode 0600 in a new directory of its own. `--out <file>` names another place outside the repo; a path inside the repo is refused, so the state is never committed by accident. When the record cannot be pushed, nothing is written.
+   The file is mode 0600 in a new directory of its own. `--out <file>` names another place outside the repo. A path inside any git working tree is refused, so the state is never committed by accident. A CI job is refused too, since its files can become artifacts.
 
 4. Delete the file when you are done.
 
