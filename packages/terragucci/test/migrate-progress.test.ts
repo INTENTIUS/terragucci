@@ -304,7 +304,7 @@ describe("span events", () => {
     const span = trace.start("migration carve");
     trace.event(span, "migration moved", { "terragucci.migration.address": "aws_sqs_queue.jobs" }, "2026-10-17T04:39:52.000Z");
     trace.end(span);
-    const body = tracesBody(trace.spans, {}, "0") as { resourceSpans: { scopeSpans: { spans: { events?: { timeUnixNano: string; name: string; attributes: unknown[] }[] }[] }[] }[] };
+    const body = tracesBody(trace.spans, {}) as { resourceSpans: { scopeSpans: { spans: { events?: { timeUnixNano: string; name: string; attributes: unknown[] }[] }[] }[] }[] };
     expect(body.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.events).toEqual([
       { timeUnixNano: String(BigInt(Date.parse("2026-10-17T04:39:52.000Z")) * 1_000_000n), name: "migration moved", attributes: [{ key: "terragucci.migration.address", value: { stringValue: "aws_sqs_queue.jobs" } }] },
     ]);

@@ -407,7 +407,7 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   const tel = telemetryFromEnv(env);
   if (tel?.metrics) {
     const gauges = fromLedger ? deliveryGauges(fromLedger.dora, productWords()) : doraGauges(dora);
-    const problem = await send(tel.metrics, metricsBody(gauges, { ...tel.resource, "service.version": VERSION }, VERSION), options.otlpFetch);
+    const problem = await send(tel.metrics, metricsBody(gauges, { ...tel.resource, "service.version": VERSION }), options.otlpFetch);
     result.metrics = problem ? { problem } : { sent: gauges.length };
   }
   if (out?.bucket) {
