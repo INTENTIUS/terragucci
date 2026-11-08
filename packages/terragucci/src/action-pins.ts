@@ -17,11 +17,8 @@ export { tagComments, unpinnedActions } from "@intentius/chant/action-pins";
 export const CHECKOUT = usesRef(ACTION_PINS.checkout4);
 export const CACHE_RESTORE = usesRef(ACTION_PINS.cacheRestore4);
 export const SETUP_NODE = usesRef(ACTION_PINS.setupNode4);
-/**
- * actions/cache at v4.3.0, the commit chant's cache/restore and cache/save
- * rows pin. chant's table has no actions/cache row at v4 (chant issue 4816).
- */
-export const CACHE = `actions/cache@${ACTION_PINS.cacheRestore4.sha}`;
+/** actions/cache at v4.3.0, chant's `cache4` row, the commit its cache/restore and cache/save rows pin. */
+export const CACHE = usesRef(ACTION_PINS.cache4);
 
 /** upload-artifact for the forge: v3 on Forgejo, v4 on GitHub. */
 export const uploadArtifact = (forge: Forge): string => usesRef(forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4);

@@ -27,7 +27,7 @@ afterEach(() => {
 
 describe("the notify slot", () => {
   it("keeps the source and header prefix terragucci's receivers filter and verify on", () => {
-    expect(TERRAGUCCI_WORDS.notify).toEqual({ source: "terragucci", wave: "wave {k}", headers: "x-terragucci" });
+    expect(TERRAGUCCI_WORDS.notify).toMatchObject({ source: "terragucci", wave: "wave {k}", headers: "x-terragucci" });
     expect([NOTIFY_SOURCE, HEADER_PREFIX]).toEqual(["terragucci", "x-terragucci"]);
   });
 

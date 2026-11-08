@@ -11,8 +11,8 @@
  * Delivery, signing and the generic webhook's event are chant's
  * (`@intentius/chant/notify`), and so are the drift event's fields and the
  * send options under terragucci's words (`notify-product`). terragucci
- * decides when to send and renders its own Slack and Teams messages, which
- * chant's cannot word yet (chant issue 4818), with chant's relay buttons. The generic
+ * decides when to send, and chant renders the Slack and Teams messages in
+ * terragucci's message words (chant#4818), with its relay buttons. The generic
  * webhook gets one `chant.notify/v1` event, with the stage's outcome
  * (`terragucci.outcome/v1`) in `detail`, signed with HMAC-SHA256 over
  * `<timestamp>.<body>` (`X-Terragucci-Signature: sha256=<hex>` beside
@@ -34,7 +34,7 @@
  * the page where a person runs the drift check again with their own forge
  * login.
  */
-import { ciRun, makeNotifyEvent, sendNotify, slackRelayActions, teamsRelayReply, type NotifyConfig, type NotifyDelivery, type NotifyEvent, type RelayButtons, type SendNotifyOptions } from "@intentius/chant/notify";
+import { ciRun, makeNotifyEvent, sendNotify, slackMessage, teamsMessage, type NotifyConfig, type NotifyDelivery, type NotifyEvent, type NotifyMessageOptions, type SendNotifyOptions } from "@intentius/chant/notify";
 import { driftNotifyFields, productSendOptions } from "@intentius/chant/notify-product";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -57,7 +57,7 @@ export const RELAY_NAME_ENV = "TERRAGUCCI_RELAY";
 export const RELAY_KEY_ENV = "TERRAGUCCI_RELAY_KEY";
 
 /** The drift notice's Re-plan button: a link, which opens the page that runs the drift check again. */
-export const REPLAN_ACTION = "terragucci-replan";
+export const REPLAN_ACTION = TERRAGUCCI_WORDS.notify.message.rerun.action;
 
 export interface WaveNotice {
   event: WaveEvent;
@@ -157,77 +157,6 @@ export function headline(n: WaveNotice): string {
   return `${NOTIFY_SOURCE}: ${summary(n)}`;
 }
 
-const rootsText = (n: WaveNotice): string => (n.roots.length > 0 ? n.roots.join(", ") : "see the run");
-
-/** A Slack button. `url` makes it a link that opens a page. */
-function slackButton(text: string, action: string, o: { value?: string; url?: string; style?: "primary" | "danger" }): Record<string, unknown> {
-  return { type: "button", action_id: action, text: { type: "plain_text", text }, ...(o.value ? { value: o.value } : {}), ...(o.url ? { url: o.url } : {}), ...(o.style ? { style: o.style } : {}) };
-}
-
-/**
- * A Slack incoming webhook's body: one mrkdwn text. With the relay's signed
- * button value (`relay`, which chant's sendNotify passes for a waiting wave
- * when the relay key is set), the text as a block and chant's Approve and
- * Decline buttons.
- */
-export function slackMessage(n: WaveNotice, relay?: RelayButtons): { text: string; blocks?: Record<string, unknown>[] } {
-  const text = slackText(n);
-  if (!n.relay || !relay || n.event !== "waiting") return { text };
-  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, slackRelayActions(relay)] };
-}
-
-function slackText(n: WaveNotice): string {
-  return [
-      `*${headline(n)}*`,
-      ...(n.review ? [`Review and approve: <${n.review.url}|pull request ${n.review.pr}>, then run the wave again`] : []),
-      `Roots: ${rootsText(n)}`,
-      ...(n.digest ? [`Digest: \`${n.digest}\``] : []),
-      `${n.review ? "Or approve" : "Approve"}: \`${n.approve}\``,
-      ...(n.outcome ? [`Outcome: ${n.outcome}`] : []),
-      ...(n.run ? [`Run: <${n.run}>`] : []),
-      ...(n.report ? [`Report: <${n.report}>`] : []),
-    ].join("\n");
-}
-
-/** The Teams reply that approves or declines a waiting wave through the relay's outgoing webhook: a mention of the relay, then chant's reply. */
-export const teamsReply = (n: Pick<WaveNotice, "relay">, relay: RelayButtons, action: "approve" | "decline"): string => `@${n.relay} ${teamsRelayReply(relay, action)}`;
-
-/** A Teams incoming webhook's body (a Workflows webhook): one Adaptive Card. Its actions open the pull request's review page, under pr-review, and the run. */
-export function teamsMessage(n: WaveNotice, relay?: RelayButtons): Record<string, unknown> {
-  const facts = [
-    { title: "Wave", value: String(n.wave) },
-    ...(n.review ? [{ title: "Review and approve", value: `pull request ${n.review.pr}, then run the wave again: ${n.review.url}` }] : []),
-    { title: "Roots", value: rootsText(n) },
-    ...(n.digest ? [{ title: "Digest", value: n.digest }] : []),
-    { title: n.review ? "Or approve" : "Approve", value: n.approve },
-    ...(n.outcome ? [{ title: "Outcome", value: n.outcome }] : []),
-    ...(n.run ? [{ title: "Run", value: n.run }] : []),
-  ];
-  return {
-    type: "message",
-    attachments: [
-      {
-        contentType: "application/vnd.microsoft.card.adaptive",
-        contentUrl: null,
-        content: {
-          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-          type: "AdaptiveCard",
-          version: "1.4",
-          body: [
-            { type: "TextBlock", text: headline(n), weight: "Bolder", wrap: true },
-            { type: "FactSet", facts },
-            // Teams has no button that reaches a relay without a registered bot, so the card gives the reply its outgoing webhook reads.
-            ...(n.relay && relay && n.event === "waiting"
-              ? [{ type: "TextBlock", wrap: true, text: `Approve here: reply ${teamsReply(n, relay, "approve")}. Decline: reply ${teamsReply(n, relay, "decline")}.` }]
-              : []),
-          ],
-          ...(n.review || n.run ? { actions: [...(n.review ? [{ type: "Action.OpenUrl", title: "Review and approve", url: n.review.url }] : []), ...(n.run ? [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] : [])] } : {}),
-        },
-      },
-    ],
-  };
-}
-
 /** The product name chant's event carries as its `source`: the words' notify slot (./ci-words.ts, chant#4610). */
 export const NOTIFY_SOURCE = TERRAGUCCI_WORDS.notify.source;
 /** The webhook headers' prefix: `x-terragucci-signature`, `-timestamp`, `-event` and `-delivery`. */
@@ -264,6 +193,28 @@ export function webhookEvent(n: WaveNotice, env: NodeJS.ProcessEnv = process.env
   );
 }
 
+/**
+ * The event the Slack and Teams messages are rendered from: the webhook's
+ * event (`e`, whose relay buttons chant signed) with what the chat line shows
+ * of every wave, the approval a person gives (or why there is none), and the
+ * digest only of a waiting wave.
+ */
+export function waveChat(n: WaveNotice, e: NotifyEvent = webhookEvent(n)): NotifyEvent {
+  const { digest: _d, ...rest } = e;
+  return {
+    ...rest,
+    targets: n.roots,
+    ...(n.digest ? { digest: n.digest } : {}),
+    approve: { command: n.approve, ...(n.review ? { review: n.review } : {}) },
+    ...(n.outcome ? { reason: n.outcome } : {}),
+    ...(n.run ? { run: { ...e.run, url: n.run } } : {}),
+    ...(n.report ? { reportUrl: n.report } : {}),
+  };
+}
+
+/** chant's message words under terragucci's (./ci-words.ts), with the relay a waiting wave's Teams reply mentions. */
+export const messageWords = (relayName?: string): NotifyMessageOptions => ({ ...TERRAGUCCI_WORDS.notify.message, ...(relayName ? { relayName } : {}) });
+
 /** What {@link notify} and {@link notifyDrift} pass on to chant's sendNotify: tests set the fetch, the wait between tries and the clock (seconds). */
 export type SendOptions = Pick<SendNotifyOptions, "fetch" | "sleep" | "now" | "attempts">;
 
@@ -280,7 +231,7 @@ function targets(env: NodeJS.ProcessEnv, webhook: boolean): NotifyConfig {
   };
 }
 
-/** Send through chant, with terragucci's own Slack and Teams bodies, and make each delivery a log line. */
+/** Send through chant, a wave's Slack and Teams messages from its chat event, and make each delivery a log line. */
 async function send(config: NotifyConfig, event: NotifyEvent, render: SendNotifyOptions["render"], line: string, env: NodeJS.ProcessEnv, opts: SendOptions): Promise<string[]> {
   const deliveries = await sendNotify(config, event, productSendOptions(productWords(), { ...opts, env, ...(render ? { render } : {}), userAgent: NOTIFY_SOURCE, log: () => {} }));
   return deliveries.map((d) => (d.ok ? `posted to ${LABEL[d.target]}: ${line}` : `${LABEL[d.target]}: ${d.detail}; nothing was posted`));
@@ -297,7 +248,7 @@ export async function notify(n: WaveNotice, env: NodeJS.ProcessEnv = process.env
   const config = targets(env, true);
   if (!config.webhook && !config.slack && !config.teams) return [`no webhook: ${SLACK_WEBHOOK_ENV}, ${TEAMS_WEBHOOK_ENV} and ${WEBHOOK_ENV} are empty`];
   const event = webhookEvent(n, env, opts.now !== undefined ? new Date(opts.now * 1000) : new Date());
-  return send(config, event, { slack: (_e, relay) => slackMessage(n, relay), teams: (_e, relay) => teamsMessage(n, relay) }, headline(n), env, opts);
+  return send(config, event, { slack: (e, relay) => slackMessage(waveChat(n, e), relay, messageWords(n.relay)), teams: (e, relay) => teamsMessage(waveChat(n, e), relay, messageWords(n.relay)) }, headline(n), env, opts);
 }
 
 // ── drift ────────────────────────────────────────────────────────────────
@@ -352,54 +303,16 @@ export function driftNotice(reportDir: string, env: NodeJS.ProcessEnv = process.
 }
 
 export const driftHeadline = (n: DriftNotice): string =>
-  `terragucci: drift in ${n.project}: ${n.roots.length > 0 ? `${n.roots.length} root${n.roots.length === 1 ? "" : "s"} changed outside Terraform` : "no drift found"}${n.failed.length > 0 ? `, ${n.failed.length} could not be refreshed` : ""}`;
+  `${NOTIFY_SOURCE}: drift in ${n.project}: ${n.roots.length > 0 ? `${n.roots.length} root${n.roots.length === 1 ? "" : "s"} changed outside Terraform` : "no drift found"}${n.failed.length > 0 ? `, ${n.failed.length} could not be refreshed` : ""}`;
 
-/** The drift notice for Slack: the text, and a Re-plan button that opens the page where the check runs again. */
-export function slackDrift(n: DriftNotice): { text: string; blocks?: Record<string, unknown>[] } {
-  const text = [
-    `*${driftHeadline(n)}*`,
-    ...(n.roots.length > 0 ? [`Drifted: ${n.roots.join(", ")}`] : []),
-    ...(n.failed.length > 0 ? [`Not refreshed: ${n.failed.join(", ")}`] : []),
-    ...(n.run ? [`Run: <${n.run}>`] : []),
-    ...(n.report ? [`Report: <${n.report}>`] : []),
-  ].join("\n");
-  if (!n.replan) return { text };
-  return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }, { type: "actions", block_id: "terragucci-drift", elements: [slackButton("Re-plan", REPLAN_ACTION, { url: n.replan })] }] };
-}
-
-/** The drift notice for Teams: an Adaptive Card whose Re-plan button opens the page where the check runs again. */
-export function teamsDrift(n: DriftNotice): Record<string, unknown> {
-  const facts = [
-    ...(n.roots.length > 0 ? [{ title: "Drifted", value: n.roots.join(", ") }] : []),
-    ...(n.failed.length > 0 ? [{ title: "Not refreshed", value: n.failed.join(", ") }] : []),
-    ...(n.run ? [{ title: "Run", value: n.run }] : []),
-  ];
-  const actions = [...(n.replan ? [{ type: "Action.OpenUrl", title: "Re-plan", url: n.replan }] : []), ...(n.run ? [{ type: "Action.OpenUrl", title: "Open the run", url: n.run }] : [])];
-  return {
-    type: "message",
-    attachments: [
-      {
-        contentType: "application/vnd.microsoft.card.adaptive",
-        contentUrl: null,
-        content: {
-          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
-          type: "AdaptiveCard",
-          version: "1.4",
-          body: [
-            { type: "TextBlock", text: driftHeadline(n), weight: "Bolder", wrap: true },
-            { type: "FactSet", facts },
-          ],
-          ...(actions.length > 0 ? { actions } : {}),
-        },
-      },
-    ],
-  };
-}
-
-/** chant's `drift` event for a drift notice, from chant's drift fields under terragucci's words. Only Slack and Teams get it, in terragucci's own messages. */
-function driftEvent(n: DriftNotice, env: NodeJS.ProcessEnv): NotifyEvent {
+/**
+ * chant's `drift` event for a drift notice, from chant's drift fields under
+ * terragucci's words and its headline, with the Re-plan page as its
+ * `rerunUrl`. Only Slack and Teams get it, in chant's messages.
+ */
+export function driftEvent(n: DriftNotice, env: NodeJS.ProcessEnv = process.env): NotifyEvent {
   const fields = driftNotifyFields(productWords(), { changed: n.roots, failed: n.failed, project: n.project, ...(n.report ? { reportUrl: n.report } : {}) });
-  return makeNotifyEvent({ ...fields, run: n.run ? { url: n.run } : {} }, { env });
+  return makeNotifyEvent({ ...fields, summary: driftHeadline(n).slice(`${NOTIFY_SOURCE}: `.length), run: n.run ? { url: n.run } : {}, ...(n.replan ? { rerunUrl: n.replan } : {}) }, { env });
 }
 
 /** Post a drift notice to the Slack and Teams webhooks the job holds, through chant's notify. The generic webhook's event is a wave's, so it gets none. Never throws. */
@@ -407,7 +320,7 @@ export async function notifyDrift(n: DriftNotice | undefined, env: NodeJS.Proces
   if (!n) return ["no drift found and every root refreshed; nothing posted"];
   const config = targets(env, false);
   if (!config.slack && !config.teams) return [`no chat webhook: ${SLACK_WEBHOOK_ENV} and ${TEAMS_WEBHOOK_ENV} are empty`];
-  return send(config, driftEvent(n, env), { slack: () => slackDrift(n), teams: () => teamsDrift(n) }, driftHeadline(n), env, opts);
+  return send(config, driftEvent(n, env), undefined, driftHeadline(n), env, opts);
 }
 
 // ── unrecorded writes ────────────────────────────────────────────────────
