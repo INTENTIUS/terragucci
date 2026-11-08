@@ -25,7 +25,7 @@
  * (./render-agent.ts) are rendered as before.
  */
 import { AGENT_COMMAND, CLAUDE_CODE_VERSION, type AgentCommentInput } from "./agent-comment";
-import { chantAgentJobNow, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
+import { CHANT_AGENT_JOB, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { CONFIG_NAMES, type ForgeName } from "./config";
 
@@ -90,10 +90,11 @@ export function chantAgentOptions(agent: AgentCommentInput): Record<string, unkn
   };
 }
 
-/** terragucci's words with the commands this spec has jobs for: the plan, which every pipeline has, and the agent. */
+/** terragucci's words with the commands this spec has jobs for, the plan, which every pipeline has, and the agent, and the aliases of those alone (chant refuses an alias of a command no word names). */
 function agentWords(): object {
-  const commands = Object.fromEntries(Object.entries(TERRAGUCCI_WORDS.commands).filter(([, c]) => c === "plan" || c === "agent"));
-  return { ...TERRAGUCCI_WORDS, commands };
+  const keep = (c: string): boolean => c === "plan" || c === "agent";
+  const commands = Object.fromEntries(Object.entries(TERRAGUCCI_WORDS.commands).filter(([, c]) => keep(c)));
+  return { ...TERRAGUCCI_WORDS, commands, aliases: TERRAGUCCI_WORDS.aliases.filter((a) => keep(a.command)) };
 }
 
 /** What {@link chantAgentFiles} writes: the spec, the agent's workflow, and the comment it answers. */
@@ -103,12 +104,10 @@ export interface ChantAgentFiles {
 }
 
 /**
- * The agent's files on chant's job, or undefined when the installed chant
- * has none. `image` is the pipeline's, which carries terragucci; `marker` is
+ * The agent's files on chant's job, or undefined when chant writes none. `image` is the pipeline's, which carries terragucci; `marker` is
  * the first line every file terragucci writes starts with.
  */
-export function chantAgentFiles(forge: ForgeName, image: string, agent: AgentCommentInput, marker: string, chant: ChantAgentJob | undefined = chantAgentJobNow()): ChantAgentFiles | undefined {
-  if (!chant) return undefined;
+export function chantAgentFiles(forge: ForgeName, image: string, agent: AgentCommentInput, marker: string, chant: ChantAgentJob = CHANT_AGENT_JOB): ChantAgentFiles | undefined {
   const words = agentWords();
   const jobs = chant.productPipelineJobs(forge, "default", { words, agent: chantAgentOptions(agent) });
   if (!jobs.agent) return undefined;

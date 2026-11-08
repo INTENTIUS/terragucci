@@ -102,7 +102,6 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSyn
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { chantAgentJob } from "./chant-next";
 import { runChantInProcess } from "@intentius/chant/ci-product";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
@@ -1448,7 +1447,6 @@ export async function main(argv: string[]): Promise<number> {
         const dir = str(flags, "dir");
         // chant's agent job (chant#4616): its generated jobs run `terragucci agent prepare|run|land`, which chant answers in terragucci's words.
         if (sub === "prepare" || sub === "run" || sub === "land") {
-          if (!(await chantAgentJob())) throw new ConfigError(`agent ${sub} is chant's agent job (chant#4616), and the installed chant has none; run terragucci init again to write terragucci's own agent jobs`);
           return runChantInProcess(["agent", ...argv.slice(argv.indexOf("agent") + 1)], TERRAGUCCI_WORDS);
         }
         if (sub === "check-cost") {

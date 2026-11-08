@@ -62,7 +62,7 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { chantAgentJob, chantOpGenerator, type ChantCheckHooks } from "./chant-next";
+import type { ChantCheckHooks } from "./chant-next";
 import * as checkHooksLib from "@intentius/chant/components/check-hooks";
 import { CHANT_AGENT_PATHS } from "./render-chant-agent";
 import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
@@ -362,8 +362,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const checkHooksInput = preCommitOn || namesCheckHooks(declText) ? { checkHooks: { preCommit: preCommitOn } } : {};
   // chant's agent job (chant#4616): with it, agent.comment's jobs are chant's, in a workflow of their own (./render-chant-agent.ts).
   // terragucci#1305 and chant issue 4622: the drift job is a chant drift Op (./render-chant-drift.ts), agent.drift or not.
-  if (agentCommentInput(settings)) await chantAgentJob();
-  if (settings.drift) await chantOpGenerator();
   // terragucci#1303: a plain repo's apply on chant's terraform-apply step. Each root is a terraform.roots entry of chant.config.ts,
   // and the step's spec is written once beside the pipeline, where each wave job reads its rules at base.
   const plainRoots = !tgMode && !atmos && !terramate;

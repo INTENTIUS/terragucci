@@ -1,17 +1,9 @@
 /**
- * The Terraform lexicon subpaths chant 0.124.52 and earlier lack
- * (terragucci#1278): the composed run (`compose`, `compose/run`,
- * `compose/root`, `compose/estate`, `compose/slice`), the lock code
- * (`state`) and the plan shape (`plan-shape`). chant 0.124.54, the pinned
- * release, carries all of them; the loaders stay so terragucci still builds
- * and runs on a chant without them.
- *
- * Each is imported on first use and is undefined when the installed chant
- * lacks it. The callers fall back: `waves.compose` applies in waves
- * (./compose.ts), migrate takes its locks with its own loop (./migrate.ts),
- * and a covered round holds the wave for an approval of its own
- * (./covered-wave.ts). A chant that carries them, as 0.124.54 does, turns
- * the full behaviour on with no change here.
+ * The part of chant's contract terragucci calls, written out as types, and
+ * chant's agent job and Op generators (CHANT_AGENT_JOB, below). Every part
+ * this file once loaded on first use, with a fallback for a chant that
+ * lacked it, is now imported directly (terragucci#1304): the composed run,
+ * the lock code and the plan shape (terragucci#1278), and the rest below.
  *
  * Imported directly since terragucci#1304, on the 0.124.55 pin: the module
  * registry protocol and its mirror code (`registry`, chant#4565, #4564;
@@ -109,6 +101,11 @@ import type { DriverComponent } from "@intentius/chant/components";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
+import { CI_AGENT_FLOOR, productDriftAgent, productPipelineJobs } from "@intentius/chant/ci-product";
+import { setActiveProductWords } from "@intentius/chant/ci-product-words";
+import { generateGithubOpPipeline } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
+import { generateGitlabOpPipeline } from "@intentius/chant-lexicon-gitlab/components/generate-op-pipeline";
+import { generateForgejoOpPipeline } from "@intentius/chant-lexicon-forgejo/components/generate-op-pipeline";
 
 // ── compose ────────────────────────────────────────────────────────────────
 
@@ -1142,123 +1139,21 @@ export interface ChantTemplateRender {
   TemplateRenderError: new (...args: never[]) => Error & { code: string; subject: string };
 }
 
-// ── loading ────────────────────────────────────────────────────────────────
+// ── chant's agent job and Op generators ────────────────────────────────────
 
 /**
- * The imports below take turns. The subpaths share a module graph with import cycles in it, and vitest's module
- * runner never settles two concurrent imports into such a graph: with them in parallel the suite hung on a chant
- * that has them, though plain node and the bundle are fine either way.
+ * chant's agent job and Op generators (chant#4616, #4619, terragucci#1305):
+ * the comment agent's jobs (./render-chant-agent.ts) and the drift Op
+ * (./render-chant-drift.ts) are written with them on every render.
  */
-let turn: Promise<unknown> = Promise.resolve();
-function inTurn<T>(load: () => Promise<T>): Promise<T> {
-  const next = turn.then(load);
-  turn = next.catch(() => undefined);
-  return next;
-}
-
-/** A module once: its promise, kept, resolving undefined when the import fails. */
-function once<T>(load: () => Promise<unknown>, pick: (m: Record<string, unknown>) => T | undefined): () => Promise<T | undefined> {
-  let p: Promise<T | undefined> | undefined;
-  return () =>
-    (p ??= inTurn(load).then(
-      (m) => pick(m as Record<string, unknown>),
-      () => undefined,
-    ));
-}
-
-const has = (m: Record<string, unknown>, ...names: string[]): boolean => names.every((n) => typeof m[n] === "function");
-
-const loaders = {
-
-
-  agentJob: once<ChantAgentJob>(
-    async () => {
-      const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
-      const words: Record<string, unknown> = await import("@intentius/chant/ci-product-words");
-      const github: Record<string, unknown> = await import("@intentius/chant-lexicon-github/components/generate-op-pipeline");
-      const gitlab: Record<string, unknown> = await import("@intentius/chant-lexicon-gitlab/components/generate-op-pipeline");
-      const forgejo: Record<string, unknown> = await import("@intentius/chant-lexicon-forgejo/components/generate-op-pipeline");
-      return {
-        CI_AGENT_FLOOR: product.CI_AGENT_FLOOR,
-        productPipelineJobs: product.productPipelineJobs,
-        productDriftAgent: product.productDriftAgent,
-        setActiveProductWords: words.setActiveProductWords,
-        generate: { github: github.generateGithubOpPipeline, gitlab: gitlab.generateGitlabOpPipeline, forgejo: forgejo.generateForgejoOpPipeline },
-      };
-    },
-    // chant#4616's feature-detect: CI_AGENT_FLOOR on the ci-product entry, with the generators that read a spec's `agent`.
-    (m) => {
-      const g = m.generate as Record<string, unknown> | undefined;
-      return typeof m.CI_AGENT_FLOOR === "string" && has(m, "productPipelineJobs", "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
-    },
-  ),
-  // The drift job is a chant drift Op on every forge (terragucci#1305, chant issues 4622 and 4753): the Op generators and
-  // the drift agent's spec, apart from agentJob, which also decides whether agent.comment rides chant's job.
-  opGenerator: once<ChantAgentJob>(
-    async () => {
-      const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
-      const words: Record<string, unknown> = await import("@intentius/chant/ci-product-words");
-      const github: Record<string, unknown> = await import("@intentius/chant-lexicon-github/components/generate-op-pipeline");
-      const gitlab: Record<string, unknown> = await import("@intentius/chant-lexicon-gitlab/components/generate-op-pipeline");
-      const forgejo: Record<string, unknown> = await import("@intentius/chant-lexicon-forgejo/components/generate-op-pipeline");
-      return {
-        CI_AGENT_FLOOR: product.CI_AGENT_FLOOR,
-        productPipelineJobs: product.productPipelineJobs,
-        productDriftAgent: product.productDriftAgent,
-        setActiveProductWords: words.setActiveProductWords,
-        generate: { github: github.generateGithubOpPipeline, gitlab: gitlab.generateGitlabOpPipeline, forgejo: forgejo.generateForgejoOpPipeline },
-      };
-    },
-    (m) => {
-      const g = m.generate as Record<string, unknown> | undefined;
-      return has(m, "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
-    },
-  ),
+export const CHANT_AGENT_JOB: ChantAgentJob = {
+  CI_AGENT_FLOOR,
+  productPipelineJobs: productPipelineJobs as unknown as ChantAgentJob["productPipelineJobs"],
+  productDriftAgent: productDriftAgent as unknown as ChantAgentJob["productDriftAgent"],
+  setActiveProductWords: setActiveProductWords as unknown as ChantAgentJob["setActiveProductWords"],
+  generate: {
+    github: generateGithubOpPipeline as unknown as ChantOpGenerator,
+    gitlab: generateGitlabOpPipeline as unknown as ChantOpGenerator,
+    forgejo: generateForgejoOpPipeline as unknown as ChantOpGenerator,
+  },
 };
-
-export type ChantNextPart = keyof typeof loaders;
-
-/** Set by a test: what each part loads to, in place of the import. `null` makes it missing. */
-const overrides = new Map<ChantNextPart, unknown>();
-
-/** What each part came to once its import settled, for the synchronous callers below. `null`: missing. */
-const settled = new Map<ChantNextPart, unknown>();
-
-async function load<K extends ChantNextPart>(part: K): Promise<Awaited<ReturnType<(typeof loaders)[K]>>> {
-  if (overrides.has(part)) return (overrides.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>>;
-  const m = (await loaders[part]()) as Awaited<ReturnType<(typeof loaders)[K]>>;
-  settled.set(part, m ?? null);
-  return m;
-}
-
-/** A part as it already loaded, without waiting: undefined when it is missing or has not been asked for yet. */
-function loaded<K extends ChantNextPart>(part: K): Awaited<ReturnType<(typeof loaders)[K]>> | undefined {
-  if (overrides.has(part)) return (overrides.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>>;
-  return (settled.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>> | undefined;
-}
-
-/** chant's agent job (chant#4616), or undefined. init loads it before it renders the pipeline. */
-export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
-/** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
-export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJob");
-/** chant's Op generators, which the drift job is written with (terragucci#1305), once loaded. */
-export const chantOpGenerator = (): Promise<ChantAgentJob | undefined> => load("opGenerator");
-export const chantOpGeneratorNow = (): ChantAgentJob | undefined => loaded("opGenerator");
-
-/**
- * For tests: make a part missing (`null`), or stand a module in for it.
- * Returns the function that puts the import back.
- */
-export function overrideChantNext(part: ChantNextPart, module: unknown | null): () => void {
-  overrides.set(part, module);
-  return () => {
-    overrides.delete(part);
-  };
-}
-
-/** What the installed chant carries of the composed run, its locks and its plan shape. */
-export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const agentJob = await chantAgentJob();
-  const opGenerator = await chantOpGenerator();
-  return { agentJob: !!agentJob, opGenerator: !!opGenerator };
-}

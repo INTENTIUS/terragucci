@@ -2,9 +2,9 @@
 // repo through chant's controlNoteCheckout, and a standalone migration's history on chant's gated request.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { AGENT_COMMAND, agentCommentInput } from "../src/agent-comment";
-import { overrideChantNext, type ChantAgentJob, type ChantScheduledOpSpec } from "../src/chant-next";
+import { type ChantAgentJob, type ChantScheduledOpSpec } from "../src/chant-next";
 import { validateConfig } from "../src/config";
 import { CHANT_CONTROL_DIR_ENV, CONTROL_DIR_ENV, controlClaimsAt } from "../src/estate-ownership";
 import { doneMigrations, finishedMigrationLines, migrationDetail, revertMigration } from "../src/migrate";
@@ -36,11 +36,6 @@ function fakeAgentJob(seen: { words?: unknown[]; options?: unknown[] } = {}): Ch
   };
 }
 
-let restore: (() => void) | undefined;
-afterEach(() => {
-  restore?.();
-  restore = undefined;
-});
 
 describe("agent.comment on chant's agent job", () => {
   it("keeps the per-run budget on the default command and maps max_cost_usd to chant's daily maxCostUsd", () => {
@@ -62,21 +57,16 @@ describe("agent.comment on chant's agent job", () => {
     expect(out.files[1]!.content.startsWith(MARKER)).toBe(true);
     expect((seen.words![0] as { product: string; commands: Record<string, string> }).product).toBe("terragucci");
     expect(Object.values((seen.words![0] as { commands: Record<string, string> }).commands).sort()).toEqual(["agent", "plan"]);
-    expect(chantAgentFiles("github", "img:1", agent, MARKER, undefined)).toBeUndefined();
   });
 
-  it("drops terragucci's agent jobs from the GitHub pipeline when chant has the job, and keeps them when not", () => {
+  it("writes the agent's jobs on chant's job, never terragucci's own, in the GitHub pipeline", () => {
     const input = { forge: "github" as const, binary: "tofu" as const, version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, agentComment: agent };
-    const own = renderPipeline(input);
-    expect(own.content).toContain("agent-push:");
-    restore = overrideChantNext("agentJob", fakeAgentJob());
     const viaChant = renderPipeline(input);
     expect(viaChant.content).not.toContain("agent-push:");
     expect(viaChant.extra?.map((f) => f.path)).toEqual(expect.arrayContaining([CHANT_AGENT_SPEC_FILE, CHANT_AGENT_PATHS.github]));
   });
 
   it("includes chant's GitLab agent file on the comments stage and starts it with CHANT_AGENT_PR", () => {
-    restore = overrideChantNext("agentJob", fakeAgentJob());
     const seen: { options?: unknown[] } = {};
     chantAgentFiles("gitlab", "img:1", agent, MARKER, fakeAgentJob(seen));
     expect(seen.options![0]).toMatchObject({ opsStage: "comments", opsFileName: "terragucci-agent.yml" });
