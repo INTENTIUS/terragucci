@@ -1068,25 +1068,6 @@ export interface ChantReleaseRead {
   parseReleaseLedger(lines: readonly string[]): { records: unknown[]; malformed: number };
 }
 
-/** chant's agent run record (`agentRunRecordInput`, `@intentius/chant/ci-agent`, chant#4616) and the run ledger's writer (`appendRunRecord`). */
-export interface ChantAgentRuns {
-  agentRunRecordInput(o: {
-    settings: { name: string; on: string; env: string };
-    started: string;
-    ended: string;
-    result: "pushed" | "opened" | "updated" | "refused" | "stopped" | "failed";
-    reason: string;
-    requestedBy?: string;
-    commit?: string;
-    pullRequest?: string;
-    promptDigest?: string;
-    usage?: { model?: string; usd?: number; inputTokens?: number; outputTokens?: number };
-    gitSha?: string;
-  }): object;
-  appendRunRecord(input: object, opts?: { cwd?: string }): Promise<{ commit: string }>;
-  pushLifecycleReport(opts?: { cwd?: string }): Promise<{ pushed: boolean; pushWarning?: string }>;
-}
-
 /** A scheduled Op spec as chant's Op generator takes it (`ScheduledOpSpec`), as far as terragucci writes one. */
 export type ChantScheduledOpSpec = { name: string; trigger?: object; agent?: object; runner?: unknown; findingMode?: string; [k: string]: unknown };
 
@@ -1349,16 +1330,6 @@ const loaders = {
     () => import("@intentius/chant/lifecycle/release-changelog"),
     (m) => (has(m, "changelogBump") ? (m as unknown as ChantChangelog) : undefined),
   ),
-  agentRuns: once<ChantAgentRuns>(
-    async () => {
-      const agent: object = await import("@intentius/chant/ci-agent");
-      const runs: object = await import("@intentius/chant/lifecycle/run-ledger");
-      const git: object = await import("@intentius/chant/lifecycle/git");
-      return { ...git, ...runs, ...agent };
-    },
-    // chant#4616's agent module: agentRunRecordInput and landAgentChange present means the job is there.
-    (m) => (has(m, "agentRunRecordInput", "landAgentChange", "appendRunRecord", "pushLifecycleReport") ? (m as unknown as ChantAgentRuns) : undefined),
-  ),
   agentJob: once<ChantAgentJob>(
     async () => {
       const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
@@ -1496,8 +1467,6 @@ export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load(
 export const chantChangelogNow = (): ChantChangelog | undefined => loaded("changelog");
 /** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */
 export const chantReleaseReadNow = (): ChantReleaseRead | undefined => loaded("releaseRead");
-/** chant's agent run record and run ledger (chant#4616), or undefined. */
-export const chantAgentRuns = (): Promise<ChantAgentRuns | undefined> => load("agentRuns");
 /** chant's agent job (chant#4616), or undefined. init loads it before it renders the pipeline. */
 export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
 /** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
@@ -1553,12 +1522,11 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const sourceForms = await chantSourceForms();
   const [opStandDown] = [await chantOpStandDown()];
   const [stateOps, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
-  const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
   const opGenerator = await chantOpGenerator();
   const holdRecord = await chantHoldRecord();
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
