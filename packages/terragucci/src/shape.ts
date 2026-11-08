@@ -108,7 +108,7 @@ export interface Shape {
  * choudoufu pins the OpenTofu language it forks in required_version, not a
  * release of its own; it has no `test`; under live resource markers it
  * refuses the refresh-only plan drift runs, so drift plans such a root in
- * full (`refreshOnlyOnLiveRoots`, liveDrift in ./report/drift.ts). How its
+ * full (`refreshOnlyOnLiveRoots`, the terraform lexicon's terraformLivePlanDrift). How its
  * applies are kept apart is the terraform lexicon's grain (`applyScope`,
  * ./apply-rows.ts). Its plan answers a
  * `terraform_estate_outputs` read from another estate's plan

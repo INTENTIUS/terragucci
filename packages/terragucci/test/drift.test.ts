@@ -7,7 +7,8 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { prForgeOf, type Fetch } from "../src/forge";
-import { driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
+import { terraformDriftPlan as driftPlan, terraformLivePlanDrift as liveDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
+import { renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
 import { buildReport } from "../src/report/build";
 import { renderHtml } from "../src/report/html";
 import { renderNote } from "../src/report/views";
@@ -44,14 +45,14 @@ const repoWith = (plans: Record<string, unknown>) =>
     ...Object.fromEntries(Object.entries(plans).flatMap(([name, p]) => [[`envs/${name}/main.tf`, ""], [`envs/${name}/plan.json`, JSON.stringify(p)]])),
   });
 
-describe("driftPlan", () => {
+describe("the terraform lexicon's terraformDriftPlan, as the drift report reads it", () => {
   it("reads resource_drift as the changes, and an absent list as none", () => {
     expect((driftPlan(drifted) as { resource_changes: unknown[] }).resource_changes).toHaveLength(2);
     expect((driftPlan(plan([codeChange])) as { resource_changes: unknown[] }).resource_changes).toHaveLength(0);
   });
 });
 
-describe("liveDrift", () => {
+describe("the terraform lexicon's terraformLivePlanDrift, as the drift report reads it", () => {
   it("reads a full plan's changes from the other side: code before, live after, a create as gone, a destroy as outside the code", () => {
     const p = plan([
       rc("a.upd", ["update"], { v: "live", arn: "x" }, { v: "code", arn: null }, { after_unknown: { arn: true }, before_sensitive: { s: true }, after_sensitive: {} }),

@@ -62,9 +62,10 @@ import { liveEstate, rootSecrets } from "../tips/secrets";
 import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf, type Drifted } from "../respond/drift";
+import { terraformDriftPlan, terraformLivePlanDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
 import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, driftWorkflowPath, pipelineAdded } from "./overdue";
 import { DRIFT_ISSUE_FILE } from "../drift-agent";
-import { DRIFT_MARKER, drifted, driftCount, driftNames, driftPlan, liveDrift, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
+import { DRIFT_MARKER, drifted, driftCount, driftNames, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
 import { checkPlans, configAtBase, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
@@ -742,7 +743,7 @@ async function planUnits(
         names.set(path, driftNames(plan));
         if (driftCount(plan) > 0) found.set(path, driftOf(plan));
       }
-      inputs.push({ path, plan: drift ? driftPlan(plan) : plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit, ...(read.length ? { reads: read } : {}), ...(bin ? { binary: bin } : {}) });
+      inputs.push({ path, plan: drift ? terraformDriftPlan(plan) : plan, planner, files: { json: planFiles(path).json }, preventDestroy: new Set(), terragrunt: unit, ...(read.length ? { reads: read } : {}), ...(bin ? { binary: bin } : {}) });
       for (const r of read) log(plannedReadLine(path, r));
       log(drift ? `${path}: ${driftCount(plan) === 0 ? "no drift" : `${driftCount(plan)} resource${driftCount(plan) === 1 ? "" : "s"} drifted`}` : `${path}: ${preview ? "previewed (provisional)" : "planned"}`);
     }
@@ -1382,7 +1383,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       const estateLive = liveEstate(dir);
       const held: Awaited<ReturnType<typeof rootSecrets>> = estateLive?.secrets === "refuse" ? { secrets: [] } : await rootSecrets(plan, bin, () => run("providers", "schema", "-json"));
       if (held.note) lines.push(`${root}: ${held.note}`);
-      if (live.has(root)) plan = liveDrift(plan);
+      if (live.has(root)) plan = terraformLivePlanDrift(plan);
       if (!drift) upstreamPlans.set(root, plan);
       if ([...estateOwner].some(([e, r]) => r === root && readEstates.has(e))) {
         const file = join(work, `${index}.tfplan.json`);
@@ -1406,7 +1407,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         plan: { text: scrubPlanText(text.stdout, plan).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
         ...(drift ? { names: driftNames(plan) } : {}),
         ...(attributed ? { attributed } : {}),
-        input: { path: root, plan: drift ? driftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(planCone ? { cone: planCone } : {}), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...(held.secrets.length ? { secrets: held.secrets } : {}), ...(estateLive ? { live: estateLive } : {}), ...unaddressedOf.get(root) },
+        input: { path: root, plan: drift ? terraformDriftPlan(plan) : plan, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(dir), ...(planCone ? { cone: planCone } : {}), ...(ran.length ? { steps: ran } : {}), ...(reads.length ? { reads } : {}), ...(held.secrets.length ? { secrets: held.secrets } : {}), ...(estateLive ? { live: estateLive } : {}), ...unaddressedOf.get(root) },
       };
     } finally {
       observer.endRoot(timing);
