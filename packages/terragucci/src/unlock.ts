@@ -43,7 +43,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { appendLifecycle, appendPending, decideGate, readLedger, type GateLedger, type PendingRecord } from "./apply";
+import { appendPending, decideGate, readLedger, writeLedger, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { isStored, stateObject, stateStore, type StateObject, type StoredState } from "./backend";
@@ -389,7 +389,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
         ...(commit ? { commit } : {}),
         neverOverMcp: true,
       };
-      appendPending(repo, pending, {}, UNLOCK_LEDGER);
+      await appendPending(repo, pending, {}, UNLOCK_LEDGER);
     }
     if (decision.status === "refused") {
       log(`${rel}: ${decision.by} approved ${decision.approved ?? "another digest"}, the release of another lock; this one is not released`);
@@ -428,7 +428,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
     liveRuns: live,
     ...(commit ? { commit } : {}),
   };
-  appendLifecycle(repo, UNLOCK_DONE, [JSON.stringify(record)], {}, `Released the state lock of ${rel}: ${lock.ID}`);
+  await writeLedger(repo, UNLOCK_DONE, [JSON.stringify(record)], {}, `Released the state lock of ${rel}: ${lock.ID}`);
   log(`${rel}: released ${describeLock(lock)}, approved by ${decision.by}; recorded in ${UNLOCK_DONE} on chant/lifecycle`);
   return { code: UNLOCK_EXIT.released, lock, location, digest };
 }

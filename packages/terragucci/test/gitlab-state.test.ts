@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { stateObject, stateVersion } from "../src/backend";
 import { copyBackend, unitBackend } from "../src/ephemeral";
 import { EXPORT_LEDGER, exportState } from "../src/export";
@@ -206,7 +206,7 @@ describe("state export of GitLab-managed state", () => {
     expect(first.code).toBe(3);
     expect(g.seen.map((s) => s.method)).toEqual(["HEAD"]);
     expect(exportRequest(JSON.parse(show(r.work, EXPORT_LEDGER).trim()))).toMatchObject({ location: ADDRESS, version_id: "1" });
-    appendLifecycle(r.work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: "bob", timestamp: T(1), planDigest: first.digest })], {}, "approve");
+    await writeLedger(r.work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: "bob", timestamp: T(1), planDigest: first.digest })], {}, "approve");
     mkdirSync(r.out);
     const file = join(r.out, "app.tfstate");
     const done = await exportState(r.work, { root: "app", version: "1", actor: "alice", out: file, env: ENV, exec: r.exec, fetch: g.fetch, now: T(2), log: () => {} });
@@ -253,7 +253,7 @@ describe("unlock-state of GitLab-managed state", () => {
     expect(first.digest).toBe(digest);
     expect(first.command).toBe(`terragucci approve unlock app --plan ${digest}`);
     expect(g.locks.has("app")).toBe(true);
-    appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(32), planDigest: digest })], {}, "approve");
+    await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(32), planDigest: digest })], {}, "approve");
     const second = await run(r, g, T(33));
     expect(second.code).toBe(0);
     expect(g.locks.has("app")).toBe(false);

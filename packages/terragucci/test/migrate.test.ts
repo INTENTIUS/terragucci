@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { appendLifecycle, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
+import { writeLedger, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
 import {
   addressMatches,
   applyMigration,
@@ -226,8 +226,8 @@ function repo(opts: { wantInTwo?: string[] } = {}) {
 
 const names = (work: string, root: string): string[] => (JSON.parse(readFileSync(join(work, root, "terraform.tfstate"), "utf-8")) as StateFile).resources.map((r) => r.name);
 const ledger = (origin: string) => parseLedger(git(origin, "show", `chant/lifecycle:${MIGRATE_LEDGER}`));
-function approve(work: string, gate: string, digest: string, at: string, by = "alice"): void {
-  appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
+async function approve(work: string, gate: string, digest: string, at: string, by = "alice"): Promise<void> {
+  await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
 }
 
 describe("running a migration from wave 1", () => {
@@ -258,7 +258,7 @@ describe("running a migration from wave 1", () => {
     expect(planned.code).toBe(0);
     expect(planned.records[0]).toMatchObject({ status: "planned", digest: chantOps ? JSON.parse(kept).digest : digest });
 
-    approve(work, "split-b", digest, T(2));
+    await approve(work, "split-b", digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log });
     expect(second.code).toBe(0);
     expect(second.records[0]).toMatchObject({ status: "applied", approved_by: "alice", digest });
@@ -374,7 +374,7 @@ describe("running a migration from wave 1", () => {
     const { work } = repo();
     const lines: string[] = [];
     const first = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(1), log: (l) => void lines.push(l) });
-    approve(work, "split-b", first.records[0].digest, T(2));
+    await approve(work, "split-b", first.records[0].digest, T(2));
     // Someone wrote one's state since: the same resources, a new serial.
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     const again = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log: (l) => void lines.push(l) });
@@ -445,7 +445,7 @@ describe("running a migration from wave 1", () => {
     const restore = overrideChantNext("stateOps", null);
     const first = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(1), log });
     restore();
-    approve(work, "split-b", first.records[0].digest, T(2));
+    await approve(work, "split-b", first.records[0].digest, T(2));
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     // chant finds no approval of the new digest, only alice's of the old one: the hook holds on the new digest.
     const file = join(tmp(), "hold.json");
@@ -617,7 +617,7 @@ describe("a migration between two Terragrunt units", () => {
     expect(prepared).toEqual(["live/one", "live/two"]);
     expect(new Set(seen)).toEqual(new Set(["one@one", "two@two"]));
     const digest = first.records[0].digest;
-    approve(work, "split-b", digest, T(2));
+    await approve(work, "split-b", digest, T(2));
     const second = await runMigrations(work, { ...opts, now: T(3) });
     expect(second.code).toBe(0);
     expect(second.records[0]).toMatchObject({ status: "applied", digest });

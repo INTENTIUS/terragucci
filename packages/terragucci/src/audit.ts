@@ -192,7 +192,8 @@ function readLedger(source: Source): AuditEntry[] | "none" {
   let secret: string | undefined;
   if (source.ledger.kind === "checkout") {
     dir = source.ledger.dir;
-    ref = `refs/remotes/origin/${LEDGER_BRANCH}`;
+    // A ref of its own: refs/remotes/origin/chant/lifecycle is the lease chant's ledger writer pushes against.
+    ref = "refs/terragucci/lifecycle";
     const heads = git(dir, ["ls-remote", "--heads", "origin", LEDGER_BRANCH]);
     if (!heads.ok) throw new Error(`cannot read ${LEDGER_BRANCH} from origin: ${heads.err}`);
     if (!heads.out.trim()) return "none";

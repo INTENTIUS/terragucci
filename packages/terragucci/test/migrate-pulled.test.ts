@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { backendRefusal, isPulled, MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import { stateObject } from "../src/backend";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
@@ -105,8 +105,8 @@ function repo(files: Record<string, string>, migration: string) {
   return { work, origin };
 }
 
-function approve(work: string, digest: string, at: string): void {
-  appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate: "move-app", resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
+async function approve(work: string, digest: string, at: string): Promise<void> {
+  await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate: "move-app", resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
 }
 
 const pgFrom = "backends:\n  - root: app\n    from:\n      backend: pg\n      config:\n        conn_str: postgres://db:5432/app?sslmode=disable\n        schema_name: old\n";
@@ -127,7 +127,7 @@ describe("a backend move between backends that keep no versions", () => {
     expect(planned.roots[0].source?.version_id).toBeUndefined();
     expect(store.pushes).toEqual([]);
 
-    approve(work, planned.digest, T(2));
+    await approve(work, planned.digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(3), log });
     expect(second.code).toBe(0);
     expect(second.records[0]).toMatchObject({ status: "applied", approved_by: "alice" });
@@ -147,7 +147,7 @@ describe("a backend move between backends that keep no versions", () => {
     const { work } = repo({ "app/main.tf": pg("new") + resources(["keep", "moved"]), "app/want.json": JSON.stringify(["terraform_data.keep", "terraform_data.moved"]) }, pgFrom);
     const lines: string[] = [];
     const first = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(1), log: (l) => void lines.push(l) });
-    approve(work, first.records[0].digest, T(2));
+    await approve(work, first.records[0].digest, T(2));
     store.states.set(oldPg, state("L1", 5, ["keep", "moved"]));
     const again = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(3), log: (l) => void lines.push(l) });
     // On chant's gate new contents are a new request under a digest of its own, refused against the approved request's stored proof.
@@ -167,7 +167,7 @@ describe("a backend move between backends that keep no versions", () => {
     const first = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(1), log: () => {} });
     expect(first.code).toBe(3);
     expect(first.records[0].roots.map((r) => [r.root, r.location])).toEqual([["one", "pg:db:5432/app/one.states"], ["two", "kubernetes:tf/two"]]);
-    approve(work, first.records[0].digest, T(2));
+    await approve(work, first.records[0].digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(3), log: () => {} });
     expect(second.code).toBe(0);
     // The root that gains is written first, and neither push skips the lock.
@@ -187,7 +187,7 @@ describe("a backend move to a kubernetes backend", () => {
     const first = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(1), log: () => {} });
     expect(first.code).toBe(3);
     expect(first.records[0].roots[0].before.digest).not.toBeNull();
-    approve(work, first.records[0].digest, T(2));
+    await approve(work, first.records[0].digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(3), log: () => {} });
     expect(second.code).toBe(0);
     expect(store.pushes.map((p) => [p.where, p.args.includes("-force"), p.args.includes("-lock=false")])).toEqual([[newK, true, false]]);

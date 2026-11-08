@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTION_APPLIED, ACTION_LEDGER, actionApproveCommand, engineRefusal, noActionReply, resumableActions, resumeActions, runAction, type ActionOptions } from "../src/action";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { approveGate, isGateKeyword } from "../src/approve";
 import { overrideChantNext, type ChantGatedRequestRead, type ChantInvokeActionInput } from "../src/chant-next";
 import { main } from "../src/cli";
@@ -180,7 +180,7 @@ describe("terragucci action", () => {
     expect((await approveGate(r.work, { kind: "action", target: "apps/orders", plan: first.json.digest!, actor: "alice", dryRun: true, log: (l) => void said.push(l) })).code).toBe(1);
     expect(said.join("\n")).toContain("the requester's own approval never counts");
 
-    appendLifecycle(r.work, ACTION_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-action", gate: `apps/orders:${ADDRESS}`, resolvedBy: "bob", timestamp: T(2), planDigest: first.json.digest })], {}, "approve");
+    await writeLedger(r.work, ACTION_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-action", gate: `apps/orders:${ADDRESS}`, resolvedBy: "bob", timestamp: T(2), planDigest: first.json.digest })], {}, "approve");
     // The resume job sees it, and runs it as alice.
     const listed = await resumeActions(r.work, { dryRun: true, now: T(3), log: () => {} });
     expect(listed.actions).toEqual([{ root: "apps/orders", address: ADDRESS, digest: first.json.digest, requester: "alice", approvedBy: "bob" }]);

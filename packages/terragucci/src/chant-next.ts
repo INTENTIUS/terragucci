@@ -980,38 +980,6 @@ export interface ChantRequestProof {
   readBlobFromPath(environment: string, filename: string, opts?: { cwd?: string }): Promise<string | null>;
 }
 
-/** What chant's gate ledger writers answer: whether the line reached the remote. */
-export interface ChantLedgerPush {
-  pushed: boolean;
-  pushWarning?: string;
-}
-
-/** chant's gate ledger port (`op/gate` `gitGateLedgerPort`): the writers of `_gates/<op>.jsonl` and `_gates/<op>/applied.jsonl`. */
-export interface ChantGateLedgerPort {
-  appendPending(input: Record<string, unknown>): Promise<ChantLedgerPush>;
-  appendResolution?(input: Record<string, unknown>): Promise<ChantLedgerPush>;
-  appendApplied?(record: Record<string, unknown>): Promise<ChantLedgerPush>;
-  /** chant#4623; on a chant without it a finished line goes through appendApplied, which appends any line to the same file. */
-  appendFinished?(record: Record<string, unknown>): Promise<ChantLedgerPush>;
-}
-
-/**
- * chant's ledger writers for the records a tf-apply wave writes on chant's
- * path (terragucci#1282 part j): the gate port, a file beside a pending fact,
- * and the push. Loaded only from a chant with the recorded hold
- * (`OP_WAVE_HOLD_RECORD_FLOOR`, chant#4623), so the published pin keeps
- * terragucci's own writer.
- */
-export interface ChantGateWriters {
-  OP_WAVE_HOLD_RECORD_FLOOR: string;
-  gitGateLedgerPort(opts?: { cwd?: string }): ChantGateLedgerPort;
-  writeBlobToPath(dir: string, file: string, content: string, message: string, opts?: { cwd?: string }): Promise<string>;
-  pushLifecycleReport(opts?: { cwd?: string }): Promise<ChantLedgerPush>;
-  /** Fetch chant/lifecycle into the checkout's branch, refusing a fork (#2303); every chant has it. */
-  requireLifecycleLedger(opts?: { cwd?: string }): Promise<void>;
-  isLifecycleLocalNote(warning: string | undefined): boolean;
-}
-
 /** The terraform lexicon's state operations (`state-ops`, chant#4618) with chant's gated-request reader (chant#4551). */
 export interface ChantStateOps {
   gatedStateOp<T>(input: ChantGatedStateOpInput, act: (approved: { digest: string; request: ChantGatedRequest; approvedBy: string }) => Promise<{ output: T; detail?: Record<string, string | number | boolean> }>): Promise<ChantGatedStateOpResult<T>>;
@@ -1490,16 +1458,6 @@ const loaders = {
     },
     (m) => (has(m, "gatedRequestAttachmentPath", "readBlobFromPath") ? (m as unknown as ChantRequestProof) : undefined),
   ),
-  gateWriters: once<ChantGateWriters>(
-    async () => {
-      const requests: Record<string, unknown> = await import("@intentius/chant/lifecycle/gated-request");
-      const gate: Record<string, unknown> = await import("@intentius/chant/op/gate");
-      const git: Record<string, unknown> = await import("@intentius/chant/lifecycle/git");
-      const note: Record<string, unknown> = await import("@intentius/chant/lifecycle/local-note");
-      return { OP_WAVE_HOLD_RECORD_FLOOR: requests.OP_WAVE_HOLD_RECORD_FLOOR, gitGateLedgerPort: gate.gitGateLedgerPort, writeBlobToPath: git.writeBlobToPath, pushLifecycleReport: git.pushLifecycleReport, requireLifecycleLedger: git.requireLifecycleLedger, isLifecycleLocalNote: note.isLifecycleLocalNote };
-    },
-    (m) => (typeof m.OP_WAVE_HOLD_RECORD_FLOOR === "string" && has(m, "gitGateLedgerPort", "writeBlobToPath", "pushLifecycleReport", "requireLifecycleLedger", "isLifecycleLocalNote") ? (m as unknown as ChantGateWriters) : undefined),
-  ),
   releaseRead: once<ChantReleaseRead>(
     () => import("@intentius/chant/lifecycle/release-ledger"),
     (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
@@ -1574,8 +1532,6 @@ export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("sta
 export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
 /** chant's reader of a gated request's stored proof (chant#4551, #4623), or undefined. */
 export const chantRequestProof = (): Promise<ChantRequestProof | undefined> => load("requestProof");
-/** chant's gate ledger writers (terragucci#1282 part j), or undefined on a chant before chant#4623, where terragucci writes its own lines. */
-export const chantGateWriters = (): Promise<ChantGateWriters | undefined> => load("gateWriters");
 /** chant's row leases and the lexicon's rows (chant#4552, #4594), or undefined. */
 export const chantLockRows = (): Promise<ChantLockRows | undefined> => load("lockRows");
 /** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
@@ -1646,9 +1602,8 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const agentJob = await chantAgentJob();
   const opGenerator = await chantOpGenerator();
   const holdRecord = await chantHoldRecord();
-  const gateWriters = await chantGateWriters();
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, gateWriters: !!gateWriters, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

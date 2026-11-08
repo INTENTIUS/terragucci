@@ -84,7 +84,7 @@ import { pushLifecycleReport } from "@intentius/chant/lifecycle/git";
 import { livePrEnvironments, parsePrEnvRecords, PR_ENV_LEDGER_DIR, PR_ENV_LEDGER_FILE, type LivePrEnvironment, type PrEnvRecord, type PrEnvReportRow, type PrEnvTeardownAdapter } from "@intentius/chant/components/pr-environment";
 import type { TeardownOutcome } from "@intentius/chant/lexicon";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
-import { decideGate, lockTimeoutArgs, readLedger } from "./apply";
+import { decideGate, LEDGER_READ_REF, lockTimeoutArgs, readLedger } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import {
@@ -613,7 +613,7 @@ export function legacyRecords(text: string): PrEnvRecord[] {
 
 /** A file on origin's chant/lifecycle, as fetched last. Empty when there is none. */
 function lifecycleFile(repo: string, path: string): string {
-  const show = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${path}`]);
+  const show = git(repo, ["show", `${LEDGER_READ_REF}:${path}`]);
   return show.status === 0 ? show.stdout : "";
 }
 

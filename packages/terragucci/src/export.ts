@@ -48,7 +48,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { appendLifecycle, appendPending, readLedger, type PendingRecord, type ResolutionRecord } from "./apply";
+import { appendPending, fetchedLedgerFile, LEDGER_READ_REF, readLedger, writeLedger, type PendingRecord, type ResolutionRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { isStored, READS_VERSIONS, stateObject, stateStore, type StateObject } from "./backend";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
@@ -298,7 +298,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   }
 
   const ledger = readLedger(repo, EXPORT_LEDGER);
-  const doneText = spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${EXPORT_DONE}`], { cwd: repo, encoding: "utf-8" });
+  const doneText = spawnSync("git", ["show", `${LEDGER_READ_REF}:${EXPORT_DONE}`], { cwd: repo, encoding: "utf-8" });
   const done = doneExports(doneText.status === 0 ? doneText.stdout : "");
   // This person's open request for this version: unexpired and not exported yet.
   const pending = (ledger.pending as ExportPending[])
@@ -323,7 +323,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
       request,
       neverOverMcp: true,
     };
-    appendPending(repo, record, {}, EXPORT_LEDGER);
+    await appendPending(repo, record, {}, EXPORT_LEDGER);
     const command = exportApproveCommand(root, digest, sealed);
     log(`state export: ${by} asks for ${root}'s state, ${location} version ${version}; request ${digest}`);
     log("someone other than you approves it with:");
@@ -370,7 +370,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
     content_digest: sha(body),
   };
   // The record goes first: an export that could not be recorded is never written.
-  appendLifecycle(repo, EXPORT_DONE, [JSON.stringify(line)], {}, `State exported: ${root} version ${version} for ${by}`);
+  await writeLedger(repo, EXPORT_DONE, [JSON.stringify(line)], {}, `State exported: ${root} version ${version} for ${by}`);
   writeFileSync(file, body, { mode: 0o600, flag: "wx" });
   log(`state export: wrote ${file}: ${root}'s state, ${location} version ${version}, approved by ${approval.resolvedBy}`);
   log(`state export: recorded on chant/lifecycle in ${EXPORT_DONE}; delete the file when you are done with it`);

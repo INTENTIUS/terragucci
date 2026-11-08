@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { MIGRATE_LEDGER, runBinary, runMigrations } from "../src/migrate";
 import { countsLine, countsOf, MigrationProgress, parseProgressLine, progressPath, type ProgressRecord } from "../src/migrate-progress";
 import { Trace, tracesBody } from "../src/telemetry";
@@ -134,8 +134,8 @@ function stubRepo(files: Record<string, string>, live: { id: string; estate: str
   return { work, binary };
 }
 
-function approve(work: string, gate: string, digest: string, at: string): void {
-  appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
+async function approve(work: string, gate: string, digest: string, at: string): Promise<void> {
+  await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
 }
 
 const readLines = (file: string): ProgressRecord[] => readFileSync(file, "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as ProgressRecord);
@@ -148,7 +148,7 @@ describe("a moves migration's progress, against a stub choudoufu that prints -pr
     expect(first.code).toBe(3);
     expect(first.records[0]).toMatchObject({ change: "retag", status: "waiting" });
     expect(first.records[0]!.progress).toBeUndefined();
-    approve(work, "carve", first.records[0]!.digest, T(2));
+    await approve(work, "carve", first.records[0]!.digest, T(2));
 
     const published = new Map<string, string>();
     const events: { name: string; attributes: Record<string, unknown> }[] = [];
@@ -201,7 +201,7 @@ describe("a moves migration's progress, against a stub choudoufu that prints -pr
     const { work, binary } = carveRepo();
     const env = { PATH: process.env.PATH, STUB_REPO: work };
     const first = await runMigrations(work, { binary, env, now: T(1), log: () => {} });
-    approve(work, "carve", first.records[0]!.digest, T(2));
+    await approve(work, "carve", first.records[0]!.digest, T(2));
     const second = await runMigrations(work, { binary, env, now: T(3), log: () => {}, progress: () => ({}) });
     expect(second.code).toBe(0);
     expect(second.records[0]!.status).toBe("applied");
@@ -215,7 +215,7 @@ describe("a moves migration's progress, against a stub choudoufu that prints -pr
     const env = { PATH: process.env.PATH, STUB_REPO: work, STUB_PROGRESS: "1" };
     const first = await runMigrations(work, { binary, env, now: T(1), log: () => {} });
     expect(first.code).toBe(3);
-    approve(work, "carve", first.records[0]!.digest, T(2));
+    await approve(work, "carve", first.records[0]!.digest, T(2));
     const events: string[] = [];
     const second = await runMigrations(work, { binary, env, now: T(3), log: () => {}, progress: () => ({ event: (_, a) => void events.push(String(a["terragucci.migration.address"])) }) });
     expect(second.code).toBe(0);

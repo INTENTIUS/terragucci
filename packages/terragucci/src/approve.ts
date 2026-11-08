@@ -54,7 +54,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
+import { LEDGER_READ_REF, readLedger, runOf, storedReport, waveGate, type GateLedger } from "./apply";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, recordedDenials, sortedRules } from "./override";
 import { declaredHardMandatory } from "./report/policy";
 import { checkoutApproval } from "./approval";
@@ -276,7 +276,7 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
   const config = configPath ? await loadConfig(configPath) : {};
   const mode: Approval = checkoutApproval(repo, config)?.mode ?? "ledger";
   log(`migration ${m.migration} waits for an approval of ${m.digest}${m.description ? ` (${m.description})` : ""}, since ${m.since}`);
-  const show = (path: string) => spawnSync("git", ["show", `refs/remotes/origin/chant/lifecycle:${path}`], { cwd: repo, encoding: "utf-8" });
+  const show = (path: string) => spawnSync("git", ["show", `${LEDGER_READ_REF}:${path}`], { cwd: repo, encoding: "utf-8" });
   let kept = show(keptPath(m.migration, m.digest));
   // chant keeps the proof as the request's attachment (chant#4551, #4623) when it records the gate.
   const held = kept.status === 0 ? undefined : await chantHoldRecord();

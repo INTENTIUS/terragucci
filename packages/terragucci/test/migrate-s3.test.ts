@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import {
   applyMigration,
   backendBlock,
@@ -152,8 +152,8 @@ function repo(files: Record<string, string>, change: Record<string, string>) {
 }
 
 const s3 = (key: string) => JSON.stringify({ type: "s3", config: { bucket: "state", key } });
-const approve = (work: string, gate: string, digest: string, at: string) =>
-  appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
+const approve = async (work: string, gate: string, digest: string, at: string) =>
+  await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
 
 describe("S3 signing of a request with a query", () => {
   it("signs the canonical query, as AWS's GET Bucket example with max-keys and prefix gives", () => {
@@ -188,7 +188,7 @@ describe("a backend move", () => {
     expect(first.code).toBe(3);
     expect(first.records[0]!.roots[0]).toMatchObject({ root: "app", location: "s3://state/new/app.tfstate", before: { digest: null }, source: { location: "s3://state/old/app.tfstate", version_id: old } });
     expect(lines[0]).toContain("moving the state of app from its s3 backend s3://state/old/app.tfstate to the backend its code names");
-    approve(work, "move-app", first.records[0]!.digest, T(2));
+    await approve(work, "move-app", first.records[0]!.digest, T(2));
     const second = await runMigrations(work, { ...opts, now: T(3) });
     expect(second.code).toBe(0);
     expect(JSON.parse(w.latest("state/new/app.tfstate")!.body).resources.map((r: StateResource) => r.name)).toEqual(["a"]);
@@ -208,7 +208,7 @@ describe("a backend move", () => {
     );
     const opts = { binary: "tofu", exec: w.exec, fetch: w.fetch, env: ENV, log: () => {} };
     const first = await runMigrations(work, { ...opts, now: T(1) });
-    approve(work, "move-app", first.records[0]!.digest, T(2));
+    await approve(work, "move-app", first.records[0]!.digest, T(2));
     w.put("state/old/app.tfstate", JSON.stringify(state("L", 3, ["a"])));
     const again = await runMigrations(work, { ...opts, now: T(3) });
     expectMovedAfterApproval(again, first.records[0]!.digest, ["app"]);
@@ -248,7 +248,7 @@ describe("a revert", () => {
     const before = w.put("state/one.tfstate", JSON.stringify(state("L1", 4, ["a", "b"])));
     const opts = { binary: "tofu", exec: w.exec, fetch: w.fetch, env: ENV, log: () => {} };
     const split = await runMigrations(work, { ...opts, now: T(1) });
-    approve(work, "split-b", split.records[0]!.digest, T(2));
+    await approve(work, "split-b", split.records[0]!.digest, T(2));
     expect((await runMigrations(work, { ...opts, now: T(3) })).code).toBe(0);
     // The revert: the file from the record, and the code as it was.
     expect(writeRevert(work, "split-b")).toBe("migrations/split-b-revert.yml");
@@ -260,7 +260,7 @@ describe("a revert", () => {
     expect(waits.code).toBe(3);
     expect(waits.records[0]).toMatchObject({ name: "split-b-revert", change: "revert", revert: "split-b" });
     expect(waits.records[0]!.roots.map((r) => [r.root, r.restore?.version_id])).toEqual([["one", before], ["two", null]]);
-    approve(work, "split-b-revert", waits.records[0]!.digest, T(5));
+    await approve(work, "split-b-revert", waits.records[0]!.digest, T(5));
     expect((await runMigrations(work, { ...opts, now: T(6) })).code).toBe(0);
     const one = JSON.parse(w.latest("state/one.tfstate")!.body) as StateFile;
     expect(one.resources.map((r) => r.name)).toEqual(["a", "b"]);
@@ -396,7 +396,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     expect(lines[0]).toContain("moving the state of app from its cloud workspace tfe.test/acme/app-prod");
     expect(first.records[0]!.roots[0]).toMatchObject({ location: "s3://state/app.tfstate", source: { backend: "cloud", location: "cloud://tfe.test/acme/app-prod", version_id: "sv-2" } });
     expect(t.calls.some((c) => c.path === "/api/tfe/v2/workspaces/ws-1/current-state-version")).toBe(true);
-    approve(work, "move-app", first.records[0]!.digest, T(2));
+    await approve(work, "move-app", first.records[0]!.digest, T(2));
     const second = await runMigrations(work, { ...opts, now: T(3) });
     expect(second.code).toBe(0);
     expect(JSON.parse(w.latest("state/app.tfstate")!.body)).toMatchObject({ lineage: "L", serial: 3 });
@@ -416,7 +416,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     );
     const opts = { binary: "tofu", exec: w.exec, fetch: t.fetch, env: TENV, log: () => {} };
     const first = await runMigrations(work, { ...opts, now: T(1) });
-    approve(work, "move-app", first.records[0]!.digest, T(2));
+    await approve(work, "move-app", first.records[0]!.digest, T(2));
     t.versions.pop();
     const dropped = await runMigrations(work, { ...opts, now: T(3) });
     expectMovedAfterApproval(dropped, first.records[0]!.digest, ["app"]);
@@ -425,7 +425,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     // An approval is used once; the plan from sv-1 waits for its own.
     const waits = await runMigrations(work, { ...opts, now: T(4) });
     expect(waits.code).toBe(3);
-    approve(work, "move-app", waits.records[0]!.digest, T(5));
+    await approve(work, "move-app", waits.records[0]!.digest, T(5));
     t.lock();
     const locked = await runMigrations(work, { ...opts, now: T(6) });
     expect(locked.code).toBe(1);
@@ -457,12 +457,12 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
     const first = await runMigrations(work, { ...opts, now: T(1) });
     expect(first.code).toBe(3);
     expect(first.records[0]!.roots[0]!.source).toMatchObject({ backend: "file", location: "exported/app.tfstate" });
-    approve(work, "move-app", first.records[0]!.digest, T(2));
+    await approve(work, "move-app", first.records[0]!.digest, T(2));
     write(work, { "exported/app.tfstate": JSON.stringify(state("L", 8, ["a"])) });
     expectMovedAfterApproval(await runMigrations(work, { ...opts, now: T(3) }), first.records[0]!.digest, ["app"]);
     const waits = await runMigrations(work, { ...opts, now: T(4) });
     expect(waits.code).toBe(3);
-    approve(work, "move-app", waits.records[0]!.digest, T(5));
+    await approve(work, "move-app", waits.records[0]!.digest, T(5));
     expect((await runMigrations(work, { ...opts, now: T(6) })).code).toBe(0);
     expect(JSON.parse(w.latest("state/app.tfstate")!.body)).toMatchObject({ serial: 8 });
   });

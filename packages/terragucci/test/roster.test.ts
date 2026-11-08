@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { MIGRATE_LEDGER, runMigrations, type BinaryExec } from "../src/migrate";
 import { buildReport } from "../src/report/build";
 import { addToEstates, ESTATES_SCHEMA, rosterKey, rosterOf, stockEstate, uploadRosters, waveRosters, type Roster } from "../src/report/roster";
@@ -219,7 +219,7 @@ describe("an estate migration's rosters", () => {
     expect(first.code).toBe(3);
     // Planned and waiting: nothing was written, so no roster.
     expect(rosters).toEqual([]);
-    appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate: "carve-jobs", resolvedBy: "alice", timestamp: "2026-10-16T12:02:00.000Z", planDigest: first.records[0]!.digest })], {}, "approve");
+    await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate: "carve-jobs", resolvedBy: "alice", timestamp: "2026-10-16T12:02:00.000Z", planDigest: first.records[0]!.digest })], {}, "approve");
     const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: "2026-10-16T12:03:00.000Z", log: () => {}, roster });
     expect(second.code).toBe(0);
     expect(rosters).toEqual([
