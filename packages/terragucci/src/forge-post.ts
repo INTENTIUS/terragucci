@@ -19,10 +19,9 @@
  * token posts nothing.
  */
 import { readFileSync } from "node:fs";
-import { forgeTargetFromEnv, type PrForge } from "@intentius/chant/pr-forge";
-import { gitlabApi } from "./comment-apply-gitlab";
+import type { PrForge } from "@intentius/chant/pr-forge";
 import { ConfigError, type ForgeName } from "./config";
-import { call, commitStatuses, poster, type Fetch } from "./forge";
+import { commitStatuses, poster, type Fetch } from "./forge";
 import { PLAN_MARK } from "./plan-note-gitlab";
 
 export const POST_COMMANDS = ["status", "note", "reply", "stale"] as const;
@@ -65,7 +64,7 @@ export async function forgePost(cmd: string, args: string[], o: PostOptions): Pr
     if (cmd === "status") await status(forge, args, o, env);
     else if (cmd === "note") await forge.upsertComment(prOf(env), PLAN_MARK, readFileSync(need(args[0], "note <file>"), "utf-8"));
     else if (cmd === "reply") await forge.addComment(prOf(env), `terragucci: ${need(args[0], "reply <text>")}`);
-    else await stale(forge, need(args[0], "stale <roots> <branch>").split(","), args[1] ?? "", o, env);
+    else await stale(forge, need(args[0], "stale <roots> <branch>").split(","), args[1] ?? "");
     return undefined;
   } catch (e) {
     return `terragucci: ${cmd} failed: ${(e as Error).message}`;
@@ -99,20 +98,6 @@ async function status(forge: PrForge, args: string[], o: PostOptions, env: NodeJ
   });
 }
 
-/** The open pull (or merge) requests into `branch`, by number (iid on GitLab). */
-async function openInto(branch: string, o: PostOptions, env: NodeJS.ProcessEnv): Promise<number[]> {
-  const doFetch = o.fetch ?? (globalThis.fetch as unknown as Fetch);
-  const b = encodeURIComponent(branch);
-  if (o.forge === "gitlab") {
-    const list = await gitlabApi(env, env.TG_TOKEN, doFetch)("GET", `/projects/${encodeURIComponent(env.CI_PROJECT_ID ?? "")}/merge_requests?state=opened&target_branch=${b}&per_page=100`);
-    return (Array.isArray(list) ? list : []).map((m: any) => m?.iid).filter((n: unknown): n is number => Number.isInteger(n));
-  }
-  // The repository and its API as chant's client reads them from the job's environment.
-  const t = forgeTargetFromEnv(env, { kind: o.forge, tokenEnv: "TG_TOKEN" });
-  const list = await call(doFetch, { forge: o.forge, origin: `https://${t.host}`, path: t.repo, token: t.token, api: t.apiBase }, "GET", `/repos/${t.repo}/pulls?state=open&base=${b}&per_page=100`);
-  return (Array.isArray(list) ? list : []).map((p: any) => p?.number).filter((n: unknown): n is number => Number.isInteger(n));
-}
-
 /** The plan note with the stale line under its first line, or undefined when it covers none of `moved` or already says so. */
 export function staleNote(body: string, moved: readonly string[], branch: string): string | undefined {
   if (body.includes(STALE_MARKER)) return undefined;
@@ -123,8 +108,9 @@ export function staleNote(body: string, moved: readonly string[], branch: string
   return lines.join("\n");
 }
 
-async function stale(forge: PrForge, moved: string[], branch: string, o: PostOptions, env: NodeJS.ProcessEnv): Promise<void> {
-  for (const n of await openInto(branch, o, env)) {
+async function stale(forge: PrForge, moved: string[], branch: string): Promise<void> {
+  if (!forge.openPullRequests) throw new Error(`chant's ${forge.kind} client lists no open pull requests`);
+  for (const { number: n } of await forge.openPullRequests(branch)) {
     const note = await forge.findComment(n, PLAN_MARK);
     const body = note ? staleNote(note.body, moved, branch) : undefined;
     if (body) await forge.upsertComment(n, PLAN_MARK, body);

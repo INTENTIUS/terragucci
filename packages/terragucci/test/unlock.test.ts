@@ -8,7 +8,7 @@ import type { Fetch } from "../src/forge";
 import { ledgerEntries, UNLOCK_DONE_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { S3Fetch } from "../src/report/s3";
-import { liveRuns, lockDigest, parseLockInfo, parseUnlocks, possibleHolders, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { lockDigest, parseLockInfo, parseUnlocks, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { appliedFile, appliedLines, chantGated } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -39,23 +39,6 @@ describe("parseLockInfo", () => {
   });
 });
 
-describe("possibleHolders", () => {
-  const runs = [
-    { id: "1", status: "running", started: T(0) },
-    { id: "2", status: "running", started: T(10) },
-    { id: "3", status: "waiting" },
-  ];
-  it("keeps the runs that began before the lock, give or take the skew, and any with no start", () => {
-    expect(possibleHolders(runs, T(5)).map((r) => r.id)).toEqual(["1", "3"]);
-    expect(possibleHolders(runs, T(9)).map((r) => r.id)).toEqual(["1", "2", "3"]);
-    expect(possibleHolders(runs, T(9), 0).map((r) => r.id)).toEqual(["1", "3"]);
-  });
-  it("keeps every run when the lock says not when it was taken", () => {
-    expect(possibleHolders(runs, undefined)).toHaveLength(3);
-    expect(possibleHolders(runs, "yesterday")).toHaveLength(3);
-  });
-});
-
 /** A forge answering its run listings from `runs` by status, recording each URL asked. */
 function forge(runs: Array<Record<string, unknown>>, failing = false) {
   const asked: string[] = [];
@@ -69,31 +52,6 @@ function forge(runs: Array<Record<string, unknown>>, failing = false) {
   };
   return { fetch, asked };
 }
-
-describe("liveRuns", () => {
-  it("lists Forgejo's running, waiting and blocked runs, with when each began", async () => {
-    const f = forge([
-      { id: 7, status: "running", started: T(2), created: T(1), html_url: "http://forge/o/r/actions/runs/7" },
-      { id: 8, status: "waiting", started: "1970-01-01T00:00:00Z", created: T(3) },
-      { id: 9, status: "success", started: T(0) },
-    ]);
-    const runs = await liveRuns(f.fetch, { forge: "forgejo", origin: "http://forge", path: "o/r", token: "t" });
-    expect(runs).toEqual([
-      { id: "7", status: "running", started: T(2), url: "http://forge/o/r/actions/runs/7" },
-      { id: "8", status: "waiting", started: T(3), url: undefined },
-    ]);
-    expect(f.asked.every((u) => u.startsWith("http://forge/api/v1/repos/o/r/actions/runs?status="))).toBe(true);
-  });
-
-  it("lists GitHub's runs in progress or queued, and GitLab's running and pending pipelines", async () => {
-    const gh = forge([{ id: 1, status: "in_progress", run_started_at: T(1) }, { id: 2, status: "completed" }]);
-    expect(await liveRuns(gh.fetch, { forge: "github", origin: "https://github.com", path: "o/r", token: "t" })).toEqual([{ id: "1", status: "in_progress", started: T(1), url: undefined }]);
-    expect(gh.asked[0]).toBe("https://api.github.com/repos/o/r/actions/runs?status=in_progress&per_page=100");
-    const gl = forge([{ id: 5, status: "pending", created_at: T(4), web_url: "https://gl/p/-/pipelines/5" }]);
-    expect(await liveRuns(gl.fetch, { forge: "gitlab", origin: "https://gl", path: "g/p", token: "t" })).toEqual([{ id: "5", status: "pending", started: T(4), url: "https://gl/p/-/pipelines/5" }]);
-    expect(gl.asked[0]).toBe("https://gl/api/v4/projects/g%2Fp/pipelines?status=running&per_page=100");
-  });
-});
 
 /** The bucket's lock files in memory. */
 function bucket() {

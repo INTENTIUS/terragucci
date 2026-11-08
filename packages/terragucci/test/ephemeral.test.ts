@@ -272,7 +272,10 @@ describe("a pull request's copy", () => {
     expect(await upApproved(s, { ...opts(s), pr: 7, head: s.head, now: T(0) })).toBe(0);
     vi.stubEnv("TG_TOKEN", "t");
     const states: Record<number, string> = { 7: "open" };
-    const fetchFn: Fetch = async (url) => ({ ok: true, status: 200, json: async () => ({ state: states[Number(url.split("/").pop())] }), text: async () => "" });
+    const fetchFn: Fetch = async (url) => {
+      const body = { state: states[Number(url.split("/").pop())] };
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    };
     const env = { ...process.env, GITHUB_REPOSITORY: "o/r", GITHUB_SERVER_URL: "https://github.example", TG_TOKEN: "t" };
     expect(await ephemeralSweep(s.work, { ...opts(s), env, fetch: fetchFn, now: T(10) })).toBe(0);
     expect(readLive(s.work).has(7)).toBe(true);
