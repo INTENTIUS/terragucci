@@ -244,19 +244,14 @@ describe("running a migration from wave 1", () => {
     const pending = ledger(origin).pending;
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ op: "tf-migrate", gate: "split-b", planDigest: digest });
-    if (chantOps) {
-      expect((pending[0] as { request?: unknown }).request).toMatchObject({ kind: "migrate", subject: "split-b", fields: { file: "migrations/split-b.yml", roots: "one,two" } });
-    } else {
-      expect(pending[0]).toMatchObject({ neverOverMcp: true });
-      expect(pending[0].members?.map((m) => m.member)).toEqual(["one", "two"]);
-    }
+    expect((pending[0] as { request?: unknown }).request).toMatchObject({ kind: "migrate", subject: "split-b", fields: { file: "migrations/split-b.yml", roots: "one,two" } });
     // The plan record kept beside the ledger holds digests, never a state's contents: on chant's gate it is the request's attachment.
-    const kept = git(origin, "show", `chant/lifecycle:${chantOps ? `_gates/tf-migrate/requests/${digest.replace(/:/g, "_")}.json` : `_gates/tf-migrate/split-b/${digest.replace(":", "_")}.json`}`);
+    const kept = git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${digest.replace(/:/g, "_")}.json`);
     expect(kept).not.toContain("secret-");
     // A pull request's plan job proves the same proof, read only: on chant's gate the request binds that proof, under a digest of chant's.
     const planned = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, planOnly: true, log });
     expect(planned.code).toBe(0);
-    expect(planned.records[0]).toMatchObject({ status: "planned", digest: chantOps ? JSON.parse(kept).digest : digest });
+    expect(planned.records[0]).toMatchObject({ status: "planned", digest: JSON.parse(kept).digest });
 
     await approve(work, "split-b", digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log });
@@ -267,7 +262,7 @@ describe("running a migration from wave 1", () => {
     expect(second.records[0].roots.map((r) => r.verify?.changes)).toEqual([[], []]);
     const { line, text } = migrationRecord(work, "split-b");
     expect(doneMigrations(text).get("split-b")?.status).toBe("applied");
-    expect(git(origin, "show", `chant/lifecycle:${chantOps ? appliedFile("tf-migrate") : MIGRATE_DONE}`)).not.toContain("secret-");
+    expect(git(origin, "show", `chant/lifecycle:${appliedFile("tf-migrate")}`)).not.toContain("secret-");
     expect((line.roots as { root: string; before_digest: string; after_digest: string }[]).map((r) => [r.root, r.before_digest !== r.after_digest])).toEqual([["one", true], ["two", true]]);
     const record = JSON.parse(readFileSync(join(work, "terragucci-report", "migrations", "split-b.json"), "utf-8"));
     expect(record.status).toBe("applied");
@@ -379,7 +374,7 @@ describe("running a migration from wave 1", () => {
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     const again = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log: (l) => void lines.push(l) });
     // On chant's gate a state written since is a new request under a digest of its own, refused against the approved request's stored proof.
-    if (chantOps) expect(again.records[0].digest).not.toBe(first.records[0].digest);
+    expect(again.records[0].digest).not.toBe(first.records[0].digest);
     expect(again.code).toBe(4);
     expect(again.records[0]).toMatchObject({ status: "refused", moved: ["one"] });
     expect(lines.join("\n")).toContain("the states moved since: one");

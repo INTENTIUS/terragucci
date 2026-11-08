@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { writeLedger } from "../src/apply";
-import { EXPORT_DONE, EXPORT_LEDGER, exportState, requestDigest } from "../src/export";
+import { EXPORT_DONE, EXPORT_LEDGER, exportState } from "../src/export";
 import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
@@ -69,7 +69,7 @@ const approve = async (work: string, digest: string, by: string, at: string) =>
 const exportsDone = (work: string) => exportRecords(chantOps, (path) => show(work, path));
 
 /** The file whose history holds the export records. */
-const recordFile = chantOps ? appliedFile("tf-state-export") : EXPORT_DONE_FILE;
+const recordFile = appliedFile("tf-state-export");
 
 const show = (work: string, path: string): string => {
   git(work, "fetch", "-q", "origin", "+refs/heads/chant/lifecycle:refs/remotes/origin/chant/lifecycle");
@@ -84,11 +84,11 @@ describe("terragucci state export", () => {
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: (l) => lines.push(l) });
     expect(r.code).toBe(3);
     const location = "s3://state/app.tfstate";
-    expect(r.digest).toBe(chantOps ? await chantRequestDigest("tf-state-export", { kind: "state-export", subject: "app", by: "alice", at: T(0), fields: { location, version_id: "v1" } }) : requestDigest({ root: "app", location, version_id: "v1", by: "alice", at: T(0) }));
+    expect(r.digest).toBe(await chantRequestDigest("tf-state-export", { kind: "state-export", subject: "app", by: "alice", at: T(0), fields: { location, version_id: "v1" } }));
     expect(r.command).toBe(`terragucci approve export app --plan ${r.digest}`);
     expect(w.seen.every((s) => s.method === "HEAD")).toBe(true);
     const pending = JSON.parse(show(work, EXPORT_LEDGER).trim());
-    expect(pending).toMatchObject({ kind: "pending", op: "tf-state-export", gate: "app", planDigest: r.digest, request: chantOps ? { kind: "state-export", subject: "app", by: "alice", fields: { version_id: "v1" } } : { root: "app", version_id: "v1", by: "alice" } });
+    expect(pending).toMatchObject({ kind: "pending", op: "tf-state-export", gate: "app", planDigest: r.digest, request: { kind: "state-export", subject: "app", by: "alice", fields: { version_id: "v1" } } });
     expect(lines.join("\n")).toContain("someone other than you approves it");
     // Asked again before an approval: the same request waits, and no second one is written.
     const again = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(1), log: () => {} });
@@ -110,7 +110,7 @@ describe("terragucci state export", () => {
     const done = exportsDone(work);
     expect(done).toEqual([expect.objectContaining({ kind: "state-export", root: "app", version_id: "v1", location: "s3://state/app.tfstate", exportedBy: "alice", approvedBy: "bob", planDigest: first.digest })]);
     expect(done[0]!.content_digest).toMatch(/^sha256:/);
-    expect(show(work, chantOps ? appliedFile("tf-state-export") : EXPORT_DONE)).not.toContain("secret-1");
+    expect(show(work, appliedFile("tf-state-export"))).not.toContain("secret-1");
     // The request exported once: running again asks anew.
     const next = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(3), log: () => {} });
     expect(next.code).toBe(3);
@@ -126,7 +126,7 @@ describe("terragucci state export", () => {
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: (l) => lines.push(l) });
     expect(r.code).toBe(3);
     // chant's gate words the refusal its own way: the requester's own approval never counts.
-    expect(lines.join("\n")).toMatch(chantOps ? /alice made the request, and a requester's own approval does not count/ : /an approval by alice does not count/);
+    expect(lines.join("\n")).toMatch(/alice made the request, and a requester's own approval does not count/);
     expect(w.seen.some((s) => s.method === "GET")).toBe(false);
   });
 
@@ -135,7 +135,7 @@ describe("terragucci state export", () => {
     const w = world();
     const r = await exportState(work, { root: "app", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
     const request = JSON.parse(show(work, EXPORT_LEDGER).trim()).request;
-    expect(chantOps ? request.fields.version_id : request.version_id).toBe("v2");
+    expect(request.fields.version_id).toBe("v2");
     expect(r.code).toBe(3);
     await expect(exportState(work, { root: "app", version: "nope", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} })).rejects.toThrow(/has no version nope/);
   });
@@ -145,7 +145,7 @@ describe("terragucci state export", () => {
     const w = world();
     const first = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
     await approve(work, first.digest!, "bob", T(1));
-    await expect(exportState(work, { root: "app", version: "v1", actor: "alice", out: join(work, "app.tfstate"), env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} })).rejects.toThrow(/inside the repo/);
+    await expect(exportState(work, { root: "app", version: "v1", actor: "alice", out: join(work, "app.tfstate"), env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} })).rejects.toThrow(/inside the git working tree/);
     expect(existsSync(join(work, "app.tfstate"))).toBe(false);
     git(work, "config", "user.name", "");
     await expect(exportState(work, { root: "app", env: { ...ENV, GIT_CONFIG_GLOBAL: "/dev/null" }, exec: w.exec, fetch: w.fetch })).rejects.toThrow(/names who asks/);

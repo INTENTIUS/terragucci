@@ -8,7 +8,7 @@ import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
 import { MIGRATE_LEDGER, OVERRIDE_FILE, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import type { StoreFetch } from "@intentius/chant/object-store";
-import { lockDigest, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
+import { UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { chantGated, exportRecords, exportRequest, migrationRecord, unlockRecords } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -317,8 +317,7 @@ describe("unlock-state on a gcs or azurerm state", () => {
     const wait = await unlockState(r.work, "app", { ...opts, now: T(20) });
     expect(wait).toMatchObject({ code: 3, location: "gs://acme-state/envs/dev/app/default.tflock", lock: { ID: gen, Who: "runner@job-1" } });
     // chant's digest is over its request; terragucci's own binds the root, the lock's location and its ID (the generation).
-    if (chantOps) expect(JSON.parse(show(r.origin, UNLOCK_LEDGER).trim())).toMatchObject({ planDigest: wait.digest, request: { fields: { location: "gs://acme-state/envs/dev/app/default.tflock", id: gen } } });
-    else expect(wait.digest).toBe(lockDigest("app", "gs://acme-state/envs/dev/app/default.tflock", gen));
+    expect(JSON.parse(show(r.origin, UNLOCK_LEDGER).trim())).toMatchObject({ planDigest: wait.digest, request: { fields: { location: "gs://acme-state/envs/dev/app/default.tflock", id: gen } } });
     await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
     const done = await unlockState(r.work, "app", { ...opts, now: T(22) });
     expect(done.code).toBe(0);
@@ -342,15 +341,13 @@ describe("unlock-state on a gcs or azurerm state", () => {
     expect(wait).toMatchObject({ code: 3, location: "az://acme/tfstate/app.tfstate", lock: { ID: "lease-9" } });
     await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
     release = false;
-    await expect(unlockState(r.work, "app", { ...opts, now: T(22) })).rejects.toThrow(/force-unlock ran, and az:\/\/acme\/tfstate\/app.tfstate is still locked/);
+    await expect(unlockState(r.work, "app", { ...opts, now: T(22) })).rejects.toThrow(/the release of lock lease-9 ran, and az:\/\/acme\/tfstate\/app.tfstate still holds it/);
     release = true;
-    if (chantOps) {
-      // chant spent the approval on the release that failed, and a request applies once: the next run asks again, for an approval of its own.
-      const again = await unlockState(r.work, "app", { ...opts, now: T(23) });
-      expect(again.code).toBe(3);
-      expect(again.digest).not.toBe(wait.digest);
-      await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(24), planDigest: again.digest })], {}, "approve");
-    }
+    // chant spent the approval on the release that failed, and a request applies once: the next run asks again, for an approval of its own.
+    const again = await unlockState(r.work, "app", { ...opts, now: T(23) });
+    expect(again.code).toBe(3);
+    expect(again.digest).not.toBe(wait.digest);
+    await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(24), planDigest: again.digest })], {}, "approve");
     expect((await unlockState(r.work, "app", { ...opts, now: T(25) })).code).toBe(0);
   });
 });

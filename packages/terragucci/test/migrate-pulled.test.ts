@@ -137,7 +137,7 @@ describe("a backend move between backends that keep no versions", () => {
     expect(store.states.get(oldPg)?.serial).toBe(4);
     const { line, text } = migrationRecord(work, "move-app");
     expect(line.roots).toEqual([expect.objectContaining({ root: "app", location: "pg:db:5432/app/new.states", before: null, after: null, before_digest: null, source: "pg:db:5432/app/old.states", source_version: null })]);
-    expect(git(origin, "show", `chant/lifecycle:${chantOps ? appliedFile("tf-migrate") : MIGRATE_DONE}`)).not.toContain("secret-");
+    expect(git(origin, "show", `chant/lifecycle:${appliedFile("tf-migrate")}`)).not.toContain("secret-");
     // A pg backend keeps no versions, so the move cannot be put back by version: a backend move the other way does it.
     expect(() => revertMigration("move-app", text)).toThrow("backend move the other way");
   });
@@ -151,7 +151,7 @@ describe("a backend move between backends that keep no versions", () => {
     store.states.set(oldPg, state("L1", 5, ["keep", "moved"]));
     const again = await runMigrations(work, { binary: "tofu", exec: binary(store), env: {}, now: T(3), log: (l) => void lines.push(l) });
     // On chant's gate new contents are a new request under a digest of its own, refused against the approved request's stored proof.
-    if (chantOps) expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
+    expect(again.records[0]!.digest).not.toBe(first.records[0]!.digest);
     expect(again.code).toBe(4);
     expect(again.records[0]).toMatchObject({ status: "refused", moved: ["app"] });
     expect(lines.join("\n")).toContain("the states moved since: app");

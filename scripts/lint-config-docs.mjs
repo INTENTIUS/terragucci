@@ -42,6 +42,9 @@ const NOT_VARIABLES = new Set([
 // only in chant since terragucci calls chant's check directly.
 const CHANT_FORGE_CHECK_VARIABLES = new Set(["AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL_IAM", "AZURE_GRAPH_TOKEN"]);
 // The control dispatch's variables (see UNDOCUMENTED_KEYS above).
+// Variables the terraform lexicon's state stores read (GitLab-managed state's http backend): on the page, and
+// named only in chant since terragucci's export, unlock and state reads call chant's stores.
+const CHANT_STATE_VARIABLES = /^TF_HTTP_/;
 const UNDOCUMENTED_VARIABLES = new Set(["TERRAGUCCI_CONTROL_TOKEN", "TG_CONTROL_TOKEN", "TG_CONTROL_READ", "TERRAGUCCI_MEMBER", "TERRAGUCCI_OP", "TERRAGUCCI_SHA"]);
 const NAME = /\b(?:(?:TG|TERRAGUCCI|TOFU|TF|OTEL|AWS|ARM|AZURE|GOOGLE|GITHUB|GITLAB|FORGEJO|GITEA|CI|RUNNER|ACTIONS|ANTHROPIC)_[A-Z0-9_]*[A-Z0-9]|TRACEPARENT)\b/g;
 
@@ -66,7 +69,7 @@ for (const [name, file] of [...used].sort()) {
   if (!listed.has(name) && !UNDOCUMENTED_VARIABLES.has(name)) problems.push(`${name} is read in ${file} and is not on environment.md`);
 }
 for (const name of listed) {
-  if (!used.has(name) && !CHANT_FORGE_CHECK_VARIABLES.has(name) && !/^(TF_CLI_ARGS|OTEL_EXPORTER_OTLP_(TRACES|METRICS)_HEADERS)$/.test(name) && !/^(OTEL_|AWS_ROLE|ARM_)/.test(name)) {
+  if (!used.has(name) && !CHANT_FORGE_CHECK_VARIABLES.has(name) && !CHANT_STATE_VARIABLES.test(name) && !/^(TF_CLI_ARGS|OTEL_EXPORTER_OTLP_(TRACES|METRICS)_HEADERS)$/.test(name) && !/^(OTEL_|AWS_ROLE|ARM_)/.test(name)) {
     problems.push(`${name} is on environment.md and nothing in packages/terragucci/src names it`);
   }
 }

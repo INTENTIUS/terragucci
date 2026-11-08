@@ -5,92 +5,47 @@
  * A runner that kills a job never lets the binary release its lock, and the
  * next plan of that state then waits for it until its lock timeout. The
  * usual fix is a `force-unlock` by hand, with nothing recorded and nothing
- * checking that the job is really gone. This command does that instead:
+ * checking that the job is really gone. This command does that instead,
+ * through chant's lock release (chant#4804): the terraform lexicon's
+ * `terraformStateUnlock` reads the lock (the s3 lock file `use_lockfile`
+ * takes, the gcs lock object, the azurerm lease, the lock of a
+ * GitLab-managed state) and releases it with the binary's fixed
+ * `force-unlock` of its ID, or on GitLab a release of that ID on the unlock
+ * address. Core's `releaseStateLock` asks the forge which of the
+ * repository's runs are alive (`forgeLiveRuns`): while one that began before
+ * the lock is, nothing is asked or released. Otherwise the release waits at
+ * gate `<root>` of op `tf-unlock` for an approval of that lock by someone
+ * other than the requester, checks the runs again just before the spend, and
+ * records who released which lock in the request's `finished` line.
  *
- *   1. It inits the root and reads the lock, with its ID, who took it and
- *      when: the lock file the S3 backend's `use_lockfile` takes,
- *      `<key>.tflock`; the gcs backend's lock object,
- *      `<prefix>/<workspace>.tflock`, whose generation is the lock's ID; the
- *      lease an azurerm backend holds on the state blob, with the lock info
- *      in the blob's metadata; or the lock of a GitLab-managed state.
- *   2. It asks the forge which of the repository's runs are still running or
- *      waiting. A run that began before the lock was taken may be the one
- *      holding it, so while any such run is alive the lock is not released.
- *   3. The lock waits at a gate of its own, `tf-unlock <root>`, on
- *      chant/lifecycle, bound to a digest of the root, the lock's location and
- *      its ID: `chant approve tf-unlock <root> --plan <digest>` approves that
- *      lock and no other. Under `approval: sealed` only a sealed approval counts.
- *   4. Approved, it checks again that no such run is alive, releases the lock
- *      with the binary's `force-unlock` of that ID (on GitLab, a release of
- *      that ID on its lock endpoint, which GitLab refuses for any other
- *      lock), and records who released
- *      which lock, under whose approval, in `_gates/tf-unlock/done.jsonl`,
- *      which `terragucci audit` reads.
- *
- * A comment never runs it (comment.ts refuses `unlock-state`): a person runs
- * it at a shell, with the forge token in the variable `token_env` names.
- *
- * With a chant that has the terraform lexicon's state operations
- * (chant#4618), steps 3 and 4 are chant's gated request (chant#4551,
- * ./gated-request.ts): the request binds the root, the lock's location and
- * its ID, the approval is spent on `_gates/tf-unlock/applied.jsonl` before
- * the release, the check for a live run runs again just before the spend,
- * the binary's `force-unlock` is the lexicon's, and a `finished` line with
- * who released which lock replaces the done.jsonl line. The person who asks
- * for the release does not approve it.
+ * terragucci prepares the root (its init, a workspace a root names), reads
+ * its approval rules and the forge token `token_env` names, keeps
+ * choudoufu's live resource markers, which take no lock, and words the
+ * command and the messages. A comment never runs it (comment.ts refuses
+ * `unlock-state`): a person runs it at a shell. The `done.jsonl` lines older
+ * releases wrote stay readable by `terragucci audit`; nothing writes them now.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { appendPending, decideGate, readLedger, writeLedger, type GateLedger, type PendingRecord } from "./apply";
+import { describeLock, describeRun, forgeLiveRuns, type LiveRun, type LockInfo } from "@intentius/chant/state-unlock";
+import { terraformStateUnlock } from "@intentius/chant-lexicon-terraform/state-ops";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
-import { isStored, stateObject, stateStore, type StateObject, type StoredState } from "./backend";
-import { shownUrl, type GitLabFetch, gitlabStore } from "@intentius/chant-lexicon-terraform/state/gitlab";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "./detect";
 import { detectShape } from "./shape";
-import { forgeLiveRuns, possibleHolders, type LiveRun } from "@intentius/chant/state-unlock";
 import { apiBase, DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
-import type { StoreFetch } from "@intentius/chant/object-store";
 import { forgeOf } from "./respond/change";
-import { sealRefusal } from "./seal";
-import { asyncExec, chantStateOps, opMessage, requestRules, type ChantStateOps } from "./gated-request";
+import { asyncExec, opMessage, requestRules } from "./gated-request";
+
+export type { LockInfo };
 
 export const UNLOCK_OP = "tf-unlock";
 export const UNLOCK_LEDGER = `_gates/${UNLOCK_OP}.jsonl`;
-/** Beside the ledger, out of chant's sight: one line per lock released. */
+/** Beside the ledger: the line older releases wrote for each lock released, which `terragucci audit` still reads. */
 export const UNLOCK_DONE = `_gates/${UNLOCK_OP}/done.jsonl`;
-
-/** Exit codes, as the waves give them. */
-export const UNLOCK_EXIT = { released: 0, refused: 1, waiting: 3, other: 4 } as const;
-
-/** The lock info the binary writes, and prints when it finds a lock held. */
-export interface LockInfo {
-  ID: string;
-  Operation?: string;
-  Info?: string;
-  Who?: string;
-  Version?: string;
-  Created?: string;
-  Path?: string;
-}
-
-/** A lock file's text, or undefined when it holds no lock ID. */
-export function parseLockInfo(text: string): LockInfo | undefined {
-  try {
-    const v = JSON.parse(text) as Record<string, unknown>;
-    if (!v || typeof v !== "object" || typeof v.ID !== "string" || v.ID === "") return undefined;
-    const s = (k: string): string | undefined => (typeof v[k] === "string" ? (v[k] as string) : undefined);
-    return { ID: v.ID, Operation: s("Operation"), Info: s("Info"), Who: s("Who"), Version: s("Version"), Created: s("Created"), Path: s("Path") };
-  } catch {
-    return undefined;
-  }
-}
-
-/** The digest an approval of this lock binds: the root, where the lock is and its ID. */
-export const lockDigest = (root: string, location: string, id: string): string => computePlanDigest("terragucci-state-lock", { root, location, id });
 
 /** The command that approves releasing a lock. */
 export const unlockApproveCommand = (root: string, digest: string, sealed = false): string => `terragucci approve unlock ${root} --plan ${digest}${sealed ? " --sign" : ""}`;
@@ -123,25 +78,6 @@ export interface UnlockResult {
   live?: boolean;
 }
 
-/** One line of `_gates/tf-unlock/done.jsonl`. */
-export interface UnlockRecord {
-  version: 1;
-  kind: "unlock";
-  op: typeof UNLOCK_OP;
-  gate: string;
-  root: string;
-  location: string;
-  lock: LockInfo;
-  planDigest: string;
-  approvedBy: string;
-  approvedAt: string;
-  releasedBy: string;
-  timestamp: string;
-  /** How many of the repository's runs were alive when it was released, none of which began before the lock. */
-  liveRuns: number;
-  commit?: string;
-}
-
 const runBinary = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv): { status: number; out: string } => {
   const p = spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 1 << 26 });
   return { status: p.status ?? 1, out: `${p.stdout ?? ""}${p.stderr ?? ""}${p.error ? p.error.message : ""}` };
@@ -152,92 +88,6 @@ const tail = (s: string): string => s.trim().split("\n").slice(-10).join("\n");
 function gitOut(repo: string, args: string[]): string {
   const p = spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
   return p.status === 0 ? p.stdout.trim() : "";
-}
-
-const describeLock = (l: LockInfo): string => `lock ${l.ID}${l.Operation ? `, ${l.Operation}` : ""}${l.Who ? ` by ${l.Who}` : ""}${l.Created ? ` at ${l.Created}` : ""}`;
-
-const describeRun = (r: LiveRun): string => `run ${r.id} (${r.status}${r.started ? `, began ${r.started}` : ""})${r.url ? ` ${r.url}` : ""}`;
-
-const RELEASES = "unlock-state releases the lock of an s3 backend's lock file, a gcs or azurerm backend, and a GitLab-managed state";
-
-/** The state a root's lock guards (an s3 lock file, a gcs lock object, an azurerm lease, or GitLab's lock), or why this command cannot read its lock. */
-function lockedObject(root: string, o: StateObject): StoredState | Extract<StateObject, { gitlab: unknown }> {
-  if ("unsupported" in o) throw new ConfigError(`${root}: ${o.unsupported}; ${RELEASES}`);
-  if ("gitlab" in o) {
-    if (!o.gitlab.lockAddress) throw new ConfigError(`${root}: its http backend names no lock_address (TF_HTTP_LOCK_ADDRESS), so it takes no lock`);
-    if (!o.gitlab.unlockAddress) throw new ConfigError(`${root}: its http backend names no unlock_address (TF_HTTP_UNLOCK_ADDRESS), so no lock it takes can be released`);
-    return o as Extract<StateObject, { gitlab: unknown }>;
-  }
-  if (!isStored(o)) throw new ConfigError(`${root} keeps its state in a local file, whose lock goes with the process that took it; ${RELEASES}`);
-  if (o.backend === "s3" && !o.lockfile) throw new ConfigError(`${root}: its s3 backend takes no lock file (use_lockfile = true)${o.dynamodb ? ", only a DynamoDB lock," : ""} and unlock-state releases the lock file`);
-  return o;
-}
-
-/** How a root's lock is read and released. */
-interface HeldLock {
-  location: string;
-  /** The lock info's text and, when it differs from the ID in the text, the ID the release takes; undefined when no lock is held. */
-  read(): Promise<{ text: string; id?: string } | undefined>;
-  /** Release the lock with this ID, and check it is gone. */
-  release(id: string): Promise<void>;
-}
-
-/**
- * A lock the backend keeps in the store (an s3 lock file, a gcs lock object,
- * an azurerm lease) is read from the store (./backend.ts) and released by the
- * binary's `force-unlock`. GitLab's lock is read by asking for it
- * (the terraform lexicon's gitlabStore: a free one is taken and released at once) and released
- * by its ID on the unlock address, which GitLab refuses when another lock
- * holds the state.
- */
-async function heldLock(rel: string, object: ReturnType<typeof lockedObject>, binary: string, dir: string, env: NodeJS.ProcessEnv, exec: NonNullable<UnlockOptions["exec"]>, options: UnlockOptions, chant?: ChantStateOps): Promise<HeldLock> {
-  if ("gitlab" in object) {
-    const gl = object.gitlab;
-    const state = gitlabStore(gl, (options.s3Fetch ?? globalThis.fetch) as unknown as GitLabFetch, "terragucci");
-    const location = shownUrl(gl.lockAddress!);
-    const asked = async <T>(call: () => Promise<T>): Promise<T> => {
-      try {
-        return await call();
-      } catch (e) {
-        throw new ConfigError(`${rel}: ${(e as Error).message}`);
-      }
-    };
-    return {
-      location,
-      read: async () => {
-        const text = await asked(() => state.probeLock());
-        return text === undefined ? undefined : { text };
-      },
-      release: async (id) => {
-        await asked(() => state.releaseLock(id));
-        const after = await asked(() => state.probeLock());
-        if (after && parseLockInfo(after)?.ID === id) throw new ConfigError(`${rel}: GitLab released lock ${id}, and ${location} still holds it`);
-      },
-    };
-  }
-  const store = await stateStore(object as StoredState, options.s3Fetch);
-  const location = store.lockLocation;
-  return {
-    location,
-    read: async () => {
-      const held = await store.heldLock();
-      return held === undefined ? undefined : { text: held.info, ...(held.id ? { id: held.id } : {}) };
-    },
-    release: async (id) => {
-      if (chant) {
-        // chant#4618: the lexicon's fixed `force-unlock -force -no-color <id>`.
-        try {
-          await chant.forceUnlockState({ root: rel, binary, dir, env, exec: asyncExec(exec), id });
-        } catch (e) {
-          throw new ConfigError(`${rel}: ${opMessage(e)}`);
-        }
-      } else {
-        const unlock = exec(binary, ["force-unlock", "-force", "-no-color", id], dir, env);
-        if (unlock.status !== 0) throw new ConfigError(`${rel}: ${binary} force-unlock ${id} failed:\n${tail(unlock.out)}`);
-      }
-      if (await store.heldLock()) throw new ConfigError(`${rel}: ${binary} force-unlock ran, and ${location} is still locked`);
-    },
-  };
 }
 
 /**
@@ -263,187 +113,79 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   // killed apply leaves nothing held. The binary is never run.
   if (binary === "choudoufu" && liveRoots(repo, [rel]).length > 0) {
     log(`${rel}: choudoufu keeps its resources under live resource markers, with no state file and no state lock; nothing to release`);
-    return { code: UNLOCK_EXIT.released, live: true };
+    return { code: 0, live: true };
   }
 
   // A root that names its workspace (an Atmos instance) inits in default and keeps its state, and its lock, under its own.
   const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
   if (init.status !== 0) throw new ConfigError(`${rel}: ${binary} init failed:\n${tail(init.out)}`);
-  const object = lockedObject(rel, stateObject(dir, shape.rootEnv(rel, env)));
-  const chant = await chantStateOps();
-  const held = await heldLock(rel, object, binary, dir, env, exec, options, chant);
-  const location = held.location;
-  const found = await held.read();
-  if (found === undefined) {
-    log(`${rel}: no lock is held on ${location}; nothing to release`);
-    return { code: UNLOCK_EXIT.released, location };
-  }
-  const info = parseLockInfo(found.text);
-  if (!info) throw new ConfigError(`${rel}: ${location} holds no lock ID the binary wrote; read it, and remove it by hand if it is not a lock`);
-  // The ID the release takes: a gcs lock's is its object's generation, which the binary prints as the lock's ID.
-  const lock: LockInfo = { ...info, ...(found.id ? { ID: found.id } : {}) };
-  const digest = lockDigest(rel, location, lock.ID);
-  log(`${rel}: ${location} holds ${describeLock(lock)}`);
 
-  // Fails closed: a forge that cannot be asked cannot say the holder is gone.
-  const target = forgeOf(repo, settings, env);
-  const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge];
-  if (!target.token) throw new ConfigError(`${tokenEnv} is not set; unlock-state reads the forge's runs with it, to know no run holding the lock is alive`);
-  const fetchFn = options.fetch ?? (globalThis.fetch as unknown as Fetch);
-  let live = 0;
-  const holders = async (): Promise<LiveRun[]> => {
-    let runs: LiveRun[];
-    try {
-      runs = await forgeLiveRuns({ kind: target.forge, apiBase: apiBase(target), repo: target.path, token: target.token, fetch: fetchFn as never });
-    } catch (e) {
-      throw new ConfigError(`${rel}: the forge's runs could not be read (${(e as Error).message}), so nothing says the run holding the lock is gone`);
-    }
-    live = runs.length;
-    return possibleHolders(runs, lock.Created);
+  // Fails closed: a forge that cannot be asked cannot say the holder is gone. Read only once a lock is held.
+  const liveRuns = async () => {
+    const target = forgeOf(repo, settings, env);
+    const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge];
+    if (!target.token) throw new ConfigError(`${tokenEnv} is not set; unlock-state reads the forge's runs with it, to know no run holding the lock is alive`);
+    return forgeLiveRuns({ kind: target.forge, apiBase: apiBase(target), repo: target.path, token: target.token, fetch: fetchFn as never });
   };
-  const alive = await holders();
-  if (alive.length > 0) {
-    log(`${rel}: ${alive.length === 1 ? "a run that began before the lock is" : `${alive.length} runs that began before the lock are`} still alive, so the lock may be theirs and is not released:`);
-    for (const r of alive) log(`  ${describeRun(r)}`);
-    log("Run this again once they have finished, or stop them on the forge first.");
-    return { code: UNLOCK_EXIT.refused, lock, location, digest, alive };
-  }
-  log(`${rel}: no run that began before the lock is alive`);
-
+  const fetchFn = options.fetch ?? (globalThis.fetch as unknown as Fetch);
   const now = options.now ?? new Date().toISOString();
   const rule = await approvalRule(repo, { at: "HEAD", ...(configPath ? { config: configPath } : {}) });
   const sealed = rule.mode === "sealed";
   const actor = options.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
-  if (chant) {
-    const commitSha = gitOut(repo, ["rev-parse", "HEAD"]);
-    const result = await chant.gatedStateOp(
-      {
-        op: UNLOCK_OP,
-        request: { kind: "unlock", subject: rel, by: actor, fields: { location, id: lock.ID } },
-        rules: requestRules(rule),
-        description: `release ${describeLock(lock)} on ${location}`,
-        base: rule.base,
-        cwd: repo,
-        now,
-        ...(commitSha ? { commit: commitSha } : {}),
-        // The approval may be hours old: ask again just before the spend, so a run that came back keeps its lock and the approval stands.
-        beforeSpend: async () => {
-          const still = await holders();
-          return still.length > 0 ? `a run that began before the lock is alive again (${still.map(describeRun).join("; ")}), so the lock is not released` : undefined;
-        },
-      },
-      async ({ approvedBy }) => {
-        await held.release(lock.ID);
-        return { output: approvedBy, detail: { by: actor, location, lock_id: lock.ID, ...(lock.Operation ? { operation: lock.Operation } : {}), ...(lock.Who ? { locked_by: lock.Who } : {}), ...(lock.Created ? { locked_at: lock.Created } : {}), approved_by: approvedBy, live_runs: live } };
-      },
-    );
-    const command = unlockApproveCommand(rel, result.digest, sealed);
-    switch (result.status) {
-      case "done":
-        log(`${rel}: released ${describeLock(lock)}, approved by ${result.approvedBy}; recorded in _gates/${UNLOCK_OP}/applied.jsonl on chant/lifecycle${result.recorded ? "" : " (the finished line was not pushed; the applied line was)"}`);
-        return { code: UNLOCK_EXIT.released, lock, location, digest: result.digest };
-      case "failed":
-        throw result.error instanceof ConfigError ? result.error : new ConfigError(`${rel}: ${opMessage(result.error)}`);
-      case "held":
-        log(`${rel}: ${result.reason}`);
-        return { code: UNLOCK_EXIT.refused, lock, location, digest: result.digest };
-      case "spent":
-        log(`${rel}: the release of ${describeLock(lock)} under request ${result.digest} ran already${result.finished ? ` (${result.finished.result} at ${result.finished.timestamp})` : ""}; a request releases once`);
-        return { code: UNLOCK_EXIT.other, lock, location, digest: result.digest };
-      case "refused":
-        log(`${rel}: an approval does not count: ${result.reason}`);
-      // falls through: the request still waits for another approver
-      case "waiting":
-        log(`${rel}: releasing ${describeLock(lock)} waits for an approval of digest ${result.digest} by someone other than ${actor}. Approve it with:`);
-        log(`  ${command}`);
-        log("Then run this again.");
-        return { code: UNLOCK_EXIT.waiting, lock, location, digest: result.digest, command };
-    }
-  }
-  let ledger: GateLedger = readLedger(repo, UNLOCK_LEDGER);
-  if (sealed) {
-    ledger = {
-      ...ledger,
-      resolutions: ledger.resolutions.filter((r) => {
-        if (r.gate !== rel) return true;
-        const why = sealRefusal(rule.signers, r);
-        if (why !== null && samePlanDigest(r.planDigest, digest)) log(`${rel}: an approval does not count: ${why}`);
-        return why === null;
-      }),
-    };
-  }
-  const decision = decideGate(ledger, rel, digest, now);
-  const command = unlockApproveCommand(rel, digest, sealed);
   const commit = gitOut(repo, ["rev-parse", "HEAD"]);
-  if (decision.status !== "approved") {
-    if (!decision.standing) {
-      const pending: PendingRecord = {
-        version: 1,
-        kind: "pending",
-        op: UNLOCK_OP,
-        gate: rel,
-        timestamp: now,
-        expiresAt: new Date(Date.parse(now) + 48 * 3600 * 1000).toISOString(),
-        planDigest: digest,
-        description: `release ${describeLock(lock)} on ${location}`,
-        ...(commit ? { commit } : {}),
-        neverOverMcp: true,
-      };
-      await appendPending(repo, pending, {}, UNLOCK_LEDGER);
-    }
-    if (decision.status === "refused") {
-      log(`${rel}: ${decision.by} approved ${decision.approved ?? "another digest"}, the release of another lock; this one is not released`);
-      log(`${rel}: to release ${describeLock(lock)}, approve it with:`);
-      log(`  ${command}`);
-      return { code: UNLOCK_EXIT.other, lock, location, digest, command };
-    }
-    log(`${rel}: releasing ${describeLock(lock)} waits for an approval of digest ${digest}. Approve it with:`);
-    log(`  ${command}`);
-    log("Then run this again.");
-    return { code: UNLOCK_EXIT.waiting, lock, location, digest, command };
+  let result: Awaited<ReturnType<typeof terraformStateUnlock>>;
+  try {
+    result = await terraformStateUnlock({
+      root: rel,
+      binary,
+      dir,
+      env: shape.rootEnv(rel, env),
+      exec: asyncExec(exec),
+      init: false,
+      ...(options.s3Fetch ? { fetch: options.s3Fetch } : {}),
+      by: actor,
+      liveRuns,
+      words: { op: UNLOCK_OP, approveCommand: (subject: string, digest: string) => unlockApproveCommand(subject, digest, sealed) },
+      rules: requestRules(rule),
+      cwd: repo,
+      ...(rule.base ? { base: rule.base } : {}),
+      now,
+      ...(commit ? { commit } : {}),
+    });
+  } catch (e) {
+    if (e instanceof ConfigError) throw e;
+    throw new ConfigError(`${rel}: ${opMessage(e)}`);
   }
-  log(`${rel}: approved by ${decision.by} for this lock`);
-
-  // The approval may be hours old: ask again just before the release.
-  const still = await holders();
-  if (still.length > 0) {
-    log(`${rel}: a run that began before the lock is alive again, so the lock is not released:`);
-    for (const r of still) log(`  ${describeRun(r)}`);
-    return { code: UNLOCK_EXIT.refused, lock, location, digest, alive: still };
+  const location = result.location;
+  switch (result.status) {
+    case "free":
+      log(`${rel}: no lock is held on ${location}; nothing to release`);
+      return { code: result.exit, location };
+    case "alive":
+      log(`${rel}: ${location} holds ${describeLock(result.lock)}`);
+      log(`${rel}: ${result.alive.length === 1 ? "a run that began before the lock is" : `${result.alive.length} runs that began before the lock are`} still alive, so the lock may be theirs and is not released:`);
+      for (const r of result.alive) log(`  ${describeRun(r)}`);
+      log("Run this again once they have finished, or stop them on the forge first.");
+      return { code: result.exit, lock: result.lock, location, alive: result.alive };
+    case "released":
+      log(`${rel}: released ${describeLock(result.lock)}, approved by ${result.approvedBy}; recorded in _gates/${UNLOCK_OP}/applied.jsonl on chant/lifecycle${result.recorded ? "" : " (the finished line was not pushed; the applied line was)"}`);
+      return { code: result.exit, lock: result.lock, location, digest: result.digest };
+    case "failed":
+      throw new ConfigError(`${rel}: ${opMessage(result.error)}`);
+    case "held":
+      log(`${rel}: ${result.reason}`);
+      return { code: result.exit, lock: result.lock, location, digest: result.digest };
+    case "spent":
+      log(`${rel}: the release of ${describeLock(result.lock)} under request ${result.digest} ran already; a request releases once`);
+      return { code: result.exit, lock: result.lock, location, digest: result.digest };
+    case "refused":
+      log(`${rel}: an approval does not count: ${result.reason}`);
+    // falls through: the request still waits for another approver
+    case "waiting":
+      log(`${rel}: ${location} holds ${describeLock(result.lock)}; no run that began before it is alive`);
+      log(`${rel}: releasing ${describeLock(result.lock)} waits for an approval of digest ${result.digest} by someone other than ${actor}. Approve it with:`);
+      log(`  ${result.command}`);
+      log("Then run this again.");
+      return { code: result.exit, lock: result.lock, location, digest: result.digest, command: result.command };
   }
-  await held.release(lock.ID);
-  const record: UnlockRecord = {
-    version: 1,
-    kind: "unlock",
-    op: UNLOCK_OP,
-    gate: rel,
-    root: rel,
-    location,
-    lock,
-    planDigest: digest,
-    approvedBy: decision.by,
-    approvedAt: decision.at,
-    releasedBy: actor,
-    timestamp: new Date().toISOString(),
-    liveRuns: live,
-    ...(commit ? { commit } : {}),
-  };
-  await writeLedger(repo, UNLOCK_DONE, [JSON.stringify(record)], {}, `Released the state lock of ${rel}: ${lock.ID}`);
-  log(`${rel}: released ${describeLock(lock)}, approved by ${decision.by}; recorded in ${UNLOCK_DONE} on chant/lifecycle`);
-  return { code: UNLOCK_EXIT.released, lock, location, digest };
 }
-
-/** The locks released, from a done.jsonl text. Malformed lines are skipped. */
-export function parseUnlocks(text: string): UnlockRecord[] {
-  const out: UnlockRecord[] = [];
-  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
-    try {
-      const r = JSON.parse(line) as UnlockRecord;
-      if (r.version === 1 && r.kind === "unlock" && typeof r.gate === "string") out.push(r);
-    } catch {
-      continue;
-    }
-  }
-  return out;
-}
-

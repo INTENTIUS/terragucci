@@ -931,7 +931,7 @@ terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]
 |---|---|
 | `<root>` | the root whose state to export, with a backend that keeps versions (an `s3` bucket with versioning, a `gcs` bucket with object versioning, an `azurerm` account with blob versioning or a backend with `snapshot = true`), or on GitLab-managed state: a plain root, or a Terragrunt unit, which Terragrunt prepares through its `remote_state` block |
 | `--version` | the version id, as the estate page's State versions section lists it (GitLab's serial on GitLab-managed state); the current version by default |
-| `--out` | where to write the file, outside the repo; a new private directory under the system's temp directory by default |
+| `--out` | where to write the file, outside every git working tree; a new private directory under the system's temp directory by default |
 | `--actor` | who asks; git's `user.name` by default |
 
 Run it twice in a checkout whose `origin` you can push to, signed in to the cloud as yourself. [Export a state version](/terragucci/guides/export-a-state-version/) has the steps.
@@ -1103,7 +1103,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | 1 | one or more projects or roots failed, or a usage or config error |
 | 3 | waiting on an approval, or on a rollout's pull request |
 | 4 | a wave's plans changed after an approval or a policy override no run applied, so `stage tf-apply` applied nothing; or a share's plans changed after its wave decided, and the roots that moved were not applied |
-| 5 | `stage tf-apply --on-held refuse`: another run's apply holds a resource the wave changes |
+| 5 | `stage tf-apply --on-held refuse`: another run's apply holds a resource the wave changes; `unlock-state`: a run that may hold the lock is alive, so nothing was asked or released |
 | 6 | `stage tf-apply --stand-down`: a newer push applies instead |
 | 7 | `stage tf-apply`: chant's policy denied the plan and no override counts |
 | 8 | `stage tf-apply`: a decision point was answered with an answer the gate does not pass on, so nothing applied |
@@ -1126,7 +1126,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `config check` | `ok`, with or without warnings | problems found | | |
 | `config identities` | printed | no config, an unknown project, or no forge to name | | |
 | `forge check` | no mismatch | a mismatch, or with `--require-clouds` a cloud not checked; no config, an unknown project, or no forge to name | | |
-| `state export` | the version written and recorded | a root, backend or version it does not export, a file inside the repo, or nobody named | waits for an approval by someone else | |
+| `state export` | the version written and recorded | a root, backend or version it does not export, a file inside a git working tree, a CI job, a request exported already, or nobody named | waits for an approval by someone else | |
 | `check-root`, `check-pins`, `check-policy`, `check-sources` | passed | failed | | |
 | `check-job` | the job runs where its environment's apply is set to run | a flag missing | | |
 | `install` | done | not a Linux host | | |
@@ -1135,7 +1135,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `verify-release` | every target verified | a target refused | | |
 | `modules` | printed, the status recorded, or `consumers.json` written or matching | the catalog could not be read, the token was refused, the status record could not be pushed, or with `consumers --check` the file is out of line; no catalog yet, no registry to read, a module the catalog does not list, a version with no release record, or no `--reason` | | |
 | `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy; no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
-| `unlock-state` | released, or no lock held | a run that may hold the lock is alive; no forge token, a forge it cannot read, a backend with no lock file | waits for an approval of the lock | an approval stands for another lock |
+| `unlock-state` | released, or no lock held | no forge token, a forge it cannot read, a backend with no lock file, or a request that released already | waits for an approval of the lock | |
 | `approve`, `override` | approved | `approve --plan` names a digest no wave waits for; no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
 | `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | a bad flag | | |
 | `relay` | never: it serves until stopped | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
@@ -1145,4 +1145,4 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `view` | stopped with Ctrl-C, or the view exported | behold stopped or refused the reports; a bad flag or config, or a source behold cannot read | | |
 | `drift-agent` | prompt written; pull request opened, or the change refused with a comment on the issue | git or the forge failed; a bad flag, or a run that opened no drift issue | | |
 
-Code 4 comes from `stage tf-apply`, `unlock-state` and `ephemeral`, which have no `--json`.
+Code 4 comes from `stage tf-apply` and `ephemeral`, which have no `--json`.

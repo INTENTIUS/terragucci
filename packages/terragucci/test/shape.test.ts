@@ -167,6 +167,11 @@ function writtenAtmos(yml = "forge: forgejo\nbinary: tofu\nurl: https://forge.te
   return repo;
 }
 
+/** A checkout of `repo` with one commit. */
+const committed = (repo: string): void => {
+  for (const args of [["init", "-q", "-b", "main"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"]]) execFileSync("git", args, { cwd: repo });
+};
+
 /** The backend init records in a data dir, as the binary writes it: s3, with Atmos's workspace_key_prefix. */
 const initialised = (dataDir: string): void => {
   mkdirSync(dataDir, { recursive: true });
@@ -195,6 +200,8 @@ describe("an Atmos instance runs in its own workspace outside the plan and apply
 
   it("unlock-state looks for the lock of the instance's workspace, not default's", async () => {
     const repo = writtenAtmos();
+    // Both read the approval rules from the config at HEAD, so the checkout has a commit.
+    committed(repo);
     const envs: (string | undefined)[] = [];
     const exec = (_b: string, _a: string[], dir: string, env: NodeJS.ProcessEnv) => {
       envs.push(env.TF_WORKSPACE);
@@ -208,6 +215,8 @@ describe("an Atmos instance runs in its own workspace outside the plan and apply
 
   it("state export reads the instance's workspace's state", async () => {
     const repo = writtenAtmos();
+    // Both read the approval rules from the config at HEAD, so the checkout has a commit.
+    committed(repo);
     const exec = async (_b: string, _a: string[], _dir: string, env: NodeJS.ProcessEnv) => {
       initialised(env.TF_DATA_DIR!);
       return { code: 0, stdout: "", out: "" };
