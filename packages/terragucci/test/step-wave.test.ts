@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
-import { overrideChantNext, type ChantAfterPlanRun } from "../src/chant-next";
+import type { ChantAfterPlanRun } from "../src/chant-next";
 import { CHANT_CONFIG, CHANT_CONFIG_MARKER, chantConfigRoots, chantConfigText, chantConfigWrittenByTerragucci, declaredTerraformRoots } from "../src/chant-config";
 import { committedSpecAt, waveCallArgv, WAVES_SPEC, wavesSpecText, wavesStepSpec } from "../src/chant-waves";
 import { renderPipeline } from "../src/render";
@@ -94,7 +94,6 @@ describe("a wave on chant's step (terragucci#1303)", () => {
     const seen: ChantAfterPlanRun[] = [];
     const specs: object[] = [];
     op.fake = fakeChant(work, seen, specs) as typeof op.fake;
-    restore.push(overrideChantNext("waveCapabilities", { registry: { has: () => true } }));
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
     const code = await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: { ...process.env } });
@@ -110,7 +109,6 @@ describe("a wave on chant's step (terragucci#1303)", () => {
     const { work, bin } = setup();
     const seen: ChantAfterPlanRun[] = [];
     op.fake = fakeChant(work, seen, []) as typeof op.fake;
-    restore.push(overrideChantNext("waveCapabilities", { registry: { has: () => true } }));
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
     await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: { ...process.env } });

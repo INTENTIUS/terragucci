@@ -64,7 +64,7 @@ import { ConfigError, findConfig, loadConfig, type Approval } from "./config";
 import type { Fetch } from "./forge";
 import { originOf, resumeAfterApproval } from "./resume";
 import { keptPath, MIGRATE_LEDGER, MIGRATE_OP } from "./migrate";
-import { chantHoldRecord } from "./chant-next";
+import { gatedRequestAttachmentPath } from "@intentius/chant/lifecycle/gated-request";
 import { EXPORT_LEDGER, EXPORT_OP } from "./export";
 import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { ACTION_LEDGER, ACTION_OP, approveActionArgs } from "./action";
@@ -279,9 +279,8 @@ async function approveMigration(repo: string, m: WaitingMigration, o: ApproveOpt
   const show = (path: string) => spawnSync("git", ["show", `${LEDGER_READ_REF}:${path}`], { cwd: repo, encoding: "utf-8" });
   let kept = show(keptPath(m.migration, m.digest));
   // chant keeps the proof as the request's attachment (chant#4551, #4623) when it records the gate.
-  const held = kept.status === 0 ? undefined : await chantHoldRecord();
-  if (held) {
-    const at = held.gatedRequestAttachmentPath(MIGRATE_OP, m.digest);
+  if (kept.status !== 0) {
+    const at = gatedRequestAttachmentPath(MIGRATE_OP, m.digest);
     kept = show(`${at.dir}/${at.file}`);
   }
   for (const l of describeMigration(kept.status === 0 ? kept.stdout : undefined)) log(l);

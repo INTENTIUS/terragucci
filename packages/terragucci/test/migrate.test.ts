@@ -2,6 +2,13 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** The reader of a gated request's stored proof, when a case stands one in. */
+const proof = vi.hoisted((): { read?: (dir: string, file: string) => Promise<string | null> } => ({}));
+vi.mock("@intentius/chant/lifecycle/git", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, readBlobFromPath: (dir: string, file: string, opts?: unknown) => (proof.read ? proof.read(dir, file) : (m.readBlobFromPath as (d: string, f: string, o?: unknown) => Promise<string | null>)(dir, file, opts)) };
+});
 import { writeLedger, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
 import {
   addressMatches,
@@ -31,7 +38,6 @@ import {
 import { ledgerEntries, MIGRATE_DONE_FILE, MIGRATE_LEDGER_FILE } from "../src/report/audit";
 import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { tmp, write } from "./helpers";
-import { overrideChantNext } from "../src/chant-next";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 
 // With chant's state operations a standalone migration is chant's gated request: chant's digest, its pending
@@ -283,7 +289,6 @@ describe("running a migration from wave 1", () => {
   });
 
   it("under chant run wave on a chant that records the hold (chant#4623), hands chant the proof and writes how it ended to CHANT_HOLD_FINISHED, with no ledger line of its own", async () => {
-    restoreChant.push(overrideChantNext("holdRecord", { OP_WAVE_HOLD_RECORD_FLOOR: "0.125.0", gatedRequestAttachmentPath: (op: string, d: string) => ({ dir: `_gates/${op}/requests`, file: `${d.replace(/:/g, "_")}.json` }) }));
     const { work, origin } = repo();
     const log = () => {};
     const file = join(tmp(), "hold.json");
@@ -396,7 +401,8 @@ describe("running a migration from wave 1", () => {
     const now = [root("one", "v2"), root("two", "v1")];
     // chant kept the approved request's proof: only the root whose state before differs moved.
     const kept = new Map([["_gates/tf-migrate/requests/sha256_old.json", JSON.stringify({ roots: [root("one", "v1"), root("two", "v1")] })]]);
-    restoreChant.push(overrideChantNext("requestProof", { gatedRequestAttachmentPath: (op: string, d: string) => ({ dir: `_gates/${op}/requests`, file: `${d.replace(/:/g, "_")}.json` }), readBlobFromPath: async (dir: string, file: string) => kept.get(`${dir}/${file}`) ?? null }));
+    proof.read = async (dir: string, file: string) => kept.get(`${dir}/${file}`) ?? null;
+    restoreChant.push(() => void delete proof.read);
     expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved))).toEqual({ approved: "sha256:old", by: "alice", moved: ["one"] });
     // No approval, the requester's own, or one spent already: the new request only waits.
     expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [])))).toBeUndefined();
@@ -404,10 +410,8 @@ describe("running a migration from wave 1", () => {
     expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [{ resolvedBy: "alice", timestamp: T(2) }], true)))).toBeUndefined();
     // A later run finds the new request asked already, newer than the approval: it waits for that digest's approval.
     expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(5), now, requests(approved))).toBeUndefined();
-    // With no proof to compare, every root moved; on a chant without the reader too.
+    // With no proof to compare, every root moved.
     kept.clear();
-    expect((await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved)))?.moved).toEqual(["one", "two"]);
-    restoreChant.push(overrideChantNext("requestProof", null));
     expect((await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved)))?.moved).toEqual(["one", "two"]);
   });
 

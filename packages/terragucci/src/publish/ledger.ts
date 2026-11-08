@@ -21,7 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { ReleaseRecord, RunOrigin } from "@intentius/chant/lifecycle/release-ledger";
-import { chantReleaseReadNow } from "../chant-next";
+import { parseReleaseLedger, releaseLedgerLines } from "@intentius/chant/lifecycle/release-ledger";
 import { ConfigError } from "../config";
 
 export const LIFECYCLE = "chant/lifecycle";
@@ -213,10 +213,9 @@ export function ledgerPrefixes(paths: readonly string[]): string[] {
   return [...new Set(paths.map((p) => re.exec(p)?.[1]).filter((p): p is string => p !== undefined))].sort();
 }
 
-/** The records of one ledger file's text: chant's reader when the installed chant has it, else {@link parseLedger}. */
+/** The records of one ledger file's text, with chant's release record reader. */
 function recordsOf(text: string): ReleaseRecord[] {
-  const chant = chantReleaseReadNow();
-  return chant ? (chant.parseReleaseLedger(chant.releaseLedgerLines(text)).records as ReleaseRecord[]) : parseLedger(text);
+  return parseReleaseLedger(releaseLedgerLines(text)).records as unknown as ReleaseRecord[];
 }
 
 /**

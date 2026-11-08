@@ -37,7 +37,7 @@ import {
   type ChantReleaseStatusRecord,
   type ChantTerraformDocsRunner,
 } from "../chant-next";
-import { chantTemplateRequests } from "../chant-next";
+import { parseTemplateSpec } from "@intentius/chant/template-request";
 import { loadHclParser } from "../rollout/parser";
 import { moduleTarAt, tarEntries } from "./archive";
 import { tryGit, hasCommit } from "./git";
@@ -109,10 +109,8 @@ async function templateField(dir: string): Promise<{ spec?: unknown; note?: stri
   const file = join(dir, TEMPLATE_FILE);
   if (!existsSync(file)) return {};
   const text = readFileSync(file, "utf-8");
-  const chant = await chantTemplateRequests();
-  if (!chant) throw new ConfigError("chant's template request (@intentius/chant/template-request) did not load; reinstall @intentius/chant");
   try {
-    return { spec: chant.parseTemplateSpec(text) };
+    return { spec: parseTemplateSpec(text) };
   } catch (e) {
     return { note: `${TEMPLATE_FILE} left out of the catalog: ${(e as Error).message.split("\n", 1)[0]}` };
   }

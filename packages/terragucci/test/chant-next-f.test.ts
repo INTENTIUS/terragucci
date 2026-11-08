@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildLedgerEstate } from "@intentius/chant/ci-estate";
 import { parseLedger, type ResolutionRecord } from "../src/apply";
-import { chantOpStandDown, overrideChantNext } from "../src/chant-next";
+import { newerCommitOnBranch } from "@intentius/chant/op";
 import { wavesStepSpec, waveCallArgv } from "../src/chant-waves";
 import { productWords, TERRAGUCCI_WORDS } from "../src/ci-words";
 import { mergeLedgerEstate } from "../src/estate";
@@ -18,7 +18,6 @@ import { ciPolicySource, fetchPolicySource } from "../src/report/policy";
 import { gateSigners } from "./sshsig";
 import { git, tmp, write } from "./helpers";
 
-const standDown = await chantOpStandDown();
 
 let restore: (() => void)[] = [];
 afterEach(() => {
@@ -162,18 +161,14 @@ describe("policy source", () => {
 describe("stand-down", () => {
   const input = { waves: [["network"]], gate: "always" as const, approval: "ledger" as const, call: waveCallArgv, migrations: false, standDown: true };
 
-  it("leaves the step spec without standDown on a chant without chant's stand-down", () => {
-    restore.push(overrideChantNext("opStandDown", null));
-    expect((wavesStepSpec(input) as unknown as Record<string, unknown>).standDown).toBeUndefined();
-  });
 
-  it("asks chant to stand the wave down when chant has it", () => {
-    restore.push(overrideChantNext("opStandDown", { newerCommitOnBranch: async () => undefined, tipAppliesTargets: () => false, OP_WAVE_STAND_DOWN_FLOOR: "next" }));
+
+  it("asks chant to stand the wave down", () => {
     expect((wavesStepSpec(input) as unknown as Record<string, unknown>).standDown).toBe(true);
     expect((wavesStepSpec({ ...input, standDown: false }) as unknown as Record<string, unknown>).standDown).toBeUndefined();
   });
 
-  it.runIf(standDown)("exports the newer-commit lookup apply.ts uses", () => {
-    expect(typeof standDown!.newerCommitOnBranch).toBe("function");
+  it("exports the newer-commit lookup apply.ts uses", () => {
+    expect(typeof newerCommitOnBranch).toBe("function");
   });
 });

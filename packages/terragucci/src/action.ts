@@ -41,7 +41,8 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { readLedger, type PendingRecord } from "./apply";
 import { approvalRule, checkoutApproval } from "./approval";
 import { binaryEnv } from "./binary-env";
-import { chantStateOps, type ChantStateOps, type ChantGatedRequestRead, type ChantInvokeActionResult, type ChantRootRun } from "./chant-next";
+import { stateOps } from "./gated-request";
+import { type ChantStateOps, type ChantGatedRequestRead, type ChantInvokeActionResult, type ChantRootRun } from "./chant-next";
 import { ACTION_ADDRESS } from "./comment";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type Approval, type Binary } from "./config";
 import { requestRules, syncLocalLedger } from "./gated-request";
@@ -65,9 +66,7 @@ export const actionSubject = (root: string, address: string): string => `${root}
 
 /** The terraform lexicon's state operations, which hold `invokeAction`. */
 async function actionOps(): Promise<ChantStateOps> {
-  const ops = await chantStateOps();
-  if (!ops) throw new ConfigError("the terraform lexicon's state operations did not load; reinstall @intentius/chant-lexicon-terraform");
-  return ops;
+  return stateOps;
 }
 
 /** The oldest Terraform that invokes an action. */

@@ -24,7 +24,6 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
 import { chantCommand } from "./chant-bin";
-import { chantOpStandDownNow } from "./chant-next";
 import { ConfigError } from "./config";
 
 /** The op, and the spec's name: the waves' gates stay `tf-apply` / `wave-<k>`. */
@@ -149,7 +148,7 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
       ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.approveAbove !== undefined ? { cost: { command: ["infracost", "breakdown", "--path", "{planJson}", "--format", "json"], approveAbove: input.approveAbove, format: "infracost" } } : {}) } }
       : {}),
     // chant stands the wave down before it spends the approval, when the installed chant has the stand-down (chant#4581).
-    ...(input.standDown && chantOpStandDownNow() ? { standDown: true } : {}),
+    ...(input.standDown ? { standDown: true } : {}),
     // The gate's report is terragucci's; the held hook is chant's holds now.
     hooks: { after: { gate: hooks?.after?.gate } },
     waves: rest.waves.map((w) => ({ ...w, runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),

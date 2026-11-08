@@ -86,7 +86,10 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
-import { chantOpStandDown, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
+import { newerCommitOnBranch } from "@intentius/chant/op";
+import { CapabilityRegistry } from "@intentius/chant/components/capability";
+import { terraformApplyCapability } from "@intentius/chant-lexicon-terraform/components/capability-plugin";
+import { type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
 import { declaredTerraformRoots } from "./chant-config";
 import type { RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
@@ -948,11 +951,7 @@ async function newerPush(repo: string, env: NodeJS.ProcessEnv): Promise<string |
   const branch = env.GITHUB_REF_NAME || env.CI_COMMIT_BRANCH;
   const sha = env.GITHUB_SHA || env.CI_COMMIT_SHA;
   if (!branch || !sha) return undefined;
-  const chant = await chantOpStandDown();
-  if (chant) return (await chant.newerCommitOnBranch(repo, env, sha))?.tip;
-  const r = git(repo, ["ls-remote", "origin", `refs/heads/${branch}`]);
-  const tip = r.status === 0 ? r.stdout.split(/\s/)[0]?.trim() : "";
-  return tip && tip !== sha ? tip : undefined;
+  return (await newerCommitOnBranch(repo, env, sha))?.tip;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -1452,6 +1451,17 @@ interface StepWave {
   settings: ResolvedSettings;
 }
 
+/** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C). */
+let capabilities: { registry: CapabilityRegistry } | undefined;
+function waveCapabilities(): { registry: CapabilityRegistry } {
+  if (!capabilities) {
+    const registry = new CapabilityRegistry();
+    registry.register(terraformApplyCapability as never);
+    capabilities = { registry };
+  }
+  return capabilities;
+}
+
 /**
  * Whether this job's wave runs on chant's terraform-apply step (terragucci#1303),
  * with chant's after-plan hook (chant#4614): undefined when the terraform
@@ -1462,8 +1472,7 @@ interface StepWave {
  * it moves onto chant too.
  */
 async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: WavesContext, specWaves: string[][], unattended: boolean): Promise<StepWave | undefined> {
-  const caps = await chantWaveCapabilities();
-  if (!caps) return undefined;
+  const caps = waveCapabilities();
   const chant = (await import("@intentius/chant/op")) as unknown as ChantAfterPlan;
   const read = await waveSettings(repo, options, ctx.configPath);
   if ("error" in read) return undefined;

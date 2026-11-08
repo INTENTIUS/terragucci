@@ -64,7 +64,9 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantRequestProof, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
+import { gatedRequestAttachmentPath } from "@intentius/chant/lifecycle/gated-request";
+import { readBlobFromPath } from "@intentius/chant/lifecycle/git";
+import { type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
 import { SourceLockedError, StateLockedError, takeLocksWithSources } from "@intentius/chant-lexicon-terraform/state";
 import { fetchedLedgerFile, LEDGER_READ_REF, movedMembers, readLedger, type GateLedger } from "./apply";
@@ -75,7 +77,7 @@ import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "@intentius/chant/object-store";
 import { MARKER, PIPELINE_PATHS } from "./render";
-import { chantStateOps, opMessage, requestRules, syncLocalLedger } from "./gated-request";
+import { opMessage, requestRules, stateOps, syncLocalLedger } from "./gated-request";
 import { rootRoleEnv } from "./cloud-identity";
 import { liveRoots } from "./detect";
 import { eachLimited } from "./each-limited";
@@ -580,16 +582,14 @@ export async function movedSinceChantApproval(
   if (!prior || !approval) return undefined;
   const all = roots.map((r) => r.root);
   let stored: Pick<MigrationRecord, "roots"> | undefined;
-  const reader = await chantRequestProof();
-  if (reader) {
-    const { dir, file } = reader.gatedRequestAttachmentPath(MIGRATE_OP, prior.digest);
-    try {
-      const text = await reader.readBlobFromPath(dir, file, { cwd: repo });
-      if (text) stored = JSON.parse(text) as Pick<MigrationRecord, "roots">;
-    } catch {
-      stored = undefined;
-    }
+  const { dir, file } = gatedRequestAttachmentPath(MIGRATE_OP, prior.digest);
+  try {
+    const text = await readBlobFromPath(dir, file, { cwd: repo });
+    if (text) stored = JSON.parse(text) as Pick<MigrationRecord, "roots">;
+  } catch {
+    stored = undefined;
   }
+
   const moved = Array.isArray(stored?.roots) ? movedMembers(beforeMembers(stored.roots), beforeMembers([...roots])) : all;
   return { approved: prior.digest, by: approval.resolvedBy, moved };
 }
@@ -671,29 +671,15 @@ export const firstLine = (s: string, n = 4): string => s.trim().split("\n").slic
 /** Plan a root and read its resource changes; with `-lock=false` when the job holds the lock itself. */
 export async function planChanges(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv, work: string, tag: string, lock: boolean, keep?: (plan: unknown) => void): Promise<{ changes: string[]; summary: string }> {
   const planFile = join(work, `${tag}.tfplan`);
-  const chant = await chantStateOps();
-  if (chant) {
-    // chant#4618: the lexicon's fixed `plan [-lock=false] -out` and `show -json`.
-    let read: { json: unknown; summary: string };
-    try {
-      read = await chant.planStateCheck({ root: tag, binary, dir, env, exec, planFile, ...(lock ? {} : { lock: false }) });
-    } catch (e) {
-      throw new ConfigError(`the plan of ${tag} failed: ${firstLine(opMessage(e))}`);
-    }
-    keep?.(read.json);
-    return { changes: resourceChanges(read.json), summary: read.summary };
-  }
-  const plan = await exec(binary, ["plan", "-input=false", "-no-color", ...(lock ? [] : ["-lock=false"]), `-out=${planFile}`], dir, env);
-  if (plan.code !== 0) throw new ConfigError(`the plan of ${tag} failed: ${firstLine(plan.out)}`);
-  const show = await exec(binary, ["show", "-json", planFile], dir, env);
-  let json: unknown;
+  // chant#4618: the lexicon's fixed `plan [-lock=false] -out` and `show -json`.
+  let read: { json: unknown; summary: string };
   try {
-    json = JSON.parse(show.stdout);
-  } catch {
-    throw new ConfigError(`show -json of ${tag} printed no plan: ${firstLine(show.out)}`);
+    read = await stateOps.planStateCheck({ root: tag, binary, dir, env, exec, planFile, ...(lock ? {} : { lock: false }) });
+  } catch (e) {
+    throw new ConfigError(`the plan of ${tag} failed: ${firstLine(opMessage(e))}`);
   }
-  keep?.(json);
-  return { changes: resourceChanges(json), summary: plan.out.match(/Plan: .*|No changes\..*/)?.[0] ?? "planned" };
+  keep?.(read.json);
+  return { changes: resourceChanges(read.json), summary: read.summary };
 }
 
 // ── planning ─────────────────────────────────────────────────────────────
@@ -1209,19 +1195,12 @@ export async function applyMigration(repo: string, plan: PlannedMigration, optio
         continue;
       }
       // Over the empty state a backend wrote at init, of another lineage, the push is forced; the digest check above found it still empty.
-      const lockArgs = isStored(f.object) ? ["-lock=false"] : f.replacesEmpty ? ["-force"] : [];
       const at = plan.places.get(r.root) ?? { dir: join(repo, r.root), env: rootRoleEnv(env, r.root) };
-      const chant = await chantStateOps();
-      if (chant) {
-        // chant#4618: the lexicon's fixed `state push [-lock=false] [-force] <file>`.
-        try {
-          await chant.pushStateFile({ root: r.root, binary: options.binary, dir: at.dir, env: at.env, exec, file: f.path, ...(isStored(f.object) ? { lock: false } : f.replacesEmpty ? { force: true } : {}) });
-        } catch (e) {
-          return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(opMessage(e))}` };
-        }
-      } else {
-        const push = await exec(options.binary, ["state", "push", ...lockArgs, f.path], at.dir, at.env);
-        if (push.code !== 0) return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(push.out)}` };
+      // chant#4618: the lexicon's fixed `state push [-lock=false] [-force] <file>`.
+      try {
+        await stateOps.pushStateFile({ root: r.root, binary: options.binary, dir: at.dir, env: at.env, exec, file: f.path, ...(isStored(f.object) ? { lock: false } : f.replacesEmpty ? { force: true } : {}) });
+      } catch (e) {
+        return { ...record, status: "failed", error: `state push in ${r.root} failed: ${firstLine(opMessage(e))}` };
       }
       log(`${r.root}: wrote its new state`);
     }
@@ -1669,7 +1648,7 @@ async function runGated(
   m: Migration,
   plan: PlannedMigration,
   record: MigrationRecord,
-  chant: NonNullable<Awaited<ReturnType<typeof chantStateOps>>>,
+  chant: ChantStateOps,
   o: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void; now: string; rule: Awaited<ReturnType<typeof approvalRule>>; label: string; proved: string; command: string; commit: string; runId: string | undefined; work: string },
 ): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env, label } = o;
@@ -1793,9 +1772,7 @@ async function runOne(repo: string, m: Migration, options: RunMigrationsOptions 
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   if (!options.hold) {
     // chant's gated request (chant#4551): the request, the spend before the write, and the finished line.
-    const chant = await chantStateOps();
-    if (!chant) throw new ConfigError(`${label}: the installed chant has no gated requests, which a migration's gate runs on`);
-    return runGated(repo, m, plan, record, chant, { ...options, now, rule, label, proved, command, commit, runId, work });
+    return runGated(repo, m, plan, record, stateOps, { ...options, now, rule, label, proved, command, commit, runId, work });
   }
   // chant settles the gate (chant#4623): hold the wave on it, with the proof as the request's attachment, or write
   // the states under the approval chant found and say how it ended in the finished file chant records.

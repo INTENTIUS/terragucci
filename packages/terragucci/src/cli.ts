@@ -102,7 +102,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSyn
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { chantAgentJob, preloadChantNext } from "./chant-next";
+import { chantAgentJob } from "./chant-next";
 import { runChantInProcess } from "@intentius/chant/ci-product";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
@@ -476,8 +476,6 @@ function originForge(dir: string): ForgeName | undefined {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  // The chant parts synchronous code reads (the words module, chant#4550, and the rest preloadChantNext names), loaded once; none on a chant without them.
-  await preloadChantNext();
   // A usage or config error exits 1 under chant's table (chant#4553, ruling C).
   const USAGE_EXIT = CHANT_EXIT.failed;
   const { cmd, flags, args, repeated } = parse(argv);

@@ -30,7 +30,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { ConfigError, TEMPLATES_APPS, type ResolvedSettings } from "./config";
-import { chantTemplateRender, chantTemplateRequests, type ChantCatalogComponent, type ChantCatalogVersion, type ChantReleaseCatalogDoc, type ChantTemplateInput, type ChantTemplateRender, type ChantTemplateRequest, type ChantTemplateRequestRefusal, type ChantTemplateSpec } from "./chant-next";
+import * as templateRequestLib from "@intentius/chant/template-request";
+import * as templateRenderLib from "@intentius/chant-lexicon-terraform/template";
+import { type ChantTemplateRequests, type ChantCatalogComponent, type ChantCatalogVersion, type ChantReleaseCatalogDoc, type ChantTemplateInput, type ChantTemplateRender, type ChantTemplateRequest, type ChantTemplateRequestRefusal, type ChantTemplateSpec } from "./chant-next";
 import { productWords } from "./ci-words";
 import { globMatch } from "./detect";
 import { defaultBranch, DEFAULT_TOKEN_ENV, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
@@ -283,8 +285,8 @@ type Planned = { ok: true; files: Map<string, string>; title: string } | Extract
  * refusal pushes nothing.
  */
 export async function request(o: RequestOptions): Promise<RequestResult> {
-  const [core, render] = [await chantTemplateRequests(), await chantTemplateRender()];
-  if (!core || !render) throw new ConfigError("chant's template request (@intentius/chant/template-request) or the terraform lexicon's template rendering (@intentius/chant-lexicon-terraform/template) did not load; reinstall @intentius/chant and @intentius/chant-lexicon-terraform");
+  const core = templateRequestLib as unknown as ChantTemplateRequests;
+  const render = templateRenderLib as unknown as ChantTemplateRender;
   const addon = o.app !== undefined;
   const env = o.env ?? process.env;
   const log = o.log ?? ((l: string) => console.error(l));
