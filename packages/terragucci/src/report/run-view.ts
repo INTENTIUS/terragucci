@@ -14,7 +14,7 @@ import type { ChangeSetAction } from "@intentius/chant/change-set";
 import { esc } from "./html";
 import { progressCounts, type ProgressStatus, type WaveProgress } from "../apply-progress";
 import { blastRadius, GRAPH_CSS, phaseTotals, renderGraphSvg, renderTimelineSvg, span, type Span } from "./graph";
-import type { ObjectStore } from "./object-store";
+import type { ObjectStore } from "@intentius/chant/object-store";
 import type { ReportComposedMember, ReportWave, WaveState } from "./schema";
 import { updateJson, type Wait } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";

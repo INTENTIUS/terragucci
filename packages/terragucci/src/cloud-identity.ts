@@ -43,7 +43,7 @@ import {
 } from "@intentius/chant/ci-identity";
 import { environmentOf, withEnvironmentRoles } from "./environments";
 import { DEFAULT_GROUP, reservedGroupName, type EnvironmentSettings, type OidcSettings, type ProjectSettings, type RolePair, type RunnerSpec } from "./config";
-import { StoreError } from "./report/object-store";
+import { StoreError } from "@intentius/chant/object-store";
 
 export { DEFAULT_GROUP, reservedGroupName };
 

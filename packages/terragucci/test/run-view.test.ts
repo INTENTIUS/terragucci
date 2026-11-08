@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { waveReads, waveState } from "../src/apply";
-import { StoreConflict, type ObjectStore, type StoreCondition } from "../src/report/object-store";
+import { StoreConflict, type ObjectStore, type StoreCondition } from "@intentius/chant/object-store";
 import { renderRunHtml, RUN_SCHEMA, runSkeleton, runViewKey, updateRunView, withWave, type RunView } from "../src/report/run-view";
 import { unitEdges } from "../src/terragrunt";
 import { tmp, write } from "./helpers";

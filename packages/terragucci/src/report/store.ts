@@ -32,7 +32,7 @@ import { addToInventory, inventoryRoots } from "./inventory";
 import { addToVersions, versionsRoots } from "./versions";
 import { addToStateVersions, stateRecords } from "./state-versions";
 import { addToStateEdges, hasEdgeFacts } from "./state-edges";
-import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "./object-store";
+import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from "@intentius/chant/object-store";
 import { failedRoots, type Report } from "./schema";
 import { scrubText } from "../secret-values";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";

@@ -5,7 +5,7 @@ import { describeEstate, estate } from "../src/estate";
 import { appendEntries, AUDIT_SCHEMA, readRecord, reportEntry, type AuditEntry } from "../src/report/audit";
 import { buildReport } from "../src/report/build";
 import { addToChanges, buildHistory, changeRows, CHANGES_SCHEMA, historyId, planAppliedChanges, readInlineHistory, renderHistoryHtml, type ChangeRow } from "../src/report/history";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import type { Report } from "../src/report/schema";
 import { runPath, uploadReport, writeReportDir } from "../src/report/store";
 import { validate, type Json } from "../../../scripts/schema-check";

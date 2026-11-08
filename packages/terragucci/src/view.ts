@@ -26,7 +26,8 @@
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { ConfigError, resolveProject, resolveRepo, type TerragucciConfig } from "./config";
-import { bucketUrl, parseReportsBucket } from "./report/object-store";
+import { bucketUrl } from "@intentius/chant/object-store";
+import { parseReportsBucket } from "./report/object-store";
 import { runFacts } from "./report/stage";
 import { VIEWS_DIR } from "./report/store";
 

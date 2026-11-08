@@ -20,7 +20,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { terraformCredential } from "@intentius/chant/terraform/credentials";
 import { ConfigError } from "./config";
-import type { StoreFetch } from "./report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 
 /** The backends a move reads from without the binary: a TFE-API workspace, and a state file. */
 export const EXTERNAL_BACKENDS = ["remote", "cloud", "file"];

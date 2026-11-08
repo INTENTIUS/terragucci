@@ -5,7 +5,7 @@ import { estate } from "../src/estate";
 import { buildReport } from "../src/report/build";
 import { buildEstate, readInlineEstate, renderEstateHtml } from "../src/report/estate";
 import { addToInventory, countTypes, INVENTORY_SCHEMA, inventoryRoots, planResources, type InventoryRoot } from "../src/report/inventory";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import type { Report } from "../src/report/schema";
 import { uploadReport, writeReportDir } from "../src/report/store";
 import { validate, type Json } from "../../../scripts/schema-check";

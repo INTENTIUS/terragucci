@@ -25,10 +25,6 @@
  * reads and handover parameters (`pr-forge`, `ci-handover`, chant#4554;
  * ./forge.ts, ./handover.ts).
  *
- * Newer than the pin too (chant#4554, terragucci#1282): chant core's object
- * store clients (`@intentius/chant/object-store`), which ./report/bucket.ts
- * and ./backend.ts's version list use when the installed chant has them.
- *
  * Newer than the pin too (chant#4556, terragucci#1284): the check moment,
  * `ci.hooks.check`, from `@intentius/chant/components/check-hooks`: the
  * writer `init` adds the pre-commit preset's hook with, and the runner the
@@ -113,10 +109,6 @@ import type { DriverComponent } from "@intentius/chant/components";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
-import type { AzureBlobClient, AzureTarget } from "./report/azure-blob";
-import type { GcsClient, GcsTarget } from "./report/gcs";
-import { adoptChantStoreErrors, type ObjectStore, type StoreFetch } from "./report/object-store";
-import type { S3Client, S3Target } from "./report/s3";
 
 // ── compose ────────────────────────────────────────────────────────────────
 
@@ -370,27 +362,6 @@ export interface ChantCheckHooks {
   writeCiHook(root: string, moment: "check", hook: ChantCheckHook, opts?: { member?: string }): { file: string; replaced: boolean };
   /** The first chant that reads `ci.hooks.check`: a declaration that uses it sets `minReader` to it. */
   CI_CHECK_HOOK_FLOOR: string;
-}
-
-// ── object-store ───────────────────────────────────────────────────────────
-
-/**
- * chant core's object store clients (`@intentius/chant/object-store`,
- * chant#4554), lifted from ./report/s3.ts, gcs.ts, azure-blob.ts and
- * bucket.ts. The targets are the same shape as terragucci's, and so are the
- * clients' methods; the product words are parameters.
- */
-export interface ChantObjectStore {
-  storeFromEnv(
-    where: { bucket: string; endpoint?: string; role?: string; sessionName?: string; setting?: string; roleSetting?: string; hints?: { oidc?: string; gcp?: string; azure?: string } },
-    env?: NodeJS.ProcessEnv,
-    fetchFn?: StoreFetch,
-  ): ObjectStore;
-  S3Client: new (target: S3Target, fetchFn?: StoreFetch) => Pick<S3Client, keyof S3Client>;
-  GcsClient: new (target: GcsTarget, fetchFn?: StoreFetch) => Pick<GcsClient, keyof GcsClient>;
-  AzureBlobClient: new (target: AzureTarget, fetchFn?: StoreFetch) => Pick<AzureBlobClient, keyof AzureBlobClient>;
-  StoreError: abstract new (...args: never[]) => Error;
-  StoreConflict: abstract new (...args: never[]) => Error;
 }
 
 // ── bucket-check ───────────────────────────────────────────────────────────
@@ -1302,16 +1273,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/registry"),
     (m) => (has(m, "moduleSourceForms", "providerAddressForms", "usedSources", "lockedProviders") ? (m as unknown as ChantSourceForms) : undefined),
   ),
-  objectStore: once<ChantObjectStore>(
-    () => import("@intentius/chant/object-store"),
-    (m) => {
-      if (!has(m, "storeFromEnv", "S3Client", "GcsClient", "AzureBlobClient", "StoreError", "StoreConflict")) return undefined;
-      const store = m as unknown as ChantObjectStore;
-      // A chant client throws chant's errors: terragucci's StoreError and StoreConflict take them as their own.
-      adoptChantStoreErrors(store.StoreError, store.StoreConflict);
-      return store;
-    },
-  ),
   stateOps: once<ChantStateOps>(
     async () => {
       const ops: object = await import("@intentius/chant-lexicon-terraform/state-ops");
@@ -1429,8 +1390,6 @@ export const chantComposeRun = (): Promise<ChantComposeRun | undefined> => load(
 export const chantState = (): Promise<ChantState | undefined> => load("state");
 /** chant's plan shape (`/plan-shape`), or undefined. */
 export const chantPlanShape = (): Promise<ChantPlanShape | undefined> => load("planShape");
-/** chant core's object store clients (`@intentius/chant/object-store`, chant#4554), or undefined. */
-export const chantObjectStore = (): Promise<ChantObjectStore | undefined> => load("objectStore");
 
 /** chant's check moment (`/components/check-hooks`, chant#4556), or undefined. */
 export const chantCheckHooks = (): Promise<ChantCheckHooks | undefined> => load("checkHooks");
@@ -1517,7 +1476,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, objectStore, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantObjectStore(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
+  const [compose, composeRun, state, planShape, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [opStandDown] = [await chantOpStandDown()];
@@ -1528,5 +1487,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

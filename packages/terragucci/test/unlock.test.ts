@@ -7,7 +7,7 @@ import { ConfigError } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { ledgerEntries, UNLOCK_DONE_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
-import type { S3Fetch } from "../src/report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { lockDigest, parseLockInfo, parseUnlocks, UNLOCK_DONE, UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { appliedFile, appliedLines, chantGated } from "./gated-helpers";
 import { tmp, write } from "./helpers";

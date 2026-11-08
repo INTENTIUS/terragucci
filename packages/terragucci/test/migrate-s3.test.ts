@@ -18,7 +18,7 @@ import {
   type StateFile,
   type StateResource,
 } from "../src/migrate";
-import { sign, type S3Fetch } from "../src/report/s3";
+import { sign, type S3Fetch } from "@intentius/chant/object-store";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 

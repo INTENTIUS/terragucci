@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildReport, planFiles, type RootInput } from "../src/report/build";
 import { blockIs, diffFence, diffLines, planBlocks, scrubPlanText, sensitiveValues, unitBlocks } from "../src/report/plan-text";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { artifactReportUrl, forgeOfEnv, reportLinks } from "../src/report/stage";
 import { presignedLinks, writeReportDir } from "../src/report/store";
 import { NOTE_LIMIT_FORGEJO, noteLimit, renderNote } from "../src/report/views";

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { estate } from "../src/estate";
 import { buildReport, type RootInput } from "../src/report/build";
 import { buildEstate, readInlineEstate, renderEstateHtml } from "../src/report/estate";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import type { Report, ReportRead } from "../src/report/schema";
 import { addToStateEdges, EDGES_SCHEMA, edgesOf, hasEdgeFacts, readsOf, readStateEdges, type EdgeRead } from "../src/report/state-edges";
 import { runStage } from "../src/report/stage";

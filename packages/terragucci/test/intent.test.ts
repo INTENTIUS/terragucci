@@ -12,7 +12,7 @@ import { validateConfig } from "../src/config";
 import type { DecideFetch, DecideSettings } from "../src/decide";
 import { LAYA_MODEL } from "../src/images";
 import { buildReport, planFiles } from "../src/report/build";
-import type { S3Fetch } from "../src/report/s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { runKey, writeReportDir } from "../src/report/store";
 import { respond } from "../src/respond";
 import { checkDescription, intentState } from "../src/respond/intent";

@@ -22,7 +22,7 @@
  * No attribute value reaches the roster.
  */
 import { isObject } from "./redact";
-import { StoreError, type ObjectStore } from "./object-store";
+import { StoreError, type ObjectStore } from "@intentius/chant/object-store";
 import { updateJson, type Wait } from "./store";
 import type { Report } from "./schema";
 

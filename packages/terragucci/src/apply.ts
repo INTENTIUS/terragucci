@@ -129,7 +129,7 @@ import { StageObserver } from "./report/observe";
 import { redactPlan } from "./report/redact";
 import { storeFromEnv } from "./report/bucket";
 import { named } from "./estate";
-import type { ObjectStore } from "./report/object-store";
+import type { ObjectStore } from "@intentius/chant/object-store";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
 import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportComposedMember, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";

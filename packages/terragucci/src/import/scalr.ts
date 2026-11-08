@@ -16,7 +16,7 @@
  * plan` and `input: hcp` do not carry.
  */
 import { ConfigError } from "../config";
-import type { StoreFetch } from "../report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { tfeClient, type ApiResource } from "../state-source";
 import type { Notes } from "./notes";
 import { conceptCell } from "./platform-guide";

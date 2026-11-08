@@ -43,7 +43,7 @@
 import { readFileSync } from "node:fs";
 import { AUDIT_FILES, renderAuditHtml } from "../packages/terragucci/src/report/audit";
 import { renderHistoryHtml } from "../packages/terragucci/src/report/history";
-import { encodePath } from "../packages/terragucci/src/report/object-store";
+import { encodePath } from "@intentius/chant/object-store";
 import { renderIndexHtml, type IndexEntry, type ReportIndex } from "../packages/terragucci/src/report/store";
 import {
   keeps,
@@ -102,7 +102,7 @@ async function read(key: string): Promise<{ text: string | undefined; etag: stri
 async function put(key: string, body: string, type: string, etag?: string): Promise<"ok" | "conflict"> {
   const cond: Record<string, string> = etag ? { "if-match": etag } : {};
   let res = await fetch(url(key), { method: "PUT", headers: { "content-type": type, ...cond }, body, signal: AbortSignal.timeout(TIMEOUT) });
-  // A store that takes no conditional write gets an unconditional one, as terragucci's own uploads do (report/s3.ts).
+  // A store that takes no conditional write gets an unconditional one, as terragucci's own uploads do (chant's S3 client).
   if (res.status === 501 && etag) res = await fetch(url(key), { method: "PUT", headers: { "content-type": type }, body, signal: AbortSignal.timeout(TIMEOUT) });
   if (res.status === 412 || res.status === 409) return "conflict";
   if (!res.ok) throw new Error(`PUT ${key}: ${res.status}`);

@@ -5,7 +5,7 @@ import { liveHistoryArgs, parseLiveHistory, recordVersions, versionsLine, type H
 import { estate } from "../src/estate";
 import { buildReport } from "../src/report/build";
 import { buildHistory, changeRows, historyId, renderHistoryHtml } from "../src/report/history";
-import { S3Client, type S3Fetch } from "../src/report/s3";
+import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { REPORT_MINOR, type Report, type ReportRecordVersions } from "../src/report/schema";
 import { uploadReport, writeReportDir } from "../src/report/store";
 import { validate, type Json } from "../../../scripts/schema-check";

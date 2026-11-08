@@ -15,7 +15,7 @@
  *            versions; else, when the backend takes snapshots
  *            (`snapshot = true`), a snapshot of the blob terragucci takes,
  *            whose time is its id
- *   http     a GitLab-managed state's serial (./gitlab-state.ts)
+ *   http     a GitLab-managed state's serial (the terraform lexicon's gitlabStore)
  *   local    keeps no versions
  *
  * A backend that keeps no history either (pg, kubernetes, consul, and an
@@ -36,20 +36,17 @@
  * with the audit job's own identity.
  *
  * Requests are signed with the credentials the backend would use: those its
- * configuration names, else the job's own (the variables report/s3.ts,
- * report/gcs.ts and report/azure-blob.ts read). A backend that assumes an
+ * configuration names, else the job's own (the variables chant's object
+ * store clients read). A backend that assumes an
  * identity of its own may answer 403 to the job's: the version is then
  * recorded as unknown, with the reason, and the apply is never failed for it.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { createHash } from "node:crypto";
-import { currentSerial, gitlabState, isGitLabAddress, shownUrl, type GitLabState } from "./gitlab-state";
-import { AZURE_AUTHORITY, AzureBlobClient, azureFromEnv, type AzureOidc, type AzureTarget, type BlobAt } from "./report/azure-blob";
-import { GCS_ENDPOINT, GcsClient, gcsFromEnv, type GcsTarget } from "./report/gcs";
-import { StoreError, type ObjectVersion, type StoreFetch } from "./report/object-store";
-import { S3Client, s3FromEnv, type S3Fetch, type S3Target } from "./report/s3";
-import { chantObjectStore } from "./chant-next";
+import { gitlabState, gitlabStore, isGitLabAddress, shownUrl, type GitLabState } from "@intentius/chant-lexicon-terraform/state/gitlab";
+import { AZURE_AUTHORITY, AzureBlobClient, azureFromEnv, type AzureOidc, type AzureTarget, type BlobAt, GCS_ENDPOINT, GcsClient, gcsFromEnv, type GcsTarget, StoreError, type ObjectVersion, type StoreFetch, S3Client, s3FromEnv, type S3Fetch, type S3Target } from "@intentius/chant/object-store";
+import { STORE_WORDS } from "./report/object-store";
 import type { ReportStateVersion } from "./report/schema";
 import { literal, stateAddress } from "./state-address";
 
@@ -252,7 +249,7 @@ export function stateObject(dir: string, env: NodeJS.ProcessEnv = process.env, b
   const jobEnv = { ...env, AWS_REGION: region, ...(access && secret ? { AWS_ACCESS_KEY_ID: access, AWS_SECRET_ACCESS_KEY: secret, AWS_SESSION_TOKEN: str(c.token) ?? "" } : {}) };
   let target: S3Target;
   try {
-    target = s3FromEnv({ bucket, ...(endpoint ? { endpoint } : {}) }, jobEnv);
+    target = s3FromEnv({ bucket, ...(endpoint ? { endpoint } : {}), ...STORE_WORDS }, jobEnv);
   } catch (e) {
     return { backend: "s3", unsupported: `the job has no credentials to read s3://${bucket}: ${(e as Error).message}` };
   }
@@ -615,7 +612,7 @@ export async function stateVersion(dir: string, env: NodeJS.ProcessEnv = process
   if ("gitlab" in o) {
     // GitLab answers the serial only with the state: it is read, and only its serial kept.
     try {
-      const now = await currentSerial(o.gitlab, fetchFn ?? (globalThis.fetch as unknown as S3Fetch));
+      const now = await gitlabStore(o.gitlab, (fetchFn ?? globalThis.fetch) as never, "terragucci").serial();
       if (!now) return { backend: "http", location: o.location, versioning: "unknown", note: "GitLab holds no state at this address" };
       return { backend: "http", location: o.location, version_id: String(now.serial), versioning: "on" };
     } catch (e) {
@@ -650,20 +647,19 @@ export async function listStateVersions(location: string, env: NodeJS.ProcessEnv
   if (!m) return { skipped: "terragucci lists the versions of s3, gcs and azurerm states only" };
   const [, scheme, bucket, rest] = m as unknown as [string, string, string, string];
   try {
-    // The target is terragucci's, so a missing credential reads as it does today; the client is chant core's where the installed chant has it (chant#4554).
-    const chant = await chantObjectStore();
+    // chant core's clients (chant#4554).
     let versions: ObjectVersion[];
     if (scheme === "s3") {
-      const t = s3FromEnv({ bucket }, env);
-      versions = await (chant ? new chant.S3Client(t, fetchFn) : new S3Client(t, fetchFn)).listVersions(rest);
+      const t = s3FromEnv({ bucket, ...STORE_WORDS }, env);
+      versions = await new S3Client(t, fetchFn).listVersions(rest);
     } else if (scheme === "gs") {
-      const t = gcsFromEnv({ bucket }, env);
-      versions = await (chant ? new chant.GcsClient(t, fetchFn) : new GcsClient(t, fetchFn)).listVersions(rest);
+      const t = gcsFromEnv({ bucket, ...STORE_WORDS }, env);
+      versions = await new GcsClient(t, fetchFn).listVersions(rest);
     } else {
       const [container, ...key] = rest.split("/");
       if (!container || key.length === 0) return { skipped: `${location} names no blob` };
-      const t = azureFromEnv({ account: bucket, container }, env);
-      versions = await (chant ? new chant.AzureBlobClient(t, fetchFn) : new AzureBlobClient(t, fetchFn)).listVersions(key.join("/"));
+      const t = azureFromEnv({ account: bucket, container, ...STORE_WORDS }, env);
+      versions = await new AzureBlobClient(t, fetchFn).listVersions(key.join("/"));
     }
     return versions.length > 0 ? { versions } : { skipped: "the store lists no versions of the state" };
   } catch (e) {

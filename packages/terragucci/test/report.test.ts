@@ -11,7 +11,8 @@ import { changeKind, foldChange, HIGHLIGHTS } from "../src/report/highlight";
 import { readInlineReport, renderHtml } from "../src/report/html";
 import { validateConfig } from "../src/config";
 import { PLAN_KEYS, redactPlan } from "../src/report/redact";
-import { S3Client, S3Error, s3FromEnv, sign, type S3Fetch } from "../src/report/s3";
+import { S3Client, S3Error, s3FromEnv, sign, type S3Fetch } from "@intentius/chant/object-store";
+import { STORE_WORDS } from "../src/report/object-store";
 import { REDACTED, type Report } from "../src/report/schema";
 import { artifactReportUrl, preventDestroyIn, projectFromRemote, reportLinks, runFacts } from "../src/report/stage";
 import { addToIndex, bucketReportUrl, copyToRun, INDEX_TRIES, indexEntry, renderIndexHtml, reportsBase, runPath, traceKey, updateIndex, uploadReport, writeReportDir } from "../src/report/store";
@@ -385,7 +386,7 @@ describe("where reports go", () => {
     const tokenFile = join(dir, "token");
     writeFileSync(tokenFile, "eyJ.token.sig\n");
     const env = { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: tokenFile, AWS_REGION: "eu-west-2" };
-    const target = s3FromEnv({ bucket: "s3://acme-reports" }, env);
+    const target = s3FromEnv({ bucket: "s3://acme-reports", ...STORE_WORDS }, env);
     expect(target).toMatchObject({ bucket: "acme-reports", region: "eu-west-2", webIdentity: { roleArn: env.AWS_ROLE_ARN, tokenFile, endpoint: "https://sts.eu-west-2.amazonaws.com" } });
     const calls: { url: string; init: Parameters<S3Fetch>[1] }[] = [];
     const fake: S3Fetch = async (url, init) => {
@@ -411,13 +412,13 @@ describe("where reports go", () => {
     const keys = { AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
     const oidc = { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: "/tmp/t", AWS_ENDPOINT_URL: "http://floci:4566/" };
     const role = "arn:aws:iam::123456789012:role/reports";
-    expect(s3FromEnv({ bucket: "b" }, { ...keys, ...oidc })).toMatchObject({ accessKeyId: "AK", endpoint: "http://floci:4566", region: "us-east-1" });
-    expect(s3FromEnv({ bucket: "b" }, oidc)).toMatchObject({ webIdentity: { roleArn: oidc.AWS_ROLE_ARN, endpoint: "http://floci:4566" } });
-    expect(s3FromEnv({ bucket: "b", role }, { ...keys, ...oidc })).toMatchObject({ webIdentity: { roleArn: role } });
-    expect(s3FromEnv({ bucket: "b" }, { ...oidc, AWS_ENDPOINT_URL_STS: "https://sts.example" })).toMatchObject({ webIdentity: { endpoint: "https://sts.example" } });
-    expect(() => s3FromEnv({ bucket: "b", role }, keys)).toThrow(/reports.role is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not/);
-    expect(() => s3FromEnv({ bucket: "b" }, { AWS_ROLE_ARN: oidc.AWS_ROLE_ARN })).toThrow(/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE/);
-    expect(() => s3FromEnv({ bucket: "b" }, { AWS_ACCESS_KEY_ID: "", AWS_SECRET_ACCESS_KEY: "" })).toThrow(S3Error);
+    expect(s3FromEnv({ bucket: "b", ...STORE_WORDS }, { ...keys, ...oidc })).toMatchObject({ accessKeyId: "AK", endpoint: "http://floci:4566", region: "us-east-1" });
+    expect(s3FromEnv({ bucket: "b", ...STORE_WORDS }, oidc)).toMatchObject({ webIdentity: { roleArn: oidc.AWS_ROLE_ARN, endpoint: "http://floci:4566" } });
+    expect(s3FromEnv({ bucket: "b", role, ...STORE_WORDS }, { ...keys, ...oidc })).toMatchObject({ webIdentity: { roleArn: role } });
+    expect(s3FromEnv({ bucket: "b", ...STORE_WORDS }, { ...oidc, AWS_ENDPOINT_URL_STS: "https://sts.example" })).toMatchObject({ webIdentity: { endpoint: "https://sts.example" } });
+    expect(() => s3FromEnv({ bucket: "b", role, ...STORE_WORDS }, keys)).toThrow(/reports.role is set, but AWS_WEB_IDENTITY_TOKEN_FILE is not/);
+    expect(() => s3FromEnv({ bucket: "b", ...STORE_WORDS }, { AWS_ROLE_ARN: oidc.AWS_ROLE_ARN })).toThrow(/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE/);
+    expect(() => s3FromEnv({ bucket: "b", ...STORE_WORDS }, { AWS_ACCESS_KEY_ID: "", AWS_SECRET_ACCESS_KEY: "" })).toThrow(S3Error);
   });
 
   it("a refused web identity names STS's error, and the next request asks again", async () => {
@@ -428,11 +429,11 @@ describe("where reports go", () => {
       sts++;
       return { ok: false, status: 403, text: async () => "<ErrorResponse><Error><Code>AccessDenied</Code><Message>Not authorized to perform sts:AssumeRoleWithWebIdentity</Message></Error></ErrorResponse>" };
     };
-    const s3 = new S3Client(s3FromEnv({ bucket: "b" }, { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token") }), fake);
+    const s3 = new S3Client(s3FromEnv({ bucket: "b", ...STORE_WORDS }, { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token") }), fake);
     await expect(s3.get("x")).rejects.toThrow("AssumeRoleWithWebIdentity for arn:aws:iam::123456789012:role/plan: 403 AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity");
     await expect(s3.get("x")).rejects.toThrow(/AccessDenied/);
     expect(sts).toBe(2);
-    const missing = new S3Client(s3FromEnv({ bucket: "b" }, { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "absent") }), fake);
+    const missing = new S3Client(s3FromEnv({ bucket: "b", ...STORE_WORDS }, { AWS_ROLE_ARN: "arn:aws:iam::123456789012:role/plan", AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "absent") }), fake);
     await expect(missing.get("x")).rejects.toThrow(/cannot read the OIDC token/);
   });
 

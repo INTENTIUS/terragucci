@@ -60,7 +60,7 @@ import { forgeOf } from "./respond/change";
 import { clients, parseIndex } from "./estate";
 import { AUDIT_FILES, readRecord, type AuditEntry } from "./report/audit";
 import { DORA_FILE } from "./report/dora";
-import { StoreError, type ObjectStore, type StoreFetch } from "./report/object-store";
+import { StoreError, type ObjectStore, type StoreFetch } from "@intentius/chant/object-store";
 import { runViewKey } from "./report/run-view";
 import type { Report } from "./report/schema";
 import { readStateVersions } from "./report/state-versions";

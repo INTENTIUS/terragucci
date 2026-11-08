@@ -6,7 +6,7 @@ import { readScalr } from "../src/import/scalr";
 import { readTfe } from "../src/import/tfe";
 import { convertWorkspaces, describeWorkspaceImport, importWorkspaces, repoOfRemote, type PlatformRead, type PlatformWorkspace } from "../src/import/workspaces";
 import { CONCEPTS_TABLE } from "../src/import/platform-guide";
-import type { StoreFetch } from "../src/report/object-store";
+import type { StoreFetch } from "@intentius/chant/object-store";
 import { backend, remoteState, tmp, write } from "./helpers";
 
 const GUIDE = join(__dirname, "../../../docs-site/src/content/docs/guides/coming-from-hcp-terraform-scalr-or-otf.mdx");

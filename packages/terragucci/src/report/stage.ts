@@ -69,7 +69,7 @@ import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
 import { checkPlans, configAtBase, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
 import { storeFromEnv } from "./bucket";
-import type { S3Fetch } from "./s3";
+import type { S3Fetch } from "@intentius/chant/object-store";
 import { modulePins, StageObserver } from "./observe";
 import { telemetryFromEnv, type OtlpFetch } from "../telemetry";
 import type { Report, ReportApprovalRule, ReportBlast, ReportCompose, ReportCost, ReportDeferred, ReportMockRead, ReportPolicy, ReportRead, ReportRootBinary, ReportRun } from "./schema";
