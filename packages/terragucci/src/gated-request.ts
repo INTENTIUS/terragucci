@@ -1,17 +1,17 @@
 /**
  * The state operations outside waves on chant (terragucci#1282, chant#4618):
  * a lock release, a state export and a standalone migration ask, spend and
- * finish chant's gated request (chant#4551) when the installed chant has the
- * terraform lexicon's `state-ops`, and run the binary through its fixed
- * operations. Without it, export.ts, unlock.ts and migrate.ts run their own
- * gate and write their `done.jsonl` lines as before.
+ * finish chant's gated request (chant#4551) through the terraform lexicon's
+ * `state-ops`, `state-export` and `state-unlock` (chant#4618, #4804), and run
+ * the binary through its fixed operations. The `done.jsonl` lines older
+ * releases wrote stay readable; nothing writes them.
  *
  * What changes with chant's gate, by its ruling: chant computes the digest
  * over the request (so a request pending at the switch is asked again), and
  * the requester's own approval never counts, for a lock release and a
  * migration too. The ops and the gates are the same as before (`tf-unlock`,
  * `tf-state-export`, `tf-migrate`, gate the root or the migration), so
- * `terragucci approve unlock|export|migrate` approves either way.
+ * `terragucci approve unlock|export|migrate` approves them.
  */
 import { spawnSync } from "node:child_process";
 import { chantStateOps, type ChantGatedStateOpResult, type ChantRootRun, type ChantStateOps } from "./chant-next";

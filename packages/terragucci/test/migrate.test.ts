@@ -230,6 +230,12 @@ async function approve(work: string, gate: string, digest: string, at: string, b
   await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
 }
 
+/** What chant does with a hold's finished file: the finished line on `_gates/tf-migrate/applied.jsonl`. */
+async function chantFinished(work: string, gate: string, digest: string, file: string, at: string): Promise<void> {
+  const { result, detail } = JSON.parse(readFileSync(file, "utf-8")) as { result: string; detail: Record<string, unknown> };
+  await writeLedger(work, appliedFile("tf-migrate"), [JSON.stringify({ version: 1, kind: "finished", op: "tf-migrate", gate, planDigest: digest, applied: at, result, timestamp: at, detail })], {}, "finished");
+}
+
 describe("running a migration from wave 1", () => {
   it("waits for an approval of its digest, applies under it, records the versions before and after, and never runs again", async () => {
     const { work, origin } = repo();
@@ -274,36 +280,6 @@ describe("running a migration from wave 1", () => {
     writeFileSync(join(work, "migrations", "split-b.yml"), "moves:\n  - from: one\n    to: two\n    addresses: [terraform_data.a]\n");
     expect((await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(5), log })).code).toBe(1);
     expect(lines.join("\n")).toContain("changed after it applied");
-  });
-
-  it("under chant run wave, proves the migration, holds wave 1 on its gate through CHANT_HOLD, and applies once chant hands it the approval", async () => {
-    // A chant before chant#4623: the hold path writes the proof, the applied line and done.jsonl itself.
-    restoreChant.push(overrideChantNext("holdRecord", null));
-    const { work, origin } = repo();
-    const lines: string[] = [];
-    const log = (l: string) => void lines.push(l);
-    // wave 1's `migrations` hook: the proof alone, which fails the wave when it cannot be made.
-    const proved = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, prove: true, log });
-    expect(proved.code).toBe(0);
-    const digest = proved.records[0].digest;
-    // Its `migration gate` hook: chant settles the gate, so the run names it in the hold file and records no pending fact itself.
-    const file = join(tmp(), "hold.json");
-    const held = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file }, log });
-    expect(held.code).toBe(3);
-    expect(JSON.parse(readFileSync(file, "utf-8"))).toMatchObject({ op: "tf-migrate", gate: "split-b", digest, pending: { members: [{ member: "one" }, { member: "two" }] } });
-    expect(() => git(origin, "show", `chant/lifecycle:${MIGRATE_LEDGER}`)).toThrow();
-    expect(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/split-b/${digest.replace(":", "_")}.json`)).not.toContain("secret-");
-    expect(names(work, "one")).toEqual(["a", "b"]);
-    // chant found the approval and runs the hook again with CHANT_HOLD_APPROVED.
-    const approved = { op: "tf-migrate", gate: "split-b", digest, approvedBy: "alice", approvedAt: T(2) };
-    const applied = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved }, now: T(3), log });
-    expect(applied.code).toBe(0);
-    expect(applied.records[0]).toMatchObject({ status: "applied", approved_by: "alice" });
-    expect(names(work, "two")).toEqual(["c", "b"]);
-    expect(doneMigrations(git(origin, "show", `chant/lifecycle:${MIGRATE_DONE}`)).get("split-b")?.status).toBe("applied");
-    // Once applied it never runs again, as when chant plans the wave again in the same job.
-    const other = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { ...approved, digest: "sha256:other" } }, log });
-    expect(other).toEqual({ code: 0, records: [] });
   });
 
   it("under chant run wave on a chant that records the hold (chant#4623), hands chant the proof and writes how it ended to CHANT_HOLD_FINISHED, with no ledger line of its own", async () => {
@@ -353,8 +329,11 @@ describe("running a migration from wave 1", () => {
     const first = hold();
     expect(first.gate).toBe("split-b");
     // chant found split-b's approval: the run applies it, then holds on split-d, which plans against what split-b wrote (chant#3847).
-    const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { op: "tf-migrate", gate: "split-b", digest: first.digest, approvedBy: "alice", approvedAt: T(2) } }, now: T(3), log });
+    const finished = join(tmp(), "hold-finished.json");
+    const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file, approved: { op: "tf-migrate", gate: "split-b", digest: first.digest, approvedBy: "alice", approvedAt: T(2) }, finished }, now: T(3), log });
     expect(second.code).toBe(3);
+    // chant records how split-b ended from the finished file, as its finished line.
+    await chantFinished(work, "split-b", first.digest, finished, T(3));
     expect(second.records.map((r) => [r.name, r.status])).toEqual([["split-b", "applied"], ["split-d", "waiting"]]);
     expect(names(work, "two")).toEqual(["c", "b"]);
     expect(names(work, "four")).toEqual([]);
@@ -435,11 +414,11 @@ describe("running a migration from wave 1", () => {
   it("under chant run wave, wave 1 refused for a state written after the approval names the root", async () => {
     const { work } = repo();
     const log = () => {};
-    // The approved digest's pending fact, with its members, as the ledger keeps it. terragucci's own gate writes that
-    // fact; chant's gated request keeps no members, and under chant run wave chant writes them from the hold file.
-    const restore = overrideChantNext("stateOps", null);
-    const first = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(1), log });
-    restore();
+    // The approved digest's pending fact, with its members, as chant writes it from the hold file under chant run wave.
+    const asked = join(tmp(), "hold.json");
+    const first = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, hold: { file: asked }, now: T(1), log });
+    const hold = JSON.parse(readFileSync(asked, "utf-8")) as { digest: string; pending: { members: unknown[] } };
+    await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "pending", op: "tf-migrate", gate: "split-b", timestamp: T(1), expiresAt: T(49), planDigest: hold.digest, members: hold.pending.members })], {}, "chant's pending fact, with the hold file's members");
     await approve(work, "split-b", first.records[0].digest, T(2));
     writeFileSync(join(work, "one", "terraform.tfstate"), JSON.stringify(state("L1", 6, [res("terraform_data", "a"), res("terraform_data", "b")])));
     // chant finds no approval of the new digest, only alice's of the old one: the hook holds on the new digest.
