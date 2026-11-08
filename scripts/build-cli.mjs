@@ -14,6 +14,7 @@ import { gzipSync } from "node:zlib";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { ReleaseImageError, releaseImagePins, writeReleaseImagePins } from "@intentius/chant/lifecycle/release-images";
 // One set of options for the shipped bundle, the origin/main baseline and a
 // smoke claim's BREAK bundle (stack/break-bundle.mjs).
 import { bundleOptions as options } from "./cli-bundle.mjs";
@@ -34,14 +35,15 @@ const cleanStage = () => rmSync(stage, { recursive: true, force: true });
 process.on("exit", cleanStage);
 for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(1));
 
-// A release's build (chant issue 4657): the cut built the four CI images first and
-// names their digests in the file CHANT_RELEASE_DIGESTS points at, { "<name>": "sha256:..." }.
-// The bundle carries them as `init`'s table, keyed by each image's reference at this
-// version, and dist/image-digests.json carries the same table for the npm target's `pins`.
-// Any other build has no table, and `init` writes the tags bare.
-const digests = releaseDigests();
+// A release's build (chant issues 4657 and 4819): the cut built the four CI images first and
+// names their digests in the file CHANT_RELEASE_DIGESTS points at. chant's releaseImagePins
+// turns them into `init`'s table, keyed by each image's reference at this version, and
+// writeReleaseImagePins writes the same table as dist/image-digests.json for the npm
+// target's `pins`. Any other build has no table, and `init` writes the tags bare.
+const { version } = JSON.parse(readFileSync(join(pkg, "package.json"), "utf-8"));
+const digests = released(() => releaseImagePins({ images: imageRefs(version), version }));
 // A build outside a release leaves no table from an earlier release's build behind.
-if (!digests) rmSync(join(dist, "image-digests.json"), { force: true });
+if (!digests) writeReleaseImagePins(undefined, { out: join(dist, "image-digests.json") });
 const base = options(pkg);
 const result = await build({
   ...base,
@@ -56,17 +58,8 @@ const metaDir = join(root, "node_modules/.cache/terragucci");
 mkdirSync(metaDir, { recursive: true });
 writeFileSync(join(metaDir, "metafile.json"), JSON.stringify(result.metafile));
 chmodSync(join(stage, "terragucci.mjs"), 0o755);
-if (digests) {
-  // The npm target's `pins` reads this file; the publish plan refuses a digest the release did not build.
-  const bundled = readFileSync(join(stage, "terragucci.mjs"), "utf-8");
-  for (const [ref, digest] of Object.entries(digests)) {
-    if (!bundled.includes(digest)) {
-      console.error(`the bundle does not carry ${ref}@${digest}`);
-      process.exit(1);
-    }
-  }
-  writeFileSync(join(stage, "image-digests.json"), `${JSON.stringify(digests, null, 2)}\n`);
-}
+// The npm target's `pins` reads this file; the publish plan refuses a digest the release did not build.
+if (digests) released(() => writeReleaseImagePins(digests, { out: join(stage, "image-digests.json"), bundles: [join(stage, "terragucci.mjs")] }));
 
 // The registry edge function (`terragucci registry edge`, terragucci#1287): chant's
 // terraform lexicon function as a Cloudflare Worker and a Lambda@Edge handler,
@@ -170,28 +163,20 @@ for (const [name, v] of largest) console.log(`    ${String(v.bytesInOutput).padS
 const kb = (p) => Math.round(statSync(p).size / 1024);
 console.log(`  ✓ dist/terragucci.mjs ${kb(join(dist, "terragucci.mjs"))} KB, dist/types.d.ts ${kb(join(dist, "types.d.ts"))} KB`);
 
-/** The release's image digests as `init`'s table, or undefined outside a release build. */
-function releaseDigests() {
-  const file = process.env.CHANT_RELEASE_DIGESTS;
-  if (!file) return undefined;
-  const { version } = JSON.parse(readFileSync(join(pkg, "package.json"), "utf-8"));
-  // The release's label is the version: `just version-bump` set it on main before the cut.
-  const label = process.env.CHANT_RELEASE_LABEL;
-  if (label && label !== version) {
-    console.error(`the release is labelled ${label}, and packages/terragucci/package.json is at ${version}; run just version-bump ${label} and cut the merged commit`);
+/** Run one of chant's release steps; a refusal is its message and exit 1. */
+function released(step) {
+  try {
+    return step();
+  } catch (e) {
+    if (!(e instanceof ReleaseImageError)) throw e;
+    console.error(e.message);
     process.exit(1);
   }
-  const named = JSON.parse(readFileSync(file, "utf-8"));
-  const table = {};
-  for (const [name, tag] of Object.entries(imageTags(version))) {
-    const digest = named[name];
-    if (typeof digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
-      console.error(`${file} has no digest for the ${name} image, which the release builds`);
-      process.exit(1);
-    }
-    table[`ghcr.io/intentius/terragucci-${name}:${tag}`] = digest;
-  }
-  return table;
+}
+
+/** Each CI image's reference at `version`, by its name in chant.config.ts's release.images. */
+function imageRefs(version) {
+  return Object.fromEntries(Object.entries(imageTags(version)).map(([name, tag]) => [name, `ghcr.io/intentius/terragucci-${name}:${tag}`]));
 }
 
 /** Each CI image's tag at `version`, as imageTag in packages/terragucci/src/images.ts gives it. */

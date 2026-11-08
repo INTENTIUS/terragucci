@@ -53,7 +53,15 @@ export default {
       ],
       file: ".github/workflows/publish.yml",
     },
-    images: ciImages.map((name) => ({ name, build: `scripts/release-image.sh ${name}`, archive: `dist/images/${name}.tar` })),
+    // chant builds each image from its Dockerfile (chant issue 4819): reproducibly, as an OCI archive at
+    // dist/images/<name>.tar, after the bundle the image copies in is built with no digests file named.
+    // TERRAGUCCI_IMAGE_PLATFORMS narrows the platforms for a local build.
+    images: ciImages.map((name) => ({
+      name,
+      dockerfile: `images/Dockerfile.${name}`,
+      prepare: "node scripts/build-cli.mjs >/dev/null",
+      ...(process.env.TERRAGUCCI_IMAGE_PLATFORMS ? { platforms: process.env.TERRAGUCCI_IMAGE_PLATFORMS.split(",") } : {}),
+    })),
     publish: [
       ...ciImages.map((name) => ({
         type: "oci" as const,
