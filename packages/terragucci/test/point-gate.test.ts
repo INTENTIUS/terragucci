@@ -17,10 +17,17 @@ import { resumable } from "../src/resume";
 import { relayToken } from "@intentius/chant/notify";
 import { decideRelayClick } from "@intentius/chant/notify-relay";
 import { checkoutRelayDeps } from "@intentius/chant/cli/handlers/notify-relay";
-import { relayCheckout } from "../src/relay-host";
+import { relayCheckout } from "@intentius/chant/notify-relay-repo";
 import { createWorkspaceTools } from "@intentius/chant/cli/mcp/workspace-tools";
 import { resetGateOrigin, setGateOrigin } from "@intentius/chant/lifecycle/gate-origin";
 import { git, tmp, write } from "./helpers";
+
+/** chant's checkout of the default branch, as `terragucci relay` gets it. */
+async function checkedOut(url: string): Promise<string> {
+  const r = await relayCheckout(url, "main", process.env);
+  if ("error" in r) throw new Error(r.error);
+  return r.dir;
+}
 
 /** A fake tofu: plans one resource to create in the root, and logs each apply to $LOG. */
 const TOFU = `#!/usr/bin/env bash
@@ -153,7 +160,7 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
     }
 
     // chant's relay, in its own checkout of the default branch, as `terragucci relay` runs it: an agent's click does not answer the question.
-    const relay = relayCheckout(origin, "main");
+    const relay = await checkedOut(origin);
     const deps = checkoutRelayDeps(relay, "terragucci-relay");
     const here = process.cwd();
     process.chdir(relay);

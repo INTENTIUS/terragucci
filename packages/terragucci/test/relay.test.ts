@@ -1,7 +1,7 @@
 /**
- * `terragucci relay` (./src/relay-host.ts): the host's approve-only token
- * check and checkout, and chant's relay (chant#4611) deciding a click over a
- * repo laid out as terragucci lays it out.
+ * `terragucci relay` (./src/relay-host.ts): terragucci's settings as chant's
+ * relay flags, and chant's relay (chant#4611) deciding a click over a repo
+ * laid out as terragucci lays it out.
  */
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
@@ -11,8 +11,16 @@ import { decideRelayClick } from "@intentius/chant/notify-relay";
 import { checkoutRelayDeps } from "@intentius/chant/cli/handlers/notify-relay";
 import { parseLedger } from "../src/apply";
 import { TERRAGUCCI_WORDS } from "../src/ci-words";
-import { chantRelayEnv, checkToken, gitAuthEnv, relayCheckout, relayRepo } from "../src/relay-host";
+import { relayCheckout } from "@intentius/chant/notify-relay-repo";
+import { chantRelayEnv, relayArgv } from "../src/relay-host";
 import { git, tmp, write } from "./helpers";
+
+/** chant's checkout of the default branch, as `terragucci relay` gets it. */
+async function checkedOut(url: string): Promise<string> {
+  const r = await relayCheckout(url, "main", process.env);
+  if ("error" in r) throw new Error(r.error);
+  return r.dir;
+}
 
 const KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 const SIGNERS = `alice@acme.com,slack:T1/U1,teams:0000-aaaa ssh-ed25519 ${KEY}\nbob@acme.com ssh-ed25519 ${KEY}\n`;
@@ -23,52 +31,17 @@ const jsonl = (...lines: unknown[]) => lines.map((l) => JSON.stringify(l)).join(
 const D = "jcs1-sha256:" + "a".repeat(64);
 const RELAY_KEY = "relay-key-for-tests";
 
-describe("relay: the token", () => {
-  const forge = (routes: Record<string, unknown>, headers: Record<string, string> = {}) =>
-    (async (url: string) => {
-      const path = url.replace(/^https?:\/\/[^/]+/, "");
-      const hit = Object.entries(routes).find(([p]) => path === p);
-      return { ok: Boolean(hit), status: hit ? 200 : 404, json: async () => hit?.[1], text: async () => "", headers: { get: (n: string) => headers[n] ?? null } };
-    }) as any;
-
-  it("on Forgejo, takes a token whose user neither administers the repo nor may push to the default branch, and pushes as that user", async () => {
-    const repo = relayRepo("http://forgejo:3000/acme/infra.git", "forgejo");
-    const ok = forge({ "/api/v1/user": { login: "relay-bot" }, "/api/v1/repos/acme/infra": { permissions: { admin: false, push: true } }, "/api/v1/repos/acme/infra/branches/main": { user_can_push: false } });
-    expect(await checkToken(repo, "t", "main", ok)).toEqual({ user: "relay-bot" });
-    const admin = forge({ "/api/v1/user": { login: "root" }, "/api/v1/repos/acme/infra": { permissions: { admin: true } }, "/api/v1/repos/acme/infra/branches/main": { user_can_push: true } });
-    expect(await checkToken(repo, "t", "main", admin)).toEqual({ error: "the token's user administers acme/infra" });
-    const pusher = forge({ "/api/v1/user": { login: "dev" }, "/api/v1/repos/acme/infra": { permissions: { admin: false } }, "/api/v1/repos/acme/infra/branches/main": { user_can_push: true } });
-    expect(await checkToken(repo, "t", "main", pusher)).toMatchObject({ error: expect.stringMatching(/may push to main/) });
-  });
-
-  it("on GitHub, refuses a classic token and an unprotected default branch", async () => {
-    const repo = relayRepo("https://github.com/acme/infra.git");
-    const routes = { "/repos/acme/infra": { permissions: { admin: false, push: true } }, "/repos/acme/infra/branches/main": { protected: true } };
-    expect(await checkToken(repo, "t", "main", forge(routes))).toEqual({ user: "x-access-token" });
-    expect(await checkToken(repo, "t", "main", forge(routes, { "x-oauth-scopes": "repo" }))).toMatchObject({ error: expect.stringMatching(/classic token/) });
-    expect(await checkToken(repo, "t", "main", forge({ ...routes, "/repos/acme/infra/branches/main": { protected: false } }))).toMatchObject({ error: expect.stringMatching(/not protected/) });
-  });
-
-  it("on GitLab, refuses the api scope, a Maintainer, and a push level the user holds", async () => {
-    const repo = relayRepo("https://gitlab.com/acme/infra.git");
-    const base = { "/api/v4/personal_access_tokens/self": { scopes: ["write_repository", "read_api"] }, "/api/v4/projects/acme%2Finfra": { permissions: { project_access: { access_level: 30 } } }, "/api/v4/projects/acme%2Finfra/protected_branches/main": { push_access_levels: [{ access_level: 40 }] } };
-    expect(await checkToken(repo, "t", "main", forge(base))).toEqual({ user: "oauth2" });
-    expect(await checkToken(repo, "t", "main", forge({ ...base, "/api/v4/personal_access_tokens/self": { scopes: ["api"] } }))).toMatchObject({ error: expect.stringMatching(/scopes api/) });
-    expect(await checkToken(repo, "t", "main", forge({ ...base, "/api/v4/projects/acme%2Finfra": { permissions: { project_access: { access_level: 40 } } } }))).toMatchObject({ error: expect.stringMatching(/Maintainer/) });
-    expect(await checkToken(repo, "t", "main", forge({ ...base, "/api/v4/projects/acme%2Finfra/protected_branches/main": { push_access_levels: [{ access_level: 30 }] } }))).toMatchObject({ error: expect.stringMatching(/may push to main/) });
-  });
-
-  it("refuses a clone address that carries a credential, and keeps the token out of every file", () => {
-    expect(() => relayRepo("https://bot:t@github.com/acme/infra.git")).toThrow(/must not carry a credential/);
-    expect(gitAuthEnv("relay-bot", "tok")).toEqual({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from("relay-bot:tok").toString("base64")}`, GIT_TERMINAL_PROMPT: "0" });
-  });
-});
-
 describe("relay: the host's settings", () => {
-  it("maps terragucci's principal and Slack response names onto chant's, and listens on every interface", () => {
-    expect(chantRelayEnv({ TERRAGUCCI_RELAY_PRINCIPAL: "acme-relay", TERRAGUCCI_RELAY_SLACK_RESPONSE: "https://hooks.slack.com/" }, 8080)).toEqual({ CHANT_RELAY_PRINCIPAL: "acme-relay", CHANT_RELAY_PORT: "8080", CHANT_RELAY_HOST: "0.0.0.0", CHANT_RELAY_SLACK_RESPONSE: "https://hooks.slack.com/" });
-    expect(chantRelayEnv({}, 9000)).toMatchObject({ CHANT_RELAY_PRINCIPAL: "terragucci-relay", CHANT_RELAY_PORT: "9000" });
-    expect(() => chantRelayEnv({ TERRAGUCCI_RELAY_PRINCIPAL: "a\nb" }, 1)).toThrow(/one principal on one line/);
+  it("hands chant terragucci's repo, token variable and forge, and listens on every interface", () => {
+    expect(relayArgv({ TERRAGUCCI_RELAY_REPO: "https://github.com/acme/infra.git", TERRAGUCCI_RELAY_TOKEN: "t" }, 8080)).toEqual(["notify", "relay", "--repo", "https://github.com/acme/infra.git", "--token-env", "TERRAGUCCI_RELAY_TOKEN", "--host", "0.0.0.0", "--port", "8080"]);
+    expect(relayArgv({ TERRAGUCCI_RELAY_REPO: "https://git.acme.test/o/r.git", TERRAGUCCI_RELAY_FORGE: "forgejo", CHANT_RELAY_HOST: "127.0.0.1" }, 9000)).toEqual(["notify", "relay", "--repo", "https://git.acme.test/o/r.git", "--token-env", "TERRAGUCCI_RELAY_TOKEN", "--forge", "forgejo", "--host", "127.0.0.1", "--port", "9000"]);
+    expect(() => relayArgv({}, 1)).toThrow(/TERRAGUCCI_RELAY_REPO is empty/);
+  });
+
+  it("maps terragucci's principal and Slack response names onto chant's", () => {
+    expect(chantRelayEnv({ TERRAGUCCI_RELAY_PRINCIPAL: "acme-relay", TERRAGUCCI_RELAY_SLACK_RESPONSE: "https://hooks.slack.com/" })).toEqual({ CHANT_RELAY_PRINCIPAL: "acme-relay", CHANT_RELAY_SLACK_RESPONSE: "https://hooks.slack.com/" });
+    expect(chantRelayEnv({})).toEqual({});
+    expect(() => chantRelayEnv({ TERRAGUCCI_RELAY_PRINCIPAL: "a\nb" })).toThrow(/one principal on one line/);
   });
 });
 
@@ -90,7 +63,7 @@ describe("relay: chant's relay over terragucci's repo", () => {
     git(life, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ledger");
     git(life, "push", "-q", origin, "chant/lifecycle");
 
-    const checkout = relayCheckout(origin, "main");
+    const checkout = await checkedOut(origin);
     const deps = checkoutRelayDeps(checkout, "terragucci-relay");
     const click = (user: string) => ({
       app: "slack" as const,
