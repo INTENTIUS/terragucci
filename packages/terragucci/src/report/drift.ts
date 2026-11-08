@@ -2,9 +2,11 @@
  * Drift: what a refresh-only plan found changed in the real world, and the
  * one issue that tracks it. A refresh-only plan proposes no change to the
  * code's resources; what it reports is `resource_drift`, the objects whose
- * real state moved since the last apply. That list stands in for
- * `resource_changes` when the report is built, so the report is the same
- * JSON and HTML as a plan's, and code waiting on main never shows in it.
+ * real state moved since the last apply. The terraform lexicon's
+ * `terraformDriftPlan` puts that list in place of `resource_changes` when the
+ * report is built, so the report is the same JSON and HTML as a plan's, and
+ * code waiting on main never shows in it; `terraformLivePlanDrift` reads a
+ * live root's full plan as drift.
  */
 import type { IssueResult, PrForge } from "@intentius/chant/pr-forge";
 import { terraformPlanDriftCount, terraformPlanDriftNames } from "@intentius/chant-lexicon-terraform/drift-rows";
@@ -14,48 +16,6 @@ import type { Attributed } from "../respond/attribute";
 import type { Report, ReportChange } from "./schema";
 
 type Json = Record<string, unknown>;
-
-/** The plan as the report reads it: the drift found, in place of the changes proposed. */
-export function driftPlan(plan: unknown): unknown {
-  if (plan === null || typeof plan !== "object" || Array.isArray(plan)) return plan;
-  const p = plan as Json;
-  return { ...p, resource_changes: Array.isArray(p.resource_drift) ? p.resource_drift : [] };
-}
-
-const FLIP: Record<string, string> = { create: "delete", delete: "create" };
-
-/**
- * A full plan of a root under live resource markers, as drift: choudoufu
- * refuses a refresh-only plan there, and every plan of such a root reads the
- * live system, so what the plan would change is what moved outside it. Each
- * change it proposes becomes a `resource_drift` entry seen from the other
- * side: the code's value before, the live value after, a resource the plan
- * would create one that no longer exists, and one it would destroy one that
- * exists outside the code. A replacement is a change.
- */
-export function liveDrift(plan: unknown): unknown {
-  if (plan === null || typeof plan !== "object" || Array.isArray(plan)) return plan;
-  const p = plan as Json;
-  const changes = Array.isArray(p.resource_changes) ? (p.resource_changes as Json[]) : [];
-  const resource_drift = changes
-    .filter((r) => r.mode !== "data")
-    .flatMap((r) => {
-      const ch = (r.change ?? {}) as Json;
-      const actions = Array.isArray(ch.actions) ? (ch.actions as string[]) : [];
-      if (actions.length === 0 || actions.every((a) => a === "no-op" || a === "read")) return [];
-      const action = actions.length === 1 ? (FLIP[actions[0]!] ?? actions[0]!) : "update";
-      const live = (ch.before ?? null) as Json | null;
-      let code = (ch.after ?? null) as Json | null;
-      // A value the plan knows only after the apply is not a difference: the live one stands for it.
-      const unknown = ch.after_unknown !== null && typeof ch.after_unknown === "object" ? (ch.after_unknown as Json) : {};
-      if (code && live) code = { ...code, ...Object.fromEntries(Object.keys(unknown).filter((k) => unknown[k] === true && k in live).map((k) => [k, live[k]])) };
-      return [{
-        ...r,
-        change: { actions: [action], before: code, after: live, before_sensitive: ch.after_sensitive ?? false, after_sensitive: ch.before_sensitive ?? false },
-      }];
-    });
-  return { ...p, resource_drift };
-}
 
 /** How many resources a refresh-only plan found drifted: every resource_drift entry, by the terraform lexicon's drift rows (chant#4580). */
 export function driftCount(plan: unknown): number {

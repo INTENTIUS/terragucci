@@ -10,7 +10,7 @@ import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { findRoots, globMatch, liveRoots } from "../detect";
 import { detectShape, fullDriftPlans, type Shape } from "../shape";
-import { liveDrift } from "../report/drift";
+import { terraformLivePlanDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
 import { defaultBranch, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
@@ -303,11 +303,11 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
     const planFile = join(dir, ".terragucci-drift.tfplan");
     try {
       run("init", "-input=false");
-      // A root under live resource markers plans in full, its changes read as drift (liveDrift).
+      // A root under live resource markers plans in full, its changes read as drift (the terraform lexicon's terraformLivePlanDrift).
       const live = fullDriftPlans(binary) && liveRoots(repo, [root]).length > 0;
       run("plan", ...(live ? [] : ["-refresh-only"]), "-input=false", "-lock=false", `-out=${planFile}`);
       const shown: unknown = JSON.parse(run("show", "-json", planFile).stdout);
-      let found = driftOf(live ? liveDrift(shown) : shown);
+      let found = driftOf(live ? terraformLivePlanDrift(shown) : shown);
       if (attributing) {
         const at = attributing.known?.[root] ?? (await attribute(root, found, attributing));
         const routed = route(at.attributions);
