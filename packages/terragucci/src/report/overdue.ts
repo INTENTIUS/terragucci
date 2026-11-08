@@ -11,17 +11,17 @@
  * that never ran, the job log, the report's `overdue` and the plan note say
  * so.
  *
- * chant's forge client asks GitHub and Forgejo (`scheduledRuns`). A GitLab
- * drift schedule is one with no `TERRAGUCCI_SCHEDULE=comments`, which chant's
- * client does not select by, so terragucci asks GitLab itself.
+ * chant's forge client asks the forge (`scheduledRuns`). On GitLab it picks
+ * the schedules the drift job's rule does: every active schedule whose
+ * `TERRAGUCCI_SCHEDULE` names none of terragucci's other schedules.
  */
 import { fileAdded, overdueVerdict, type OverdueOp } from "@intentius/chant/op/schedule-overdue";
 import type { ScheduledRuns } from "@intentius/chant/pr-forge";
 import type { ForgeName } from "../config";
-import { call, prForgeOf, type Fetch, type ForgeTarget } from "../forge";
+import { prForgeOf, type Fetch, type ForgeTarget } from "../forge";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { PIPELINE_PATHS, SCHEDULE_VAR } from "../render";
+import { OTHER_SCHEDULES, PIPELINE_PATHS, SCHEDULE_VAR } from "../render";
 import { CHANT_DRIFT_PATHS } from "../render-chant-drift";
 
 /** The name the drift job goes by in chant's verdict and the report. */
@@ -29,30 +29,6 @@ export const DRIFT_OP = "tf-drift";
 
 /** What a plan job with no forge token leaves for the note job: the cron and the pipeline file's first commit. */
 export const DRIFT_SCHEDULE_FILE = "drift-schedule.json";
-
-type Json = Record<string, unknown>;
-
-const newest = (dates: (string | undefined)[]): string | undefined =>
-  dates.filter((d): d is string => typeof d === "string" && !Number.isNaN(Date.parse(d))).sort((a, b) => Date.parse(b) - Date.parse(a))[0];
-
-/** GitLab: the newest pipeline of an active schedule that is not the comments schedule. */
-async function gitlabDriftRuns(fetch: Fetch, t: ForgeTarget): Promise<ScheduledRuns> {
-  const id = encodeURIComponent(t.path);
-  const pipelines = (await call(fetch, t, "GET", `/projects/${id}/pipelines?source=schedule&per_page=1&order_by=id&sort=desc`)) as Json[];
-  const schedules = (await call(fetch, t, "GET", `/projects/${id}/pipeline_schedules?scope=active&per_page=100`)) as Json[];
-  // The comments schedule runs no drift job. Its variables are on each schedule, not the list.
-  const details = (await Promise.all(schedules.map((s) => call(fetch, t, "GET", `/projects/${id}/pipeline_schedules/${Number(s.id)}`)))) as Json[];
-  const isComments = (d: Json): boolean => Array.isArray(d.variables) && d.variables.some((v: Json) => v?.key === SCHEDULE_VAR && v?.value === "comments");
-  if (!details.some(isComments)) {
-    const last = newest(pipelines.map((p) => p.created_at as string | undefined));
-    return { ...(last ? { last } : {}), ...(schedules.length === 0 ? { noSchedule: true } : {}) };
-  }
-  const drift = details.filter((d) => !isComments(d));
-  const lastIds = drift.map((d) => Number((d.last_pipeline as Json | undefined)?.id)).filter((n) => Number.isInteger(n) && n > 0);
-  const lasts = (await Promise.all(lastIds.map((n) => call(fetch, t, "GET", `/projects/${id}/pipelines/${n}`)))) as Json[];
-  const last = newest(lasts.map((p) => p.created_at as string | undefined));
-  return { ...(last ? { last } : {}), ...(drift.length === 0 ? { noSchedule: true } : {}) };
-}
 
 /**
  * The workflow file the drift job runs in: chant's drift Op workflow
@@ -66,8 +42,7 @@ export function driftWorkflowPath(repo: string, forge: ForgeName): string {
 
 /** Ask the forge when the drift job last ran, from `workflow` on GitHub and Forgejo (the pipeline's by default). Throws when the forge will not say. */
 export async function driftRuns(fetch: Fetch, t: ForgeTarget, workflow: string = PIPELINE_PATHS[t.forge]): Promise<ScheduledRuns> {
-  if (t.forge === "gitlab") return gitlabDriftRuns(fetch, t);
-  return prForgeOf(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()! });
+  return prForgeOf(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()!, schedule: { variable: SCHEDULE_VAR, not: OTHER_SCHEDULES } });
 }
 
 /** When the drift job's workflow file first appeared in the checkout's history (ISO 8601), if the history has it. */

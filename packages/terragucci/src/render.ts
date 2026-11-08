@@ -2243,6 +2243,14 @@ const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[
 /** The pipeline variable that tells the comments schedule's pipelines from drift's on GitLab. */
 export const SCHEDULE_VAR = "TERRAGUCCI_SCHEDULE";
 
+/**
+ * The values of SCHEDULE_VAR that name terragucci's other GitLab schedules.
+ * The drift job runs for every schedule whose SCHEDULE_VAR is none of them,
+ * and the plan job's overdue check asks chant for the same schedules
+ * (./report/overdue.ts).
+ */
+export const OTHER_SCHEDULES = ["comments", "resume", "rollouts", "ephemeral"] as const;
+
 /** The GitLab environment whose jobs see apply.merge_token_env's variable when it is scoped to it: comments and pr-merge, which run no merge request code. */
 export const MERGE_ENVIRONMENT = "terragucci-merge";
 
@@ -2925,7 +2933,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // terragucci#1305 and chant issues 4622 and 4753: the drift job is a chant drift Op in a file of its own, which
     // .gitlab-ci.yml includes. It keeps the drift stage's id_tokens, a Terragrunt repo's cache and the rule that picks
     // drift's schedule, so no project adds a variable to its drift schedule.
-    const driftRule = `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} != "comments"${input.resume ? ` && $${SCHEDULE_VAR} != "resume"` : ""}${rollouts ? ` && $${SCHEDULE_VAR} != "rollouts"` : ""}${ephemeral ? ` && $${SCHEDULE_VAR} != "ephemeral"` : ""}`;
+    const driftRule = `$CI_PIPELINE_SOURCE == "schedule"${OTHER_SCHEDULES.map((v) => ` && $${SCHEDULE_VAR} != "${v}"`).join("")}`;
     const glDrift = drift
       ? chantDriftFiles({
           forge,

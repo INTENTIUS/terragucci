@@ -85,16 +85,13 @@ describe("driftRuns", () => {
     expect(asked[0]).toBe("https://api.github.com/repos/acme/infra/actions/workflows/terragucci-drift.yml");
   });
 
-  it("gitlab: the newest scheduled pipeline, and whether the project has an active schedule", async () => {
-    const { fetch, asked } = forge([
-      ["pipelines?source=schedule", []],
-      ["pipeline_schedules", []],
-    ]);
+  it("gitlab: a project with no active schedule has no drift schedule", async () => {
+    const { fetch, asked } = forge([["pipeline_schedules", []]]);
     expect(await driftRuns(fetch, target("gitlab"))).toEqual({ noSchedule: true });
-    expect(asked[0]).toContain("/api/v4/projects/acme%2Finfra/pipelines?source=schedule");
+    expect(asked[0]).toContain("/api/v4/projects/acme%2Finfra/pipeline_schedules?scope=active");
   });
 
-  it("gitlab: the comments schedule's pipelines are no drift runs", async () => {
+  it("gitlab: the comments schedule's pipelines are no drift runs, and a schedule without TERRAGUCCI_SCHEDULE is drift's", async () => {
     // Longer keys first: the fake answers the first key a URL contains.
     const { fetch } = forge([
       ["pipeline_schedules/1", { id: 1, variables: [{ key: "TERRAGUCCI_SCHEDULE", value: "comments" }], last_pipeline: { id: 90 } }],

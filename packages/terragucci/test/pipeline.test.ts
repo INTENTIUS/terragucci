@@ -2296,13 +2296,13 @@ describe("the rollout job", () => {
     expect(doc.rollout.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "rollouts"' }]);
     expect(doc.rollout.script.join("\n")).toContain("terragucci respond rollout --mode apply");
     expect(doc.rollout.variables.GIT_DEPTH).toBe("0");
-    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
     expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
   });
 
   it("gitlab: with apply.resume too, drift leaves both the resume and the rollouts schedules alone", () => {
     const out = renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *", resume: 10 });
-    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts"' }]);
+    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
   });
 
   it("github: with apply.resume too, the rollout workflow sits beside the resume workflow", () => {
@@ -2404,7 +2404,7 @@ describe("the drift stage", () => {
     expect(doc.stages).toContain("drift");
     const op = driftOp(out, "gitlab")!;
     expect(op.job.stage).toBe("drift");
-    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
+    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
     expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
     expect(doc["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
     expect(op.script).toContain("terragucci stage tf-drift");
@@ -2445,7 +2445,7 @@ describe("the comments job (GitLab)", () => {
     expect(doc.plan.rules[0].if).toContain("merge_request_event");
     const both = withComments({ drift: "0 6 * * *" });
     const op = driftOp(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, comments: "*/5 * * * *", drift: "0 6 * * *" }), "gitlab")!;
-    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments"' }]);
+    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
     expect(both.comments.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE == "comments"');
   });
 

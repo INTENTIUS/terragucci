@@ -63,9 +63,8 @@ function headers(t: ForgeTarget): Record<string, string> {
 /**
  * One API call; a status other than 2xx throws a ForgeError naming it. Only
  * the GitLab comment jobs (./comment-gitlab.ts, ./comment-apply-gitlab.ts),
- * which wait on chant's GitLab comment jobs (chant issue 4785), and the GitLab
- * drift schedule read (./report/overdue.ts) still call it; every other read
- * goes through chant's client and reads.
+ * which wait on chant's GitLab comment jobs (chant issue 4785), still call it;
+ * every other read goes through chant's client and reads.
  */
 export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: string, body?: unknown): Promise<unknown> {
   const res = await fetch(`${apiBase(t)}${path}`, { method, headers: headers(t), body: body === undefined ? undefined : JSON.stringify(body) });
