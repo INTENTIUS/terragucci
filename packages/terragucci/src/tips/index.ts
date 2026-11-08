@@ -33,7 +33,9 @@ import { tf042 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf042"
 import { tf043 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf043";
 import { tf044 } from "@intentius/chant-lexicon-terraform/lint/post-synth/tf044";
 import { registryCatalog as tf } from "../chant-catalog";
-import { chantModuleCatalog, chantTf046, type ChantModuleCompatibility, type ChantReleaseCatalogDoc } from "../chant-next";
+import * as tf046Lib from "@intentius/chant-lexicon-terraform/lint/post-synth/tf046";
+import * as moduleCatalogLib from "@intentius/chant-lexicon-terraform/module-catalog";
+import type { ChantModuleCatalog, ChantModuleCompatibility, ChantReleaseCatalogDoc, ChantTf046 } from "../chant-next";
 import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
@@ -55,8 +57,7 @@ export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
  * turns it on. It reads the job's environment to know it runs in CI.
  */
 export async function codeRules(env: NodeJS.ProcessEnv = process.env): Promise<Readonly<Record<string, PostSynthCheck>>> {
-  const lib = await chantTf046();
-  if (!lib) return CODE_RULES;
+  const lib = tf046Lib as unknown as ChantTf046;
   return { ...CODE_RULES, TF046: { ...lib.tf046, check: (ctx: PostSynthContext) => lib.checkLocalRecordStore(ctx, env) } };
 }
 
@@ -223,7 +224,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
     const floating = new Set<string>();
     const users = new Map<string, Set<string>>();
     const choudoufu = new Set(options.choudoufuRoots ?? (options.settings.binary === "choudoufu" ? roots : []));
-    const catalog = choudoufu.size > 0 ? await chantModuleCatalog() : undefined;
+    const catalog = choudoufu.size > 0 ? (moduleCatalogLib as unknown as ChantModuleCatalog) : undefined;
     for (const dir of options.configDirs ?? []) {
       const entities = await parseTerraformRootDir(join(repo, dir), dir, parser);
       const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;

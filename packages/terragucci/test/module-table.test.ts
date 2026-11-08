@@ -1,6 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** The catalog's answers a case stands in for chant's, when it sets them. */
+const stand = vi.hoisted((): { compat?: (source: string, version: string) => unknown } => ({}));
+vi.mock("@intentius/chant-lexicon-terraform/module-catalog", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, moduleCompatibility: (source: string, version: string) => (stand.compat ?? (m.moduleCompatibility as (s: string, v: string) => unknown))(source, version) };
+});
 import { BUILT_IN, type ResolvedSettings } from "../src/config";
-import { chantModuleCatalog, overrideChantNext, type ChantModuleCatalog, type ChantModuleCompatibility } from "../src/chant-next";
+import * as moduleCatalogLib from "@intentius/chant-lexicon-terraform/module-catalog";
+import type { ChantModuleCatalog, ChantModuleCompatibility } from "../src/chant-next";
 import { buildEstate, compatCell, renderEstateHtml, type ProjectIndex } from "../src/report/estate";
 import { loadHclParser } from "../src/rollout/parser";
 import { MODULE_TABLE_TIP, moduleTableMessage, repoTips, type TipOptions } from "../src/tips";
@@ -84,7 +92,9 @@ describe("the module table tip (terragucci#1286)", () => {
   });
 
   it("tips a choudoufu root's refused pin, and no tofu root's", async () => {
-    restore = overrideChantNext("moduleCatalog", fakeCatalog({ "terraform-aws-modules/eks/aws 21.29.0": answer({}) }));
+    const fake = fakeCatalog({ "terraform-aws-modules/eks/aws 21.29.0": answer({}) });
+    stand.compat = fake.moduleCompatibility;
+    restore = () => void delete stand.compat;
     const hcl = 'module "eks" {\n  source  = "terraform-aws-modules/eks/aws"\n  version = "21.29.0"\n}\n';
     const repo = write(tmp(), { "live/main.tf": hcl, "stock/main.tf": hcl });
     const parser = await loadHclParser();
@@ -95,16 +105,10 @@ describe("the module table tip (terragucci#1286)", () => {
     expect(table[0].url).toContain("#terragucci-module-table");
   });
 
-  it("gives no module table tip when the installed chant has no catalog", async () => {
-    restore = overrideChantNext("moduleCatalog", null);
-    const repo = write(tmp(), { "live/main.tf": 'module "eks" {\n  source  = "terraform-aws-modules/eks/aws"\n  version = "21.29.0"\n}\n' });
-    const tips = await repoTips(repo, ["live"], { settings: { ...BUILT_IN, binary: "choudoufu" } as TipOptions["settings"], parser: await loadHclParser(), rules: [] });
-    expect(tips.filter((t) => t.rule === MODULE_TABLE_TIP)).toEqual([]);
-  });
 
-  it("reads chant's own catalog when the installed chant has one", async () => {
-    const lib = await chantModuleCatalog();
-    if (!lib) return;
+
+  it("reads chant's own catalog", async () => {
+    const lib = moduleCatalogLib as unknown as ChantModuleCatalog;
     expect(lib.moduleCompatibility("terraform-aws-modules/sqs/aws", "5.2.2")?.status).toBe("clear");
     expect(lib.moduleCompatibility("terraform-aws-modules/eks/aws", "21.29.0")?.tier).toBe("static");
   });

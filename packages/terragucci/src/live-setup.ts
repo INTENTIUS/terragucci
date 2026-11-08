@@ -18,7 +18,11 @@
 import { resolve } from "node:path";
 import { backendBlock, estateOf, liveBody } from "./detect";
 import { recordStoreOf, type RecordStore } from "./cdf-records";
-import { chantBucketCheck, type ChantBucketReport, type ChantBucketTarget } from "./chant-next";
+import * as bucketCheck from "@intentius/chant/bucket-check";
+import type { ChantBucketCheck, ChantBucketReport, ChantBucketTarget } from "./chant-next";
+
+/** chant core's shared bucket check (chant#4558). */
+const bucketLib = bucketCheck as unknown as ChantBucketCheck;
 import { defaultPolicyExec, type PolicyExec } from "./report/policy";
 
 /** Where choudoufu's estate name came from: the live block, the configuration's tags, the backend key, or the root's path. */
@@ -228,12 +232,10 @@ export type BucketOutcome =
  */
 export async function checkStoreBucket(dir: string, s: LiveStore, env: NodeJS.ProcessEnv = process.env): Promise<BucketOutcome> {
   if (s.kind === "local") return { skipped: "the local store has no bucket" };
-  const lib = await chantBucketCheck();
-  if (!lib) return { skipped: "the installed chant has no bucket check" };
   const t = bucketTarget(dir, s, env);
   if ("skip" in t) return { skipped: t.skip };
   try {
-    return { checked: await lib.checkBucket(t.target, { namespaces: s.prefix ? [s.prefix] : [] }) };
+    return { checked: await bucketLib.checkBucket(t.target, { namespaces: s.prefix ? [s.prefix] : [] }) };
   } catch (e) {
     return { skipped: `the bucket could not be checked: ${(e as Error).message}` };
   }

@@ -1171,33 +1171,6 @@ const has = (m: Record<string, unknown>, ...names: string[]): boolean => names.e
 const loaders = {
 
 
-  state: once<ChantState>(
-    () => import("@intentius/chant-lexicon-terraform/state"),
-    (m) => (has(m, "takeLocksWithSources", "SourceLockedError", "StateLockedError") ? (m as unknown as ChantState) : undefined),
-  ),
-  planShape: once<ChantPlanShape>(
-    () => import("@intentius/chant-lexicon-terraform/plan-shape"),
-    (m) => (has(m, "terraformPlanShape") ? (m as unknown as ChantPlanShape) : undefined),
-  ),
-  checkHooks: once<ChantCheckHooks>(
-    () => import("@intentius/chant/components/check-hooks"),
-    (m) => (has(m, "runCheckHooks", "writeCiHook") && typeof m.CI_CHECK_HOOK_FLOOR === "string" ? (m as unknown as ChantCheckHooks) : undefined),
-  ),
-  bucketCheck: once<ChantBucketCheck>(
-    () => import("@intentius/chant/bucket-check"),
-    (m) => (has(m, "checkBucket", "BucketCheckError") ? (m as unknown as ChantBucketCheck) : undefined),
-  ),
-  tf046: once<ChantTf046>(
-    () => import("@intentius/chant-lexicon-terraform/lint/post-synth/tf046"),
-    (m) => {
-      const check = m.tf046 as PostSynthCheck | undefined;
-      return check?.id === "TF046" && typeof check.check === "function" && has(m, "checkLocalRecordStore") ? (m as unknown as ChantTf046) : undefined;
-    },
-  ),
-  moduleCatalog: once<ChantModuleCatalog>(
-    () => import("@intentius/chant-lexicon-terraform/module-catalog"),
-    (m) => (has(m, "moduleCompatibility") && typeof m.MODULE_COMPATIBILITY_PAGE === "string" && typeof m.MODULE_CATALOG_SOURCE === "object" ? (m as unknown as ChantModuleCatalog) : undefined),
-  ),
   opWaveStep: once<ChantOpWaveStep>(
     () => import("@intentius/chant/op/op-waves-capability"),
     (m) => (has(m, "opWaveStepProblems", "opWaveHoldsProblems", "planOpWaveStep", "applyOpWaveStep") ? (m as unknown as ChantOpWaveStep) : undefined),
@@ -1215,18 +1188,10 @@ const loaders = {
     },
     (m) => (m.registry ? (m as unknown as ChantWaveCapabilities) : undefined),
   ),
-  registryProxies: once<ChantRegistryProxies>(
-    () => import("@intentius/chant-lexicon-terraform/registry"),
-    (m) => (has(m, "artifactoryProxy", "nexusProxy", "moduleThroughProxy", "providerThroughProxy", "registryLocation", "fetchTarball") ? (m as unknown as ChantRegistryProxies) : undefined),
-  ),
   opStandDown: once<ChantOpStandDown>(
     // `op` is on the pin; the stand-down (chant#4581) is told apart by its exports.
     () => import("@intentius/chant/op"),
     (m) => (has(m, "newerCommitOnBranch", "tipAppliesTargets") && typeof m.OP_WAVE_STAND_DOWN_FLOOR === "string" ? (m as unknown as ChantOpStandDown) : undefined),
-  ),
-  sourceForms: once<ChantSourceForms>(
-    () => import("@intentius/chant-lexicon-terraform/registry"),
-    (m) => (has(m, "moduleSourceForms", "providerAddressForms", "usedSources", "lockedProviders") ? (m as unknown as ChantSourceForms) : undefined),
   ),
   stateOps: once<ChantStateOps>(
     async () => {
@@ -1329,33 +1294,15 @@ function loaded<K extends ChantNextPart>(part: K): Awaited<ReturnType<(typeof lo
   return (settled.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>> | undefined;
 }
 
-/** chant's lock code (`/state`), or undefined. */
-export const chantState = (): Promise<ChantState | undefined> => load("state");
-/** chant's plan shape (`/plan-shape`), or undefined. */
-export const chantPlanShape = (): Promise<ChantPlanShape | undefined> => load("planShape");
 
-/** chant's check moment (`/components/check-hooks`, chant#4556), or undefined. */
-export const chantCheckHooks = (): Promise<ChantCheckHooks | undefined> => load("checkHooks");
 
-/** chant core's shared bucket check (`@intentius/chant/bucket-check`, chant#4558), or undefined. */
-export const chantBucketCheck = (): Promise<ChantBucketCheck | undefined> => load("bucketCheck");
 
-/** The terraform lexicon's TF046 (chant#4561), or undefined. */
-export const chantTf046 = (): Promise<ChantTf046 | undefined> => load("tf046");
 
-/** The terraform lexicon's known-module catalog (`module-catalog`, chant#4560), or undefined. */
-export const chantModuleCatalog = (): Promise<ChantModuleCatalog | undefined> => load("moduleCatalog");
 
 /** chant's op-wave step contract (chant#4545), or undefined. */
 export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load("opWaveStep");
 /** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C), or undefined. */
 export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
-/** The terraform lexicon's source reading and forms (chant#3924), or undefined. */
-export const chantSourceForms = (): Promise<ChantSourceForms | undefined> => load("sourceForms");
-/** The source forms as they already loaded, for the synchronous matchers in ./sources.ts. */
-export const chantSourceFormsNow = (): ChantSourceForms | undefined => loaded("sourceForms");
-/** The terraform lexicon's registry proxies (chant#4606), or undefined. */
-export const chantRegistryProxies = (): Promise<ChantRegistryProxies | undefined> => load("registryProxies");
 /** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
 export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
 /** chant's recorded op-wave hold (chant#4623), or undefined on a chant whose hold writes no applied or finished line. */
@@ -1406,9 +1353,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [state, planShape, checkHooks, bucketCheck, tf046, moduleCatalog, opWaveStep, waveCapabilities] = await Promise.all([chantState(), chantPlanShape(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantOpWaveStep(), chantWaveCapabilities()]);
-  const registryProxies = await chantRegistryProxies();
-  const sourceForms = await chantSourceForms();
+  const [opWaveStep, waveCapabilities] = await Promise.all([chantOpWaveStep(), chantWaveCapabilities()]);
   const [opStandDown] = [await chantOpStandDown()];
   const [stateOps, releaseRead] = [await chantStateOps(), await load("releaseRead")];
   const agentJob = await chantAgentJob();
@@ -1417,5 +1362,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, opStandDown: !!opStandDown, stateOps: !!stateOps, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

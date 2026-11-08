@@ -64,8 +64,9 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantRequestProof, chantState, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
+import { chantRequestProof, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
+import { SourceLockedError, StateLockedError, takeLocksWithSources } from "@intentius/chant-lexicon-terraform/state";
 import { fetchedLedgerFile, LEDGER_READ_REF, movedMembers, readLedger, type GateLedger } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
@@ -1129,9 +1130,6 @@ export async function takeLocks(files: ReadonlyMap<string, { object: StateObject
       throw new ConfigError(`${root}: the lock ${stateLocation(object)} could not be taken: ${(e as Error).message}`);
     }
   }
-  const lib = await chantState();
-  if (!lib) return takeLocksHere(sources, stores, now);
-  const { takeLocksWithSources, SourceLockedError, StateLockedError } = lib;
   try {
     const got = await takeLocksWithSources({ sources, stores: stores.map(({ root, store }) => ({ root, store })), now, op: MIGRATE_LOCK, sourceOp: MIGRATE_SOURCE_LOCK, who: `terragucci@${hostname()}` });
     return [
@@ -1147,43 +1145,6 @@ export async function takeLocks(files: ReadonlyMap<string, { object: StateObject
     }
     throw new ConfigError((e as Error).message);
   }
-}
-
-/**
- * takeLocks without chant's lock code: each source's lock through its own
- * API, then each store's lock with lockInfo, releasing what it took and
- * throwing ConfigError at the first one held. The loop terragucci had before
- * chant's (#1274).
- */
-export async function takeLocksHere(sources: readonly ChantSourceLock[], stores: readonly { root: string; object: StateObject; store: StateStore }[], now: string): Promise<HeldLock[]> {
-  const held: HeldLock[] = [];
-  const releaseAll = async () => {
-    for (const h of held.reverse()) await h.release().catch(() => {});
-  };
-  for (const s of sources) {
-    try {
-      held.push({ root: s.root, release: await s.lock(`${MIGRATE_SOURCE_LOCK.operation}: ${MIGRATE_SOURCE_LOCK.info}`) });
-    } catch (e) {
-      await releaseAll();
-      throw new ConfigError(`${s.root}: ${(e as Error).message}`);
-    }
-  }
-  for (const { root, object, store } of stores) {
-    let got: boolean;
-    try {
-      got = await store.lock(lockInfo(store.location.replace(/^[a-z0-9]+:\/\//, ""), now));
-    } catch (e) {
-      await releaseAll();
-      throw new ConfigError(`${root}: the lock ${store.lockLocation} could not be taken: ${(e as Error).message}`);
-    }
-    if (!got) {
-      const info = await store.heldLock().catch(() => undefined);
-      await releaseAll();
-      throw new ConfigError(`${root}: its state is locked (${store.lockLocation}${info ? `: ${info.info.slice(0, 300)}` : ""}), so nothing was written`);
-    }
-    held.push({ root, object, store, release: () => store.unlock() });
-  }
-  return held;
 }
 
 /** The roots whose state, or whose state at the backend it moves from, moved since the plan: another version id or another digest. */

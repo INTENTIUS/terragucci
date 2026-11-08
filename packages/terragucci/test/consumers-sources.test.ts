@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { chantNextParts, overrideChantNext } from "../src/chant-next";
 import { consumersOf } from "../src/publish/consumers";
-import { moduleForms, providerForms, sourceAllowed } from "../src/sources";
+import { sourceAllowed } from "../src/sources";
 
-const parts = await chantNextParts();
 
 describe("consumers.json entries (chant#4600)", () => {
   it("groups pinned registry calls by module address and version, leaving unpinned calls out", () => {
@@ -24,20 +22,11 @@ describe("sources on chant#3924's forms", () => {
     ["tfr:///terraform-aws-modules/vpc/aws?version=5.0.0", ["registry.terraform.io/terraform-aws-modules/vpc/aws"]],
   ];
 
-  it.skipIf(!parts.sourceForms)("matches as terragucci's own forms did", () => {
+  it("matches as terragucci's own forms did", () => {
     for (const [source, list] of cases) expect(sourceAllowed("module", source, list), source).toBe(true);
     expect(sourceAllowed("provider", "HashiCorp/AWS", ["registry.terraform.io/hashicorp/*"])).toBe(true);
     expect(sourceAllowed("module", "git::https://example.com/x.git", ["registry.terraform.io/**"])).toBe(false);
   });
 
-  it("keeps its own forms on a chant without them", () => {
-    const restore = overrideChantNext("sourceForms", null);
-    try {
-      for (const [source, list] of cases) expect(sourceAllowed("module", source, list), source).toBe(true);
-      expect(moduleForms("terraform-aws-modules/vpc/aws")).toContain("registry.opentofu.org/terraform-aws-modules/vpc/aws");
-      expect(providerForms("hashicorp/aws")).toContain("registry.terraform.io/hashicorp/aws");
-    } finally {
-      restore();
-    }
-  });
+
 });

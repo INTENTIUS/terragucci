@@ -17,7 +17,10 @@
  */
 import type { ChangeSetDocument } from "@intentius/chant/change-set";
 import { coveredRound, type CoverageSide, type PlanShape, type RoundCoverage } from "@intentius/chant/components";
-import { chantPlanShape } from "./chant-next";
+import * as planShapeLib from "@intentius/chant-lexicon-terraform/plan-shape";
+import type { ChantPlanShape } from "./chant-next";
+
+const lib = planShapeLib as unknown as ChantPlanShape;
 import type { UnknownRead } from "./unknown-reads";
 
 /** One root of the wave as the pull request planned it, and as the wave planned it now. */
@@ -29,8 +32,6 @@ export interface CoveredRoot {
   fresh: unknown;
 }
 
-/** Why no wave is covered when the installed chant has no plan shape. */
-export const NO_PLAN_SHAPE = "the installed chant cannot compare plan shapes (`@intentius/chant-lexicon-terraform/plan-shape`), so the wave waits for an approval of its own";
 
 /** Every member carries a shape, so neither side's change set is read. */
 const NO_DOC = {} as ChangeSetDocument;
@@ -54,8 +55,6 @@ export function unknownInputs(root: string, unknown: readonly UnknownRead[]): st
 export async function waveCoverage(roots: readonly CoveredRoot[], unknown: readonly UnknownRead[], approvedDigest: string): Promise<RoundCoverage> {
   const missing = roots.find((r) => r.previewed === undefined);
   if (missing) return { covered: false, reason: `the pull request's plan of ${missing.root} could not be read, so nothing says what was approved for it` };
-  const lib = await chantPlanShape();
-  if (!lib) return { covered: false, reason: NO_PLAN_SHAPE };
   const terraformPlanShape = (plan: unknown, root: string, options?: { unknownInputs?: string[] }): PlanShape => lib.terraformPlanShape(plan, root, options) as PlanShape;
   const approvedShapes: Record<string, PlanShape> = {};
   const freshShapes: Record<string, PlanShape> = {};

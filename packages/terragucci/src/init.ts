@@ -62,7 +62,8 @@ import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
-import { chantAgentJob, chantCheckHooks, chantOpGenerator } from "./chant-next";
+import { chantAgentJob, chantOpGenerator, type ChantCheckHooks } from "./chant-next";
+import * as checkHooksLib from "@intentius/chant/components/check-hooks";
 import { CHANT_AGENT_PATHS } from "./render-chant-agent";
 import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
@@ -355,10 +356,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // check.pre_commit: tf-check runs the repo's pre-commit hooks as a chant check hook (./pre-commit.ts). The check
   // job also runs check-hooks when the declaration already names check hooks of its own.
   const preCommitOn = settings.check?.pre_commit === true;
-  const chantHooks = await chantCheckHooks();
+  const chantHooks = checkHooksLib as unknown as ChantCheckHooks;
   const declFile = declarationFile(repo) ?? declPath;
   const declText = existsSync(declFile) ? readFileSync(declFile, "utf-8") : undefined;
-  const checkHooksInput = preCommitOn || (chantHooks && namesCheckHooks(declText)) ? { checkHooks: { preCommit: preCommitOn } } : {};
+  const checkHooksInput = preCommitOn || namesCheckHooks(declText) ? { checkHooks: { preCommit: preCommitOn } } : {};
   // chant's agent job (chant#4616): with it, agent.comment's jobs are chant's, in a workflow of their own (./render-chant-agent.ts).
   // terragucci#1305 and chant issue 4622: the drift job is a chant drift Op (./render-chant-drift.ts), agent.drift or not.
   if (agentCommentInput(settings)) await chantAgentJob();
@@ -502,7 +503,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // The preset's hook goes into ci.hooks.check with chant's writer when the installed chant reads that moment; turned
   // off, the hook an earlier init wrote goes. On a chant without the moment, check-hooks runs the preset itself.
   const declSoFar = decl?.content ?? declText;
-  const hooked = preCommitOn && chantHooks
+  const hooked = preCommitOn
     ? withPreCommitHook(chantHooks, basename(declFile), declSoFar ?? `${JSON.stringify({ name: workspaceName(repo, options.name), schema: 1, minReader: chantHooks.CI_CHECK_HOOK_FLOOR, members: [] }, null, 2)}\n`, binary.value)
     : !preCommitOn && declSoFar !== undefined && !declFile.endsWith(".jsonc") ? withoutPreCommitHook(declSoFar) : undefined;
   if (hooked !== undefined) {
@@ -511,7 +512,6 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (at >= 0) files[at] = change;
     else files.push(change);
   }
-  if (preCommitOn && !chantHooks) notes.push(`check.pre_commit is on, and the installed chant has no ci.hooks.check moment, so init writes no check hook and tf-check runs ${PRE_COMMIT_CONFIG}'s hooks itself`);
   if (!preCommitOn && existsSync(join(repo, PRE_COMMIT_CONFIG))) {
     notes.push(`tip: ${PRE_COMMIT_CONFIG} is here; set check.pre_commit: true in terragucci.yml and tf-check runs its hooks over each change, with PCT_TFPATH set to ${binary.value} and terraform_fmt skipped (the job's image needs pre-commit and the tools the file names)`);
   }
