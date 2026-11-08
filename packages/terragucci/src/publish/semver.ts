@@ -1,5 +1,3 @@
-import { chantChangelogNow } from "../chant-next";
-
 export interface Semver {
   major: number;
   minor: number;
@@ -20,33 +18,6 @@ export function compareSemver(a: Semver, b: Semver): number {
 }
 
 export type Bump = "major" | "minor" | "patch";
-
-/**
- * The bump a set of commit messages calls for. A breaking marker (`type!:` or
- * a `BREAKING CHANGE` footer) is a major, `feat` a minor, and anything else a
- * patch, because a changed module is always published at a new version.
- *
- * chant's `changelogBump` (chant#4597) decides it when the installed chant
- * has it, so the version a publish cuts and the changelog's bump in the
- * release catalog are one decision; the loop below is the fallback, with the
- * same rules. cli.ts loads it before a command runs (preloadChantNext).
- */
-export function bumpFor(messages: string[]): Bump {
-  const chant = chantChangelogNow();
-  if (chant) return chant.changelogBump(messages);
-  return ownBumpFor(messages);
-}
-
-/** terragucci's own bump, the fallback on a chant without `changelogBump`. */
-export function ownBumpFor(messages: string[]): Bump {
-  let bump: Bump = "patch";
-  for (const message of messages) {
-    const subject = message.split("\n", 1)[0];
-    if (/^\w+(\([^)]*\))?!:/.test(subject) || /^BREAKING[ -]CHANGE:/m.test(message)) return "major";
-    if (/^feat(\([^)]*\))?:/.test(subject)) bump = "minor";
-  }
-  return bump;
-}
 
 /** The bump that takes `from` to `to`, a later version: the largest part that moved. */
 export function bumpBetween(from: Semver, to: Semver): Bump {

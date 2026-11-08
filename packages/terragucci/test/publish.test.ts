@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, validateConfig } from "../src/config";
 import { publish } from "../src/publish";
-import { bumpFor } from "../src/publish/semver";
+import { changelogBump as bumpFor } from "@intentius/chant/lifecycle/release-changelog";
 import { git, tmp, write } from "./helpers";
 import { fakeRegistry } from "./registry";
 
@@ -27,7 +27,7 @@ function repoWithModules(): string {
 
 const oci = { modules: { publish: "oci://registry.test/acme/modules" } };
 
-describe("bumpFor", () => {
+describe("the module bump, chant's changelogBump", () => {
   it("reads conventional commits", () => {
     expect(bumpFor(["fix: a"])).toBe("patch");
     expect(bumpFor(["fix: a", "feat(net): b"])).toBe("minor");

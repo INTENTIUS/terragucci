@@ -43,12 +43,13 @@ import { gitlabTarget, hcpTarget, repositoryTarget, type HostedOptions } from ".
 import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
-import { applyBump, bumpBetween, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "./semver";
+import { changelogBump } from "@intentius/chant/lifecycle/release-changelog";
+import { applyBump, bumpBetween, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "./semver";
 import { downloadDoc, keyFor, newest, readVersions, registryAddress, registryStore, tarballName, writeHeadersFile, writeVersion, type RegistryAddress, type RegistryStore, type ReleaseMeta } from "./registry";
 import { publishProviderMirror, type ProviderMirrorRun } from "./provider-mirror";
 import { testModule, type TestBinary, type TestRunner } from "./test";
 
-export { bumpFor, parseSemver } from "./semver";
+export { parseSemver } from "./semver";
 
 export interface Release {
   version: Semver;
@@ -612,9 +613,9 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
             continue;
           }
           version = pinned;
-        } else version = applyBump(last.version, bumpFor(messages));
+        } else version = applyBump(last.version, changelogBump(messages));
         const changes = last.revision ? changesSince(last.revision) : undefined;
-        if (changes) bumps = { commits: pinned ? bumpBetween(last.version, pinned) : bumpFor(messages), iface: interfaceBump(changes), changes };
+        if (changes) bumps = { commits: pinned ? bumpBetween(last.version, pinned) : changelogBump(messages), iface: interfaceBump(changes), changes };
       } else {
         version = pinned ?? { major: 0, minor: 1, patch: 0 };
       }
