@@ -1226,23 +1226,6 @@ const loaders = {
     () => import("@intentius/chant-lexicon-terraform/module-catalog"),
     (m) => (has(m, "moduleCompatibility") && typeof m.MODULE_COMPATIBILITY_PAGE === "string" && typeof m.MODULE_CATALOG_SOURCE === "object" ? (m as unknown as ChantModuleCatalog) : undefined),
   ),
-  ciControl: once<ChantCiControl>(
-    () => import("@intentius/chant/ci-control"),
-    // chant#4568's own feature-detect: these three present means the rest is too.
-    (m) => (has(m, "controlDispatchRequest", "putControlEntry", "reconcileProjects") && has(m, "resolveControlTarget", "controlDispatchScript", "gitControlLedger", "readControlEntries", "retireControlEntry", "importControlConfig", "estateClaims") ? (m as unknown as ChantCiControl) : undefined),
-  ),
-  controlPipelineGithub: once<ChantControlPipeline>(
-    () => import("@intentius/chant-lexicon-github/components/control-pipeline"),
-    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
-  ),
-  controlPipelineGitlab: once<ChantControlPipeline>(
-    () => import("@intentius/chant-lexicon-gitlab/components/control-pipeline"),
-    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
-  ),
-  controlPipelineForgejo: once<ChantControlPipeline>(
-    () => import("@intentius/chant-lexicon-forgejo/components/control-pipeline"),
-    (m) => (has(m, "generateControlPipeline") ? (m as unknown as ChantControlPipeline) : undefined),
-  ),
   opWaveStep: once<ChantOpWaveStep>(
     () => import("@intentius/chant/op/op-waves-capability"),
     (m) => (has(m, "opWaveStepProblems", "opWaveHoldsProblems", "planOpWaveStep", "applyOpWaveStep") ? (m as unknown as ChantOpWaveStep) : undefined),
@@ -1449,14 +1432,6 @@ export const chantOpStandDown = (): Promise<ChantOpStandDown | undefined> => loa
 /** The stand-down as it already loaded, for the synchronous spec builder in ./chant-waves.ts. cli.ts loads it first. */
 export const chantOpStandDownNow = (): ChantOpStandDown | undefined => loaded("opStandDown");
 
-/** chant core's control repo (`@intentius/chant/ci-control`, chant#4568), or undefined. */
-export const chantCiControl = (): Promise<ChantCiControl | undefined> => load("ciControl");
-/** chant's control repo as it already loaded, for the synchronous script builders (./control-repo.ts). init loads it first. */
-export const chantCiControlNow = (): ChantCiControl | undefined => loaded("ciControl");
-/** The forge lexicon's control repo pipeline (chant#4568), or undefined. */
-export function chantControlPipeline(forge: "github" | "gitlab" | "forgejo"): Promise<ChantControlPipeline | undefined> {
-  return load(forge === "github" ? "controlPipelineGithub" : forge === "gitlab" ? "controlPipelineGitlab" : "controlPipelineForgejo");
-}
 
 /** chant core's template request (`@intentius/chant/template-request`, chant#4651), or undefined. */
 export const chantTemplateRequests = (): Promise<ChantTemplateRequests | undefined> => load("templateRequest");
@@ -1476,7 +1451,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [compose, composeRun, state, planShape, checkHooks, bucketCheck, tf046, moduleCatalog, ciControl, controlPipelineGithub, controlPipelineGitlab, controlPipelineForgejo, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantCiControl(), chantControlPipeline("github"), chantControlPipeline("gitlab"), chantControlPipeline("forgejo"), chantOpWaveStep(), chantWaveCapabilities()]);
+  const [compose, composeRun, state, planShape, checkHooks, bucketCheck, tf046, moduleCatalog, opWaveStep, waveCapabilities] = await Promise.all([chantCompose(), chantComposeRun(), chantState(), chantPlanShape(), chantCheckHooks(), chantBucketCheck(), chantTf046(), chantModuleCatalog(), chantOpWaveStep(), chantWaveCapabilities()]);
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [opStandDown] = [await chantOpStandDown()];
@@ -1487,5 +1462,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }

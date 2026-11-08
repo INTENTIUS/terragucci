@@ -1,21 +1,24 @@
-// The control repo on chant core (chant#4568, terragucci#1282 part d). With `@intentius/chant/ci-control` the
-// entries are lines of `_control/entries.jsonl` on the control repo's chant/lifecycle, the member's dispatch is
-// chant's script, and `control records migrate` moves the record files onto the ledger. Without it, terragucci's
-// record files and scripts. Each case stands a module in for chant's, makes it missing, or runs only when the
-// installed chant has it.
-import { afterEach, describe, expect, it } from "vitest";
-import { chantCiControl, overrideChantNext, type ChantCiControl, type ChantControlEntry, type ChantControlLedgerPort } from "../src/chant-next";
-import { ConfigError } from "../src/config";
+// The control repo on chant core (chant#4568). The entries are lines of `_control/entries.jsonl` on the control
+// repo's chant/lifecycle, the member's dispatch is chant's script, and `control records migrate` moves the record
+// files onto the ledger. A case stands a fake in for chant's control module with vi.mock, or runs on the real one.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChantCiControl, ChantControlEntry, ChantControlLedgerPort } from "../src/chant-next";
 import { initRecords, LEDGER_PATH, migrateRecords, putEntryAt, readEntriesAt, retireEntryAt, validateSettings, type ChantRunner } from "../src/control-records";
-import { controlCloneScript, controlLifecycleStep, dispatchScript, resolveControl } from "../src/control-repo";
+import { controlCloneScript, dispatchScript, resolveControl } from "../src/control-repo";
 import { git, tmp } from "./helpers";
 
-const real = await chantCiControl();
+/** The fake chant's control module calls go to, when a case sets one. */
+const stand = vi.hoisted((): { in?: ChantCiControl } => ({}));
+vi.mock("@intentius/chant/ci-control", async (real: () => Promise<Record<string, unknown>>) => {
+  const FAKED = ["gitControlLedger", "readControlEntries", "putControlEntry", "retireControlEntry", "importControlConfig", "estateClaims", "resolveControlTarget", "controlDispatchScript", "controlStatusContext"];
+  const m = await real();
+  const out: Record<string, unknown> = { ...m };
+  for (const name of FAKED) out[name] = (...args: unknown[]) => ((stand.in as unknown as Record<string, (...a: unknown[]) => unknown> | undefined)?.[name] ?? (m[name] as (...a: unknown[]) => unknown))(...args);
+  return out;
+});
 
-let restore: (() => void)[] = [];
 afterEach(() => {
-  for (const r of restore) r();
-  restore = [];
+  delete stand.in;
 });
 
 /** A chant control module over an in-memory ledger, recording the calls terragucci makes. */
@@ -71,18 +74,9 @@ const fileRun = (): ChantRunner => () => ({
 const control = { repo: "github.com/acme/control", op: "deploy" };
 
 describe("control entries on the ledger", () => {
-  it("reads and writes the record files on a chant without the control repo", async () => {
-    restore.push(overrideChantNext("ciControl", null));
-    const dir = tmp();
-    initRecords(dir);
-    const entries = await readEntriesAt(dir, fileRun());
-    expect(entries.map((e) => [e.project, e.path])).toEqual([["github.com/acme/app", "terragucci/records/ctl-001.md"]]);
-    await expect(migrateRecords(dir, fileRun())).rejects.toThrow(ConfigError);
-  });
-
   it("keeps the record files while the ledger has no entries", async () => {
     const { chant, calls } = fakeControl();
-    restore.push(overrideChantNext("ciControl", chant));
+    stand.in = chant;
     const dir = tmp();
     initRecords(dir);
     const entries = await readEntriesAt(dir, fileRun());
@@ -92,7 +86,7 @@ describe("control entries on the ledger", () => {
 
   it("reads, writes and retires on the ledger once it has entries", async () => {
     const { chant, calls } = fakeControl([entryLine("github.com/acme/app")]);
-    restore.push(overrideChantNext("ciControl", chant));
+    stand.in = chant;
     const dir = tmp();
     const entries = await readEntriesAt(dir);
     expect(entries).toEqual([{ id: "ctl-001", path: LEDGER_PATH, digest: "d1", entry: "project", project: "github.com/acme/app", settings: {}, estates: ["net"] }]);
@@ -103,7 +97,7 @@ describe("control entries on the ledger", () => {
 
   it("moves the record files onto the ledger with their estates", async () => {
     const { chant, calls } = fakeControl();
-    restore.push(overrideChantNext("ciControl", chant));
+    stand.in = chant;
     const dir = tmp();
     initRecords(dir);
     const r = await migrateRecords(dir, fileRun());
@@ -117,7 +111,7 @@ describe("control entries on the ledger", () => {
     expect(validateSettings("project", "not a key", {}).length).toBeGreaterThan(0);
   });
 
-  it.runIf(real)("moves records onto a real control repo's chant/lifecycle and reads them back", async () => {
+  it("moves records onto a real control repo's chant/lifecycle and reads them back", async () => {
     const dir = tmp();
     git(dir, "init", "-q", "-b", "main");
     git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init");
@@ -130,25 +124,16 @@ describe("control entries on the ledger", () => {
 });
 
 describe("the member's dispatch and the read checkout", () => {
-  it("are terragucci's own on a chant without the control repo", async () => {
-    restore.push(overrideChantNext("ciControl", null));
-    await chantCiControl();
-    const c = resolveControl(control, "app");
-    expect(dispatchScript(c, "github")).toContain("TG_CONTROL_TOKEN");
-    expect(controlLifecycleStep(c)).toBeUndefined();
-    expect(controlCloneScript(c)).not.toContain("chant/lifecycle");
-  });
-
-  it("are chant's with terragucci's secrets and mark on a chant with it", async () => {
+  it("are chant's, with terragucci's secrets and mark", async () => {
     const { chant, calls } = fakeControl();
-    restore.push(overrideChantNext("ciControl", chant));
+    stand.in = chant;
     const c = resolveControl({ ...control, token_env: "MY_DISPATCH", read_token_env: "MY_READ" }, "app");
     const script = dispatchScript(c, "github");
     expect(script.split("\n").slice(0, 3)).toEqual(['export CHANT_CONTROL_TOKEN="${TG_CONTROL_TOKEN:-}"', 'export CHANT_CONTROL_SHA="${TG_SHA:-}"', "export TG_FORGE=github"]);
     expect(script).toContain("chant-dispatch sent=terragucci post sent terragucci/control");
     expect(calls).toEqual(["target token=MY_DISPATCH read=MY_READ"]);
     expect(dispatchScript(c, "gitlab")).toContain("chant-dispatch sent= mark=");
-    expect(controlLifecycleStep(c)).toBeDefined();
-    expect(controlCloneScript(c)).toContain("refs/heads/chant/lifecycle");
+    stand.in = undefined;
+    expect(controlCloneScript(c)).toContain("CHANT_CONTROL_DIR");
   });
 });

@@ -145,7 +145,7 @@ import { describeBinary, RootBinaries } from "./pins";
 import { plan } from "./plan";
 import { describeChecks, describePublish, findModules, publish, verifyPublished } from "./publish";
 import { describeReconcile, reconcile } from "./reconcile";
-import { chantControlPipelineFile, controlPipeline } from "./control-repo";
+import { chantControlPipelineFile } from "./control-repo";
 import { configFromEntries, hasControlEntries, importControlConfigAt, initRecords, KIND_FILE, LEDGER_PATH, migrateRecords, putEntryAt, readEntriesAt, retireEntryAt } from "./control-records";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { MARKER } from "./render";
@@ -1545,7 +1545,7 @@ export async function main(argv: string[]): Promise<number> {
         const forge = (str(flags, "forge") as ForgeName | undefined) ?? cfg.forge ?? originForge(cwd);
         if (!forge || !(FORGES as readonly string[]).includes(forge)) throw new ConfigError("control init cannot tell which forge this repo is on; pass --forge github|gitlab|forgejo");
         // The forge lexicon's control pipeline in terragucci's words when the installed chant has it (chant#4568).
-        const pipeline = (await chantControlPipelineFile(forge)) ?? controlPipeline(forge);
+        const pipeline = chantControlPipelineFile(forge);
         const file = join(cwd, pipeline.path);
         const existing = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
         if (existing !== undefined && !existing.startsWith(MARKER) && flags.force !== true) throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; pass --force to replace it`);

@@ -23,7 +23,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { registryCatalog as tf } from "../chant-catalog";
-import { chantCiControl, type ChantModuleConsumer } from "../chant-next";
+import { consumersDocument, readControlConsumers } from "@intentius/chant/ci-control";
+import type { ChantModuleConsumer } from "../chant-next";
 import { CONTROL_READ_TOKEN_ENV, ConfigError, parseProjectKey, type ControlSettings } from "../config";
 import { readEntriesAt } from "../control-records";
 import { findRoots } from "../detect";
@@ -56,15 +57,12 @@ export function consumersOf(calls: readonly ChantModuleConsumer[]): VersionConsu
   return [...by.values()];
 }
 
-/** This repo's `consumers.json` text, from its roots (module directories left out), or undefined on a chant without the scan or the document. */
+/** This repo's `consumers.json` text, from its roots (module directories left out). */
 export async function projectConsumersDocument(repo: string, o: { roots?: string[]; skip?: string[]; parser?: Hcl2Json }): Promise<{ text: string; consumers: VersionConsumers[] } | undefined> {
-  const control = await chantCiControl();
-  const write = control as unknown as { consumersDocument?: (c: readonly VersionConsumers[]) => string } | undefined;
-  if (typeof write?.consumersDocument !== "function") return undefined;
   const skip = o.skip ?? [];
   const roots = findRoots(repo, o.roots).filter((r) => !skip.some((m) => r === m || r.startsWith(`${m}/`)));
   const consumers = consumersOf(await tf.moduleConsumers(repo, roots, o.parser));
-  return { text: write.consumersDocument(consumers), consumers };
+  return { text: consumersDocument(consumers as never), consumers };
 }
 
 /** Clones a repo, shallow; tests pass a fake. */
@@ -82,9 +80,8 @@ const fetchLifecycle = (dir: string): void => {
 
 /**
  * Every project's consumers the control repo lists, joined (chant#4600), or
- * undefined when there is no control repo to read, no token to read it with,
- * or no join in the installed chant. Problems name the project and never
- * the token.
+ * undefined when there is no control repo to read or no token to read it
+ * with. Problems name the project and never the token.
  */
 export async function controlConsumers(
   control: ControlSettings | undefined,
@@ -92,10 +89,6 @@ export async function controlConsumers(
   clone: ShallowClone = gitClone,
 ): Promise<{ consumers: VersionConsumers[]; problems: string[]; missing: string[] } | undefined> {
   if (!control) return undefined;
-  const chant = (await chantCiControl()) as unknown as
-    | { readControlConsumers?: (entries: readonly unknown[], read: (project: string) => Promise<string | null>) => Promise<{ consumers: VersionConsumers[]; problems: string[]; missing: string[] }> }
-    | undefined;
-  if (typeof chant?.readControlConsumers !== "function") return undefined;
   const token = env[CONTROL_READ_TOKEN_ENV];
   const given = env[CONTROL_DIR_ENV];
   if (!given && !token) return undefined;
@@ -118,7 +111,7 @@ export async function controlConsumers(
       fetchLifecycle(dir);
     }
     const entries = await readEntriesAt(dir);
-    return await chant.readControlConsumers(entries, async (project) => {
+    return await readControlConsumers(entries as never, async (project) => {
       if (!token) throw new Error(`${CONTROL_READ_TOKEN_ENV} is not set, so the project cannot be read`);
       const into = mkdtempSync(join(tmpdir(), "terragucci-consumers-"));
       scratch.push(into);
