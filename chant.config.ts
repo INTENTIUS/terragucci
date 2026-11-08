@@ -28,10 +28,14 @@ export default {
   // The release (CONTRIBUTING.md, Releasing): chant's cut builds the four CI images as OCI
   // archives and records their digests, the bundle pins them (scripts/build-cli.mjs reads
   // CHANT_RELEASE_DIGESTS), and chant's publish pushes the images, publishes the package and
-  // makes the GitHub release. The label is the package version `just version-bump` set.
+  // makes the GitHub release. The label is the version: the cut and the publish job stamp it into
+  // packages/terragucci/package.json and the lockfile (release.version), so main keeps its committed version.
   // The cut compiles one environment, `release`, which builds nothing but this root's workflows.
   environments: ["release"],
   release: {
+    // The release's label is the package's version for the cut's build and the publish (chant issue 4840). The images
+    // take it as the CHANT_RELEASE_LABEL build argument for their version label.
+    version: { packages: ["packages/terragucci"] },
     // .github/workflows/publish.yml, from `chant release workflow` (chant issues 4656 and 4751): one run, started by
     // hand with the version. The gate names the newest green commit at or below the dispatched one, the cut builds the
     // images and the bundle that pins them and pushes the release/<version> tag, and the publish job takes the cut's

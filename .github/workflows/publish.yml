@@ -102,6 +102,7 @@ jobs:
         with:
           name: chant-release-images
           path: dist/images
+      - run: npx chant release stamp "$CHANT_RELEASE_LABEL"
       - run: npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json
       - run: echo "CHANT_RELEASE_DIGESTS=$PWD/.chant/release-digests.json" >> "$GITHUB_ENV"
       - run: node scripts/build-cli.mjs

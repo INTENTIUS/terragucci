@@ -12,15 +12,20 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 
 ## In 0.4.54
 
+This release pins chant 0.124.79 in the package and the CI images.
+
 - Every record terragucci writes on `chant/lifecycle`, such as a state export, a lock release, a migration, an agent run or a template request, goes through chant's ledger writer. In a checkout with no remote the record stays on the local branch, where the command used to fail.
 - A choudoufu wave holds its resources only through chant's row leases, in `_locks/rows/pr-apply.json`; `_locks/apply-rows.json` is no longer read or written. Whether a holding run is gone is chant's answer too: a holder that keeps a heartbeat is judged by it, and `CHANT_LOCK_STALE` and `CHANT_FORGE_TOKEN` are read before `TG_LOCK_STALE` and `TG_TOKEN`.
 - `terragucci state export` and `terragucci unlock-state` run on chant's state export and lock release. An export is refused in a CI job and into any git working tree, and a request that was exported already exits 1. `unlock-state` exits 5, not 1, when a run that may hold the lock is still alive, and 1, not 4, for a request that released already; a new lock is a request of its own, which waits for its own approval.
 - A pull request's ephemeral copy is planned, applied and destroyed by chant's pull request environments of Terraform roots, with the same state key suffix and records. An azurerm copy's location is now recorded as `az://<account>/<container>/<key>`; copies recorded before are still destroyed.
 - terragucci reads pull requests and who may comment through chant's forge reads. On GitHub, a comment whose author's permission the job's token cannot read is ignored as one without write access; the job no longer fails on it. A rollout no longer takes a pull request from a fork for one of its waves.
 - On GitLab the overdue drift check asks chant which schedules are drift's, by the drift job's own rule. That rule now always leaves out the `comments`, `resume`, `rollouts` and `ephemeral` schedules, whichever of those the config turns on.
-- More waves plan and apply through chant's `terraform-apply` step. The step now takes the keys that used to keep a wave back: `secrets`, `oidc.roles`, `sources` and `cost`, as well as `ci.hooks`, the policy's overrides and its outcomes. It also takes choudoufu, reads of another root's state and a job per identity.
-- On the step each root runs the binary `chant.config.ts` names, found beside the job's binary or the version the root pins. A root that plans with another binary keeps terragucci's own plan, and the job says why. So does a wave under `approval: pr-review` or `approval_rules`.
+- More waves plan and apply through chant's `terraform-apply` step. `secrets`, `cost` and `ci.hooks` no longer keep a wave on terragucci's own plan. Nor does a choudoufu root, or a read of another root's state.
+- Each root on the step runs the binary `chant.config.ts` names, from the directory of the job's binary or of the version the root pins. A root that plans with another binary keeps terragucci's own plan, and the job says why. So does a wave under `approval: pr-review` or `approval_rules`.
 - A wave on the step plans its roots one at a time. Each root's plan file is `chant.tfplan` in its own directory.
+- `terragucci mcp` lists each tool's MCP annotations, as its own server did before it moved onto chant's. `plan_result` is the one change: it is listed as not read-only, since it is served with the propose tools.
+- An MCP tool that answers with a list, such as `index` or `templates`, now gives it as `structuredContent.items`. Its text block still holds the list.
+- A release takes its version from its label: the publish run stamps it into the package for its build, and each image's version label comes from the build. main keeps its committed version, and a release no longer needs a commit that moves it.
 
 ## In 0.4.53
 
