@@ -33,9 +33,11 @@
  * under the lock that no state moved since the plan, writes the new states
  * with `state push` (an azurerm state with a write under its lease, which
  * keeps the binary out), plans every root again against its real backend
- * and requires no change, and records the version ids before and after on
- * chant/lifecycle (`_gates/tf-migrate/done.jsonl`) and in the report. A
- * migration that applied is never run again.
+ * and requires no change, and records the version ids before and after in
+ * the gated request's `finished` line on chant/lifecycle
+ * (`_gates/tf-migrate/applied.jsonl`) and in the report. A migration that
+ * applied is never run again; the `done.jsonl` lines older releases wrote
+ * are still read as its history.
  *
  * State contents never leave the job: the record holds version ids and
  * digests. It moves states between `s3` backends that take a lock file,
@@ -62,9 +64,9 @@ import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragru
 import { hostname, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { chantHoldRecord, chantRequestProof, chantState, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
+import { chantRequestProof, chantState, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
-import { appendPending, fetchedLedgerFile, LEDGER_READ_REF, decideGate, movedMembers, readLedger, writeLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
+import { fetchedLedgerFile, LEDGER_READ_REF, movedMembers, readLedger, type GateLedger } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { isStored, READS_VERSIONS, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
@@ -72,7 +74,6 @@ import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "@intentius/chant/object-store";
 import { MARKER, PIPELINE_PATHS } from "./render";
-import { sealRefusal } from "./seal";
 import { chantStateOps, opMessage, requestRules, syncLocalLedger } from "./gated-request";
 import { rootRoleEnv } from "./cloud-identity";
 import { liveRoots } from "./detect";
@@ -1395,36 +1396,6 @@ export function doneMigrations(text: string): Map<string, { status: string; file
   return out;
 }
 
-/** One line of `done.jsonl`: what a migration's writes did, with the version ids before and after and never a state's contents. */
-export function doneLine(record: MigrationRecord, approvedBy: string, now: string, runId?: string, commit?: string): Record<string, unknown> {
-  return {
-    version: 1,
-    kind: "migration",
-    op: MIGRATE_OP,
-    gate: record.name,
-    timestamp: now,
-    planDigest: record.digest,
-    file_digest: record.file_digest,
-    result: record.status,
-    approvedBy,
-    change: record.change,
-    ...(record.revert ? { revert: record.revert } : {}),
-    roots: record.roots.map((r) => ({
-      root: r.root,
-      location: r.location,
-      before: r.before.version_id ?? null,
-      after: r.after.version_id ?? null,
-      before_digest: r.before.digest,
-      after_digest: r.after.digest,
-      ...(r.source ? { source: r.source.location, source_version: r.source.version_id ?? null } : {}),
-    })),
-    ...(record.retags ? { retags: record.retags.map((t) => ({ address: t.address, from: t.from, to: t.to, from_estate: t.from_estate, to_estate: t.to_estate, live_id: t.live_id })) } : {}),
-    ...(record.error ? { error: record.error } : {}),
-    ...(runId ? { runId } : {}),
-    ...(commit ? { commit } : {}),
-  };
-}
-
 /**
  * The flat facts a migration's `finished` line keeps on chant's gated request
  * (chant#4551, #4618): how it ended, its file's digest, its change, and each
@@ -1618,9 +1589,9 @@ export interface MigrationHold {
   approved?: { op: string; gate: string; digest: string; approvedBy: string; approvedAt: string };
   /**
    * chant's `CHANT_HOLD_FINISHED` (chant#4623), set on the approved re-run
-   * only when chant wrote the gate's applied line. The migration then writes
-   * how it ended there, and chant writes the finished line from it, so this
-   * run writes no applied or done.jsonl line of its own.
+   * once chant wrote the gate's applied line. The migration writes how it
+   * ended there, and chant writes the finished line from it; this run writes
+   * no ledger line of its own.
    */
   finished?: string;
 }
@@ -1671,9 +1642,9 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
     if (problems.length > 0) return { code: EXIT.failed, records: [] };
   }
   let done = new Map<string, { status: string; file_digest?: string; timestamp: string }>();
-  let ledger: GateLedger = { pending: [], resolutions: [] };
   try {
-    ledger = readLedger(repo, MIGRATE_LEDGER);
+    // The fetch of chant/lifecycle that migrationHistory reads.
+    readLedger(repo, MIGRATE_LEDGER);
     done = doneMigrations(migrationHistory(repo));
   } catch (e) {
     if (!options.planOnly) {
@@ -1704,7 +1675,7 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
     }
     const work = mkdtempSync(join(tmpdir(), "terragucci-migrate-"));
     try {
-      const out = await runOne(repo, m, ledger, { ...options, env, log }, work);
+      const out = await runOne(repo, m, { ...options, env, log }, work);
       records.push(out.record);
       writeRecord(repo, out.record);
       if (out.code !== EXIT.applied) return { code: out.code, records, ...(out.command ? { command: out.command } : {}) };
@@ -1729,10 +1700,8 @@ export async function runMigrations(repo: string, options: RunMigrationsOptions)
  * `finished` line holds what `migrate revert` and the list of migrations
  * still to apply read (migrationDetail, migrationHistory), so nothing is
  * written to done.jsonl. A migration inside a wave (`hold`) stays on the
- * wave's hold hook, which chant decides already. On a chant with the
- * recorded hold (chant#4623) chant writes that gate's applied and finished
- * lines too; on an older one the hold path writes its applied and
- * done.jsonl lines itself.
+ * wave's hold hook, which chant decides already, and chant writes that
+ * gate's applied and finished lines too (chant#4623).
  */
 async function runGated(
   repo: string,
@@ -1830,7 +1799,7 @@ function writeHoldFinished(file: string, result: "applied" | "failed", detail: R
   writeFileSync(file, JSON.stringify({ result, detail }) + "\n");
 }
 
-async function runOne(repo: string, m: Migration, ledger: GateLedger, options: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void }, work: string): Promise<{ code: number; record: MigrationRecord; command?: string }> {
+async function runOne(repo: string, m: Migration, options: RunMigrationsOptions & { env: NodeJS.ProcessEnv; log: (l: string) => void }, work: string): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env } = options;
   const label = `migration ${m.name}`;
   const live = liveRoots(repo, m.kind === "backends" ? m.backends.map((b) => b.root) : m.moves.flatMap((x) => [x.from, x.to])).length > 0;
@@ -1858,87 +1827,30 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   const configPath = options.config ?? findConfig(repo);
   const rule = await approvalRule(repo, { ...(options.base ? { at: options.base } : {}), ...(configPath ? { config: configPath } : {}), ...(options.approval ? { flag: options.approval } : {}) });
   const sealed = rule.mode === "sealed";
-  if (sealed) {
-    ledger = {
-      ...ledger,
-      resolutions: ledger.resolutions.filter((r) => {
-        if (r.gate !== m.name) return true;
-        const why = sealRefusal(rule.signers, r);
-        if (why !== null && samePlanDigest(r.planDigest, record.digest)) log(`${label}: an approval does not count: ${why}`);
-        return why === null;
-      }),
-    };
-  }
   const command = migrateApproveCommand(m.name, record.digest, sealed);
   const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
   const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
-  const members = beforeMembers(record.roots);
-  let decision = options.hold ? undefined : decideGate(ledger, m.name, record.digest, now);
-  if (options.hold) {
-    // chant settles the gate: hold the wave on it, or write the states under the approval chant found.
-    const a = options.hold.approved;
-    if (!a || a.op !== MIGRATE_OP || a.gate !== m.name || !samePlanDigest(a.digest, record.digest)) {
-      const description = `${label}: ${record.roots.map((r) => r.root).join(", ")}`;
-      const proof = JSON.stringify(record, null, 2) + "\n";
-      // chant#4623: chant records the gate and keeps the proof beside the pending fact.
-      const recorded = !!(await chantHoldRecord());
-      mkdirSync(dirname(options.hold.file), { recursive: true });
-      writeFileSync(options.hold.file, JSON.stringify({ op: MIGRATE_OP, gate: m.name, digest: record.digest, description, pending: { ...(commit ? { commit } : {}), members }, ...(recorded ? { record: true, attachment: proof } : {}) }) + "\n");
-      // The proof beside the pending fact, which a refusal later compares with. Only on a chant that keeps none.
-      if (!recorded && git(repo, ["cat-file", "-e", `${LEDGER_READ_REF}:${keptPath(m.name, record.digest)}`]).status !== 0) {
-        try {
-          await writeLedger(repo, "", [], { [keptPath(m.name, record.digest)]: proof }, `The proof of ${MIGRATE_OP} ${m.name}: ${record.digest}`);
-        } catch (e) {
-          log(`${label}: the proof was not kept beside the pending fact: ${(e as Error).message}`);
-        }
-      }
-      log(`${label} waits for an approval of digest ${record.digest}. Read the proof above, then approve it with:`);
-      log(`  ${command}`);
-      log("Then run this job again.");
-      return { code: EXIT.waiting, record: { ...record, status: "waiting" }, command };
-    }
-    decision = { status: "approved", by: a.approvedBy, at: a.approvedAt };
+  if (!options.hold) {
+    // chant's gated request (chant#4551): the request, the spend before the write, and the finished line.
+    const chant = await chantStateOps();
+    if (!chant) throw new ConfigError(`${label}: the installed chant has no gated requests, which a migration's gate runs on`);
+    return runGated(repo, m, plan, record, chant, { ...options, now, rule, label, proved, command, commit, runId, work });
   }
-  const chant = options.hold ? undefined : await chantStateOps();
-  if (chant) return runGated(repo, m, plan, record, chant, { ...options, now, rule, label, proved, command, commit, runId, work });
-  if (!decision) throw new ConfigError(`${label}: the gate was not decided`);
-  if (decision.status !== "approved") {
-    if (!decision.standing) {
-      const pending: PendingRecord = {
-        version: 1,
-        kind: "pending",
-        op: MIGRATE_OP,
-        gate: m.name,
-        timestamp: now,
-        expiresAt: new Date(at(now) + 48 * 3600 * 1000).toISOString(),
-        planDigest: record.digest,
-        description: `${label}: ${record.roots.map((r) => r.root).join(", ")}`,
-        ...(runId ? { runId } : {}),
-        ...(commit ? { commit } : {}),
-        members,
-        neverOverMcp: true,
-      };
-      await appendPending(repo, pending, { [keptPath(m.name, record.digest)]: JSON.stringify(record, null, 2) + "\n" }, MIGRATE_LEDGER);
-    }
-    if (decision.status === "refused") {
-      const moved = movedSinceApproval(ledger, m.name, decision.approved, members, record.roots.map((r) => r.root));
-      log(`${label}: ${decision.by} approved ${decision.approved ?? "another digest"}, and the states moved since: ${moved.join(", ") || "the migration file"}; nothing was written`);
-      log(`${label}: read the proof above, then approve this plan with:`);
-      log(`  ${command}`);
-      return { code: EXIT.refused, record: { ...record, status: "refused", moved }, command };
-    }
+  // chant settles the gate (chant#4623): hold the wave on it, with the proof as the request's attachment, or write
+  // the states under the approval chant found and say how it ended in the finished file chant records.
+  const a = options.hold.approved;
+  if (!a || a.op !== MIGRATE_OP || a.gate !== m.name || !samePlanDigest(a.digest, record.digest)) {
+    const description = `${label}: ${record.roots.map((r) => r.root).join(", ")}`;
+    const proof = JSON.stringify(record, null, 2) + "\n";
+    mkdirSync(dirname(options.hold.file), { recursive: true });
+    writeFileSync(options.hold.file, JSON.stringify({ op: MIGRATE_OP, gate: m.name, digest: record.digest, description, pending: { ...(commit ? { commit } : {}), members: beforeMembers(record.roots) }, record: true, attachment: proof }) + "\n");
     log(`${label} waits for an approval of digest ${record.digest}. Read the proof above, then approve it with:`);
     log(`  ${command}`);
     log("Then run this job again.");
     return { code: EXIT.waiting, record: { ...record, status: "waiting" }, command };
   }
-  log(`${label}: approved by ${decision.by} for this digest`);
-  // chant#4623: under chant's recorded hold, chant spent the approval already and writes the finished line from `finished`.
-  const finishedFile = options.hold?.approved ? options.hold.finished : undefined;
-  if (!finishedFile) {
-    const applied: AppliedRecord = { version: 1, kind: "applied", op: MIGRATE_OP, gate: m.name, planDigest: record.digest, approvedAt: decision.at, approvedBy: decision.by, timestamp: now, ...(runId ? { runId } : {}), ...(commit ? { commit } : {}) };
-    await writeLedger(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
-  }
+  log(`${label}: approved by ${a.approvedBy} for this digest`);
+  const finishedFile = options.hold.finished;
   let result: MigrationRecord;
   const sinks = plan.estate ? options.progress?.(m.name) : undefined;
   try {
@@ -1947,17 +1859,16 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     log(`${label}: ${(e as Error).message}`);
     sinks?.end?.("failed", undefined, (e as Error).message);
     // No `result` in the detail: the migration threw, and its history skips the line (finishedMigrationLines).
-    if (finishedFile) writeHoldFinished(finishedFile, "failed", { approved_by: decision.by, error: (e as Error).message.slice(0, 400) });
+    if (finishedFile) writeHoldFinished(finishedFile, "failed", { approved_by: a.approvedBy, error: (e as Error).message.slice(0, 400) });
     return { code: EXIT.failed, record: { ...record, status: "failed", error: (e as Error).message } };
   }
   sinks?.end?.(result.status, result.progress, result.error);
-  result = { ...result, approved_by: decision.by, finished: new Date().toISOString(), ...(commit ? { commit } : {}) };
-  if (finishedFile) writeHoldFinished(finishedFile, result.status === "applied" ? "applied" : "failed", { approved_by: decision.by, ...migrationDetail(result, m) });
+  result = { ...result, approved_by: a.approvedBy, finished: new Date().toISOString(), ...(commit ? { commit } : {}) };
+  if (finishedFile) writeHoldFinished(finishedFile, result.status === "applied" ? "applied" : "failed", { approved_by: a.approvedBy, ...migrationDetail(result, m) });
   if (result.status === "refused") {
     log(`${label}: under the lock, the state of ${result.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
     return { code: EXIT.refused, record: result };
   }
-  if (!finishedFile) await writeLedger(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
   if (!plan.estate) for (const r of result.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
   if (result.status !== "applied") {
     log(`${label}: ${result.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);
