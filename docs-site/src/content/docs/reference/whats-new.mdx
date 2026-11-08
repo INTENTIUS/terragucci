@@ -1,16 +1,16 @@
 ---
-title: Changes in 0.4.52
-description: "terragucci 0.4.52, released 2026-11-08."
+title: Changes in 0.4.53
+description: "terragucci 0.4.53, released 2026-11-08."
 ---
 
-Release `0.4.52` is on npm as `@intentius/terragucci@0.4.52`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.52) lists every change.
+Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.53) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.52 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.53 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
-## In 0.4.52
+## In 0.4.53
 
 On chant 0.124.76, the drift check, the formatting commit, the chat relay and the release itself run as chant's jobs, so terragucci no longer writes its own.
 
@@ -20,7 +20,7 @@ On chant 0.124.76, the drift check, the formatting commit, the chat relay and th
 - `dora.json` is built by chant's delivery code from the same records, and keeps its fields and values.
 - A release is cut and published by chant in one run under the tag `release/<version>`, which pushes the images, publishes the package and makes the GitHub release together.
 
-The two releases before this one were tagged but never reached npm, because their publish jobs could not use the images their cuts had built; chant now hands the cut's images to the publish job.
+The three releases before this one were tagged but never reached npm, while chant's release jobs learned what a repository's first release needs: the cut's images handed to the publish job, and the token the GitHub release is made with.
 
 ## In 0.4.49
 
