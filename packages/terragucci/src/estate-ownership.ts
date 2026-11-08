@@ -1,7 +1,7 @@
 /**
  * Which project owns an estate, resolved fresh at each plan (terragucci#753).
  *
- * The control repo's records say which projects own which choudoufu estates.
+ * The control repo's entries say which projects own which choudoufu estates.
  * A plan reads them at its start, so nothing written into a project goes
  * stale, and sets them beside what the project's own roots own and read:
  *
@@ -17,16 +17,16 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigError, parseProjectKey, type ControlSettings } from "./config";
-import { hasControlEntries, hasControlRecords, readClaims, readClaimsAt, type ChantRunner } from "./control-records";
+import { hasControlEntries, readClaimsAt } from "./control-records";
 
 /** The token a plan may read the control repo with, when no checkout is given. */
 export const CONTROL_READ_TOKEN_ENV = "TERRAGUCCI_CONTROL_READ_TOKEN";
-/** A control repo checkout the plan reads, in place of cloning one. */
+/** A control repo checkout, with its chant/lifecycle, that the plan reads in place of cloning one. */
 export const CONTROL_DIR_ENV = "TERRAGUCCI_CONTROL_DIR";
 /**
  * chant's read of the control repo (chant#4619 `controlNoteCheckout`): a
  * directory holding the control repo's chant/lifecycle alone, where its
- * entries are once it ran `terragucci control records migrate`.
+ * entries are.
  */
 export const CHANT_CONTROL_DIR_ENV = "CHANT_CONTROL_DIR";
 
@@ -87,72 +87,34 @@ export function projectKeyFromEnv(env: NodeJS.ProcessEnv): string | undefined {
 export type Clone = (url: string, into: string) => void;
 const gitClone: Clone = (url, into) => void execFileSync("git", ["clone", "--quiet", "--depth", "1", url, into], { stdio: ["ignore", "ignore", "pipe"] });
 
-/**
- * The estate claims in the control repo's records, read now: from the
- * checkout `TERRAGUCCI_CONTROL_DIR` names, else from a shallow clone of
- * `control.repo` with `TERRAGUCCI_CONTROL_READ_TOKEN`. With neither, undefined:
- * the plan has no control repo to ask and says so.
- */
-export function controlClaims(
-  control: ControlSettings | undefined,
-  env: NodeJS.ProcessEnv,
-  run?: ChantRunner,
-  clone: Clone = gitClone,
-): Map<string, string[]> | undefined {
-  const dir = env[CONTROL_DIR_ENV];
-  if (dir) return readClaims(dir, run);
-  const token = env[CONTROL_READ_TOKEN_ENV];
-  if (!control || !token) return undefined;
-  const into = mkdtempSync(join(tmpdir(), "terragucci-control-"));
-  try {
-    const pk = parseProjectKey(control.repo);
-    const url = `https://oauth2:${encodeURIComponent(token)}@${pk.host}/${pk.path}.git`;
-    try {
-      clone(url, into);
-    } catch (e) {
-      throw new ConfigError(`could not read the control repo ${control.repo} to resolve estate ownership: ${String((e as Error).message).replaceAll(token, "***").split("\n")[0]}`);
-    }
-    if (!hasControlRecords(into)) return undefined;
-    return readClaims(into, run);
-  } finally {
-    rmSync(into, { recursive: true, force: true });
-  }
-}
-
 /** What fetches the control repo's chant/lifecycle into a clone, as a local branch. Tests pass a fake. */
 export type FetchLifecycle = (dir: string) => void;
 const gitFetchLifecycle: FetchLifecycle = (dir) => {
   try {
     execFileSync("git", ["-C", dir, "fetch", "--quiet", "--depth", "1", "origin", "+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle"], { stdio: ["ignore", "ignore", "pipe"] });
   } catch {
-    // A control repo whose records are still files has no chant/lifecycle.
+    // A control repo with no entries yet has no chant/lifecycle.
   }
 };
 
 /**
- * {@link controlClaims}, with the control repo's entries read from its
- * ledger when they are there (chant#4568): the checkout's local
- * chant/lifecycle, which the pipeline's read step fetches, or, for a clone,
- * fetched here with the same token. A control repo whose records are still
- * files is read as before.
- *
- * Which directory: terragucci's checkout (TERRAGUCCI_CONTROL_DIR) when the
- * plan job made one, else chant's read (CHANT_CONTROL_DIR) when its entries
- * are there. With chant's read the plan job checks terragucci's out only
- * for a control repo whose records are still files, so the checkout's
- * variable can name a directory that is not there.
+ * The estate claims on the control repo's ledger (chant#4568), read now:
+ * from the checkout `TERRAGUCCI_CONTROL_DIR` names, else from chant's read
+ * (`CHANT_CONTROL_DIR`), else from a shallow clone of `control.repo` with
+ * `TERRAGUCCI_CONTROL_READ_TOKEN`, its chant/lifecycle fetched with the same
+ * token. With none of them, or no entries there, undefined: the plan has no
+ * control repo to ask and says so.
  */
 export async function controlClaimsAt(
   control: ControlSettings | undefined,
   env: NodeJS.ProcessEnv,
-  run?: ChantRunner,
   clone: Clone = gitClone,
   fetchLifecycle: FetchLifecycle = gitFetchLifecycle,
 ): Promise<Map<string, string[]> | undefined> {
   const dir = env[CONTROL_DIR_ENV];
   const chantDir = env[CHANT_CONTROL_DIR_ENV];
-  if (dir && (existsSync(dir) || !chantDir)) return readClaimsAt(dir, run);
-  if (chantDir) return (await hasControlEntries(chantDir)) ? readClaimsAt(chantDir, run) : undefined;
+  if (dir && (existsSync(dir) || !chantDir)) return readClaimsAt(dir);
+  if (chantDir) return (await hasControlEntries(chantDir)) ? readClaimsAt(chantDir) : undefined;
   const token = env[CONTROL_READ_TOKEN_ENV];
   if (!control || !token) return undefined;
   const into = mkdtempSync(join(tmpdir(), "terragucci-control-"));
@@ -166,7 +128,7 @@ export async function controlClaimsAt(
     }
     fetchLifecycle(into);
     if (!(await hasControlEntries(into))) return undefined;
-    return readClaimsAt(into, run);
+    return await readClaimsAt(into);
   } finally {
     rmSync(into, { recursive: true, force: true });
   }

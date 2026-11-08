@@ -74,7 +74,7 @@ const fetchLifecycle = (dir: string): void => {
   try {
     execFileSync("git", ["-C", dir, "fetch", "--quiet", "--depth", "1", "origin", "+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle"], { stdio: ["ignore", "ignore", "pipe"] });
   } catch {
-    // A control repo whose records are still files has no chant/lifecycle.
+    // A control repo with no entries yet has no chant/lifecycle.
   }
 };
 

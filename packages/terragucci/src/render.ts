@@ -180,7 +180,7 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { controlCloneScript, controlDirEnv, controlReadSteps, dispatchScript, type ResolvedControl } from "./control-repo";
+import { controlCloneScript, controlReadSteps, dispatchScript, type ResolvedControl } from "./control-repo";
 import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
@@ -2776,7 +2776,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const plan = new GitLabJob({
       stage: "plan",
       image: jobImage,
-      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv, ...(input.control ? controlDirEnv("gitlab") : {}) },
+      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv },
       rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
       ...idTokens("plan"),
       ...(tg ? forgeCache("gitlab") : {}),
@@ -3192,7 +3192,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       ...decideEnv,
       ...costEnv,
       ...reportKeyEnv(forge, input.reports),
-      ...(input.control ? controlDirEnv(forge) : {}),
     },
     outputs: handoverOutputs("plan", forge),
     steps: [
@@ -3243,7 +3242,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const go = "steps.decide.outputs.go == '1'";
   const azureReplan = Boolean(oidc?.azure);
   const trades = needsToken && !azureReplan;
-  const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports), ...(input.control ? controlDirEnv(forge) : {}) };
+  const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
   const replan = new Job({
     "runs-on": "ubuntu-latest",
     container: { image },

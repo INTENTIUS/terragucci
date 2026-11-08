@@ -34,8 +34,7 @@
  * chant core, `@intentius/chant/ci-control`, and each forge lexicon's
  * `components/control-pipeline`. With them the member's dispatch, the control
  * repo's pipeline, its entries on the ledger and reconcile are chant's
- * (./control-repo.ts, ./control-records.ts, ./reconcile.ts). Without them
- * terragucci's own code runs, with its record files.
+ * (./control-repo.ts, ./control-records.ts, ./reconcile.ts).
  *
  * Newer than the pin too (terragucci#1282 part e): the
  * op-wave step contract (`op/op-waves-capability`, chant#4545) with the
