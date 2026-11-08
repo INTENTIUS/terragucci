@@ -6,7 +6,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runStage } from "../src/report/stage";
-import { binaryEnv, metricsBody, parsePairs, parseTraceparent, send, telemetryFromEnv, Trace, tracesBody, type OtlpFetch } from "../src/telemetry";
+import { parseOtlpPairs } from "@intentius/chant/otlp";
+import { binaryEnv, telemetryFromEnv, Trace, tracesBody } from "../src/telemetry";
 import { tmp, write } from "./helpers";
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
@@ -32,12 +33,6 @@ describe("telemetry from the environment", () => {
     expect(g.traces).toBeUndefined();
     expect(g.skipped[0]).toMatch(/grpc/);
   });
-
-  it("parses traceparent and pairs", () => {
-    expect(parseTraceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")).toEqual({ traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "b7ad6b7169203331" });
-    expect(parseTraceparent("00-00000000000000000000000000000000-b7ad6b7169203331-01")).toBeUndefined();
-    expect(parsePairs("a=1, b = x%3Dy")).toEqual({ a: "1", b: "x=y" });
-  });
 });
 
 describe("OTLP bodies", () => {
@@ -45,34 +40,17 @@ describe("OTLP bodies", () => {
     const trace = new Trace("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
     const top = trace.start("terragucci tf-plan");
     expect(top.parentSpanId).toBe("b7ad6b7169203331");
-    const child = trace.start("tofu plan", top, { n: 2 }, 3);
+    const child = trace.start("tofu plan", top, { n: 2 }, { kind: 3 });
     trace.end(child, {}, "exit 1");
     const env = binaryEnv({ OTEL_RESOURCE_ATTRIBUTES: "team=infra" }, trace, child, "envs/a");
     expect(env.TRACEPARENT).toBe(`00-0af7651916cd43dd8448eb211c80319c-${child.spanId}-01`);
     expect(env.OTEL_TRACES_EXPORTER).toBe("otlp");
-    expect(parsePairs(env.OTEL_RESOURCE_ATTRIBUTES)).toEqual({ team: "infra", "terragucci.trace_id": trace.traceId, "terragucci.span_id": child.spanId, "terragucci.root": "envs/a" });
+    expect(parseOtlpPairs(env.OTEL_RESOURCE_ATTRIBUTES)).toEqual({ team: "infra", "terragucci.trace_id": trace.traceId, "terragucci.span_id": child.spanId, "terragucci.root": "envs/a" });
     expect(binaryEnv({ OTEL_TRACES_EXPORTER: "none" }, trace, child, "a").OTEL_TRACES_EXPORTER).toBe("none");
 
-    const body = tracesBody(trace.spans, { "service.name": "terragucci" }, "0.2.0") as any;
+    const body = tracesBody(trace.spans, { "service.name": "terragucci" }) as any;
     const spans = body.resourceSpans[0].scopeSpans[0].spans;
     expect(spans[1]).toMatchObject({ name: "tofu plan", kind: 3, parentSpanId: top.spanId, status: { code: 2, message: "exit 1" }, attributes: [{ key: "n", value: { intValue: "2" } }] });
-  });
-
-  it("groups gauges by name", () => {
-    const body = metricsBody([
-      { name: "m", unit: "1", description: "d", value: 1, attributes: { a: "x" } },
-      { name: "m", unit: "1", description: "d", value: 2.5, attributes: { a: "y" } },
-    ], {}, "0.2.0", 5n) as any;
-    const m = body.resourceMetrics[0].scopeMetrics[0].metrics;
-    expect(m).toHaveLength(1);
-    expect(m[0].gauge.dataPoints.map((p: any) => [p.asDouble, p.timeUnixNano])).toEqual([[1, "5"], [2.5, "5"]]);
-  });
-
-  it("send reports a refusal or an unreachable endpoint and never throws", async () => {
-    const refusing: OtlpFetch = async () => ({ ok: false, status: 401, text: async () => "no" });
-    expect(await send({ url: "http://c/v1/traces", headers: {} }, {}, refusing)).toMatch(/401/);
-    const down: OtlpFetch = async () => { throw new Error("ECONNREFUSED"); };
-    expect(await send({ url: "http://c/v1/traces", headers: {} }, {}, down)).toMatch(/ECONNREFUSED/);
   });
 });
 

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ACTION_PINS, tagComments, unpinnedActions } from "../src/action-pins";
+import { ACTION_PINS, unpinnedActions } from "@intentius/chant/action-pins";
 import { agentCommentInput, agentDriftInput } from "../src/agent-comment";
 import { validateConfig } from "../src/config";
 import { renderPipeline } from "../src/render";
@@ -35,10 +35,10 @@ describe("the actions a rendered workflow uses", () => {
       expect(files.length).toBeGreaterThan(3);
       for (const f of files) expect({ path: f.path, unpinned: unpinnedActions(f.content) }).toEqual({ path: f.path, unpinned: [] });
       const all = files.map((f) => f.content).join("\n");
-      expect(all).toMatch(new RegExp(`uses: \\S*actions/checkout@${ACTION_PINS.checkout.sha} # ${ACTION_PINS.checkout.tag}$`, "m"));
-      const upload = forge === "forgejo" ? ACTION_PINS.uploadArtifactV3 : ACTION_PINS.uploadArtifact;
+      expect(all).toMatch(new RegExp(`uses: \\S*actions/checkout@${ACTION_PINS.checkout4.sha} # ${ACTION_PINS.checkout4.tag}$`, "m"));
+      const upload = forge === "forgejo" ? ACTION_PINS.uploadArtifact3 : ACTION_PINS.uploadArtifact4;
       expect(all).toContain(`actions/upload-artifact@${upload.sha} # ${upload.tag}`);
-      if (forge === "forgejo") expect(all).toContain(`https://code.forgejo.org/actions/checkout@${ACTION_PINS.checkout.sha}`);
+      if (forge === "forgejo") expect(all).toContain(`https://code.forgejo.org/actions/checkout@${ACTION_PINS.checkout4.sha}`);
     });
   }
 
@@ -56,25 +56,5 @@ describe("the actions a rendered workflow uses", () => {
     };
     walk(dir);
     expect(found).toEqual([]);
-  });
-
-  it("finds a tag, a branch or a short SHA, and passes a full SHA, a local action and a docker image", () => {
-    const yaml = [
-      "      - uses: actions/checkout@v4",
-      "        uses: https://code.forgejo.org/actions/cache@main",
-      "      - uses: 'actions/setup-node@8207627'",
-      `      - uses: actions/checkout@${"a".repeat(40)} # v4.4.0`,
-      "      - uses: ./.github/actions/local",
-      "      - uses: docker://alpine:3.20",
-    ].join("\n");
-    expect(unpinnedActions(yaml)).toEqual(["actions/checkout@v4", "https://code.forgejo.org/actions/cache@main", "actions/setup-node@8207627"]);
-  });
-
-  it("writes the release beside a pinned line once, and leaves an unknown SHA alone", () => {
-    const line = `      - uses: actions/checkout@${ACTION_PINS.checkout.sha}`;
-    const once = tagComments(line);
-    expect(once).toBe(`${line} # ${ACTION_PINS.checkout.tag}`);
-    expect(tagComments(once)).toBe(once);
-    expect(tagComments(`  uses: actions/checkout@${"f".repeat(40)}`)).toBe(`  uses: actions/checkout@${"f".repeat(40)}`);
   });
 });

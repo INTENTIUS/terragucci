@@ -24,7 +24,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { version as VERSION } from "../package.json";
 import { send, telemetryFromEnv, Trace, tracesBody, type OtlpFetch } from "./telemetry";
 import type { Actor } from "./actor";
 import { AGENT_RUNS_FILE } from "./report/audit";
@@ -240,7 +239,7 @@ export async function sendAgentRun(r: AgentRunRecord, env: NodeJS.ProcessEnv, fe
   if (!t?.traces) return undefined;
   const trace = new Trace(env.TRACEPARENT);
   agentRunSpan(trace, r);
-  return send(t.traces, tracesBody(trace.spans, t.resource, VERSION), fetchFn);
+  return send(t.traces, tracesBody(trace.spans, t.resource), fetchFn);
 }
 
 export interface RecordDeps {

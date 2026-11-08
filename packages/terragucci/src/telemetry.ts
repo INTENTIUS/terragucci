@@ -21,16 +21,19 @@
  * `terragucci.span_id` as resource attributes, so its trace names the span
  * that ran it.
  */
-import { randomBytes } from "node:crypto";
-import { sendOtlp } from "@intentius/chant/otlp";
+import { formatOtlpPairs, OtlpTrace, otlpFromEnv, otlpTracesBody, parseOtlpPairs, type OtlpAttrs, type OtlpAttrValue, type OtlpSpan, type OtlpSpanEvent, type OtlpTarget } from "@intentius/chant/otlp";
+import { otlpMetricsBody, otlpMetricsFromEnv } from "@intentius/chant/otlp-metrics";
 
-export type AttrValue = string | number | boolean;
-export type Attrs = Record<string, AttrValue | undefined>;
+export { sendOtlp as send, type OtlpFetch } from "@intentius/chant/otlp";
 
-export interface Target {
-  url: string;
-  headers: Record<string, string>;
-}
+export type AttrValue = OtlpAttrValue;
+export type Attrs = OtlpAttrs;
+export type Target = OtlpTarget;
+export type Span = OtlpSpan;
+export type SpanEvent = OtlpSpanEvent;
+/** One stage run's trace: chant's (`@intentius/chant/otlp`, chant#4555). */
+export const Trace = OtlpTrace;
+export type Trace = OtlpTrace;
 
 export interface Telemetry {
   traces?: Target;
@@ -41,172 +44,29 @@ export interface Telemetry {
   skipped: string[];
 }
 
-export type OtlpFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+/** The product the exporter's attributes and default service name are under. */
+const PRODUCT = "terragucci";
 
-/** `k=v,k2=v2`, values percent-decoded, as OTEL_*_HEADERS and OTEL_RESOURCE_ATTRIBUTES write them. */
-export function parsePairs(text: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const part of (text ?? "").split(",")) {
-    const i = part.indexOf("=");
-    if (i <= 0) continue;
-    const k = part.slice(0, i).trim();
-    let v = part.slice(i + 1).trim();
-    try {
-      v = decodeURIComponent(v);
-    } catch {
-      // keep it as written
-    }
-    if (k) out[k] = v;
-  }
-  return out;
-}
-
-const formatPairs = (pairs: Record<string, string>): string =>
-  Object.entries(pairs).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join(",");
-
-function target(env: NodeJS.ProcessEnv, signal: "traces" | "metrics", skipped: string[]): Target | undefined {
-  const S = signal.toUpperCase();
-  const exporter = env[`OTEL_${S}_EXPORTER`];
-  if (exporter !== undefined && exporter.trim() !== "" && !exporter.split(",").map((s) => s.trim()).includes("otlp")) return undefined;
-  const own = env[`OTEL_EXPORTER_OTLP_${S}_ENDPOINT`]?.trim();
-  const base = env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim();
-  const url = own || (base ? `${base.replace(/\/+$/, "")}/v1/${signal}` : undefined);
-  if (!url) return undefined;
-  const protocol = env[`OTEL_EXPORTER_OTLP_${S}_PROTOCOL`] ?? env.OTEL_EXPORTER_OTLP_PROTOCOL;
-  if (protocol === "grpc") {
-    skipped.push(`${signal}: terragucci sends OTLP over HTTP and the protocol is grpc; point it at the collector's HTTP port`);
-    return undefined;
-  }
-  if (!/^https?:\/\//.test(url)) {
-    skipped.push(`${signal}: ${url} is not an http or https URL`);
-    return undefined;
-  }
-  return { url, headers: { ...parsePairs(env.OTEL_EXPORTER_OTLP_HEADERS), ...parsePairs(env[`OTEL_EXPORTER_OTLP_${S}_HEADERS`]) } };
-}
-
-/** The stage's telemetry from the environment, or undefined when no endpoint is set. */
+/** The stage's telemetry from the environment, through chant's readers (chant#4555), or undefined when no endpoint is set. */
 export function telemetryFromEnv(env: NodeJS.ProcessEnv): Telemetry | undefined {
-  if (env.OTEL_SDK_DISABLED?.trim().toLowerCase() === "true") return undefined;
-  const skipped: string[] = [];
-  const traces = target(env, "traces", skipped);
-  const metrics = target(env, "metrics", skipped);
-  if (!traces && !metrics && skipped.length === 0) return undefined;
-  const resource: Attrs = { ...parsePairs(env.OTEL_RESOURCE_ATTRIBUTES) };
-  resource["service.name"] = env.OTEL_SERVICE_NAME?.trim() || resource["service.name"] || "terragucci";
-  return { ...(traces ? { traces } : {}), ...(metrics ? { metrics } : {}), resource, skipped };
+  const t = otlpFromEnv(env, { prefix: PRODUCT });
+  const m = otlpMetricsFromEnv(env, { product: PRODUCT });
+  if (!t && !m) return undefined;
+  return {
+    ...(t?.traces ? { traces: t.traces } : {}),
+    ...(m?.metrics ? { metrics: m.metrics } : {}),
+    resource: t?.resource ?? m!.resource,
+    skipped: [...(t?.skipped ?? []), ...(m?.skipped ?? [])],
+  };
 }
-
-// ── traces ───────────────────────────────────────────────────────────────────
 
 /** Now, in Unix nanoseconds. */
 export const nowNanos = (): bigint => BigInt(Math.round((performance.timeOrigin + performance.now()) * 1000)) * 1000n;
 
-export interface Span {
-  traceId: string;
-  spanId: string;
-  parentSpanId?: string;
-  name: string;
-  /** 1 internal, 3 client (a process terragucci ran). */
-  kind: 1 | 3;
-  start: bigint;
-  end?: bigint;
-  attributes: Attrs;
-  error?: string;
-  /** Things that happened at one time inside the span, such as one resource's write in a migration. */
-  events?: SpanEvent[];
+/** The OTLP/JSON body for a trace's spans: chant's. */
+export function tracesBody(spans: readonly Span[], resource: Attrs): unknown {
+  return otlpTracesBody(spans, resource);
 }
-
-export interface SpanEvent {
-  name: string;
-  /** Unix nanoseconds. */
-  time: bigint;
-  attributes: Attrs;
-}
-
-const hex = (bytes: number): string => randomBytes(bytes).toString("hex");
-
-/** `00-<trace>-<span>-<flags>`, or undefined when it is not one. */
-export function parseTraceparent(text: string | undefined): { traceId: string; spanId: string } | undefined {
-  const m = /^[\da-f]{2}-([\da-f]{32})-([\da-f]{16})-[\da-f]{2}$/.exec((text ?? "").trim().toLowerCase());
-  if (!m || /^0+$/.test(m[1]) || /^0+$/.test(m[2])) return undefined;
-  return { traceId: m[1], spanId: m[2] };
-}
-
-/** One stage run's trace. Spans are kept in memory and sent once. */
-export class Trace {
-  readonly traceId: string;
-  readonly parent?: string;
-  readonly spans: Span[] = [];
-
-  constructor(traceparent?: string) {
-    const p = parseTraceparent(traceparent);
-    this.traceId = p?.traceId ?? hex(16);
-    this.parent = p?.spanId;
-  }
-
-  start(name: string, parent?: Span, attributes: Attrs = {}, kind: 1 | 3 = 1): Span {
-    const span: Span = { traceId: this.traceId, spanId: hex(8), name, kind, start: nowNanos(), attributes: { ...attributes } };
-    const parentId = parent?.spanId ?? this.parent;
-    if (parentId) span.parentSpanId = parentId;
-    this.spans.push(span);
-    return span;
-  }
-
-  end(span: Span, attributes: Attrs = {}, error?: string): void {
-    span.end = nowNanos();
-    Object.assign(span.attributes, attributes);
-    if (error) span.error = error;
-  }
-
-  /** An event inside `span`, at `at` (an RFC 3339 time) or now. */
-  event(span: Span, name: string, attributes: Attrs = {}, at?: string): void {
-    const ms = at ? Date.parse(at) : NaN;
-    const time = Number.isFinite(ms) ? BigInt(Math.round(ms)) * 1_000_000n : nowNanos();
-    (span.events ??= []).push({ name, time, attributes: { ...attributes } });
-  }
-
-  /** The W3C header that makes `span` the parent of what a process sends. */
-  traceparent(span: Span): string {
-    return `00-${this.traceId}-${span.spanId}-01`;
-  }
-}
-
-function attrList(attrs: Attrs): { key: string; value: Record<string, unknown> }[] {
-  return Object.entries(attrs)
-    .filter((e): e is [string, AttrValue] => e[1] !== undefined)
-    .map(([key, v]) => ({
-      key,
-      value: typeof v === "boolean" ? { boolValue: v } : typeof v === "number" ? (Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v }) : { stringValue: v },
-    }));
-}
-
-const SCOPE = (version: string) => ({ name: "terragucci", version });
-
-/** The OTLP/JSON body for a trace's spans. */
-export function tracesBody(spans: Span[], resource: Attrs, version: string): unknown {
-  return {
-    resourceSpans: [{
-      resource: { attributes: attrList(resource) },
-      scopeSpans: [{
-        scope: SCOPE(version),
-        spans: spans.map((s) => ({
-          traceId: s.traceId,
-          spanId: s.spanId,
-          ...(s.parentSpanId ? { parentSpanId: s.parentSpanId } : {}),
-          name: s.name,
-          kind: s.kind,
-          startTimeUnixNano: String(s.start),
-          endTimeUnixNano: String(s.end ?? s.start),
-          attributes: attrList(s.attributes),
-          ...(s.events?.length ? { events: s.events.map((e) => ({ timeUnixNano: String(e.time), name: e.name, attributes: attrList(e.attributes) })) } : {}),
-          status: s.error ? { code: 2, message: s.error } : { code: 1 },
-        })),
-      }],
-    }],
-  };
-}
-
-// ── metrics ──────────────────────────────────────────────────────────────────
 
 export interface Gauge {
   name: string;
@@ -216,31 +76,10 @@ export interface Gauge {
   attributes: Attrs;
 }
 
-/** The OTLP/JSON body for gauges, one data point each, grouped by name. */
-export function metricsBody(gauges: Gauge[], resource: Attrs, version: string, at: bigint = nowNanos()): unknown {
-  const byName = new Map<string, Gauge[]>();
-  for (const g of gauges) byName.set(g.name, [...(byName.get(g.name) ?? []), g]);
-  return {
-    resourceMetrics: [{
-      resource: { attributes: attrList(resource) },
-      scopeMetrics: [{
-        scope: SCOPE(version),
-        metrics: [...byName.values()].map((gs) => ({
-          name: gs[0].name,
-          unit: gs[0].unit,
-          description: gs[0].description,
-          gauge: { dataPoints: gs.map((g) => ({ attributes: attrList(g.attributes), timeUnixNano: String(at), asDouble: g.value })) },
-        })),
-      }],
-    }],
-  };
-}
-
-// ── sending ──────────────────────────────────────────────────────────────────
-
-/** POST one OTLP/JSON body through chant's exporter (chant#4555); the body stays terragucci's. Returns the problem, or undefined when it was taken. Never throws. */
-export async function send(t: Target, body: unknown, fetchFn: OtlpFetch = fetch as unknown as OtlpFetch): Promise<string | undefined> {
-  return sendOtlp(t, body, fetchFn);
+/** The OTLP/JSON body for gauges, one data point each, grouped by name: chant's. */
+export function metricsBody(gauges: readonly Gauge[], resource: Attrs, at: bigint = nowNanos()): unknown {
+  // chant's attribute writer takes numbers and booleans as they are.
+  return otlpMetricsBody(gauges as never, resource, at);
 }
 
 /**
@@ -250,11 +89,11 @@ export async function send(t: Target, body: unknown, fetchFn: OtlpFetch = fetch 
  * one already (`none` keeps it off).
  */
 export function binaryEnv(env: NodeJS.ProcessEnv, trace: Trace, span: Span, root: string): NodeJS.ProcessEnv {
-  const resource = { ...parsePairs(env.OTEL_RESOURCE_ATTRIBUTES), "terragucci.trace_id": trace.traceId, "terragucci.span_id": span.spanId, "terragucci.root": root };
+  const resource = { ...parseOtlpPairs(env.OTEL_RESOURCE_ATTRIBUTES), "terragucci.trace_id": trace.traceId, "terragucci.span_id": span.spanId, "terragucci.root": root };
   return {
     ...env,
     TRACEPARENT: trace.traceparent(span),
     OTEL_TRACES_EXPORTER: env.OTEL_TRACES_EXPORTER || "otlp",
-    OTEL_RESOURCE_ATTRIBUTES: formatPairs(resource),
+    OTEL_RESOURCE_ATTRIBUTES: formatOtlpPairs(resource),
   };
 }

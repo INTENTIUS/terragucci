@@ -282,7 +282,7 @@ export class StageObserver {
   /** Run the binary inside a root, as a span of its own when tracing. */
   command<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => R): R {
     if (!this.trace || !t.span) return spawn(env);
-    const span = this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3);
+    const span = this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, { kind: 3 });
     const r = spawn(binaryEnv(env, this.trace, span, t.path));
     this.trace.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
     return r;
@@ -295,7 +295,7 @@ export class StageObserver {
    */
   async commandAsync<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => Promise<R>): Promise<R> {
     const start = nowNanos();
-    const span = this.trace && t.span ? this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, 3) : undefined;
+    const span = this.trace && t.span ? this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, { kind: 3 }) : undefined;
     let runEnv = span ? binaryEnv(env, this.trace!, span, t.path) : env;
     if (this.receiver) runEnv = this.receiver.env(runEnv, t.path, args[0]);
     const r = await spawn(runEnv);
@@ -500,7 +500,7 @@ export class StageObserver {
         });
         if (r.error) t.span.error = r.error.split("\n")[0];
       }
-      const problem = await send(tel.traces, tracesBody(this.trace.spans, resource, run.terragucci ?? "0.0.0"), fetchFn);
+      const problem = await send(tel.traces, tracesBody(this.trace.spans, resource), fetchFn);
       if (problem) log(`telemetry: the trace was not sent: ${problem}`);
       else sent.push(`trace ${this.trace.traceId} (${this.trace.spans.length} spans)`);
     }
@@ -508,7 +508,7 @@ export class StageObserver {
     // A tf-apply wave sends its trace, each root's apply time and its wave gauges. The plan's other metrics stay the plan's, since a wave's would count its roots twice.
     if (tel.metrics) {
       const gauges = perRunLabels(this.stage === "tf-apply" ? this.applyGauges(report, end) : this.gauges(report, binaryVersion(run.binary, env), end), this.perRun, run.commit);
-      const problem = await send(tel.metrics, metricsBody(gauges, metricsResource, run.terragucci ?? "0.0.0", end), fetchFn);
+      const problem = await send(tel.metrics, metricsBody(gauges, metricsResource, end), fetchFn);
       if (problem) log(`telemetry: the metrics were not sent: ${problem}`);
       else sent.push(`${gauges.length} metric points`);
     }

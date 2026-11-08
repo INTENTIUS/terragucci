@@ -9,8 +9,10 @@
  * request's review page.
  *
  * Delivery, signing and the generic webhook's event are chant's
- * (`@intentius/chant/notify`); terragucci decides when to send, renders its
- * own Slack and Teams messages and keeps the relay's buttons. The generic
+ * (`@intentius/chant/notify`), and so are the drift event's fields and the
+ * send options under terragucci's words (`notify-product`). terragucci
+ * decides when to send and renders its own Slack and Teams messages, which
+ * chant's cannot word yet (chant issue 4818), with chant's relay buttons. The generic
  * webhook gets one `chant.notify/v1` event, with the stage's outcome
  * (`terragucci.outcome/v1`) in `detail`, signed with HMAC-SHA256 over
  * `<timestamp>.<body>` (`X-Terragucci-Signature: sha256=<hex>` beside
@@ -33,10 +35,11 @@
  * login.
  */
 import { ciRun, makeNotifyEvent, sendNotify, slackRelayActions, teamsRelayReply, type NotifyConfig, type NotifyDelivery, type NotifyEvent, type RelayButtons, type SendNotifyOptions } from "@intentius/chant/notify";
+import { driftNotifyFields, productSendOptions } from "@intentius/chant/notify-product";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { OUTCOME_SCHEMA, waveGate, type WaveOutcome } from "./apply";
-import { TERRAGUCCI_WORDS } from "./ci-words";
+import { productWords, TERRAGUCCI_WORDS } from "./ci-words";
 
 /** What the wave did. */
 export const NOTIFY_EVENTS = ["waiting", "refused", "failed"] as const;
@@ -279,7 +282,7 @@ function targets(env: NodeJS.ProcessEnv, webhook: boolean): NotifyConfig {
 
 /** Send through chant, with terragucci's own Slack and Teams bodies, and make each delivery a log line. */
 async function send(config: NotifyConfig, event: NotifyEvent, render: SendNotifyOptions["render"], line: string, env: NodeJS.ProcessEnv, opts: SendOptions): Promise<string[]> {
-  const deliveries = await sendNotify(config, event, { ...opts, env, ...(render ? { render } : {}), prefix: HEADER_PREFIX, userAgent: NOTIFY_SOURCE, log: () => {} });
+  const deliveries = await sendNotify(config, event, productSendOptions(productWords(), { ...opts, env, ...(render ? { render } : {}), userAgent: NOTIFY_SOURCE, log: () => {} }));
   return deliveries.map((d) => (d.ok ? `posted to ${LABEL[d.target]}: ${line}` : `${LABEL[d.target]}: ${d.detail}; nothing was posted`));
 }
 
@@ -393,12 +396,10 @@ export function teamsDrift(n: DriftNotice): Record<string, unknown> {
   };
 }
 
-/** chant's `drift` event for a drift notice. Only Slack and Teams get it, in terragucci's own messages. */
+/** chant's `drift` event for a drift notice, from chant's drift fields under terragucci's words. Only Slack and Teams get it, in terragucci's own messages. */
 function driftEvent(n: DriftNotice, env: NodeJS.ProcessEnv): NotifyEvent {
-  return makeNotifyEvent(
-    { source: NOTIFY_SOURCE, event: "drift", summary: driftHeadline(n).slice(`${NOTIFY_SOURCE}: `.length), project: n.project, targets: n.roots, drift: { changed: n.roots, ...(n.failed.length > 0 ? { failed: n.failed } : {}) }, run: n.run ? { url: n.run } : {}, ...(n.report ? { reportUrl: n.report } : {}) },
-    { env },
-  );
+  const fields = driftNotifyFields(productWords(), { changed: n.roots, failed: n.failed, project: n.project, ...(n.report ? { reportUrl: n.report } : {}) });
+  return makeNotifyEvent({ ...fields, run: n.run ? { url: n.run } : {} }, { env });
 }
 
 /** Post a drift notice to the Slack and Teams webhooks the job holds, through chant's notify. The generic webhook's event is a wave's, so it gets none. Never throws. */
