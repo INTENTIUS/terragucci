@@ -9,6 +9,12 @@
  * the DORA figures (`dora.json`); from the repo, the waves waiting on
  * `chant/lifecycle`, each with the command a person runs to approve it.
  *
+ * It runs on chant's own read-only server (`serve mcp --read-only`,
+ * chant#4543), in process with terragucci's words, and terragucci's tools are
+ * added to it through the product tool hook (chant#4555) as
+ * `terragucci:<name>`, each declared read-only ({@link productHook}). The
+ * server also serves chant's read tools (the ledger, the workspace graph).
+ *
  * Nothing here approves, applies, overrides or merges:
  * - every tool reads, and the bucket's client is wrapped so a write throws;
  * - with `--propose` (PROPOSE_TOOLS), three tools more write to the forge and
@@ -18,24 +24,13 @@
  *   on a pull request; `plan_result` reads the plan note and the head's plan
  *   report. A pull request they open plans and goes through the gate like any
  *   other, and nothing they do changes what a wave needs;
- * - a call to a tool that is not listed is refused, and one whose name says it
- *   would approve, apply, override, lock, merge or write is refused by name,
- *   with the CLI's own answer: approvals belong to a person at a shell, and
- *   chant refuses a gate approval made over MCP;
- * - the server will not start with a tool whose name says it would write
- *   (`assertReadOnly`);
+ * - chant's server refuses a call to a tool it does not list, and will not
+ *   start with a product tool whose name says it would write; chant refuses
+ *   a gate approval made over MCP;
  * - credentials come from the server's environment (the variables the reports
  *   bucket's client reads, the forge token `token_env` names, and git's own
  *   for the repo), never from a tool's arguments: a tool takes only the
  *   arguments it lists, and refuses any other.
- *
- * With a chant that has the product tool hook (chant#4555), `terragucci mcp`
- * is chant's own read-only server (`serve mcp --read-only`, chant#4543) run in
- * process with terragucci's words, and terragucci's tools are added to it
- * through the hook as `terragucci:<name>`, each declared read-only
- * ({@link productHook}). The server then also serves chant's read tools (the
- * ledger, the workspace graph), and chant makes the checks above: it refuses
- * to start with a tool named as a write, and serves no run tool.
  *
  * `--propose` runs on chant's server too (`serve mcp --read-only --propose`,
  * chant#4655): PROPOSE_TOOLS are contributed with `forgeWrite: true`, whose
@@ -49,9 +44,6 @@
  * `claimedBy`, which the forge does not vouch for.
  */
 import { execFileSync } from "node:child_process";
-import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { BRANCH, parseComment } from "./comment";
 import { ConfigError, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { call, DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
@@ -67,8 +59,8 @@ import { readStateVersions } from "./report/state-versions";
 import { statesKey, type IndexEntry } from "./report/store";
 import { readLedger } from "./apply";
 import { waitingWaves } from "./approve";
-import { loadMcpSdk } from "./mcp-sdk";
-import { chantProductMcp, type ChantMcpTool, type ChantProductMcp, type ChantProductMcpHook } from "./chant-next";
+import { runChantInProcess } from "@intentius/chant/ci-product";
+import type { ChantMcpTool, ChantProductMcpHook } from "./chant-next";
 import { findTemplate, listTemplates, readTemplatesCatalog, request, templatesSettings } from "./templates";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { version as VERSION } from "../package.json";
@@ -125,39 +117,6 @@ export interface Forge {
   settings: ResolvedSettings;
   /** The variable the token is read from. */
   tokenEnv: string;
-}
-
-/**
- * Words that say a tool would change something: each names what terragucci
- * does only from a shell or a pipeline, never over MCP. A tool's name may not
- * start with one, and may not hold one of STRONG_WORDS anywhere (so
- * `last_apply`, which reads, is a name; `apply_wave` and `wave_approve` are not).
- */
-export const WRITE_WORDS = ["approve", "apply", "override", "revoke", "unlock", "lock", "merge", "resume", "migrate", "write", "put", "delete", "push", "commit", "publish", "reconcile", "rollout", "init", "generate", "respond", "relay", "notify", "update", "create", "exec"] as const;
-export const STRONG_WORDS = ["approve", "override", "revoke", "unlock", "merge", "write", "delete", "push", "commit", "publish", "exec"] as const;
-
-const writeWord = (name: string): string | undefined => {
-  const parts = name.toLowerCase().split(/[^a-z]+/).filter(Boolean);
-  const first = parts[0] ?? "";
-  return WRITE_WORDS.find((w) => first.startsWith(w)) ?? STRONG_WORDS.find((w) => parts.some((p) => p.startsWith(w)));
-};
-
-/** Refuse to serve a tool whose name says it would approve, apply, override or write. */
-export function assertReadOnly(tools: readonly Tool[]): void {
-  for (const t of tools) {
-    const w = writeWord(t.name);
-    if (w) throw new ConfigError(`terragucci mcp is read-only, and the tool ${t.name} would ${w}; it is not served`);
-  }
-}
-
-/** The answer to a call that would approve, apply, override or write: the CLI's own refusal. With `proposing`, the server serves PROPOSE_TOOLS. */
-export function refusal(name: string, proposing = false): string {
-  const w = writeWord(name);
-  const what = w ? `${name} would ${w}, and ` : `there is no tool ${name}; `;
-  const serves = proposing
-    ? "terragucci mcp never approves, applies, overrides or merges: " + what + "it serves what terragucci wrote to the reports bucket and the repo, and opens pull requests and asks for their plans."
-    : "terragucci mcp is read-only: " + what + "it serves only what terragucci wrote to the reports bucket and the repo.";
-  return `${serves} Approvals, applies and overrides belong to a person at a shell (terragucci approve, terragucci override), and a gate approval made over MCP is refused.`;
 }
 
 /** Arguments named like a credential: refused by name, since credentials come from the environment. */
@@ -705,21 +664,6 @@ export async function forgeActor(f: Forge, env: NodeJS.ProcessEnv): Promise<stri
   throw new ToolError(`the forge did not say whose token ${f.tokenEnv} is (${why}), so there is no requester it vouches for; a request needs one`);
 }
 
-const text = (value: unknown): CallToolResult => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
-const failed = (message: string): CallToolResult => ({ isError: true, content: [{ type: "text", text: message }] });
-
-/** Answer one tools/call: a listed tool with its own arguments, or a refusal. */
-export async function callTool(tools: readonly Tool[], name: string, args: Record<string, unknown> | undefined, ctx: Context): Promise<CallToolResult> {
-  const tool = tools.find((t) => t.name === name);
-  if (!tool) return failed(refusal(name, tools.some((t) => PROPOSE_TOOLS.includes(t))));
-  try {
-    return text(await tool.run(checkArgs(tool, args), ctx));
-  } catch (e) {
-    if (e instanceof ToolError || e instanceof StoreError || e instanceof ConfigError || e instanceof TypeError) return failed(e.message);
-    throw e;
-  }
-}
-
 export interface McpOptions {
   /** The repo the server runs in. */
   cwd: string;
@@ -802,29 +746,6 @@ const READ_ONLY_INSTRUCTIONS = "terragucci's estate, reports, state versions, au
 const PROPOSE_INSTRUCTIONS =
   "terragucci's estate, reports, state versions, audit trail, DORA figures and templates, and two ways to propose a change: commit it to a local branch and call propose to push it and open a pull request, or call request_from_template to ask for an app or an add-on from a template. Then plan_result reads the pull request's plan note and policy result. Nothing here approves, applies, overrides or merges; a person does that.";
 
-/** The server, on any transport: the tools listed, each call answered or refused. */
-export async function serve(o: McpOptions, transport: Transport): Promise<Server> {
-  const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
-  assertReadOnly(tools);
-  const ctx = context(o);
-  const { Server, CallToolRequestSchema, ListToolsRequestSchema } = await loadMcpSdk();
-  const server = new Server(
-    { name: "terragucci", version: VERSION },
-    {
-      capabilities: { tools: {} },
-      instructions: o.propose
-        ? PROPOSE_INSTRUCTIONS
-        : READ_ONLY_INSTRUCTIONS,
-    },
-  );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, annotations: t.annotations ?? { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } })),
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async (req) => callTool(tools, req.params.name, req.params.arguments, ctx));
-  await server.connect(transport);
-  return server;
-}
-
 /**
  * terragucci's tools as chant's product tool hook (chant#4555): each reads
  * through the same context, with the bucket's client wrapped so a write
@@ -835,7 +756,6 @@ export async function serve(o: McpOptions, transport: Transport): Promise<Server
  */
 export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS, propose = false): ChantProductMcpHook {
   const forge = propose ? PROPOSE_TOOLS : [];
-  assertReadOnly([...tools, ...forge]);
   const ctx = context(o);
   const contributed = (t: Tool, kind: { readOnly: true } | { forgeWrite: true }): ChantMcpTool => ({
     name: t.name,
@@ -853,33 +773,11 @@ export function productHook(o: McpOptions, tools: readonly Tool[] = TOOLS, propo
   };
 }
 
-/**
- * The chant whose server `terragucci mcp` runs on, or undefined for
- * terragucci's own: any chant with the product tool hook and its propose tier
- * (chant#4655).
- */
-export async function chantServer(o: Pick<McpOptions, "propose" | "tools">): Promise<ChantProductMcp | undefined> {
-  if (o.tools) return undefined;
-  return chantProductMcp();
-}
-
-/** `terragucci mcp`: serve on stdin and stdout (or `transport`, in tests) until the client closes them. */
-export async function mcp(o: McpOptions & { transport?: Transport }): Promise<void> {
-  const chant = await chantServer(o);
-  if (chant) {
-    // chant's `serve mcp` loads a lexicon first and exits where it finds none (a directory that is no chant
-    // project, as a laptop's often is); terragucci's tools need none, so it names the terraform lexicon (chant#3648).
-    const argv = ["serve", "mcp", "--read-only", ...(o.propose ? ["--propose"] : []), "--lexicon", "terraform"];
-    const code = await chant.runChantInProcess(argv, TERRAGUCCI_WORDS, { mcp: productHook(o, TOOLS, o.propose === true) });
-    if (code !== 0) throw new ConfigError(`chant's MCP server ended with exit ${code}`);
-    return;
-  }
-  const { StdioServerTransport } = await loadMcpSdk();
-  const server = await serve(o, o.transport ?? new StdioServerTransport());
-  await new Promise<void>((resolve) => {
-    server.onclose = () => resolve();
-    process.stdin.once("end", () => resolve());
-    process.stdin.once("close", () => resolve());
-  });
-  await server.close();
+/** `terragucci mcp`: chant's server on stdin and stdout, until the client closes them. */
+export async function mcp(o: McpOptions): Promise<void> {
+  // chant's `serve mcp` loads a lexicon first and exits where it finds none (a directory that is no chant
+  // project, as a laptop's often is); terragucci's tools need none, so it names the terraform lexicon (chant#3648).
+  const argv = ["serve", "mcp", "--read-only", ...(o.propose ? ["--propose"] : []), "--lexicon", "terraform"];
+  const code = await runChantInProcess(argv, TERRAGUCCI_WORDS, { mcp: productHook(o, o.tools ?? TOOLS, o.propose === true) });
+  if (code !== 0) throw new ConfigError(`chant's MCP server ended with exit ${code}`);
 }

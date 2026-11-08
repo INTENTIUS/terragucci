@@ -49,8 +49,7 @@ const DENIED = [
   [/^js-yaml\//, "js-yaml"],
   [/^@lezer\/|^@prometheus-io\//, "the PromQL parser"],
   [/(^|\/)packages\/terragucci\/src\/dashboards\/index\.ts$/, "the dashboards' declarations"],
-  // The MCP SDK's JSON Schema validator: terragucci mcp asks a client for no
-  // input, and scripts/cli-bundle.mjs swaps the validator for one that refuses.
+  // Ajv, which only chant core's own validation brings in.
   [/^ajv(-formats)?\//, "Ajv"],
 ];
 

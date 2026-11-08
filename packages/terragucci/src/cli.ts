@@ -102,7 +102,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSyn
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { chantAgentJob, chantProductMcp, preloadChantNext } from "./chant-next";
+import { chantAgentJob, preloadChantNext } from "./chant-next";
+import { runChantInProcess } from "@intentius/chant/ci-product";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
@@ -1442,18 +1443,15 @@ export async function main(argv: string[]): Promise<number> {
         // chant's commit job (chant#4722, #4749): its jobs run `terragucci commit prepare|run|land`, which chant answers in terragucci's words.
         const sub = args[0];
         if (sub !== "prepare" && sub !== "run" && sub !== "land") throw new ConfigError("commit is prepare, run or land, the steps of chant's commit job");
-        const chant = await chantProductMcp();
-        if (!chant) throw new ConfigError("commit is chant's commit job, and the installed chant has no product runtime");
-        return chant.runChantInProcess(["commit", ...argv.slice(argv.indexOf("commit") + 1)], TERRAGUCCI_WORDS);
+        return runChantInProcess(["commit", ...argv.slice(argv.indexOf("commit") + 1)], TERRAGUCCI_WORDS);
       }
       case "agent": {
         const sub = args[0];
         const dir = str(flags, "dir");
         // chant's agent job (chant#4616): its generated jobs run `terragucci agent prepare|run|land`, which chant answers in terragucci's words.
         if (sub === "prepare" || sub === "run" || sub === "land") {
-          const chant = await chantProductMcp();
-          if (!chant || !(await chantAgentJob())) throw new ConfigError(`agent ${sub} is chant's agent job (chant#4616), and the installed chant has none; run terragucci init again to write terragucci's own agent jobs`);
-          return chant.runChantInProcess(["agent", ...argv.slice(argv.indexOf("agent") + 1)], TERRAGUCCI_WORDS);
+          if (!(await chantAgentJob())) throw new ConfigError(`agent ${sub} is chant's agent job (chant#4616), and the installed chant has none; run terragucci init again to write terragucci's own agent jobs`);
+          return runChantInProcess(["agent", ...argv.slice(argv.indexOf("agent") + 1)], TERRAGUCCI_WORDS);
         }
         if (sub === "check-cost") {
           if (!dir) throw new ConfigError("agent check-cost needs --dir <dir>");

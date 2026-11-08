@@ -3,10 +3,8 @@
 // smoke claim's BREAK bundle), so a BREAK bundle differs from the shipped one
 // only by its cut.
 import { readFileSync } from "node:fs";
-import { builtinModules } from "node:module";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { build } from "esbuild";
 import { chantExternal } from "./chant-external.mjs";
 import { chantNext } from "./chant-next-plugin.mjs";
 
@@ -26,71 +24,6 @@ const gzippedJson = {
     });
   },
 };
-
-// The MCP SDK's server imports Ajv to validate what it asks a client to fill
-// in (elicitation). `terragucci mcp` asks for nothing, so the SDK's validator
-// module resolves to src/mcp-validator.ts, which refuses any schema, and Ajv
-// stays out of the bundle (terragucci#657).
-const noAjv = (pkgDir) => ({
-  name: "mcp-no-ajv",
-  setup(b) {
-    b.onResolve({ filter: /[\\/]validation[\\/]ajv-provider\.js$/ }, (args) =>
-      /[\\/]@modelcontextprotocol[\\/]sdk[\\/]/.test(args.importer) ? { path: join(pkgDir, "src/mcp-validator.ts") } : undefined);
-  },
-});
-
-// The MCP SDK and zod are 140 KB of the bundle, and only `terragucci mcp`
-// runs them (terragucci#1232). src/mcp-sdk.ts is their one way in: here it is
-// replaced by a module holding them built on their own, minified and gzipped,
-// which `loadMcpSdk` imports from a data: URL on its first call. The inner
-// build may import Node's own modules only, since a data: URL module resolves
-// nothing else. Its inputs are kept in `innerInputs` for the metafile
-// bundle-check reads.
-export const innerInputs = {};
-const lazyMcpSdk = (pkgDir) => ({
-  name: "lazy-mcp-sdk",
-  setup(b) {
-    b.onLoad({ filter: /[\\/]src[\\/]mcp-sdk\.ts$/ }, async (args) => {
-      const inner = await build({
-        stdin: {
-          contents: [
-            'export { Server } from "@modelcontextprotocol/sdk/server/index.js";',
-            'export { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";',
-            'export { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";',
-          ].join("\n"),
-          resolveDir: pkgDir,
-          sourcefile: "mcp-sdk-inner.js",
-        },
-        bundle: true,
-        platform: "node",
-        format: "esm",
-        target: "node22",
-        legalComments: "none",
-        minify: true,
-        logLevel: "warning",
-        write: false,
-        metafile: true,
-        plugins: [noAjv(pkgDir)],
-      });
-      const code = inner.outputFiles[0].contents;
-      const builtin = new Set(builtinModules.flatMap((m) => [m, `node:${m}`]));
-      const outside = inner.metafile.outputs[Object.keys(inner.metafile.outputs)[0]].imports.filter((i) => !builtin.has(i.path)).map((i) => i.path);
-      if (outside.length) throw new Error(`the MCP SDK's inner build imports ${outside.join(", ")}, which a data: URL module cannot resolve`);
-      Object.assign(innerInputs, inner.metafile.inputs);
-      const packed = gzipSync(code, { level: 9 }).toString("base64");
-      return {
-        loader: "js",
-        resolveDir: pkgDir,
-        watchFiles: Object.keys(inner.metafile.inputs),
-        contents: [
-          'import { gunzipSync } from "node:zlib";',
-          "let sdk;",
-          `export const loadMcpSdk = () => (sdk ??= import("data:text/javascript;base64," + gunzipSync(Buffer.from(${JSON.stringify(packed)}, "base64")).toString("base64")));`,
-        ].join("\n"),
-      };
-    });
-  },
-});
 
 /** The options for the bundle of the package at pkgDir; `plugins` run before the shipped ones. */
 export const bundleOptions = (pkgDir, plugins = []) => ({
@@ -112,5 +45,5 @@ export const bundleOptions = (pkgDir, plugins = []) => ({
   logLevel: "warning",
   // chant core the installed chant serves as compiled JS stays external
   // (scripts/chant-external.mjs); chant-next stands in for a subpath it lacks.
-  plugins: [...plugins, chantExternal(pkgDir), chantNext, gzippedJson, lazyMcpSdk(pkgDir), noAjv(pkgDir)],
+  plugins: [...plugins, chantExternal(pkgDir), chantNext, gzippedJson],
 });

@@ -1,15 +1,23 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { overrideChantNext, type ChantProductMcpHook } from "../src/chant-next";
+import type { ChantProductMcpHook } from "../src/chant-next";
 import { loadConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { mcp, productHook, PROPOSE_TOOLS, PROPOSED_FOOTER, serve, TOOLS, type McpOptions } from "../src/mcp";
+import { mcp, productHook, PROPOSE_TOOLS, PROPOSED_FOOTER, TOOLS, type McpOptions } from "../src/mcp";
+import { chantClient } from "./mcp-chant";
+
+/** Where `terragucci mcp` hands chant its server, a case stands a fake in (fakeChant). */
+const inProcess = vi.hoisted((): { fake?: (argv: string[], words: object, options?: object) => Promise<number> } => ({}));
+vi.mock("@intentius/chant/ci-product", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, runChantInProcess: (...a: [string[], object, object?]) => (inProcess.fake ?? (m.runChantInProcess as typeof inProcess.fake)!)(...a) };
+});
 import { bareFrom, git, tmp, write } from "./helpers";
 
 const CATALOG = readFileSync(join(__dirname, "fixtures/templates/catalog.json"), "utf-8");
@@ -71,13 +79,8 @@ async function requesting(propose = true) {
   return { bare, dir, forge, o };
 }
 
-async function connected(o: McpOptions): Promise<Client> {
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await serve(o, a);
-  const client = new Client({ name: "test", version: "1" });
-  await client.connect(b);
-  return client;
-}
+/** A client of chant's server with terragucci's tools, in process (./mcp-chant.ts). */
+const connected = (o: McpOptions): Promise<Client> => chantClient(o);
 
 const said = (r: object): string => ((r as { content: unknown }).content as { text: string }[])[0].text;
 const requestBranches = (bare: string): string[] => git(bare, "for-each-ref", "--format=%(refname)", "refs/heads/request").split("\n").filter(Boolean);
@@ -91,8 +94,8 @@ describe("terragucci mcp: templates and request_from_template", () => {
     const proposing = (await (await connected({ ...o, propose: true })).listTools()).tools;
     expect(proposing.map((t) => t.name)).toEqual(expect.arrayContaining(["templates", "request_from_template"]));
     const req = proposing.find((t) => t.name === "request_from_template")!;
-    expect(req.annotations?.readOnlyHint).toBe(false);
-    expect(req.annotations?.destructiveHint).toBe(false);
+    // chant's tools/list carries no annotations yet (chant#4823); the tool still declares them.
+    expect(PROPOSE_TOOLS.find((t) => t.name === "request_from_template")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
     expect(req.inputSchema.required).toEqual(["template", "name"]);
   });
 
@@ -186,8 +189,9 @@ function fakeChant(transport: Transport) {
 async function startMcp(o: McpOptions) {
   const [a, b] = InMemoryTransport.createLinkedPair();
   const chant = fakeChant(a);
-  const restore = overrideChantNext("productMcp", chant.m);
-  const done = mcp({ ...o, transport: a });
+  inProcess.fake = chant.m.runChantInProcess;
+  const restore = () => void delete inProcess.fake;
+  const done = mcp(o);
   const client = new Client({ name: "test", version: "1" });
   await client.connect(b);
   return { client, chant, done, restore };
