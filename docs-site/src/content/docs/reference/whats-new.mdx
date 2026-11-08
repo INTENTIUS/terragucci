@@ -15,6 +15,7 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 - Every record terragucci writes on `chant/lifecycle`, such as a state export, a lock release, a migration, an agent run or a template request, goes through chant's ledger writer. In a checkout with no remote the record stays on the local branch, where the command used to fail.
 - A choudoufu wave holds its resources only through chant's row leases, in `_locks/rows/pr-apply.json`; `_locks/apply-rows.json` is no longer read or written. Whether a holding run is gone is chant's answer too: a holder that keeps a heartbeat is judged by it, and `CHANT_LOCK_STALE` and `CHANT_FORGE_TOKEN` are read before `TG_LOCK_STALE` and `TG_TOKEN`.
 - `terragucci state export` and `terragucci unlock-state` run on chant's state export and lock release. An export is refused in a CI job and into any git working tree, and a request that was exported already exits 1. `unlock-state` exits 5, not 1, when a run that may hold the lock is still alive, and 1, not 4, for a request that released already; a new lock is a request of its own, which waits for its own approval.
+- A pull request's ephemeral copy is planned, applied and destroyed by chant's pull request environments of Terraform roots, with the same state key suffix and records. An azurerm copy's location is now recorded as `az://<account>/<container>/<key>`; copies recorded before are still destroyed.
 
 ## In 0.4.53
 

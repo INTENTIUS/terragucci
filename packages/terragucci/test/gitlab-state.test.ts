@@ -4,7 +4,6 @@ import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
 import { stateObject, stateVersion } from "../src/backend";
-import { copyBackend, unitBackend } from "../src/ephemeral";
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
 import type { GitLabFetch } from "@intentius/chant-lexicon-terraform/state/gitlab";
@@ -84,28 +83,6 @@ describe("GitLab-managed state", () => {
     const at = (attrs: Record<string, string>) => stateAddress("http", (n) => attrs[n], "");
     expect(at({ address: ADDRESS })).toEqual(at({ address: `${ADDRESS}/`, username: "x" }));
     expect(at({ address: ADDRESS })).not.toEqual(at({ address: `${API}/net` }));
-  });
-});
-
-describe("ephemeral copies of GitLab-managed state", () => {
-  const root = (attrs: string): string => write(tmp(), { "main.tf": `terraform {\n  backend "http" {\n${attrs}  }\n}\n` });
-  it("names the copy's state and its lock with the suffix, from the block or the variables", () => {
-    const block = root(`    address        = "${ADDRESS}"\n    lock_address   = "${ADDRESS}/lock"\n    unlock_address = "${ADDRESS}/lock"\n`);
-    expect(copyBackend(block, "app", "pr-3")).toEqual({ type: "http", attribute: "address", key: `${API}/app-pr-3`, location: `${API}/app-pr-3`, extra: { lock_address: `${API}/app-pr-3/lock`, unlock_address: `${API}/app-pr-3/lock` } });
-    const empty = root("");
-    expect(copyBackend(empty, "app", "pr-3", { TF_HTTP_ADDRESS: ADDRESS, TF_HTTP_LOCK_ADDRESS: `${ADDRESS}/lock` })).toEqual({ type: "http", attribute: "address", key: `${API}/app-pr-3`, location: `${API}/app-pr-3`, extra: { lock_address: `${API}/app-pr-3/lock` } });
-    expect(copyBackend(root(`    address = "${ADDRESS}"\n`), "app", "pr-3")).not.toHaveProperty("extra");
-  });
-
-  it("refuses an http backend that is not GitLab's, one with no address, and a lock of another state", () => {
-    expect(() => copyBackend(root('    address = "https://state.example.com/net"\n'), "app", "pr-3")).toThrow(/not a GitLab project's state API/);
-    expect(() => copyBackend(root(""), "app", "pr-3")).toThrow(/names no address, in the block or TF_HTTP_ADDRESS/);
-    expect(() => copyBackend(root(`    address      = "${ADDRESS}"\n    lock_address = "${API}/net/lock"\n`), "app", "pr-3")).toThrow(/lock_address .* is not the lock of its state/);
-  });
-
-  it("checks a unit's copy locks its own state", () => {
-    const unit = (config: Record<string, string>) => write(tmp(), { ".terraform/terraform.tfstate": JSON.stringify({ backend: { type: "http", config } }) });
-    expect(unitBackend(unit({ address: `${API}/app-pr-3`, lock_address: `${API}/app-pr-3/lock` }))).toEqual({ type: "http", attribute: "address", key: `${API}/app-pr-3`, location: `${API}/app-pr-3`, locks: [`${API}/app-pr-3/lock`] });
   });
 });
 
