@@ -60,7 +60,12 @@ import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { dataDir } from "./backend";
 import { ConfigError, resolveProject, resolveRepo, type SourceProxy, type SourcesSettings } from "./config";
-import { chantRegistryProxies, chantSourceForms, chantSourceFormsNow, type ChantRegistryProxies, type ChantRegistryProxy } from "./chant-next";
+import * as registryLib from "@intentius/chant-lexicon-terraform/registry";
+import type { ChantRegistryProxies, ChantRegistryProxy, ChantSourceForms } from "./chant-next";
+
+/** The terraform lexicon's source reading and forms (chant#3924) and registry proxies (chant#4606). */
+const forms = registryLib as unknown as ChantSourceForms;
+const proxyLib = registryLib as unknown as ChantRegistryProxies;
 import { configAtBase, type TrustedOptions } from "./report/policy";
 import { loadHclParser } from "./rollout/parser";
 import { baseCommit } from "./seal";
@@ -104,43 +109,17 @@ export function sourceGlob(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-/** A hostless registry module address: `<namespace>/<name>/<system>`, optionally with a `//<subdir>`. */
-const HOSTLESS_MODULE = /^[A-Za-z0-9][A-Za-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9_-]*\/[A-Za-z0-9][A-Za-z0-9_-]*(\/\/.*)?$/;
-
 /** An address at a default registry, as the lock file and modules.json write it: the address without its host, else undefined. */
 function atDefaultRegistry(address: string): string | undefined {
   const host = DEFAULT_REGISTRIES.find((h) => address.toLowerCase().startsWith(`${h}/`));
   return host ? address.slice(host.length + 1) : undefined;
 }
 
-/** The forms a module source matches as: as written without its query, and its registry forms. chant's (chant#3924) once loaded. */
-export function moduleForms(source: string): string[] {
-  const lib = chantSourceFormsNow();
-  if (lib) return lib.moduleSourceForms(source);
-  const written = source.trim().split("?")[0]!;
-  const out = [written];
-  const tfr = /^tfr:\/\/([^/]*)\/(.+)$/.exec(written);
-  if (tfr) {
-    if (tfr[1]) out.push(`${tfr[1]}/${tfr[2]}`);
-    else out.push(...DEFAULT_REGISTRIES.map((h) => `${h}/${tfr[2]}`));
-  } else if (HOSTLESS_MODULE.test(written)) {
-    out.push(...DEFAULT_REGISTRIES.map((h) => `${h}/${written}`));
-  } else {
-    const hostless = atDefaultRegistry(written);
-    if (hostless && HOSTLESS_MODULE.test(hostless)) out.push(hostless, ...DEFAULT_REGISTRIES.map((h) => `${h}/${hostless}`).filter((f) => f !== written));
-  }
-  return out;
-}
+/** The forms a module source matches as: as written without its query, and its registry forms (chant#3924). */
+export const moduleForms = (source: string): string[] => forms.moduleSourceForms(source);
 
 /** The forms a provider address matches as: in lower case, and with a default registry's host when it is written without one. */
-export function providerForms(address: string): string[] {
-  const lib = chantSourceFormsNow();
-  if (lib) return lib.providerAddressForms(address);
-  const a = address.trim().toLowerCase();
-  if (a.split("/").length === 2) return [a, ...DEFAULT_REGISTRIES.map((h) => `${h}/${a}`)];
-  const hostless = atDefaultRegistry(a);
-  return hostless && hostless.split("/").length === 2 ? [a, hostless, ...DEFAULT_REGISTRIES.map((h) => `${h}/${hostless}`).filter((f) => f !== a)] : [a];
-}
+export const providerForms = (address: string): string[] => forms.providerAddressForms(address);
 
 /** The upstream a source written through a proxy stands for, or undefined (./sources.ts proxyUpstream). */
 export type ThroughProxy = (kind: UsedSource["kind"], source: string) => string | undefined;
@@ -247,40 +226,14 @@ async function dirSources(abs: string, shown: string, prefix: string, top: boole
 export async function rootSources(repo: string, root: string, parser: Hcl2Json): Promise<{ used: UsedSource[]; unread: { file: string; block: string; source: string; why: string }[] }> {
   const used: UsedSource[] = [];
   const unread: { file: string; block: string; source: string; why: string }[] = [];
-  const walk = async (dir: string, prefix: string, chain: string[], top: boolean): Promise<void> => {
-    const { providers, calls } = await dirSources(join(repo, dir), dir, prefix, top, parser);
-    used.push(...providers);
-    for (const c of calls) {
-      used.push({ kind: "module", file: c.file, block: c.block, source: c.source });
-      if (!isLocal(c.source)) continue;
-      // A Terragrunt source's `//` marks the directory it copies; the module is the path with it read as one `/`.
-      const path = c.source.split("?")[0]!.replace(/\/\/+/g, "/");
-      const next = posix.normalize(posix.join(dir, path)).replace(/\/+$/, "") || ".";
-      if (next === ".." || next.startsWith("../")) {
-        unread.push({ file: c.file, block: c.block, source: c.source, why: "it is outside the repo, so the sources it uses cannot be read" });
-        continue;
-      }
-      if (moduleFiles(join(repo, next), false).length === 0) {
-        if (!existsSync(join(repo, next))) unread.push({ file: c.file, block: c.block, source: c.source, why: `${next} does not exist, so the sources it uses cannot be read` });
-        continue;
-      }
-      if (chain.includes(next)) continue;
-      await walk(next, `${c.block} > `, [...chain, next], false);
-    }
-  };
   const start = posix.normalize(root).replace(/\/+$/, "") || ".";
   // A unit an explicit stack generates from a remote source: the stack file's unit block names it.
   const stacked = await stackUnitSource(repo, start, parser);
   if (stacked) used.push({ kind: "module", file: stacked.file, block: `unit.${stacked.name}`, source: stacked.source });
-  // The terraform lexicon reads the rest (chant#3924); terragucci's own walk is the fallback.
-  const lib = await chantSourceForms();
-  if (lib) {
-    const read = await lib.usedSources(join(repo, start), { project: repo, parser });
-    for (const u of read.used) used.push({ kind: u.kind, file: u.file, block: u.block, source: u.source, ...(u.implied ? { implied: u.implied } : {}) });
-    unread.push(...read.unread);
-    return { used, unread };
-  }
-  await walk(start, "", [start], true);
+  // The terraform lexicon reads the rest (chant#3924).
+  const read = await forms.usedSources(join(repo, start), { project: repo, parser });
+  for (const u of read.used) used.push({ kind: u.kind, file: u.file, block: u.block, source: u.source, ...(u.implied ? { implied: u.implied } : {}) });
+  unread.push(...read.unread);
   return { used, unread };
 }
 
@@ -294,11 +247,10 @@ function refusals(used: readonly UsedSource[], lists: SourcesSettings, through?:
   return out;
 }
 
-/** `sources.proxies` as the terraform lexicon's proxy entries (chant#4606), or none on a chant without them. */
+/** `sources.proxies` as the terraform lexicon's proxy entries (chant#4606), or undefined when there are none. */
 export async function registryProxies(proxies: readonly SourceProxy[] | undefined): Promise<{ lib: ChantRegistryProxies; list: ChantRegistryProxy[] } | undefined> {
   if (!proxies?.length) return undefined;
-  const lib = await chantRegistryProxies();
-  if (!lib) return undefined;
+  const lib = proxyLib;
   const list = proxies.map((p) =>
     p.artifactory ? lib.artifactoryProxy(p.artifactory, p.repo, p.upstream) : lib.nexusProxy({ url: p.nexus!, repo: p.repo, ...(p.upstream ? { upstream: p.upstream } : {}), ...(p.host ? { host: p.host } : {}) }),
   );
@@ -308,8 +260,7 @@ export async function registryProxies(proxies: readonly SourceProxy[] | undefine
 /**
  * How `sources.proxies` stands a source in for its upstream: a module source
  * or provider address written through an Artifactory or Nexus proxy matches
- * the lists as the upstream source too. Without chant's proxies (chant#4606)
- * a source is matched as written only.
+ * the lists as the upstream source too (chant#4606).
  */
 export async function proxyUpstream(proxies: readonly SourceProxy[] | undefined): Promise<ThroughProxy | undefined> {
   const p = await registryProxies(proxies);
@@ -320,7 +271,6 @@ export async function proxyUpstream(proxies: readonly SourceProxy[] | undefined)
 /** Check one root's sources against the lists: what they refuse. */
 export async function checkRootSources(repo: string, root: string, lists: SourcesSettings, parser: Hcl2Json): Promise<SourceRefusal[]> {
   const { used, unread } = await rootSources(repo, root, parser);
-  await chantSourceForms();
   const out = refusals(used, lists, await proxyUpstream(lists.proxies));
   if (lists.modules) for (const u of unread) out.push({ kind: "module", ...u, list: lists.modules });
   return out;
@@ -372,8 +322,7 @@ export async function lockedSources(repo: string, root: string, parser: Hcl2Json
   }
   const lockFile = join(rootDir, ".terraform.lock.hcl");
   const lockText = existsSync(lockFile) ? readFileSync(lockFile, "utf-8") : "";
-  const forms = await chantSourceForms();
-  const locked = forms ? forms.lockedProviders(lockText) : [...lockText.matchAll(/^provider\s+"([^"]+)"/gm)].map((m) => m[1]!);
+  const locked = forms.lockedProviders(lockText);
   // The root and every module init recorded, read from their files: the calls each makes, and the providers each uses.
   const calls = new Map<string, { file: string; source: string }>();
   const users = new Map<string, UsedSource[]>();
@@ -415,7 +364,6 @@ export async function lockedSources(repo: string, root: string, parser: Hcl2Json
 /** Check what one root's `init` fetched and installed against the lists: what they refuse. */
 export async function checkLockedSources(repo: string, root: string, lists: SourcesSettings, parser: Hcl2Json, env: NodeJS.ProcessEnv = {}): Promise<SourceRefusal[]> {
   const used = await lockedSources(repo, root, parser, env);
-  await chantSourceForms();
   return refusals(used, lists, await proxyUpstream(lists.proxies));
 }
 

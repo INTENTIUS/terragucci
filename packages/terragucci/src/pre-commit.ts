@@ -22,7 +22,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chantCheckHooks, type ChantCheckHook, type ChantCheckHooks, type ChantCheckHooksReport } from "./chant-next";
+import * as checkHooksLib from "@intentius/chant/components/check-hooks";
+import type { ChantCheckHook, ChantCheckHooks, ChantCheckHooksReport } from "./chant-next";
 import { CHECK_DIR, type CheckResult } from "./check";
 import { ConfigError, type Binary } from "./config";
 import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
@@ -169,8 +170,8 @@ export interface CheckHooksOptions {
   preCommit: boolean;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
-  /** For tests: the chant check moment, `null` for none. Default: the installed chant's. */
-  chant?: ChantCheckHooks | null;
+  /** For tests: the chant check moment. Default: chant's (`components/check-hooks`). */
+  chant?: ChantCheckHooks;
   /** For tests: runs the fallback's argv. */
   exec?: (argv: string[], cwd: string, env: Record<string, string>) => number;
 }
@@ -182,15 +183,13 @@ const run = (argv: string[], cwd: string, env: Record<string, string>): number =
 };
 
 /**
- * tf-check's check hooks: chant's check moment when the installed chant has
- * it (`ci.hooks.check` at base), else, with `check.pre_commit` on, the
- * preset's hook run here. Without either, nothing runs.
+ * tf-check's check hooks: chant's check moment (`ci.hooks.check` at base).
  */
 export async function checkHooks(repo: string, options: CheckHooksOptions): Promise<CheckResult> {
   const env = options.env ?? process.env;
   const log = options.log ?? ((line: string) => console.log(line));
-  const chant = options.chant === undefined ? await chantCheckHooks() : (options.chant ?? undefined);
-  if (chant) {
+  const chant = options.chant ?? (checkHooksLib as unknown as ChantCheckHooks);
+  {
     mkdirSync(join(repo, CHECK_HOOKS_OUT), { recursive: true });
     let report: ChantCheckHooksReport;
     try {
@@ -206,18 +205,4 @@ export async function checkHooks(repo: string, options: CheckHooksOptions): Prom
     }
     return result;
   }
-  if (!options.preCommit) return { ok: true, log: [], report: [] };
-  const hook = preCommitHook(options.binary);
-  let exit: number;
-  try {
-    exit = (options.exec ?? run)(hook.command, repo, { ...hookEnv(env), CHANT_HOOKS_BASE: options.base });
-  } catch (e) {
-    throw new ConfigError(`check.pre_commit: the hook could not start (${(e as Error).message})`);
-  }
-  return checkHooksResult({
-    base: options.base,
-    status: exit === 0 ? "passed" : "failed",
-    hooks: [{ name: PRE_COMMIT_HOOK, exit, outcome: exit === 0 ? "passed" : "failed" }],
-    ...(exit === 0 ? {} : { failed: `a check hook failed: ${PRE_COMMIT_HOOK}` }),
-  });
 }

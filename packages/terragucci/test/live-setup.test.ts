@@ -1,10 +1,16 @@
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { chantBucketCheck, chantTf046, overrideChantNext } from "../src/chant-next";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** The bucket check a case stands in for chant's, when it sets one. */
+const stand = vi.hoisted((): { checkBucket?: (...a: unknown[]) => Promise<unknown> } => ({}));
+vi.mock("@intentius/chant/bucket-check", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, checkBucket: (...a: unknown[]) => (stand.checkBucket ?? (m.checkBucket as (...x: unknown[]) => Promise<unknown>))(...a) };
+});
 import { describeInit, init } from "../src/init";
 import { liveImportReadsBackend } from "../src/migrate-estate";
 import type { BinaryExec } from "../src/migrate";
-import { codeRules, CODE_RULES } from "../src/tips/index";
+import { codeRules } from "../src/tips/index";
 import type { PolicyExec } from "../src/report/policy";
 import {
   bucketLines,
@@ -134,23 +140,11 @@ describe("the bucket check", () => {
     expect("skip" in bucketTarget(dir, { ...store, kind: "azurerm", bucket: "acct/recs" }, {})).toBe(true);
   });
 
-  it("is skipped on a chant without it", async () => {
-    const restore = overrideChantNext("bucketCheck", null);
-    try {
-      const repo = tmp();
-      write(repo, LIVE_ROOT);
-      const store = parseLiveSetup(JSON.stringify(DERIVED))!.store!;
-      expect(await checkStoreBucket(join(repo, "net"), store, {})).toEqual({ skipped: "the installed chant has no bucket check" });
-    } finally {
-      restore();
-    }
-  });
+
 
   it("passes the estate's prefix to chant's check and prints each failing setting with its fix", async () => {
     const seen: unknown[] = [];
-    const restore = overrideChantNext("bucketCheck", {
-      BucketCheckError: Error,
-      checkBucket: async (target: unknown, options: unknown) => {
+    stand.checkBucket = async (target: unknown, options: unknown) => {
         seen.push(target, options);
         return {
           store: "s3",
@@ -163,8 +157,8 @@ describe("the bucket check", () => {
             { setting: "public_access_block", verdict: "unreadable", found: "GetPublicAccessBlock was denied", unwaivable: false },
           ],
         };
-      },
-    });
+    };
+    const restore = () => void delete stand.checkBucket;
     try {
       const repo = tmp();
       write(repo, LIVE_ROOT);
@@ -180,11 +174,7 @@ describe("the bucket check", () => {
     }
   });
 
-  it("is chant's own check where the installed chant carries it", async () => {
-    const lib = await chantBucketCheck();
-    if (!lib) return;
-    expect(typeof lib.checkBucket).toBe("function");
-  });
+
 });
 
 describe("init under choudoufu", () => {
@@ -227,16 +217,8 @@ describe("live-import reads the backend", () => {
 });
 
 describe("TF046 in the tips", () => {
-  it("is on where the installed chant has it, and absent where it does not", async () => {
-    const lib = await chantTf046();
-    const rules = await codeRules({});
-    if (lib) expect(Object.keys(rules)).toContain("TF046");
-    else expect(rules).toBe(CODE_RULES);
-    const restore = overrideChantNext("tf046", null);
-    try {
-      expect(Object.keys(await codeRules({}))).not.toContain("TF046");
-    } finally {
-      restore();
-    }
+  it("is on", async () => {
+    expect(Object.keys(await codeRules({}))).toContain("TF046");
   });
+
 });

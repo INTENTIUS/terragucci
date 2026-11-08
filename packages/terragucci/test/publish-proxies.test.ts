@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { validateConfig } from "../src/config";
-import { chantNextParts } from "../src/chant-next";
 import { publish } from "../src/publish";
 import { repositoryPlace } from "../src/publish/hosted";
 import { proxyUpstream, sourceAllowed } from "../src/sources";
 import { git, tmp, write } from "./helpers";
 
-const parts = await chantNextParts();
 
 function commit(dir: string, message: string): void {
   git(dir, "add", "-A");
@@ -87,7 +85,7 @@ describe("sources.proxies (terragucci#1302)", () => {
     expect(problems({ sources: { proxies: [{ artifactory: "acme.jfrog.io", repo: "x", host: "label" }] } })).toContain("it needs nexus");
   });
 
-  it.skipIf(!parts.registryProxies)("matches a source written through a proxy as its upstream", async () => {
+  it("matches a source written through a proxy as its upstream", async () => {
     const through = await proxyUpstream([{ artifactory: "acme.jfrog.io", repo: "tf-remote" }]);
     const list = ["registry.terraform.io/terraform-aws-modules/*/*"];
     expect(sourceAllowed("module", "acme.jfrog.io/tf-remote__terraform-aws-modules/vpc/aws", list, through)).toBe(true);

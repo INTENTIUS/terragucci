@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { overrideChantNext, type ChantCheckHook, type ChantCheckHooks, type ChantCheckHooksReport } from "../src/chant-next";
+import { CI_CHECK_HOOK_FLOOR } from "@intentius/chant/components/check-hooks";
+import type { ChantCheckHook, ChantCheckHooks, ChantCheckHooksReport } from "../src/chant-next";
 import { ConfigError, validateConfig } from "../src/config";
 import { init } from "../src/init";
 import { checkHooks, checkHooksResult, namesCheckHooks, PRE_COMMIT_HOOK, preCommitHook, preCommitScript, withoutPreCommitHook, withPreCommitHook } from "../src/pre-commit";
@@ -124,22 +125,9 @@ describe("check.pre_commit", () => {
     expect(result.log).toContain("FAILED check hooks: a check hook failed: tflint");
   });
 
-  it("runs the preset itself, without forge tokens, on a chant with no check moment", async () => {
-    const ran: { argv: string[]; env: Record<string, string> }[] = [];
-    const env = { PATH: "/usr/bin", GITHUB_TOKEN: "secret", TG_TOKEN: "secret", TF_TOKEN_app_terraform_io: "secret", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "secret" };
-    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: [], binary: "choudoufu", preCommit: true, chant: null, env, exec: (argv, _cwd, e) => (ran.push({ argv, env: e }), 1) });
-    expect(result.ok).toBe(false);
-    expect(ran).toHaveLength(1);
-    expect(ran[0]!.argv).toEqual(preCommitHook("choudoufu").command);
-    expect(ran[0]!.env).toEqual({ PATH: "/usr/bin", CHANT_HOOKS_BASE: "origin/main" });
-  });
 
-  it("runs nothing on a chant with no check moment when the preset is off", async () => {
-    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: [], binary: "tofu", preCommit: false, chant: null, exec: () => {
-      throw new Error("ran");
-    } });
-    expect(result).toEqual({ ok: true, log: [], report: [] });
-  });
+
+
 
   it("reports nothing when no check hook is declared", () => {
     expect(checkHooksResult({ base: "HEAD", status: "none", hooks: [] })).toEqual({ ok: true, log: [], report: [] });
@@ -162,12 +150,11 @@ describe("init with check.pre_commit", () => {
   });
 
   it("writes the hook into chant.workspace.json with chant's writer and runs check-hooks in tf-check", async () => {
-    restore = overrideChantNext("checkHooks", fakeChant());
     const dir = repo("binary: tofu\ncheck:\n  pre_commit: true\n", { ".pre-commit-config.yaml": "repos: []\n" });
     const r = await init(dir, { binary: "tofu" });
     const decl = JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"));
     expect(decl.ci.hooks.check).toEqual([preCommitHook("tofu")]);
-    expect(decl.minReader).toBe("0.124.55");
+    expect(decl.minReader).toBe(CI_CHECK_HOOK_FLOOR);
     const pipeline = readFileSync(join(dir, ".github/workflows/terragucci.yml"), "utf-8");
     expect(pipeline).toContain("terragucci check-hooks --binary tofu --pre-commit");
     expect(pipeline).toContain("fetch-depth: 0");
@@ -177,12 +164,5 @@ describe("init with check.pre_commit", () => {
     expect(again.files.every((f) => f.status === "unchanged")).toBe(true);
   });
 
-  it("writes no hook on a chant without the check moment, and tf-check runs the preset itself", async () => {
-    restore = overrideChantNext("checkHooks", null);
-    const dir = repo("binary: tofu\ncheck:\n  pre_commit: true\n");
-    const r = await init(dir, { binary: "tofu" });
-    expect(r.files.some((f) => f.path.endsWith("chant.workspace.json"))).toBe(false);
-    expect(r.notes.some((n) => n.includes("the installed chant has no ci.hooks.check moment"))).toBe(true);
-    expect(readFileSync(join(dir, ".github/workflows/terragucci.yml"), "utf-8")).toContain("terragucci check-hooks --binary tofu --pre-commit");
-  });
+
 });

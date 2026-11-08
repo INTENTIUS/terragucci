@@ -493,7 +493,7 @@ export function addModuleCompat(versions: EstateVersions, indexes: readonly Proj
   }
 }
 
-/** `catalog`: chant's known-module catalog (../chant-next.ts chantModuleCatalog), absent when the installed chant has none. */
+/** `catalog`: chant's known-module catalog (`module-catalog`, chant#4560); absent, the page shows no compatibility column. */
 export function buildEstate(indexes: ProjectIndex[], now: Date = new Date(), catalog?: ChantModuleCatalog): Estate {
   const projects = indexes.map((p) => projectState(p, now));
   const overridden = projects.reduce((n, p) => n + (p.overridden ?? 0), 0);
