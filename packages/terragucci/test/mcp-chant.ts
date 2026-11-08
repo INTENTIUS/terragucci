@@ -4,8 +4,8 @@
  * over the SDK's in-memory transport, as `terragucci mcp` serves them over
  * stdio. Tool names go to and come back from the server as `terragucci:<name>`;
  * the client below takes and gives them without the prefix. A call's result
- * is read as any object: chant puts a tool's array result in
- * `structuredContent`, which the SDK's own result schema refuses.
+ * is read as any object, so a test reads `structuredContent.items` (chant
+ * sends an array result so, chant#4822) without a cast through the SDK's type.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { z } from "zod";
