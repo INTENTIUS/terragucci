@@ -29,6 +29,8 @@ export const TERRAGUCCI_WORDS = {
     { from: "atlantis apply", command: "apply" as const, when: ATLANTIS_COMMENTS_ENV },
   ],
   approve: "terragucci approve {gate} --plan {digest} {sign}",
+  // The plan note's line for a denial a listed approver may override (chant#4810), as ../override.ts overrideCommand writes it.
+  override: 'terragucci override {target} --rule {rule} --reason "<why>" {sign}',
   op: WAVES_OP,
   gateName: "wave-{k}",
   approval: "per-wave" as const,

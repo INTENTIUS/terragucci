@@ -89,24 +89,6 @@ export function unitBlocks(text: string, address?: string): PlanBlock[] {
   return address === undefined ? chosen : chosen.filter((b) => blockIs(b, address));
 }
 
-/**
- * Lines as a `diff` block wants them, as Atlantis comments a plan: each
- * line's change symbol (`+`, `-`, `~`, `-/+`, `+/-`) moves to the first
- * column, so the forge colours additions and removals. The rest of the line
- * is the binary's.
- */
-export function diffLines(lines: string[]): string[] {
-  return lines.map((l) => l.replace(/^(\s+)(-\/\+|\+\/-|[-+~])(?= )/, "$2$1"));
-}
-
-/** A fenced `diff` block whose fence is longer than any run of backticks in the text. */
-export function diffFence(lines: string[]): string {
-  const body = lines.join("\n");
-  const longest = Math.max(0, ...[...body.matchAll(/`+/g)].map((m) => m[0].length));
-  const fence = "`".repeat(Math.max(3, longest + 1));
-  return `${fence}diff\n${body}\n${fence}\n`;
-}
-
 /** The plan's one-line total: `Plan: 1 to add, ...`, `No changes. ...`, or the outputs line. */
 export function planTotals(text: string): string | undefined {
   return /^Plan: .*$/m.exec(text)?.[0] ?? /^No changes\..*$/m.exec(text)?.[0] ?? (/^Changes to Outputs:/m.test(text) ? "Changes to Outputs only." : undefined);

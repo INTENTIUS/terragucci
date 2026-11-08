@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildReport, planFiles, type RootInput } from "../src/report/build";
-import { blockIs, diffFence, diffLines, planBlocks, scrubPlanText, sensitiveValues, unitBlocks } from "../src/report/plan-text";
+import { blockIs, planBlocks, scrubPlanText, sensitiveValues, unitBlocks } from "../src/report/plan-text";
 import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { artifactReportUrl, forgeOfEnv, reportLinks } from "../src/report/stage";
 import { presignedLinks, writeReportDir } from "../src/report/store";
@@ -35,13 +35,6 @@ describe("the rendered plan, cut into blocks", () => {
     expect(blockIs(blocks[0], "terraform_data.cfg", "abcd1234")).toBe(false);
     // The outputs and the totals belong to no resource.
     expect(blocks.flatMap((b) => b.lines).some((l) => l.startsWith("Plan:") || l.includes("Changes to Outputs"))).toBe(false);
-  });
-
-  it("moves each change symbol to the first column, as Atlantis does, so the forge colours the lines", () => {
-    expect(diffLines(['  ~ resource "a" "b" {', "      - 1,", "-/+ resource", "        id = 1", '  # a.b will be updated'])).toEqual([
-      '~   resource "a" "b" {', "-       1,", "-/+ resource", "        id = 1", "  # a.b will be updated",
-    ]);
-    expect(diffFence(["a ```b"])).toBe("````diff\na ```b\n````\n");
   });
 
   it("masks every value the plan JSON marks sensitive, even where the binary printed it", () => {
