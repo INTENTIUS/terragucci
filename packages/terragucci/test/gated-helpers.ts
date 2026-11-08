@@ -7,11 +7,11 @@
  * writes `_gates/<op>/done.jsonl`.
  */
 import { readLedger } from "../src/apply";
-import { chantStateOps } from "../src/chant-next";
+import { stateOps } from "../src/gated-request";
 import { MIGRATE_LEDGER, migrationHistory } from "../src/migrate";
 
 /** Whether the installed chant runs these operations as gated requests. */
-export const chantGated = async (): Promise<boolean> => !!(await chantStateOps());
+export const chantGated = async (): Promise<boolean> => true;
 
 /** chant's request, as its pending line carries it. */
 export interface GatedRequest {
@@ -24,7 +24,7 @@ export interface GatedRequest {
 
 /** The digest chant binds a request to (`gatedRequestDigest`); only called on a chant with state operations. */
 export async function chantRequestDigest(op: string, request: GatedRequest): Promise<string> {
-  const m = (await chantStateOps()) as unknown as { gatedRequestDigest(op: string, r: GatedRequest): string };
+  const m = stateOps as unknown as { gatedRequestDigest(op: string, r: GatedRequest): string };
   return m.gatedRequestDigest(op, request);
 }
 

@@ -5,7 +5,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTION_APPLIED, ACTION_LEDGER, actionApproveCommand, engineRefusal, noActionReply, resumableActions, resumeActions, runAction, type ActionOptions } from "../src/action";
 import { writeLedger } from "../src/apply";
 import { approveGate, isGateKeyword } from "../src/approve";
-import { overrideChantNext, type ChantGatedRequestRead, type ChantInvokeActionInput } from "../src/chant-next";
+import type { ChantGatedRequestRead, ChantInvokeActionInput } from "../src/chant-next";
+
+/** chant's action and gated-request reads a case stands in, when it sets them. */
+const fakeOps = vi.hoisted((): { invokeAction?: (input: never) => Promise<unknown>; readGatedRequests?: (...a: never[]) => Promise<unknown> } => ({}));
+vi.mock("@intentius/chant-lexicon-terraform/action-ops", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, invokeAction: (input: never) => (fakeOps.invokeAction ?? (m.invokeAction as (i: never) => Promise<unknown>))(input) };
+});
+vi.mock("@intentius/chant/lifecycle/gated-request", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  return { ...m, readGatedRequests: (...a: never[]) => (fakeOps.readGatedRequests ?? (m.readGatedRequests as (...x: never[]) => Promise<unknown>))(...a) };
+});
 import { main } from "../src/cli";
 import { decideComment, parseComment, readActionDispatch } from "../src/comment";
 import { ACTION_PATHS, renderPipeline, type PipelineInput } from "../src/render";
@@ -120,16 +131,15 @@ describe("terragucci action", () => {
   it("with a fake chant, waits with exit 3 and prints the digest and the approve line as JSON", async () => {
     const r = repo();
     const asked: ChantInvokeActionInput[] = [];
-    const ops = (await import("../src/chant-next")).chantStateOps;
-    const base = (await ops()) ?? {};
-    restore = overrideChantNext("stateOps", {
-      ...base,
-      readGatedRequests: async () => [],
-      invokeAction: async (input: ChantInvokeActionInput) => {
-        asked.push(input);
-        return { outcome: "gated", digest: D, subject: `${input.root}:${input.address}`, command: "chant approve", exit: 3 };
-      },
-    });
+    fakeOps.readGatedRequests = async () => [];
+    fakeOps.invokeAction = (async (input: ChantInvokeActionInput) => {
+      asked.push(input);
+      return { outcome: "gated", digest: D, subject: `${input.root}:${input.address}`, command: "chant approve", exit: 3 };
+    }) as never;
+    restore = () => {
+      delete fakeOps.readGatedRequests;
+      delete fakeOps.invokeAction;
+    };
     const done = await cli(r.work, "action", "apps/orders", ADDRESS, "--json", "--binary", r.bin, "--actor", "alice");
     expect(done.code).toBe(3);
     expect(JSON.parse(done.out)).toEqual({ status: "gated", root: "apps/orders", address: ADDRESS, digest: D, approve: `terragucci approve action apps/orders --plan ${D}` });

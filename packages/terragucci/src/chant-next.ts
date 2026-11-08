@@ -1171,38 +1171,6 @@ const has = (m: Record<string, unknown>, ...names: string[]): boolean => names.e
 const loaders = {
 
 
-  opWaveStep: once<ChantOpWaveStep>(
-    () => import("@intentius/chant/op/op-waves-capability"),
-    (m) => (has(m, "opWaveStepProblems", "opWaveHoldsProblems", "planOpWaveStep", "applyOpWaveStep") ? (m as unknown as ChantOpWaveStep) : undefined),
-  ),
-  waveCapabilities: once<ChantWaveCapabilities>(
-    async () => {
-      const core: Record<string, unknown> = await import("@intentius/chant/components/capability");
-      const lexicon: Record<string, unknown> = await import("@intentius/chant-lexicon-terraform/components/capability-plugin");
-      const Registry = core.CapabilityRegistry as (new () => { register(c: unknown): unknown; has(kind: string): boolean }) | undefined;
-      const capability = lexicon.terraformApplyCapability as { kind?: string } | undefined;
-      if (!Registry || capability?.kind !== "terraform-apply") return {};
-      const registry = new Registry();
-      registry.register(capability);
-      return { registry };
-    },
-    (m) => (m.registry ? (m as unknown as ChantWaveCapabilities) : undefined),
-  ),
-  opStandDown: once<ChantOpStandDown>(
-    // `op` is on the pin; the stand-down (chant#4581) is told apart by its exports.
-    () => import("@intentius/chant/op"),
-    (m) => (has(m, "newerCommitOnBranch", "tipAppliesTargets") && typeof m.OP_WAVE_STAND_DOWN_FLOOR === "string" ? (m as unknown as ChantOpStandDown) : undefined),
-  ),
-  stateOps: once<ChantStateOps>(
-    async () => {
-      const ops: object = await import("@intentius/chant-lexicon-terraform/state-ops");
-      const requests: object = await import("@intentius/chant/lifecycle/gated-request");
-      // chant#4653: the day-2 action sits on its own subpath.
-      const action: object = await import("@intentius/chant-lexicon-terraform/action-ops");
-      return { ...requests, ...ops, ...action };
-    },
-    (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests", "invokeAction") && m.ACTION_ADDRESS instanceof RegExp ? (m as unknown as ChantStateOps) : undefined),
-  ),
   agentJob: once<ChantAgentJob>(
     async () => {
       const product: Record<string, unknown> = await import("@intentius/chant/ci-product");
@@ -1246,31 +1214,6 @@ const loaders = {
       return has(m, "productDriftAgent", "setActiveProductWords") && g && has(g, "github", "gitlab", "forgejo") ? (m as unknown as ChantAgentJob) : undefined;
     },
   ),
-  holdRecord: once<ChantHoldRecord>(
-    () => import("@intentius/chant/lifecycle/gated-request"),
-    // chant#4623's feature-detect: an op-wave hold with `record: true` gets chant's applied and finished lines and keeps its attachment.
-    (m) => (typeof m.OP_WAVE_HOLD_RECORD_FLOOR === "string" && has(m, "gatedRequestAttachmentPath") ? (m as unknown as ChantHoldRecord) : undefined),
-  ),
-  requestProof: once<ChantRequestProof>(
-    async () => {
-      const requests: Record<string, unknown> = await import("@intentius/chant/lifecycle/gated-request");
-      const git: Record<string, unknown> = await import("@intentius/chant/lifecycle/git");
-      return { gatedRequestAttachmentPath: requests.gatedRequestAttachmentPath, readBlobFromPath: git.readBlobFromPath };
-    },
-    (m) => (has(m, "gatedRequestAttachmentPath", "readBlobFromPath") ? (m as unknown as ChantRequestProof) : undefined),
-  ),
-  releaseRead: once<ChantReleaseRead>(
-    () => import("@intentius/chant/lifecycle/release-ledger"),
-    (m) => (has(m, "releaseLedgerLines", "parseReleaseLedger") ? (m as unknown as ChantReleaseRead) : undefined),
-  ),
-  templateRequest: once<ChantTemplateRequests>(
-    () => import("@intentius/chant/template-request"),
-    (m) => (has(m, "makeTemplateRequest", "checkTemplateRequest", "requestBranch", "requestBody", "templateName", "parseTemplateSpec") && typeof m.TEMPLATE_REQUEST_FLOOR === "string" ? (m as unknown as ChantTemplateRequests) : undefined),
-  ),
-  templateRender: once<ChantTemplateRender>(
-    () => import("@intentius/chant-lexicon-terraform/template"),
-    (m) => (has(m, "renderAppRoot", "terraformInputType", "TemplateRenderError") ? (m as unknown as ChantTemplateRender) : undefined),
-  ),
 };
 
 export type ChantNextPart = keyof typeof loaders;
@@ -1294,24 +1237,6 @@ function loaded<K extends ChantNextPart>(part: K): Awaited<ReturnType<(typeof lo
   return (settled.get(part) ?? undefined) as Awaited<ReturnType<(typeof loaders)[K]>> | undefined;
 }
 
-
-
-
-
-
-/** chant's op-wave step contract (chant#4545), or undefined. */
-export const chantOpWaveStep = (): Promise<ChantOpWaveStep | undefined> => load("opWaveStep");
-/** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C), or undefined. */
-export const chantWaveCapabilities = (): Promise<ChantWaveCapabilities | undefined> => load("waveCapabilities");
-/** The terraform lexicon's state operations with chant's gated requests (chant#4618, #4551), or undefined. */
-export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("stateOps");
-/** chant's recorded op-wave hold (chant#4623), or undefined on a chant whose hold writes no applied or finished line. */
-export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
-/** chant's reader of a gated request's stored proof (chant#4551, #4623), or undefined. */
-export const chantRequestProof = (): Promise<ChantRequestProof | undefined> => load("requestProof");
-
-/** chant's release record reader as it already loaded, for the synchronous ledger reads of another remote. preloadChantNext loads it. */
-export const chantReleaseReadNow = (): ChantReleaseRead | undefined => loaded("releaseRead");
 /** chant's agent job (chant#4616), or undefined. init loads it before it renders the pipeline. */
 export const chantAgentJob = (): Promise<ChantAgentJob | undefined> => load("agentJob");
 /** The agent job as it already loaded, for the synchronous renderer (./render-chant-agent.ts). */
@@ -1319,26 +1244,6 @@ export const chantAgentJobNow = (): ChantAgentJob | undefined => loaded("agentJo
 /** chant's Op generators, which the drift job is written with (terragucci#1305), once loaded. */
 export const chantOpGenerator = (): Promise<ChantAgentJob | undefined> => load("opGenerator");
 export const chantOpGeneratorNow = (): ChantAgentJob | undefined => loaded("opGenerator");
-
-/**
- * Load the parts synchronous code reads, once, before a command runs. cli.ts
- * calls it.
- */
-export async function preloadChantNext(): Promise<void> {
-  await chantOpStandDown();
-  await load("releaseRead");
-}
-
-/** chant's op-wave stand-down (chant#4581), or undefined. */
-export const chantOpStandDown = (): Promise<ChantOpStandDown | undefined> => load("opStandDown");
-/** The stand-down as it already loaded, for the synchronous spec builder in ./chant-waves.ts. cli.ts loads it first. */
-export const chantOpStandDownNow = (): ChantOpStandDown | undefined => loaded("opStandDown");
-
-
-/** chant core's template request (`@intentius/chant/template-request`, chant#4651), or undefined. */
-export const chantTemplateRequests = (): Promise<ChantTemplateRequests | undefined> => load("templateRequest");
-/** The terraform lexicon's template rendering (`@intentius/chant-lexicon-terraform/template`, chant#4652), or undefined. */
-export const chantTemplateRender = (): Promise<ChantTemplateRender | undefined> => load("templateRender");
 
 /**
  * For tests: make a part missing (`null`), or stand a module in for it.
@@ -1353,14 +1258,7 @@ export function overrideChantNext(part: ChantNextPart, module: unknown | null): 
 
 /** What the installed chant carries of the composed run, its locks and its plan shape. */
 export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> {
-  const [opWaveStep, waveCapabilities] = await Promise.all([chantOpWaveStep(), chantWaveCapabilities()]);
-  const [opStandDown] = [await chantOpStandDown()];
-  const [stateOps, releaseRead] = [await chantStateOps(), await load("releaseRead")];
   const agentJob = await chantAgentJob();
   const opGenerator = await chantOpGenerator();
-  const holdRecord = await chantHoldRecord();
-  const requestProof = await chantRequestProof();
-  const templateRequest = await chantTemplateRequests();
-  const templateRender = await chantTemplateRender();
-  return { opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, opStandDown: !!opStandDown, stateOps: !!stateOps, releaseRead: !!releaseRead, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { agentJob: !!agentJob, opGenerator: !!opGenerator };
 }

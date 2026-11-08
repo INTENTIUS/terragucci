@@ -14,11 +14,15 @@
  * `terragucci approve unlock|export|migrate` approves them.
  */
 import { spawnSync } from "node:child_process";
-import { chantStateOps, type ChantGatedStateOpResult, type ChantRootRun, type ChantStateOps } from "./chant-next";
+import * as gatedRequestLib from "@intentius/chant/lifecycle/gated-request";
+import * as stateOpsLib from "@intentius/chant-lexicon-terraform/state-ops";
+import * as actionOpsLib from "@intentius/chant-lexicon-terraform/action-ops";
+import type { ChantGatedStateOpResult, ChantRootRun, ChantStateOps } from "./chant-next";
 import type { ApprovalRule } from "./approval";
 import type { GatedRequestRules } from "@intentius/chant/lifecycle/gated-request";
 
-export { chantStateOps };
+/** The terraform lexicon's state operations (chant#4618), its day-2 action (chant#4653) and chant's gated requests (chant#4551). */
+export const stateOps = { ...gatedRequestLib, ...stateOpsLib, ...actionOpsLib } as unknown as ChantStateOps;
 export type { ChantGatedStateOpResult, ChantStateOps };
 
 /** The rules a request is decided by: the mode at base and `approval_rules` as chant's quorum. */

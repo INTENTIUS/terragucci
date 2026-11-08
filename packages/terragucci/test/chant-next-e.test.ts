@@ -2,12 +2,11 @@
 // (chant#4580), the op-wave step contract (chant#4545) and chant's OTLP exporter (chant#4555), on the chant the tree pins.
 import { describe, expect, it } from "vitest";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { chantOpWaveStep } from "../src/chant-next";
+import * as step from "@intentius/chant/op/op-waves-capability";
 import { waveCallArgv, waveExit, waveStepProblems, wavesStepSpec } from "../src/chant-waves";
 import { driftCount, driftNames } from "../src/report/drift";
 import { send } from "../src/telemetry";
 
-const step = await chantOpWaveStep();
 
 
 describe("exit codes", () => {
@@ -56,10 +55,10 @@ describe("the op-wave step contract", () => {
     expect(spec.waves[1].runs).toEqual([{ target: "app", input: { reads: [{ var: "vpc_id", root: "network", output: ["vpc_id"] }] } }, { target: "edge" }]);
   });
 
-  it.runIf(step)("is a spec chant's step check accepts", () => {
+  it("is a spec chant's step check accepts", () => {
     const spec = wavesStepSpec(input) as unknown as Record<string, any>;
-    expect(step!.opWaveStepProblems(spec)).toEqual([]);
-    expect(step!.opWaveHoldsProblems(spec.holds)).toEqual([]);
+    expect(step.opWaveStepProblems(spec as never)).toEqual([]);
+    expect(step.opWaveHoldsProblems(spec.holds as never)).toEqual([]);
   });
 
   it("says why a repo keeps the call back", () => {

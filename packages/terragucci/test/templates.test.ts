@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli";
-import { overrideChantNext, type ChantReleaseCatalogDoc } from "../src/chant-next";
+import type { ChantReleaseCatalogDoc } from "../src/chant-next";
 import { publish } from "../src/publish";
 import type { RegistryStore } from "../src/publish/registry";
 import { AUDIT_KINDS, ledgerEntries, REQUESTS_FILE } from "../src/report/audit";
@@ -119,20 +119,12 @@ describe("terragucci templates", () => {
     expect(JSON.parse(out).results[0].versions.map((v: { version: string; attestation: string }) => `${v.version}:${v.attestation}`)).toEqual(["1.2.0:signed", "1.0.0:unsigned"]);
   });
 
-  it("show names one template by address, path or last segment, and lists on a chant without template requests", async () => {
+  it("show names one template by address, path or last segment", async () => {
     const { dir } = repo();
     for (const name of ["acme/bucket/aws", "modules.test/acme/bucket/aws", "modules/bucket", "bucket"]) {
       const { code, out } = await run(dir, "templates", "show", name, "--json");
       expect(code, name).toBe(0);
       expect(JSON.parse(out).results.template).toBe("acme/bucket/aws");
-    }
-    const restore = [overrideChantNext("templateRequest", null), overrideChantNext("templateRender", null)];
-    try {
-      const { code, out } = await run(dir, "templates", "show", "bucket");
-      expect(code).toBe(0);
-      expect(out).toContain("bucket_name  string  required");
-    } finally {
-      for (const r of restore) r();
     }
   });
 });
