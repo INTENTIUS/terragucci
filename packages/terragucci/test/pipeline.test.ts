@@ -9,7 +9,7 @@ import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
-import { agentRunScript } from "../src/render-agent";
+import { CHANT_AGENT_PATHS } from "../src/render-chant-agent";
 import { applyScript, AWS_CLI, forgejoSkipLevels, stageTokens, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { driftOp, git, tmp } from "./helpers";
@@ -971,58 +971,14 @@ describe("the agent comment", () => {
     expect(agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "T", comment: false } }, "t"))).toBeUndefined();
   });
 
-  it.each(["github", "forgejo"] as const)("%s: an agent comment starts the agent job, and the re-plan job leaves it alone", (forge) => {
-    const doc = withAgent(forge);
-    expect(doc.jobs.agent.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci agent ')");
+  it.each(["github", "forgejo"] as const)("%s: an agent comment is chant's agent job, in a workflow of its own, and the re-plan job leaves it alone", (forge) => {
+    const out = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc: OIDC, agentComment: agent });
+    const doc = body(out.content);
+    expect(doc.jobs.agent).toBeUndefined();
+    expect(doc.jobs["agent-push"]).toBeUndefined();
     expect(doc.jobs.replan.if).toContain("&& !startsWith(github.event.comment.body, '/terragucci agent ')");
     expect(JSON.stringify(doc.jobs.replan.steps)).toContain(" --agent on --out terragucci-comment.json");
-    expect(doc.jobs.agent["timeout-minutes"]).toBe(20);
-    expect(doc.jobs["agent-push"].needs).toBe("agent");
-    expect(doc.jobs["agent-push"].if).toBe("needs.agent.outputs.go == '1'");
-  });
-
-  it.each(["github", "forgejo"] as const)("%s: no cloud credentials reach either job, and only the push job holds the push token", (forge) => {
-    const doc = withAgent(forge);
-    for (const name of ["agent", "agent-push"]) {
-      const job = JSON.stringify(doc.jobs[name]);
-      expect(job, name).not.toContain(OIDC.plan_role);
-      expect(job, name).not.toContain(OIDC.apply_role);
-      expect(job, name).not.toContain("tg oidc");
-      expect(job, name).not.toContain("id-token");
-      expect(job, name).not.toContain("enable-openid-connect");
-    }
-    expect(JSON.stringify(doc.jobs.agent)).not.toContain("AGENT_FORGE_TOKEN");
-    expect(doc.jobs["agent-push"].env.TG_TOKEN).toBe("${{ secrets.AGENT_FORGE_TOKEN }}");
-    // The model's key is in the agent's step alone, not the job, and not the push job.
-    const run = doc.jobs.agent.steps.find((s: { name?: string }) => s.name === "Run the agent on the ask");
-    expect(run.env.ANTHROPIC_API_KEY).toBe("${{ secrets.ANTHROPIC_API_KEY }}");
-    expect(run.env.TG_AGENT_MAX_TURNS).toBe("12");
-    expect(run.env.TG_TOKEN).toBeUndefined();
-    expect(doc.jobs.agent.env?.ANTHROPIC_API_KEY).toBeUndefined();
-    expect(JSON.stringify(doc.jobs["agent-push"])).not.toContain("ANTHROPIC_API_KEY");
-    // Checkouts keep no credentials for the agent to find.
-    for (const name of ["agent", "agent-push"]) {
-      const checkout = doc.jobs[name].steps.find((s: { uses?: string }) => s.uses?.includes("checkout"));
-      expect(checkout.with["persist-credentials"], name).toBe(false);
-    }
-    if (forge === "github") {
-      expect(doc.jobs.agent.permissions).toEqual({ contents: "read", "pull-requests": "write" });
-      expect(doc.jobs["agent-push"].permissions).toEqual({ contents: "read" });
-    }
-  });
-
-  it.each(["github", "forgejo"] as const)("%s: the ask never reaches a shell as an expression", (forge) => {
-    const doc = withAgent(forge);
-    for (const name of ["agent", "agent-push"]) expect(JSON.stringify(doc.jobs[name].steps), name).not.toContain("github.event.comment");
-    const ask = doc.jobs.agent.steps.find((s: { id?: string }) => s.id === "ask").run as string;
-    expect(ask).toContain(`terragucci comment --agent run${forge === "forgejo" ? " --forge forgejo" : ""} --policy-dir 'rego' --out /tmp/terragucci-agent/decision.json --prompt /tmp/terragucci-agent/prompt.md || exit 1`);
-    const run = doc.jobs.agent.steps.find((s: { name?: string }) => s.name === "Run the agent on the ask").run as string;
-    expect(run).toContain(`( ${AGENT_COMMAND} ) <"$TG_AGENT_PROMPT"`);
-    expect(run).toContain('git -c core.hooksPath=/dev/null diff --cached --binary --no-renames "$TG_SHA" >/tmp/terragucci-agent/change/change.patch');
-    const push = doc.jobs["agent-push"].steps.at(-1).run as string;
-    expect(push).toContain("terragucci comment --agent push --change /tmp/terragucci-agent/change --policy-dir 'rego'");
-    expect(doc.jobs.agent.steps.at(-1).uses).toBe(forgeRef(forge, uploadArtifact(forge)));
-    expect(doc.jobs["agent-push"].steps[1].uses).toBe(forgeRef(forge, downloadArtifact(forge)));
+    expect(out.extra?.map((f) => f.path)).toContain(CHANT_AGENT_PATHS[forge]);
   });
 
   it("the default command is Claude Code in print mode with the file tools and no web, MCP or project settings", () => {
@@ -1030,62 +986,18 @@ describe("the agent comment", () => {
     for (const flag of ['--max-turns "$TG_AGENT_MAX_TURNS"', "--permission-prompts none", "--setting-sources user", "--strict-mcp-config", '"Edit(.git/**)"', '"WebFetch"']) expect(AGENT_COMMAND).toContain(flag);
     expect(AGENT_COMMAND).not.toContain("dangerously");
     expect(AGENT_COMMAND).not.toContain("bypassPermissions");
-    const custom = agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "T", comment: { command: "my-agent --stdin", key_secret: "OPENAI_KEY" } } }, "t"))!;
-    const doc = body(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: custom }).content);
-    const run = doc.jobs.agent.steps.find((s: { name?: string }) => s.name === "Run the agent on the ask");
-    expect(run.run).toContain('( my-agent --stdin ) <"$TG_AGENT_PROMPT"');
-    expect(run.env.OPENAI_KEY).toBe("${{ secrets.OPENAI_KEY }}");
-    expect(run.env.TG_AGENT_MAX_TURNS).toBe("30");
-    expect(doc.jobs.agent["timeout-minutes"]).toBe(30);
   });
 
-  it("gitlab: needs comments, whose job starts the agent's pipeline on the default branch", () => {
+  it("gitlab: needs comments, whose job starts chant's agent pipeline on the default branch", () => {
     expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent })).toThrow(/agent\.comment on GitLab needs comments: <cron>/);
-    const yml = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent, comments: "*/5 * * * *" }).content;
-    const doc = parseYAML(yml) as any;
-    expect(doc.comments.script[0]).toContain("--agent on");
-    expect(doc.agent.rules).toEqual([{ if: "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TERRAGUCCI_AGENT_MR" }]);
-    expect(doc.agent.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
-    expect(doc.agent.script[0]).toContain("terragucci comment --forge gitlab --agent run");
-    // The agent's command runs with a cleared environment: the job's variables, GITLAB_TOKEN among them, never reach it.
-    expect(doc.agent.script[0]).toMatch(/env -i PATH="\$\{PATH:-\}" .* ANTHROPIC_API_KEY="\$\{ANTHROPIC_API_KEY:-\}" bash -c 'npx -y @anthropic-ai\/claude-code@/);
-    expect(doc.agent.artifacts.paths).toEqual(["terragucci-agent/"]);
-    expect(doc["agent-push"].needs).toEqual(["agent"]);
-    expect(doc["agent-push"].variables).toEqual({ TG_TOKEN: "$AGENT_FORGE_TOKEN" });
-    expect(doc["agent-push"].script[0]).toContain("terragucci comment --forge gitlab --agent push --change terragucci-agent");
+    const out = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, agentComment: agent, comments: "*/5 * * * *" });
+    const doc = parseYAML(out.content) as any;
+    expect(doc.comments.script[0]).toContain("--agent chant");
+    expect(doc.agent).toBeUndefined();
+    expect(doc["agent-push"]).toBeUndefined();
+    expect(out.content).toContain(`- local: ${CHANT_AGENT_PATHS.gitlab}`);
     // The pipeline the comments job starts runs the agent's jobs alone.
-    expect(doc["apply-wave-1"].rules[0].if).toContain("$TERRAGUCCI_AGENT_MR == null");
-    expect(doc.check.rules[0].if).toContain("$TERRAGUCCI_AGENT_MR == null");
-  });
-
-  it("an agent that fails in the step's own shell still writes its exit code and the patch, so the push job can say it stopped", async () => {
-    const work = tmp("tg-agent-work-");
-    git(work, "init", "-q", "-b", "main");
-    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "head");
-    const sha = git(work, "rev-parse", "HEAD").trim();
-    const dir = tmp("tg-agent-dir-");
-    writeFileSync(join(dir, "prompt.md"), "the ask\n");
-    const script = agentRunScript("echo half > half.txt; exit 2").replaceAll(AGENT_DIR, dir);
-    expect(script.split("\n")[0]).toBe(READS_EXIT);
-    const r = await runStep(`cd ${work} && ${script}`, { TG_SHA: sha });
-    expect(r.status, r.out).toBe(0);
-    expect(readFileSync(join(dir, "change", "rc"), "utf-8").trim()).toBe("2");
-    expect(readFileSync(join(dir, "change", "change.patch"), "utf-8")).toContain("half.txt");
-  });
-
-  it("the agent's step runs without the runner's token variables, which Forgejo sets whatever permissions: says", async () => {
-    const work = tmp("tg-agent-work-");
-    git(work, "init", "-q", "-b", "main");
-    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "head");
-    const sha = git(work, "rev-parse", "HEAD").trim();
-    const dir = tmp("tg-agent-dir-");
-    writeFileSync(join(dir, "prompt.md"), "the ask\n");
-    const script = agentRunScript('env | grep -E "^(GITHUB_TOKEN|FORGEJO_TOKEN|GITEA_TOKEN|ACTIONS_RUNTIME_TOKEN|ACTIONS_ID_TOKEN_REQUEST_TOKEN|ACTIONS_ID_TOKEN_REQUEST_URL)=" > seen.txt || true; echo "$ANTHROPIC_API_KEY" > key.txt').replaceAll(AGENT_DIR, dir);
-    const tokens = Object.fromEntries(["GITHUB_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL"].map((k) => [k, "secret"]));
-    const r = await runStep(`cd ${work} && ${script}`, { TG_SHA: sha, ANTHROPIC_API_KEY: "model-key", ...tokens });
-    expect(r.status, r.out).toBe(0);
-    expect(readFileSync(join(work, "seen.txt"), "utf-8")).toBe("");
-    expect(readFileSync(join(work, "key.txt"), "utf-8").trim()).toBe("model-key");
+    expect(doc["apply-wave-1"].rules[0].if).toContain("$CHANT_AGENT_PR == null");
   });
 });
 

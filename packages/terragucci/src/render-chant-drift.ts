@@ -39,7 +39,7 @@
  * Forgejo with oidc chant's job sets enable-openid-connect itself.
  */
 import type { AgentCommentInput } from "./agent-comment";
-import { chantOpGeneratorNow, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
+import { CHANT_AGENT_JOB, type ChantAgentJob, type ChantScheduledOpSpec } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import type { ForgeName } from "./config";
 import { chantAgentOptions } from "./render-chant-agent";
@@ -117,8 +117,7 @@ export interface ChantDriftInput {
 }
 
 /** The drift Op's files, or undefined when the installed chant has no Op generator. */
-export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob | undefined = chantOpGeneratorNow()): { path: string; content: string }[] | undefined {
-  if (!chant) return undefined;
+export function chantDriftFiles(i: ChantDriftInput, chant: ChantAgentJob = CHANT_AGENT_JOB): { path: string; content: string }[] | undefined {
   let agent: object | undefined;
   if (i.agent) {
     const { name: _name, ...settings } = chantAgentOptions(i.agent);

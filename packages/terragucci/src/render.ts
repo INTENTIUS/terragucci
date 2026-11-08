@@ -187,14 +187,14 @@ import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
-import { AGENT_COMMENT_IF, agentCommentJobs, costEnv as agentCostEnv, gitlabAgentPushScript, gitlabAgentRunScript } from "./render-agent";
+import { AGENT_COMMENT_IF } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { commentLine, productPipelineJobs, type CiProductCommand } from "@intentius/chant/ci-product";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
-import { AGENT_MR_VAR, GL_AGENT_ARTIFACT, GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
+import { GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
 import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
 import { groupsArg, type ApplyGroup } from "./cloud-identity";
@@ -2700,8 +2700,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
-  // agent.comment on chant's agent job (chant#4616), when the installed chant has it: its own workflow, and terragucci's agent jobs are left out.
+  // agent.comment is chant's agent job (chant#4616), in a workflow of its own.
   const chantAgent = input.agentComment && !(forge === "gitlab" && !input.comments) ? chantAgentFiles(forge, image, input.agentComment, MARKER) : undefined;
+  if (input.agentComment && !(forge === "gitlab" && !input.comments) && !chantAgent) throw new RenderError("agent.comment: chant's agent job wrote no jobs for this pipeline");
   if (forge === "gitlab") {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
@@ -2737,7 +2738,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
     // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them.
-    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [chantAgent ? CHANT_AGENT_PR_VAR : AGENT_MR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
+    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [CHANT_AGENT_PR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
     const notMrApply = startedBy.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
@@ -2979,30 +2980,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: chantAgent ? "chant" : Boolean(input.agentComment), review: Boolean(input.review) }))],
-      } as never) as never);
-    }
-    if (input.agentComment && !chantAgent) {
-      // `/terragucci agent <ask>`: the comments job starts a pipeline of the default branch for it. The agent runs in
-      // one job with the model's key alone (its environment cleared), and a fresh job pushes its change with the agent's token.
-      const agent = input.agentComment;
-      const onAgent = `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $${AGENT_MR_VAR}`;
-      jobs.set("agent", new GitLabJob({
-        stage: "comments",
-        image: jobImage,
-        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, TG_AGENT_MAX_TURNS: String(agent.maxTurns), ...agentCostEnv(agent) },
-        rules: [new Rule({ if: onAgent })],
-        timeout: `${agent.timeout} minutes`,
-        script: [bash("AGENT", gitlabAgentRunScript(agent, GL_AGENT_ARTIFACT))],
-        artifacts: { name: GL_AGENT_ARTIFACT, when: "always", paths: [`${GL_AGENT_ARTIFACT}/`] },
-      } as never) as never);
-      jobs.set("agent-push", new GitLabJob({
-        stage: "comments",
-        image: jobImage,
-        needs: ["agent"],
-        variables: { TG_TOKEN: `$${agent.tokenSecret}` },
-        rules: [new Rule({ if: onAgent })],
-        script: [bash("AGENT_PUSH", gitlabAgentPushScript(agent.policyDir, GL_AGENT_ARTIFACT))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: chantAgent ? "chant" : false, review: Boolean(input.review) }))],
       } as never) as never);
     }
     if (input.review) {
@@ -3394,7 +3372,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       steps: [new Step({ name: "Say on the head whether its waiting waves are approved", shell: "bash", run: `terragucci approval-status --forge ${forge}${agentLogin ? ` --agent-login ${agentLogin}` : ""}` })],
     } as never) as never);
   }
-  if (input.agentComment && !chantAgent) for (const [name, job] of agentCommentJobs(forge, image, input.agentComment)) entities.set(name, job);
   if (locksPlan) {
     // locks: plan. The workflow is the default branch's on pull_request_target and on a comment, and the job checks out
     // only the default branch: it reads the change as data from git, runs no binary and assumes no cloud role. So it may

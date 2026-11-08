@@ -23,7 +23,6 @@ afterEach(() => {
 });
 import { agentRunRecord, AGENT_RUNS_FILE, checkCostLimit, digestOf, overBudgetNote, readAgentUsage, readPromptDigest, recordAgentRun, recordOutcome, recordPushOutcome, sendAgentRun } from "../src/agent-record";
 import { reviewRunScript } from "../src/render-review";
-import { agentRunScript, gitlabAgentRunScript } from "../src/render-agent";
 import { ledgerEntries } from "../src/report/audit";
 import { tmp } from "./helpers";
 
@@ -128,17 +127,6 @@ describe("the audit trail", () => {
   });
 });
 
-describe("the agent job's script", () => {
-  it("keeps the output and the prompt digest, takes the agent's exit code, and is valid bash", () => {
-    for (const script of [agentRunScript("my-agent"), gitlabAgentRunScript({ command: "my-agent", keySecret: "KEY", policyDir: "policy", tokenSecret: "T", maxTurns: 3, timeout: 5 }, "art")]) {
-      expect(script).toContain("agent-output.json");
-      expect(script).toContain("prompt.sha256");
-      expect(script).toContain("${PIPESTATUS[0]}");
-      expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
-    }
-  });
-});
-
 describe("the money limit", () => {
   it("stops a run whose reported cost is above it, and records why", () => {
     const dir = change({ "agent-output.json": CLAUDE, rc: "0\n" });
@@ -155,11 +143,7 @@ describe("the money limit", () => {
     expect(readFileSync(join(dir, "rc"), "utf-8").trim()).toBe("0");
   });
 
-  it("is checked after the agent, by both scripts, and the stop is recorded as stopped", async () => {
-    for (const script of [agentRunScript("my-agent"), gitlabAgentRunScript({ command: "my-agent", keySecret: "KEY", policyDir: "policy", tokenSecret: "T", maxTurns: 3, timeout: 5 }, "art")]) {
-      expect(script).toContain("terragucci agent check-cost");
-      expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
-    }
+  it("records a stop as stopped", async () => {
     const r = await recordPushOutcome({ feature: "agent.comment", cwd: "/x", change: change({}), forge: "github", env: {}, ok: false, stopped: true, requestedBy: "alice", reason: "over" }, { log: () => {}, fetchForge: async () => ({ ok: false, status: 401, json: async () => ({}) }) as never });
     expect(r).toMatchObject({ result: "stopped", requestedBy: "alice" });
     expect(ledger.records[0]!.outcomes.agent).toMatchObject({ result: "stopped", requestedBy: "alice" });

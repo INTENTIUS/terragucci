@@ -1,19 +1,13 @@
 /**
- * terragucci#1282 (unit g): the switches onto chant behind chant-next.ts's
- * loaders. Each part is stood in for with overrideChantNext, so no chant
- * release is needed: the product tool hook (chant#4555), the gated-request helpers
- * (chant#4551, #4618), and the member-prefixed module ledgers.
+ * terragucci#1282 (unit g): the switches onto chant: the product tool hook
+ * (chant#4555), the gated-request helpers (chant#4551, #4618), and the
+ * member-prefixed module ledgers.
  */
-import { afterEach, describe, expect, test } from "vitest";
-import { overrideChantNext } from "../src/chant-next";
+import { describe, expect, test } from "vitest";
 import { ledgerPrefixes } from "../src/publish/ledger";
 import { asyncExec, requestRules } from "../src/gated-request";
 import { productHook, TOOLS } from "../src/mcp";
 
-const restore: Array<() => void> = [];
-afterEach(() => {
-  while (restore.length) restore.pop()!();
-});
 
 
 

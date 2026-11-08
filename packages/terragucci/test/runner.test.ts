@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { chantAgentJob } from "../src/chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, validateConfig, type ForgeName } from "../src/config";
 import { jobStage, renderPipeline, RenderError, type PipelineInput } from "../src/render";
@@ -28,11 +27,6 @@ const PASS = { secrets: ["TF_VAR_db_password"], vars: ["TF_VAR_region"] };
 const RICH: Partial<PipelineInput> = { drift: "0 6 * * *", resume: 10, ephemeral: { sweep: 30 }, publish: true, respond: { tips: "on" } };
 
 describe("runner", () => {
-  // init loads chant's agent job, whose Op generator writes the drift job (chant issue 4622); the render reads it as loaded.
-  beforeAll(async () => {
-    await chantAgentJob();
-  });
-
   it("unset, the pipeline is the one it always was", () => {
     for (const forge of ["github", "forgejo"] as const) {
       expect(render(forge, RICH).content).toBe(render(forge, { ...RICH, runner: undefined }).content);
