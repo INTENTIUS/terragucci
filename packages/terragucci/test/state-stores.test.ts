@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { stateObject, stateStore, stateVersion, type StoredState } from "../src/backend";
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
@@ -271,7 +271,7 @@ describe("terragucci state export of a gcs or azurerm state", () => {
     const opts = { root: "app", version: v1, actor: "alice", env: {}, exec, fetch: g.fetch, log: () => {} };
     const ask = await exportState(r.work, { ...opts, now: T(0) });
     expect(ask.code).toBe(3);
-    appendLifecycle(r.work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: "bob", timestamp: T(1), planDigest: ask.digest })], {}, "approve");
+    await writeLedger(r.work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: "bob", timestamp: T(1), planDigest: ask.digest })], {}, "approve");
     mkdirSync(r.out);
     const got = await exportState(r.work, { ...opts, now: T(2), out: join(r.out, "app.tfstate") });
     expect(got.code).toBe(0);
@@ -319,7 +319,7 @@ describe("unlock-state on a gcs or azurerm state", () => {
     // chant's digest is over its request; terragucci's own binds the root, the lock's location and its ID (the generation).
     if (chantOps) expect(JSON.parse(show(r.origin, UNLOCK_LEDGER).trim())).toMatchObject({ planDigest: wait.digest, request: { fields: { location: "gs://acme-state/envs/dev/app/default.tflock", id: gen } } });
     else expect(wait.digest).toBe(lockDigest("app", "gs://acme-state/envs/dev/app/default.tflock", gen));
-    appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
+    await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
     const done = await unlockState(r.work, "app", { ...opts, now: T(22) });
     expect(done.code).toBe(0);
     expect(unlocked).toEqual([gen]);
@@ -340,7 +340,7 @@ describe("unlock-state on a gcs or azurerm state", () => {
     const opts = { env: { FORGEJO_TOKEN: "tok" }, exec, s3Fetch: s.fetch, fetch: quiet, log: () => {}, actor: "dana" };
     const wait = await unlockState(r.work, "app", { ...opts, now: T(20) });
     expect(wait).toMatchObject({ code: 3, location: "az://acme/tfstate/app.tfstate", lock: { ID: "lease-9" } });
-    appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
+    await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(21), planDigest: wait.digest })], {}, "approve");
     release = false;
     await expect(unlockState(r.work, "app", { ...opts, now: T(22) })).rejects.toThrow(/force-unlock ran, and az:\/\/acme\/tfstate\/app.tfstate is still locked/);
     release = true;
@@ -349,7 +349,7 @@ describe("unlock-state on a gcs or azurerm state", () => {
       const again = await unlockState(r.work, "app", { ...opts, now: T(23) });
       expect(again.code).toBe(3);
       expect(again.digest).not.toBe(wait.digest);
-      appendLifecycle(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(24), planDigest: again.digest })], {}, "approve");
+      await writeLedger(r.work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: "lee", timestamp: T(24), planDigest: again.digest })], {}, "approve");
     }
     expect((await unlockState(r.work, "app", { ...opts, now: T(25) })).code).toBe(0);
   });
@@ -421,8 +421,8 @@ describe("a migration between a gcs root and an azurerm root", () => {
     return { work, origin };
   }
 
-  const approve = (work: string, digest: string, at: string) =>
-    appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate: "split-b", resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
+  const approve = async (work: string, digest: string, at: string) =>
+    await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate: "split-b", resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
 
   it("writes the gcs state with the binary under its lock object and the azurerm state under its lease, recording each version", async () => {
     const w = world();
@@ -436,7 +436,7 @@ describe("a migration between a gcs root and an azurerm root", () => {
       ["one", "gs://acme-state/one/default.tfstate", before],
       ["two", "az://acme/tfstate/two.tfstate", null],
     ]);
-    approve(work, first.records[0]!.digest, T(2));
+    await approve(work, first.records[0]!.digest, T(2));
     const second = await runMigrations(work, { ...opts, now: T(3) });
     expect(second.code).toBe(0);
     expect((JSON.parse(w.g.latest("acme-state/one/default.tfstate")!.body) as StateFile).resources.map((r) => r.name)).toEqual(["a"]);
@@ -462,7 +462,7 @@ describe("a migration between a gcs root and an azurerm root", () => {
     const { work } = migrationRepo();
     const opts = { binary: "tofu", exec: w.exec, fetch: w.fetch, env: {}, log: () => {} };
     const first = await runMigrations(work, { ...opts, now: T(1) });
-    approve(work, first.records[0]!.digest, T(2));
+    await approve(work, first.records[0]!.digest, T(2));
     w.g.put("acme-state/one/default.tflock", lockText("other", T(2), "x"));
     const second = await runMigrations(work, { ...opts, now: T(3) });
     expect(second.code).toBe(1);

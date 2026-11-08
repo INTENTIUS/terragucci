@@ -64,7 +64,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { chantHoldRecord, chantRequestProof, chantState, type ChantSourceLock, type ChantStateOps, type LockOperation } from "./chant-next";
 import { parseYAML } from "@intentius/chant/yaml";
-import { appendLifecycle, appendPending, decideGate, movedMembers, readLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
+import { appendPending, fetchedLedgerFile, LEDGER_READ_REF, decideGate, movedMembers, readLedger, writeLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { isStored, READS_VERSIONS, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
@@ -1513,7 +1513,7 @@ export function finishedMigrationLines(appliedText: string): string[] {
  */
 export function migrationHistory(repo: string): string {
   const show = (path: string): string => {
-    const r = git(repo, ["show", `refs/remotes/origin/chant/lifecycle:${path}`]);
+    const r = git(repo, ["show", `${LEDGER_READ_REF}:${path}`]);
     return r.status === 0 ? r.stdout : "";
   };
   const done = show(MIGRATE_DONE).split("\n").map((l) => l.trim()).filter(Boolean);
@@ -1885,9 +1885,9 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
       mkdirSync(dirname(options.hold.file), { recursive: true });
       writeFileSync(options.hold.file, JSON.stringify({ op: MIGRATE_OP, gate: m.name, digest: record.digest, description, pending: { ...(commit ? { commit } : {}), members }, ...(recorded ? { record: true, attachment: proof } : {}) }) + "\n");
       // The proof beside the pending fact, which a refusal later compares with. Only on a chant that keeps none.
-      if (!recorded && git(repo, ["cat-file", "-e", `refs/remotes/origin/chant/lifecycle:${keptPath(m.name, record.digest)}`]).status !== 0) {
+      if (!recorded && git(repo, ["cat-file", "-e", `${LEDGER_READ_REF}:${keptPath(m.name, record.digest)}`]).status !== 0) {
         try {
-          appendLifecycle(repo, "", [], { [keptPath(m.name, record.digest)]: proof }, `The proof of ${MIGRATE_OP} ${m.name}: ${record.digest}`);
+          await writeLedger(repo, "", [], { [keptPath(m.name, record.digest)]: proof }, `The proof of ${MIGRATE_OP} ${m.name}: ${record.digest}`);
         } catch (e) {
           log(`${label}: the proof was not kept beside the pending fact: ${(e as Error).message}`);
         }
@@ -1918,7 +1918,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
         members,
         neverOverMcp: true,
       };
-      appendPending(repo, pending, { [keptPath(m.name, record.digest)]: JSON.stringify(record, null, 2) + "\n" }, MIGRATE_LEDGER);
+      await appendPending(repo, pending, { [keptPath(m.name, record.digest)]: JSON.stringify(record, null, 2) + "\n" }, MIGRATE_LEDGER);
     }
     if (decision.status === "refused") {
       const moved = movedSinceApproval(ledger, m.name, decision.approved, members, record.roots.map((r) => r.root));
@@ -1937,7 +1937,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
   const finishedFile = options.hold?.approved ? options.hold.finished : undefined;
   if (!finishedFile) {
     const applied: AppliedRecord = { version: 1, kind: "applied", op: MIGRATE_OP, gate: m.name, planDigest: record.digest, approvedAt: decision.at, approvedBy: decision.by, timestamp: now, ...(runId ? { runId } : {}), ...(commit ? { commit } : {}) };
-    appendLifecycle(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
+    await writeLedger(repo, MIGRATE_APPLIED, [JSON.stringify(applied)], {}, `Applied under approval: ${MIGRATE_OP} ${m.name}`);
   }
   let result: MigrationRecord;
   const sinks = plan.estate ? options.progress?.(m.name) : undefined;
@@ -1957,7 +1957,7 @@ async function runOne(repo: string, m: Migration, ledger: GateLedger, options: R
     log(`${label}: under the lock, the state of ${result.moved!.join(", ")} is not the one planned; nothing was written. Run this job again to plan from the states as they are`);
     return { code: EXIT.refused, record: result };
   }
-  if (!finishedFile) appendLifecycle(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
+  if (!finishedFile) await writeLedger(repo, MIGRATE_DONE, [JSON.stringify(doneLine(result, decision.by, now, runId, commit))], {}, `Migration ${result.status}: ${m.name}`);
   if (!plan.estate) for (const r of result.roots) log(`${r.root}: version ${r.before.version_id ?? "none"} before, ${r.after.version_id ?? "none"} after`);
   if (result.status !== "applied") {
     log(`${label}: ${result.error}; ${plan.estate ? `the markers were written, and terragucci-report/migrations/${m.name}.json names each resource and its live id` : `the states were written, and each root's version before is in terragucci-report/migrations/${m.name}.json`}`);

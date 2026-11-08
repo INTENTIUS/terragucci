@@ -442,7 +442,7 @@ async function recordRequest(cwd: string, r: Extract<RequestResult, { dryRun: fa
   };
   const what = r.request.addon !== undefined ? `the add-on ${r.request.addon} for ${r.request.app}` : r.request.app;
   try {
-    (await import("./apply")).appendLifecycle(cwd, REQUESTS_FILE, [JSON.stringify(line)], {}, `Request ${what} from ${r.request.template} ${r.request.version}`);
+    await (await import("./apply")).writeLedger(cwd, REQUESTS_FILE, [JSON.stringify(line)], {}, `Request ${what} from ${r.request.template} ${r.request.version}`);
   } catch (e) {
     log(`terragucci: could not record the request on chant/lifecycle (${(e as Error).message})`);
   }

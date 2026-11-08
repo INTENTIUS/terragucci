@@ -10,6 +10,10 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 | Each repo | `npx @intentius/terragucci@0.4.53 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
+## In 0.4.54
+
+- Every record terragucci writes on `chant/lifecycle`, such as a state export, a lock release, a migration, an agent run or a template request, goes through chant's ledger writer. In a checkout with no remote the record stays on the local branch, where the command used to fail.
+
 ## In 0.4.53
 
 On chant 0.124.76, the drift check, the formatting commit, the chat relay and the release itself run as chant's jobs, so terragucci no longer writes its own.

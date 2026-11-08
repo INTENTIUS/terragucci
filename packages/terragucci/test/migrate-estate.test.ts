@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
 import { ESTATE_PARALLELISM, isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
 import { runStage } from "../src/report/stage";
@@ -106,8 +106,8 @@ function repo(files: Record<string, string>) {
   return { work, origin };
 }
 
-function approve(work: string, gate: string, digest: string, at: string): void {
-  appendLifecycle(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
+async function approve(work: string, gate: string, digest: string, at: string): Promise<void> {
+  await writeLedger(work, MIGRATE_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-migrate", gate, resolvedBy: "alice", timestamp: at, planDigest: digest })], {}, "approve");
 }
 
 /** Estate mono owns the queues jobs and keep; the code now declares jobs in team. */
@@ -206,7 +206,7 @@ describe("an estate migration's roots", () => {
       expect(first.code).toBe(3);
       const planned = { ...t.most };
       t.most.init = t.most.plan = t.most.dry = 0;
-      approve(work, "carve", first.records[0]!.digest, T(2));
+      await approve(work, "carve", first.records[0]!.digest, T(2));
       const second = await runMigrations(work, { binary: "choudoufu", exec: t.exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
       expect(second.code).toBe(0);
       return { first: first.records[0]!, second: second.records[0]!, planned, applied: { ...t.most }, sameRoot: t.sameRoot(), lines, work };
@@ -258,7 +258,7 @@ describe("a move between two estates", () => {
     expect(calls.filter((c) => c.includes("live-mv"))).toEqual(["team: live-mv -no-color -json -dry-run -from-estate=mono aws_sqs_queue.jobs aws_sqs_queue.jobs"]);
     expect(liveOf(work).find((l) => l.id === "q-jobs")?.estate).toBe("mono");
 
-    approve(work, "carve-jobs", rec.digest, T(2));
+    await approve(work, "carve-jobs", rec.digest, T(2));
     const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
     expect(second.code).toBe(0);
     expect(second.records[0]).toMatchObject({ status: "applied", approved_by: "alice" });
@@ -282,7 +282,7 @@ describe("a move between two estates", () => {
     const exec = choudoufu(work);
     const lines: string[] = [];
     const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: (l) => void lines.push(l) });
-    approve(work, "carve-jobs", first.records[0]!.digest, T(2));
+    await approve(work, "carve-jobs", first.records[0]!.digest, T(2));
     // Another queue now carries the markers: the digest names q-jobs.
     setLive(work, [{ id: "q-other", estate: "mono", address: "aws_sqs_queue.jobs" }, { id: "q-keep", estate: "mono", address: "aws_sqs_queue.keep" }]);
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
@@ -306,12 +306,12 @@ describe("a move between two estates", () => {
     const { work, origin } = retagRepo();
     const exec = choudoufu(work);
     const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: () => {} });
-    approve(work, "carve-jobs", first.records[0]!.digest, T(2));
+    await approve(work, "carve-jobs", first.records[0]!.digest, T(2));
     expect((await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} })).code).toBe(0);
     // Wave 2's job: a fresh checkout of main alone, which runs no migration step before it plans its roots.
     const wave2 = join(tmp("tg-estate-wave2-"), "work");
     git(origin, "clone", "-q", "--single-branch", "-b", "main", origin, wave2);
-    expect(git(wave2, "for-each-ref", "refs/remotes/origin/chant/lifecycle").trim()).toBe("");
+    expect(git(wave2, "for-each-ref", "refs/terragucci/lifecycle").trim()).toBe("");
     expect([...pendingEstateMigrations(wave2)]).toEqual([]);
   });
 
@@ -329,7 +329,7 @@ describe("a move between two estates", () => {
     expect(calls.filter((c) => c.startsWith("team: plan"))).toEqual([]);
     expect(lines.join("\n")).toContain("team: not planned before the retag; live-mv -dry-run found the resource that joins it");
 
-    approve(work, "carve-jobs", rec.digest, T(2));
+    await approve(work, "carve-jobs", rec.digest, T(2));
     calls.length = 0;
     const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
     expect(second.code).toBe(0);
@@ -396,7 +396,7 @@ describe("adopting a state into an estate", () => {
     expect(liveOf(work).every((l) => l.estate === undefined)).toBe(true);
     expect(lines.join("\n")).toContain("adopting the state of app from its local backend into the estate its code names");
 
-    approve(work, "adopt-app", rec.digest, T(2));
+    await approve(work, "adopt-app", rec.digest, T(2));
     const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
     expect(second.code).toBe(0);
     expect(second.records[0]!.roots[0]!.verify?.changes).toEqual([]);
@@ -427,7 +427,7 @@ describe("adopting a state into an estate", () => {
     expect(calls.filter((c) => c.startsWith("app: live-import")).map((c) => c.includes("-approve"))).toEqual([false]);
     expect(lines.join("\n")).toContain("app: 2 of 2 resource instances in old.tfstate verify against the live system, so the stamp adopts each one");
 
-    approve(work, "adopt-app", rec.digest, T(2));
+    await approve(work, "adopt-app", rec.digest, T(2));
     calls.length = 0;
     const second = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: (l) => void lines.push(l) });
     expect(second.code).toBe(0);
@@ -459,7 +459,7 @@ describe("adopting a state into an estate", () => {
     const { work } = adoptRepo();
     const exec = choudoufu(work);
     const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: () => {} });
-    approve(work, "adopt-app", first.records[0]!.digest, T(2));
+    await approve(work, "adopt-app", first.records[0]!.digest, T(2));
     const path = join(work, "app", "old.tfstate");
     writeFileSync(path, readFileSync(path, "utf-8").replace('"serial":3', '"serial":4'));
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} });
@@ -475,7 +475,7 @@ describe("adopting a state into an estate", () => {
     // A live-import that verifies but writes nothing, as when -approve never reaches it.
     const exec: BinaryExec = (b, args, dir, env) => base(b, args.filter((a) => a !== "-approve"), dir, env);
     const first = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(1), log: () => {} });
-    approve(work, "adopt-app", first.records[0]!.digest, T(2));
+    await approve(work, "adopt-app", first.records[0]!.digest, T(2));
     const again = await runMigrations(work, { binary: "choudoufu", exec, env: {}, now: T(3), log: () => {} });
     expect(again.code).toBe(1);
     expect(again.records[0]!.error).toMatch(/printed no stamp report/);
@@ -544,7 +544,7 @@ describe("a pull request's plan of a root a backends migration adopts", () => {
     git(lifecycle, "init", "-q", "-b", "chant/lifecycle");
     git(lifecycle, "add", "-A");
     git(lifecycle, "commit", "-q", "-m", "done");
-    git(repo, "fetch", "-q", lifecycle, "chant/lifecycle:refs/remotes/origin/chant/lifecycle");
+    git(repo, "fetch", "-q", lifecycle, "chant/lifecycle:refs/terragucci/lifecycle");
     expect(pendingEstateMigrations(repo).size).toBe(0);
     const logs: string[] = [];
     const { report } = await runStage("tf-plan", repo, { binary: planStandIn(tmp()), layers, out: join(tmp(), "r"), env: { PATH: process.env.PATH } }, (l) => logs.push(l));

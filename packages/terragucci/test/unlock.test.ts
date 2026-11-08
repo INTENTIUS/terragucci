@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { ConfigError } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { ledgerEntries, UNLOCK_DONE_FILE } from "../src/report/audit";
@@ -152,8 +152,8 @@ const run = (w: ReturnType<typeof world>, f: ReturnType<typeof forge>, extra: Pa
   return unlockState(w.work, "app", { env: ENV, exec: w.exec, s3Fetch: w.bucket.fetch, fetch: f.fetch, log: (l) => lines.push(l), actor: "dana", ...extra }).then((r) => ({ ...r, lines }));
 };
 
-const approve = (work: string, digest: string, at: string, by = "lee") =>
-  appendLifecycle(work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
+const approve = async (work: string, digest: string, at: string, by = "lee") =>
+  await writeLedger(work, UNLOCK_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-unlock", gate: "app", resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
 
 const lifecycle = (origin: string, path: string): string => {
   try {
@@ -204,7 +204,7 @@ describe("unlockState", () => {
     expect(await run(w, f, { now: T(31) })).toMatchObject({ code: 3, digest });
     expect(lifecycle(w.origin, UNLOCK_LEDGER).trim().split("\n")).toHaveLength(1);
 
-    approve(w.work, digest, T(32));
+    await approve(w.work, digest, T(32));
     const done = await run(w, f, { now: T(33) });
     expect(done.code).toBe(0);
     expect(w.bucket.objects.has(KEY)).toBe(false);
@@ -232,7 +232,7 @@ describe("unlockState", () => {
     w.bucket.objects.set(KEY, lockText("lock-1", T(10)));
     const asked = await run(w, forge([]), { now: T(30) });
     expect(asked.code).toBe(3);
-    approve(w.work, chantOps ? asked.digest! : lockDigest("app", LOCATION, "lock-1"), T(32));
+    await approve(w.work, chantOps ? asked.digest! : lockDigest("app", LOCATION, "lock-1"), T(32));
     // The forge now lists a run that began before the lock: one a runner picked up again.
     const r = await run(w, forge([{ id: 43, status: "running", started: T(9) }]), { now: T(33) });
     expect(r.code).toBe(1);
@@ -245,7 +245,7 @@ describe("unlockState", () => {
     w.bucket.objects.set(KEY, lockText("lock-1", T(10)));
     const asked = await run(w, forge([]), { now: T(30) });
     expect(asked.code).toBe(3);
-    approve(w.work, chantOps ? asked.digest! : lockDigest("app", LOCATION, "lock-1"), T(32));
+    await approve(w.work, chantOps ? asked.digest! : lockDigest("app", LOCATION, "lock-1"), T(32));
     // The lock was released by other means and a new one taken since.
     w.bucket.objects.set(KEY, lockText("lock-2", T(40)));
     const r = await run(w, forge([]), { now: T(41) });

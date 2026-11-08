@@ -241,7 +241,7 @@ export async function sendAgentRun(r: AgentRunRecord, env: NodeJS.ProcessEnv, fe
 }
 
 export interface RecordDeps {
-  /** Append the line to chant/lifecycle (appendLifecycle). */
+  /** Append the line to chant/lifecycle (chant's ledger writer). */
   append?: (line: string, message: string) => void;
   fetch?: OtlpFetch;
   log?: (line: string) => void;
@@ -263,7 +263,7 @@ export async function recordAgentRun(repo: string, o: RecordAgentRunInput, deps:
       const pushed = await chant.pushLifecycleReport({ cwd: repo });
       log(`terragucci: recorded the ${record.feature} run in local/runs__${AGENT_OPS[record.feature]}.jsonl on chant/lifecycle${pushed.pushed ? "" : ` (not pushed: ${pushed.pushWarning ?? "no remote"})`}`);
     } else {
-      const append = deps.append ?? (async (line: string, message: string): Promise<void> => (await import("./apply")).appendLifecycle(repo, AGENT_RUNS_FILE, [line], {}, message));
+      const append = deps.append ?? (async (line: string, message: string): Promise<void> => (await import("./apply")).writeLedger(repo, AGENT_RUNS_FILE, [line], {}, message));
       await append(JSON.stringify(record), `Agent run ${record.feature}: ${record.result}`);
       log(`terragucci: recorded the ${record.feature} run in ${AGENT_RUNS_FILE} on chant/lifecycle`);
     }

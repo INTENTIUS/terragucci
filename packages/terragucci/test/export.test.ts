@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { appendLifecycle } from "../src/apply";
+import { writeLedger } from "../src/apply";
 import { EXPORT_DONE, EXPORT_LEDGER, exportState, requestDigest } from "../src/export";
 import { ledgerEntries, EXPORT_DONE_FILE, EXPORT_LEDGER_FILE } from "../src/report/audit";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
@@ -62,8 +62,8 @@ function repo(files: Record<string, string> = {}) {
   return { work, origin, out: join(dir, "exports") };
 }
 
-const approve = (work: string, digest: string, by: string, at: string) =>
-  appendLifecycle(work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
+const approve = async (work: string, digest: string, by: string, at: string) =>
+  await writeLedger(work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "app", resolvedBy: by, timestamp: at, planDigest: digest })], {}, "approve");
 
 /** The exports recorded, from whichever file the path records them in. */
 const exportsDone = (work: string) => exportRecords(chantOps, (path) => show(work, path));
@@ -100,7 +100,7 @@ describe("terragucci state export", () => {
     const { work, out } = repo();
     const w = world();
     const first = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
-    approve(work, first.digest!, "bob", T(1));
+    await approve(work, first.digest!, "bob", T(1));
     mkdirSync(out);
     const file = join(out, "app.tfstate");
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", out: file, env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} });
@@ -121,7 +121,7 @@ describe("terragucci state export", () => {
     const { work } = repo();
     const w = world();
     const first = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
-    approve(work, first.digest!, "alice", T(1));
+    await approve(work, first.digest!, "alice", T(1));
     const lines: string[] = [];
     const r = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: (l) => lines.push(l) });
     expect(r.code).toBe(3);
@@ -144,7 +144,7 @@ describe("terragucci state export", () => {
     const { work } = repo();
     const w = world();
     const first = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
-    approve(work, first.digest!, "bob", T(1));
+    await approve(work, first.digest!, "bob", T(1));
     await expect(exportState(work, { root: "app", version: "v1", actor: "alice", out: join(work, "app.tfstate"), env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} })).rejects.toThrow(/inside the repo/);
     expect(existsSync(join(work, "app.tfstate"))).toBe(false);
     git(work, "config", "user.name", "");
@@ -169,7 +169,7 @@ describe("terragucci state export", () => {
     const first = await exportState(work, { ...opts, now: T(0), log: () => {} });
     expect(first.code).toBe(3);
     expect(prepared[0]).toEqual(expect.arrayContaining(["run", "--working-dir", "live/app", "--", "init"]));
-    appendLifecycle(work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "live/app", resolvedBy: "bob", timestamp: T(1), planDigest: first.digest })], {}, "approve");
+    await writeLedger(work, EXPORT_LEDGER, [JSON.stringify({ version: 1, kind: "resolution", op: "tf-state-export", gate: "live/app", resolvedBy: "bob", timestamp: T(1), planDigest: first.digest })], {}, "approve");
     mkdirSync(out);
     const file = join(out, "app.tfstate");
     const r = await exportState(work, { ...opts, out: file, now: T(2), log: () => {} });
@@ -193,7 +193,7 @@ describe("terragucci state export", () => {
     const { work } = repo();
     const w = world();
     const first = await exportState(work, { root: "app", version: "v1", actor: "alice", env: ENV, exec: w.exec, fetch: w.fetch, now: T(0), log: () => {} });
-    approve(work, first.digest!, "bob", T(1));
+    await approve(work, first.digest!, "bob", T(1));
     const out = join(tmp(), "x.tfstate");
     await exportState(work, { root: "app", version: "v1", actor: "alice", out, env: ENV, exec: w.exec, fetch: w.fetch, now: T(2), log: () => {} });
     const log = (path: string) => gateLedgerLinesFromLog(git(work, "log", "--reverse", "--format=%x1e%H%x1f%an%x1f%aI", "-p", "--unified=0", "refs/remotes/origin/chant/lifecycle", "--", path));

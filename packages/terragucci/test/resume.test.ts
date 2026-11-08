@@ -7,7 +7,7 @@ import { validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
 import { renderPipeline, resumeCron, resumeScript } from "../src/render";
 import { originOf, resumable, resumeAfterApproval, resumeStep, resumeWithChant } from "../src/resume";
-import { appendLifecycle, type GateLedger } from "../src/apply";
+import { writeLedger, type GateLedger } from "../src/apply";
 import { driftOp, git, tmp } from "./helpers";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 9, 8, 12, m)).toISOString();
@@ -157,7 +157,7 @@ describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resu
   }
 
   /** A checkout whose origin's chant/lifecycle holds `lines` in `_gates/<op>.jsonl`. */
-  function repoWith(op: string, lines: unknown[]): string {
+  async function repoWith(op: string, lines: unknown[]): Promise<string> {
     const dir = tmp("tg-resume-");
     const origin = join(dir, "origin.git");
     git(dir, "init", "-q", "--bare", origin);
@@ -166,7 +166,7 @@ describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resu
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     git(work, "remote", "add", "origin", origin);
     git(work, "push", "-q", "origin", "main");
-    appendLifecycle(work, `_gates/${op}.jsonl`, lines.map((l) => JSON.stringify(l)), {}, "ledger");
+    await writeLedger(work, `_gates/${op}.jsonl`, lines.map((l) => JSON.stringify(l)), {}, "ledger");
     return work;
   }
 
@@ -211,10 +211,10 @@ describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resu
       "GET /projects/9/jobs/17": { status: "canceled", name: "apply-wave-3" },
       "POST /projects/9/jobs/17/retry": { id: 18 },
     });
-    const repo = repoWith("tf-apply", waiting("wave-2", { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "7", jobName: "apply-wave-2" }));
+    const repo = await repoWith("tf-apply", waiting("wave-2", { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "7", jobName: "apply-wave-2" }));
     // Wave 3's apply under an approval recorded its changes, with where it ran, and never how it ended: its job was canceled.
     const stopped = { version: 1, kind: "changes", op: "tf-apply", gate: "wave-3", planDigest: "jcs1-sha256:cc", approvedAt: at(2), approvedBy: "alice", timestamp: at(3), holder: "300", changes: [], resume: { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "17", jobName: "apply-wave-3" } };
-    appendLifecycle(repo, "_gates/tf-apply/applied.jsonl", [JSON.stringify(stopped)], {}, "stopped");
+    await writeLedger(repo, "_gates/tf-apply/applied.jsonl", [JSON.stringify(stopped)], {}, "stopped");
     const lines: string[] = [];
     expect(await resumeWithChant(repo, { ...process.env, TG_TOKEN: "project" }, { log: (l) => void lines.push(l) })).toBe(0);
     expect(lines).toEqual(["terragucci resume: chant run resume --op tf-apply", "terragucci resume: chant run resume --op tf-migrate"]);

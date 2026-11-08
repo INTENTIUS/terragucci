@@ -86,7 +86,7 @@
  * decided; 5 another run's apply holds a resource it changes; 6 a newer push
  * superseded it.
  */
-import { chantGateWriters, chantOpStandDown, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
+import { chantOpStandDown, chantWaveCapabilities, type ChantAfterPlan, type ChantAfterPlanRun, type ChantPolicyRow } from "./chant-next";
 import { declaredTerraformRoots } from "./chant-config";
 import type { RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
@@ -99,7 +99,9 @@ import type { OpWaveDecision } from "@intentius/chant/op";
 import { resolveGateRunLocator, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { fetchLifecycleStatus } from "@intentius/chant/lifecycle/git";
+import { fetchLifecycleStatus, pushLifecycleRebasing, readBlobBySha, readPathSha, RefCASConflictError, requireLifecycleLedger, writeLedgerFiles } from "@intentius/chant/lifecycle/git";
+import { isLifecycleLocalNote } from "@intentius/chant/lifecycle/local-note";
+import { gitGateLedgerPort } from "@intentius/chant/op/gate";
 import { appliesFrom, routeConflicts, routedBranch } from "@intentius/chant/workspace/ci-branches";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import {
@@ -523,24 +525,29 @@ export function movedMembers(approved: readonly WaveMember[], now: readonly Wave
 }
 
 const LIFECYCLE = "chant/lifecycle";
-const REMOTE_REF = `refs/remotes/origin/${LIFECYCLE}`;
+/**
+ * Where terragucci reads origin's chant/lifecycle: a ref of its own, never
+ * `refs/remotes/origin/chant/lifecycle`, which is the lease chant's writer
+ * pushes against. Moving that ref without the branch would let chant's push
+ * write over records it has not seen.
+ */
+export const LEDGER_READ_REF = "refs/terragucci/lifecycle";
 const LEDGER_PATH = `_gates/${APPLY_OP}.jsonl`;
 /** Where the waves record each approval they applied under: beside the reports, out of chant's sight. */
 export const APPLIED_PATH = `_gates/${APPLY_OP}/applied.jsonl`;
 /** The applied file beside an op's ledger: `_gates/<op>.jsonl` keeps it at `_gates/<op>/applied.jsonl`. */
 export const appliedPathFor = (ledgerPath: string): string => `${ledgerPath.replace(/\.jsonl$/, "")}/applied.jsonl`;
-const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
 
 function git(repo: string, args: string[], input?: string, env: NodeJS.ProcessEnv = process.env) {
   return spawnSync("git", args, { cwd: repo, encoding: "utf-8", input, env });
 }
 
-/** Fetch `chant/lifecycle`. False when the remote has no such branch yet; throws when the remote cannot be read. */
+/** Fetch `chant/lifecycle` into LEDGER_READ_REF. False when the remote has no such branch yet; throws when the remote cannot be read. */
 function fetchLifecycle(repo: string): boolean {
   const heads = git(repo, ["ls-remote", "--heads", "origin", LIFECYCLE]);
   if (heads.status !== 0) throw new ConfigError(`cannot read ${LIFECYCLE} from origin, so the gate cannot be decided: ${heads.stderr.trim()}`);
   if (!heads.stdout.trim()) return false;
-  const f = git(repo, ["fetch", "-q", "origin", `+refs/heads/${LIFECYCLE}:${REMOTE_REF}`]);
+  const f = git(repo, ["fetch", "-q", "origin", `+refs/heads/${LIFECYCLE}:${LEDGER_READ_REF}`]);
   if (f.status !== 0) throw new ConfigError(`cannot fetch ${LIFECYCLE}, so the gate cannot be decided: ${f.stderr.trim()}`);
   return true;
 }
@@ -548,11 +555,17 @@ function fetchLifecycle(repo: string): boolean {
 /** The gate ledger as `chant/lifecycle` on origin holds it now: the waves' gates, or with `path` another op's file. */
 export function readLedger(repo: string, path: string = LEDGER_PATH): GateLedger {
   if (!fetchLifecycle(repo)) return { pending: [], resolutions: [] };
-  const show = git(repo, ["show", `${REMOTE_REF}:${path}`]);
+  const show = git(repo, ["show", `${LEDGER_READ_REF}:${path}`]);
   const ledger = parseLedger(show.status === 0 ? show.stdout : "");
-  const applied = git(repo, ["show", `${REMOTE_REF}:${appliedPathFor(path)}`]);
+  const applied = git(repo, ["show", `${LEDGER_READ_REF}:${appliedPathFor(path)}`]);
   const text = applied.status === 0 ? applied.stdout : "";
   return { ...ledger, applied: parseApplied(text), finished: parseFinished(text) };
+}
+
+/** A file on origin's chant/lifecycle as readLedger last fetched it; undefined when there is none. */
+export function fetchedLedgerFile(repo: string, path: string): string | undefined {
+  const show = git(repo, ["show", `${LEDGER_READ_REF}:${path}`]);
+  return show.status === 0 ? show.stdout : undefined;
 }
 
 /**
@@ -565,105 +578,97 @@ export const approvedPath = (wave: number, digest: string): string => `_gates/${
 
 /** The report a waiting wave kept for `digest` on chant/lifecycle, as last fetched; undefined when it kept none. */
 export function storedReport(repo: string, wave: number, digest: string): string | undefined {
-  const show = git(repo, ["show", `${REMOTE_REF}:${approvedPath(wave, digest)}`]);
-  return show.status === 0 ? show.stdout : undefined;
+  return fetchedLedgerFile(repo, approvedPath(wave, digest));
 }
 
-/** Append a pending fact to the ledger and push it, with any `files` beside it, retrying when another writer moved the branch. */
-export function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}, path: string = LEDGER_PATH): void {
-  appendRecord(repo, record, files, `Pending gate record: ${record.op} ${record.gate}`, path);
-}
-
-/** Append lines to the ledger (`path`, the waves' file by default) and push them in one commit, as appendPending does. */
-function appendRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | AppliedRecord[] | FinishedRecord, files: Record<string, string>, message: string, path: string = LEDGER_PATH): void {
-  appendLifecycle(repo, path, (Array.isArray(record) ? record : [record]).map((r) => JSON.stringify(r)), files, message);
+/** Append a pending fact to the ledger and push it, with any `files` beside it. */
+export async function appendPending(repo: string, record: PendingRecord, files: Record<string, string> = {}, path: string = LEDGER_PATH): Promise<void> {
+  await writeLedger(repo, path, [JSON.stringify(record)], files, `Pending gate record: ${record.op} ${record.gate}`);
 }
 
 /**
- * Write one record of a tf-apply wave on chant's gate ledger writers when the
- * installed chant has them (terragucci#1282 part j, chant#4623): a pending
- * fact or an approval through `appendPending` and `appendResolution`, an
- * `applied` or `changes` line through `appendApplied`, a `finished` line
- * through `appendFinished`. chant resolves where the lines go from `repo`, the
- * same place its wave reads them, and honours `--no-record`. On a chant
- * without them, terragucci's own writer (appendRecord). Throws when the line
- * does not reach the remote, as appendLifecycle does.
+ * Write one record of a tf-apply wave on chant's gate ledger writers
+ * (chant#4623): a pending fact or an approval through `appendPending` and
+ * `appendResolution`, an `applied` or `changes` line through `appendApplied`,
+ * a `finished` line through `appendFinished`. chant resolves where the lines
+ * go from `repo`, the same place its wave reads them, and honours
+ * `--no-record`. Throws when the line does not reach the remote.
  */
 export async function writeWaveRecord(repo: string, record: PendingRecord | ResolutionRecord | AppliedRecord | FinishedRecord, message: string): Promise<void> {
-  const chant = await chantGateWriters();
-  if (!chant) return appendRecord(repo, record, {}, message, record.kind === "pending" || record.kind === "resolution" || record.kind === undefined ? LEDGER_PATH : APPLIED_PATH);
   // chant's writers append to the checkout's branch and push it with a lease: bring the branch up to origin first,
   // so a record made elsewhere since the wave last read the ledger is appended to, never pushed over.
-  await chant.requireLifecycleLedger({ cwd: repo });
-  const port = chant.gitGateLedgerPort({ cwd: repo });
+  await requireLifecycleLedger({ cwd: repo });
+  const port = gitGateLedgerPort({ cwd: repo });
   const line = record as unknown as Record<string, unknown>;
   const { version: _version, ...input } = line;
   let push: { pushed: boolean; pushWarning?: string };
   if (record.kind === "pending") {
     const { kind: _kind, ...fact } = input;
-    push = await port.appendPending(fact);
+    push = await port.appendPending(fact as never);
   } else if (record.kind === "finished") {
     const write = port.appendFinished ?? port.appendApplied;
     if (!write) throw new ConfigError(`chant's gate ledger cannot record how an apply ended (${message})`);
-    push = await write.call(port, line);
+    push = await write.call(port, line as never);
   } else if (record.kind === "applied" || record.kind === "changes") {
     if (!port.appendApplied) throw new ConfigError(`chant's gate ledger cannot record an applied approval (${message})`);
-    push = await port.appendApplied(line);
+    push = await port.appendApplied(line as never);
   } else {
     if (!port.appendResolution) throw new ConfigError(`chant's gate ledger cannot record an approval (${message})`);
-    push = await port.appendResolution(input);
+    push = await port.appendResolution(input as never);
   }
-  requireLedgerPush(chant, push, message);
+  requireLedgerPush(push, message);
 }
 
-/** Write `files` on chant/lifecycle beside a pending fact, with chant's writer when it has one (writeWaveRecord), else appendLifecycle. */
+/** Write `files` on chant/lifecycle beside a pending fact, with chant's writer. */
 export async function writeWaveFiles(repo: string, files: Record<string, string>, message: string): Promise<void> {
-  const chant = await chantGateWriters();
-  if (!chant) return appendLifecycle(repo, "", [], files, message);
-  await chant.requireLifecycleLedger({ cwd: repo });
-  for (const [path, text] of Object.entries(files)) {
-    const at = path.lastIndexOf("/");
-    await chant.writeBlobToPath(path.slice(0, at), path.slice(at + 1), text, message, { cwd: repo });
-  }
-  requireLedgerPush(chant, await chant.pushLifecycleReport({ cwd: repo }), message);
+  await writeLedger(repo, "", [], files, message);
 }
 
-function requireLedgerPush(chant: { isLifecycleLocalNote(w: string | undefined): boolean }, push: { pushed: boolean; pushWarning?: string }, message: string): void {
-  if (push.pushed || chant.isLifecycleLocalNote(push.pushWarning)) return;
+function requireLedgerPush(push: { pushed: boolean; pushWarning?: string }, message: string): void {
+  if (push.pushed || isLifecycleLocalNote(push.pushWarning)) return;
   throw new ConfigError(`could not push the ledger record (${message}) to ${LIFECYCLE}: ${push.pushWarning ?? "the push did not land"}; check that the job may push to it`);
 }
 
 /**
- * Append `lines` to `path` on chant/lifecycle, write `files` beside it, and
- * push the commit, retrying when another writer moved the branch. `refs` are
- * pushed with it in one atomic push (a release tag), so the branch and the
- * refs move together or not at all.
+ * Append `lines` to `path` on chant/lifecycle and write `files` beside it in
+ * one commit, with chant's ledger writer: chant brings the checkout's branch
+ * up to origin, writes with a compare-and-swap on each file, and pushes
+ * against its lease, replaying the commit when another writer pushed first.
+ * Paths are full branch paths. Throws when the commit does not reach the
+ * remote; a checkout with no remote keeps it locally, as chant does.
  */
-export function appendLifecycle(repo: string, path: string, lines: string[], files: Record<string, string>, message: string, refs: string[] = []): void {
-  const line = lines.join("\n");
-  // No lines: only the files are written.
-  const appending = lines.length > 0;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const exists = fetchLifecycle(repo);
-    const parent = exists ? git(repo, ["rev-parse", REMOTE_REF]).stdout.trim() : "";
-    const old = exists && appending ? git(repo, ["show", `${REMOTE_REF}:${path}`]) : undefined;
-    // One record per line, each ending in a newline, so a line appended with `>>` stays its own record.
-    const text = `${old && old.status === 0 && old.stdout.trim() ? `${old.stdout.replace(/\n$/, "")}\n` : ""}${line}\n`;
-    const blob = appending ? git(repo, ["hash-object", "-w", "--stdin"], text).stdout.trim() : "";
-    // A scratch index, so the checkout's own index is left alone.
-    const scratch = mkdtempSync(join(tmpdir(), "terragucci-ledger-"));
-    const env = { ...process.env, ...GIT_ID, GIT_INDEX_FILE: join(scratch, "index") };
-    if (parent) git(repo, ["read-tree", parent], undefined, env);
-    for (const [file, b] of [...(appending ? [[path, blob]] : []), ...Object.entries(files).map(([f, t]) => [f, git(repo, ["hash-object", "-w", "--stdin"], t).stdout.trim()])])
-      git(repo, ["update-index", "--add", "--cacheinfo", `100644,${b},${file}`], undefined, env);
-    const tree = git(repo, ["write-tree"], undefined, env).stdout.trim();
-    const commit = git(repo, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message], undefined, env).stdout.trim();
-    rmSync(scratch, { recursive: true, force: true });
-    if (!commit) throw new ConfigError(`could not write the ledger record (${message})`);
-    const push = git(repo, ["push", "-q", ...(refs.length ? ["--atomic"] : []), "origin", `${commit}:refs/heads/${LIFECYCLE}`, ...refs]);
-    if (push.status === 0) return;
+export async function writeLedger(repo: string, path: string, lines: string[], files: Record<string, string>, message: string): Promise<void> {
+  await requireLifecycleLedger({ cwd: repo });
+  const at = (p: string): [string, string] => {
+    const i = p.lastIndexOf("/");
+    return i < 0 ? ["", p] : [p.slice(0, i), p.slice(i + 1)];
+  };
+  // Full paths: the readers name them from the branch's root, whatever workspace member the checkout is.
+  const where = { cwd: repo, ledgerPrefix: "" };
+  for (let attempt = 0; ; attempt++) {
+    const writes: Array<{ path: string; content: string; expectPriorSha?: string | null }> = Object.entries(files).map(([p, content]) => ({ path: p, content }));
+    if (lines.length > 0) {
+      const [dir, file] = at(path);
+      const prior = await readPathSha(dir, file, where);
+      const old = prior ? await readBlobBySha(prior, { cwd: repo }) : null;
+      // One record per line, each ending in a newline, so a line appended with `>>` stays its own record.
+      writes.unshift({ path, content: `${old && old.trim() ? `${old.replace(/\n$/, "")}\n` : ""}${lines.join("\n")}\n`, expectPriorSha: prior });
+    }
+    if (writes.length === 0) return;
+    try {
+      await writeLedgerFiles(writes, message, { cwd: repo });
+      break;
+    } catch (e) {
+      if (!(e instanceof RefCASConflictError) || attempt >= 4) throw e;
+    }
   }
-  throw new ConfigError(`could not push the ledger record (${message}) to ${LIFECYCLE}${refs.length ? ` with ${refs.join(", ")}` : ""}; check that the job may push to it`);
+  let push: { pushed: boolean; pushWarning?: string };
+  try {
+    push = await pushLifecycleRebasing({ cwd: repo });
+  } catch (e) {
+    push = { pushed: false, pushWarning: (e as Error).message };
+  }
+  requireLedgerPush(push, message);
 }
 
 // ── planning and applying ────────────────────────────────────────────────
