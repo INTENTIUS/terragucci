@@ -4,12 +4,12 @@
  * when their push job finishes, whatever the outcome.
  *
  * It goes two places. Always, one run record on chant/lifecycle, which the
- * audit trail reads as an `agent-run` entry: with a chant that has the agent
- * job (chant#4616), chant's run record (`agentRunRecordInput`) appended with
- * chant's run ledger writer to `local/runs__<op>.jsonl` under the member's
- * prefix, op {@link AGENT_OPS} of the feature, the cost in
- * `outcomes.agent.usage.usd`, where chant's `maxCostUsd` sums it; else one
- * line in `_gates/agent-runs.jsonl`, as before. And,
+ * audit trail reads as an `agent-run` entry: chant's run record
+ * (`agentRunRecordInput`, chant#4616) appended with chant's run ledger
+ * writer to `local/runs__<op>.jsonl` under the member's prefix, op
+ * {@link AGENT_OPS} of the feature, the cost in `outcomes.agent.usage.usd`,
+ * where chant's `maxCostUsd` sums it. The audit trail still reads the lines
+ * older releases wrote to `_gates/agent-runs.jsonl`. And,
  * when the job's environment names an OTLP traces endpoint (the variables in
  * ./telemetry.ts), one span to the customer's collector, which a Langfuse
  * instance can be. A record that cannot be written is logged and never fails
@@ -30,7 +30,9 @@ import type { Actor } from "./actor";
 import { AGENT_RUNS_FILE } from "./report/audit";
 import type { Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
-import { chantAgentRuns } from "./chant-next";
+import { agentRunRecordInput, type AgentTrigger } from "@intentius/chant/ci-agent";
+import { pushLifecycleReport } from "@intentius/chant/lifecycle/git";
+import { appendRunRecord } from "@intentius/chant/lifecycle/run-ledger";
 
 export { AGENT_RUNS_FILE };
 export const AGENT_FEATURES = ["agent.comment", "agent.drift", "review.agent", "agent.refused-wave"] as const;
@@ -53,10 +55,11 @@ const AGENT_TRIGGER: Readonly<Record<AgentFeature, string>> = { "agent.comment":
  * wave's `summarized`, which push nothing, are recorded as `opened`, with
  * the word kept in `reason`.
  */
-export function chantAgentRunInput(r: AgentRunRecord, started: string, gitSha?: string): Parameters<NonNullable<Awaited<ReturnType<typeof chantAgentRuns>>>["agentRunRecordInput"]>[0] {
+export function chantAgentRunInput(r: AgentRunRecord, started: string, gitSha?: string): Parameters<typeof agentRunRecordInput>[0] {
   const result = r.result === "posted" || r.result === "summarized" ? "opened" : r.result;
   return {
-    settings: { name: AGENT_OPS[r.feature], on: AGENT_TRIGGER[r.feature], env: "local" },
+    // chant's AgentTrigger names its own job's two triggers; the review and the refused-wave summary keep their word.
+    settings: { name: AGENT_OPS[r.feature], on: AGENT_TRIGGER[r.feature] as AgentTrigger, env: "local" },
     started,
     ended: r.timestamp,
     result,
@@ -241,32 +244,23 @@ export async function sendAgentRun(r: AgentRunRecord, env: NodeJS.ProcessEnv, fe
 }
 
 export interface RecordDeps {
-  /** Append the line to chant/lifecycle (chant's ledger writer). */
-  append?: (line: string, message: string) => void;
   fetch?: OtlpFetch;
   log?: (line: string) => void;
   /** False in a job with no checkout (the review note's): only the span is sent. Default true. */
   ledger?: boolean;
 }
 
-/** Write a run's record to the ledger and, when configured, send its span. Never throws. */
+/** Write a run's record to chant's run ledger and, when configured, send its span. Never throws. */
 export async function recordAgentRun(repo: string, o: RecordAgentRunInput, deps: RecordDeps = {}): Promise<AgentRunRecord> {
   const record = agentRunRecord(o);
   const log = deps.log ?? ((l: string) => console.log(l));
-  if (deps.ledger === false) log(`terragucci: no checkout in this job, so the ${record.feature} run is not written to ${AGENT_RUNS_FILE}`);
+  if (deps.ledger === false) log(`terragucci: no checkout in this job, so the ${record.feature} run is not written to chant/lifecycle`);
   else try {
-    const chant = deps.append ? undefined : await chantAgentRuns();
-    if (chant) {
-      // chant#4616: chant's run record on chant's run ledger, under the member's prefix, pushed after.
-      const sha = o.env.TG_SHA || o.env.GITHUB_SHA || o.env.CI_COMMIT_SHA;
-      await chant.appendRunRecord(chant.agentRunRecordInput(chantAgentRunInput(record, o.started ?? record.timestamp, sha)), { cwd: repo });
-      const pushed = await chant.pushLifecycleReport({ cwd: repo });
-      log(`terragucci: recorded the ${record.feature} run in local/runs__${AGENT_OPS[record.feature]}.jsonl on chant/lifecycle${pushed.pushed ? "" : ` (not pushed: ${pushed.pushWarning ?? "no remote"})`}`);
-    } else {
-      const append = deps.append ?? (async (line: string, message: string): Promise<void> => (await import("./apply")).writeLedger(repo, AGENT_RUNS_FILE, [line], {}, message));
-      await append(JSON.stringify(record), `Agent run ${record.feature}: ${record.result}`);
-      log(`terragucci: recorded the ${record.feature} run in ${AGENT_RUNS_FILE} on chant/lifecycle`);
-    }
+    // chant#4616: chant's run record on chant's run ledger, under the member's prefix, pushed after.
+    const sha = o.env.TG_SHA || o.env.GITHUB_SHA || o.env.CI_COMMIT_SHA;
+    await appendRunRecord(agentRunRecordInput(chantAgentRunInput(record, o.started ?? record.timestamp, sha)), { cwd: repo });
+    const pushed = await pushLifecycleReport({ cwd: repo });
+    log(`terragucci: recorded the ${record.feature} run in local/runs__${AGENT_OPS[record.feature]}.jsonl on chant/lifecycle${pushed.pushed ? "" : ` (not pushed: ${pushed.pushWarning ?? "no remote"})`}`);
   } catch (e) {
     log(`terragucci: could not record the agent run (${(e as Error).message})`);
   }

@@ -2,7 +2,25 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** chant's run ledger stood in for: each appended run record lands here, or the append throws `fail`. */
+const ledger: { records: Array<Record<string, any>>; fail?: string; cwd?: string } = { records: [] };
+vi.mock("@intentius/chant/lifecycle/run-ledger", async (real: () => Promise<Record<string, unknown>>) => ({
+  ...(await real()),
+  appendRunRecord: async (input: Record<string, any>, opts?: { cwd?: string }) => {
+    if (ledger.fail) throw new Error(ledger.fail);
+    ledger.records.push(input);
+    ledger.cwd = opts?.cwd;
+    return { commit: "c", record: input };
+  },
+}));
+vi.mock("@intentius/chant/lifecycle/git", async (real: () => Promise<Record<string, unknown>>) => ({ ...(await real()), pushLifecycleReport: async () => ({ pushed: true }) }));
+afterEach(() => {
+  ledger.records = [];
+  delete ledger.fail;
+  delete ledger.cwd;
+});
 import { agentRunRecord, AGENT_RUNS_FILE, checkCostLimit, digestOf, overBudgetNote, readAgentUsage, readPromptDigest, recordAgentRun, recordOutcome, recordPushOutcome, sendAgentRun } from "../src/agent-record";
 import { reviewRunScript } from "../src/render-review";
 import { agentRunScript, gitlabAgentRunScript } from "../src/render-agent";
@@ -55,12 +73,15 @@ describe("the record", () => {
     });
   });
 
-  it("writes one ledger line, and goes on when the ledger cannot be written", async () => {
-    const lines: string[] = [];
-    await recordAgentRun("/x", base(change({})), { append: (l) => void lines.push(l), log: () => {} });
-    expect(JSON.parse(lines[0]).kind).toBe("agent-run");
+  it("writes one run record on chant's run ledger, and goes on when the ledger cannot be written", async () => {
     const logged: string[] = [];
-    const r = await recordAgentRun("/x", base(change({})), { append: () => { throw new Error("no push"); }, log: (l) => void logged.push(l) });
+    await recordAgentRun("/x", base(change({})), { log: (l) => void logged.push(l) });
+    expect(ledger.records).toHaveLength(1);
+    expect(ledger.records[0]).toMatchObject({ op: "terragucci-agent", env: "local", status: "ok", outcomes: { agent: { trigger: "comment", result: "pushed", commit: "abc" } } });
+    expect(ledger.cwd).toBe("/x");
+    expect(logged.join("\n")).toContain("recorded the agent.comment run in local/runs__terragucci-agent.jsonl on chant/lifecycle");
+    ledger.fail = "no push";
+    const r = await recordAgentRun("/x", base(change({})), { log: (l) => void logged.push(l) });
     expect(r.kind).toBe("agent-run");
     expect(logged.join("\n")).toContain("could not record the agent run (no push)");
   });
@@ -139,10 +160,9 @@ describe("the money limit", () => {
       expect(script).toContain("terragucci agent check-cost");
       expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
     }
-    const lines: string[] = [];
-    const r = await recordPushOutcome({ feature: "agent.comment", cwd: "/x", change: change({}), forge: "github", env: {}, ok: false, stopped: true, requestedBy: "alice", reason: "over" }, { append: (l) => void lines.push(l), log: () => {}, fetchForge: async () => ({ ok: false, status: 401, json: async () => ({}) }) as never });
+    const r = await recordPushOutcome({ feature: "agent.comment", cwd: "/x", change: change({}), forge: "github", env: {}, ok: false, stopped: true, requestedBy: "alice", reason: "over" }, { log: () => {}, fetchForge: async () => ({ ok: false, status: 401, json: async () => ({}) }) as never });
     expect(r).toMatchObject({ result: "stopped", requestedBy: "alice" });
-    expect(JSON.parse(lines[0])).toMatchObject({ result: "stopped", requestedBy: "alice" });
+    expect(ledger.records[0]!.outcomes.agent).toMatchObject({ result: "stopped", requestedBy: "alice" });
   });
 });
 
@@ -155,14 +175,14 @@ describe("review.agent and the refused-wave summary", () => {
   });
 
   it("write a record with the actor TG_AGENT_ACTOR names, and only a span when the job has no checkout", async () => {
-    const lines: string[] = [];
     const logged: string[] = [];
     const dir = change({ "usage.json": '{"model":"m","cost_usd":0.2}', "prompt.sha256": "c".repeat(64) });
-    const r = await recordOutcome({ feature: "review.agent", cwd: "/x", change: dir, forge: "github", env: { TG_AGENT_ACTOR: "review-bot" }, result: "posted", reason: "posted" }, { append: (l) => void lines.push(l), log: () => {} });
+    const r = await recordOutcome({ feature: "review.agent", cwd: "/x", change: dir, forge: "github", env: { TG_AGENT_ACTOR: "review-bot" }, result: "posted", reason: "posted" }, { log: () => {} });
     expect(r).toMatchObject({ feature: "review.agent", actor: { kind: "agent", principal: "review-bot" }, model: "m", cost: { usd: 0.2 }, promptDigest: `sha256:${"c".repeat(64)}`, result: "posted" });
-    expect(lines).toHaveLength(1);
-    await recordOutcome({ feature: "agent.refused-wave", cwd: "/x", change: dir, forge: "github", env: { TG_AGENT_ACTOR: "x" }, result: "summarized", reason: "ok" }, { append: (l) => void lines.push(l), log: (l) => void logged.push(l), ledger: false });
-    expect(lines).toHaveLength(1);
+    expect(ledger.records).toHaveLength(1);
+    expect(ledger.records[0]).toMatchObject({ op: "terragucci-review", outcomes: { agent: { result: "opened", reason: "posted: posted", usage: { model: "m", usd: 0.2 } } } });
+    await recordOutcome({ feature: "agent.refused-wave", cwd: "/x", change: dir, forge: "github", env: { TG_AGENT_ACTOR: "x" }, result: "summarized", reason: "ok" }, { log: (l) => void logged.push(l), ledger: false });
+    expect(ledger.records).toHaveLength(1);
     expect(logged.join("\n")).toContain("no checkout in this job");
   });
 });
