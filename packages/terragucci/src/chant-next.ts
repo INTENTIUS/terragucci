@@ -87,8 +87,7 @@
  * wave in ./apply.ts). And at the 0.124.76 pin: chant core's forge and
  * trust-policy check (`forge-check`, chant#4608), which `terragucci forge
  * check` calls (./identities.ts), and its notify relay (`notify-relay`,
- * chant#4611), whose signature checks, principal mapping and button
- * decisions ./relay.ts uses, and its ledger estate (`ci-estate`, chant#4612),
+ * chant#4611), which `terragucci relay` runs (./relay-host.ts sets it up), and its ledger estate (`ci-estate`, chant#4612),
  * which ./estate.ts builds on once the ledger holds wave run records and
  * whose helpers ./report/dora.ts uses, and its shared policy source
  * (`policy-source`, chant#4613), which fetches `policy.source`

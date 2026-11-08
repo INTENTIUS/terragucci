@@ -80,7 +80,7 @@ packages/terragucci/src/state-access.ts   oidc/state-roles oidc/atmos-roles oidc
 packages/terragucci/src/check-job.ts      apply/check-job
 packages/terragucci/src/identities.ts     identities/trust-policy forge/check
 packages/terragucci/src/environments.ts   apply/groups apply/check-job identities/trust-policy
-packages/terragucci/src/forge-check.ts    forge/check
+packages/terragucci/src/identities.ts     forge/check
 packages/terragucci/src/oidc-trade.ts     security/replan-apply-role oidc/forgejo oidc/state-roles oidc/cloud-roles oidc/terragrunt
 packages/terragucci/src/export.ts         state/export state/terragrunt-export state/gcs state/azurerm
 packages/terragucci/src/branch-checkouts.ts drift/branches

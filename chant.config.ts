@@ -34,8 +34,8 @@ export default {
   release: {
     // .github/workflows/publish.yml, from `chant release workflow` (chant issues 4656 and 4751): one run, started by
     // hand with the version. The gate names the newest green commit at or below the dispatched one, the cut builds the
-    // images and the bundle that pins them and pushes the release/<version> tag, and the publish job builds the images
-    // again, checks them against the cut's digests and publishes. npm's trusted publisher is configured for publish.yml.
+    // images and the bundle that pins them and pushes the release/<version> tag, and the publish job takes the cut's
+    // image archives, checks them against its digests and publishes. npm's trusted publisher is configured for publish.yml.
     workflow: {
       trigger: "dispatch",
       gate: "last-green",
