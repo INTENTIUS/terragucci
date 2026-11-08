@@ -15,7 +15,8 @@ import { QUESTIONS } from "../decide/questions";
 import { findModules } from "../publish";
 import { commitsSince, tryGit } from "../publish/git";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, largerBump, smallerThan } from "../publish/interface";
-import { applyBump, bumpFor, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "../publish/semver";
+import { changelogBump } from "@intentius/chant/lifecycle/release-changelog";
+import { applyBump, compareSemver, formatSemver, parseSemver, type Bump, type Semver } from "../publish/semver";
 import type { Proposal } from "./change";
 
 const TYPES = "feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert";
@@ -125,7 +126,7 @@ export async function versionBumps(
     const iface = interfaceBump(changes);
     const ifaceFields = prev ? { interface: iface, ...(changes.length > 0 ? { changes: describeChanges(changes) } : {}) } : {};
     if (messages.some(isConventional)) {
-      const bump = bumpFor(messages);
+      const bump = changelogBump(messages);
       const short = prev && smallerThan(bump, iface);
       suggestions.push({
         ...base,

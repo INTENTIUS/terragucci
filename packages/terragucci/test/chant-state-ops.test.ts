@@ -1,13 +1,11 @@
 /**
  * terragucci#1282 (unit g): the switches onto chant behind chant-next.ts's
  * loaders. Each part is stood in for with overrideChantNext, so no chant
- * release is needed: the changelog bump
- * (chant#4597), the product tool hook (chant#4555), the gated-request helpers
+ * release is needed: the product tool hook (chant#4555), the gated-request helpers
  * (chant#4551, #4618), and the member-prefixed module ledgers.
  */
 import { afterEach, describe, expect, test } from "vitest";
 import { overrideChantNext } from "../src/chant-next";
-import { bumpFor, ownBumpFor } from "../src/publish/semver";
 import { ledgerPrefixes } from "../src/publish/ledger";
 import { asyncExec, requestRules } from "../src/gated-request";
 import { productHook, TOOLS } from "../src/mcp";
@@ -18,17 +16,6 @@ afterEach(() => {
 });
 
 
-
-describe("bumpFor", () => {
-  test("chant's changelogBump decides when it is loaded, and the fallback keeps the same rules", () => {
-    restore.push(overrideChantNext("changelog", { changelogBump: () => "minor" }));
-    expect(bumpFor(["fix: a"])).toBe("minor");
-    restore.pop()!();
-    restore.push(overrideChantNext("changelog", null));
-    expect(bumpFor(["feat!: b"])).toBe("major");
-    expect(ownBumpFor(["fix: a", "feat: b"])).toBe("minor");
-  });
-});
 
 describe("module ledgers under a member prefix", () => {
   test("the flat ledger and every member's, nested too, and nothing else", () => {
