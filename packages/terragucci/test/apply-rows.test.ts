@@ -2,7 +2,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyScope, chantRows, CHANT_ROWS_GATE, describeHeld, forgeLiveness, parseRows, planRows, readRows, releaseRows, releaseRowsVia, ROWS_PATH, takeRows, takeRowsVia, type HeldRow, type Liveness, type RowHolder } from "../src/apply-rows";
+import { lockRowsPath, parseLockRows as parseRows } from "@intentius/chant/lifecycle/resource-lock";
+import { applyScope, CHANT_ROWS_GATE, describeHeld, forgeLiveness, planRows, readRows, releaseRows, takeRows, type HeldRow, type Liveness, type RowHolder } from "../src/apply-rows";
 import { applyWave, EXIT } from "../src/apply";
 import { git, tmp, write } from "./helpers";
 
@@ -93,14 +94,14 @@ describe("takeRows and releaseRows", () => {
     const refused = await takeRows(work, both, holder("3"), alive);
     expect(refused).toMatchObject({ ok: false, held: [{ key: "estate e terraform_data.left", holder: { run: "1" } }] });
     // Nothing of a refused take was written.
-    expect(readRows(work).rows).toEqual({ "estate e terraform_data.left": "1", "estate e terraform_data.right": "2" });
+    expect((await readRows(work)).rows).toEqual({ "estate e terraform_data.left": "1", "estate e terraform_data.right": "2" });
     expect(describeHeld((refused as { held: HeldRow[] }).held, both)).toBe("run 1 (http://forge/runs/1) is applying a: terraform_data.left");
     // A run takes its own rows again as its own.
     expect((await takeRows(work, rows("a", "terraform_data.left"), holder("1"), alive)).ok).toBe(true);
     expect(await releaseRows(work, ["estate e terraform_data.left"], "1")).toBe(true);
     // Releasing a row another run holds leaves it.
     expect(await releaseRows(work, ["estate e terraform_data.right"], "1")).toBe(true);
-    const file = parseRows(git(origin, "show", `chant/lifecycle:${ROWS_PATH}`));
+    const file = parseRows(git(origin, "show", `chant/lifecycle:${lockRowsPath(CHANT_ROWS_GATE)}`));
     expect(file.rows).toEqual({ "estate e terraform_data.right": "2" });
     expect(Object.keys(file.holders)).toEqual(["2"]);
   });
@@ -111,14 +112,14 @@ describe("takeRows and releaseRows", () => {
     const dead: Liveness = async (h) => (h.run === "7" ? "dead" : "alive");
     const r = await takeRows(work, rows("a", "terraform_data.left"), holder("8"), dead);
     expect(r).toMatchObject({ ok: true, tookOver: [{ run: "7" }] });
-    expect(readRows(work)).toMatchObject({ rows: { "estate e terraform_data.left": "8" } });
-    expect(Object.keys(readRows(work).holders)).toEqual(["8"]);
+    expect(await readRows(work)).toMatchObject({ rows: { "estate e terraform_data.left": "8" } });
+    expect(Object.keys((await readRows(work)).holders)).toEqual(["8"]);
   });
 
   it("refuses to guess when origin cannot be read", async () => {
     const { work } = repo();
     git(work, "remote", "set-url", "origin", join(work, "nowhere.git"));
-    await expect(takeRows(work, rows("a", "terraform_data.left"), holder("1"), alive)).rejects.toThrow(/cannot read chant\/lifecycle from origin/);
+    await expect(takeRows(work, rows("a", "terraform_data.left"), holder("1"), alive)).rejects.toThrow(/cannot fetch chant\/lifecycle from origin/);
     expect(await releaseRows(work, ["k"], "1")).toBe(false);
   });
 });
@@ -160,11 +161,8 @@ describe("forgeLiveness", () => {
   });
 });
 
-/**
- * The rows file a wave holds its rows in: chant's for the pull-request loop's
- * gate where chant has row leases (chant#4552), else terragucci's own.
- */
-const rowsFile = async (): Promise<string> => (await chantRows())?.lockRowsPath(CHANT_ROWS_GATE) ?? ROWS_PATH;
+/** The rows file a wave holds its rows in: chant's for the pull-request loop's gate. */
+const rowsFile = async (): Promise<string> => lockRowsPath(CHANT_ROWS_GATE);
 
 /**
  * A fake choudoufu: plan writes the root into the plan file and counts the
@@ -226,7 +224,7 @@ describe("a choudoufu wave holds what its plans change", () => {
 
   it("refuses at once, naming the run, when the apply a comment started meets a resource another run is applying", async () => {
     const { work, bin, log, lines } = await setup();
-    await takeRowsVia(work, rows("a", "terraform_data.unrelated").concat({ key: "object left-id", root: "b", address: "kubernetes_labels.x" }), holder("55"), alive);
+    await takeRows(work, rows("a", "terraform_data.unrelated").concat({ key: "object left-id", root: "b", address: "kubernetes_labels.x" }), holder("55"), alive);
     expect(await applyWave(work, opts(bin, { onHeld: "refuse", liveness: alive }))).toBe(EXIT.held);
     expect(existsSync(log)).toBe(false);
     // Another estate's change meets this one on the live object: the line names this wave's resource it holds.
@@ -237,11 +235,11 @@ describe("a choudoufu wave holds what its plans change", () => {
 
   it("a push's wave waits while the run is alive, then plans again once it let go, and applies", async () => {
     const { work, bin, log, planned, lines } = await setup();
-    await takeRowsVia(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "estate shop terraform_data.left" })), holder("55"), alive);
+    await takeRows(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "estate shop terraform_data.left" })), holder("55"), alive);
     let asked = 0;
     // The holder lets go after a few polls.
     const liveness: Liveness = async () => {
-      if (++asked === 3) await releaseRowsVia(work, ["estate shop terraform_data.left"], "55");
+      if (++asked === 3) await releaseRows(work, ["estate shop terraform_data.left"], "55");
       return "alive";
     };
     expect(await applyWave(work, opts(bin, { liveness }))).toBe(EXIT.applied);
@@ -254,7 +252,7 @@ describe("a choudoufu wave holds what its plans change", () => {
 
   it("takes over from a run that is gone without planning again, so the apply's own re-read judges what that run left", async () => {
     const { work, bin, log, planned, lines } = await setup();
-    await takeRowsVia(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "object left-id" })), holder("55"), alive);
+    await takeRows(work, rows("a", "terraform_data.left").map((r) => ({ ...r, key: "object left-id" })), holder("55"), alive);
     let asked = 0;
     // Alive at the first take, gone by the poll after it.
     const liveness: Liveness = async () => (++asked > 1 ? "dead" : "alive");

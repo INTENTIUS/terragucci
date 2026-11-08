@@ -1,13 +1,12 @@
 /**
  * terragucci#1282 (unit g): the switches onto chant behind chant-next.ts's
  * loaders. Each part is stood in for with overrideChantNext, so no chant
- * release is needed: row leases (chant#4552, #4594), the changelog bump
+ * release is needed: the changelog bump
  * (chant#4597), the product tool hook (chant#4555), the gated-request helpers
  * (chant#4551, #4618), and the member-prefixed module ledgers.
  */
 import { afterEach, describe, expect, test } from "vitest";
-import { overrideChantNext, type ChantLockRow, type ChantLockRows } from "../src/chant-next";
-import { CHANT_ROWS_GATE, planRows, planRowsVia, releaseRowsVia, takeRowsVia } from "../src/apply-rows";
+import { overrideChantNext } from "../src/chant-next";
 import { bumpFor, ownBumpFor } from "../src/publish/semver";
 import { ledgerPrefixes } from "../src/publish/ledger";
 import { asyncExec, requestRules } from "../src/gated-request";
@@ -18,54 +17,7 @@ afterEach(() => {
   while (restore.length) restore.pop()!();
 });
 
-const PLAN = { resource_changes: [{ address: "aws_s3_bucket.logs", mode: "managed", change: { actions: ["update"], before: { id: "logs-1" } } }] };
 
-function fakeRows(): ChantLockRows & { taken: Array<{ gate: string; rows: readonly ChantLockRow[] }>; released: string[][] } {
-  const taken: Array<{ gate: string; rows: readonly ChantLockRow[] }> = [];
-  const released: string[][] = [];
-  return {
-    taken,
-    released,
-    terraformLockRows: (root, estate, plan) => planRows(root, estate, plan).map((r) => ({ key: r.key, target: r.root, address: r.address })),
-    async takeLockRows(gate, rows) {
-      taken.push({ gate, rows });
-      if (rows.some((r) => r.key === "object held-1")) return { ok: false, held: [{ key: "object held-1", wanted: "object held-1", holder: { run: "77", at: "2026-10-27T10:00:00Z" } }] };
-      return { ok: true, tookOver: [], pushed: true };
-    },
-    async releaseLockRows(_gate, keys) {
-      released.push([...keys]);
-      return true;
-    },
-    async readLockRows() {
-      return { version: 1, holders: {}, rows: {} };
-    },
-    lockRowsPath: (gate) => `_locks/rows/${gate}.json`,
-  };
-}
-
-describe("row leases through chant", () => {
-  test("the rows are the lexicon's, with the same keys as planRows", async () => {
-    restore.push(overrideChantNext("lockRows", fakeRows()));
-    expect(await planRowsVia("net", "e01", PLAN)).toEqual(planRows("net", "e01", PLAN));
-  });
-
-  test("a take and a release go to the pull-request loop's rows file", async () => {
-    const chant = fakeRows();
-    restore.push(overrideChantNext("lockRows", chant));
-    const rows = planRows("net", "e01", PLAN);
-    const me = { run: "100", at: "2026-10-27T11:00:00Z" };
-    expect(await takeRowsVia("/repo", rows, me, async () => "alive")).toEqual({ ok: true, tookOver: [] });
-    expect(chant.taken[0]!.gate).toBe(CHANT_ROWS_GATE);
-    expect(await releaseRowsVia("/repo", rows.map((r) => r.key), me.run)).toBe(true);
-    expect(chant.released).toEqual([rows.map((r) => r.key)]);
-  });
-
-  test("a row another run holds names the row this take wanted", async () => {
-    restore.push(overrideChantNext("lockRows", fakeRows()));
-    const held = await takeRowsVia("/repo", [{ key: "object held-1", root: "net", address: "aws_s3_bucket.logs" }], { run: "100", at: "" }, async () => "alive");
-    expect(held).toEqual({ ok: false, held: [{ key: "object held-1", holder: { run: "77", at: "2026-10-27T10:00:00Z" } }] });
-  });
-});
 
 describe("bumpFor", () => {
   test("chant's changelogBump decides when it is loaded, and the fallback keeps the same rules", () => {

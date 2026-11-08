@@ -1024,41 +1024,6 @@ export type ChantInvokeActionResult =
   | { outcome: "ok"; digest: string; subject: string; approvedBy: string; tail: string; recorded: boolean; exit: number }
   | { outcome: "failed"; digest: string; subject: string; approvedBy: string; error: string; tail: string; recorded: boolean; exit: number };
 
-/** One row an apply holds (`LockRow`, chant#4552). */
-export interface ChantLockRow {
-  key: string;
-  target: string;
-  address: string;
-}
-
-export interface ChantLockRowHolder {
-  run: string;
-  at: string;
-  url?: string;
-  sha?: string;
-}
-
-export interface ChantHeldLockRow {
-  key: string;
-  wanted: string;
-  holder: ChantLockRowHolder;
-}
-
-export interface ChantLockRowsFile {
-  version: 1;
-  holders: Record<string, ChantLockRowHolder>;
-  rows: Record<string, string>;
-}
-
-/** chant core's row leases (`lifecycle/resource-lock`, chant#4552, #4594) and the terraform lexicon's rows (`lock-rows`). */
-export interface ChantLockRows {
-  terraformLockRows(root: string, estate: string | undefined, plan: unknown): ChantLockRow[];
-  takeLockRows(gate: string, rows: readonly ChantLockRow[], me: ChantLockRowHolder, opts?: { cwd?: string; alive?: (h: ChantLockRowHolder) => Promise<"alive" | "dead"> }): Promise<{ ok: true; tookOver: ChantLockRowHolder[]; pushed: boolean } | { ok: false; held: ChantHeldLockRow[] }>;
-  releaseLockRows(gate: string, keys: readonly string[], me: string, opts?: { cwd?: string }): Promise<boolean>;
-  readLockRows(gate: string, opts?: { cwd?: string }): Promise<ChantLockRowsFile>;
-  lockRowsPath(gate: string): string;
-}
-
 /** A tool on chant's MCP server (`McpToolContribution`). */
 export interface ChantMcpTool {
   name: string;
@@ -1376,14 +1341,6 @@ const loaders = {
     },
     (m) => (has(m, "gatedStateOp", "forceUnlockState", "pushStateFile", "planStateCheck", "planCopy", "applyPlanFile", "readGatedRequests", "invokeAction") && m.ACTION_ADDRESS instanceof RegExp ? (m as unknown as ChantStateOps) : undefined),
   ),
-  lockRows: once<ChantLockRows>(
-    async () => {
-      const leases: object = await import("@intentius/chant/lifecycle/resource-lock");
-      const rows: object = await import("@intentius/chant-lexicon-terraform/lock-rows");
-      return { ...leases, ...rows };
-    },
-    (m) => (has(m, "terraformLockRows", "takeLockRows", "releaseLockRows", "readLockRows", "lockRowsPath") ? (m as unknown as ChantLockRows) : undefined),
-  ),
   productMcp: once<ChantProductMcp>(
     () => import("@intentius/chant/ci-product"),
     (m) => (has(m, "runChantInProcess") && typeof m.PRODUCT_MCP_HOOK_FLOOR === "string" && typeof m.PRODUCT_MCP_PROPOSE_FLOOR === "string" ? (m as unknown as ChantProductMcp) : undefined),
@@ -1532,8 +1489,6 @@ export const chantStateOps = (): Promise<ChantStateOps | undefined> => load("sta
 export const chantHoldRecord = (): Promise<ChantHoldRecord | undefined> => load("holdRecord");
 /** chant's reader of a gated request's stored proof (chant#4551, #4623), or undefined. */
 export const chantRequestProof = (): Promise<ChantRequestProof | undefined> => load("requestProof");
-/** chant's row leases and the lexicon's rows (chant#4552, #4594), or undefined. */
-export const chantLockRows = (): Promise<ChantLockRows | undefined> => load("lockRows");
 /** chant's in-process CLI with the product tool hook (chant#4555), or undefined. */
 export const chantProductMcp = (): Promise<ChantProductMcp | undefined> => load("productMcp");
 
@@ -1597,7 +1552,7 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const registryProxies = await chantRegistryProxies();
   const sourceForms = await chantSourceForms();
   const [opStandDown] = [await chantOpStandDown()];
-  const [stateOps, lockRows, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantLockRows(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
+  const [stateOps, productMcp, changelog, releaseRead] = [await chantStateOps(), await chantProductMcp(), await load("changelog"), await load("releaseRead")];
   const agentRuns = await chantAgentRuns();
   const agentJob = await chantAgentJob();
   const opGenerator = await chantOpGenerator();
@@ -1605,5 +1560,5 @@ export async function chantNextParts(): Promise<Record<ChantNextPart, boolean>> 
   const requestProof = await chantRequestProof();
   const templateRequest = await chantTemplateRequests();
   const templateRender = await chantTemplateRender();
-  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, lockRows: !!lockRows, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
+  return { compose: !!compose, composeRun: !!composeRun, state: !!state, planShape: !!planShape, objectStore: !!objectStore, checkHooks: !!checkHooks, bucketCheck: !!bucketCheck, tf046: !!tf046, moduleCatalog: !!moduleCatalog, ciControl: !!ciControl, controlPipelineGithub: !!controlPipelineGithub, controlPipelineGitlab: !!controlPipelineGitlab, controlPipelineForgejo: !!controlPipelineForgejo, opWaveStep: !!opWaveStep, waveCapabilities: !!waveCapabilities, registryProxies: !!registryProxies, opStandDown: !!opStandDown, sourceForms: !!sourceForms, stateOps: !!stateOps, productMcp: !!productMcp, changelog: !!changelog, releaseRead: !!releaseRead, agentRuns: !!agentRuns, agentJob: !!agentJob, opGenerator: !!opGenerator, holdRecord: !!holdRecord, requestProof: !!requestProof, templateRequest: !!templateRequest, templateRender: !!templateRender };
 }
