@@ -4,7 +4,7 @@
  * merge made. GitHub, GitLab and Forgejo answer through their own APIs, with
  * the same `fetch` the rest of terragucci uses.
  */
-import { call, ForgeError, openPullRequest, type Fetch, type ForgeTarget } from "../forge";
+import { call, commitStatuses, defaultBranch, ForgeError, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "../forge";
 
 export interface WavePullRequest {
   url: string;
@@ -77,10 +77,7 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
   const get = (path: string) => call(fetch, t, "GET", path);
   const id = encodeURIComponent(t.path);
   return {
-    async defaultBranch() {
-      if (t.forge === "gitlab") return ((await get(`/projects/${id}`)) as { default_branch?: string }).default_branch ?? "main";
-      return ((await get(`/repos/${t.path}`)) as { default_branch?: string }).default_branch ?? "main";
-    },
+    defaultBranch: () => defaultBranch(fetch, t),
 
     async findPullRequest(branch) {
       if (t.forge === "gitlab") {
@@ -167,10 +164,6 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
     },
 
     async commitChecks(sha) {
-      if (t.forge === "gitlab") {
-        const list = (await get(`/projects/${id}/repository/commits/${sha}/statuses?per_page=100`)) as Array<{ id?: number; name: string; status: string }>;
-        return newest(list, (s) => s.name).map((s) => ({ name: s.name, state: checkState(s.status) }));
-      }
       const checks: CommitCheck[] = [];
       if (t.forge === "github") {
         const runs = (await get(`/repos/${t.path}/commits/${sha}/check-runs?per_page=100`)) as { check_runs?: Array<{ id?: number; name: string; status: string; conclusion?: string | null }> };
@@ -178,13 +171,8 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
           checks.push({ name: r.name, state: r.status === "completed" ? (STATE[r.conclusion ?? ""] ?? "failure") : "pending" });
         }
       }
-      const statuses = (await get(`/repos/${t.path}/commits/${sha}/statuses?${t.forge === "github" ? "per_page" : "limit"}=100`)) as Array<{
-        id?: number;
-        context: string;
-        state?: string;
-        status?: string;
-      }>;
-      for (const s of newest(statuses, (s) => s.context)) checks.push({ name: s.context, state: checkState(s.status ?? s.state) });
+      // Each status's newest, through chant's client (chant#4554).
+      for (const st of await commitStatuses(prForgeOf(t, fetch), sha)) checks.push({ name: st.context, state: checkState(st.state) });
       return checks;
     },
   };

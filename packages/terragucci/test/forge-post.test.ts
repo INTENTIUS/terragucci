@@ -60,7 +60,7 @@ describe("terragucci post", () => {
       3: [{ id: 13, body: "<!-- terragucci:plan roots=app -->\n> This plan is stale <!-- terragucci:stale -->" }],
     };
     const f = forge((m, u) => {
-      if (u.includes("/pulls?")) return [{ number: 1 }, { number: 2 }, { number: 3 }];
+      if (u.includes("/pulls?")) return [1, 2, 3].map((number) => ({ number, head: { ref: `b${number}`, sha: "abc", repo: { full_name: "o/r" } }, base: { ref: "main" } }));
       const n = /issues\/(\d+)\/comments/.exec(u);
       return m === "GET" && n ? notes[Number(n[1])] : {};
     });

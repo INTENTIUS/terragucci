@@ -51,7 +51,8 @@ import { probeLock, releaseLock, shownUrl, type GitLabFetch } from "./gitlab-sta
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "./detect";
 import { detectShape } from "./shape";
-import { call, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
+import { forgeLiveRuns, possibleHolders, type LiveRun } from "@intentius/chant/state-unlock";
+import { apiBase, DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
 import type { StoreFetch } from "./report/object-store";
 import { forgeOf } from "./respond/change";
 import { sealRefusal } from "./seal";
@@ -64,9 +65,6 @@ export const UNLOCK_DONE = `_gates/${UNLOCK_OP}/done.jsonl`;
 
 /** Exit codes, as the waves give them. */
 export const UNLOCK_EXIT = { released: 0, refused: 1, waiting: 3, other: 4 } as const;
-
-/** How far a run's start may be after the lock's and still count as a run that could hold it: the clocks of the job and the forge differ. */
-export const CLOCK_SKEW_MS = 2 * 60 * 1000;
 
 /** The lock info the binary writes, and prints when it finds a lock held. */
 export interface LockInfo {
@@ -96,56 +94,6 @@ export const lockDigest = (root: string, location: string, id: string): string =
 
 /** The command that approves releasing a lock. */
 export const unlockApproveCommand = (root: string, digest: string, sealed = false): string => `terragucci approve unlock ${root} --plan ${digest}${sealed ? " --sign" : ""}`;
-
-/** A run or pipeline of the repository that has not finished. */
-export interface LiveRun {
-  id: string;
-  status: string;
-  /** When it began, or was created when the forge gives no start. */
-  started?: string;
-  url?: string;
-}
-
-const time = (iso: string | undefined): number => (iso ? Date.parse(iso) : Number.NaN);
-
-/**
- * The repository's runs that have not finished: Forgejo's and GitHub's
- * Actions runs, GitLab's pipelines, read with the token.
- */
-export async function liveRuns(fetchFn: Fetch, t: ForgeTarget): Promise<LiveRun[]> {
-  const out = new Map<string, LiveRun>();
-  if (t.forge === "gitlab") {
-    for (const status of ["running", "pending", "preparing", "waiting_for_resource"]) {
-      const rows = (await call(fetchFn, t, "GET", `/projects/${encodeURIComponent(t.path)}/pipelines?status=${status}&per_page=100`)) as Array<Record<string, unknown>>;
-      for (const p of Array.isArray(rows) ? rows : []) {
-        out.set(String(p.id), { id: String(p.id), status: String(p.status ?? status), started: (p.started_at ?? p.created_at) as string | undefined, url: p.web_url as string | undefined });
-      }
-    }
-    return [...out.values()];
-  }
-  const statuses = t.forge === "github" ? ["in_progress", "queued", "waiting", "pending", "requested"] : ["running", "waiting", "blocked"];
-  const limit = t.forge === "github" ? "per_page=100" : "limit=50";
-  for (const status of statuses) {
-    const body = (await call(fetchFn, t, "GET", `/repos/${t.path}/actions/runs?status=${status}&${limit}`)) as { workflow_runs?: Array<Record<string, unknown>> };
-    for (const r of body.workflow_runs ?? []) {
-      const started = (t.forge === "github" ? (r.run_started_at ?? r.created_at) : (r.started ?? r.created)) as string | undefined;
-      // Forgejo leaves `started` at the epoch until a job starts.
-      const begun = started && time(started) > 0 ? started : ((r.created ?? r.created_at) as string | undefined);
-      out.set(String(r.id), { id: String(r.id), status: String(r.status ?? status), started: begun, url: r.html_url as string | undefined });
-    }
-  }
-  return [...out.values()];
-}
-
-/**
- * The live runs that may hold a lock taken at `created`: those that began
- * before it, give or take the clocks' skew. A lock with no time it was taken,
- * or a run with no start, keeps every run in.
- */
-export function possibleHolders(runs: readonly LiveRun[], created: string | undefined, skewMs = CLOCK_SKEW_MS): LiveRun[] {
-  const taken = time(created);
-  return runs.filter((r) => Number.isNaN(taken) || Number.isNaN(time(r.started)) || time(r.started) <= taken + skewMs);
-}
 
 export interface UnlockOptions {
   config?: string;
@@ -346,7 +294,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const holders = async (): Promise<LiveRun[]> => {
     let runs: LiveRun[];
     try {
-      runs = await liveRuns(fetchFn, target);
+      runs = await forgeLiveRuns({ kind: target.forge, apiBase: apiBase(target), repo: target.path, token: target.token, fetch: fetchFn as never });
     } catch (e) {
       throw new ConfigError(`${rel}: the forge's runs could not be read (${(e as Error).message}), so nothing says the run holding the lock is gone`);
     }
@@ -435,7 +383,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
         op: UNLOCK_OP,
         gate: rel,
         timestamp: now,
-        expiresAt: new Date(time(now) + 48 * 3600 * 1000).toISOString(),
+        expiresAt: new Date(Date.parse(now) + 48 * 3600 * 1000).toISOString(),
         planDigest: digest,
         description: `release ${describeLock(lock)} on ${location}`,
         ...(commit ? { commit } : {}),

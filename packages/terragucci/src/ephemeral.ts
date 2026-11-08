@@ -101,7 +101,7 @@ import {
 } from "./config";
 import { applyLayers, backendBlock, findRoots, globMatch } from "./detect";
 import { detectShape, type Shape } from "./shape";
-import { call, type Fetch } from "./forge";
+import { prForgeOf, type Fetch } from "./forge";
 import { isGitLabAddress, shownUrl, suffixedGitLabAddress } from "./gitlab-state";
 import { unitPlace } from "./migrate";
 import { RootBinaries } from "./pins";
@@ -635,12 +635,9 @@ export function readLive(repo: string): Map<number, LivePrEnvironment> {
 async function pullState(fetchFn: Fetch, r: Ready, pr: number): Promise<"open" | "closed" | "merged"> {
   const t = targetFromEnv(r.forge, r.env, r.env.TG_TOKEN, true);
   if (!t) throw new Error("no forge token or repository in the job");
-  if (t.forge === "gitlab") {
-    const mr = (await call(fetchFn, t, "GET", `/projects/${encodeURIComponent(t.path)}/merge_requests/${pr}`)) as { state?: string };
-    return mr.state === "merged" ? "merged" : mr.state === "closed" ? "closed" : "open";
-  }
-  const p = (await call(fetchFn, t, "GET", `/repos/${t.path}/pulls/${pr}`)) as { state?: string; merged?: boolean };
-  return p.merged === true ? "merged" : p.state === "closed" ? "closed" : "open";
+  const forge = prForgeOf(t, fetchFn);
+  if (!forge.pullRequestState) throw new Error(`chant's ${t.forge} client reads no pull request's state`);
+  return forge.pullRequestState(pr);
 }
 
 /**

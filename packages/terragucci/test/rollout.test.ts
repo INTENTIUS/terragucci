@@ -442,10 +442,11 @@ describe("the forge", () => {
         { html_url: "u/1", number: 1, state: "closed", merged: true, merge_commit_sha: "abc", body: "b", head: { ref: "w1" } },
         { html_url: "u/2", number: 2, state: "open", body: "", head: { ref: "other" } },
       ],
-      "/api/v1/repos/acme/infra/commits/abc/statuses?limit=100": [
-        { id: 1, context: "terragucci / apply (push)", status: "pending" },
-        { id: 2, context: "terragucci / apply (push)", status: "success" },
+      // Newest first, as Forgejo lists them; chant's client keeps each context's first.
+      "/api/v1/repos/acme/infra/commits/abc/statuses?limit=50&page=1": [
         { id: 3, context: "terragucci / check (push)", status: "success" },
+        { id: 2, context: "terragucci / apply (push)", status: "success" },
+        { id: 1, context: "terragucci / apply (push)", status: "pending" },
       ],
     };
     const fetch: Fetch = async (url) => {

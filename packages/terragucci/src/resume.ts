@@ -191,12 +191,6 @@ export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: num
   const later = "the pipeline's resume job applies it on its next run when apply.resume is set; otherwise run its job again, or comment /terragucci apply";
   const token = tokenFor(forge, env);
   if (!token) return `not resumed from here: no token in ${TOKEN_ENV[forge]}; ${later}`;
-  const call = async (method: string, api: string, auth: Record<string, string>, body?: unknown): Promise<any> => {
-    const r = await doFetch(api, { method, headers: { "content-type": "application/json", ...auth }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!r.ok) throw new Error(`${method} ${api.replace(/^https?:\/\/[^/]+/, "")} answered ${r.status}`);
-    if (r.status === 204) return null;
-    return r.json().catch(() => null);
-  };
   try {
     if (forge === "github" || forge === "gitlab") {
       // chant starts the job that waited again, from the run locator it recorded on the pending fact, and leaves alone a run still going, that succeeded or that was resumed already.
@@ -207,12 +201,11 @@ export async function resumeAfterApproval(o: { origin: Origin; wave: { wave: num
     }
     // Forgejo's API has no re-run: the merged pull request's /terragucci apply, as the approver, runs the waves again.
     if (!o.wave.commit) return `not resumed from here: the pending fact names no commit; ${later}`;
-    const api = `${web}/api/v1/repos/${path}`;
-    const auth = { authorization: `token ${token}` };
-    const pr = await call("GET", `${api}/commits/${o.wave.commit}/pull`, auth).catch(() => null);
-    if (!Number.isInteger(pr?.number)) return `not resumed from here: no merged pull request made ${o.wave.commit.slice(0, 8)}; ${later}`;
-    await forgejoForge({ apiBase: `${web}/api/v1`, repo: path, token, host, fetch: doFetch }).addComment(pr.number, "/terragucci apply");
-    return `resumed: commented /terragucci apply on pull request ${pr.number}, so its waves run again and each gate decides`;
+    const client = forgejoForge({ apiBase: `${web}/api/v1`, repo: path, token, host, fetch: doFetch });
+    const pr = await client.pullRequestFor(o.wave.commit).catch(() => null);
+    if (pr === null) return `not resumed from here: no merged pull request made ${o.wave.commit.slice(0, 8)}; ${later}`;
+    await client.addComment(pr, "/terragucci apply");
+    return `resumed: commented /terragucci apply on pull request ${pr}, so its waves run again and each gate decides`;
   } catch (e) {
     return `not resumed from here (${(e as Error).message}); ${later}`;
   }

@@ -1562,6 +1562,9 @@ describe("the plan stage", () => {
   });
 });
 
+/** An open pull request into main, as the forge lists it. */
+const OPEN_PULL = { number: 7, head: { ref: "change", sha: "abc", repo: { full_name: "acme/infra" } }, base: { ref: "main" } };
+
 describe("stale plan notes", () => {
   const applyEnv = (api: string, bin: Record<string, string>): Record<string, string> => ({
     // No branch, so a GitHub wave does not ask a remote for the tip (STAND_DOWN), whatever the test's own environment says.
@@ -1571,7 +1574,7 @@ describe("stale plan notes", () => {
 
   it("marks a note stale when main moved under one of its roots", async () => {
     const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
-    const api = await stubApi((h) => (h.url.startsWith("/repos/acme/infra/pulls") ? [{ number: 7 }] : h.url.includes("/issues/7/comments") && h.method === "GET" ? [noteFor("network,other")] : {}));
+    const api = await stubApi((h) => (h.url.startsWith("/repos/acme/infra/pulls") ? [OPEN_PULL] : h.url.includes("/issues/7/comments") && h.method === "GET" ? [noteFor("network,other")] : {}));
     try {
       const r = await run(applyScript("tofu", [["network"], ["app"]], "github"), applyEnv(api.url, env));
       expect(r.status).toBe(0);
@@ -1589,7 +1592,7 @@ describe("stale plan notes", () => {
     const { env } = fakeBin("#!/usr/bin/env bash\nexit 0\n", STAGE_OK);
     const stale = { id: 55, body: "<!-- terragucci:plan roots=app -->\n> stale <!-- terragucci:stale -->\n" };
     for (const note of [noteFor("elsewhere"), stale]) {
-      const api = await stubApi((h) => (h.url.startsWith("/repos/acme/infra/pulls") ? [{ number: 7 }] : h.method === "GET" ? [note] : {}));
+      const api = await stubApi((h) => (h.url.startsWith("/repos/acme/infra/pulls") ? [OPEN_PULL] : h.method === "GET" ? [note] : {}));
       try {
         await run(applyScript("tofu", [["app"]], "github"), applyEnv(api.url, env));
         expect(api.hits.some((h) => h.method === "PATCH")).toBe(false);
