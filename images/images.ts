@@ -19,6 +19,9 @@ import { DECIDE_IMAGE, LAYA_MODEL, TOOL_VERSIONS } from "../packages/terragucci/
  * NODE carries Node 22.23.3; CDK Terrain's cdktn 0.24, which a `synth` job
  * runs on the image, needs 22.19 or later.
  */
+/** The build argument a release passes its label in (chant's release.version): each image's version label reads it. */
+export const RELEASE_LABEL_ARG = "CHANT_RELEASE_LABEL";
+
 const NODE = "node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392";
 const DEBIAN = "debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251";
 const PYTHON = "python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3";
@@ -77,6 +80,9 @@ const choudoufuFetch = (v: string): string => {
 
 const finalStage = (name: string, description: string) => ({
   from: NODE,
+  // The version label is the release's label, which chant passes to a release's build; a build outside a release passes
+  // the committed version (scripts/images.ts). The committed Dockerfile never holds the version being released.
+  arg: [RELEASE_LABEL_ARG],
   // A forge may run the job as a uid with no /etc/passwd entry. Go reads the user
   // from the passwd file, or without cgo from $USER and $HOME, and tofu with an
   // OTLP endpoint set fails ("Current requires cgo or $USER set") when it finds
@@ -119,7 +125,7 @@ const finalStage = (name: string, description: string) => ({
   label: [
     `org.opencontainers.image.title="terragucci-${name}"`,
     `org.opencontainers.image.description="${description}"`,
-    `org.opencontainers.image.version="${pkg.version}"`,
+    `org.opencontainers.image.version="\${${RELEASE_LABEL_ARG}}"`,
     'org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"',
     'org.opencontainers.image.licenses="Apache-2.0"',
   ],
@@ -216,6 +222,7 @@ export const decide = new Dockerfile({
         `DECIDE_CHECKPOINT=${ckpt.name}`,
         `DECIDE_PORT=${DECIDE_IMAGE.port}`,
       ],
+      arg: [RELEASE_LABEL_ARG],
       user: "10001:10001",
       copy: [
         "--from=build /opt/venv /opt/venv",
@@ -226,7 +233,7 @@ export const decide = new Dockerfile({
       label: [
         'org.opencontainers.image.title="terragucci-decide"',
         `org.opencontainers.image.description="Laya ${DECIDE_IMAGE.laya} (${ckpt.repo}@${ckpt.revision.slice(0, 12)}) on CPU behind the Jev /v1/systemone shape"`,
-        `org.opencontainers.image.version="${pkg.version}"`,
+        `org.opencontainers.image.version="\${${RELEASE_LABEL_ARG}}"`,
         'org.opencontainers.image.source="https://github.com/INTENTIUS/terragucci"',
         'org.opencontainers.image.licenses="Apache-2.0"',
       ],

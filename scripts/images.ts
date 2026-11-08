@@ -83,6 +83,10 @@ function run(bin: string, argv: string[]): void {
   execFileSync(bin, argv, { cwd: root, stdio: "inherit" });
 }
 
+// A build outside a release labels each image with the committed version; a release's build gets its label from chant.
+// CHANT_RELEASE_LABEL is RELEASE_LABEL_ARG in images/images.ts, the argument chant passes a release's build.
+const versionArg = ["--build-arg", `CHANT_RELEASE_LABEL=${pkg.version}`];
+
 if (cmd === "tags") {
   for (const n of NAMES) console.log(`${n} ${ref(n)}`);
 } else if (cmd === "build") {
@@ -91,7 +95,7 @@ if (cmd === "tags") {
     process.exit(2);
   }
   for (const n of NAMES) {
-    run("docker", ["buildx", "build", "--load", ...(platform ? ["--platform", platform] : []), "-f", `images/Dockerfile.${n}`, "-t", ref(n), "."]);
+    run("docker", ["buildx", "build", "--load", ...(platform ? ["--platform", platform] : []), ...versionArg, "-f", `images/Dockerfile.${n}`, "-t", ref(n), "."]);
   }
 } else if (cmd === "check") {
   const budget = JSON.parse(readFileSync(join(root, "images/budget.json"), "utf-8")) as Record<string, number>;
@@ -118,7 +122,7 @@ if (cmd === "tags") {
   // terragucci-decide (terragucci#29) is opt-in: tags, build and check above
   // never name it, and images/budget.json holds no budget for it. The stack's
   // decide profile runs it as terragucci-decide:local.
-  run("docker", ["buildx", "build", "--load", ...(platform ? ["--platform", platform] : []), "-f", "images/Dockerfile.decide", "-t", decideImage(), "-t", "terragucci-decide:local", "."]);
+  run("docker", ["buildx", "build", "--load", ...(platform ? ["--platform", platform] : []), ...versionArg, "-f", "images/Dockerfile.decide", "-t", decideImage(), "-t", "terragucci-decide:local", "."]);
 } else {
   console.error("usage: npx tsx scripts/images.ts tags|build|check|build-decide [--platform linux/amd64|linux/arm64]");
   process.exit(2);

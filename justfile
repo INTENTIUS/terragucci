@@ -406,10 +406,6 @@ diff-guard base="origin/main" head="HEAD":
     scripts/diff-guard.sh {{base}} {{head}}
     scripts/lfs-check.sh {{base}} {{head}}
 
-[doc("Move the package and the images' version labels to VERSION, and regenerate the Dockerfiles, both examples' pipelines and patches, and the cli-json goldens with the new tags. A release then runs the publish workflow with VERSION.")]
-version-bump version:
-    npx tsx scripts/release.ts bump {{version}}
-
 [doc("Build the terragucci CLI into one bundled file. A release's build reads CHANT_RELEASE_DIGESTS and pins the images by digest.")]
 build-cli:
     node scripts/build-cli.mjs
