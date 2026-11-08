@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig, type ControlSettings } from "../src/config";
-import { controlPipeline, dependentsScript, dispatchScript, resolveControl } from "../src/control-repo";
+import { chantControlPipelineFile, dispatchScript, resolveControl } from "../src/control-repo";
 import { commentApplyScript, renderPipeline, resumeScript } from "../src/render";
 import { tmp } from "./helpers";
 
@@ -65,7 +65,7 @@ describe("control: the dispatch step in a member's pipeline", () => {
   it("gitlab and forgejo: a pipeline trigger and a workflow dispatch", () => {
     const gl = dispatchScript(resolveControl({ repo: "gitlab.com/acme/ctl", op: "deploy" }, "infra"));
     expect(gl).toContain("https://gitlab.com/api/v4/projects/acme%2Fctl/trigger/pipeline");
-    expect(gl).toContain("variables[TERRAGUCCI_MEMBER]=$member");
+    expect(gl).toContain("variables[CHANT_CONTROL_MEMBER]=$member");
     const fj = dispatchScript(resolveControl({ repo: "codeberg.org/acme/ctl", op: "deploy" }, "infra"));
     expect(fj).toContain("https://codeberg.org/api/v1/repos/acme/ctl/actions/workflows/terragucci-dependents.yml/dispatches");
   });
@@ -89,28 +89,12 @@ describe("control: the dispatch step in a member's pipeline", () => {
 });
 
 describe("control: the control repo's pipeline", () => {
-  it("github: runs on the dispatch, passes the payload as environment, never in the script", () => {
-    const p = controlPipeline("github");
-    expect(p.path).toBe(".github/workflows/terragucci-dependents.yml");
-    const d = doc(p.content);
-    expect(d.on.repository_dispatch).toEqual({ types: ["terragucci-applied"] });
-    const step = d.jobs.dependents.steps.find((s: any) => s.run);
-    expect(step.env.TERRAGUCCI_MEMBER).toContain("client_payload.member");
-    expect(step.run).not.toContain("client_payload");
-    expect(step.run).toContain('chant workspace run --dependents-of "$member" --op "$op"');
-  });
-  it("forgejo and gitlab get their own triggers", () => {
-    expect(doc(controlPipeline("forgejo").content).on.repository_dispatch).toBeUndefined();
-    const gl = doc(controlPipeline("gitlab").content);
-    expect(gl.dependents.rules[0].if).toContain('$CI_PIPELINE_SOURCE == "trigger"');
-  });
-  it("the script runs the dependents of the member the dispatch names, and refuses an odd name", () => {
-    const ok = run(dependentsScript(), { TERRAGUCCI_MEMBER: "infra", TERRAGUCCI_OP: "deploy" });
-    expect(ok.status).toBe(0);
-    expect(ok.log).toContain("npx --no-install chant workspace run --dependents-of infra --op deploy --json");
-    const bad = run(dependentsScript(), { TERRAGUCCI_MEMBER: "infra; echo hi", TERRAGUCCI_OP: "deploy" });
-    expect(bad.status).toBe(2);
-    expect(bad.log).toBe("");
+  it("is the forge lexicon's, in terragucci's words, behind terragucci's first line", () => {
+    for (const forge of ["github", "gitlab", "forgejo"] as const) {
+      const p = chantControlPipelineFile(forge);
+      expect(p.content.split("\n")[0]).toContain("terragucci");
+      expect(p.content).toContain("--dependents-of");
+    }
   });
 });
 

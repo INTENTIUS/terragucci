@@ -8,53 +8,31 @@
  * `chant workspace run --dependents-of <member> --op <op>`. The member holds
  * a token for that one call and no other access to the control repo.
  *
- * This file has both halves: the member's step (`dispatchScript`) and the
- * control repo's pipeline (`controlPipeline`).
- *
- * chant core holds the control repo now (chant#4568). When the installed
- * chant has `@intentius/chant/ci-control`, the member's step is chant's
- * `controlDispatchScript` with terragucci's words, its token piped to curl on
- * stdin rather than put in curl's arguments; the control repo's pipeline is
- * the forge lexicon's `generateControlPipeline` (`chantControlPipelineFile`);
- * and the read-only checkout also fetches the control repo's `chant/lifecycle`,
- * where its entries live (./control-records.ts). Without it, the code below.
- * On GitLab chant's trigger names the variables CHANT_CONTROL_MEMBER,
- * CHANT_CONTROL_OP and CHANT_CONTROL_SHA, so members and the control repo's
- * pipeline move together: run `terragucci control init` in the control repo
- * with the same terragucci the members use.
+ * chant core holds the control repo (chant#4568): the member's step is
+ * chant's `controlDispatchScript` with terragucci's words, its token piped to
+ * curl on stdin rather than put in curl's arguments; the control repo's
+ * pipeline is the forge lexicon's `generateControlPipeline`
+ * (`chantControlPipelineFile`); and the plan job reads the control repo's
+ * `chant/lifecycle`, where its entries live (./control-records.ts), with
+ * chant's `controlNoteCheckout`. On GitLab chant's trigger names the
+ * variables CHANT_CONTROL_MEMBER, CHANT_CONTROL_OP and CHANT_CONTROL_SHA.
  */
-import { Job, Step, Workflow } from "@intentius/chant-lexicon-github/generated/index";
-import { Image, Job as GitLabJob, Rule } from "@intentius/chant-lexicon-gitlab/generated/index";
-import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab/serializer";
+import { Step } from "@intentius/chant-lexicon-github/generated/index";
+import * as chant from "@intentius/chant/ci-control";
+import { generateControlPipeline as githubControlPipeline } from "@intentius/chant-lexicon-github/components/control-pipeline";
+import { generateControlPipeline as gitlabControlPipeline } from "@intentius/chant-lexicon-gitlab/components/control-pipeline";
+import { generateControlPipeline as forgejoControlPipeline } from "@intentius/chant-lexicon-forgejo/components/control-pipeline";
 import { CONTROL_NAME, CONTROL_READ_TOKEN_ENV, CONTROL_TOKEN_ENV, ConfigError, forgeFromHost, parseProjectKey, type ControlSettings, type ForgeName } from "./config";
-import { MARKER, serializeWorkflow } from "./render";
-import { CHECKOUT, SETUP_NODE } from "./action-pins";
-import { chantCiControlNow, chantControlPipeline, type ChantControlTarget } from "./chant-next";
+import { MARKER } from "./render";
+import { CHECKOUT } from "./action-pins";
+import type { ChantControlTarget } from "./chant-next";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 
 /** The commit status that marks a commit whose apply the control repo was told about. */
 export const CONTROL_STATUS = "terragucci/control";
 
-/** The event type of the GitHub repository_dispatch a member sends. */
-export const DISPATCH_EVENT = "terragucci-applied";
-
-/** The control repo's pipeline files, one per forge, beside the repo's own. */
-export const CONTROL_PATHS: Record<ForgeName, string> = {
-  github: ".github/workflows/terragucci-dependents.yml",
-  forgejo: ".forgejo/workflows/terragucci-dependents.yml",
-  gitlab: ".gitlab/terragucci-dependents.yml",
-};
-
-/** The workflow file name a Forgejo dispatch addresses. */
-const FORGEJO_WORKFLOW = "terragucci-dependents.yml";
-/** The variables a GitLab trigger carries, and the inputs a Forgejo or GitHub manual dispatch takes. */
-const MEMBER_VAR = "TERRAGUCCI_MEMBER";
-const OP_VAR = "TERRAGUCCI_OP";
 /** The branch a GitLab or Forgejo dispatch runs on when `control.ref` is unset. */
 export const CONTROL_REF_DEFAULT = "main";
-/** What the control repo's job installs and runs: the chant its own package.json pins. */
-export const CONTROL_CHANT_FLOOR = "0.124.47";
-
 /** `control` once the member's name and the control repo's forge are settled. */
 export interface ResolvedControl {
   repo: string;
@@ -97,60 +75,27 @@ export function controlCheckoutStep(c: ResolvedControl, cond?: string): Instance
 }
 
 /**
- * The control repo's `chant/lifecycle` as a local branch of the checkout,
- * where chant's control entries live (chant#4568). A control repo that has not
- * moved its records onto the ledger yet has no such branch, and its record
- * files are read as before.
+ * chant's read of the control repo (chant#4619): `controlNoteCheckout`
+ * fetches the control repo's `chant/lifecycle` alone into a directory
+ * outside the checkout and sets CHANT_CONTROL_DIR to it.
  */
-const LIFECYCLE_FETCH = `git -C ${CONTROL_CHECKOUT_DIR} fetch --quiet --depth 1 origin "+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle"`;
-const NO_LIFECYCLE = `echo "terragucci: the control repo has no chant/lifecycle yet, so its record files are read"`;
-
-/**
- * GitHub and Forgejo, with chant's control repo (chant#4568): the step after
- * the checkout that fetches the control repo's `chant/lifecycle` with the same
- * read token. The token reaches git as a header for this one command, never
- * the checkout's config, which the plan's code can read. Undefined on a chant
- * without the control repo.
- */
-export function controlLifecycleStep(c: ResolvedControl, cond?: string): InstanceType<typeof Step> | undefined {
-  if (!chantCiControlNow()) return undefined;
-  return new Step({
-    ...(cond ? { if: cond } : {}),
-    name: `Fetch the control repo's chant/lifecycle, where its entries are`,
-    shell: "bash",
-    env: { TG_CONTROL_READ: `\${{ secrets.${c.readTokenEnv} || github.token }}` },
-    run: [`auth="$(printf 'x-access-token:%s' "$TG_CONTROL_READ" | base64 | tr -d '\\n')"`, `${LIFECYCLE_FETCH.replace("git -C", 'git -c http.extraheader="AUTHORIZATION: basic $auth" -C')} || ${NO_LIFECYCLE}`].join("\n"),
-  } as never);
-}
-
-/**
- * chant's read of the control repo (chant#4619, terragucci#1282 part i):
- * `controlNoteCheckout` fetches the control repo's `chant/lifecycle` alone
- * into a directory outside the checkout and sets CHANT_CONTROL_DIR to it.
- * Undefined on a chant without it, and then the steps below read the
- * control repo as before.
- */
-export function chantNoteCheckout(c: ResolvedControl, memberForge: ForgeName): { stepName: string; env: Record<string, string>; script: string } | undefined {
-  const chant = chantCiControlNow();
-  if (!chant || typeof chant.controlNoteCheckout !== "function") return undefined;
-  return chant.controlNoteCheckout(memberForge, chantControlTarget(chant, c), TERRAGUCCI_WORDS);
+export function chantNoteCheckout(c: ResolvedControl, memberForge: ForgeName): { stepName: string; env: Record<string, string>; script: string } {
+  return chant.controlNoteCheckout(memberForge, chantControlTarget(c), TERRAGUCCI_WORDS);
 }
 
 /** Where chant's control entries are on the control repo's chant/lifecycle (./control-records.ts LEDGER_PATH). */
 const ENTRIES_ON_LEDGER = 'git -C "$CHANT_CONTROL_DIR" cat-file -e "refs/heads/chant/lifecycle:_control/entries.jsonl" 2>/dev/null';
 
 /**
- * GitHub and Forgejo: the plan job's read of the control repo. With chant's
- * read (chant#4619): chant's step, then a step that says whether the
- * control repo's entries are on its chant/lifecycle, and terragucci's
- * checkout only when they are not, for a control repo whose records are
- * still files (it has not run `terragucci control records migrate`). Estate
- * ownership reads whichever one is there (./estate-ownership.ts). Without
- * chant's read: terragucci's checkout and the lifecycle fetch, as before.
+ * GitHub and Forgejo: the plan job's read of the control repo: chant's
+ * step, then a step that says whether the control repo's entries are on its
+ * chant/lifecycle, and terragucci's checkout only when they are not, for a
+ * control repo whose records are still files (it has not run `terragucci
+ * control records migrate`). Estate ownership reads whichever one is there
+ * (./estate-ownership.ts).
  */
 export function controlReadSteps(c: ResolvedControl, memberForge: Exclude<ForgeName, "gitlab">, cond?: string): InstanceType<typeof Step>[] {
   const note = chantNoteCheckout(c, memberForge);
-  if (!note) return [controlCheckoutStep(c, cond), ...[controlLifecycleStep(c, cond)].filter((x) => x !== undefined)];
   const files = `${cond ? `(${cond}) && ` : ""}steps.control-store.outputs.files == '1'`;
   return [
     new Step({ ...(cond ? { if: cond } : {}), name: note.stepName, shell: "bash", env: note.env, run: note.script } as never),
@@ -167,113 +112,30 @@ export function controlReadSteps(c: ResolvedControl, memberForge: Exclude<ForgeN
 
 /** GitLab: the lines that clone the control repo, read-only, with the read variable when it is set and the job token when not. */
 export function controlCloneScript(c: ResolvedControl): string {
+  // chant's read first; the clone only for a control repo whose entries are not on its chant/lifecycle.
   const note = chantNoteCheckout(c, "gitlab");
-  if (note) {
-    // chant's read first; the clone only for a control repo whose entries are not on its chant/lifecycle.
-    return [note.script, `if [ -n "\${CHANT_CONTROL_DIR:-}" ] && ${ENTRIES_ON_LEDGER}; then`, `  echo "terragucci: read the control repo's entries from its chant/lifecycle"`, "else", ...ownCloneScript(c).split("\n").map((l) => `  ${l}`), "fi"].join("\n");
-  }
-  return ownCloneScript(c);
+  return [note.script, `if [ -n "\${CHANT_CONTROL_DIR:-}" ] && ${ENTRIES_ON_LEDGER}; then`, `  echo "terragucci: read the control repo's entries from its chant/lifecycle"`, "else", ...recordsCloneScript(c).split("\n").map((l) => `  ${l}`), "fi"].join("\n");
 }
 
-/** terragucci's own clone of the control repo, for GitLab. */
-function ownCloneScript(c: ResolvedControl): string {
+/** terragucci's clone of a control repo whose records are still files, for GitLab. */
+function recordsCloneScript(c: ResolvedControl): string {
   const url = `${c.host}/${c.path}.git`;
   return [
     `rm -rf ${CONTROL_CHECKOUT_DIR}`,
     `git clone --quiet --depth 1 "https://oauth2:\${${c.readTokenEnv}:-\${CI_JOB_TOKEN:-}}@${url}" ${CONTROL_CHECKOUT_DIR} || { echo "terragucci: could not read the control repo ${c.repo}" >&2; exit 1; }`,
-    // chant's control entries are on the control repo's chant/lifecycle (chant#4568), fetched while the remote still holds the token.
-    ...(chantCiControlNow() ? [`${LIFECYCLE_FETCH} || ${NO_LIFECYCLE}`] : []),
     `git -C ${CONTROL_CHECKOUT_DIR} remote set-url origin "https://${url}"`,
   ].join("\n");
 }
 
-/** A value that passed CONTROL_NAME is safe in a single-quoted shell word and a JSON string; this keeps it so. */
-function quoted(v: string): string {
-  if (!CONTROL_NAME.test(v)) throw new Error(`not a safe name: ${v}`);
-  return `'${v}'`;
-}
-
 /**
- * The member's step: one request to the control repo's forge, with the
- * member's name, the Op and the commit that applied. The token is read from
- * `$TG_CONTROL_TOKEN` (the job maps the secret into it) and goes in a header,
- * never on a command line or into the log. A status other than success fails
- * the step, with the status and the forge's answer.
+ * The member's step, through chant (chant#4568): one request to the control
+ * repo's forge, with the member's name, the Op and the commit that applied.
+ * The job's variables stay terragucci's (TG_CONTROL_TOKEN, TG_SHA); the
+ * script hands them to chant's names first. The mark that stops a second
+ * send is terragucci's.
  */
 export function dispatchScript(c: ResolvedControl, memberForge?: ForgeName): string {
-  const chant = chantCiControlNow();
-  if (chant) return chantDispatchScript(chant, c, memberForge);
-  const member = quoted(c.member);
-  const op = quoted(c.op);
-  // The sha may come from another job's output: it is data, and only a commit sha goes into the request.
-  const common = [
-    "set -u",
-    `member=${member}`,
-    `op=${op}`,
-    'sha="${TG_SHA:-}"',
-    'case "$sha" in ""|*[!0-9a-f]*) echo "terragucci: the dispatch names no commit sha, so ' + c.repo + ' was not told" >&2; exit 1 ;; esac',
-    // Three paths can complete an apply of a commit (the push's last wave, a resume, a comment): the first to tell the control repo marks the commit, the others find the mark.
-    ...(memberForge && memberForge !== "gitlab"
-      ? [
-          `export TG_FORGE=${memberForge}`,
-          `if [ "$(terragucci post sent ${CONTROL_STATUS} 2>/dev/null)" = 1 ]; then echo "terragucci: ${c.repo} was told about \${sha:0:8} already"; exit 0; fi`,
-        ]
-      : []),
-  ];
-  const mark = memberForge && memberForge !== "gitlab" ? `; terragucci post status ${CONTROL_STATUS} success "told ${c.repo} that $member applied"` : "";
-  const api = (url: string, args: string[]): string[] => [
-    `url=${url}`,
-    'body="$(mktemp)"',
-    `code="$(curl -sS -o "$body" -w '%{http_code}' -X POST ${args.join(" ")} "$url")" || { echo "terragucci: the dispatch to ${c.repo} could not be sent" >&2; exit 1; }`,
-    `case "$code" in 2??) echo "terragucci: told ${c.repo} that $member applied (HTTP $code)"${mark} ;; *) echo "terragucci: ${c.repo} refused the dispatch (HTTP $code): $(head -c 400 "$body")" >&2; exit 1 ;; esac`,
-  ];
-  if (c.forge === "github") {
-    const base = c.host === "github.com" ? "https://api.github.com" : `https://${c.host}/api/v3`;
-    return [
-      ...common,
-      ...api(`'${base}/repos/${c.path}/dispatches'`, [
-        `-H "Authorization: Bearer $TG_CONTROL_TOKEN"`,
-        `-H 'Accept: application/vnd.github+json'`,
-        `-H 'Content-Type: application/json'`,
-        `-d "{\\"event_type\\":\\"${DISPATCH_EVENT}\\",\\"client_payload\\":{\\"member\\":\\"$member\\",\\"op\\":\\"$op\\",\\"sha\\":\\"$sha\\"}}"`,
-      ]),
-    ].join("\n");
-  }
-  if (c.forge === "gitlab") {
-    const project = encodeURIComponent(c.path);
-    return [
-      ...common,
-      ...api(`'https://${c.host}/api/v4/projects/${project}/trigger/pipeline'`, [
-        `--form "token=$TG_CONTROL_TOKEN"`,
-        `--form 'ref=${c.ref}'`,
-        `--form "variables[${MEMBER_VAR}]=$member"`,
-        `--form "variables[${OP_VAR}]=$op"`,
-        `--form "variables[TERRAGUCCI_SHA]=$sha"`,
-      ]),
-    ].join("\n");
-  }
-  return [
-    ...common,
-    ...api(`'https://${c.host}/api/v1/repos/${c.path}/actions/workflows/${FORGEJO_WORKFLOW}/dispatches'`, [
-      `-H "Authorization: token $TG_CONTROL_TOKEN"`,
-      `-H 'Content-Type: application/json'`,
-      `-d "{\\"ref\\":\\"${c.ref}\\",\\"inputs\\":{\\"member\\":\\"$member\\",\\"op\\":\\"$op\\"}}"`,
-    ]),
-  ].join("\n");
-}
-
-/** terragucci's `control` settings as chant's control target (chant#4568): `token_env` is chant's `tokenSecret`, `read_token_env` its `readTokenSecret`. */
-export function chantControlTarget(chant: NonNullable<ReturnType<typeof chantCiControlNow>>, c: ResolvedControl): ChantControlTarget {
-  return chant.resolveControlTarget({ repo: c.repo, forge: c.forge, op: c.op, member: c.member, tokenSecret: c.tokenEnv, readTokenSecret: c.readTokenEnv, ref: c.ref }, c.member);
-}
-
-/**
- * The member's step through chant (chant#4568). The job's variables stay
- * terragucci's (TG_CONTROL_TOKEN, TG_SHA); the script hands them to chant's
- * names first. The mark that stops a second send is terragucci's, as before.
- */
-function chantDispatchScript(chant: NonNullable<ReturnType<typeof chantCiControlNow>>, c: ResolvedControl, memberForge?: ForgeName): string {
-  const target = chantControlTarget(chant, c);
+  const target = chantControlTarget(c);
   const status = chant.controlStatusContext(TERRAGUCCI_WORDS);
   const marks = memberForge && memberForge !== "gitlab";
   return [
@@ -287,32 +149,10 @@ function chantDispatchScript(chant: NonNullable<ReturnType<typeof chantCiControl
   ].join("\n");
 }
 
-/**
- * The control repo's step: runs the member's dependents. The member and the Op
- * arrive in the environment (a dispatch's payload is data, never part of the
- * script) and are checked against the same pattern the member's config used
- * before they reach a command line.
- */
-export function dependentsScript(): string {
-  return [
-    "set -eu",
-    `member="\${${MEMBER_VAR}:-}"`,
-    `op="\${${OP_VAR}:-}"`,
-    `re='${CONTROL_NAME.source}'`,
-    '[[ $member =~ $re && $op =~ $re ]] || { echo "terragucci: the dispatch names no usable member and Op (member=\\"$member\\", op=\\"$op\\")" >&2; exit 2; }',
-    "npm ci",
-    'npx --no-install chant workspace run --dependents-of "$member" --op "$op" --json',
-  ].join("\n");
+/** terragucci's `control` settings as chant's control target (chant#4568): `token_env` is chant's `tokenSecret`, `read_token_env` its `readTokenSecret`. */
+export function chantControlTarget(c: ResolvedControl): ChantControlTarget {
+  return chant.resolveControlTarget({ repo: c.repo, forge: c.forge, op: c.op, member: c.member, tokenSecret: c.tokenEnv, readTokenSecret: c.readTokenEnv, ref: c.ref }, c.member);
 }
-
-/** What the control repo's pipeline is for, as its file's header says. */
-const header = (): string => [
-  MARKER,
-  "# A member repo's pipeline sends a dispatch here after its apply succeeds; this",
-  "# runs that member's dependents with `chant workspace run --dependents-of`.",
-  "# Run `npx terragucci control init` to rewrite it rather than editing it here.",
-  "",
-].join("\n");
 
 export interface ControlPipeline {
   path: string;
@@ -323,66 +163,11 @@ export interface ControlPipeline {
 
 /**
  * The control repo's pipeline from the forge lexicon (chant#4568), in
- * terragucci's words, or undefined on a chant without it. The file keeps
- * terragucci's first line, which marks a file terragucci wrote.
+ * terragucci's words. The file keeps terragucci's first line, which marks a
+ * file terragucci wrote.
  */
-export async function chantControlPipelineFile(forge: ForgeName): Promise<ControlPipeline | undefined> {
-  const lexicon = await chantControlPipeline(forge);
-  if (!lexicon) return undefined;
-  const file = lexicon.generateControlPipeline({ words: TERRAGUCCI_WORDS });
+export function chantControlPipelineFile(forge: ForgeName): ControlPipeline {
+  const generate = forge === "github" ? githubControlPipeline : forge === "gitlab" ? gitlabControlPipeline : forgejoControlPipeline;
+  const file = generate({ words: TERRAGUCCI_WORDS });
   return { path: file.path, content: file.content.startsWith(MARKER) ? file.content : `${MARKER}\n${file.content}`, notes: file.notes };
-}
-
-/** The control repo's pipeline for `forge`. */
-export function controlPipeline(forge: ForgeName): ControlPipeline {
-  const script = dependentsScript();
-  if (forge === "gitlab") {
-    const job = new GitLabJob({
-      stage: "deploy",
-      image: new Image({ name: "node:22" }),
-      rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "trigger" && $${MEMBER_VAR} && $${OP_VAR}` })],
-      // One member at a time: two applies upstream should not run the same dependents side by side.
-      resource_group: "terragucci-dependents-$" + MEMBER_VAR,
-      script: [`bash <<'DEPENDENTS' || exit $?\n${script}\nDEPENDENTS`],
-    } as never);
-    const out = gitlabSerializer.serialize(new Map([["dependents", job as never]]));
-    return {
-      path: CONTROL_PATHS.gitlab,
-      content: header() + (typeof out === "string" ? out : out.primary),
-      notes: [`add \`- local: ${CONTROL_PATHS.gitlab}\` to the include list of .gitlab-ci.yml, and create a pipeline trigger token under Settings > CI/CD > Pipeline trigger tokens for each member's ${CONTROL_TOKEN_ENV}`],
-    };
-  }
-  const member = "${{ github.event.client_payload.member || inputs.member }}";
-  const op = "${{ github.event.client_payload.op || inputs.op }}";
-  const workflow = new Workflow({
-    name: "terragucci dependents",
-    on: {
-      ...(forge === "github" ? { repository_dispatch: { types: [DISPATCH_EVENT] } } : {}),
-      workflow_dispatch: {
-        inputs: {
-          member: { description: "The member whose dependents run", required: true, type: "string" },
-          op: { description: "The Op to run on them", required: true, type: "string" },
-        },
-      },
-    },
-    permissions: { contents: "read" },
-    // One run per member at a time, and none cancelled: a later apply of the same member waits for the one running.
-    concurrency: { group: `terragucci-dependents-${member}`, "cancel-in-progress": false },
-  } as never);
-  const job = new Job({
-    "runs-on": "ubuntu-latest",
-    steps: [
-      new Step({ uses: CHECKOUT }),
-      new Step({ uses: SETUP_NODE, with: { "node-version": "22", cache: "npm" } }),
-      new Step({ name: "Run the dependents of the member that applied", shell: "bash", env: { [MEMBER_VAR]: member, [OP_VAR]: op }, run: script }),
-    ],
-  } as never);
-  const jobs = new Map<string, never>([["workflow", workflow as never], ["dependents", job as never]]);
-  const notes = [
-    `the repo's package.json must pin @intentius/chant at ${CONTROL_CHANT_FLOOR} or later, which has \`chant workspace run --dependents-of\``,
-    forge === "github"
-      ? `give each member a ${CONTROL_TOKEN_ENV} secret: a token that may send a repository_dispatch to this repo and do nothing else`
-      : `give each member a ${CONTROL_TOKEN_ENV} secret: a token that may dispatch workflows in this repo and do nothing else`,
-  ];
-  return { path: CONTROL_PATHS[forge], content: header() + serializeWorkflow(forge, jobs), notes };
 }

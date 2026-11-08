@@ -21,18 +21,19 @@
  *
  * chant core holds the control entries now (chant#4568): lines of
  * `_control/entries.jsonl` on the control repo's `chant/lifecycle`, with no
- * record files and no product git writes. When the installed chant has
- * `@intentius/chant/ci-control` and the control repo's ledger has entries,
- * the `*At` functions below read and write there, with terragucci's config
- * check as chant's `validate`. `migrateRecords` (`terragucci control records
- * migrate`) moves a repo's record files onto the ledger with chant's
- * `importControlConfig`. A repo that has not moved keeps its files, on any
- * chant.
+ * record files and no product git writes. When the control repo's ledger
+ * has entries, the `*At` functions below read and write there, with
+ * terragucci's config check as chant's `validate`. `migrateRecords`
+ * (`terragucci control records migrate`, first released in 0.4.53) moves a
+ * repo's record files onto the ledger with chant's `importControlConfig`. A
+ * repo that has not moved keeps its files until the record file code goes,
+ * in 0.4.55.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { chantCiControl, type ChantCiControl, type ChantControlEntry, type ChantControlLedgerPort } from "./chant-next";
+import * as ciControl from "@intentius/chant/ci-control";
+import type { ChantCiControl, ChantControlEntry, ChantControlLedgerPort } from "./chant-next";
 import { ConfigError, parseProjectKey, validateConfig, type ProjectSettings, type TerragucciConfig } from "./config";
 
 /** Where `control records init` puts the kind, from the control repo's root. */
@@ -304,16 +305,16 @@ export const LEDGER_PATH = "chant/lifecycle:_control/entries.jsonl";
 /** The product the ledger's entries are written as. */
 const PRODUCT = "terragucci";
 
-/** chant's control repo and the ledger of the control repo at `dir`, when the installed chant has it. */
+/** chant's control repo and the ledger of the control repo at `dir`. */
 export interface ControlLedger {
   chant: ChantCiControl;
   port: ChantControlLedgerPort;
 }
 
-/** The control repo's ledger at `dir`, or undefined on a chant without `@intentius/chant/ci-control`. */
-export async function controlLedger(dir: string): Promise<ControlLedger | undefined> {
-  const chant = await chantCiControl();
-  return chant ? { chant, port: chant.gitControlLedger({ cwd: dir }) } : undefined;
+/** The control repo's ledger at `dir`, through chant's `@intentius/chant/ci-control`. */
+export async function controlLedger(dir: string): Promise<ControlLedger> {
+  const chant: ChantCiControl = ciControl;
+  return { chant, port: chant.gitControlLedger({ cwd: dir }) };
 }
 
 /** Does the control repo's ledger hold entries, so it is the store? */
@@ -431,7 +432,6 @@ export interface MigrateResult {
  */
 export async function migrateRecords(dir: string, run: ChantRunner = chantRunner, dryRun = false): Promise<MigrateResult> {
   const ledger = await controlLedger(dir);
-  if (!ledger) throw new ConfigError("moving the records onto the ledger needs a chant with the control repo (@intentius/chant/ci-control); this one has none, so the record files stay the store");
   const entries = readEntries(dir, run);
   const defaults = entries.find((e) => e.entry === "defaults");
   const projects: Record<string, Record<string, unknown>> = {};
