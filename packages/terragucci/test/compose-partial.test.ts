@@ -3,10 +3,19 @@
 // each left-out root in its own wave, and places the run after every wave a left-out root it reads applies in. When
 // that puts the run after a root outside it that reads it, the whole change applies in waves.
 //
-// chant's composition stands in here (src/chant-next.ts), so these run on any chant: each case hands terragucci the
-// left-out report chant would give.
-import { afterEach, describe, expect, it } from "vitest";
-import { overrideChantNext, type ChantComposition, type ChantCompositionInput, type ChantFallback } from "../src/chant-next";
+// chant's composition stands in here (vi.mock of the lexicon's `compose`): each case hands terragucci the left-out
+// report chant would give.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ChantComposition, ChantCompositionInput, ChantFallback } from "../src/chant-next";
+
+/** The composition a case stands in for chant's, when it sets one. */
+const stand = vi.hoisted((): { compose?: Record<string, (...a: never[]) => unknown> } => ({}));
+vi.mock("@intentius/chant-lexicon-terraform/compose", async (real: () => Promise<Record<string, unknown>>) => {
+  const m = await real();
+  const out: Record<string, unknown> = { ...m };
+  for (const name of ["compositionFor", "moduleNames", "readOrder"]) out[name] = (...a: never[]) => (stand.compose?.[name] ?? (m[name] as (...x: never[]) => unknown))(...a);
+  return out;
+});
 import { compositionFor, compositionLine, placeRun, reportCompose, specWavesWithRun, wavesWithRun, type CompositionInput } from "../src/compose";
 import type { Report } from "../src/report/schema";
 import { composeBlock } from "../src/report/views";
@@ -28,13 +37,12 @@ function chantSays(members: string[], left: ChantFallback[], whole?: ChantFallba
     fallbacks: left,
     ...(whole ? { fallback: whole } : {}),
   };
-  restore.push(
-    overrideChantNext("compose", {
-      compositionFor: (i: ChantCompositionInput) => (seen.push(i), composition),
-      moduleNames: (roots: readonly string[]) => new Map(roots.map((r) => [r, r])),
-      readOrder: (set: readonly string[]) => [...set],
-    }),
-  );
+  stand.compose = {
+    compositionFor: ((i: ChantCompositionInput) => (seen.push(i), composition)) as never,
+    moduleNames: ((roots: readonly string[]) => new Map(roots.map((r) => [r, r]))) as never,
+    readOrder: ((set: readonly string[]) => [...set]) as never,
+  };
+  restore.push(() => void delete stand.compose);
   return seen;
 }
 

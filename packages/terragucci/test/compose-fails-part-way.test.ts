@@ -9,14 +9,12 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyComposedWave } from "../src/apply";
-import { chantNextParts } from "../src/chant-next";
 import { COMPOSE_DIR, ComposedRun, compositionFor } from "../src/compose";
 import type { BinaryExec } from "../src/migrate";
 import type { Report } from "../src/report/schema";
 import { composeBlock } from "../src/report/views";
 import { tmp, write } from "./helpers";
 
-const parts = await chantNextParts();
 
 const A = 'resource "terraform_data" "x" {\n  input = "a"\n}\n\noutput "id" {\n  value = terraform_data.x.id\n}\n';
 const reader = (up: string): string =>
@@ -115,7 +113,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe.runIf(parts.compose && parts.composeRun)("a composed run that fails on its second member", () => {
+describe("a composed run that fails on its second member", () => {
   it("says so in apply's lines, its FAILED line, the report's rows and the note, and keeps what applied", async () => {
     const repo = write(tmp(), { "a/main.tf": A, "b/main.tf": reader("a"), "c/main.tf": reader("b") });
     const c = await compositionFor(repo, {

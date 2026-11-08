@@ -1,11 +1,10 @@
-// chant's composed run (`/compose`, `/compose/run`, `/compose/root`, `/compose/estate`, `/compose/slice`) and its lock
-// code (`/state`) are in chant 0.124.54 but not in 0.124.52 and earlier (terragucci#1278). terragucci loads
-// them on first use (src/chant-next.ts). Without them `waves.compose` applies in waves with the `off` kind and migrate
-// takes its locks with its own loop; with them, chant's run and chant's lock code do the work. Each case below either
-// makes a part missing, stands a module in for it, or runs only when the installed chant has it.
+// chant's composed run (`/compose`, `/compose/run`, `/compose/root`, `/compose/estate`, `/compose/slice`), which
+// `waves.compose` runs on, and its lock code (`/state`), which migrate takes its locks with when the installed chant
+// has it (src/chant-next.ts). A lock case either makes the lock code missing, stands a module in for it, or runs only
+// when the installed chant has it.
 import { afterEach, describe, expect, it } from "vitest";
-import { chantNextParts, overrideChantNext, type ChantComposition } from "../src/chant-next";
-import { ComposedRun, compositionFor, compositionLine, NO_CHANT_COMPOSE, NO_CHANT_RUN, reportCompose, specWavesWithRun, wavesWithRun, type Composition } from "../src/compose";
+import { chantNextParts, overrideChantNext } from "../src/chant-next";
+import { compositionFor, specWavesWithRun } from "../src/compose";
 import { MIGRATE_LOCK, MIGRATE_SOURCE_LOCK, takeLocks, takeLocksHere } from "../src/migrate";
 import type { StateObject, StateStore } from "../src/backend";
 import { ConfigError } from "../src/config";
@@ -38,44 +37,7 @@ const without = (...names: Parameters<typeof overrideChantNext>[0][]) => {
   for (const n of names) restore.push(overrideChantNext(n, null));
 };
 
-describe("waves.compose on a chant with no composed run", () => {
-  it("applies in waves with the off kind, naming the roots the run would have covered", async () => {
-    without("compose", "composeRun");
-    const c = await compositionFor(tree(), input);
-    expect(c.fallback).toEqual({ kind: "off", reason: NO_CHANT_COMPOSE });
-    expect(c.wave).toBeUndefined();
-    expect(c.chant).toBeUndefined();
-    // app and the root it reads; edge is not reached.
-    expect(c.roots).toEqual(["app", "network"]);
-    expect(c.ownWave).toEqual(new Map([["network", 1], ["app", 2]]));
-    expect(reportCompose(c)).toEqual({ roots: ["app", "network"], max: 10, fallback: { kind: "off", reason: NO_CHANT_COMPOSE } });
-    expect(compositionLine(c)).toBe(`compose: ${NO_CHANT_COMPOSE}, so the change applies in waves`);
-  });
-
-  it("leaves the waves as they are, in the run view and in chant's spec", async () => {
-    without("compose", "composeRun");
-    const c = await compositionFor(tree(), input);
-    expect(wavesWithRun(input.waves, c, true)).toEqual(input.waves);
-    expect(wavesWithRun(input.waves, c, false)).toEqual(input.waves);
-    expect(specWavesWithRun(input.waves, c)).toEqual(input.waves);
-  });
-
-  it("says why a run cannot plan when chant's run is missing, and applies nothing", async () => {
-    without("composeRun");
-    // A composition as chant's would make it, so only the missing run stops it.
-    const chant: ChantComposition = { candidates: ["app", "network"], members: ["app", "network"], order: ["network", "app"], max: 10, roots: new Map(), dirs: new Map(), modules: new Map([["network", "network"], ["app", "app"]]), reads: new Map(), fallbacks: [] };
-    const c: Composition = { roots: ["app", "network"], order: ["network", "app"], max: 10, wave: 1, modules: chant.modules, reads: new Map(), ownWave: new Map(), chant, terraform: { roots: {} } as unknown as NonNullable<Composition["terraform"]> };
-    const run = new ComposedRun({ repo: tmp(), composition: c, binary: { path: "tofu", name: "tofu" }, env: {}, work: tmp(), lock: true, hooks: { log: () => {} } });
-    const planned = await run.plan();
-    expect(planned.error).toBe(NO_CHANT_RUN);
-    expect(planned.digest).toBe("");
-    const applied = await run.apply();
-    expect(applied.ok).toBe(false);
-    await run.release();
-  });
-});
-
-describe.runIf(parts.compose && parts.composeRun)("waves.compose on a chant with its composed run", () => {
+describe("waves.compose on chant's composed run", () => {
   // Two plain roots that read nothing of each other compose (as in compose-legacy-unwritten.test.ts).
   const plain = { all: ["app", "network"], waves: [["network"], ["app"]], env: {} as NodeJS.ProcessEnv, binary: () => ({ name: "tofu" }), deps: new Map<string, Set<string>>() };
   const twoRoots = (): string =>
@@ -93,14 +55,7 @@ describe.runIf(parts.compose && parts.composeRun)("waves.compose on a chant with
     expect(specWavesWithRun(plain.waves, c)).toEqual([["compose:wave-1"], ["compose:wave-1"]]);
   });
 
-  it("falls back with the off kind for the same change only once chant's composition is taken away", async () => {
-    const dir = twoRoots();
-    expect((await compositionFor(dir, plain)).fallback).toBeUndefined();
-    without("compose");
-    const c = await compositionFor(dir, plain);
-    expect(c.fallback).toEqual({ kind: "off", reason: NO_CHANT_COMPOSE });
-    expect(c.roots).toEqual(["app", "network"]);
-  });
+
 });
 
 // ── migrate's locks ─────────────────────────────────────────────────────────

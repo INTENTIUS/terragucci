@@ -3,7 +3,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { chantNextParts } from "../src/chant-next";
 import { COMPOSE_DIR, ComposedRun, compositionFor, reportCompose, writeEstateRoot, type Composition } from "../src/compose";
 import { tmp, write } from "./helpers";
 
@@ -50,10 +49,8 @@ const input = (binary: (r: string) => { name: string; version?: string }) => ({
 
 // chant's composed run is in no published chant yet (terragucci#1278): these run when the installed chant has it.
 // test/compose-without-chant.test.ts holds what happens without it.
-const parts = await chantNextParts();
-const withChant = parts.compose && parts.composeRun;
 
-describe.runIf(withChant)("compositionFor on choudoufu estates", () => {
+describe("compositionFor on choudoufu estates", () => {
   it("composes roots that all run choudoufu, in read order, as estates", async () => {
     const c = await compositionFor(tree(), input(() => ({ name: "choudoufu" })));
     expect(c.fallback).toBeUndefined();
@@ -93,7 +90,7 @@ describe.runIf(withChant)("compositionFor on choudoufu estates", () => {
   });
 });
 
-describe.runIf(withChant)("the composed root of an estate run", () => {
+describe("the composed root of an estate run", () => {
   it("holds one module call per estate and nothing else, and changes no estate file", async () => {
     const dir = tree();
     const before = Object.fromEntries(["network", "app", "edge"].map((r) => [r, readFileSync(join(dir, r, "main.tf"), "utf-8")]));
@@ -135,7 +132,7 @@ const after = {
   },
 };
 
-describe.runIf(withChant)("a composed run of estates", () => {
+describe("a composed run of estates", () => {
   it("plans and applies from the composed root with no state handling, and reports each estate", async () => {
     const dir = tree();
     const c = await compositionFor(dir, input(() => ({ name: "choudoufu" })));
