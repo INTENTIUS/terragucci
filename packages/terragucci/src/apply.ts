@@ -148,7 +148,7 @@ import { quorumRuleLine, quorumRuleProgress, quorumRulesFor, quorumWaiting, role
 import { mayOverride, overrideCommand, overridersFor, type Overriders } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
-import { changesSomething, forgeCalls, gitlabCalls, gitlabMergeRequestOf, pullOf, reviewDigest, reviewWave, type ForgeCalls, type ReviewedPull, type ReviewOutcome } from "./review";
+import { changesSomething, forgeCalls, jobForge, pullOf, reviewDigest, reviewWave, type JobForge, type ReviewedPull, type ReviewOutcome } from "./review";
 import { AGENT_NOT_EXCLUDED, judge, mergeExcluded, notCounted, pullInvolvement, sameLogin, whyInvolved, type Excluded, type Involved } from "./involved";
 import { gitlabReviewCalls, gitlabReviewOf } from "./gitlab-agent";
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
@@ -3062,17 +3062,17 @@ async function priceWave(
 async function gitlabWaveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWaveOptions, label: string): Promise<PolicyReview> {
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   try {
-    const mr = await gitlabMergeRequestOf(gitlabCalls(env, options.fetch), sha, env);
+    const mr = await pullOf(jobForge("gitlab", env, options.fetch), env, sha);
     if (!mr) {
       console.log(`${label}: review: no merge request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
       return noReview();
     }
-    const head = typeof mr.sha === "string" ? mr.sha : "";
-    const { job, skipped, ...review } = await gitlabReviewOf(gitlabReviewCalls(env, options.fetch), { number: mr.iid, head });
+    const head = mr.head;
+    const { job, skipped, ...review } = await gitlabReviewOf(gitlabReviewCalls(env, options.fetch), { number: mr.number, head });
     for (const s of skipped) console.log(`${label}: review: skipped the review job ${s.job === null ? "a note named" : s.job}, since ${s.why}`);
     console.log(review.found
-      ? `${label}: review: merge request !${mr.iid}'s head ${head.slice(0, 8)} was reviewed with risk ${review.risk} in job ${job} of a default-branch pipeline, which the policy reads as input.review`
-      : `${label}: review: no review job of a default-branch pipeline kept a review of merge request !${mr.iid}'s head ${head.slice(0, 8)}, so input.review.found is false`);
+      ? `${label}: review: merge request !${mr.number}'s head ${head.slice(0, 8)} was reviewed with risk ${review.risk} in job ${job} of a default-branch pipeline, which the policy reads as input.review`
+      : `${label}: review: no review job of a default-branch pipeline kept a review of merge request !${mr.number}'s head ${head.slice(0, 8)}, so input.review.found is false`);
     return review;
   } catch (e) {
     console.log(`${label}: review: could not read the merge request's review (${(e as Error).message.split("\n")[0]}), so input.review.found is false`);
@@ -3096,7 +3096,7 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   try {
     const f = forgeCalls(env, options.fetch);
-    const pr = await pullOf(f, env, sha);
+    const pr = await pullOf(jobForge(on, env, options.fetch), env, sha);
     if (!pr) {
       console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);
       return noReview();
@@ -3251,12 +3251,7 @@ async function unknownReadHold(repo: string, options: ApplyWaveOptions, ctx: Wav
     const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
     let pr: { number: number; head: string } | undefined;
     try {
-      if (env.GITLAB_CI === "true" || settings?.forge === "gitlab") {
-        const mr = await gitlabMergeRequestOf(gitlabCalls(env, options.fetch), sha, env);
-        pr = mr ? { number: mr.iid, head: typeof mr.sha === "string" ? mr.sha : "" } : undefined;
-      } else {
-        pr = await pullOf(forgeCalls(env, options.fetch), env, sha);
-      }
+      pr = await pullOf(jobForge(env.GITLAB_CI === "true" || settings?.forge === "gitlab" ? "gitlab" : forgeOfEnv(env), env, options.fetch), env, sha);
     } catch (e) {
       return { missing: `the forge could not say which pull request made ${sha.slice(0, 8)} (${(e as Error).message.split("\n")[0]})` };
     }
@@ -3480,21 +3475,15 @@ async function waveInvolvement(repo: string, options: ApplyWaveOptions, rule: Ap
   const forge = forgeOfEnv(env);
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   const notes: string[] = [];
-  let calls: ForgeCalls | undefined;
+  let f: JobForge | undefined;
   let pr: ReviewedPull | undefined;
   try {
-    if (forge === "gitlab") {
-      calls = gitlabCalls(env, options.fetch);
-      const mr = await gitlabMergeRequestOf(calls, sha, env);
-      if (mr) pr = { number: mr.iid, head: typeof mr.sha === "string" ? mr.sha : sha, ...(typeof mr.author?.username === "string" ? { author: mr.author.username } : {}) };
-    } else {
-      calls = forgeCalls(env, options.fetch);
-      pr = await pullOf(calls, env, sha);
-    }
+    f = jobForge(forge, env, options.fetch);
+    pr = await pullOf(f, env, sha);
   } catch (e) {
     notes.push(`the pull request that made ${sha.slice(0, 8)} could not be read from the forge (${(e as Error).message}), so only git names the people behind it`);
   }
-  const inv = await pullInvolvement({ forge, ...(calls ? { calls } : {}), ...(pr ? { pr } : {}), env, ...(options.fetch ? { fetch: options.fetch } : {}), git: { repo, base: rule.base, head: sha }, ...(rule.agentTokenEnv ? { agentTokenEnv: rule.agentTokenEnv } : {}), ...(rule.agentLogin ? { agentLogin: rule.agentLogin } : {}) });
+  const inv = await pullInvolvement({ forge, ...(f ? { reads: f.reads } : {}), ...(pr ? { pr } : {}), env, ...(options.fetch ? { fetch: options.fetch } : {}), git: { repo, base: rule.base, head: sha }, ...(rule.agentTokenEnv ? { agentTokenEnv: rule.agentTokenEnv } : {}), ...(rule.agentLogin ? { agentLogin: rule.agentLogin } : {}) });
   return { people: inv.people, notes: [...notes, ...inv.notes] };
 }
 

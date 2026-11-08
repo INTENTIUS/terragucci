@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { resolutionRefusal, type ResolutionRecord } from "../src/apply";
 import { agentLoginWarning, approvalModeOf, requireSignedOf, validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { AGENT_NOT_EXCLUDED, forgeCommits, pullInvolvement, gitChange, involvedIn, judge, noreplyLogin, notCounted, requestedBy, tokenUsers, whyInvolved, type ChangeCommit } from "../src/involved";
+import type { ForgeReads } from "@intentius/chant/pr-forge-reads";
+import { AGENT_NOT_EXCLUDED, changeCommits, pullInvolvement, gitChange, involvedIn, judge, noreplyLogin, notCounted, requestedBy, tokenUsers, whyInvolved, type ChangeCommit } from "../src/involved";
 import { gateSealPayload } from "../src/seal";
 import { git, tmp, write } from "./helpers";
 import { gateSigners, signerLine, sshsig, sshKey } from "./sshsig";
@@ -44,9 +45,9 @@ describe("the people behind a change", () => {
   it("the agent's token's user: its review doesn't count, from GET /user with the token or the Pushed-by trailer", async () => {
     expect(whyInvolved(involvedIn({ commits: agentAsked }), "agent-bot")).toBe("agent-bot is the user the agent's token acts as, and it pushed abc1234");
     const f: Fetch = async (url, init) => {
-      const token = init?.headers?.authorization;
-      const login = token === "token agent-secret" ? "agent-bot" : token === "token pipeline-secret" ? "pipeline-bot" : undefined;
-      return { ok: login !== undefined, status: login ? 200 : 403, json: async () => ({ login }), text: async () => "" } as never;
+      const token = init?.headers?.Authorization;
+      const login = token === "Bearer agent-secret" ? "agent-bot" : token === "Bearer pipeline-secret" ? "pipeline-bot" : undefined;
+      return { ok: login !== undefined, status: login ? 200 : 403, json: async () => ({ login }), text: async () => JSON.stringify({ login }) } as never;
     };
     const tokens = await tokenUsers({ forge: "github", env: { GITHUB_API_URL: "https://forge.test/api/v3", TG_TOKEN: "pipeline-secret", AGENT_TOKEN: "agent-secret" }, fetch: f, agentTokenEnv: "AGENT_TOKEN" });
     expect(tokens).toEqual([
@@ -84,8 +85,8 @@ describe("the people behind a change", () => {
     expect(requestedBy("x\n\nRequested-by: carol\nrequested-by: Carol\nRequested-by: $(id)\n")).toEqual(["carol"]);
   });
 
-  it("reads a pull request's commits as GitHub and Forgejo list them", () => {
-    expect(forgeCommits([{ sha: A, commit: { message: "m\n\nRequested-by: carol", author: { email: "a@x" }, committer: { email: "c@x" } }, author: { login: "alice" }, committer: { login: "web-flow" } }, { nope: 1 }])).toEqual([
+  it("reads a pull request's commits as chant's reads give them", () => {
+    expect(changeCommits([{ sha: A, message: "m\n\nRequested-by: carol", author: { email: "a@x", login: "alice" }, committer: { email: "c@x", login: "web-flow" } }])).toEqual([
       { sha: A, message: "m\n\nRequested-by: carol", authorEmail: "a@x", committerEmail: "c@x", authorLogin: "alice", committerLogin: "web-flow" },
     ]);
   });
@@ -169,13 +170,13 @@ describe("agent.login", () => {
   });
 
   it("the forge's pull request reads put agent.login in the set, and say so when agent.token_env is set without it", async () => {
-    const calls = { repo: "acme/infra", get: async () => [], post: async () => null };
+    const reads = { pullRequestCommits: async () => [] } as unknown as ForgeReads;
     const f: Fetch = async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => "" }) as never;
     const pr = { number: 7, head: B, author: "alice" };
-    const withLogin = await pullInvolvement({ forge: "github", calls, pr, env: {}, fetch: f, agentTokenEnv: "AGENT_TOKEN", agentLogin: "acme-agent" });
+    const withLogin = await pullInvolvement({ forge: "github", reads, pr, env: {}, fetch: f, agentTokenEnv: "AGENT_TOKEN", agentLogin: "acme-agent" });
     expect(judge(["acme-agent"], withLogin).by).toEqual([]);
     expect(withLogin.notes).not.toContain(AGENT_NOT_EXCLUDED);
-    const without = await pullInvolvement({ forge: "github", calls, pr, env: {}, fetch: f, agentTokenEnv: "AGENT_TOKEN" });
+    const without = await pullInvolvement({ forge: "github", reads, pr, env: {}, fetch: f, agentTokenEnv: "AGENT_TOKEN" });
     expect(without.notes).toContain(AGENT_NOT_EXCLUDED);
     expect(AGENT_NOT_EXCLUDED).toMatch(/^the agent's account isn't excluded: set agent.login/);
   });

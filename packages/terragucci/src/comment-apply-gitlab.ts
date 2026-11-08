@@ -42,10 +42,9 @@ import type { WavesAfter } from "./detect";
 import type { PrApproverFilter, PrForge } from "@intentius/chant/pr-forge";
 import { unmetApplyRequires } from "./apply-requires";
 import { ConfigError, type ApplyRequire } from "./config";
-import { commitStatuses, call as forgeCall, poster, type Fetch, type ForgeTarget } from "./forge";
+import { commitStatuses, call as forgeCall, jobReads, poster, type Fetch, type ForgeTarget } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { agentSettingsAt, pullInvolvement } from "./involved";
-import type { ForgeCalls } from "./review";
 
 /** GitLab's Developer access level: the least that may ask for an apply. */
 const DEVELOPER = 30;
@@ -77,8 +76,6 @@ export function gitlabApi(env: NodeJS.ProcessEnv, token: string | undefined, doF
   return (method, path, body) => forgeCall(doFetch, t, method, path, body) as Promise<any>;
 }
 
-/** review.ts's calls, over a GitLabCall. */
-const reviewCalls = (api: GitLabCall, id: string): ForgeCalls => ({ repo: `projects/${id}`, get: (p) => api("GET", `/${p}`), post: (p, b) => api("POST", `/${p}`, b) });
 
 /** Why an open merge request does not apply: a refusal to reply with, or a forge answer that broke the check. */
 export type Verdict = { refuse: string } | { fail: string };
@@ -126,7 +123,7 @@ export async function openChecks(c: OpenCheck): Promise<Verdict | undefined> {
   // chant's check waits (pending) until GitLab records the latest push as a diff version.
   const approvers = async (): Promise<PrApproverFilter> => {
     const pr = { number: iid, head: sha, ...(typeof c.mr.author?.username === "string" ? { author: c.mr.author.username } : {}) };
-    return approverFilter(await pullInvolvement({ forge: "gitlab", calls: reviewCalls(api, id), pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) }));
+    return approverFilter(await pullInvolvement({ forge: "gitlab", reads: jobReads("gitlab", c.env ?? process.env, c.fetch), pr, env: c.env ?? {}, ...(c.fetch ? { fetch: c.fetch } : {}), ...(c.agentLogin ? { agentLogin: c.agentLogin } : {}), ...(c.agentTokenEnv ? { agentTokenEnv: c.agentTokenEnv } : {}) }));
   };
   const forge = c.forge ?? poster("gitlab", c.env ?? process.env, c.fetch);
   const unmet = await unmetApplyRequires(forge, iid, sha, { approvers, ignore: [APPLY_CONTEXT()], ...(c.requires ? { requires: c.requires } : {}), ...(c.wait ? { wait: c.wait } : {}) });
@@ -354,7 +351,7 @@ export async function mergeGitLabMR(o: GitLabMergeOptions): Promise<string> {
   if (mr?.source_project_id !== mr?.target_project_id) throw new Error(`!${o.pr} comes from a fork`);
   if (env.CI_DEFAULT_BRANCH && mr?.target_branch !== env.CI_DEFAULT_BRANCH) throw new Error(`!${o.pr} targets ${String(mr?.target_branch)}, not ${env.CI_DEFAULT_BRANCH}`);
   // approved counts as the apply's decision did: chant's prApproved under approverFilter, read with the job's own token.
-  const involved = await pullInvolvement({ forge: "gitlab", calls: reviewCalls(read, id), pr: { number: o.pr, head: o.sha, ...(typeof mr?.author?.username === "string" ? { author: mr.author.username } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
+  const involved = await pullInvolvement({ forge: "gitlab", reads: jobReads("gitlab", env, doFetch), pr: { number: o.pr, head: o.sha, ...(typeof mr?.author?.username === "string" ? { author: mr.author.username } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
   for (const line of involved.notes) console.log(`terragucci: ${line}`);
   const forge = poster("gitlab", env, doFetch, "TG_TOKEN");
   if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether !${o.pr} is approved`);

@@ -37,7 +37,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { parseProductComment } from "@intentius/chant/ci-product-words";
 import { commentProductWords, productWords } from "./ci-words";
 import { ConfigError } from "./config";
-import { poster, type Fetch } from "./forge";
+import { jobReads, poster, type Fetch } from "./forge";
 import { commentCell, leftOut } from "./import/guide";
 
 /** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
@@ -334,7 +334,7 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
   } else {
     let permission: unknown;
     try {
-      permission = (await call("GET", `repos/${repo}/collaborators/${encodeURIComponent(user)}/permission`))?.permission;
+      permission = await jobReads("github", env, doFetch).permission(user);
     } catch (e) {
       return broke(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
     }

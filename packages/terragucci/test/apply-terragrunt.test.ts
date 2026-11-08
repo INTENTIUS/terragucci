@@ -120,8 +120,8 @@ describe("a Terragrunt wave behind its gate", () => {
     const sha = "d".repeat(40);
     const note = noteMarker({ head, waves: [{ number: 2, digest: null, waits: true }], previews: notePreviews([{ ...was, terragrunt: { stack: "live", selection: "", provisional: true, run_result: "succeeded" }, reads: [{ upstream: "live/a", data: "a", outputs: "planned" }] }]) });
     const fetch = (async (url: string) => {
-      const body = url.endsWith(`/commits/${sha}/pull`) ? { number: 9, head: { sha: head } } : url.includes("/issues/9/comments") ? [{ body: note }] : null;
-      return { ok: body !== null, status: body === null ? 404 : 200, json: async () => body, text: async () => "" };
+      const body = url.endsWith(`/commits/${sha}/pull`) || url.endsWith("/pulls/9") ? { number: 9, head: { sha: head } } : url.includes("/issues/9/comments") ? [{ id: 1, body: note }] : null;
+      return { ok: body !== null, status: body === null ? 404 : 200, json: async () => body, text: async () => JSON.stringify(body) };
     }) as never;
     const env = { GITHUB_REPOSITORY: "acme/live", GITHUB_SERVER_URL: "https://forgejo.example", TG_TOKEN: "t", TG_SHA: sha, FORGEJO_ACTIONS: "true" };
     expect(await applyWave(work, { ...opts(tg), env, fetch, wave: 2, now: T(2) })).toBe(3);

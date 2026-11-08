@@ -394,8 +394,9 @@ describe("the gate against the preview", () => {
     const calls: string[] = [];
     const fetch = async (url: string) => {
       calls.push(url);
-      const body = url.endsWith(`/commits/${"a".repeat(40)}/pull`) ? { number: 7, head: { sha: "f".repeat(40) } } : url.includes("/issues/7/comments") ? [{ body: note }] : null;
-      return { ok: body !== null, status: body === null ? 404 : 200, json: async () => body, text: async () => "" } as Response;
+      const pull = { number: 7, head: { sha: "f".repeat(40) } };
+      const body = url.endsWith(`/commits/${"a".repeat(40)}/pull`) || url.endsWith("/pulls/7") ? pull : url.includes("/issues/7/comments") ? [{ id: 1, body: note }] : null;
+      return { ok: body !== null, status: body === null ? 404 : 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
     };
     const env = { GITHUB_REPOSITORY: "acme/live", GITHUB_SERVER_URL: "https://forgejo.example", TG_TOKEN: "t" };
     const now = changes("5-r2", "5-r1");

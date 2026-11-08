@@ -198,10 +198,10 @@ describe("decideApplyComment", () => {
     expect(await decideApplyComment({ layers, env: s.env, fetch: s.fetch, git: r.git })).toMatchObject({ go: false, fail: true });
   });
 
-  it("on GitHub, a permission the API will not give fails the job and applies nothing", async () => {
+  it("on GitHub, a permission the API will not give applies nothing, read as no write access", async () => {
     const r = repos();
     const s = setup({ comment: "/terragucci apply", permission: "403", pr: MERGED(r.merge) });
-    expect(await decideApplyComment({ layers, env: s.env, fetch: s.fetch, git: r.git })).toMatchObject({ go: false, fail: true });
+    expect(await decideApplyComment({ layers, env: s.env, fetch: s.fetch, git: r.git })).toMatchObject({ go: false, reason: expect.stringMatching(/has no write access to this repository, so nothing is applied/) });
   });
 
   describe("on Forgejo", () => {

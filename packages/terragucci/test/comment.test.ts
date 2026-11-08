@@ -188,12 +188,11 @@ describe("decideComment", () => {
     expect((await decideComment({ layers, env: s.env, fetch: s.fetch })).go).toBe(false);
   });
 
-  it("on GitHub, a permission the API will not give stops the re-plan", async () => {
+  it("on GitHub, a permission the API will not give stops the re-plan, read as no write access", async () => {
     const s = setup({ comment: "/terragucci plan", permission: "403" });
     const d = await decideComment({ layers, env: s.env, fetch: s.fetch });
     expect(d.go).toBe(false);
-    expect(d.reason).toContain("answered 403");
-    expect(d.fail).toBe(true);
+    expect(d.reason).toBe("dev has no write access, so the comment is ignored");
   });
 
   it("a pull request the API will not give fails the job, and one that is merely closed does not", async () => {

@@ -219,7 +219,7 @@ function fakeForge(head: () => string) {
     let out: unknown = [];
     if (path === "/repos/acme/infra") out = { default_branch: "main" };
     else if (method === "POST" && path === "/repos/acme/infra/pulls") out = { number: 7, html_url: "https://forge.test/acme/infra/pulls/7", title: "t", body: "b", head: { ref: "feature" } };
-    else if (path === "/repos/acme/infra/pulls/7") out = { state: "open", head: { sha: head(), ref: "feature" }, html_url: "https://forge.test/acme/infra/pulls/7" };
+    else if (path === "/repos/acme/infra/pulls/7") out = { number: 7, state: "open", head: { sha: head(), ref: "feature" }, html_url: "https://forge.test/acme/infra/pulls/7" };
     else if (method === "POST" && path === "/repos/acme/infra/issues/7/comments") out = { id: 11, html_url: "https://forge.test/acme/infra/pulls/7#issuecomment-11" };
     else if (path === "/repos/acme/infra/issues/7/comments" && (u.searchParams.get("page") ?? "1") === "1") out = [{ id: 10, body: "<!-- terragucci:plan roots=envs/prod/orders -->\nPlan: 1 to destroy", user: { login: "pipeline" } }];
     return { ok: true, status: 200, json: async () => out, text: async () => JSON.stringify(out) };

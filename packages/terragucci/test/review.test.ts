@@ -71,7 +71,7 @@ describe("the plan note's marker", () => {
 });
 
 describe("reviewWave", () => {
-  const note = (digest: string | null, head = HEAD) => ({ body: `### terragucci tf-plan\n${noteMarker({ head, waves: [{ number: 1, digest, waits: true }] })}` });
+  const note = (digest: string | null, head = HEAD) => ({ id: 1, body: `### terragucci tf-plan\n${noteMarker({ head, waves: [{ number: 1, digest, waits: true }] })}` });
   const base = (reviews: unknown[], comments: unknown[]) => ({
     [`GET repos/acme/infra/commits/${MERGE}/pulls`]: [pull],
     "GET repos/acme/infra/pulls/7": pull,
@@ -167,7 +167,7 @@ describe("approvalStatus", () => {
   it("is success when no wave waits, and reads the waves from the head's note when no report is given", async () => {
     const f = forge({
       "GET repos/acme/infra/pulls/7": pull,
-      "GET repos/acme/infra/issues/7/comments": [{ body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: false }] }) }],
+      "GET repos/acme/infra/issues/7/comments": [{ id: 1, body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: false }] }) }],
       [`POST repos/acme/infra/statuses/${HEAD}`]: {},
     });
     expect(await approvalStatus({ env: prEnv, fetch: f.fetch, forge: "forgejo" })).toEqual({ state: "success", description: "no wave waits for an approval" });
@@ -178,14 +178,14 @@ describe("approvalStatus", () => {
 describe("pr-review on GitLab", () => {
   const glEnv = { CI_API_V4_URL: "https://api.test", CI_PROJECT_ID: "9", TG_TOKEN: "t" };
   const mr = { iid: 3, state: "merged", merge_commit_sha: MERGE, sha: HEAD, author: { username: "author" } };
-  const system = (who: string, id: number, body: string, at: string) => ({ system: true, author: { username: who, id }, body, created_at: at });
+  const system = (who: string, id: number, body: string, at: string) => ({ id: 1000 + id, system: true, author: { username: who, id }, body, created_at: at });
   const routes = (notes: unknown[]) => ({
     "GET user": { id: 900, username: "project_9_bot" },
     [`GET projects/9/repository/commits/${MERGE}/merge_requests`]: [mr],
     "GET projects/9/merge_requests/3": mr,
     "GET projects/9/merge_requests/3/commits": [],
     "GET projects/9/merge_requests/3/versions": [{ id: 2, head_commit_sha: HEAD, created_at: "2026-10-01T10:00:00Z" }, { id: 1, head_commit_sha: "c".repeat(40), created_at: "2026-10-01T09:00:00Z" }],
-    "GET projects/9/merge_requests/3/notes": [{ system: false, body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: true }] }) }, ...notes],
+    "GET projects/9/merge_requests/3/notes": [{ id: 1, system: false, body: noteMarker({ head: HEAD, waves: [{ number: 1, digest: "jcs1-sha256:aa", waits: true }] }) }, ...notes],
     "GET projects/9/members/all/1": { access_level: 30 },
     "GET projects/9/members/all/2": { access_level: 20 },
     "GET projects/9/members/all/3": { access_level: 40 },
