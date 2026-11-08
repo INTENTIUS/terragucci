@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { livePrEnvironments, parsePrEnvRecords, type PrEnvRecord } from "@intentius/chant/components/pr-environment";
 import {
-  copyBackend,
   EPHEMERAL_RECORDS,
   ephemeralDown,
   ephemeralLedger,
@@ -14,7 +13,6 @@ import {
   LEGACY_EPHEMERAL_DONE,
   legacyRecords,
   readLive,
-  suffixedKey,
   updateList,
 } from "../src/ephemeral";
 import { validateConfig, type ForgeName } from "../src/config";
@@ -27,26 +25,6 @@ import { driftOp, git, tmp, write } from "./helpers";
 
 const T = (m: number): string => new Date(Date.UTC(2026, 0, 1, 0, m)).toISOString();
 const body = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-
-describe("a copy's state key", () => {
-  it("adds the suffix before .tfstate, else at the end", () => {
-    expect(suffixedKey("envs/dev/terraform.tfstate", "pr-7")).toBe("envs/dev/terraform-pr-7.tfstate");
-    expect(suffixedKey("envs/dev", "pr-7")).toBe("envs/dev-pr-7");
-    expect(suffixedKey("envs/dev/", "pr-7")).toBe("envs/dev-pr-7");
-  });
-
-  it("is read from the root's backend block, and refused where no key can take a suffix", () => {
-    const dir = tmp("tg-eph-backend-");
-    const root = (name: string, tf: string): string => write(join(dir, name), { "main.tf": tf });
-    expect(copyBackend(root("s3", 'terraform {\n  backend "s3" {\n    bucket = "b"\n    key    = "app/one.tfstate" # the key\n  }\n}\n'), "s3", "pr-3")).toEqual({ type: "s3", attribute: "key", key: "app/one-pr-3.tfstate", location: "s3://b/app/one-pr-3.tfstate" });
-    expect(copyBackend(root("gcs", 'terraform {\n  backend "gcs" {\n    bucket = "b"\n    prefix = "app"\n  }\n}\n'), "gcs", "pr-3")).toMatchObject({ attribute: "prefix", key: "app-pr-3", location: "gs://b/app-pr-3" });
-    expect(copyBackend(root("none", 'resource "terraform_data" "x" {}\n'), "none", "pr-3")).toMatchObject({ type: "local", attribute: "path", key: "terraform-pr-3.tfstate" });
-    expect(copyBackend(write(join(dir, "json"), { "cdk.tf.json": JSON.stringify({ terraform: { backend: { s3: { bucket: "b", key: "j.tfstate" } } } }) }), "json", "pr-3")).toMatchObject({ key: "j-pr-3.tfstate" });
-    expect(() => copyBackend(root("cloud", "terraform {\n  cloud {\n    organization = \"o\"\n  }\n}\n"), "cloud", "pr-3")).toThrow(/HCP Terraform \(a cloud block\)/);
-    expect(() => copyBackend(root("http", 'terraform {\n  backend "http" {\n    address = "https://x"\n  }\n}\n'), "http", "pr-3")).toThrow(/not a GitLab project's state API/);
-    expect(() => copyBackend(root("nokey", 'terraform {\n  backend "s3" {\n    bucket = "b"\n  }\n}\n'), "nokey", "pr-3")).toThrow(/names no key/);
-  });
-});
 
 describe("the live copies", () => {
   const legacy = (r: Record<string, unknown>): string => JSON.stringify({ version: 1, kind: "ephemeral-apply", op: "tf-ephemeral", gate: "pr-1", pr: 1, suffix: "pr-1", roots: [{ root: "a", location: "s3://b/a-pr-1.tfstate", result: "applied" }], planDigest: "d", by: "x", timestamp: T(0), result: "applied", commit: "c1", expiresAt: T(60), ...r });
@@ -364,7 +342,7 @@ describe("a pull request's copy", () => {
     const comment = git(s.work, "rev-parse", "HEAD").trim();
     git(s.work, "push", "-q", "-f", "origin", "HEAD:refs/pull/9/head");
     const planned = lines(s.args).filter((l) => / (plan|apply) /.test(l)).length;
-    await expect(ephemeralUp(s.work, { ...opts(s), env: { ...env, TG_NO_SUFFIX: "1" }, pr: 9, head: comment, now: T(3) })).rejects.toThrow(/live\/preview\/net: its s3 backend's key is x\/live\/preview\/net\/terraform\.tfstate with TERRAGUCCI_EPHEMERAL_SUFFIX set, which is the unit's own state, so its copy is refused/);
+    await expect(ephemeralUp(s.work, { ...opts(s), env: { ...env, TG_NO_SUFFIX: "1" }, pr: 9, head: comment, now: T(3) })).rejects.toThrow(/live\/preview\/net: its s3 backend's key is x\/live\/preview\/net\/terraform\.tfstate as it was prepared, which is the root's own state, so its copy is refused/);
     expect(lines(s.args).filter((l) => / (plan|apply) /.test(l)).length).toBe(planned);
   });
 

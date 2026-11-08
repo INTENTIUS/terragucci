@@ -33,7 +33,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ConfigError, type ResolvedSettings } from "./config";
-import { HTTP_LOCK_ATTRIBUTES, KEY_ATTRIBUTE, SUFFIX_READ } from "./ephemeral";
+import { HTTP_LOCK_ATTRIBUTES, KEY_ATTRIBUTE } from "@intentius/chant-lexicon-terraform/pr-env";
+import { SUFFIX_READ } from "./ephemeral";
 import { findRoots, globMatch } from "./detect";
 import { IDENT, isMap, overlayLevel, type GenerateLevel, type GenerateSettings } from "./generate-config";
 import { versionGlobs } from "./pins";
