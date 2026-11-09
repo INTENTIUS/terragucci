@@ -184,8 +184,9 @@ import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./cloud-identity";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { committedSpecAt, WAVES_SPEC, readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, wavesSpecText, wavesStepSpec, waveStepProblems, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
-import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
+import { committedSpecAt, WAVES_SPEC, readCallFile, runChantWave, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesSpec, wavesSpecText, wavesStepSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
+import { ComposedRun, compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, stepWavesWithRun, wavesWithRun, type ComposedApply, type ComposedPlan, type Composition } from "./compose";
+import { composeGroup } from "@intentius/chant-lexicon-terraform/components/compose-group";
 import { groupOf } from "./cloud-identity";
 import type { WaveComposedInput } from "./report/build";
 
@@ -1459,18 +1460,23 @@ type StepChant = Pick<typeof import("@intentius/chant/op"), "runOpWave" | "opWav
  * with terragucci's resolver (chant#4857, #4858): each root runs the release
  * it pins, installed and checked as its own plan did, and a read of an
  * upstream's state runs with that upstream's role, workspace and the wave's
- * provider cache.
+ * provider cache. Under `waves.compose` its group methods are chant's
+ * composed run (`composeGroup`, chant#4848) over the project terragucci
+ * composed the run in; terragucci already left out a root whose identity
+ * differs, so chant reads no identity of its own. A composed run keeps the
+ * project's binary.
  */
-function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache): CapabilityRegistry {
+function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache, c?: Composition, env: NodeJS.ProcessEnv = process.env): CapabilityRegistry {
   const registry = new CapabilityRegistry();
-  registry.register(
-    terraformApplyCapabilityWith({
-      resolveRoot: async (root) => ({
-        binary: (await binaries.resolve(root)).path,
-        readEnv: definedEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), join(repo, root))),
-      }),
-    }) as never,
-  );
+  const cap = terraformApplyCapabilityWith({
+    resolveRoot: async (root) => ({
+      binary: (await binaries.resolve(root)).path,
+      readEnv: definedEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), join(repo, root))),
+    }),
+  });
+  const terraform = c?.terraform;
+  const group = terraform ? composeGroup({ project: async () => ({ projectRoot: repo, terraform }), identity: async () => undefined, env: { ...process.env, ...env, TF_PLUGIN_CACHE_DIR: cache.dir }, log: (l) => console.log(l) }) : undefined;
+  registry.register((group ? { ...cap, ...group } : cap) as never);
   return registry;
 }
 
@@ -1485,7 +1491,9 @@ async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: Wav
   const read = await waveSettings(repo, options, ctx.configPath);
   if ("error" in read) return undefined;
   const settings = read.settings;
-  const reasons = waveStepProblems({ ...(options.composition ? { composed: true } : {}) });
+  const reasons: string[] = [];
+  // A composed run on the step is chant's composition of its roots, from the project terragucci composed them in.
+  if (options.composition?.wave !== undefined && !options.composition.fallback && !options.composition.terraform) reasons.push("waves.compose made this run without chant's composition, so the step has no project to compose it in");
   // A Terragrunt repo runs no terraform-apply step, so it needs no chant.config.ts.
   const declared = options.terragrunt ? { roots: new Set<string>() } : declaredTerraformRoots(repo);
   if ("why" in declared) reasons.push(declared.why);
@@ -2092,8 +2100,10 @@ async function runStepWave(
 ): Promise<{ code: number; result?: RunOpWaveResult }> {
   const settings = at.settings;
   const env = options.env ?? process.env;
-  // A Terragrunt wave finds its units when it plans (chant#4848).
-  const listed = typeof at.specWaves === "number" ? undefined : at.specWaves;
+  // A Terragrunt wave finds its units when it plans (chant#4848). A composed wave lists the run's roots, which chant plans together.
+  const c = options.composition?.wave !== undefined && !options.composition.fallback ? options.composition : undefined;
+  const listed = typeof at.specWaves === "number" ? undefined : c ? stepWavesWithRun(applyWaves(options.layers, options.canary), c) : at.specWaves;
+  const grouped = c ? at.grouped?.map((g) => ({ ...g, roots: g.roots.flatMap((r) => (isComposeTarget(r) ? c.order : [r])) })) : at.grouped;
   const roots = listed?.[options.wave - 1] ?? [];
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   const all = listed?.flat() ?? [];
@@ -2115,15 +2125,16 @@ async function runStepWave(
     ...(Object.keys(workspaces).length ? { workspaces } : {}),
     ...(Object.keys(reads).length ? { reads } : {}),
     ...(rule && !rule.point ? { approvals } : {}),
-    waves: at.specWaves,
+    waves: listed ?? at.specWaves,
+    ...(c ? { together: c.wave! } : {}),
     ...(options.rest ? { rest: true } : {}),
     ...(terragrunt ? { terragrunt: { layers: options.layers.filter((l) => l.length > 0), exclude: settings.terragrunt?.exclude, binary: options.binary, terragrunt, ...(options.parallelism !== undefined ? { parallelism: options.parallelism } : {}) } } : {}),
     // allow_unattended at base: chant's gate is never, and the after-plan hook holds a wave the gate would hold unless the policy lets it through.
     gate: ctx.unattended ? "never" : options.gate,
     ...(!ctx.unattended && listed && at.gates.some((g) => g !== options.gate) ? { gates: at.gates } : {}),
     approval: at.approval,
-    ...(at.grouped
-      ? { jobs: { wave: options.wave, groups: at.grouped.map((g) => ({ name: g.name, runs: g.roots, shares: g.shares })) } }
+    ...(grouped
+      ? { jobs: { wave: options.wave, groups: grouped.map((g) => ({ name: g.name, runs: g.roots, shares: g.shares })) } }
       : options.shares !== undefined ? { shares: { wave: options.wave, shares: options.shares } } : {}),
     call: waveCallArgv,
     migrations: existsSync(join(repo, MIGRATIONS_DIR)),
@@ -2185,7 +2196,7 @@ async function runStepWave(
     ...((options.shares !== undefined || at.grouped) && options.share === undefined && options.group === undefined ? { decide: true } : {}),
     ...(options.group !== undefined ? { group: options.group } : {}),
     ...(options.share !== undefined ? { share: options.share } : {}),
-    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache)) as never,
+    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache, c, env)) as never,
     // The migration and gate hooks call back into this process: the job waits for them without blocking it.
     hookExec: at.chant.spawnExecAsync,
     afterPlan: stepAfterPlan(s),
@@ -2207,6 +2218,11 @@ async function runStepWave(
   }
   if (result.failed.length > 0) j.w.failed = [...result.failed];
   if (result.decision?.digest) j.w.digest ??= result.decision.digest;
+  // The composed run in the report: its roots by module, and the digest of its one plan, which chant keeps as the wave's group member.
+  if (c && c.wave === options.wave) {
+    const group = result.decision?.members.find((m) => m.member === "(wave plan)");
+    j.w.composed = { target: composeTarget(c.wave), planDigest: group?.planDigest ?? null, members: c.order.map((r) => ({ root: r, module: `module.${c.modules.get(r)}` })) };
+  }
   // After an approval of other plans, chant writes the report of the plans now and the one approved; the respond job reads them where terragucci kept its own.
   for (const [dir, path] of Object.entries(result.decision?.reports ?? {})) {
     if (!path || !existsSync(join(repo, path))) continue;

@@ -114,6 +114,8 @@ export interface WavesStepInput extends WavesSpecInput {
    * again by Terragrunt's graph.
    */
   terragrunt?: { layers: string[][]; exclude?: string[]; binary: string; terragrunt: string; parallelism?: number };
+  /** `waves.compose`: the wave, by number from 1, whose roots plan and apply together as one composed run through `terraform-apply`'s group methods (chant#4848). */
+  together?: number;
   /** Vars each root reads from another root's outputs (Atmos's `!terraform.state`), as the terraform lexicon's `reads`, each with the upstream's directory and workspace (chant#4858). */
   reads?: Record<string, { var: string; root: string; output: string[]; dir?: string; workspace?: string }[]>;
   /** The workspace each root that names one plans and applies in (an Atmos instance's), created after an init in default (chant#4855). */
@@ -181,18 +183,8 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
     // The gate's report is terragucci's; the held hook is chant's holds now.
     hooks: { after: { gate: hooks?.after?.gate } },
     // A Terragrunt wave plans its units as one run --all, as a layer of the graph runs.
-    waves: rest.waves.map((w) => ({ ...w, ...(approval ? { approval } : {}), ...(input.terragrunt ? { together: true } : {}), runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
+    waves: rest.waves.map((w, i) => ({ ...w, ...(approval ? { approval } : {}), ...(input.terragrunt || input.together === i + 1 ? { together: true } : {}), runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
   } as OpWavesSpec;
-}
-
-/**
- * Why a repo's apply cannot run on chant's step contract yet, one reason
- * each; empty when it can.
- */
-export function waveStepProblems(o: { composed?: boolean }): string[] {
-  const out: string[] = [];
-  if (o.composed) out.push("waves.compose plans the wave's roots as one run, which the step does not");
-  return out;
 }
 
 const GIT_ID = { GIT_AUTHOR_NAME: "terragucci", GIT_AUTHOR_EMAIL: "terragucci@localhost", GIT_COMMITTER_NAME: "terragucci", GIT_COMMITTER_EMAIL: "terragucci@localhost" };
