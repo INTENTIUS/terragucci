@@ -113,6 +113,7 @@ import {
   TerragruntMockRefusal,
   type TerragruntExec,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { terragruntApplyCapability } from "@intentius/chant-lexicon-terraform/terragrunt/capability";
 import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
 import { explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
@@ -1323,12 +1324,12 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     if (unattended) console.log(`wave ${options.wave}: policy.outcomes at base names allow_unattended, so the wave's gate (${options.gate}) is decided once the policy reads its plans, and holds the wave through its held hook`);
     const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned, ...(unattended ? { unattended } : {}), migrated: new Set() };
     // terragucci#1303: a repo that qualifies plans and applies the wave through chant's terraform-apply step, in this process.
-    const stepWave = typeof specWaves === "number" ? undefined : await stepWaveReasons(repo, options, ctx);
+    const stepWave = await stepWaveReasons(repo, options, ctx);
     if (stepWave && stepWave.reasons.length > 0) console.log(`wave ${options.wave}: plans and applies through terragucci's own calls, not chant's terraform-apply step: ${stepWave.reasons.join("; ")}`);
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
-      if (stepWave && stepWave.reasons.length === 0 && typeof specWaves !== "number") {
+      if (stepWave && stepWave.reasons.length === 0) {
         ran = await runStepWave(repo, options, ctx, jobOf, { chant: stepWave.chant, settings: stepWave.settings, specWaves, base, gates, approval: rule?.mode ?? "ledger", ...(rule?.point ? { point: rule.point } : {}), ...(grouped ? { grouped } : {}) });
       } else {
       const spec = wavesSpec({
@@ -1484,8 +1485,9 @@ async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: Wav
   const read = await waveSettings(repo, options, ctx.configPath);
   if ("error" in read) return undefined;
   const settings = read.settings;
-  const reasons = waveStepProblems({ ...(options.terragrunt ? { terragrunt: true } : {}), ...(options.composition ? { composed: true } : {}) });
-  const declared = declaredTerraformRoots(repo);
+  const reasons = waveStepProblems({ ...(options.composition ? { composed: true } : {}) });
+  // A Terragrunt repo runs no terraform-apply step, so it needs no chant.config.ts.
+  const declared = options.terragrunt ? { roots: new Set<string>() } : declaredTerraformRoots(repo);
   if ("why" in declared) reasons.push(declared.why);
   // chant's involved people are known at base: an agent whose login the job reads from its token is not (chant#4859).
   const rule = ctx.rule;
@@ -1560,6 +1562,99 @@ interface StepContext {
   /** What each root's run hooks gave it, by root. */
   roots: Map<string, StepRoot>;
   jobOf: (k: number) => WaveJob;
+  /** A Terragrunt wave's units (chant#4848, #4849). */
+  units?: StepUnits;
+}
+
+/** What a Terragrunt wave on chant's `terragrunt-apply` step shares (terragucci#1303). */
+interface StepUnits {
+  /** The Terragrunt the job runs, and how: with terragucci's lock timeout, its backend bootstrap and its sources check. */
+  terragrunt: string;
+  exec: TerragruntExec;
+  /** What each unit runs, a pinned release installed and checked. */
+  tools: UnitBinaries;
+  /** The units the sources check refused after their init, and those it was asked about. */
+  refused: Map<string, string[]>;
+  asked: Set<string>;
+  /** A unit whose azurerm backend Terragrunt bootstraps. */
+  azure: Set<string>;
+  /** Each wave's units, as chant's step found them. */
+  found: Map<number, string[]>;
+  /** The units whose failure the wave already named. */
+  said: Set<string>;
+  /** The waves Terragrunt's graph cuts the pipeline's into, and which unit reads which. */
+  cut?: string[][];
+  edges?: Map<string, Set<string>>;
+}
+
+/**
+ * A Terragrunt wave's units on chant's step: the job's Terragrunt with
+ * terragucci's lock timeout, its backend bootstrap when `generate` asks for
+ * one, and, with `sources` at base, the check of what each unit's init
+ * fetched before it plans (./sources-terragrunt.ts).
+ */
+function stepUnits(s: StepContext, terragrunt: string): StepUnits {
+  const { repo, options, settings } = s;
+  const env = options.env ?? process.env;
+  // shape: Terragrunt's backend bootstrap. generate's disable_init: false asks Terragrunt to init the backend; only the apply job may create or change the bucket.
+  const bootstrap = backendBootstrap(repo, settings) && env.TG_BACKEND_BOOTSTRAP === undefined;
+  if (bootstrap) console.log(`wave ${options.wave}: generate gives a unit disable_init: false, so Terragrunt bootstraps its backend (TG_BACKEND_BOOTSTRAP)`);
+  const timed = unitLockTimeoutExec(bootstrapExec(options.terragruntExec ?? terragruntExec, bootstrap), env);
+  const refused = new Map<string, string[]>();
+  const asked = new Set<string>();
+  const exec = s.sources ? unitSourcesExec(timed, s.sources, options.binary, env, refused, asked) : timed;
+  const azure = bootstrap ? new Set(bootstrapUnits(repo, settings).filter((b) => b.backend === "azurerm").map((b) => b.unit)) : new Set<string>();
+  return { terragrunt, exec, tools: new UnitBinaries(repo, options.binary, settings.version, terragrunt, env, options.installer), refused, asked, azure, found: new Map(), said: new Set() };
+}
+
+/**
+ * A Terragrunt wave's registry: the terraform lexicon's `terragrunt-apply`
+ * (chant#4848) with the job's Terragrunt and each unit's pinned releases
+ * (chant#4849). Its discovery is the step's, and terragucci reads what it
+ * found: each wave's units, the waves the graph cuts the pipeline's into,
+ * and the units no wave lists, which it names.
+ */
+function unitCapabilities(s: StepContext, u: StepUnits): CapabilityRegistry {
+  const { repo, options, settings } = s;
+  const cap = terragruntApplyCapability({ exec: u.exec, resolveUnit: async (unit) => { const t = await u.tools.resolve(unit); return { terragrunt: t.terragrunt, binary: t.binary }; } });
+  const registry = new CapabilityRegistry();
+  registry.register({
+    ...cap,
+    discoverRuns: async (ctx: Parameters<NonNullable<typeof cap.discoverRuns>>[0], input: Parameters<NonNullable<typeof cap.discoverRuns>>[1]) => {
+      const k = ctx.wave.number;
+      if (!u.cut) {
+        // Which unit reads which: only Terragrunt's own discovery knows.
+        const units = await discoverUnits(repo, { exclude: settings.terragrunt?.exclude, binary: options.binary, terragrunt: u.terragrunt, exec: u.exec });
+        const listed = options.layers.filter((l) => l.length > 0);
+        if (units.source !== "terragrunt find") {
+          console.log(`wave ${k}: ${units.notes.join("; ")}`);
+          console.log(`wave ${k}: without Terragrunt's discovery nobody knows which units read which, so nothing in it was applied`);
+          throw new Error("Terragrunt's discovery did not run");
+        }
+        try {
+          u.cut = refineWaves(listed, units.units);
+        } catch (e) {
+          console.log(`wave ${k}: ${(e as Error).message}, so nothing was applied`);
+          throw e;
+        }
+        u.edges = unitEdges(units.units);
+        if (u.cut.length !== listed.length) console.log(`wave ${k}: Terragrunt's edges cut the pipeline's ${waves(listed.length)} into ${u.cut.length}; run terragucci init to give each wave its own job`);
+        const unlisted = units.units.map((x) => x.path).filter((p) => !listed.some((l) => l.includes(p)) && !options.elsewhere?.includes(p));
+        if (unlisted.length > 0) console.log(`wave ${k}: the pipeline does not list ${unlisted.join(", ")}, so no wave applies it; run terragucci init to add it`);
+      }
+      const found = await cap.discoverRuns!(ctx, input);
+      u.found.set(k, [...found.targets]);
+      const w = s.jobOf(k).w;
+      w.count = u.cut.length;
+      w.units = { waves: u.cut, edges: u.edges ?? new Map() };
+      if (found.targets.length === 0) {
+        s.jobOf(k).facts.nothing = true;
+        console.log(`wave ${k}: this repo has ${waves(u.cut.length)}, so there is nothing to apply`);
+      } else console.log(`wave ${k} of ${u.cut.length}: planning ${found.targets.join(", ")}`);
+      return found;
+    },
+  } as never);
+  return registry;
 }
 
 /** The `ci.hooks` environment of a root: the job's, with its role, workspace and the wave's provider cache, never its secrets. */
@@ -1586,6 +1681,7 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
   return {
     name: "terragucci",
     async beforePlan(run) {
+      if (s.units) return unitBeforePlan(s, s.units, run.target);
       const root = run.target;
       const dir = join(repo, root);
       const expected = s.binaries.expected(root);
@@ -1628,12 +1724,27 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
     async beforeApply(run) {
       const own = s.roots.get(run.target);
       if (!own) return;
+      if (s.units) {
+        const error = await unitStep(s, run.target, own, "before-apply", unitPlanFile(repo, run));
+        if (error) throw new Error(error);
+        return;
+      }
       const error = await rootSteps(repo, { root: run.target, steps: own.steps, holds: own.holds }, stepHookEnv(s, run.target), "before-apply", planFileOf(repo, run));
       if (error) throw new Error(error);
     },
     async afterApply(run) {
       const own = s.roots.get(run.target);
       if (!own || run.outcome !== "applied") return;
+      if (s.units) {
+        // A unit's state is in Terragrunt's cache: its backend comes from its evaluated remote_state block (recordUnitStateVersions).
+        const w = s.jobOf(run.wave).w;
+        const versions = await recordUnitStateVersions(repo, [run.target], { terragrunt: s.units.terragrunt, exec: s.units.exec, binary: own.binary }, options.env ?? process.env);
+        for (const [unit, v] of versions) (w.states ??= new Map()).set(unit, v);
+        console.log(`applied ${run.target}`);
+        const error = await unitStep(s, run.target, own, "after-apply");
+        if (error) throw new Error(error);
+        return;
+      }
       const error = await rootSteps(repo, { root: run.target, steps: own.steps, holds: own.holds }, stepHookEnv(s, run.target), "after-apply");
       if (error) throw new Error(error);
       const w = s.jobOf(run.wave).w;
@@ -1648,6 +1759,68 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
       if (shown !== undefined) (w.appliedStates ??= new Map()).set(run.target, shown);
     },
   };
+}
+
+/**
+ * Before a unit of a Terragrunt wave on chant's step plans (chant#4848): the
+ * sources check, the releases it pins, the azurerm bootstrap the Terragrunt
+ * it runs can make, and its `before-observe` and `before-plan` hooks. The
+ * units of one `run --all` run with one environment, the job's.
+ */
+async function unitBeforePlan(s: StepContext, u: StepUnits, unit: string): Promise<{ refuse?: string }> {
+  const own: StepRoot = { env: {}, binary: s.options.binary, bin: { name: basename(s.options.binary) }, steps: [], holds: [] };
+  s.roots.set(unit, own);
+  const refused = s.sources ? await s.sources.before(unit) : [];
+  if (refused.length) return { refuse: `refused by sources, so it was not initialised\n${refused.join("\n")}` };
+  let tools: UnitTools;
+  try {
+    tools = await u.tools.resolve(unit);
+  } catch (e) {
+    return { refuse: (e as Error).message };
+  }
+  own.binary = tools.binary;
+  own.bin = tools.report;
+  if (tools.report.pin || tools.report.terragrunt?.pin) console.log(`${unit}: ${binaryText(tools.report)}`);
+  // Terragrunt bootstraps an azurerm backend from 1.2 on; an older release would skip the storage account and the container.
+  const old = u.azure.has(unit) ? azureBootstrapRefusal(unit, tools.report.terragrunt?.version) : undefined;
+  if (old) {
+    console.log(`FAILED ${unit}: ${old}`);
+    return { refuse: old };
+  }
+  for (const moment of ["before-observe", "before-plan"] as const) {
+    const error = await unitStep(s, unit, own, moment);
+    if (error) return { refuse: error };
+  }
+  return {};
+}
+
+/** Say once that a unit failed, and why, as the wave's lines and its report name it. */
+function unitFailed(u: StepUnits, w: WaveRun, unit: string, why: string): void {
+  if (u.said.has(unit)) return;
+  u.said.add(unit);
+  console.log(`FAILED ${unit}: ${why.split("\n")[0]}`);
+  console.log(indent(why));
+  w.failed = [...(w.failed ?? []), unit];
+}
+
+/** A unit's `ci.hooks` at one moment, in its directory, with the job's environment. Returns the error of a hook that failed. */
+async function unitStep(s: StepContext, unit: string, own: StepRoot, when: HookMoment, planFile?: string): Promise<string | undefined> {
+  if (!s.ws) return undefined;
+  const outcomes = await runUnitHooks(s.ws.hooks, when, [unit], { repo: s.repo, stage: "tf-apply", env: s.ws.env, log: (l) => console.log(l), ...(planFile ? { planFile: () => planFile } : {}) });
+  const o = outcomes.get(unit);
+  if (!o) return undefined;
+  own.steps.push(...o.runs);
+  if (o.holds.length) own.holds.push(...o.holds);
+  return o.error;
+}
+
+/** A unit's saved plan, beside the plan document chant's step names in its artifact. */
+function unitPlanFile(repo: string, run: { target: string; artifact?: unknown; planJson?: string }): string | undefined {
+  const json = (run.artifact as { planJson?: string } | undefined)?.planJson ?? run.planJson;
+  const tail = `/json/${run.target}/tfplan.json`;
+  if (!json?.endsWith(tail)) return undefined;
+  const at = json.startsWith("/") ? json : join(repo, json);
+  return `${at.slice(0, at.length - tail.length)}/plans/${run.target}/tfplan.tfplan`;
 }
 
 /** The plan file chant's step applies, as a `ci.hooks` hook gets it: the artifact's file in the root's directory. */
@@ -1682,17 +1855,21 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       const j = s.jobOf(r.wave);
       const { w, facts } = j;
       const deciding = r.job === "wave" || r.job === "decide";
+      // A Terragrunt wave's units are the ones chant's step found for it, and its waves the ones Terragrunt's graph cuts.
+      const count = s.units?.cut?.length ?? waves.length;
       if (!w.planned) {
-        j.label = deciding ? `wave ${r.wave} of ${waves.length}` : `wave ${r.wave} of ${waves.length}${options.group !== undefined ? `, group ${options.group}` : ""}${options.share !== undefined ? `, share ${options.share}` : ""}`;
+        j.label = deciding ? `wave ${r.wave} of ${count}` : `wave ${r.wave} of ${count}${options.group !== undefined ? `, group ${options.group}` : ""}${options.share !== undefined ? `, share ${options.share}` : ""}`;
         if (ctx.part !== undefined) w.share = ctx.part;
         else if (options.share !== undefined) w.share = options.share;
         w.settings = settings;
         w.started ??= new Date().toISOString();
-        const targets = deciding ? (spec.waves[r.wave - 1]?.runs ?? []).map((x) => x.target) : [r.target];
-        const linked = waveReads(repo, waves, targets, r.wave);
-        w.reads = linked.reads;
-        w.waveReads = afterWaves(repo, settings, options, targets, linked.waves, r.wave);
-        logReads(j.label, linked.reads, waves);
+        const targets = !deciding ? [r.target] : s.units ? (s.units.found.get(r.wave) ?? [r.target]) : (spec.waves[r.wave - 1]?.runs ?? []).map((x) => x.target);
+        if (!s.units) {
+          const linked = waveReads(repo, waves, targets, r.wave);
+          w.reads = linked.reads;
+          w.waveReads = afterWaves(repo, settings, options, targets, linked.waves, r.wave);
+          logReads(j.label, linked.reads, waves);
+        }
         const planned = targets.map((target) => {
           if (target === r.target) return stepPlannedRoot(repo, options, w, r, s.roots.get(target));
           const plan = chant.opWavePlanPath(spec, r.wave, target);
@@ -1730,7 +1907,19 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       }
       const p = w.planned.find((x) => x.root === r.target) as PlannedRoot | undefined;
       const own = s.roots.get(r.target);
-      if (own && p) {
+      if (s.units) {
+        // What a unit's init fetched and locked is checked before it plans (./sources-terragrunt.ts): a refused unit, or one the check never saw, is not applied.
+        const refused = s.units.refused.get(r.target);
+        const why = refused ? `${UNIT_REFUSED}\n${refused.join("\n")}` : s.sources && !s.units.asked.has(r.target) ? uncheckedUnit("applied") : undefined;
+        if (why) {
+          unitFailed(s.units, w, r.target, why);
+          throw new Error(`${r.target}: ${why.split("\n")[0]}`);
+        }
+        if (own && p) {
+          const error = await unitStep(s, r.target, own, "after-plan", unitPlanFile(repo, r));
+          if (error) throw new Error(`${r.target}: ${error}`);
+        }
+      } else if (own && p) {
         const error = await rootSteps(repo, { root: r.target, steps: own.steps, holds: own.holds }, stepHookEnv(s, r.target), "after-plan", planFileOf(repo, r));
         if (error) throw new Error(`${r.target}: ${error}`);
       }
@@ -1760,7 +1949,12 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       for (const p of plans) if (p.holds.length) console.log(`${label}: ${p.root}: hook ${p.holds.join(", ")} asks for an approval, so the gate holds this wave${changes === 0 ? " when it changes something" : ""}`);
       if (heldBySteps.length) w.heldBySteps = heldBySteps;
       // An upstream output unknown when the change was reviewed holds the wave under every gate but never (#1012).
-      const reads = changes > 0 && gate !== "never" ? rootReads(repo, waves, planned.wave, w.reads, new Set(changing.map((p) => p.root))) : [];
+      const reads = changing.length === 0 || gate === "never" ? [] : s.units ? unitReads(repo, s.units.cut ?? [], planned.wave, s.units.edges ?? new Map(), changing.map((p) => p.root)) : rootReads(repo, waves, planned.wave, w.reads, new Set(changing.map((p) => p.root)));
+      // A Terragrunt wave compares what it plans with the pull request's preview (./tg-preview-gate.ts).
+      if (s.units && changing.length > 0) {
+        const units = changing.map((p) => ({ root: p.root, plan: p.plan, ...(p.member ? { member: p.member } : {}), changes: p.changes, destroys: p.destroys, outputs: true }));
+        w.preview = await comparePreview({ repo, env: options.env ?? process.env, wave: planned.wave, binary: options.binary, ...(options.fetch ? { fetch: options.fetch } : {}), units }, (l) => console.log(`${label}: ${l}`));
+      }
       const unknown = await unknownReadHold(repo, options, ctx, w, label, gate, reads, changing.map((p) => ({ root: p.root, plan: p.plan })));
       if (unknown.length) holds.push(`${unknown.map((u) => u.root).join(", ")} ${unknown.length === 1 ? "reads" : "read"} an output unknown when the change was reviewed`);
       // The policy's hold and allow_unattended rules, over the plans that change something (policy.outcomes at base).
@@ -1780,7 +1974,8 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       const roots = w.roots ?? [];
       const approvals = changes > 0 && w.digest ? await stepGateApprovals(s, j, w.digest, plans) : [];
       return {
-        pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}) },
+        // The pending fact names the members it asks approval for, as the respond job reads them.
+        pending: { description: `${label}: ${(s.units ? changing.map((p) => p.root) : roots).join(", ")}`, ...(commit ? { commit } : {}), members: [...members.filter((m) => moving.has(m.member)), ...(priced && changing.length > 0 ? [priced] : [])] },
         ...(priced && changing.length > 0 ? { members: [priced] } : {}),
         ...(changes > 0 ? { holds } : {}),
         ...(approvals.length ? { approvals } : {}),
@@ -1893,12 +2088,16 @@ async function runStepWave(
   options: ApplyWaveOptions,
   ctx: WavesContext,
   jobOf: (k: number) => WaveJob,
-  at: { chant: StepChant; settings: ResolvedSettings; specWaves: string[][]; base: string; gates: Gate[]; approval: Approval; point?: string; grouped?: { name: string; roots: string[]; shares: number }[] },
+  at: { chant: StepChant; settings: ResolvedSettings; specWaves: string[][] | number; base: string; gates: Gate[]; approval: Approval; point?: string; grouped?: { name: string; roots: string[]; shares: number }[] },
 ): Promise<{ code: number; result?: RunOpWaveResult }> {
   const settings = at.settings;
-  const roots = at.specWaves[options.wave - 1] ?? [];
-  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, options.env ?? process.env);
-  const all = at.specWaves.flat();
+  const env = options.env ?? process.env;
+  // A Terragrunt wave finds its units when it plans (chant#4848).
+  const listed = typeof at.specWaves === "number" ? undefined : at.specWaves;
+  const roots = listed?.[options.wave - 1] ?? [];
+  const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
+  const all = listed?.flat() ?? [];
+  const terragrunt = options.terragrunt ? (options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt") : undefined;
   // A root that names its workspace (an Atmos instance's) plans in it, and an Atmos read is read from the upstream's own workspace (chant#4855, #4858).
   const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(join(repo, r)); return w ? [[r, w]] : []; }));
   const reads = Object.fromEntries(all.flatMap((r) => {
@@ -1917,9 +2116,11 @@ async function runStepWave(
     ...(Object.keys(reads).length ? { reads } : {}),
     ...(rule && !rule.point ? { approvals } : {}),
     waves: at.specWaves,
+    ...(options.rest ? { rest: true } : {}),
+    ...(terragrunt ? { terragrunt: { layers: options.layers.filter((l) => l.length > 0), exclude: settings.terragrunt?.exclude, binary: options.binary, terragrunt, ...(options.parallelism !== undefined ? { parallelism: options.parallelism } : {}) } } : {}),
     // allow_unattended at base: chant's gate is never, and the after-plan hook holds a wave the gate would hold unless the policy lets it through.
     gate: ctx.unattended ? "never" : options.gate,
-    ...(!ctx.unattended && at.gates.some((g) => g !== options.gate) ? { gates: at.gates } : {}),
+    ...(!ctx.unattended && listed && at.gates.some((g) => g !== options.gate) ? { gates: at.gates } : {}),
     approval: at.approval,
     ...(at.grouped
       ? { jobs: { wave: options.wave, groups: at.grouped.map((g) => ({ name: g.name, runs: g.roots, shares: g.shares })) } }
@@ -1970,9 +2171,12 @@ async function runStepWave(
     console.log(`wave ${options.wave}: ${(e as Error).message}, so nothing in it was applied`);
     return { code: EXIT.failed };
   }
+  if (terragrunt) s.units = stepUnits(s, terragrunt);
   // chant stores the change set on the local ledger before its gate fetches the remote one: bring a stale copy up to date first.
   await fetchLifecycleStatus({ cwd: repo });
-  const result = await at.chant.runOpWave({
+  let result: RunOpWaveResult;
+  try {
+    result = await at.chant.runOpWave({
     spec,
     specFile: WAVES_SPEC,
     wave: options.wave,
@@ -1981,13 +2185,21 @@ async function runStepWave(
     ...((options.shares !== undefined || at.grouped) && options.share === undefined && options.group === undefined ? { decide: true } : {}),
     ...(options.group !== undefined ? { group: options.group } : {}),
     ...(options.share !== undefined ? { share: options.share } : {}),
-    capabilities: waveCapabilities(repo, binaries, cache) as never,
+    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache)) as never,
     // The migration and gate hooks call back into this process: the job waits for them without blocking it.
     hookExec: at.chant.spawnExecAsync,
     afterPlan: stepAfterPlan(s),
     runHooks: stepRunHooks(s),
     log: (line) => console.log(line),
   });
+  } catch (e) {
+    // A wave whose runs could not be found, such as a Terragrunt pipeline that applies a unit before what it reads, applies nothing.
+    console.log(`wave ${options.wave}: ${(e as Error).message}`);
+    return { code: EXIT.failed };
+  } finally {
+    // A unit the sources check refused after its init fails the wave's one run --all: name it, as its own row says.
+    for (const [unit, lines] of s.units?.refused ?? []) unitFailed(s.units!, jobOf(options.wave).w, unit, `${UNIT_REFUSED}\n${lines.join("\n")}`);
+  }
   const j = jobOf(options.wave);
   if (result.applied.length > 0) {
     j.w.applyStarted ??= j.w.plannedAt;

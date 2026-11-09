@@ -106,9 +106,14 @@ export function wavesSpec(input: WavesSpecInput): OpWavesSpec {
 }
 
 /** What a wave spec on chant's step contract adds to {@link WavesSpecInput} (chant#4545). */
-export interface WavesStepInput extends Omit<WavesSpecInput, "waves" | "rest"> {
-  /** Each wave's roots. A Terragrunt repo's discovered waves have no step: chant plans the runs a spec lists. */
-  waves: string[][];
+export interface WavesStepInput extends WavesSpecInput {
+  /**
+   * A Terragrunt repo's step (chant#4848): every wave finds its units when it
+   * plans and plans them together with one `run --all`, through the terraform
+   * lexicon's `terragrunt-apply`. `layers` are the pipeline's waves, each cut
+   * again by Terragrunt's graph.
+   */
+  terragrunt?: { layers: string[][]; exclude?: string[]; binary: string; terragrunt: string; parallelism?: number };
   /** Vars each root reads from another root's outputs (Atmos's `!terraform.state`), as the terraform lexicon's `reads`, each with the upstream's directory and workspace (chant#4858). */
   reads?: Record<string, { var: string; root: string; output: string[]; dir?: string; workspace?: string }[]>;
   /** The workspace each root that names one plans and applies in (an Atmos instance's), created after an init in default (chant#4855). */
@@ -149,14 +154,25 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
   return {
     ...rest,
     approvals: { spend: true, ...(input.approvals ?? {}) },
-    step: {
-      kind: "terraform-apply",
-      root: "{target}",
-      // A root with no terraform.roots entry plans its own directory (chant#4842).
-      dir: "{target}",
-      ...(input.lockTimeout !== undefined ? { lockTimeout: input.lockTimeout } : {}),
-      ...(input.cone ? { cone: input.cone } : {}),
-    },
+    step: input.terragrunt
+      ? {
+          kind: "terragrunt-apply",
+          // Terragrunt runs in the wave's directory (chant#4856).
+          unit: "{target}",
+          layers: input.terragrunt.layers,
+          ...(input.terragrunt.exclude?.length ? { exclude: input.terragrunt.exclude } : {}),
+          binary: input.terragrunt.binary,
+          terragrunt: input.terragrunt.terragrunt,
+          ...(input.terragrunt.parallelism !== undefined ? { parallelism: input.terragrunt.parallelism } : {}),
+        }
+      : {
+          kind: "terraform-apply",
+          root: "{target}",
+          // A root with no terraform.roots entry plans its own directory (chant#4842).
+          dir: "{target}",
+          ...(input.lockTimeout !== undefined ? { lockTimeout: input.lockTimeout } : {}),
+          ...(input.cone ? { cone: input.cone } : {}),
+        },
     ...(input.policy || input.approveAbove !== undefined
       ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.approveAbove !== undefined ? { cost: { command: ["infracost", "breakdown", "--path", "{planJson}", "--format", "json"], approveAbove: input.approveAbove, format: "infracost" } } : {}) } }
       : {}),
@@ -164,19 +180,17 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
     ...(input.standDown ? { standDown: true } : {}),
     // The gate's report is terragucci's; the held hook is chant's holds now.
     hooks: { after: { gate: hooks?.after?.gate } },
-    waves: rest.waves.map((w) => ({ ...w, ...(approval ? { approval } : {}), runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
+    // A Terragrunt wave plans its units as one run --all, as a layer of the graph runs.
+    waves: rest.waves.map((w) => ({ ...w, ...(approval ? { approval } : {}), ...(input.terragrunt ? { together: true } : {}), runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
   } as OpWavesSpec;
 }
 
 /**
  * Why a repo's apply cannot run on chant's step contract yet, one reason
- * each; empty when it can. The step plans the runs a spec lists one by one,
- * so a Terragrunt repo's discovered waves and a composed run keep the call
- * back.
+ * each; empty when it can.
  */
-export function waveStepProblems(o: { terragrunt?: boolean; composed?: boolean }): string[] {
+export function waveStepProblems(o: { composed?: boolean }): string[] {
   const out: string[] = [];
-  if (o.terragrunt) out.push("a Terragrunt repo finds its units when it plans, and a step plans the runs the spec lists");
   if (o.composed) out.push("waves.compose plans the wave's roots as one run, which the step does not");
   return out;
 }

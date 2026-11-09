@@ -63,7 +63,7 @@ describe("the op-wave step contract", () => {
 
   it("says why a repo keeps the call back", () => {
     expect(waveStepProblems({})).toEqual([]);
-    expect(waveStepProblems({ terragrunt: true, composed: true })).toHaveLength(2);
+    expect(waveStepProblems({ composed: true })).toHaveLength(1);
   });
 });
 

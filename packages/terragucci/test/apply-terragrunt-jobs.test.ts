@@ -52,9 +52,9 @@ describe("a Terragrunt wave behind its gate", () => {
       const decided = join(tmp("tg-decided-"), "wave-1.json");
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, now: T(1) })).toBe(0);
       expect(JSON.parse(readFileSync(decided, "utf-8"))).toMatchObject({ status: "not-required" });
-      // The share plans its units again, as chant checks each against the decision, and applies nothing.
+      // The share plans its units again, as chant checks each against the decision, and applies their saved plans, which change nothing.
       expect(await applyWave(work, { ...split(tg, decided), wave: 1, share: 1, now: T(2) })).toBe(0);
-      expect(runs(tg)).toEqual(["plan live/c,live/d,live/e", "plan live/c,live/d"]);
+      expect(runs(tg)).toEqual(["plan live/c,live/d,live/e", "plan live/c,live/d", "apply live/c,live/d"]);
     });
   });
 
