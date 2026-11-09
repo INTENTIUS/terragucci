@@ -267,7 +267,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 | `--rest` | | `tf-apply --terragrunt` only: run this wave, then each wave after it, stopping at the first that does not apply |
 | `--base` | `TG_BASE` | the ref a change is measured against, such as `origin/main`; default is the pull request's target branch |
 | `--forge` | | `github`, `forgejo` or `gitlab`, when the environment cannot tell; the plan note keeps to its comment limit, and `tf-drift` files its issue there |
-| `--parallelism` | | roots run at once per dependency layer (`tf-plan`, `tf-drift`); overrides `parallelism` in `terragucci.yml`; `1` is serial. A `tf-apply` wave runs its roots one at a time |
+| `--parallelism` | | roots run at once per dependency layer (`tf-plan`, `tf-drift`) or wave (`tf-apply`); overrides `parallelism` in `terragucci.yml`; `1` is serial. The roots' inits take turns on the provider cache |
 
 Both `stage tf-plan` and `stage tf-drift` write the report even when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 

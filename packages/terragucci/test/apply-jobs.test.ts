@@ -9,10 +9,18 @@ import { T, FAKE } from "./apply-helpers";
 describe("planning a wave's roots", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  /** A fake tofu, run in the root's directory as chant's step runs it, whose plan counts the plans running together in $RUN and appends each count to $RUN/counts. */
+  /**
+   * A fake tofu, run in the root's directory as chant's step runs it, whose plan counts the plans running together in $RUN and
+   * appends each count to $RUN/counts, and whose init and apply do the same in $RUN/inits and $RUN/applies.
+   */
   const COUNTING = `#!/usr/bin/env bash
 root="$(basename "$PWD")"
 case "$1" in
+  init)
+    touch "$RUN/initing.$root"
+    ls "$RUN" | grep -c '^initing\\.' >> "$RUN/inits"
+    sleep 0.1
+    rm -f "$RUN/initing.$root" ;;
   plan)
     for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done
     touch "$RUN/running.$root"
@@ -56,25 +64,82 @@ exit 0
   const most = (run: string, file = "counts"): number => Math.max(...readFileSync(join(run, file), "utf-8").split("\n").filter(Boolean).map(Number));
   const roots = ["r1", "r2", "r3", "r4", "r5", "r6"];
 
-  // chant's step plans and applies one root at a time, since the roots' inits share the wave's provider cache (chant issue 4864).
-  it("plans and applies one root at a time on chant's step, whatever --parallelism says, and says so", async () => {
+  // chant's step plans and applies up to parallelism roots at once, their inits one at a time on the wave's provider cache (chant issue 4864).
+  it("plans and applies up to --parallelism roots at once on chant's step, with their inits one at a time, and says so", async () => {
     const { work, bin, run } = wave(roots);
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
     expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 }), lines.join("\n")).toBe(0);
-    expect(most(run)).toBe(1);
+    expect(most(run)).toBe(2);
     expect(readFileSync(join(run, "applies"), "utf-8").split("\n").filter(Boolean)).toHaveLength(roots.length);
-    expect(most(run, "applies")).toBe(1);
-    expect(lines).toContain("wave 1: chant's step plans one root at a time, since the roots' inits share the wave's provider cache");
+    expect(most(run, "applies")).toBe(2);
+    expect(most(run, "inits")).toBe(1);
+    expect(lines).toContain("wave 1: chant's step plans and applies up to 2 roots at once (--parallelism), with their inits one at a time on the wave's provider cache");
   });
 
-  it("plans one root at a time under the config's parallelism key too", async () => {
+  it("plans up to the config's parallelism key at once too", async () => {
     const { work, bin, run } = wave(roots);
     writeFileSync(join(work, "terragucci.yml"), "parallelism: 3\n");
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
     expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env }), lines.join("\n")).toBe(0);
-    expect(most(run)).toBe(1);
+    expect(most(run)).toBe(3);
+    expect(most(run, "inits")).toBe(1);
+    expect(lines).toContain("wave 1: chant's step plans and applies up to 3 roots at once (terragucci.yml), with their inits one at a time on the wave's provider cache");
+  });
+
+  it("runs before-plan hooks and a pinned install side by side and reports the same wave as one root at a time", { timeout: 60_000 }, async () => {
+    // Two roots pin the same release the job's binary does not carry: it is installed once, however many roots ask for it at once.
+    const both = ["p1", "p2", "p3"];
+    const mark = `touch "$RUN/hook.$(basename "$PWD")"; ls "$RUN" | grep -c '^hook\\.' >> "$RUN/hooks"; sleep 0.3; mv "$RUN/hook.$(basename "$PWD")" "$RUN/hooked.$(basename "$PWD")"`;
+    const wave1 = (parallelism: number) => {
+      const { work, bin, run } = wave(both);
+      for (const r of both.slice(0, 2)) writeFileSync(join(work, r, ".opentofu-version"), "1.9.9\n");
+      writeFileSync(join(work, "chant.workspace.json"), `${JSON.stringify({ name: "t", schema: 1, minReader: "0.102.0", members: [], ci: { hooks: { before: { plan: [{ name: "mark", command: ["sh", "-c", mark], perRun: true }] } } } }, null, 2)}\n`);
+      git(work, "add", "-A");
+      // ci.hooks are read at base: the wave's one commit.
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "-m", "one");
+      git(work, "push", "-q", "-f", "origin", "main");
+      let installs = 0;
+      const installer = async (_tool: string, version: string): Promise<string> => {
+        installs++;
+        await new Promise((r) => setTimeout(r, 200));
+        const dir = join(run, `install-${version}`);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, "tofu"), COUNTING, { mode: 0o755 });
+        return dir;
+      };
+      return { work, bin, run, parallelism, installer, installs: () => installs };
+    };
+    const outcome = async (w: ReturnType<typeof wave1>) => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
+      expect(await applyWave(w.work, { wave: 1, layers: [both], binary: w.bin, gate: "never", env: process.env, parallelism: w.parallelism, installer: w.installer as never }), lines.join("\n")).toBe(0);
+      const report = JSON.parse(readFileSync(join(w.work, "terragucci-report", "report.json"), "utf-8"));
+      const wave = report.waves[0];
+      return {
+        wave: { roots: wave.roots, set_digest: wave.set_digest, approval: wave.approval, outcomes: wave.outcomes },
+        roots: (report.roots as { path: string; plan_digest: string | null; binary?: unknown; steps?: { when: string }[] }[]).map((r) => ({ path: r.path, plan_digest: r.plan_digest, binary: r.binary, steps: r.steps?.map((s) => s.when) })),
+      };
+    };
+    // Each wave sets $RUN to its own directory, so each runs before the next is set up.
+    const serial = wave1(1);
+    const one = await outcome(serial);
+    const side = wave1(2);
+    const two = await outcome(side);
+    expect(two).toEqual(one);
+    expect(one.wave.set_digest).toMatch(/\S/);
+    expect(one.roots.map((r) => r.path)).toEqual(both);
+    expect(one.roots.every((r) => r.plan_digest)).toBe(true);
+    expect(one.roots.map((r) => r.steps)).toEqual(both.map(() => ["before-plan"]));
+    expect(one.roots.map((r) => (r.binary as { version?: string }).version)).toEqual(["1.9.9", "1.9.9", "1.8.0"]);
+    // The roots overlapped, their hooks too, and their inits took turns.
+    expect(most(serial.run)).toBe(1);
+    expect(most(side.run)).toBe(2);
+    expect(most(side.run, "hooks")).toBe(2);
+    expect(most(side.run, "inits")).toBe(1);
+    expect(side.installs()).toBe(1);
+    for (const r of both) expect(existsSync(join(side.run, `hooked.${r}`))).toBe(true);
   });
 });
 

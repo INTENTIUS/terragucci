@@ -131,6 +131,8 @@ export interface WavesStepInput extends WavesSpecInput {
   policy?: boolean;
   /** `--stand-down`: a wave whose roots a newer push on the branch also applies stands down with 6 (chant#4581). */
   standDown?: boolean;
+  /** How many of a wave's roots chant's step plans and applies at once, their inits one at a time on the wave's provider cache (chant#4864). Over 1 only; a Terragrunt step carries its own. */
+  parallelism?: number;
 }
 
 /**
@@ -155,6 +157,8 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
   return {
     ...rest,
     approvals: { spend: true, ...(input.approvals ?? {}) },
+    // At spec level only: a together wave refuses a wave-level parallelism over 1.
+    ...(!input.terragrunt && input.parallelism !== undefined && input.parallelism > 1 ? { parallelism: input.parallelism } : {}),
     step: input.terragrunt
       ? {
           kind: "terragrunt-apply",
