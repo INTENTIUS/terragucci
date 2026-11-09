@@ -21,18 +21,24 @@ const USAGE = 1;
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
 
-/** A stand-in for tofu that says it is `version`, and logs each command and the root it ran in to $LOG as `<version> <command> <root>`. */
+/**
+ * A stand-in for tofu that says it is `version`, and logs each command and the
+ * root it ran in to $LOG as `<version> <command> <root>`. tf-plan names the
+ * root with -chdir; chant's step, which tf-apply runs on, runs it in the root.
+ */
 function fakeTofu(dir: string, version: string): string {
   mkdirSync(dir, { recursive: true });
   const bin = join(dir, "tofu");
   writeFileSync(bin, `#!/usr/bin/env bash
 if [ "$1" = version ]; then echo '{"terraform_version":"${version}"}'; exit 0; fi
-dir="\${1#-chdir=}"; root="$(basename "$dir")"
-echo "${version} $2 $root" >> "$LOG"
-case "$2" in
-  plan) for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add" ;;
-  show) cat "$PLANS/$(cat "\${@: -1}").json" ;;
+if [[ "$1" == -chdir=* ]]; then dir="\${1#-chdir=}"; shift; else dir="$PWD"; fi
+root="$(basename "$dir")"
+echo "${version} $1 $root" >> "$LOG"
+case "$1" in
+  plan) for a in "$@"; do case "$a" in -out=*) o="\${a#-out=}"; case "$o" in /*) ;; *) o="$dir/$o" ;; esac; echo "$root" > "$o" ;; esac; done; echo "Plan: 1 to add" ;;
+  show) f="\${@: -1}"; case "$f" in /*) ;; *) f="$dir/$f" ;; esac; if [ -f "$f" ]; then cat "$PLANS/$(cat "$f").json"; else echo '{"values":{}}'; fi ;;
   apply) echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+  output) echo "{}" ;;
 esac
 exit 0
 `);
@@ -196,10 +202,14 @@ describe("a stage whose roots run two versions", () => {
   });
 
   it("tf-apply plans and applies each root of one wave with its own version, and the wave's report names both", async () => {
-    const { repo, job, log, installer, installs } = setup();
+    const { dir, repo, job, log, installer, installs } = setup();
     git(repo, "init", "-q", "-b", "main");
     git(repo, "add", "-A");
     git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one");
+    // The wave reads the gate ledger from origin before it applies a change.
+    git(dir, "init", "-q", "--bare", join(dir, "origin.git"));
+    git(repo, "remote", "add", "origin", join(dir, "origin.git"));
+    git(repo, "push", "-q", "origin", "main");
     vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       expect(await applyWave(repo, { wave: 1, layers: [["a", "b"]], binary: job, gate: "never", installer, env: { PATH: process.env.PATH } })).toBe(0);

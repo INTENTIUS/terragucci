@@ -17,14 +17,13 @@
  * 7 denied and 8 declined. A code terragucci's own calls came to for the wave
  * takes a non-zero exit (waveExit).
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
-import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
+import { dirname, join } from "node:path";
+import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec } from "@intentius/chant/op";
 import type { GateQuorumRule } from "@intentius/chant/gate-decision";
-import { chantCommand } from "./chant-bin";
 import { ConfigError } from "./config";
 
 /** The op, and the spec's name: the waves' gates stay `tf-apply` / `wave-<k>`. */
@@ -317,48 +316,6 @@ export async function serveWave(repo: string, dir: string, handle: (r: WaveReque
     server.listen(sock, () => resolve());
   });
   return { close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
-}
-
-/**
- * Run `chant run wave` for wave `k` and read its result. chant's log goes to
- * the job's, as the waves' own lines do; its `--json` result is read from its
- * standard output.
- */
-export function runChantWave(
-  repo: string,
-  o: { wave: number; base: string; decide?: boolean; share?: number; group?: string; env: NodeJS.ProcessEnv; chant?: string },
-): Promise<{ code: number; result?: RunOpWaveResult }> {
-  const args = ["run", "wave", "--spec", WAVES_SPEC, "--wave", String(o.wave), "--base", o.base, "--json", ...(o.decide ? ["--decide"] : []), ...(o.group !== undefined ? ["--group", o.group] : []), ...(o.share !== undefined ? ["--share", String(o.share)] : [])];
-  const env = { ...o.env, PATH: [join(repo, "node_modules", ".bin"), o.env.PATH ?? ""].join(delimiter) };
-  return new Promise((resolve) => {
-    const child = spawn(chantCommand(repo, o.chant ? { chant: o.chant } : {}), args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
-    child.stdout.on("data", (d) => (out += d));
-    // chant's log is the wave's: each line goes where terragucci's own lines go.
-    let err = "";
-    child.stderr.on("data", (d) => {
-      err += d;
-      const lines = err.split("\n");
-      err = lines.pop() ?? "";
-      for (const line of lines) console.log(line);
-    });
-    child.stderr.on("end", () => {
-      if (err) console.log(err);
-    });
-    child.on("error", (e) => {
-      console.log(`chant run wave did not start (${e.message}): the @intentius/chant package that @intentius/terragucci installs with itself is missing; install terragucci again`);
-      resolve({ code: 1 });
-    });
-    child.on("close", (code) => {
-      let result: RunOpWaveResult | undefined;
-      try {
-        result = out.trim() ? (JSON.parse(out) as RunOpWaveResult) : undefined;
-      } catch {
-        if (out.trim()) process.stdout.write(out);
-      }
-      resolve({ code: code ?? 1, ...(result ? { result } : {}) });
-    });
-  });
 }
 
 /** The spec's text, as writeSpec writes it and init commits it. */

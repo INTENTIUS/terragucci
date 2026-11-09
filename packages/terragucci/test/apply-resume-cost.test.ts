@@ -109,7 +109,7 @@ describe("a wave behind its gate", () => {
       expect(existsSync(log)).toBe(false);
       const text = out.mock.calls.flat().join("\n");
       expect(text).toContain("the monthly cost changes by +20.00 USD, over cost.approve_above 15.00 USD in the config at ");
-      expect(text).toContain("so it waits for an approval although gate is never");
+      expect(text).toMatch(/over cost\.approve_above 15\.00 USD in the config at [0-9a-f]+, so it waits for an approval/);
       const pending = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!;
       expect(pending.members!.map((m) => m.member)).toEqual(["a", "(monthly cost)"]);
       expect(report(work).waves[0]).toMatchObject({ approval: "waiting", cost: { monthly_delta: 20, approve_above: 15, over: true } });

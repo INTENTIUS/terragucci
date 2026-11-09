@@ -132,12 +132,14 @@ describe("a wave on chant's step (terragucci#1303)", () => {
     expect(readFileSync(log, "utf-8")).toContain("applied a");
   });
 
-  it("keeps terragucci's calls, and says why, when chant.config.ts is missing", async () => {
-    const { work, bin } = setup();
+  it("plans and applies on the step when chant.config.ts is missing", async () => {
+    const { work, bin, log } = setup();
     const lines = quiet();
-    await applyWave(work, opts(bin));
-    expect(lines.find((l) => l.includes("not chant's terraform-apply step"))).toContain("chant.config.ts is missing");
-    expect(existsSync(join(work, WAVES_SPEC))).toBe(true);
+    expect(await applyWave(work, opts(bin))).toBe(0);
+    expect(lines.some((l) => l.includes("not chant's terraform-apply step"))).toBe(false);
+    expect(readFileSync(`${log}.calls`, "utf-8")).toContain("-out=chant.tfplan");
+    expect(readFileSync(log, "utf-8")).toContain("applied a");
+    expect(JSON.parse(readFileSync(join(work, WAVES_SPEC), "utf-8")).step).toMatchObject({ kind: "terraform-apply" });
   });
 
   it("plans a root that names its workspace in it, and gives an Atmos read the upstream's directory and workspace (chant#4855, #4858)", () => {

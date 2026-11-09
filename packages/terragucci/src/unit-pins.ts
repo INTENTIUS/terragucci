@@ -26,7 +26,6 @@ import {
   applyTerragruntWave,
   planTerragruntWave,
   TerragruntMockRefusal,
-  type TerragruntWaveApply,
   type TerragruntWavePlan,
   type TerragruntWaveRunInput,
 } from "@intentius/chant-lexicon-terraform/terragrunt/run";
@@ -198,21 +197,6 @@ export async function planWaveGroups(groups: UnitGroup[], input: Omit<Terragrunt
   }
   if (reads.length > 0) throw new TerragruntMockRefusal(reads);
   out.code = codes.find((c) => c !== 0 && c !== 2) ?? (codes.includes(2) ? 2 : 0);
-  return out;
-}
-
-/** Apply a planned wave's units group by group, each from its own saved plans. */
-export async function applyWaveGroups(groups: UnitGroup[], units: readonly string[], input: Omit<TerragruntWaveRunInput, "units" | "workDir" | "binary" | "terragrunt">, apply: ApplyWave = applyTerragruntWave): Promise<TerragruntWaveApply> {
-  const want = new Set(units);
-  const out: TerragruntWaveApply = { results: [], code: 0, log: "" };
-  for (const g of groups) {
-    const mine = g.units.filter((u) => want.has(u));
-    if (mine.length === 0) continue;
-    const a = await apply({ ...input, units: mine, workDir: g.workDir, binary: g.binary, terragrunt: g.terragrunt });
-    out.results.push(...a.results);
-    out.log += a.log;
-    if (out.code === 0) out.code = a.code;
-  }
   return out;
 }
 

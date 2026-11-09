@@ -109,8 +109,8 @@ describe("a wave behind its gate", () => {
       expect(existsSync(log)).toBe(true);
       // The review's line on the ledger, made when the wave read the review, is the approval the wave applied under.
       const reviewed = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).resolutions.at(-1)!;
-      expect(reviewed).toMatchObject({ via: "pr-review", planDigest: first });
-      expect(appliedOf(origin)).toEqual([expect.objectContaining({ planDigest: first, approvedAt: reviewed.timestamp, approvedBy: "alice" })]);
+      expect(reviewed).toMatchObject({ planDigest: first, review: { pr: 7, head } });
+      expect(appliedOf(origin)).toEqual([expect.objectContaining({ planDigest: first, approvedAt: reviewed.timestamp, approvedBy: "github:alice" })]);
       // The next merge, not reviewed yet, plans other values: it waits and asks for a review, and the reviewed approval refuses nothing.
       moveA(work);
       lines.length = 0;
@@ -191,7 +191,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(1);
       expect(existsSync(log)).toBe(false);
       const text = lines.join("\n");
-      expect(text).toContain("mallory is not listed in policy.override at base (alice)");
+      expect(text).toMatch(/an override does not count: mallory is not listed in policy\.override in the config at base.* \(alice\)/);
       expect(text).toContain("the override by alice gives no reason");
       expect(text).toContain("written by a job");
     });

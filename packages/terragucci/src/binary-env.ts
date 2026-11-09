@@ -12,6 +12,9 @@
  * reaches it.
  */
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { accessSync, constants, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, delimiter, join } from "node:path";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 
 /** The forge token variables the binary never sees, by name. */
@@ -37,6 +40,38 @@ export function binaryEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     out[k] = v;
   }
   return out;
+}
+
+/**
+ * The binary chant's step runs in place of `binary` (terragucci#1303): a
+ * script of the same name in `dir` that drops the forge tokens `env` holds,
+ * by name and by value, then runs `binary` with what it was given. chant runs
+ * the binary with the job's environment, so this is where the tokens are left
+ * out. One script per binary.
+ */
+export function tokenlessBinary(dir: string, given: string, env: NodeJS.ProcessEnv): string {
+  // A name runs what PATH finds now, so the script never finds itself when its directory comes first on PATH.
+  const binary = given.includes("/") ? given : ((env.PATH ?? "").split(delimiter).map((d) => join(d, given)).find((p) => runnable(p)) ?? given);
+  const kept = binaryEnv(env);
+  const drop = [...new Set([...FORGE_TOKEN_ENV, ...Object.keys(env).filter((k) => !(k in kept))])].filter((k) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).sort();
+  const at = join(dir, createHash("sha256").update(`${binary}\n${drop.join(" ")}`).digest("hex").slice(0, 16));
+  const path = join(at, basename(binary) || "terraform");
+  if (!existsSync(path)) {
+    mkdirSync(at, { recursive: true });
+    const q = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
+    writeFileSync(path, `#!/bin/sh\nexec env ${drop.map((k) => `-u ${k}`).join(" ")} ${q(binary)} "$@"\n`, { mode: 0o755 });
+  }
+  return path;
+}
+
+/** Whether `p` is a file this process may run. */
+function runnable(p: string): boolean {
+  try {
+    accessSync(p, constants.X_OK);
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Terragrunt's runner, as chant's default runs it, with the job's environment less its forge tokens. */

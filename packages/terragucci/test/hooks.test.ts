@@ -9,6 +9,7 @@ import { hookName, hookProblems, hooksAt, readHooks, runHooks, runUnitHooks } fr
 import { renderNote } from "../src/report/views";
 import { runStage } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
+import { STEP_FAKE as FAKE } from "./apply-helpers";
 
 // Hours from the start of the run: chant stamps the pending facts it records with the time it runs, so an approval at T(h) is newer than any of them.
 const T0 = Date.now();
@@ -204,17 +205,6 @@ describe("tf-plan with ci.hooks", () => {
     expect(renderNote(r2.report)).toMatch(/waits for an approval.*\(a hook of `app` asks for one\)/);
   });
 });
-
-/** A fake tofu for a wave: plan writes the root into the plan file, show -json prints $PLANS/<root>.json, apply logs the root. */
-const FAKE = `#!/usr/bin/env bash
-dir="\${1#-chdir=}"; root="$(basename "$dir")"
-case "$2" in
-  plan) for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add" ;;
-  show) cat "$PLANS/$(cat "\${@: -1}").json" ;;
-  apply) echo "applied $root" >> "$LOG"; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
-esac
-exit 0
-`;
 
 describe("a wave with ci.hooks", () => {
   afterEach(() => {

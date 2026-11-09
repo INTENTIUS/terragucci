@@ -29,13 +29,15 @@ async function checkedOut(url: string): Promise<string> {
   return r.dir;
 }
 
-/** A fake tofu: plans one resource to create in the root, and logs each apply to $LOG. */
+/** A fake tofu, run as chant's step runs it in the root's own directory: plans one resource to create, and logs each apply to $LOG. */
 const TOFU = `#!/usr/bin/env bash
-case "$2" in
+case "$1" in
   init) exit 0 ;;
+  version) echo '{"terraform_version":"1.8.0"}' ;;
   plan) for a in "$@"; do case "$a" in -out=*) echo x > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add" ;;
-  show) echo '{"resource_changes":[{"address":"terraform_data.x","mode":"managed","type":"terraform_data","name":"x","change":{"actions":["create"],"before":null,"after":{"input":"1"},"after_unknown":{}}}]}' ;;
+  show) if [ -f "\${@: -1}" ]; then echo '{"resource_changes":[{"address":"terraform_data.x","mode":"managed","type":"terraform_data","name":"x","change":{"actions":["create"],"before":null,"after":{"input":"1"},"after_unknown":{}}}]}'; else echo '{"values":{}}'; fi ;;
   apply) echo applied >> "$LOG"; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+  output) echo "{}" ;;
 esac
 exit 0
 `;

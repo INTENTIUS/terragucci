@@ -255,6 +255,13 @@ describe("install atmos", () => {
 
 const hasTofu = spawnSync("tofu", ["version"], { encoding: "utf-8" }).status === 0;
 
+/** Give `work` a bare origin under `dir` and push main: a wave reads the gate ledger from origin before it applies a change. */
+function withOrigin(dir: string, work: string): void {
+  git(dir, "init", "-q", "--bare", join(dir, "origin.git"));
+  git(work, "remote", "add", "origin", join(dir, "origin.git"));
+  git(work, "push", "-q", "origin", "main");
+}
+
 describe.skipIf(!hasTofu)("two instances of one component, applied with the real tofu", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -273,6 +280,7 @@ describe.skipIf(!hasTofu)("two instances of one component, applied with the real
     git(work, "init", "-q", "-b", "main");
     git(work, "add", "-A");
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one");
+    withOrigin(dir, work);
     const out = vi.spyOn(console, "log").mockImplementation(() => {});
     const env = { ...process.env, TF_IN_AUTOMATION: "1", TF_WORKSPACE: "default" };
     expect(await applyWave(work, { wave: 1, layers: [["dev/vpc", "prod/vpc"]], binary: "tofu", gate: "never", env })).toBe(0);
@@ -284,7 +292,8 @@ describe.skipIf(!hasTofu)("two instances of one component, applied with the real
       expect(plan).toContain("No changes.");
     }
     expect(existsSync(join(shared, "terraform.tfstate"))).toBe(false);
-    expect(out.mock.calls.flat().join("\n")).toMatch(/applied dev\/vpc/);
+    // chant's step records each root it applied on the wave's release ledger.
+    for (const s of ["dev", "prod"]) expect(out.mock.calls.flat().join("\n")).toContain(`${s}/vpc: recorded on the "wave-1" release ledger as ${s}/vpc`);
   });
 });
 
@@ -447,6 +456,7 @@ describe.skipIf(!hasTofu)("a read of an unapplied upstream, with the real tofu",
     git(work, "init", "-q", "-b", "main");
     git(work, "add", "-A");
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "one");
+    withOrigin(dir, work);
     const env = { ...process.env, TF_IN_AUTOMATION: "1" } as Record<string, string>;
     const layers = [["dev/vpc"], ["dev/app"]];
     const logs: string[] = [];
