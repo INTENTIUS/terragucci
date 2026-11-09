@@ -53,7 +53,8 @@ import { detectForge } from "@intentius/chant/pr-forge";
 import { poster, type Fetch } from "./forge";
 import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
 import { planNoteBodyOf } from "./plan-note";
-import type { ForgeCalls, ReviewedPull } from "./review";
+import type { ReviewForge, ReviewedPull } from "./review";
+import type { RunArtifact, WorkflowRun } from "@intentius/chant/pr-forge-reads";
 import { productReviewMarker, productReviewNoteBody, productReviewPrompt, type ReviewWords } from "@intentius/chant/op/activities/review-product";
 import { REVIEW_COMMAND, REVIEW_RISKS as RISKS, riskOf, type ReviewRisk as Risk } from "@intentius/chant/op/activities/review-agent";
 
@@ -388,11 +389,9 @@ export function artifactBytes(env: NodeJS.ProcessEnv, doFetch: FetchBytes = fetc
   };
 }
 
-/** An artifact list as either forge answers it: GitHub `{artifacts}`, Forgejo a bare array or `{artifacts}`. */
-function artifactsOf(got: any, name: string): any[] {
-  return (Array.isArray(got) ? got : Array.isArray(got?.artifacts) ? got.artifacts : [])
-    .filter((a: any) => a?.name === name && a?.expired !== true && Number.isInteger(a?.id))
-    .sort((a: any, b: any) => b.id - a.id);
+/** The artifacts of `name` chant's reads list (unexpired), newest first. */
+function newestFirst(artifacts: readonly RunArtifact[], name: string): RunArtifact[] {
+  return artifacts.filter((a) => a.name === name).sort((a, b) => b.id - a.id);
 }
 
 function entryOf(zip: Buffer, name: string): string | undefined {
@@ -411,15 +410,15 @@ function entryOf(zip: Buffer, name: string): string | undefined {
  * description and base read from the API. `run` is the pipeline's run, whose
  * plan report the prompt reads.
  */
-export async function reviewSubject(event: any, f: ForgeCalls): Promise<{ subject: ReviewSubject; run?: number }> {
+export async function reviewSubject(event: any, f: ReviewForge): Promise<{ subject: ReviewSubject; run?: number }> {
   const wr = event?.workflow_run;
   if (!wr) return { subject: subjectOfPullEvent(event) };
   if (wr.event !== "pull_request") throw new ConfigError(`the review runs after a pull_request run of the pipeline; this one was started by ${String(wr.event)}`);
   const head = wr.head_sha;
   const prs = (Array.isArray(wr.pull_requests) ? wr.pull_requests : []).filter((p: any) => Number.isInteger(p?.number) && p?.head?.sha === head);
   if (prs.length !== 1 || !Number.isInteger(wr.id)) throw new ConfigError(`the pipeline's run names ${prs.length} pull requests of its head, not one, so there is nothing to review`);
-  const pull = await f.get(`repos/${f.repo}/pulls/${prs[0].number}`);
-  return { subject: checkedSubject({ pr: prs[0].number, head, base: pull?.base?.ref, title: pull?.title, body: pull?.body }), run: wr.id };
+  const pull = await f.reads.pullRequest(prs[0].number);
+  return { subject: checkedSubject({ pr: prs[0].number, head, base: pull?.base, title: pull?.title, body: pull?.body }), run: wr.id };
 }
 
 export interface FetchReportOptions {
@@ -430,7 +429,6 @@ export interface FetchReportOptions {
   now?: () => number;
 }
 
-const DONE = new Set(["success", "failure", "cancelled", "skipped", "completed"]);
 
 /**
  * The plan job's report, from the pipeline's run of the head, into `dir`: the
@@ -442,22 +440,20 @@ const DONE = new Set(["success", "failure", "cancelled", "skipped", "completed"]
  * it returns is said in the log. The report is the change's own run's, so it
  * is data like the diff, never trusted.
  */
-export async function fetchPlanReport(f: ForgeCalls, bytes: ArtifactFiles, subject: ReviewSubject, run: number | undefined, dir: string, o: FetchReportOptions = {}): Promise<string> {
+export async function fetchPlanReport(f: ReviewForge, bytes: ArtifactFiles, subject: ReviewSubject, run: number | undefined, dir: string, o: FetchReportOptions = {}): Promise<string> {
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = o.now ?? Date.now;
   let id = run;
   if (id === undefined) {
     const deadline = now() + (o.waitMs ?? 30 * 60_000);
     for (;;) {
-      const listed = await f.get(`repos/${f.repo}/actions/runs?event=pull_request&head_sha=${subject.head}&limit=50`);
-      // Forgejo lists a pull_request_target run as a pull_request run of the head; trigger_event tells them apart.
-      const pipeline = (Array.isArray(listed?.workflow_runs) ? listed.workflow_runs : [])
-        .filter((r: any) => Number.isInteger(r?.id) && (r?.trigger_event ?? r?.event) === "pull_request" && r?.workflow_id === PIPELINE_WORKFLOW && (r?.commit_sha ?? r?.head_sha) === subject.head)
-        .sort((a: any, b: any) => b.id - a.id)[0];
+      // chant's reads give Forgejo's own trigger as `event`, so a pull_request_target run of the head is not taken for the pipeline's.
+      const pipeline = (await f.reads.headRuns(subject.head, { event: "pull_request", limit: 50 }))
+        .filter((r) => r.event === "pull_request" && r.workflow === PIPELINE_WORKFLOW && r.headSha === subject.head)
+        .sort((a, b) => b.id - a.id)[0];
       if (pipeline) {
-        const jobs = await f.get(`repos/${f.repo}/actions/runs/${pipeline.id}/jobs`);
-        const plan = (Array.isArray(jobs) ? jobs : Array.isArray(jobs?.jobs) ? jobs.jobs : []).find((j: any) => j?.name === REPORT_KEEPER_JOB);
-        if (DONE.has(plan?.status) || DONE.has(pipeline.status)) {
+        const plan = (await f.reads.runJobs(pipeline.id)).find((j) => j.name === REPORT_KEEPER_JOB);
+        if (plan?.done || pipeline.done) {
           id = pipeline.id;
           break;
         }
@@ -469,7 +465,7 @@ export async function fetchPlanReport(f: ForgeCalls, bytes: ArtifactFiles, subje
       await sleep(o.pollMs ?? 10_000);
     }
   }
-  const artifact = artifactsOf(await f.get(`repos/${f.repo}/actions/runs/${id}/artifacts?name=${PLAN_REPORT_ARTIFACT}&per_page=100&limit=50`), PLAN_REPORT_ARTIFACT)[0];
+  const artifact = newestFirst(await f.reads.artifacts(PLAN_REPORT_ARTIFACT, { run: id, limit: 50 }), PLAN_REPORT_ARTIFACT)[0];
   const zip = artifact ? await bytes(`repos/${f.repo}/actions/artifacts/${artifact.id}/zip`) : undefined;
   if (!zip) return `no plan report: run ${id} kept none`;
   mkdirSync(dir, { recursive: true });
@@ -493,24 +489,20 @@ export async function fetchPlanReport(f: ForgeCalls, bytes: ArtifactFiles, subje
  * branch, and the event's pull request and head this one. Forgejo lists such a
  * run with event `pull_request`; `trigger_event` is the workflow's own.
  */
-export function untrustedRun(run: any, forge: "github" | "forgejo", pr: ReviewedPull, defaultBranch: string): string | undefined {
+export function untrustedRun(run: WorkflowRun | undefined, forge: "github" | "forgejo", pr: ReviewedPull, defaultBranch: string): string | undefined {
+  if (!run) return "the forge has no such run";
   if (forge === "github") {
-    if (run?.event !== REVIEW_EVENTS.github) return `it ran on ${String(run?.event)}, not workflow_run`;
-    const path = typeof run?.path === "string" ? run.path.replace(/@.*$/, "") : "";
-    if (path !== REVIEW_PATHS.github) return `it ran ${String(run?.path)}, not ${REVIEW_PATHS.github}`;
+    if (run.event !== REVIEW_EVENTS.github) return `it ran on ${run.event}, not workflow_run`;
+    const path = (run.path ?? "").replace(/@.*$/, "");
+    if (path !== REVIEW_PATHS.github) return `it ran ${run.path ?? "no workflow file"}, not ${REVIEW_PATHS.github}`;
     return undefined;
   }
-  if (run?.trigger_event !== REVIEW_EVENTS.forgejo) return `it ran on ${String(run?.trigger_event ?? run?.event)}, not pull_request_target`;
-  if (run?.workflow_id !== REVIEW_PATHS.forgejo.split("/").pop()) return `it ran ${String(run?.workflow_id)}, not ${REVIEW_PATHS.forgejo}`;
-  let payload: any;
-  try {
-    payload = typeof run?.event_payload === "string" ? JSON.parse(run.event_payload) : run?.event_payload;
-  } catch {
-    payload = undefined;
-  }
-  const pull = payload?.pull_request;
-  if (pull?.base?.ref !== defaultBranch) return `it ran the review workflow of ${String(pull?.base?.ref)}, not of the default branch ${defaultBranch}`;
-  if (pull?.number !== pr.number || pull?.head?.sha !== pr.head) return `it reviewed pull request ${String(pull?.number)} at ${String(pull?.head?.sha).slice(0, 8)}`;
+  // chant's reads give Forgejo's trigger_event as `event`, its workflow_id as `workflow`, and the event payload's pull request.
+  if (run.event !== REVIEW_EVENTS.forgejo) return `it ran on ${run.event}, not pull_request_target`;
+  if (run.workflow !== REVIEW_PATHS.forgejo.split("/").pop()) return `it ran ${run.workflow ?? "no workflow file"}, not ${REVIEW_PATHS.forgejo}`;
+  const pull = run.pullRequests[0];
+  if (pull?.base !== defaultBranch) return `it ran the review workflow of ${String(pull?.base)}, not of the default branch ${defaultBranch}`;
+  if (pull.number !== pr.number || pull.headSha !== pr.head) return `it reviewed pull request ${pull.number} at ${String(pull.headSha).slice(0, 8)}`;
   return undefined;
 }
 
@@ -523,20 +515,20 @@ export function untrustedRun(run: any, forge: "github" | "forgejo", pr: Reviewed
  * included, and any run's token can post a note, so neither counts by itself.
  * `skipped` says which artifacts were passed over, and why.
  */
-export async function reviewOfPull(f: ForgeCalls, pr: ReviewedPull, bytes: ArtifactFiles, forge: "github" | "forgejo"): Promise<PolicyReview & { run?: number; skipped: { run: number | null; why: string }[] }> {
+export async function reviewOfPull(f: ReviewForge, pr: ReviewedPull, bytes: ArtifactFiles, forge: "github" | "forgejo"): Promise<PolicyReview & { run?: number; skipped: { run: number | null; why: string }[] }> {
   const skipped: { run: number | null; why: string }[] = [];
   const name = reviewArtifactName(pr.head);
-  const artifacts = artifactsOf(await f.get(`repos/${f.repo}/actions/artifacts?name=${name}&per_page=100&limit=50`), name);
+  const artifacts = newestFirst(await f.reads.artifacts(name, { limit: 50 }), name);
   if (!artifacts.length) return { ...noReview(pr), skipped };
-  const defaultBranch = (await f.get(`repos/${f.repo}`))?.default_branch;
+  const defaultBranch = f.client.defaultBranch ? await f.client.defaultBranch() : undefined;
   if (typeof defaultBranch !== "string" || !BRANCH.test(defaultBranch)) throw new Error("the forge did not say the repository's default branch");
   for (const artifact of artifacts) {
-    const runId = artifact.run_id ?? artifact.workflow_run?.id;
-    if (!Number.isInteger(runId)) {
+    const runId = artifact.run;
+    if (runId === undefined || !Number.isInteger(runId)) {
       skipped.push({ run: null, why: "the forge names no run that kept it" });
       continue;
     }
-    const why = untrustedRun(await f.get(`repos/${f.repo}/actions/runs/${runId}`), forge, pr, defaultBranch);
+    const why = untrustedRun(await f.reads.run(runId), forge, pr, defaultBranch);
     if (why) {
       skipped.push({ run: runId, why });
       continue;

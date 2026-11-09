@@ -141,7 +141,7 @@ import { quorumRuleLine, quorumWaiting, trustRolesAt, type GateQuorumRuleProgres
 import { mayOverride, overrideCommand, overridersFor, type Overriders } from "./override";
 import { approveCommand } from "./report/marker";
 import type { Fetch } from "./forge";
-import { changesSomething, forgeCalls, jobForge, pullOf, reviewDigest, reviewWave, type JobForge, type ReviewedPull, type ReviewOutcome } from "./review";
+import { changesSomething, jobForge, pullOf, reviewDigest, reviewForge, reviewWave, type JobForge, type ReviewedPull, type ReviewOutcome } from "./review";
 import { AGENT_NOT_EXCLUDED, judge, mergeExcluded, notCounted, pullInvolvement, tokenUsers, whyInvolved, type Excluded, type Involved } from "./involved";
 import { gitlabReviewCalls, gitlabReviewOf } from "./gitlab-agent";
 import { artifactBytes, noReview, reviewOfPull, type FetchBytes, type PolicyReview } from "./review-agent";
@@ -2860,7 +2860,7 @@ async function waveReview(repo: string, env: NodeJS.ProcessEnv, options: ApplyWa
   const on: "github" | "forgejo" = forge === "forgejo" || forge === "github" ? forge : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
   const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
   try {
-    const f = forgeCalls(env, options.fetch);
+    const f = reviewForge(on, env, options.fetch);
     const pr = await pullOf(jobForge(on, env, options.fetch), env, sha);
     if (!pr) {
       console.log(`${label}: review: no pull request made ${sha.slice(0, 8) || "this commit"}, so input.review has no review`);

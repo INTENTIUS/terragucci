@@ -21,6 +21,7 @@ A control repo keeps its projects and defaults only as chant's entries on its `c
 - The plan job reads the control repo through chant's read step alone. On GitHub and Forgejo it no longer checks the control repo out into `.terragucci-control`, and on GitLab it no longer clones it. `TERRAGUCCI_CONTROL_DIR` is no longer set by the job, though a plan still reads a checkout it names.
 - `TERRAGUCCI_CHANT` is no longer read.
 - A plan that reads the control repo through `TERRAGUCCI_CONTROL_READ_TOKEN` now finds its estate owners. The clone it read was removed before the read finished, so it found none.
+- The review agent reads the pull request, the pipeline's runs and jobs, and the review artifacts through chant's forge reads. A review artifact whose run the forge no longer lists is passed over, and the log says so.
 
 Every wave now plans and applies on chant's step, and terragucci's own wave plan and apply are gone:
 

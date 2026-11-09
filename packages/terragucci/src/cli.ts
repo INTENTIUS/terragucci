@@ -119,7 +119,7 @@ import { poster } from "./forge";
 import { pollGitLabComments } from "./comment-gitlab";
 import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
-import { approvalStatus, forgeCalls } from "./review";
+import { approvalStatus, reviewForge as reviewForgeOf } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
@@ -1492,7 +1492,7 @@ export async function main(argv: string[]): Promise<number> {
           } catch (e) {
             throw new ConfigError(`review prompt reads the pull request from the event file, and could not (${(e as Error).message})`);
           }
-          const f = forgeCalls(process.env);
+          const f = reviewForgeOf(reviewForge === "forgejo" || (reviewForge === undefined && (process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true")) ? "forgejo" : "github", process.env);
           const { subject, run } = await reviewSubject(event, f);
           console.log(`terragucci review: ${await fetchPlanReport(f, artifactBytes(process.env), subject, run, report)}`);
           const w = writeReviewPrompt({ report, instructions: str(flags, "instructions") ?? REVIEW_INSTRUCTIONS, pull: subject });
