@@ -115,9 +115,8 @@ import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
 import { describeAction, noActionReply, readActionDecision, resumeActions, runAction } from "./action";
-import { poster } from "./forge";
+import { jobReads, poster } from "./forge";
 import { pollGitLabComments } from "./comment-gitlab";
-import { gitlabApi } from "./comment-apply-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, reviewForge as reviewForgeOf } from "./review";
 import { postPlanNoteFromReport } from "./plan-note";
@@ -1036,7 +1035,7 @@ export async function main(argv: string[]): Promise<number> {
           const out = str(flags, "out");
           const prompt = str(flags, "prompt");
           if (!out || !prompt) throw new ConfigError("comment --forge gitlab --agent run needs --out <file> and --prompt <file>");
-          const decision = await readGitLabAgentAsk(gitlabApi(process.env, process.env.TG_TOKEN, fetch), process.env);
+          const decision = await readGitLabAgentAsk(jobReads("gitlab", process.env, fetch), process.env);
           writeDecision(resolve(cwd, out), decision);
           if (decision.go && decision.ask) writePrompt(resolve(cwd, prompt), { ask: decision.ask, pr: decision.pr!, head: decision.head!, user: decision.user!, policyDir, what: `merge request !${decision.pr}` });
           if (decision.fail) {

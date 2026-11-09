@@ -37,10 +37,13 @@ import { join } from "node:path";
 import { landAgentChange, type PushResult } from "./agent-comment";
 import { tokenUser } from "./involved";
 import { BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
-import { gitlabApi, type GitLabCall } from "./comment-apply-gitlab";
+import { developerOrAbove } from "./comment-apply-gitlab";
+import type { GitlabPipelines, StartedRun } from "@intentius/chant/ci-note-commands";
+import type { PrForge } from "@intentius/chant/pr-forge";
+import type { ForgeReads, ForgeUser, PullRequestDetail, PullRequestNote, RunJob } from "@intentius/chant/pr-forge-reads";
 import { ConfigError } from "./config";
-import { poster, type Fetch } from "./forge";
-import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
+import { jobReads, poster, type Fetch } from "./forge";
+import { byUser, PLAN_NOTE_FILE, planJobOf } from "./plan-note-gitlab";
 import { noReview, parseReviewMarker, REVIEW_FILE, REVIEW_MARK, REVIEWED_FILE, reviewMarker, reviewNoteBody, verdictOf, writeReviewPrompt, type PolicyReview, type WrittenPrompt } from "./review-agent";
 
 /** The variables of the agent's pipeline: the merge request, the note that asked, and the head it was asked on. */
@@ -58,20 +61,10 @@ export const GL_REVIEW_ARTIFACT = "terragucci-review";
 /** The job names a wave checks a review's pointer against, and the poll and the jobs agree on. */
 export const REVIEW_JOB = "review";
 
-/** GitLab's Developer access level: the least that may ask for the agent. */
-const DEVELOPER = 30;
-
 /** What a merge request's pipeline is still doing while its plan has not ended. */
 const RUNNING = new Set(["created", "pending", "running", "waiting_for_resource", "preparing", "scheduled", "manual"]);
 
 const short = (sha: string): string => sha.slice(0, 8);
-
-/** The project id of the job, encoded for a path. */
-function projectOf(env: NodeJS.ProcessEnv): string {
-  const id = env.CI_PROJECT_ID;
-  if (!id) throw new ConfigError("this runs in a GitLab job, which sets CI_PROJECT_ID");
-  return encodeURIComponent(id);
-}
 
 /** A git runner in the checkout: hooks and fsmonitor off, no prompt for credentials. */
 export function gitIn(cwd: string, env: NodeJS.ProcessEnv): (args: string[], input?: string) => string {
@@ -85,26 +78,39 @@ export function gitIn(cwd: string, env: NodeJS.ProcessEnv): (args: string[], inp
  * schedule runs as, who may run the default branch's pipelines, so no other
  * token is needed.
  */
-export async function startDefaultPipeline(env: NodeJS.ProcessEnv, doFetch: Fetch, variables: Record<string, string>): Promise<{ id?: number; web_url?: string }> {
+export async function startDefaultPipeline(env: NodeJS.ProcessEnv, doFetch: Fetch, variables: Record<string, string>): Promise<StartedRun> {
   const api = env.CI_API_V4_URL;
   const token = env.CI_JOB_TOKEN;
   const base = env.CI_DEFAULT_BRANCH;
   if (!api || !token || !base) throw new ConfigError("starting a pipeline needs CI_API_V4_URL, CI_JOB_TOKEN and CI_DEFAULT_BRANCH in the environment");
-  const r = await doFetch(`${api}/projects/${projectOf(env)}/trigger/pipeline`, {
+  // GitLab takes a job token on its pipeline trigger API, not on POST /pipeline.
+  if (!env.CI_PROJECT_ID) throw new ConfigError("this runs in a GitLab job, which sets CI_PROJECT_ID");
+  const r = await doFetch(`${api}/projects/${encodeURIComponent(env.CI_PROJECT_ID)}/trigger/pipeline`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token, ref: base, variables }),
   });
   if (!r.ok) throw new Error(`POST trigger/pipeline answered ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  return (await r.json()) as { id?: number; web_url?: string };
+  const got = (await r.json()) as { id?: number; web_url?: string };
+  return { ...(got.id !== undefined ? { id: got.id } : {}), ...(got.web_url ? { url: got.web_url } : {}) };
 }
 
-/** A raw file from GitLab's API (a job's artifact), or undefined when there is none. */
-async function rawFile(env: NodeJS.ProcessEnv, token: string, doFetch: Fetch, path: string): Promise<string | undefined> {
-  const r = await doFetch(`${env.CI_API_V4_URL}/projects/${projectOf(env)}/${path}`, { method: "GET", headers: { "private-token": token } });
-  if (r.status === 404) return undefined;
-  if (!r.ok) throw new Error(`GET ${path} answered ${r.status}`);
-  return r.text();
+/**
+ * The writes a note's agent pipeline starts with: the comments job's own
+ * CI_JOB_TOKEN on GitLab's trigger API (startDefaultPipeline). It starts
+ * pipelines of the default branch alone.
+ */
+export function defaultPipelines(env: NodeJS.ProcessEnv, doFetch: Fetch = fetch): GitlabPipelines {
+  const refuse = async (): Promise<StartedRun> => {
+    throw new Error("the comments job's own token starts pipelines of the default branch only");
+  };
+  return { start: (_ref, variables) => startDefaultPipeline(env, doFetch, { ...variables }), startMergeRequest: refuse, retryJob: refuse };
+}
+
+/** A file of a job's artifacts through chant's reads, or undefined when the job kept none. */
+async function artifactOf(reads: ForgeReads, job: number, path: string): Promise<string | undefined> {
+  if (!reads.artifactFile) throw new Error("chant's reads read no artifact file on this forge");
+  return reads.artifactFile(job, path);
 }
 
 /** A whole positive number from a variable, or undefined. */
@@ -123,45 +129,45 @@ function idOf(v: string | undefined): number | undefined {
  * above. The agent job reads it before the agent runs, and the push job again
  * with its own token before it pushes: neither takes the other's word.
  */
-export async function readGitLabAgentAsk(api: GitLabCall, env: NodeJS.ProcessEnv): Promise<CommentDecision> {
+export async function readGitLabAgentAsk(reads: ForgeReads, env: NodeJS.ProcessEnv): Promise<CommentDecision> {
   const iid = idOf(env[AGENT_MR_VAR]);
   const noteId = idOf(env[AGENT_NOTE_VAR]);
   const sha = (env[AGENT_HEAD_VAR] ?? "").trim();
   if (iid === undefined || noteId === undefined || !SHA.test(sha)) {
     return { go: false, fail: true, reason: `${AGENT_MR_VAR}, ${AGENT_NOTE_VAR} and ${AGENT_HEAD_VAR} must name the merge request, the note and the head` };
   }
-  const id = projectOf(env);
   const base = env.CI_DEFAULT_BRANCH;
-  let mr: any;
-  let note: any;
+  let mr: PullRequestDetail | undefined;
+  let note: PullRequestNote | undefined;
   try {
-    mr = await api("GET", `/projects/${id}/merge_requests/${iid}`);
-    note = await api("GET", `/projects/${id}/merge_requests/${iid}/notes/${noteId}`);
+    mr = await reads.pullRequest(iid);
+    note = (await reads.pullRequestNotes(iid)).find((n) => n.id === noteId);
   } catch (e) {
     return { go: false, fail: true, pr: iid, reason: `could not read !${iid} and its note (${(e as Error).message})` };
   }
-  if (mr?.state !== "opened") return { go: false, pr: iid, reason: `!${iid} is not open, so the agent does not run` };
-  const project = Number(env.CI_PROJECT_ID);
-  if (mr.source_project_id !== mr.target_project_id || mr.target_project_id !== project) {
+  if (!mr) return { go: false, fail: true, pr: iid, reason: `could not read !${iid} and its note (GitLab has no such merge request)` };
+  if (!note) return { go: false, pr: iid, reason: `note ${noteId} is not a note on !${iid}, so the agent does not run` };
+  if (mr.state !== "open") return { go: false, pr: iid, reason: `!${iid} is not open, so the agent does not run` };
+  // The reads are of the job's own project, so a merge request from this project is one whose source is its target.
+  if (!mr.sameRepo) {
     return { go: false, pr: iid, reason: "a merge request from a fork gets no agent: its branch is not this project's to push to" };
   }
-  const head = mr.source_branch;
+  const head = mr.head;
   if (typeof head !== "string" || !BRANCH.test(head) || head.split("/").some((s: string) => s === ".." || s === "")) return { go: false, fail: true, pr: iid, reason: `!${iid}'s source branch is not a branch name terragucci reads` };
   if (head === base) return { go: false, pr: iid, reason: `!${iid}'s source branch is the default branch, and an agent never pushes there` };
-  if (mr.sha !== sha) return { go: false, pr: iid, reason: `!${iid} moved from ${short(sha)} to ${typeof mr.sha === "string" ? short(mr.sha) : "another head"} since the note was read, so the agent does not run. Ask again.` };
-  const parsed = parseComment(note?.body, parseOptions(env));
-  if (parsed?.kind !== "agent") return { go: false, pr: iid, reason: `note ${noteId} on !${iid} is not a \`/terragucci agent <ask>\`` };
-  const user = note?.author?.username;
-  const uid = note?.author?.id;
-  if (typeof user !== "string" || !LOGIN.test(user) || !Number.isInteger(uid)) return { go: false, pr: iid, reason: "the note has no usable author" };
-  let level: unknown;
+  if (mr.headSha !== sha) return { go: false, pr: iid, reason: `!${iid} moved from ${short(sha)} to ${typeof mr.headSha === "string" ? short(mr.headSha) : "another head"} since the note was read, so the agent does not run. Ask again.` };
+  const parsed = parseComment(note.body, parseOptions(env));
+  if (note.system || parsed?.kind !== "agent") return { go: false, pr: iid, reason: `note ${noteId} on !${iid} is not a \`/terragucci agent <ask>\`` };
+  const user = note.author;
+  if (typeof user !== "string" || !LOGIN.test(user)) return { go: false, pr: iid, reason: "the note has no usable author" };
+  let role: string | undefined;
   try {
-    level = (await api("GET", `/projects/${id}/members/all/${uid}`))?.access_level;
+    role = await reads.permission(user);
   } catch (e) {
-    if (/ answered 404/.test((e as Error).message)) return { go: false, pr: iid, reason: `${user} is not a member of the project, so the agent does not run` };
     return { go: false, fail: true, pr: iid, reason: `could not read ${user}'s access (${(e as Error).message})` };
   }
-  if (typeof level !== "number" || level < DEVELOPER) return { go: false, pr: iid, reason: `${user} is below Developer on the project, so the agent does not run` };
+  if (role === undefined) return { go: false, pr: iid, reason: `${user} is not a member of the project, so the agent does not run` };
+  if (!developerOrAbove(role)) return { go: false, pr: iid, reason: `${user} is ${role} on the project, below Developer, so the agent does not run` };
   return { go: true, reason: `run the agent on !${iid} (${head}) for ${user}`, pr: iid, sha, ...(base ? { base } : {}), head, ask: parsed.ask, user };
 }
 
@@ -186,8 +192,7 @@ export async function pushGitLabAgentChange(o: GitLabAgentPushOptions): Promise<
   const git = o.git ?? gitIn(o.cwd ?? process.cwd(), env);
   const token = env.TG_TOKEN ?? "";
   if (!token) return { pushed: false, fail: true, reason: "the agent-push job has no TG_TOKEN, the token agent.token_env names" };
-  const api = gitlabApi(env, token, doFetch);
-  const ask = await readGitLabAgentAsk(api, env);
+  const ask = await readGitLabAgentAsk(jobReads("gitlab", env, doFetch), env);
   const reply = async (text: string): Promise<void> => {
     if (ask.pr === undefined) return;
     try {
@@ -235,16 +240,6 @@ export async function pushGitLabAgentChange(o: GitLabAgentPushOptions): Promise<
 
 // ── the review ────────────────────────────────────────────────────────────
 
-/** The merge request's pipeline of a head, newest first, and its plan job. */
-async function planJobOf(api: GitLabCall, id: string, iid: number, head: string): Promise<{ pipeline?: any; plan?: any }> {
-  const pipelines = (await api("GET", `/projects/${id}/merge_requests/${iid}/pipelines?per_page=100`)) as any[];
-  const pipeline = (Array.isArray(pipelines) ? pipelines : []).filter((p) => p?.sha === head && Number.isInteger(p?.id)).sort((a, b) => b.id - a.id)[0];
-  if (!pipeline) return {};
-  const jobs = (await api("GET", `/projects/${id}/pipelines/${pipeline.id}/jobs?per_page=100&include_retried=false`)) as any[];
-  const plan = (Array.isArray(jobs) ? jobs : []).filter((j) => j?.name === "plan").sort((a, b) => b.id - a.id)[0];
-  return { pipeline, ...(plan ? { plan } : {}) };
-}
-
 export interface GitLabReviewPromptOptions {
   /** Where the plan job's report goes. */
   report: string;
@@ -272,18 +267,18 @@ export async function writeGitLabReviewPrompt(o: GitLabReviewPromptOptions): Pro
   if (iid === undefined || !SHA.test(head)) throw new ConfigError(`${REVIEW_MR_VAR} and ${REVIEW_HEAD_VAR} must name the merge request and the head to review`);
   const token = env.TG_TOKEN;
   if (!token) throw new ConfigError("the review job reads the merge request with TG_TOKEN, and has none");
-  const api = gitlabApi(env, token, doFetch);
-  const id = projectOf(env);
-  const mr = await api("GET", `/projects/${id}/merge_requests/${iid}`);
-  const base = mr?.target_branch;
+  const reads = jobReads("gitlab", env, doFetch);
+  const mr = await reads.pullRequest(iid);
+  if (!mr) throw new ConfigError(`GitLab has no merge request !${iid}`);
+  const base = mr.base;
   if (typeof base !== "string" || !BRANCH.test(base)) throw new ConfigError(`!${iid}'s target branch is not a branch name terragucci reads`);
-  if (mr.source_project_id !== mr.target_project_id) throw new ConfigError(`!${iid} is from a fork, and a fork's merge request is not reviewed`);
+  if (!mr.sameRepo) throw new ConfigError(`!${iid} is from a fork, and a fork's merge request is not reviewed`);
   // The head as data, and the base the diff is taken against; nothing in either runs.
   git(["fetch", "-q", "origin", `+refs/merge-requests/${iid}/head:refs/terragucci/review-head`, `+refs/heads/${base}:refs/remotes/origin/${base}`]);
   git(["checkout", "-q", "--detach", head]);
   // The report of the merge request's pipeline of this head: data, like the diff.
   let said: string;
-  const { pipeline, plan } = await planJobOf(api, id, iid, head);
+  const { pipeline, plan } = await planJobOf(reads, iid, head);
   if (!pipeline) said = `no plan report: !${iid} has no pipeline of ${short(head)}`;
   else if (!plan) said = `no plan report: pipeline ${pipeline.id} has no plan job`;
   else {
@@ -292,7 +287,7 @@ export async function writeGitLabReviewPrompt(o: GitLabReviewPromptOptions): Pro
     // The plan job keeps its note as note.md, and with gitlab.token: protected as plan-note.md with its markers.
     for (const [name, from] of [[PLAN_NOTE_FILE, [PLAN_NOTE_FILE, "note.md"]], ["report.json", ["report.json"]]] as const) {
       for (const f of from) {
-        const text = await rawFile(env, token, doFetch, `jobs/${plan.id}/artifacts/terragucci-report/${f}`);
+        const text = await artifactOf(reads, plan.id, `terragucci-report/${f}`);
         if (text === undefined) continue;
         writeFileSync(join(o.report, name), text);
         kept.push(f);
@@ -308,7 +303,7 @@ export async function writeGitLabReviewPrompt(o: GitLabReviewPromptOptions): Pro
     cwd,
     env: { ...env, TG_DEFAULT_BRANCH: env.TG_DEFAULT_BRANCH || env.CI_DEFAULT_BRANCH },
     git: (args) => git(args),
-    pull: { pr: iid, head, base, title: typeof mr.title === "string" ? mr.title : "", body: typeof mr.description === "string" ? mr.description : "" },
+    pull: { pr: iid, head, base, title: mr.title, body: mr.body },
   });
   return { written, report: said };
 }
@@ -318,10 +313,8 @@ export async function writeGitLabReviewPrompt(o: GitLabReviewPromptOptions): Pro
  * review's marker, the one chant's client edits, or undefined. The job keeps
  * one such note, so it is the only one.
  */
-function myReviewNote(notes: any[], me: number): any | undefined {
-  return (Array.isArray(notes) ? notes : [])
-    .filter((n) => n?.author?.id === me && typeof n?.body === "string" && n.body.startsWith(REVIEW_MARK))
-    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0))[0];
+function myReviewNote(notes: PullRequestNote[], me: ForgeUser): PullRequestNote | undefined {
+  return notes.filter((n) => byUser(n, me) && n.body.startsWith(REVIEW_MARK)).sort((a, b) => a.id - b.id)[0];
 }
 
 export interface GitLabPostReviewOptions {
@@ -345,14 +338,14 @@ export async function postGitLabReview(o: GitLabPostReviewOptions): Promise<{ po
   const iid = idOf(env[REVIEW_MR_VAR]);
   const head = (env[REVIEW_HEAD_VAR] ?? "").trim();
   if (iid === undefined || !SHA.test(head)) return { posted: false, risk: "unknown", reason: `${REVIEW_MR_VAR} and ${REVIEW_HEAD_VAR} must name the merge request and its head, so nothing was posted` };
-  const api = gitlabApi(env, env.TG_TOKEN, doFetch);
-  const id = projectOf(env);
   try {
-    const jobs = (await api("GET", `/projects/${id}/pipelines/${env.CI_PIPELINE_ID}/jobs?per_page=100`)) as any[];
-    const job = (Array.isArray(jobs) ? jobs : []).filter((j) => j?.name === REVIEW_JOB && Number.isInteger(j?.id)).sort((a, b) => b.id - a.id)[0];
+    const reads = jobReads("gitlab", env, doFetch);
+    const pipeline = /^[1-9][0-9]*$/.test((env.CI_PIPELINE_ID ?? "").trim()) ? Number(env.CI_PIPELINE_ID) : undefined;
+    if (pipeline === undefined) throw new ConfigError("the review-note job needs CI_PIPELINE_ID in the environment");
+    const job = (await reads.runJobs(pipeline)).filter((j) => j.name === REVIEW_JOB).sort((a, b) => b.id - a.id)[0];
     const body = reviewNoteBody({ head, review: o.read(REVIEW_FILE), rc: o.read("rc").trim(), instructions: o.read("instructions"), what: "merge request", ...(job ? { job: job.id } : {}) });
     const risk = parseReviewMarker(body)?.risk ?? "unknown";
-    const me = String((await api("GET", "/user"))?.username ?? "");
+    const me = (await reads.tokenUser())?.login ?? "";
     await poster("gitlab", env, doFetch).upsertComment(iid, REVIEW_MARK, body, { author: me });
     return { posted: true, risk, reason: `posted the review of ${short(head)} on !${iid}: risk ${risk}` };
   } catch (e) {
@@ -374,52 +367,60 @@ export interface ReviewStart {
  * names no review of that head, start the review's pipeline and say so in the
  * review note. Undefined when there is nothing to do yet.
  */
-export async function startReview(c: { api: GitLabCall; id: string; me: number; meName: string; base: string; env: NodeJS.ProcessEnv; fetch: Fetch }, mr: any, notes: any[]): Promise<ReviewStart | undefined> {
-  const iid: number = mr?.iid;
-  if (mr?.state !== "opened" || !Number.isInteger(iid)) return undefined;
-  if (mr.source_project_id !== mr.target_project_id || mr.target_branch !== c.base) return undefined;
-  const head = mr.sha;
+export async function startReview(c: { reads: ForgeReads; me: ForgeUser; base: string; env: NodeJS.ProcessEnv; fetch: Fetch; forge?: PrForge }, mr: PullRequestDetail, notes: PullRequestNote[]): Promise<ReviewStart | undefined> {
+  const iid = mr.number;
+  if (mr.state !== "open") return undefined;
+  if (!mr.sameRepo || mr.base !== c.base) return undefined;
+  const head = mr.headSha;
   if (typeof head !== "string" || !SHA.test(head)) return undefined;
   const old = myReviewNote(notes, c.me);
   if (old && parseReviewMarker(old.body)?.head === head) return undefined;
-  let plan: any;
+  let plan: RunJob | undefined;
   try {
-    ({ plan } = await planJobOf(c.api, c.id, iid, head));
+    ({ plan } = await planJobOf(c.reads, iid, head));
   } catch (e) {
     return { mr: iid, started: false, fail: true, reason: `could not read the pipelines of !${iid} (${(e as Error).message})` };
   }
   // No plan yet, or one still running: the next poll looks again.
   if (!plan || RUNNING.has(plan.status)) return undefined;
-  let pipeline: { id?: number; web_url?: string };
+  let pipeline: StartedRun;
   try {
     pipeline = await startDefaultPipeline(c.env, c.fetch, { [REVIEW_MR_VAR]: String(iid), [REVIEW_HEAD_VAR]: head });
   } catch (e) {
     return { mr: iid, started: false, fail: true, reason: `could not start the review's pipeline for !${iid} (${(e as Error).message})` };
   }
-  const link = typeof pipeline?.web_url === "string" && /^https?:\/\//.test(pipeline.web_url) ? ` ${pipeline.web_url}` : "";
+  const link = pipeline.url ? ` ${pipeline.url}` : "";
   const body = [reviewMarker(head, "unknown"), `### terragucci review of \`${short(head)}\``, "", `A model reviews this head in pipeline${link}; this note shows its review once that pipeline ends. This note approves nothing.`, ""].join("\n");
   try {
-    await poster("gitlab", c.env, c.fetch).upsertComment(iid, REVIEW_MARK, body, { author: c.meName });
+    await (c.forge ?? poster("gitlab", c.env, c.fetch)).upsertComment(iid, REVIEW_MARK, body, { author: c.me.login });
   } catch (e) {
     return { mr: iid, started: true, fail: true, reason: `started the review's pipeline${link}, and the note failed (${(e as Error).message})` };
   }
   return { mr: iid, started: true, reason: `started the review of ${short(head)} in pipeline${link}` };
 }
 
-/** The calls a wave reads a GitLab review with: the API with the job's token, and an artifact's file. */
+/** The reads a wave reads a GitLab review with, through chant's client and reads with the job's token. */
 export interface GitLabReviewCalls {
-  get: (path: string) => Promise<any>;
+  defaultBranch: () => Promise<string>;
+  notes: (mr: number) => Promise<PullRequestNote[]>;
+  /** A job by id, or undefined when GitLab has none. */
+  job: (id: number) => Promise<RunJob | undefined>;
   /** A file from a job's artifacts, or undefined when the job kept none. */
   artifact: (job: number, path: string) => Promise<string | undefined>;
 }
 
 export function gitlabReviewCalls(env: NodeJS.ProcessEnv, doFetch: Fetch = fetch): GitLabReviewCalls {
-  const token = env.TG_TOKEN;
-  if (!env.CI_API_V4_URL || !env.CI_PROJECT_ID || !token) throw new ConfigError("the review on GitLab needs CI_API_V4_URL, CI_PROJECT_ID and TG_TOKEN in the environment");
-  const api = gitlabApi(env, token, doFetch);
+  if (!env.CI_API_V4_URL || !env.CI_PROJECT_ID || !env.TG_TOKEN) throw new ConfigError("the review on GitLab needs CI_API_V4_URL, CI_PROJECT_ID and TG_TOKEN in the environment");
+  const forge = poster("gitlab", env, doFetch);
+  const reads = jobReads("gitlab", env, doFetch);
   return {
-    get: (path) => api("GET", `/projects/${projectOf(env)}${path}`),
-    artifact: (job, path) => rawFile(env, token, doFetch, `jobs/${job}/artifacts/${path}`),
+    defaultBranch: async () => {
+      if (!forge.defaultBranch) throw new Error("chant's GitLab client reads no default branch");
+      return forge.defaultBranch();
+    },
+    notes: (mr) => reads.pullRequestNotes(mr),
+    job: (id) => reads.job(id),
+    artifact: (job, path) => artifactOf(reads, job, path),
   };
 }
 
@@ -434,28 +435,31 @@ export function gitlabReviewCalls(env: NodeJS.ProcessEnv, doFetch: Fetch = fetch
  */
 export async function gitlabReviewOf(c: GitLabReviewCalls, mr: { number: number; head: string }): Promise<PolicyReview & { job?: number; skipped: { job: number | null; why: string }[] }> {
   const skipped: { job: number | null; why: string }[] = [];
-  const project = await c.get("");
-  const defaultBranch = project?.default_branch;
+  const defaultBranch = await c.defaultBranch();
   if (typeof defaultBranch !== "string" || !BRANCH.test(defaultBranch)) throw new Error("GitLab did not say the project's default branch");
-  const notes = await c.get(`/merge_requests/${mr.number}/notes?per_page=100&sort=desc&order_by=created_at`);
-  const pointers = (Array.isArray(notes) ? notes : [])
-    .map((n: any) => parseReviewMarker(n?.body))
+  // Newest note first: chant's reads list them oldest first.
+  const notes = [...(await c.notes(mr.number))].reverse();
+  const pointers = notes
+    .map((n) => parseReviewMarker(n.body))
     .filter((m): m is NonNullable<typeof m> => m !== undefined && m.head === mr.head && m.job !== undefined);
   const seen = new Set<number>();
   for (const p of pointers) {
     const jobId = p.job!;
     if (seen.has(jobId)) continue;
     seen.add(jobId);
-    let job: any;
+    let job: RunJob | undefined;
     try {
-      job = await c.get(`/jobs/${jobId}`);
+      job = await c.job(jobId);
     } catch {
+      job = undefined;
+    }
+    if (!job) {
       skipped.push({ job: jobId, why: "GitLab has no such job in this project" });
       continue;
     }
-    if (job?.name !== REVIEW_JOB) { skipped.push({ job: jobId, why: `it is job ${String(job?.name)}, not ${REVIEW_JOB}` }); continue; }
-    if (job?.tag === true || job?.ref !== defaultBranch) { skipped.push({ job: jobId, why: `it ran on ${String(job?.ref)}, not the default branch ${defaultBranch}` }); continue; }
-    if (job?.status !== "success") { skipped.push({ job: jobId, why: `it ended ${String(job?.status)}` }); continue; }
+    if (job.name !== REVIEW_JOB) { skipped.push({ job: jobId, why: `it is job ${job.name}, not ${REVIEW_JOB}` }); continue; }
+    if (job.tag === true || job.ref !== defaultBranch) { skipped.push({ job: jobId, why: `it ran on ${String(job.ref)}, not the default branch ${defaultBranch}` }); continue; }
+    if (job.status !== "success") { skipped.push({ job: jobId, why: `it ended ${job.status}` }); continue; }
     let reviewed: any;
     try {
       reviewed = JSON.parse((await c.artifact(jobId, `${GL_REVIEW_ARTIFACT}/${REVIEWED_FILE}`)) ?? "");

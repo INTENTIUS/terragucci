@@ -50,28 +50,6 @@ export function apiBase(t: ForgeTarget): string {
   return `${t.origin}/api/v1`;
 }
 
-function headers(t: ForgeTarget): Record<string, string> {
-  const h: Record<string, string> = { "content-type": "application/json", accept: "application/json" };
-  // A public repo answers reads without a token.
-  if (!t.token) return h;
-  if (t.forge === "github") h.authorization = `Bearer ${t.token}`;
-  else if (t.forge === "gitlab") h["private-token"] = t.token;
-  else h.authorization = `token ${t.token}`;
-  return h;
-}
-
-/**
- * One API call; a status other than 2xx throws a ForgeError naming it. Only
- * the GitLab comment jobs (./comment-gitlab.ts, ./comment-apply-gitlab.ts),
- * which wait on chant's GitLab comment jobs (chant issue 4785), still call it;
- * every other read goes through chant's client and reads.
- */
-export async function call(fetch: Fetch, t: ForgeTarget, method: string, path: string, body?: unknown): Promise<unknown> {
-  const res = await fetch(`${apiBase(t)}${path}`, { method, headers: headers(t), body: body === undefined ? undefined : JSON.stringify(body) });
-  if (!res.ok) throw new ForgeError(`${method} ${path} on ${t.origin} answered ${res.status}: ${(await res.text()).slice(0, 300)}`, res.status);
-  return res.json();
-}
-
 /** The repo's default branch, as chant's forge client reads it (chant#4554). */
 export async function defaultBranch(fetch: Fetch, t: ForgeTarget): Promise<string> {
   const forge = prForgeOf(t, fetch);
