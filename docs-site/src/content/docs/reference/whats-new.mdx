@@ -10,6 +10,14 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 | Each repo | `npx @intentius/terragucci@0.4.53 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
+## In 0.4.56
+
+Under it is chant 0.124.84, pinned by the package and by each CI image.
+
+`terragucci notify relay` refuses a click when the signers file's history at the default branch doesn't verify, such as a signer added straight to main without a signed rotation, and records nothing. A repository that added a signer that way adds it again with `chant workspace signers rotate`.
+
+The release workflow's gate stops at once when the newest green commit's workflow files differ from the dispatched commit's, and the publish job retries an image upload GHCR refuses.
+
 ## In 0.4.55
 
 Under it is chant 0.124.81, pinned by the package and by each CI image.

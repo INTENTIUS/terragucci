@@ -76,7 +76,7 @@ EVIDENCE.md is updated with each release: run `just evidence` after the release'
 
 `release.workflow` gives the cut and publish jobs QEMU for the arm64 half of each image, the publish job `packages: write` the GHCR credentials the oci target reads and the `GITHUB_TOKEN` the GitHub release is made with (this run's token), and npm 11.5.1 or later.
 
-It publishes with npm trusted publishing: npm accepts the job's GitHub OIDC token (the workflow has `id-token: write`), so no npm token is stored anywhere, and the package carries a provenance statement for the run. Trusted publishing needs npm 11.5.1 or later; the workflow installs the npm pinned as `NPM_VERSION` in `workflows/shared.ts` when the Node 24 it gets bundles an older one.
+It publishes with npm trusted publishing: npm accepts the job's GitHub OIDC token (the workflow has `id-token: write`), so no npm token is stored anywhere, and the package carries a provenance statement for the run. Trusted publishing needs npm 11.5.1 or later; chant's release workflow installs a newer npm when the Node 24 it gets bundles an older one.
 
 The trusted publisher is configured once, on npmjs.com, in the settings of `@intentius/terragucci` under Trusted Publisher, GitHub Actions:
 
