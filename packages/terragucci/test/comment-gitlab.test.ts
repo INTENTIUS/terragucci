@@ -2,9 +2,15 @@
 // reply marker that keeps a note from being answered twice, the merge request
 // pipeline a plan starts, and the apply job an apply retries.
 import { describe, expect, it } from "vitest";
-import { DEVELOPER, noteMarker, pollGitLabComments } from "../src/comment-gitlab";
+import { memoryNoteLog } from "@intentius/chant/ci-note-commands";
+import { noteMarker, pollGitLabComments } from "../src/comment-gitlab";
 import { planJobMarker, planNoteBody, planStatus } from "../src/plan-note-gitlab";
 import type { Fetch } from "../src/forge";
+
+/** GitLab's Developer access level, as GET /members/all answers it. */
+const DEVELOPER = 30;
+/** The users GET /users?username= finds. */
+const USERS: Record<string, number> = { dev: 11, reader: 12, stranger: 13, mallory: 55 };
 
 const layers = [["network"], ["envs/dev/app", "envs/prod/app"]];
 const API = "http://gitlab/api/v4";
@@ -43,6 +49,10 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     const q = new URL(url).searchParams;
     let m: RegExpExecArray | null;
     if (path === "/user") return ok({ id: BOT, username: "terragucci-bot" });
+    if (path.startsWith("/users?")) {
+      const name = q.get("username") ?? "";
+      return ok(USERS[name] !== undefined ? [{ id: USERS[name], username: name }] : []);
+    }
     if (path.startsWith("/projects/7/merge_requests?")) return ok(w.mrs);
     if ((m = /^\/projects\/7\/jobs\/(\d+)\/artifacts\/(.+)$/.exec(path))) {
       const file = w.artifacts?.[Number(m[1])]?.[m[2]];
@@ -55,7 +65,6 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
       return ok(n ?? {});
     }
     if ((m = /^\/projects\/7\/statuses\/([0-9a-f]{40})$/.exec(path)) && method === "POST") return ok({ id: 1, name: body.name, status: body.state }, 201);
-    if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/pipelines$/.exec(path)) && method === "GET") return ok(w.mrPipelines?.[Number(m[1])] ?? []);
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/notes/.exec(path))) {
       const iid = Number(m[1]);
       if (method === "POST") {
@@ -71,9 +80,11 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     }
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/pipelines$/.exec(path)) && method === "POST") return ok({ id: 77, web_url: `http://gitlab/acme/infra/-/pipelines/77` }, 201);
     if (path.startsWith("/projects/7/pipelines?")) {
-      const all = w.pipelines ?? [];
-      const sha = q.get("sha");
-      return ok(sha ? all.filter((p) => p.sha === sha) : all);
+      // A merge request's pipelines run on its refs/merge-requests/<iid>/head.
+      const mrs = Object.entries(w.mrPipelines ?? {}).flatMap(([iid, ps]) => ps.map((p) => ({ ref: `refs/merge-requests/${iid}/head`, source: "merge_request_event", ...p })));
+      const all = [...(w.pipelines ?? []), ...mrs].sort((a, b) => b.id - a.id);
+      const [sha, ref, source] = [q.get("sha"), q.get("ref"), q.get("source")];
+      return ok(all.filter((p) => (!sha || p.sha === sha) && (!ref || p.ref === ref) && (!source || p.source === source)));
     }
     if ((m = /^\/projects\/7\/pipelines\/(\d+)\/jobs/.exec(path))) return ok(w.jobs?.[Number(m[1])] ?? []);
     if ((m = /^\/projects\/7\/repository\/commits\/([0-9a-f]+)\/statuses/.exec(path))) return ok(w.statuses?.[m[1]] ?? []);
@@ -91,7 +102,7 @@ const mergedMr = (iid = 4, extra: Record<string, unknown> = {}) => ({ iid, state
 const members = { [dev.id]: DEVELOPER, [reporter.id]: 20 };
 const poll = (w: World) => {
   const api = gitlab(w);
-  return { api, run: () => pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW }) };
+  return { api, run: () => pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog() }) };
 };
 const posts = (calls: Call[], what: RegExp) => calls.filter((c) => c.method === "POST" && what.test(c.path));
 const replies = (calls: Call[]) => posts(calls, /\/notes$/).map((c) => c.body.body as string);
@@ -128,7 +139,7 @@ describe("pollGitLabComments: plan", () => {
     const { api, run } = poll({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci plan", reporter), note(102, "/terragucci plan", stranger)] }, members });
     const r = await run();
     expect(r.outcomes.map((o) => [o.ran, o.replied])).toEqual([[false, false], [false, false]]);
-    expect(r.outcomes[0].reason).toMatch(/reader is below Developer/);
+    expect(r.outcomes[0].reason).toMatch(/reader is reporter on the project, below developer/);
     expect(r.outcomes[1].reason).toMatch(/stranger is not a member/);
     expect(posts(api.calls, /./)).toEqual([]);
   });
@@ -188,7 +199,7 @@ describe("pollGitLabComments: plan", () => {
 });
 
 describe("pollGitLabComments: apply", () => {
-  const pipelines = [{ id: 40, sha: MERGE, ref: "main", source: "push" }];
+  const pipelines = [{ id: 40, sha: MERGE, ref: "main", source: "push" }, { id: 39, sha: MERGE, ref: "refs/merge-requests/4/head", source: "merge_request_event" }];
   const jobs = (w1: string, w2: string) => ({ 40: [{ id: 401, name: "apply-wave-1", status: w1 }, { id: 402, name: "apply-wave-2", status: w2 }, { id: 400, name: "check", status: "success" }] });
 
   it("retries the first apply job of the merge commit's pipeline that did not succeed", async () => {
@@ -196,7 +207,7 @@ describe("pollGitLabComments: apply", () => {
     const r = await run();
     expect(r.outcomes[0]).toMatchObject({ ran: true, replied: true });
     expect(posts(api.calls, /\/retry$/).map((c) => c.path)).toEqual(["/projects/7/jobs/402/retry"]);
-    expect(api.calls.some((c) => c.path.includes(`pipelines?sha=${MERGE}&ref=main&source=push`))).toBe(true);
+    expect(api.calls.some((c) => c.path.includes(`pipelines?sha=${MERGE}&source=push`))).toBe(true);
     expect(replies(api.calls)[0]).toMatch(/retried apply-wave-2 of !4's merge commit aaaaaaaa \(http:\/\/gitlab\/acme\/infra\/-\/jobs\/9402\) for dev; its gate decides again/);
   });
 
@@ -225,7 +236,7 @@ describe("pollGitLabComments: apply", () => {
   it("refuses a merge commit a later apply superseded, naming that run", async () => {
     const { api, run } = poll({
       mrs: [mergedMr()], notes: { 4: [note(201, "/terragucci apply")] }, members,
-      pipelines: [{ id: 41, sha: LATER, ref: "main" }, ...pipelines], jobs: jobs("success", "failed"),
+      pipelines: [{ id: 41, sha: LATER, ref: "main", source: "push" }, ...pipelines], jobs: jobs("success", "failed"),
       statuses: { [LATER]: [{ name: "terragucci/apply", status: "success", target_url: "http://gitlab/acme/infra/-/pipelines/41" }] },
     });
     await run();
@@ -235,9 +246,9 @@ describe("pollGitLabComments: apply", () => {
 
   it("says so when every wave applied, a wave is still running, or no pipeline ran at the merge commit", async () => {
     for (const [w, want] of [
-      [{ pipelines, jobs: jobs("success", "success") }, /every wave of !4's merge commit aaaaaaaa already applied/],
+      [{ pipelines, jobs: jobs("success", "success") }, /every apply job of !4's merge commit aaaaaaaa already succeeded/],
       [{ pipelines, jobs: jobs("success", "running") }, /apply-wave-2 at aaaaaaaa is running already/],
-      [{ pipelines: [] }, /no pipeline ran on main at the merge commit aaaaaaaa of !4/],
+      [{ pipelines: [] }, /no pipeline at the merge commit aaaaaaaa of !4 has an apply job, so there is nothing to retry/],
     ] as const) {
       const { api, run } = poll({ mrs: [mergedMr()], notes: { 4: [note(201, "/terragucci apply")] }, members, ...w });
       await run();
@@ -257,7 +268,7 @@ describe("pollGitLabComments: the plan note (gitlab.token: protected)", () => {
   const HEAD = "c".repeat(40);
   const poll = (w: World, planNotes = true) => {
     const api = gitlab(w);
-    return { api, run: () => pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, planNotes }) };
+    return { api, run: () => pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog(), planNotes }) };
   };
 
   it("posts no plan note without --plan-notes: by default the plan job posts its own", async () => {

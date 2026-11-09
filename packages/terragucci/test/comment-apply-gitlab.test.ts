@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { appliedMarker, decideGitLabApply, mergeGitLabMR } from "../src/comment-apply-gitlab";
 import type { Git } from "../src/comment-apply";
-import { DEVELOPER, pollGitLabComments } from "../src/comment-gitlab";
+import { memoryNoteLog } from "@intentius/chant/ci-note-commands";
+import { pollGitLabComments } from "../src/comment-gitlab";
 import type { Fetch } from "../src/forge";
 import { readTargetLocks } from "@intentius/chant/lifecycle/target-lock";
 import { LOCK_GATE, takeRootLocks } from "../src/root-locks";
@@ -19,6 +20,10 @@ const layers = [["network"], ["app"]];
 const API = "http://gitlab/api/v4";
 const NOW = new Date("2026-10-07T12:00:00Z");
 const BOT = 900;
+/** GitLab's Developer access level, as GET /members/all answers it. */
+const DEVELOPER = 30;
+/** The users GET /users?username= finds. */
+const USERS: Record<string, number> = { dev: 11, reader: 12, rev: 14, author: 15 };
 
 interface Call { method: string; path: string; body?: any; token?: string }
 
@@ -29,6 +34,8 @@ interface World {
   versions?: Record<number, any[]>;
   statuses?: Record<string, any[]>;
   diffs?: any[];
+  /** GitLab's compare timed out, so its diffs may leave files out. */
+  compareTimeout?: boolean;
   /** GitLab's reads of a merge request after the first, by iid: fields that change. */
   later?: Record<number, Record<string, unknown>>;
 }
@@ -61,6 +68,10 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/merge$/.exec(path)) && method === "PUT") return ok({ state: "merged" });
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)\/commits/.exec(path))) return ok([]);
     if (path.startsWith("/users?search=")) return ok([]);
+    if (path.startsWith("/users?username=")) {
+      const name = new URL(url).searchParams.get("username") ?? "";
+      return ok(USERS[name] !== undefined ? [{ id: USERS[name], username: name }] : []);
+    }
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)(\?.*)?$/.exec(path))) {
       const iid = Number(m[1]);
       const mr = w.mrs.find((x) => x.iid === iid);
@@ -73,7 +84,7 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
       return level === undefined ? ok({ message: "404 Not found" }, 404) : ok({ access_level: level });
     }
     if ((m = /^\/projects\/7\/repository\/commits\/([0-9a-f]+)\/statuses/.exec(path))) return ok(w.statuses?.[m[1]] ?? []);
-    if (path.startsWith("/projects/7/repository/compare?")) return ok({ diffs: w.diffs ?? [] });
+    if (path.startsWith("/projects/7/repository/compare?")) return ok({ diffs: w.diffs ?? [], ...(w.compareTimeout ? { compare_timeout: true } : {}) });
     if (path === "/projects/7/pipeline" && method === "POST") return ok({ id: 88, web_url: "http://gitlab/acme/infra/-/pipelines/88" }, 201);
     return ok({ message: `no route for ${method} ${path}` }, 404);
   };
@@ -111,7 +122,7 @@ const env = { CI_API_V4_URL: API, CI_PROJECT_ID: "7", CI_DEFAULT_BRANCH: "main",
 describe("the comments job, with apply.when: pull-request", () => {
   const poll = (w: World, e: NodeJS.ProcessEnv = env) => {
     const api = gitlab(w);
-    return { api, run: () => pollGitLabComments({ layers, env: e, fetch: api.fetch, now: NOW, when: "pull-request", wait: async () => {} }) };
+    return { api, run: () => pollGitLabComments({ layers, env: e, fetch: api.fetch, now: NOW, when: "pull-request", wait: async () => {}, log: memoryNoteLog() }) };
   };
 
   it("starts a pipeline on the default branch for an approved, green, up-to-date merge request, with the merge token and the variables naming it", async () => {
@@ -129,7 +140,7 @@ describe("the comments job, with apply.when: pull-request", () => {
         { key: "TERRAGUCCI_HEAD", value: HEAD, variable_type: "env_var" },
       ],
     });
-    expect(replies(api.calls)[0]).toMatch(/^terragucci: started pipeline http:\/\/gitlab\/acme\/infra\/-\/pipelines\/88 on main to apply !3's head cccccccc for dev/);
+    expect(replies(api.calls)[0]).toMatch(/^terragucci: started pipeline http:\/\/gitlab\/acme\/infra\/-\/pipelines\/88 on main to apply !3's head cccccccc \(its job reads !3 again before it applies\) for dev/);
   });
 
   it.each([
@@ -148,11 +159,19 @@ describe("the comments job, with apply.when: pull-request", () => {
     expect(replies(api.calls)[0]).toMatch(says);
   });
 
+  it("a comparison GitLab cut short fails the note, and starts nothing", async () => {
+    const { api, run } = poll({ ...ready(HEAD, [note(101, "/terragucci apply")]), compareTimeout: true });
+    const r = await run();
+    expect(r.outcomes[0]).toMatchObject({ fail: true, ran: false, replied: false });
+    expect(r.outcomes[0].reason).toMatch(/timed out and may leave files out/);
+    expect(posts(api.calls, /^\/projects\/7\/pipeline$/)).toEqual([]);
+  });
+
   it("lock and unlock on an open merge request start the same pipeline, with no requirement checked", async () => {
     const { api, run } = poll({ mrs: [openMr(3, HEAD)], notes: { 3: [note(101, "/terragucci lock")] }, members });
     await run();
     expect(posts(api.calls, /^\/projects\/7\/pipeline$/)).toHaveLength(1);
-    expect(replies(api.calls)[0]).toContain("to lock the roots of !3 for dev");
+    expect(replies(api.calls)[0]).toContain("to lock the roots of !3 (its job reads !3 again before it locks) for dev");
   });
 
   it("a merged merge request has nothing left to apply, and with no merge token nothing starts", async () => {
@@ -168,7 +187,7 @@ describe("the comments job, with apply.when: pull-request", () => {
 
   it("with apply.when merge, lock stays unsupported and an open merge request is not applied", async () => {
     const api = gitlab({ mrs: [openMr(3, HEAD)], notes: { 3: [note(101, "/terragucci lock"), note(102, "/terragucci apply")] }, members });
-    await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW });
+    await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog() });
     expect(posts(api.calls, /^\/projects\/7\/pipeline$/)).toEqual([]);
     const said = replies(api.calls).join("\n");
     expect(said).toContain("this project applies after merge, so merge requests take no locks");
@@ -234,7 +253,7 @@ describe("the mr-apply job's decision", () => {
     for (const [notes, id, says] of [
       [[note(101, "/terragucci apply")], 999, /note 999 is not a note on !3/],
       [[note(101, "/terragucci plan")], 101, /asks for no apply, lock or unlock/],
-      [[note(101, "/terragucci apply", reporter)], 101, /reader is below Developer/],
+      [[note(101, "/terragucci apply", reporter)], 101, /reader is reporter on the project, below Developer, so nothing runs/],
     ] as [any[], number, RegExp][]) {
       const { api, run } = decide(r, ready(r.head, notes), job(r.head, id));
       const d = await run();

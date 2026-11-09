@@ -23,6 +23,13 @@ A control repo keeps its projects and defaults only as chant's entries on its `c
 - A plan that reads the control repo through `TERRAGUCCI_CONTROL_READ_TOKEN` now finds its estate owners. The clone it read was removed before the read finished, so it found none.
 - The review agent reads the pull request, the pipeline's runs and jobs, and the review artifacts through chant's forge reads. A review artifact whose run the forge no longer lists is passed over, and the log says so.
 
+On GitLab, the comments schedule answers merge request notes through chant's note commands:
+
+- Who may ask is read as a role. A note from below Developer is ignored, and the job's log names that role.
+- A reply ends with the user it ran for. What terragucci adds, such as that the job reads the merge request again, comes before that, in parentheses.
+- `/terragucci apply` on a merged merge request retries in the newest push pipeline at its merge commit that has an apply job, in chant's words. A later commit with the apply status still refuses it.
+- A note whose change cannot be compared in full gets no reply, and the next poll reads it again.
+
 Every wave now plans and applies on chant's step, and terragucci's own wave plan and apply are gone:
 
 - A wave whose roots pin their own releases. chant runs the release each root pins once terragucci has installed it and checked its version. The binary in `chant.config.ts` no longer matters, and a repo with no `chant.config.ts` plans each root by its directory.

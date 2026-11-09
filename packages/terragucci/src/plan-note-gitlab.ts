@@ -32,7 +32,7 @@
  */
 import { terragucciStatus } from "./ci-words";
 import type { PrForge } from "@intentius/chant/pr-forge";
-import type { Fetch } from "./forge";
+import type { ForgeReads, ForgeUser, PullRequestDetail, PullRequestNote, RunJob, WorkflowRun } from "@intentius/chant/pr-forge-reads";
 
 /** The note body the plan job writes into its report directory, first line included. */
 export const PLAN_NOTE_FILE = "plan-note.md";
@@ -69,30 +69,35 @@ export interface PlanNoteOutcome {
 }
 
 export interface PlanNoteContext {
-  api: (method: string, path: string, body?: unknown) => Promise<any>;
-  /** The project id, encoded for a path. */
-  id: string;
-  /** The comments job's own user id: only its notes are plan notes. */
-  me: number;
-  /** The same user's username, by which chant's client tells its notes apart. */
-  meName: string;
+  /** chant's reads, with the comments job's token. */
+  reads: ForgeReads;
+  /** The comments job's own user: only its notes are plan notes. */
+  me: ForgeUser;
   /** chant's client, holding the comments job's token: it posts the status and the note. */
   forge: PrForge;
-  /** The base URL of GitLab's API, for the artifact files, which are not JSON. */
-  apiUrl: string;
-  token: string;
-  fetch: Fetch;
   /** The artifact directory the plan job keeps. */
   reportDir: string;
 }
 
+/** True for a note the user `me` wrote. */
+export const byUser = (n: PullRequestNote, me: ForgeUser): boolean => (me.id !== undefined && n.authorId === me.id) || (me.id === undefined && n.author === me.login);
+
+/**
+ * The newest pipeline of merge request `iid` at `head` (GitLab's merge
+ * request pipelines run on `refs/merge-requests/<iid>/head`) and its newest
+ * `plan` job, read through chant's reads.
+ */
+export async function planJobOf(reads: ForgeReads, iid: number, head: string): Promise<{ pipeline?: WorkflowRun; plan?: RunJob }> {
+  const pipeline = (await reads.headRuns(head)).filter((p) => p.pullRequests.some((pr) => pr.number === iid)).sort((a, b) => b.id - a.id)[0];
+  if (!pipeline) return {};
+  const plan = (await reads.runJobs(pipeline.id)).filter((j) => j.name === "plan").sort((a, b) => b.id - a.id)[0];
+  return { pipeline, ...(plan ? { plan } : {}) };
+}
+
 /** One file of a job's artifact, or undefined when the job kept none of that name. */
 async function artifactFile(c: PlanNoteContext, job: number, path: string): Promise<string | undefined> {
-  const url = `${c.apiUrl.replace(/\/+$/, "")}/projects/${c.id}/jobs/${job}/artifacts/${path}`;
-  const res = await c.fetch(url, { method: "GET", headers: { "private-token": c.token } });
-  if (res.status === 404) return undefined;
-  if (!res.ok) throw new Error(`GET ${path} of job ${job} answered ${res.status}`);
-  return res.text();
+  if (!c.reads.artifactFile) throw new Error("chant's reads read no artifact file on this forge");
+  return c.reads.artifactFile(job, path);
 }
 
 /** The note as the comments job posts it: its own first and last lines, the plan job's body between them with no marker but the waves'. */
@@ -123,28 +128,24 @@ export function planStatus(file: string | undefined, jobStatus: string): { state
  * finished plan job, when the note does not name that job yet. `notes` are
  * the merge request's notes, as the poll read them.
  */
-export async function postPlanNote(c: PlanNoteContext, mr: any, notes: any[]): Promise<PlanNoteOutcome | undefined> {
-  const iid: number = mr.iid;
-  if (mr.state !== "opened") return undefined;
+export async function postPlanNote(c: PlanNoteContext, mr: PullRequestDetail, notes: PullRequestNote[]): Promise<PlanNoteOutcome | undefined> {
+  const iid = mr.number;
+  if (mr.state !== "open") return undefined;
   // A fork's merge request gets no plan job.
-  if (mr.source_project_id !== undefined && mr.target_project_id !== undefined && mr.source_project_id !== mr.target_project_id) return undefined;
-  const head = mr.sha;
+  if (!mr.sameRepo) return undefined;
+  const head = mr.headSha;
   if (typeof head !== "string" || !SHA.test(head)) return undefined;
   const at = { mr: iid };
-  let pipeline: any;
-  let job: any;
+  let pipeline: WorkflowRun | undefined;
+  let job: RunJob | undefined;
   try {
-    const pipelines = (await c.api("GET", `/projects/${c.id}/merge_requests/${iid}/pipelines`)) as any[];
-    pipeline = (Array.isArray(pipelines) ? pipelines : []).filter((p) => p?.sha === head && Number.isInteger(p?.id)).sort((a, b) => b.id - a.id)[0];
-    if (!pipeline) return undefined;
-    const jobs = (await c.api("GET", `/projects/${c.id}/pipelines/${pipeline.id}/jobs?per_page=100`)) as any[];
-    job = (Array.isArray(jobs) ? jobs : []).filter((j) => j?.name === "plan" && Number.isInteger(j?.id)).sort((a, b) => b.id - a.id)[0];
+    ({ pipeline, plan: job } = await planJobOf(c.reads, iid, head));
   } catch (e) {
     return { ...at, posted: false, fail: true, reason: `could not read the pipelines of !${iid} (${(e as Error).message})` };
   }
   // Still running, or never ran: the next poll looks again.
-  if (!job || (job.status !== "success" && job.status !== "failed")) return undefined;
-  const old = notes.find((n) => n?.author?.id === c.me && typeof n?.body === "string" && n.body.startsWith(PLAN_MARK));
+  if (!pipeline || !job || (job.status !== "success" && job.status !== "failed")) return undefined;
+  const old = notes.find((n) => byUser(n, c.me) && n.body.startsWith(PLAN_MARK));
   if (old && old.body.includes(planJobMarker(job.id))) return undefined;
 
   let noteFile: string | undefined;
@@ -165,7 +166,7 @@ export async function postPlanNote(c: PlanNoteContext, mr: any, notes: any[]): P
         state: status.state === "success" ? "success" : "failure",
         description: status.description,
         pipelineId: pipeline.id,
-        ...(typeof job.web_url === "string" && /^https?:\/\//.test(job.web_url) ? { url: job.web_url } : {}),
+        ...(typeof job.url === "string" && /^https?:\/\//.test(job.url) ? { url: job.url } : {}),
       });
     } catch (e) {
       return { ...at, posted: false, fail: true, reason: `could not post ${PLAN_CONTEXT()} on ${head.slice(0, 8)} (${(e as Error).message})` };
@@ -174,7 +175,7 @@ export async function postPlanNote(c: PlanNoteContext, mr: any, notes: any[]): P
   if (noteFile === undefined) return { ...at, posted: Boolean(status), reason: `plan job ${job.id} wrote no note${status ? `; ${PLAN_CONTEXT()} is ${status.state}` : ""}` };
   const body = planNoteBody(noteFile, job.id);
   try {
-    await c.forge.upsertComment(iid, PLAN_MARK, body, { author: c.meName });
+    await c.forge.upsertComment(iid, PLAN_MARK, body, { author: c.me.login });
   } catch (e) {
     return { ...at, posted: Boolean(status), fail: true, reason: `could not post the plan note of plan job ${job.id} (${(e as Error).message})` };
   }

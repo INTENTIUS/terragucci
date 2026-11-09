@@ -7,8 +7,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { pollGitLabComments, noteMarker } from "../src/comment-gitlab";
 import { validateConfig } from "../src/config";
-import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, gitlabReviewOf, postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, REVIEW_HEAD_VAR, REVIEW_MR_VAR, type GitLabReviewCalls } from "../src/gitlab-agent";
-import { gitlabApi } from "../src/comment-apply-gitlab";
+import { memoryNoteLog } from "@intentius/chant/ci-note-commands";
+import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, gitlabReviewCalls, gitlabReviewOf, postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, REVIEW_HEAD_VAR, REVIEW_MR_VAR, type GitLabReviewCalls } from "../src/gitlab-agent";
+import { jobReads } from "../src/forge";
 import { gitlabCleanEnv } from "../src/render-agent";
 import { reviewMarker } from "../src/review-agent";
 import type { Fetch } from "../src/forge";
@@ -21,7 +22,9 @@ const BOT = 900;
 const HEAD = "c".repeat(40);
 const env = { CI_API_V4_URL: API, CI_PROJECT_ID: "7", CI_DEFAULT_BRANCH: "main", TG_TOKEN: "t", CI_JOB_TOKEN: "job-token", CI_SERVER_URL: "http://gitlab", CI_PIPELINE_ID: "300" };
 
-interface Call { method: string; path: string; body?: any }
+interface Call { method: string; path: string; body?: any; jobToken?: string }
+/** The users GET /users?username= finds. */
+const USERS: Record<string, number> = { dev: 11, reader: 12 };
 interface World {
   mrs: any[];
   notes: Record<number, any[]>;
@@ -39,12 +42,22 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
     const method = init?.method ?? "GET";
     const path = url.slice(API.length);
     const body = init?.body ? JSON.parse(init.body) : undefined;
-    calls.push({ method, path, body });
+    calls.push({ method, path, body, ...(init?.headers?.["JOB-TOKEN"] ? { jobToken: init.headers["JOB-TOKEN"] } : {}) });
     const ok = (b: unknown, status = 200) => ({ ok: status < 300, status, json: async () => b, text: async () => (typeof b === "string" ? b : JSON.stringify(b)) });
     let m: RegExpExecArray | null;
     if (path === "/user") return ok({ id: BOT, username: "terragucci-bot" });
     if (path === "/projects/7") return ok(w.project ?? { id: 7, default_branch: "main" });
     if (path === "/projects/7/trigger/pipeline" && method === "POST") return ok({ id: 88, web_url: "http://gitlab/acme/infra/-/pipelines/88" }, 201);
+    if (path.startsWith("/users?")) {
+      const name = new URL(url).searchParams.get("username") ?? "";
+      return ok(USERS[name] !== undefined ? [{ id: USERS[name], username: name }] : []);
+    }
+    if (path.startsWith("/projects/7/pipelines?")) {
+      // A merge request's pipelines run on its refs/merge-requests/<iid>/head.
+      const sha = new URL(url).searchParams.get("sha");
+      const all = Object.entries(w.mrPipelines ?? {}).flatMap(([iid, ps]) => ps.map((p) => ({ ref: `refs/merge-requests/${iid}/head`, source: "merge_request_event", ...p })));
+      return ok(all.filter((p) => !sha || p.sha === sha));
+    }
     if (path.startsWith("/projects/7/merge_requests?")) return ok(w.mrs);
     if ((m = /^\/projects\/7\/merge_requests\/(\d+)$/.exec(path))) return ok(w.mrs.find((x) => x.iid === Number(m![1])) ?? { message: "404" }, w.mrs.some((x) => x.iid === Number(m![1])) ? 200 : 404);
     if ((m = /^\/projects\/7\/jobs\/(\d+)\/artifacts\/(.+)$/.exec(path))) {
@@ -65,7 +78,10 @@ function gitlab(w: World): { fetch: Fetch; calls: Call[] } {
         (w.notes[iid] ??= []).unshift(note);
         return ok(note, 201);
       }
-      return ok(w.notes[iid] ?? []);
+      // GitLab lists the notes in the order asked for (chant's reads ask oldest first).
+      const sort = new URL(url).searchParams.get("sort");
+      const listed = [...(w.notes[iid] ?? [])];
+      return ok(sort === "asc" ? listed.sort((a, b) => a.id - b.id) : sort === "desc" ? listed.sort((a, b) => b.id - a.id) : listed);
     }
     if ((m = /^\/projects\/7\/members\/all\/(\d+)$/.exec(path))) {
       const level = w.members?.[Number(m[1])];
@@ -87,19 +103,19 @@ const posts = (calls: Call[], what: RegExp) => calls.filter((c) => (c.method ===
 describe("the comments poll starts the agent", () => {
   it("off: a /terragucci agent note is answered that agent.comment is off, and nothing starts", async () => {
     const api = gitlab({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci agent rename it")] }, members });
-    const r = await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW });
+    const r = await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog() });
     expect(r.outcomes[0].reason).toMatch(/the agent command is off in this project/);
     expect(posts(api.calls, /trigger/)).toEqual([]);
   });
 
   it("on: a Developer's ask starts a default-branch pipeline with the job token and the merge request, note and head, and the reply carries the marker", async () => {
     const api = gitlab({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci agent rename it")] }, members });
-    const r = await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, agent: true });
+    const r = await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog(), agent: true });
     expect(r.outcomes).toEqual([expect.objectContaining({ mr: 3, note: 101, ran: true, replied: true })]);
     const [start] = posts(api.calls, /\/trigger\/pipeline$/);
     expect(start.body).toEqual({ token: "job-token", ref: "main", variables: { [AGENT_MR_VAR]: "3", [AGENT_NOTE_VAR]: "101", [AGENT_HEAD_VAR]: HEAD } });
     const reply = posts(api.calls, /\/notes$/)[0].body.body as string;
-    expect(reply).toMatch(/^terragucci: started pipeline http:\/\/gitlab\/acme\/infra\/-\/pipelines\/88 on main to run the agent on !3's head cccccccc for dev/);
+    expect(reply).toMatch(/^terragucci: started pipeline http:\/\/gitlab\/acme\/infra\/-\/pipelines\/88 on main to run the agent on !3's head cccccccc \(it reads !3 and this note again before the agent runs, and pushes what the agent changes to `change`\) for dev/);
     expect(reply).toContain("pushes what the agent changes to `change`");
     expect(reply).toContain(noteMarker(101));
   });
@@ -110,9 +126,9 @@ describe("the comments poll starts the agent", () => {
       notes: { 3: [note(101, "/terragucci agent rename it", reporter)], 4: [note(102, "/terragucci agent rename it")], 5: [note(103, "/terragucci agent rename it")] },
       members,
     });
-    const r = await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, agent: true });
+    const r = await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog(), agent: true });
     expect(r.outcomes.map((o) => o.reason)).toEqual([
-      expect.stringMatching(/reader is below Developer/),
+      expect.stringMatching(/reader is reporter on the project, below developer/),
       expect.stringMatching(/from a fork gets no agent/),
       expect.stringMatching(/!5 is not open/),
     ]);
@@ -122,7 +138,7 @@ describe("the comments poll starts the agent", () => {
 
 describe("readGitLabAgentAsk: the agent's pipeline reads the ask again", () => {
   const vars = { ...env, [AGENT_MR_VAR]: "3", [AGENT_NOTE_VAR]: "101", [AGENT_HEAD_VAR]: HEAD };
-  const ask = (w: World, e: NodeJS.ProcessEnv = vars) => readGitLabAgentAsk(gitlabApi(e, "t", gitlab(w).fetch), e);
+  const ask = (w: World, e: NodeJS.ProcessEnv = vars) => readGitLabAgentAsk(jobReads("gitlab", e, gitlab(w).fetch), e);
 
   it("goes for a Developer's ask on the head the note was answered on", async () => {
     const d = await ask({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci agent rename it")] }, members });
@@ -132,7 +148,7 @@ describe("readGitLabAgentAsk: the agent's pipeline reads the ask again", () => {
   it("stops when the merge request moved, the note is not an ask, or its author is below Developer", async () => {
     expect((await ask({ mrs: [openMr(3, { sha: "d".repeat(40) })], notes: { 3: [note(101, "/terragucci agent rename it")] }, members })).reason).toMatch(/!3 moved from cccccccc to dddddddd/);
     expect((await ask({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci plan")] }, members })).reason).toMatch(/is not a `\/terragucci agent <ask>`/);
-    expect((await ask({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci agent rename it", reporter)] }, members })).reason).toMatch(/reader is below Developer/);
+    expect((await ask({ mrs: [openMr()], notes: { 3: [note(101, "/terragucci agent rename it", reporter)] }, members })).reason).toMatch(/reader is reporter on the project, below Developer, so the agent does not run/);
     expect((await ask({ mrs: [openMr(3, { source_branch: "main" })], notes: { 3: [note(101, "/terragucci agent rename it")] }, members })).reason).toMatch(/source branch is the default branch/);
   });
 
@@ -226,7 +242,7 @@ describe("pushGitLabAgentChange: the agent-push job", () => {
     const e = { ...env, [AGENT_MR_VAR]: "3", [AGENT_NOTE_VAR]: "101", [AGENT_HEAD_VAR]: o.head, CI_SERVER_URL: o.server, CI_PROJECT_PATH: "acme/infra", GIT_CONFIG_GLOBAL: "/dev/null" };
     const r = await pushGitLabAgentChange({ change: patch, cwd: o.work, env: e, fetch: api.fetch });
     expect(r.pushed).toBe(false);
-    expect(posts(api.calls, /\/notes$/)[0].body.body).toMatch(/reader is below Developer on the project, so the agent does not run; nothing was pushed\./);
+    expect(posts(api.calls, /\/notes$/)[0].body.body).toMatch(/reader is reporter on the project, below Developer, so the agent does not run; nothing was pushed\./);
     expect(git(o.bare, "rev-parse", "refs/heads/change").trim()).toBe(o.head);
   });
 });
@@ -250,21 +266,21 @@ describe("the comments poll starts the review", () => {
   it("once the head's plan ended: starts the review's pipeline and says so in the review note; the next poll starts nothing", async () => {
     const w: World = { mrs: [openMr()], notes: { 3: [] }, mrPipelines: ended, jobs: planJobs("success") };
     const first = gitlab(w);
-    const r = await pollGitLabComments({ layers, env, fetch: first.fetch, now: NOW, review: true });
+    const r = await pollGitLabComments({ layers, env, fetch: first.fetch, now: NOW, review: true, log: memoryNoteLog() });
     expect(r.reviews).toEqual([expect.objectContaining({ mr: 3, started: true })]);
     expect(posts(first.calls, /\/trigger\/pipeline$/)[0].body.variables).toEqual({ [REVIEW_MR_VAR]: "3", [REVIEW_HEAD_VAR]: HEAD });
     expect(w.notes[3][0].body.split("\n")[0]).toBe(reviewMarker(HEAD, "unknown"));
     const second = gitlab(w);
-    const again = await pollGitLabComments({ layers, env, fetch: second.fetch, now: NOW, review: true });
+    const again = await pollGitLabComments({ layers, env, fetch: second.fetch, now: NOW, review: true, log: memoryNoteLog() });
     expect(again.reviews).toEqual([]);
     expect(posts(second.calls, /./)).toEqual([]);
   });
 
   it("waits while the plan runs, and leaves a fork's merge request alone", async () => {
     const running = gitlab({ mrs: [openMr()], notes: { 3: [] }, mrPipelines: ended, jobs: planJobs("running") });
-    expect((await pollGitLabComments({ layers, env, fetch: running.fetch, now: NOW, review: true })).reviews).toEqual([]);
+    expect((await pollGitLabComments({ layers, env, fetch: running.fetch, now: NOW, review: true, log: memoryNoteLog() })).reviews).toEqual([]);
     const fork = gitlab({ mrs: [openMr(3, { source_project_id: 8 })], notes: { 3: [] }, mrPipelines: ended, jobs: planJobs("success") });
-    await pollGitLabComments({ layers, env, fetch: fork.fetch, now: NOW, review: true });
+    await pollGitLabComments({ layers, env, fetch: fork.fetch, now: NOW, review: true, log: memoryNoteLog() });
     expect(posts(fork.calls, /trigger/)).toEqual([]);
   });
 
@@ -272,7 +288,7 @@ describe("the comments poll starts the review", () => {
     const old = { id: 600, body: `${reviewMarker("e".repeat(40), "low", 9)}\nold review`, author: { id: BOT, username: "terragucci-bot" }, created_at: "2026-10-07T11:00:00Z" };
     const w: World = { mrs: [openMr()], notes: { 3: [old] }, mrPipelines: ended, jobs: planJobs("failed") };
     const api = gitlab(w);
-    await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, review: true });
+    await pollGitLabComments({ layers, env, fetch: api.fetch, now: NOW, log: memoryNoteLog(), review: true });
     expect(posts(api.calls, /\/notes\/600$/)).toHaveLength(1);
     expect(w.notes[3]).toHaveLength(1);
   });
@@ -294,23 +310,14 @@ describe("postGitLabReview: the review-note job", () => {
 
 describe("gitlabReviewOf: the review a wave reads", () => {
   const reviewed = (o: { pr?: number; head?: string; base?: string } = {}) => JSON.stringify({ pr: o.pr ?? 3, head: o.head ?? HEAD, base: o.base ?? "main" });
-  const calls = (w: World): GitLabReviewCalls => {
-    const f = gitlab(w).fetch;
-    const api = gitlabApi(env, "t", f);
-    return {
-      get: (p) => api("GET", `/projects/7${p}`),
-      artifact: async (job, path) => {
-        const r = await f(`${API}/projects/7/jobs/${job}/artifacts/${path}`);
-        return r.status === 404 ? undefined : r.text();
-      },
-    };
-  };
+  const calls = (w: World): GitLabReviewCalls => gitlabReviewCalls(env, gitlab(w).fetch);
   const files = (risk: string, r = reviewed()) => ({ "terragucci-review/reviewed.json": r, "terragucci-review/review.md": `risk: ${risk}\n`, "terragucci-review/rc": "0\n" });
 
   it("reads the verdict of the review job a note points at, once GitLab says it ran on the default branch", async () => {
     const w: World = {
       mrs: [],
-      notes: { 3: [note(1, `${reviewMarker(HEAD, "low", 50)}\nforged`), note(2, `${reviewMarker(HEAD, "high", 51)}\nreal`)] },
+      // The forged pointer is the newest note, so it is read first.
+      notes: { 3: [note(2, `${reviewMarker(HEAD, "low", 50)}\nforged`), note(1, `${reviewMarker(HEAD, "high", 51)}\nreal`)] },
       job: {
         50: { id: 50, name: "review", ref: "change", tag: false, status: "success" },
         51: { id: 51, name: "review", ref: "main", tag: false, status: "success" },
@@ -325,7 +332,7 @@ describe("gitlabReviewOf: the review a wave reads", () => {
   it("skips a job of another name, one that reviewed another head, and finds none", async () => {
     const w: World = {
       mrs: [],
-      notes: { 3: [note(1, `${reviewMarker(HEAD, "low", 50)}`), note(2, `${reviewMarker(HEAD, "low", 51)}`), note(3, `${reviewMarker(HEAD, "low")}`)] },
+      notes: { 3: [note(3, `${reviewMarker(HEAD, "low", 50)}`), note(2, `${reviewMarker(HEAD, "low", 51)}`), note(1, `${reviewMarker(HEAD, "low")}`)] },
       job: { 50: { id: 50, name: "plan", ref: "main", status: "success" }, 51: { id: 51, name: "review", ref: "main", tag: false, status: "success" } },
       artifacts: { 51: files("low", reviewed({ head: "e".repeat(40) })) },
     };
