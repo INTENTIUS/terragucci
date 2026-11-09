@@ -88,15 +88,16 @@
  */
 import { newerCommitOnBranch } from "@intentius/chant/op";
 import { CapabilityRegistry } from "@intentius/chant/components/capability";
-import { terraformApplyCapability } from "@intentius/chant-lexicon-terraform/components/capability-plugin";
-import { declaredTerraformConfig } from "./chant-config";
+import { terraformApplyCapabilityWith } from "@intentius/chant-lexicon-terraform/components/capability-plugin";
+import { atmosStateReads as terraformAtmosReads } from "@intentius/chant-lexicon-terraform/state-reads";
+import { declaredTerraformRoots } from "./chant-config";
 import type { OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
 import { wavePlansChangeSet } from "./report/build";
 import { detectActor } from "./actor";
 import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { OpWaveDecision } from "@intentius/chant/op";
 import { resolveGateRunLocator, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { waveSetDigest, type WaveMember } from "@intentius/chant/gated-waves";
@@ -1322,13 +1323,13 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
     if (unattended) console.log(`wave ${options.wave}: policy.outcomes at base names allow_unattended, so the wave's gate (${options.gate}) is decided once the policy reads its plans, and holds the wave through its held hook`);
     const ctx: WavesContext = { rule, configPath, work, ...(part !== undefined ? { part } : {}), planned: (k) => jobs.get(k)?.w.planned, ...(unattended ? { unattended } : {}), migrated: new Set() };
     // terragucci#1303: a repo that qualifies plans and applies the wave through chant's terraform-apply step, in this process.
-    const stepWave = typeof specWaves === "number" ? undefined : await stepWaveReasons(repo, options, ctx, specWaves);
+    const stepWave = typeof specWaves === "number" ? undefined : await stepWaveReasons(repo, options, ctx);
     if (stepWave && stepWave.reasons.length > 0) console.log(`wave ${options.wave}: plans and applies through terragucci's own calls, not chant's terraform-apply step: ${stepWave.reasons.join("; ")}`);
     const server = await serveWave(repo, work, (r) => waveCall(repo, options, ctx, r, jobOf));
     let ran: Awaited<ReturnType<typeof runChantWave>>;
     try {
       if (stepWave && stepWave.reasons.length === 0 && typeof specWaves !== "number") {
-        ran = await runStepWave(repo, options, ctx, jobOf, { chant: stepWave.chant, registry: stepWave.registry, settings: stepWave.settings, specWaves, base, gates, approval: rule?.mode ?? "ledger", ...(rule?.point ? { point: rule.point } : {}), ...(grouped ? { grouped } : {}) });
+        ran = await runStepWave(repo, options, ctx, jobOf, { chant: stepWave.chant, settings: stepWave.settings, specWaves, base, gates, approval: rule?.mode ?? "ledger", ...(rule?.point ? { point: rule.point } : {}), ...(grouped ? { grouped } : {}) });
       } else {
       const spec = wavesSpec({
         waves: specWaves,
@@ -1446,63 +1447,53 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
 interface StepWave {
   reasons: string[];
   chant: StepChant;
-  registry: unknown;
   settings: ResolvedSettings;
 }
 
 /** chant's wave job in this process (`@intentius/chant/op`): the run, a run's plan path and the async exec its command hooks call back through. */
 type StepChant = Pick<typeof import("@intentius/chant/op"), "runOpWave" | "opWavePlanPath" | "spawnExecAsync">;
 
-/** A registry with `terraform-apply` for a wave run in this process (chant#4545, ruling C). */
-let capabilities: { registry: CapabilityRegistry } | undefined;
-function waveCapabilities(): { registry: CapabilityRegistry } {
-  if (!capabilities) {
-    const registry = new CapabilityRegistry();
-    registry.register(terraformApplyCapability as never);
-    capabilities = { registry };
-  }
-  return capabilities;
+/**
+ * A wave's registry with `terraform-apply` (chant#4545, ruling C), built
+ * with terragucci's resolver (chant#4857, #4858): each root runs the release
+ * it pins, installed and checked as its own plan did, and a read of an
+ * upstream's state runs with that upstream's role, workspace and the wave's
+ * provider cache.
+ */
+function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache): CapabilityRegistry {
+  const registry = new CapabilityRegistry();
+  registry.register(
+    terraformApplyCapabilityWith({
+      resolveRoot: async (root) => ({
+        binary: (await binaries.resolve(root)).path,
+        readEnv: definedEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), join(repo, root))),
+      }),
+    }) as never,
+  );
+  return registry;
 }
 
 /**
  * Whether this job's wave runs on chant's terraform-apply step (terragucci#1303),
  * with chant's after-plan and run hooks (chant#4614, #4842): undefined when
  * the settings do not read, so the wave keeps the calls back without a word;
- * else each reason it keeps them, empty when it can move. The step runs the
- * binary chant.config.ts names, so a root that plans with another one keeps
- * the calls back, as do the pieces of terragucci's own plan that have not
- * moved onto chant yet.
+ * else each reason it keeps them, empty when it can move.
  */
-async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: WavesContext, specWaves: string[][]): Promise<StepWave | undefined> {
-  const caps = waveCapabilities();
+async function stepWaveReasons(repo: string, options: ApplyWaveOptions, ctx: WavesContext): Promise<StepWave | undefined> {
   const chant: StepChant = await import("@intentius/chant/op");
   const read = await waveSettings(repo, options, ctx.configPath);
   if ("error" in read) return undefined;
   const settings = read.settings;
-  const roots = specWaves[options.wave - 1] ?? [];
   const reasons = waveStepProblems({ ...(options.terragrunt ? { terragrunt: true } : {}), ...(options.composition ? { composed: true } : {}) });
-  const declared = declaredTerraformConfig(repo);
+  const declared = declaredTerraformRoots(repo);
   if ("why" in declared) reasons.push(declared.why);
-  else {
-    // chant's step runs terraform.binary from chant.config.ts, found on the PATH each root's run hook gives it.
-    const step = declared.binary ?? "terraform";
-    const binaries = new RootBinaries(repo, options.binary, settings.version, options.env ?? process.env, options.installer);
-    const other = roots.filter((r) => binaries.expected(r).name !== basename(step));
-    if (step.includes("/") && step !== options.binary) reasons.push(`chant.config.ts names the binary ${step} by its path, and this job plans with ${options.binary}`);
-    else if (other.length) reasons.push(`chant.config.ts names the binary ${step}, and ${other.join(", ")} ${other.length === 1 ? "plans" : "plan"} with ${binaries.expected(other[0]!).name}`);
-  }
+  // chant's involved people are known at base: an agent whose login the job reads from its token is not (chant#4859).
   const rule = ctx.rule;
-  if (rule?.mode === "pr-review") reasons.push("approval pr-review records the review's approval in terragucci's plan call");
-  if (rule?.approvalRules?.length) reasons.push("approval_rules counts approvers in terragucci's plan call");
-  if (rule?.agentTokenEnv || rule?.agentLogin) reasons.push("agent.token_env and agent.login leave the agent's approvals out in terragucci's plan call");
+  if (rule?.agentTokenEnv && !rule.agentLogin) reasons.push("agent.token_env is set without agent.login, so the agent's approvals are left out only in terragucci's plan call");
   const steps = waveSteps(repo, options);
   if ("error" in steps) reasons.push(steps.error);
   if (pendingEstateMigrations(repo, ctx.migrated).size > 0) reasons.push("an estate migration plans some of its roots");
-  const named = roots.filter((r) => rootWorkspace(join(repo, r)));
-  if (named.length) reasons.push(`${named.join(", ")} ${named.length === 1 ? "names its" : "name their"} workspace, which terragucci creates before init`);
-  const atmos = roots.filter((r) => (atmosEdges(join(repo, r))?.reads.length ?? 0) > 0);
-  if (atmos.length) reasons.push(`${atmos.join(", ")} ${atmos.length === 1 ? "reads" : "read"} another instance's outputs, which terragucci fills in before the plan`);
-  return { reasons, chant, registry: caps.registry, settings };
+  return { reasons, chant, settings };
 }
 
 /** The summary line terraform prints, from a plan's change-set entries. */
@@ -1584,7 +1575,7 @@ const definedEnv = (env: NodeJS.ProcessEnv): Record<string, string> => Object.fr
 /**
  * The run hooks of a wave on chant's step (chant#4842): before each root
  * plans, its environment (its role, its workspace, the wave's provider cache,
- * the values `secrets` gives it, and the PATH that finds the binary it pins),
+ * and the values `secrets` gives it; the binary it pins is chant's to run, from terragucci's resolver),
  * the sources check before and after its init, and its `before-observe` and
  * `before-plan` hooks; around its apply, its `before-apply` and `after-apply`
  * hooks; after it applied, the state version, the record versions and the
@@ -1612,10 +1603,8 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
       own.bin = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
       if (own.bin.pin) console.log(`${root}: ${binaryText(own.bin)}`);
       const roleEnv = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: s.cache.dir }, root), dir), dir, expected.name);
-      // The binary chant runs by name, from the directory of the one this root plans with.
-      const path = resolved.path.includes("/") ? { PATH: [dirname(resolved.path), roleEnv.PATH ?? ""].join(delimiter) } : {};
       try {
-        own.env = { ...(await rootSecretEnv(roleEnv, root, settings.secrets)), ...path };
+        own.env = await rootSecretEnv(roleEnv, root, settings.secrets);
       } catch (e) {
         return { refuse: `a value of secrets could not be read, so it was not planned\n${(e as Error).message}` };
       }
@@ -1789,15 +1778,105 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       const env = options.env ?? process.env;
       const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
       const roots = w.roots ?? [];
+      const approvals = changes > 0 && w.digest ? await stepGateApprovals(s, j, w.digest, plans) : [];
       return {
         pending: { description: `${label}: ${roots.join(", ")}`, ...(commit ? { commit } : {}) },
         ...(priced && changing.length > 0 ? { members: [priced] } : {}),
         ...(changes > 0 ? { holds } : {}),
+        ...(approvals.length ? { approvals } : {}),
         ...(j.overriders?.length ? { overriders: j.overriders, overridersSource: "policy.override in the config at base" } : {}),
         report: storedWaveReport(repo, options, planned.wave, w.digest ?? "", roots, plans),
       };
     },
   };
+}
+
+/**
+ * The approvals a wave on chant's step settled before its gate, which the
+ * wave answer hands chant to record for the digest it decides (chant#4859):
+ * a covered round's (the approval of the pull request's plan these plans are
+ * covered by), the rest of a stopped apply's (the approval that apply ran
+ * under), and under `approval: pr-review` the merged pull request's
+ * approving review of these plans. chant leaves out the people behind the
+ * change and the agent, and counts `approval_rules`. None under
+ * `apply.point`, whose gate the decision point answers.
+ */
+async function stepGateApprovals(s: StepContext, j: WaveJob, digest: string, plans: PlannedRoot[]): Promise<import("@intentius/chant/op").OpWaveAnswerApproval[]> {
+  const { repo, options, ctx } = s;
+  const rule = ctx.rule;
+  if (!rule || rule.point) return [];
+  const { w, k: wave, label } = j;
+  const env = options.env ?? process.env;
+  const name = waveGate(wave);
+  const now = new Date().toISOString();
+  const ledger = readLedger(repo);
+  const stamp = (iso: string): number => new Date(iso).getTime();
+  // The approvals chant will count: under sealed a sealed one, and none by someone who had a hand in the change.
+  let latest: PendingRecord | undefined;
+  for (const p of ledger.pending) if (p.gate === name && (!latest || stamp(p.timestamp) >= stamp(latest.timestamp))) latest = p;
+  const since = latest ? stamp(latest.timestamp) : 0;
+  const standing = ledger.resolutions.filter((r) => r.gate === name && stamp(r.timestamp) >= since);
+  if (standing.length > 0 || rule.mode === "pr-review") {
+    j.involved ??= await waveInvolvement(repo, options, rule);
+    for (const n of j.involved.notes) console.log(`${label}: ${n}`);
+  }
+  const involved = j.involved;
+  const ruled: GateLedger = {
+    ...ledger,
+    resolutions: ledger.resolutions.filter((r) => {
+      if (r.gate !== name) return true;
+      if (rule.mode === "sealed" && sealRefusal(rule.signers, r) !== null) return false;
+      return stamp(r.timestamp) < since || !resolutionRefusal(r, { ...(involved ? { involved } : {}), signers: rule.signers, ...(rule.requireSigned ? { requireSigned: true } : {}) });
+    }),
+  };
+  // A wave that planned again after its upstreams applied, covered by the pull request's plan (unknownReadHold): an approval of that plan's digest stands for it.
+  if (w.covered) {
+    const first = coveredApproval(ruled, name, digest, w.covered, now);
+    if (first) {
+      console.log(`${label}: ${first.by} approved ${w.covered.digest}, the pull request's plan these plans are covered by, so that approval stands for ${digest}`);
+      return [{ resolvedBy: first.by, note: `covered by the approval of ${w.covered.digest} by ${first.by}: only ${w.covered.filledInputs.join(", ") || "inputs previewed as known after apply"} differ` }];
+    }
+  }
+  const decision = decideGate(ruled, name, digest, now);
+  if (decision.status !== "waiting") return [];
+  // A plain wave whose approved apply stopped before it finished: plans that are the rest of the approved ones apply under that approval.
+  const whole = options.shares === undefined && !options.groups;
+  if (whole && decision.spent) {
+    const stopped = stoppedApply(ledger, name, decision.spent.at);
+    if (stopped?.changes) {
+      const c = coverRemainder(stopped.changes, plans.map((p) => ({ root: p.root, plan: p.plan, binary: p.bin.name ?? p.binary })));
+      if (c.covered) {
+        console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished; ${c.done.length} of its ${stopped.changes.length} change${stopped.changes.length === 1 ? "" : "s"} are done in the records, and these plans make the other ${c.remaining.length}, so that approval covers them`);
+        j.resumes = stopped.planDigest;
+        return [{ resolvedBy: decision.spent.by, note: `the rest of the apply of ${stopped.planDigest}, which ${decision.spent.by} approved at ${decision.spent.at}` }];
+      }
+      console.log(`${label}: the apply of ${stopped.planDigest}, approved by ${decision.spent.by}, stopped before it finished, but ${c.why}, so these plans need an approval of their own`);
+    }
+  }
+  if (decision.spent) console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans, so these plans need an approval of their own`);
+  if (rule.mode !== "pr-review") return [];
+  // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
+  const sha = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const priced = costMember(w.waveCost);
+  const changesDigest = reviewDigest(plans.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
+  const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge: forgeOfEnv(env), sha, wave, digest: changesDigest, ...(w.covered ? { covered: w.covered.digest } : {}), ...(involved ? { involved } : {}) });
+  if (r.excluded?.length) {
+    for (const e of r.excluded) console.log(`${label}: ${notCounted(e, "review")}`);
+    w.excluded = mergeExcluded(w.excluded ?? [], r.excluded);
+  }
+  if (r.kind === "approved") {
+    console.log(`${label}: pull request ${r.pr} was approved on its head ${r.head.slice(0, 8)} by ${r.by.join(", ")}, and the plans are the ones it reviewed (${changesDigest})`);
+    return [{ resolvedBy: r.by.join(","), note: `the review of pull request ${r.pr} on its head ${r.head}`, review: { pr: r.pr, head: r.head, reviewers: r.by } }];
+  }
+  if (r.kind === "moved") j.reviewMoved = r;
+  else {
+    console.log(`${label}: no review approves this wave: ${r.why}`);
+    if (r.review) {
+      w.review = { pull_request: r.review.pr, url: r.review.url };
+      console.log(`${label}: an approving review of pull request ${r.review.pr} on its head approves it: ${r.review.url}`);
+    }
+  }
+  return [];
 }
 
 /**
@@ -1814,12 +1893,29 @@ async function runStepWave(
   options: ApplyWaveOptions,
   ctx: WavesContext,
   jobOf: (k: number) => WaveJob,
-  at: { chant: StepChant; registry: unknown; settings: ResolvedSettings; specWaves: string[][]; base: string; gates: Gate[]; approval: Approval; point?: string; grouped?: { name: string; roots: string[]; shares: number }[] },
+  at: { chant: StepChant; settings: ResolvedSettings; specWaves: string[][]; base: string; gates: Gate[]; approval: Approval; point?: string; grouped?: { name: string; roots: string[]; shares: number }[] },
 ): Promise<{ code: number; result?: RunOpWaveResult }> {
   const settings = at.settings;
   const roots = at.specWaves[options.wave - 1] ?? [];
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, options.env ?? process.env);
+  const all = at.specWaves.flat();
+  // A root that names its workspace (an Atmos instance's) plans in it, and an Atmos read is read from the upstream's own workspace (chant#4855, #4858).
+  const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(join(repo, r)); return w ? [[r, w]] : []; }));
+  const reads = Object.fromEntries(all.flatMap((r) => {
+    const list = terraformAtmosReads(atmosEdges(join(repo, r)), (u) => u, (u) => { const w = rootWorkspace(join(repo, u)); return { dir: u, ...(w ? { workspace: w } : {}) }; });
+    return list.length ? [[r, list]] : [];
+  }));
+  const rule = ctx.rule;
+  // Who counts at the gate is chant's (chant#4859): the reviews terragucci records on tf-apply, the people behind the change and the agent left out, and approval_rules.
+  const approvals = {
+    reviewLedger: APPLY_OP,
+    involved: { ...(rule?.agentLogin ? { agents: [rule.agentLogin] } : {}), exclude: true as const },
+    ...(rule?.approvalRules?.length && !rule.point ? { quorum: rule.approvalRules } : {}),
+  };
   const spec = wavesStepSpec({
+    ...(Object.keys(workspaces).length ? { workspaces } : {}),
+    ...(Object.keys(reads).length ? { reads } : {}),
+    ...(rule && !rule.point ? { approvals } : {}),
     waves: at.specWaves,
     // allow_unattended at base: chant's gate is never, and the after-plan hook holds a wave the gate would hold unless the policy lets it through.
     gate: ctx.unattended ? "never" : options.gate,
@@ -1852,6 +1948,8 @@ async function runStepWave(
   }
   if (limit.value !== 1 && roots.length > 1) console.log(`wave ${options.wave}: chant's step plans one root at a time, since the roots' inits share the wave's provider cache`);
   const stepsRead = waveSteps(repo, options);
+  const binaries = new RootBinaries(repo, options.binary, settings.version, options.env ?? process.env, options.installer);
+  const cache = waveCache(ctx.work, process.env);
   const s: StepContext = {
     repo,
     options,
@@ -1859,8 +1957,8 @@ async function runStepWave(
     settings,
     chant: at.chant,
     spec,
-    binaries: new RootBinaries(repo, options.binary, settings.version, options.env ?? process.env, options.installer),
-    cache: waveCache(ctx.work, process.env),
+    binaries,
+    cache,
     ...("ws" in stepsRead && stepsRead.ws ? { ws: stepsRead.ws } : {}),
     roots: new Map(),
     jobOf,
@@ -1883,7 +1981,7 @@ async function runStepWave(
     ...((options.shares !== undefined || at.grouped) && options.share === undefined && options.group === undefined ? { decide: true } : {}),
     ...(options.group !== undefined ? { group: options.group } : {}),
     ...(options.share !== undefined ? { share: options.share } : {}),
-    capabilities: at.registry as never,
+    capabilities: waveCapabilities(repo, binaries, cache) as never,
     // The migration and gate hooks call back into this process: the job waits for them without blocking it.
     hookExec: at.chant.spawnExecAsync,
     afterPlan: stepAfterPlan(s),
@@ -4127,6 +4225,12 @@ async function gateCall(repo: string, options: ApplyWaveOptions, ctx: WavesConte
   w.mode = mode;
   if (ctx.rule) console.log(`${label}: approval ${ctx.rule.mode} (${ctx.rule.source})`);
   if (ctx.rule?.note) console.log(`${label}: note: ${ctx.rule.note}`);
+  // On chant's step chant counts approval_rules and reads the review (chant#4859): the report takes where each rule stands, and the review, from its decision.
+  if (d?.quorumProgress?.length) {
+    w.approvalRules = d.quorumProgress.map(ruleReport);
+    for (const p of d.quorumProgress) console.log(`${label}: approval_rules: ${quorumRuleLine(p)}`);
+  }
+  if (!w.review && d?.review?.pr !== undefined && d.review.url) w.review = { pull_request: d.review.pr, url: d.review.url };
   if (status === "approved" && j.quorum?.length && ctx.rule) {
     // chant passed the gate on one approval; an approval made after the wave counted (a second one by the same person) is not a second approver.
     const now = await quorumProgress(repo, options, ctx.rule, j, j.quorumRoots ?? w.roots ?? [], digest);

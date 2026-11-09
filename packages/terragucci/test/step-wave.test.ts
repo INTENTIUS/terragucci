@@ -89,12 +89,10 @@ describe("the spec, written once (terragucci#1303)", () => {
 });
 
 describe("a wave on chant's step (terragucci#1303)", () => {
-  /** A repo whose chant.config.ts names tofu, with the step's fake tofu, run from its own directory as a job is. */
+  /** A repo whose chant.config.ts names tofu, with the step's fake tofu. chant's step looks for chant.config.ts from the wave's directory (chant#4856). */
   function onStep(files: Record<string, string> = {}, config = chantConfigText(["a"], "tofu")) {
     const s = setup({ [CHANT_CONFIG]: config, ...files });
     writeFileSync(s.bin, STEP_FAKE);
-    // chant's step looks for chant.config.ts from the process's directory, which is the repo in a job.
-    vi.spyOn(process, "cwd").mockReturnValue(s.work);
     return s;
   }
   const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: { ...process.env } });
@@ -125,13 +123,12 @@ describe("a wave on chant's step (terragucci#1303)", () => {
     expect(report.roots[0].binary).toMatchObject({ name: "tofu" });
   });
 
-  it("keeps terragucci's calls, and says why, when chant.config.ts names another binary than the roots plan with", async () => {
+  it("runs the binary each root plans with, whatever chant.config.ts names (chant#4857)", async () => {
     const { work, bin, log } = onStep({}, chantConfigText(["a"]));
     const lines = quiet();
     expect(await applyWave(work, opts(bin))).toBe(0);
-    expect(lines.find((l) => l.includes("not chant's terraform-apply step"))).toContain("chant.config.ts names the binary terraform, and a plans with tofu");
-    // terragucci's own plan writes its plan file in the job's work directory, not chant's in the root.
-    expect(readFileSync(`${log}.calls`, "utf-8")).not.toContain("chant.tfplan");
+    expect(lines.some((l) => l.includes("not chant's terraform-apply step"))).toBe(false);
+    expect(readFileSync(`${log}.calls`, "utf-8")).toContain("chant.tfplan");
     expect(readFileSync(log, "utf-8")).toContain("applied a");
   });
 
@@ -141,6 +138,15 @@ describe("a wave on chant's step (terragucci#1303)", () => {
     await applyWave(work, opts(bin));
     expect(lines.find((l) => l.includes("not chant's terraform-apply step"))).toContain("chant.config.ts is missing");
     expect(existsSync(join(work, WAVES_SPEC))).toBe(true);
+  });
+
+  it("plans a root that names its workspace in it, and gives an Atmos read the upstream's directory and workspace (chant#4855, #4858)", () => {
+    const spec = wavesStepSpec({ waves: [["net"], ["app"]], gate: "never", approval: "pr-review", call: waveCallArgv, migrations: false, workspaces: { app: "ue1-app" }, reads: { app: [{ var: "vpc_id", root: "net", output: ["id"], dir: "net", workspace: "ue1-net" }] }, approvals: { reviewLedger: "tf-apply", involved: { agents: ["bot"], exclude: true } } }) as unknown as { approvals: unknown; waves: { approval: string; runs: { target: string; input?: unknown }[] }[] };
+    expect(spec.waves[1]!.runs[0]!.input).toEqual({ reads: [{ var: "vpc_id", root: "net", output: ["id"], dir: "net", workspace: "ue1-net" }], workspace: "ue1-app" });
+    expect(spec.waves[0]!.runs[0]!.input).toBeUndefined();
+    // approval pr-review is chant's mode on the step, and who counts is chant's (chant#4859).
+    expect(spec.waves.map((w) => w.approval)).toEqual(["pr-review", "pr-review"]);
+    expect(spec.approvals).toEqual({ spend: true, reviewLedger: "tf-apply", involved: { agents: ["bot"], exclude: true } });
   });
 
   it("runs ci.hooks around init, plan and apply, as terragucci's own plan did, and a failed hook stops the wave before anything applies", async () => {
