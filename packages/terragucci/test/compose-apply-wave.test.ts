@@ -4,8 +4,8 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assertOpWavesSpec } from "@intentius/chant/op";
-import { waveCallArgv, wavesSpec } from "../src/chant-waves";
-import { composeSet, composeTarget, specWavesWithRun, wavesWithRun, type Composition } from "../src/compose";
+import { waveCallArgv, wavesSpec, wavesStepSpec } from "../src/chant-waves";
+import { composeSet, composeTarget, specWavesWithRun, stepWavesWithRun, wavesWithRun, type Composition } from "../src/compose";
 import { affectedRoots } from "../src/report/stage";
 import { baseCommit } from "../src/seal";
 import { tmp, write } from "./helpers";
@@ -31,6 +31,16 @@ describe("the spec chant gets when the composed run empties later waves", () => 
     const spec = wavesSpec({ waves: runs, gate: "on-destructive", approval: "ledger", call: waveCallArgv, migrations: false });
     expect(() => assertOpWavesSpec(spec)).not.toThrow();
     expect(spec.waves.map((w) => w.name)).toEqual(["wave-1", "wave-2", "wave-3"]);
+  });
+
+  it("on chant's step, lists the run's roots in the composed wave, which plans them together (terragucci#1303)", () => {
+    const c = composition(1, ["network", "app", "edge"]);
+    const runs = stepWavesWithRun(waves, c);
+    expect(runs).toEqual([["network", "app", "edge"], ["other"], [composeTarget(1)]]);
+    const spec = wavesStepSpec({ waves: runs, together: 1, gate: "on-destructive", approval: "ledger", call: waveCallArgv, migrations: false }) as unknown as { step: { kind: string }; waves: { together?: boolean }[] };
+    expect(() => assertOpWavesSpec(spec as never)).not.toThrow();
+    expect(spec.step.kind).toBe("terraform-apply");
+    expect(spec.waves.map((w) => w.together === true)).toEqual([true, false, false]);
   });
 
   it("is what chant refused before: a wave left with no runs", () => {

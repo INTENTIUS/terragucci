@@ -28,6 +28,7 @@ chant's `terraform-apply` step now takes these waves too:
 - A wave under `approval: pr-review` or `approval_rules` runs on the step. chant decides its gate and counts the review terragucci records. It leaves out the people behind the change and `agent.login`, and it counts `approval_rules`. The report's rules and review come from that decision.
 - A repo that sets `agent.token_env` and no `agent.login` keeps terragucci's own plan, and the job says why. Set `agent.login` to move it onto the step.
 - A Terragrunt repo's waves run on chant's `terragrunt-apply` step. Each wave still plans its units with one `run --all` per pair of releases, and applies exactly those saved plans.
+- With `waves.compose`, the composed run is chant's: its wave lists the run's roots, and chant plans and applies them together as one run. That run keeps the binary the project names.
 - A gate whose only change is an output now waits for an approval, where before it let the wave through as empty.
 - A share job of a Terragrunt wave applies its saved plans even when they change nothing.
 - A root that names its workspace plans and applies in it on the step. Its init runs in `default`. Then the workspace is selected, and created first when the backend does not list it yet.

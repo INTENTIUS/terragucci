@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import * as step from "@intentius/chant/op/op-waves-capability";
-import { waveCallArgv, waveExit, waveStepProblems, wavesStepSpec } from "../src/chant-waves";
+import { waveCallArgv, waveExit, wavesStepSpec } from "../src/chant-waves";
 import { driftCount, driftNames } from "../src/report/drift";
 import { send } from "../src/telemetry";
 
@@ -61,9 +61,9 @@ describe("the op-wave step contract", () => {
     expect(step.opWaveHoldsProblems(spec.holds as never)).toEqual([]);
   });
 
-  it("says why a repo keeps the call back", () => {
-    expect(waveStepProblems({})).toEqual([]);
-    expect(waveStepProblems({ composed: true })).toHaveLength(1);
+  it("plans a composed wave together (chant#4848)", () => {
+    const spec = wavesStepSpec({ ...input, together: 2 }) as unknown as { waves: { together?: boolean }[] };
+    expect(spec.waves.map((w) => w.together === true)).toEqual(spec.waves.map((_, i) => i === 1));
   });
 });
 

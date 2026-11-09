@@ -655,6 +655,20 @@ export function specWavesWithRun(waves: readonly string[][], c: Composition | un
   return out.map((w, i) => (w.length === 0 && waves[i]!.length > 0 ? [target] : w));
 }
 
+/**
+ * The waves as a spec on chant's step holds them (terragucci#1303): the
+ * composed wave lists the run's roots, upstreams first, which chant plans
+ * and applies together as one composed run, and each wave the run emptied
+ * keeps the run's target so it keeps its place (its job ends before it asks
+ * chant).
+ */
+export function stepWavesWithRun(waves: readonly string[][], c: Composition | undefined): string[][] {
+  const out = specWavesWithRun(waves, c);
+  if (!c || c.wave === undefined || c.fallback) return out;
+  const target = composeTarget(c.wave);
+  return out.map((w, i) => (i + 1 === c.wave ? w.flatMap((r) => (r === target ? c.order : [r])) : w));
+}
+
 /** The log line that says what `waves.compose` came to. */
 export function compositionLine(c: Composition): string {
   if (c.fallback || c.wave === undefined) return `compose: ${c.fallback?.reason ?? "no wave runs it"}, so the change applies in waves`;
