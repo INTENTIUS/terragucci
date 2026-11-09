@@ -16,21 +16,29 @@ Under it is chant 0.124.80, pinned by the package and by each CI image.
 
 A control repo keeps its projects and defaults only as chant's entries on its `chant/lifecycle`. The record files under `terragucci/records` are no longer read, and `terragucci control records init` is gone.
 
-- 0.4.54 is the last release with `terragucci control records migrate`. A control repo that still has record files runs `npx @intentius/terragucci@0.4.54 control records migrate`, pushes `chant/lifecycle`, and then upgrades.
+- 0.4.54 is the last release with `terragucci control records migrate`. A control repo that still has record files runs `npx @intentius/terragucci@0.4.54 control records migrate` and pushes `chant/lifecycle`. Then it upgrades.
 - `control records put`, `defaults`, `import` and `retire` write the entries on `chant/lifecycle` from the first one, so a new control repo needs no setup step.
 - The plan job reads the control repo through chant's read step alone. On GitHub and Forgejo it no longer checks the control repo out into `.terragucci-control`, and on GitLab it no longer clones it. `TERRAGUCCI_CONTROL_DIR` is no longer set by the job, though a plan still reads a checkout it names.
 - `TERRAGUCCI_CHANT` is no longer read.
 - A plan that reads the control repo through `TERRAGUCCI_CONTROL_READ_TOKEN` now finds its estate owners. The clone it read was removed before the read finished, so it found none.
 
-chant's `terraform-apply` step now takes these waves too:
+Every wave now plans and applies on chant's step, and terragucci's own wave plan and apply are gone:
 
-- A wave whose roots pin their own releases. chant runs the release each root pins once terragucci has installed it and checked its version. The binary in `chant.config.ts` no longer matters.
-- A wave under `approval: pr-review` or `approval_rules` runs on the step. chant decides its gate and counts the review terragucci records. It leaves out the people behind the change and `agent.login`, and it counts `approval_rules`. The report's rules and review come from that decision.
-- A repo that sets `agent.token_env` and no `agent.login` keeps terragucci's own plan, and the job says why. Set `agent.login` to move it onto the step.
+- A wave whose roots pin their own releases. chant runs the release each root pins once terragucci has installed it and checked its version. The binary in `chant.config.ts` no longer matters, and a repo with no `chant.config.ts` plans each root by its directory.
+- A wave under `approval: pr-review` or `approval_rules` runs on the step. chant decides its gate and counts the review terragucci records. It leaves out the people behind the change and the agent's account, and it counts `approval_rules`. The report's rules and review come from that decision.
+- With `agent.token_env` and no `agent.login`, the job leaves out the account the agent's token acts as.
+- An Atmos read of another instance's outputs is read from that instance's own workspace, with its role and its pinned release.
+- A wave plans and applies its roots one at a time, and the job says so. `--parallelism` and `parallelism` no longer run roots side by side.
+- The binary each root runs still sees no forge token, whether named as one or holding the same value.
+- A root an estate migration adopts into is left out of its wave until the migration has applied, and the next run plans it.
+- chant records a pull request's approving review itself. Each reviewer is named by forge principal, such as `github:alice`.
+- A choudoufu wave that meets a resource another live run is applying ends at once with exit 5. A push's wave used to wait for that run.
+- A stock binary's root is held as one row of `pr-apply` while it applies.
+- The wave's report has no per-root plan or apply times and no spans, and a failed root's outcome names no error.
 - A Terragrunt repo's waves run on chant's `terragrunt-apply` step. Each wave still plans its units with one `run --all` per pair of releases, and applies exactly those saved plans.
 - With `waves.compose`, the composed run is chant's: its wave lists the run's roots, and chant plans and applies them together as one run. That run keeps the binary the project names.
 - A gate whose only change is an output now waits for an approval, where before it let the wave through as empty.
-- A share job of a Terragrunt wave applies its saved plans even when they change nothing.
+- A share job applies its saved plans even when they change nothing.
 - A root that names its workspace plans and applies in it on the step. Its init runs in `default`. Then the workspace is selected, and created first when the backend does not list it yet.
 
 ## In 0.4.54

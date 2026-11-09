@@ -9,10 +9,10 @@ import { T, FAKE } from "./apply-helpers";
 describe("planning a wave's roots", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  /** A fake tofu whose plan counts the plans running together in $RUN and appends each count to $RUN/counts. */
+  /** A fake tofu, run in the root's directory as chant's step runs it, whose plan counts the plans running together in $RUN and appends each count to $RUN/counts. */
   const COUNTING = `#!/usr/bin/env bash
-dir="\${1#-chdir=}"; root="$(basename "$dir")"
-case "$2" in
+root="$(basename "$PWD")"
+case "$1" in
   plan)
     for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done
     touch "$RUN/running.$root"
@@ -20,7 +20,9 @@ case "$2" in
     sleep 0.3
     rm -f "$RUN/running.$root"
     echo "Plan: 1 to add" ;;
-  show) echo '{"resource_changes":[]}' ;;
+  show) if [ -f "\${@: -1}" ]; then echo '{"resource_changes":[{"address":"terraform_data.x","mode":"managed","type":"terraform_data","name":"x","change":{"actions":["create"],"before":null,"after":{},"after_unknown":{}}}]}'; else echo '{"values":{}}'; fi ;;
+  output) echo "{}" ;;
+  version) echo '{"terraform_version":"1.8.0"}' ;;
   apply)
     touch "$RUN/applying.$root"
     ls "$RUN" | grep -c '^applying\\.' >> "$RUN/applies"
@@ -35,9 +37,13 @@ exit 0
     const dir = tmp("tg-bound-");
     const work = join(dir, "work");
     for (const r of roots) mkdirSync(join(work, r), { recursive: true });
-    // chant reads the wave's rules at a commit.
+    // chant reads the wave's rules at a commit, and the gate's ledger on origin.
+    const origin = join(dir, "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
     git(work, "init", "-q", "-b", "main");
     git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
+    git(work, "remote", "add", "origin", origin);
+    git(work, "push", "-q", "origin", "main");
     const run = join(dir, "run");
     mkdirSync(run);
     const bin = join(dir, "tofu");
@@ -50,31 +56,25 @@ exit 0
   const most = (run: string, file = "counts"): number => Math.max(...readFileSync(join(run, file), "utf-8").split("\n").filter(Boolean).map(Number));
   const roots = ["r1", "r2", "r3", "r4", "r5", "r6"];
 
-  it("never plans more roots at once than --parallelism", async () => {
+  // chant's step plans and applies one root at a time, since the roots' inits share the wave's provider cache (chant issue 4864).
+  it("plans and applies one root at a time on chant's step, whatever --parallelism says, and says so", async () => {
     const { work, bin, run } = wave(roots);
-    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 })).toBe(0);
-    expect(most(run)).toBeLessThanOrEqual(2);
-    expect(most(run)).toBe(2);
-  });
-
-  it("never applies more roots at once than it plans", async () => {
-    const { work, bin, run } = wave(roots);
-    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 })).toBe(0);
-    expect(readFileSync(join(run, "applies"), "utf-8").split("\n").filter(Boolean)).toHaveLength(roots.length);
-    expect(most(run, "applies")).toBe(2);
-  });
-
-  it("plans one root at a time with a bound of 1", async () => {
-    const { work, bin, run } = wave(roots);
-    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 1 })).toBe(0);
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
+    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env, parallelism: 2 }), lines.join("\n")).toBe(0);
     expect(most(run)).toBe(1);
+    expect(readFileSync(join(run, "applies"), "utf-8").split("\n").filter(Boolean)).toHaveLength(roots.length);
+    expect(most(run, "applies")).toBe(1);
+    expect(lines).toContain("wave 1: chant's step plans one root at a time, since the roots' inits share the wave's provider cache");
   });
 
-  it("takes the bound from the config's parallelism key", async () => {
+  it("plans one root at a time under the config's parallelism key too", async () => {
     const { work, bin, run } = wave(roots);
     writeFileSync(join(work, "terragucci.yml"), "parallelism: 3\n");
-    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env })).toBe(0);
-    expect(most(run)).toBe(3);
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((l: unknown) => void lines.push(String(l)));
+    expect(await applyWave(work, { wave: 1, layers: [roots], binary: bin, gate: "never", env: process.env }), lines.join("\n")).toBe(0);
+    expect(most(run)).toBe(1);
   });
 });
 
@@ -167,13 +167,14 @@ describe("a wave split across jobs", () => {
     expect(applied(log)).toEqual([]);
   });
 
-  it("a share of a wave whose plans change nothing plans nothing and applies nothing", async () => {
+  // chant's step plans a share's roots again and applies their saved plans, which change nothing.
+  it("a share of a wave whose plans change nothing applies only its own roots' plans, which change nothing", async () => {
     const { work, bin, log, plans } = setup();
     for (const r of roots) writeFileSync(join(plans, `${r}.json`), JSON.stringify({ resource_changes: [] }));
     expect(await applyWave(work, { ...opts(bin, { gate: "never" }), now: T(1) })).toBe(0);
     expect(JSON.parse(readFileSync(join(work, decidedPath(1)), "utf-8"))).toMatchObject({ status: "not-required" });
     expect(await applyWave(work, { ...opts(bin, { gate: "never" }), share: 2 })).toBe(0);
-    expect(applied(log)).toEqual([]);
+    expect(applied(log)).toEqual(["c"]);
   });
 
   it("a wave of one root, or one job, applies in its own job as before", async () => {

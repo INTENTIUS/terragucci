@@ -46,7 +46,8 @@ describe("a wave that read an output unknown at review, applied again by a comme
     vi.restoreAllMocks();
   });
 
-  it("still waits when its upstream's plan in the comment's run changes nothing, and applies once its plans are approved", async () => {
+  // Six waves on chant's step, about two seconds each: past the default timeout on a loaded machine.
+  it("still waits when its upstream's plan in the comment's run changes nothing, and applies once its plans are approved", { timeout: 120_000 }, async () => {
     const { work, origin, bin, log } = setup({
       "terragucci.yml": "reports:\n  bucket: s3://reports\n  endpoint: http://s3.test\n",
       "a/main.tf": state("a.tfstate"),

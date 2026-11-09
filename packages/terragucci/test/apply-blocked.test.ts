@@ -19,15 +19,17 @@ const state = (key: string): string => `terraform {\n  backend "s3" {\n    bucke
 const reads = (key: string): string => `data "terraform_remote_state" "up" {\n  backend = "s3"\n  config = {\n    bucket = "s"\n    key    = "${key}"\n  }\n}\n`;
 const create = { resource_changes: [{ address: "terraform_data.x", mode: "managed", type: "terraform_data", name: "x", change: { actions: ["create"], before: null, after: { input: "1" }, after_unknown: {} } }] };
 
-/** The fake tofu of ./apply-helpers.ts, whose apply fails for each root named in $FAIL. */
+/** The fake tofu of ./apply-helpers.ts, run in the root's directory as chant's step runs it, whose apply fails for each root named in $FAIL. */
 const FAILING = `#!/usr/bin/env bash
-dir="\${1#-chdir=}"; root="$(basename "$dir")"
-case "$2" in
+root="$(basename "$PWD")"
+case "$1" in
   plan) for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add" ;;
-  show) cat "$PLANS/$(cat "\${@: -1}").json" ;;
+  show) f="\${@: -1}"; if [ -f "$f" ]; then cat "$PLANS/$(cat "$f").json"; else echo '{"values":{}}'; fi ;;
   apply)
     case " $FAIL " in *" $root "*) echo "Error: The name of a FIFO queue can only end with '.fifo'" >&2; exit 1 ;; esac
     echo "applied $root" >> "$LOG"; echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+  output) echo "{}" ;;
+  version) echo '{"terraform_version":"1.8.0"}' ;;
 esac
 exit 0
 `;
@@ -77,9 +79,9 @@ describe("a failed root blocks only its dependents (#1161)", () => {
     expect(await run(1)).toBe(0);
     expect(await run(2, "cluster-a")).toBe(1);
     expect(outcome(work, 2).members).toEqual({ "cluster-a": { status: "failed" }, "cluster-b": { status: "applied" } });
-    // The report the bucket gets says the same, with the failed root's error.
+    // The report the bucket gets says the same. chant's step keeps no failed root's error for it.
     expect(waveReport(work).outcomes).toEqual([
-      { root: "cluster-a", outcome: "failed", error: "Error: The name of a FIFO queue can only end with '.fifo'" },
+      { root: "cluster-a", outcome: "failed" },
       { root: "cluster-b", outcome: "applied" },
     ]);
     expect(await run(3)).toBe(1);

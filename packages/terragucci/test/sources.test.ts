@@ -312,14 +312,20 @@ describe("tf-plan with sources", () => {
   });
 });
 
-/** A fake tofu for a wave: plan writes the root into the plan file, show -json prints one create, apply logs the root. */
+/**
+ * A fake tofu for a wave, run by chant's step in the root's directory: plan
+ * writes the root into the plan file, show -json of it prints one create, show
+ * -json of the state prints no values, apply logs the root.
+ */
 const FAKE = `#!/usr/bin/env bash
-dir="\${1#-chdir=}"; root="$(basename "$dir")"
-echo "$root $2" >> "$CALLS"
-case "$2" in
+dir="$PWD"; root="$(basename "$dir")"
+echo "$root $1" >> "$CALLS"
+case "$1" in
   plan) for a in "$@"; do case "$a" in -out=*) echo "$root" > "\${a#-out=}" ;; esac; done; echo "Plan: 1 to add" ;;
-  show) echo '{"resource_changes":[{"address":"terraform_data.x","mode":"managed","type":"terraform_data","name":"x","change":{"actions":["create"],"before":null,"after":{"input":"1"},"after_unknown":{}}}]}' ;;
+  show) if [ -f "\${@: -1}" ]; then echo '{"resource_changes":[{"address":"terraform_data.x","mode":"managed","type":"terraform_data","name":"x","change":{"actions":["create"],"before":null,"after":{"input":"1"},"after_unknown":{}}}]}'; else echo '{"values":{}}'; fi ;;
   apply) echo "Apply complete! Resources: 1 added, 0 changed, 0 destroyed." ;;
+  output) echo "{}" ;;
+  version) echo '{"terraform_version":"1.8.0"}' ;;
 esac
 exit 0
 `;
@@ -518,7 +524,7 @@ describe("tf-plan checks what init fetched before plan", () => {
 });
 
 /** FAKE, whose init also leaves the root as INITED does. */
-const INITING_FAKE = FAKE.replace('case "$2" in\n', 'case "$2" in\n  init) cp -R "$FIXTURE/." "$dir/" ;;\n');
+const INITING_FAKE = FAKE.replace('case "$1" in\n', 'case "$1" in\n  init) cp -R "$FIXTURE/." "$dir/" ;;\n');
 
 describe("a tf-apply wave checks what init fetched before plan", () => {
   afterEach(() => {

@@ -1175,13 +1175,14 @@ function fakeBin(script: string, scripts: Record<string, string> = {}): { dir: s
 const STAGE_OK = { terragucci: "#!/usr/bin/env bash\nexit 0\n" };
 
 describe("the plugin cache", () => {
-  // Each init logs its root, its cache and how many inits are running with it.
-  const INIT_LOG = `#!/usr/bin/env bash\ncase "$2" in init) r="$(basename "\${1#-chdir=}")"; touch "\${LOG}.running.$r"; echo "$r $TF_PLUGIN_CACHE_DIR $(ls "\${LOG}".running.* | wc -l | tr -d ' ')" >> "\${LOG}"; sleep 0.3; mv "\${LOG}.running.$r" "\${LOG}.done.$r" ;; plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done ;; show) echo '{"resource_changes":[]}' ;; esac\nexit 0\n`;
+  // Chant's step runs the binary in the root's directory. Each init logs its root, its cache and how many inits are running with it.
+  const INIT_LOG = `#!/usr/bin/env bash\nr="$(basename "$PWD")"\ncase "$1" in init) touch "\${LOG}.running.$r"; echo "$r $TF_PLUGIN_CACHE_DIR $(ls "\${LOG}".running.* | wc -l | tr -d ' ')" >> "\${LOG}"; sleep 0.3; mv "\${LOG}.running.$r" "\${LOG}.done.$r" ;; plan) for a in "$@"; do case "$a" in -out=*) : > "\${a#-out=}" ;; esac; done ;; show) echo '{"resource_changes":[]}' ;; output) echo '{}' ;; version) echo '{"terraform_version":"1.8.0"}' ;; esac\nexit 0\n`;
 
   async function inits(cache: string | undefined): Promise<string[][]> {
     const { dir, env } = fakeBin(INIT_LOG);
     await terragucciBin(join(dir, "bin"));
-    // A job's checkout: chant reads the wave's rules at a commit.
+    // A job's checkout with the wave's roots: chant reads the wave's rules at a commit.
+    for (const r of ["a", "b", "c"]) mkdirSync(join(dir, r));
     git(dir, "init", "-q", "-b", "main");
     git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
     const log = join(dir, "cache.log");

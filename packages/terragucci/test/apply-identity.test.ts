@@ -41,7 +41,7 @@ describe("a wave behind its gate", () => {
       approve(origin, approval(digest, "alice"));
       expect(await applyWave(work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(log)).toBe(false);
-      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
+      expect(lines.join("\n")).toMatch(/the approval by alice at \S+ does not count: the approval by alice is not signed; gate wave-1 needs chant approve --sign/);
       expect(lines.join("\n")).toContain(`--plan ${digest} --sign`);
     });
 
@@ -103,8 +103,8 @@ describe("a wave behind its gate", () => {
       approve(s.origin, approval(digest, "alice"));
       expect(await applyWave(s.work, { ...opts, now: T(3) })).toBe(3);
       expect(existsSync(s.log)).toBe(false);
-      expect(lines.join("\n")).toContain("does not list wave-1 under identity.gates");
-      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
+      expect(lines.join("\n")).toContain("approval sealed (identity.gates in chant.workspace.json at base, with no approval key)");
+      expect(lines.join("\n")).toMatch(/the approval by alice at \S+ does not count: the approval of gate wave-1 by alice carries no seal/);
       approve(s.origin, sealed(digest, "alice", alice));
       expect(await applyWave(s.work, { ...opts, now: T(5) })).toBe(0);
       expect(existsSync(s.log)).toBe(true);
@@ -139,7 +139,7 @@ describe("a wave behind its gate", () => {
       expect(lines).toContain(`  terragucci approve wave-1 --plan ${digest} --sign`);
       approve(origin, approval(digest, 2));
       expect(await applyWave(work, { ...opts(bin), now: T(3) })).toBe(3);
-      expect(lines.join("\n")).toMatch(/carries no seal \(terragucci approve --sign\)/);
+      expect(lines.join("\n")).toMatch(/the approval by alice at \S+ does not count: the approval of gate wave-1 by alice carries no seal/);
       const a = approval(digest, 4);
       approve(origin, { ...a, seal: { signer: "alice", key: "SHA256:test", signature: sshsig(alice, gateSealPayload(a), "chant-gate") } });
       expect(await applyWave(work, { ...opts(bin), now: T(5) })).toBe(0);
@@ -193,7 +193,7 @@ describe("a wave behind its gate", () => {
       expect(await applyWave(work, { ...opts(bin), env, fetch: forge([review], digest), now: T(3) })).toBe(0);
       expect(existsSync(log)).toBe(true);
       const recorded = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).resolutions;
-      expect(recorded.at(-1)).toMatchObject({ gate: "wave-1", planDigest: digest, resolvedBy: "alice", via: "pr-review", pr: 7, head, reviewers: ["alice"] });
+      expect(recorded.at(-1)).toMatchObject({ gate: "wave-1", planDigest: digest, resolvedBy: "github:alice", review: { pr: 7, head, approvers: ["github:alice"] } });
     });
 
     it("the pipeline's --approval sealed holds when the config names no mode", async () => {

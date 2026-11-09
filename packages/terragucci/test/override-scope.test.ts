@@ -107,7 +107,8 @@ describe("tf-apply under scoped policy.override entries", () => {
     lines.length = 0;
     expect(await applyWave(work, opts(bin, [["a", "b"]], 3))).toBe(1);
     expect(existsSync(log)).toBe(false);
-    expect(lines.join("\n")).toContain("a: the override by alice does not count: policy.override at base lets bob override a for main.deny_data");
+    expect(lines.join("\n")).toContain("a: an override does not count: alice is not listed in policy.override in the config at base");
+    expect(lines.join("\n")).toContain("a: bob may override it with: chant approve policy-override a --rule main.deny_data");
     // Nothing was spent: bob's override of a, beside alice's of b, lets the wave through.
     record(origin, "a", of("a"), "bob", 4);
     expect(await applyWave(work, opts(bin, [["a", "b"]], 5))).toBe(0);
