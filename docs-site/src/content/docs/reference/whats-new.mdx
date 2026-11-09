@@ -22,6 +22,13 @@ A control repo keeps its projects and defaults only as chant's entries on its `c
 - `TERRAGUCCI_CHANT` is no longer read.
 - A plan that reads the control repo through `TERRAGUCCI_CONTROL_READ_TOKEN` now finds its estate owners. The clone it read was removed before the read finished, so it found none.
 
+chant's `terraform-apply` step now takes these waves too:
+
+- A wave whose roots pin their own releases. chant runs the release each root pins once terragucci has installed it and checked its version. The binary in `chant.config.ts` no longer matters.
+- A wave under `approval: pr-review` or `approval_rules` runs on the step. chant decides its gate and counts the review terragucci records. It leaves out the people behind the change and `agent.login`, and it counts `approval_rules`. The report's rules and review come from that decision.
+- A repo that sets `agent.token_env` and no `agent.login` keeps terragucci's own plan, and the job says why. Set `agent.login` to move it onto the step.
+- A root that names its workspace plans and applies in it on the step. Its init runs in `default`. Then the workspace is selected, and created first when the backend does not list it yet.
+
 ## In 0.4.54
 
 This release pins chant 0.124.79 in the package and the CI images.

@@ -23,6 +23,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec, RunOpWaveResult } from "@intentius/chant/op";
+import type { GateQuorumRule } from "@intentius/chant/gate-decision";
 import { chantCommand } from "./chant-bin";
 import { ConfigError } from "./config";
 
@@ -108,8 +109,12 @@ export function wavesSpec(input: WavesSpecInput): OpWavesSpec {
 export interface WavesStepInput extends Omit<WavesSpecInput, "waves" | "rest"> {
   /** Each wave's roots. A Terragrunt repo's discovered waves have no step: chant plans the runs a spec lists. */
   waves: string[][];
-  /** Vars each root reads from another root's outputs (Atmos's `!terraform.state`), as the terraform lexicon's `reads`. */
-  reads?: Record<string, { var: string; root: string; output: string[] }[]>;
+  /** Vars each root reads from another root's outputs (Atmos's `!terraform.state`), as the terraform lexicon's `reads`, each with the upstream's directory and workspace (chant#4858). */
+  reads?: Record<string, { var: string; root: string; output: string[]; dir?: string; workspace?: string }[]>;
+  /** The workspace each root that names one plans and applies in (an Atmos instance's), created after an init in default (chant#4855). */
+  workspaces?: Record<string, string>;
+  /** Who counts at the gate (chant#4859): the pull request's review lines on terragucci's own ledger, the involved people left out, and `approval_rules`. */
+  approvals?: { reviewLedger?: string; involved?: { agents?: string[]; exclude: true }; quorum?: GateQuorumRule[] };
   /** A pull request's base, for a choudoufu live root's cone plan. */
   cone?: string;
   /** How long a plan or an apply waits for a state lock. Default: the lexicon's 5m. */
@@ -135,9 +140,15 @@ export interface WavesStepInput extends Omit<WavesSpecInput, "waves" | "rest"> {
 export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
   const own = wavesSpec(input) as OpWavesSpec & { planWave?: unknown; applyWave?: unknown; hooks?: { after?: { plan?: unknown; gate?: unknown } } };
   const { planWave: _p, applyWave: _a, hooks, ...rest } = own;
-  const runInput = (root: string): Record<string, unknown> | undefined => (input.reads?.[root]?.length ? { reads: input.reads[root] } : undefined);
+  const runInput = (root: string): Record<string, unknown> | undefined => {
+    const i = { ...(input.reads?.[root]?.length ? { reads: input.reads[root] } : {}), ...(input.workspaces?.[root] ? { workspace: input.workspaces[root] } : {}) };
+    return Object.keys(i).length ? i : undefined;
+  };
+  // approval pr-review is chant's own mode on the step: it counts the review lines terragucci records on tf-apply (chant#4859).
+  const approval = input.approval === "pr-review" ? "pr-review" : undefined;
   return {
     ...rest,
+    approvals: { spend: true, ...(input.approvals ?? {}) },
     step: {
       kind: "terraform-apply",
       root: "{target}",
@@ -153,7 +164,7 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
     ...(input.standDown ? { standDown: true } : {}),
     // The gate's report is terragucci's; the held hook is chant's holds now.
     hooks: { after: { gate: hooks?.after?.gate } },
-    waves: rest.waves.map((w) => ({ ...w, runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
+    waves: rest.waves.map((w) => ({ ...w, ...(approval ? { approval } : {}), runs: (w.runs ?? []).map((r) => { const i = runInput(r.target); return i ? { ...r, input: i } : r; }) })),
   } as OpWavesSpec;
 }
 
