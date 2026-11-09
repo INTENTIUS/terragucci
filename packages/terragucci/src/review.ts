@@ -67,24 +67,17 @@ export function reviewDigest(members: readonly { member: string; planDigest: str
 }
 
 /**
- * A forge's REST API, as the jobs call it with their own token: the review
- * agent's reads of a workflow run's jobs and artifacts (./review-agent.ts),
- * which chant's reads have no call for.
+ * What the review agent reads of a GitHub or Forgejo repository
+ * (./review-agent.ts): chant's client and reads with the job's TG_TOKEN
+ * (pull requests, workflow runs, their jobs and artifacts, chant#4846), and
+ * the repository's path, for the artifact downloads (artifactBytes).
  */
-export interface ForgeCalls {
+export interface ReviewForge extends JobForge {
   repo: string;
-  get: (path: string) => Promise<any>;
-  post: (path: string, body: unknown) => Promise<any>;
 }
 
-export function forgeCalls(env: NodeJS.ProcessEnv, doFetch: Fetch = fetch): ForgeCalls {
-  const { api, repo, token } = apiOf(env);
-  const call = async (method: string, path: string, body?: unknown): Promise<any> => {
-    const r = await doFetch(`${api}/${path}`, { method, headers: { "content-type": "application/json", authorization: `token ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) });
-    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
-    return r.status === 204 ? null : r.json();
-  };
-  return { repo, get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) };
+export function reviewForge(kind: "github" | "forgejo", env: NodeJS.ProcessEnv, doFetch?: Fetch): ReviewForge {
+  return { ...jobForge(kind, env, doFetch), repo: apiOf(env).repo };
 }
 
 /** chant's client and reads for the forge a job runs on, with the job's TG_TOKEN. */
