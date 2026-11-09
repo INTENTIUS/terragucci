@@ -35,6 +35,11 @@ jobs:
         run: |
           commit="$(npx chant ci last-green --from "$GITHUB_SHA" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.commit?.sha??""))')"
           if [ -z "$commit" ]; then echo "no green commit at or below $GITHUB_SHA, so no release is cut" >&2; exit 1; fi
+          if ! git diff --quiet "$commit" "$GITHUB_SHA" -- ":(top).github/workflows"; then
+            changed="$(git log -1 --format=%H "$commit..$GITHUB_SHA" -- ":(top).github/workflows")"
+            echo "the newest green commit, $commit, has other workflow files than $GITHUB_SHA, and GitHub refuses this job's token a tag on it, so no release is cut. Dispatch again once ${changed:-$GITHUB_SHA}, which changed .github/workflows, or a commit after it is green." >&2
+            exit 1
+          fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
   cut:
     needs: gate
@@ -103,7 +108,7 @@ jobs:
           name: chant-release-images
           path: dist/images
       - run: npx chant release stamp "$CHANT_RELEASE_LABEL"
-      - run: npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o .chant/release-digests.json
-      - run: echo "CHANT_RELEASE_DIGESTS=$PWD/.chant/release-digests.json" >> "$GITHUB_ENV"
+      - run: npx chant release images "$CHANT_RELEASE_LABEL" --no-build -o "$RUNNER_TEMP/chant-release-digests.json"
+      - run: echo "CHANT_RELEASE_DIGESTS=$RUNNER_TEMP/chant-release-digests.json" >> "$GITHUB_ENV"
       - run: node scripts/build-cli.mjs
       - run: npx chant release publish "$CHANT_RELEASE_LABEL" --yes
