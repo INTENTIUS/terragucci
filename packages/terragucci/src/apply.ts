@@ -891,6 +891,8 @@ interface WaveJob {
   migration?: HeldMigration;
   /** When the wave's last call back from chant ended, Unix nanoseconds: its gate's span starts there, so it holds chant's decision too. */
   callEnded?: bigint;
+  /** The record of the changes beside the approval, written once before the wave's first apply: every root's apply waits on it, however many apply at once. */
+  changesRecorded?: Promise<void>;
 }
 
 /** A migration wave 1 is held on: its roots, and each one's state as its pending fact names it. */
@@ -1413,11 +1415,16 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
     },
     async beforeApply(run) {
       // Under an approval, before the wave's first apply: the changes its plans make, beside the approval (recordChanges).
+      // Roots that apply at once all wait for the one record, and none applies when it cannot be written.
       const j = s.jobOf(run.wave);
-      if (!j.w.applyStarted) {
-        j.w.applyStarted = new Date().toISOString();
-        await recordChanges(repo, j.label, j, options.now);
+      if (!j.changesRecorded) {
+        if (j.w.applyStarted) j.changesRecorded = Promise.resolve();
+        else {
+          j.w.applyStarted = new Date().toISOString();
+          j.changesRecorded = recordChanges(repo, j.label, j, options.now);
+        }
       }
+      await j.changesRecorded;
       const own = s.roots.get(run.target);
       if (!own) return;
       if (s.units) {
@@ -1846,6 +1853,7 @@ async function runStepWave(
     ...(c ? { together: c.wave! } : {}),
     ...(options.rest ? { rest: true } : {}),
     ...(terragrunt ? { terragrunt: { layers: options.layers.filter((l) => l.length > 0), exclude: settings.terragrunt?.exclude, binary: options.binary, terragrunt, ...(options.parallelism !== undefined ? { parallelism: options.parallelism } : {}) } } : {}),
+    ...(!terragrunt && limit.value > 1 ? { parallelism: limit.value } : {}),
     // allow_unattended at base: chant's gate is never, and the after-plan hook holds a wave the gate would hold unless the policy lets it through.
     gate: ctx.unattended ? "never" : options.gate,
     ...(!ctx.unattended && listed && at.gates.some((g) => g !== options.gate) ? { gates: at.gates } : {}),
@@ -1875,7 +1883,7 @@ async function runStepWave(
     mkdirSync(dirname(join(repo, waveRecordPath(options.wave))), { recursive: true });
     copyFileSync(file, join(repo, waveRecordPath(options.wave)));
   }
-  if (limit.value !== 1 && roots.length > 1) console.log(`wave ${options.wave}: chant's step plans one root at a time, since the roots' inits share the wave's provider cache`);
+  if (limit.value !== 1 && roots.length > 1) console.log(`wave ${options.wave}: chant's step plans and applies up to ${limit.value} roots at once (${limit.reason}), with their inits one at a time on the wave's provider cache`);
   const stepsRead = waveSteps(repo, options);
   const binaries = new RootBinaries(repo, options.binary, settings.version, options.env ?? process.env, options.installer);
   const cache = waveCache(ctx.work, process.env);

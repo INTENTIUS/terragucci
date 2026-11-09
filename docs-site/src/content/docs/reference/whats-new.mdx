@@ -12,7 +12,7 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 
 ## In 0.4.55
 
-Under it is chant 0.124.80, pinned by the package and by each CI image.
+Under it is chant 0.124.81, pinned by the package and by each CI image.
 
 A control repo keeps its projects and defaults only as chant's entries on its `chant/lifecycle`. The record files under `terragucci/records` are no longer read, and `terragucci control records init` is gone.
 
@@ -36,7 +36,7 @@ Every wave now plans and applies on chant's step, and terragucci's own wave plan
 - A wave under `approval: pr-review` or `approval_rules` runs on the step. chant decides its gate and counts the review terragucci records. It leaves out the people behind the change and the agent's account, and it counts `approval_rules`. The report's rules and review come from that decision.
 - With `agent.token_env` and no `agent.login`, the job leaves out the account the agent's token acts as.
 - An Atmos read of another instance's outputs is read from that instance's own workspace, with its role and its pinned release.
-- A wave plans and applies its roots one at a time, and the job says so. `--parallelism` and `parallelism` no longer run roots side by side.
+- `--parallelism` and `parallelism` run a wave's roots side by side as before. Their inits take turns on the wave's provider cache, and the job says how many roots run at once.
 - The binary each root runs still sees no forge token, whether named as one or holding the same value.
 - A root an estate migration adopts into is left out of its wave until the migration has applied, and the next run plans it.
 - chant records a pull request's approving review itself. Each reviewer is named by forge principal, such as `github:alice`.
