@@ -5,8 +5,10 @@
  * report, so they match what reviewers saw.
  *
  * Whether or not telemetry is on, the binary's own spans are collected for
- * the run (`spans.ts`), and the report names the slowest roots and, in each
- * root, the slowest resources and provider calls.
+ * the run on the terraform lexicon's span receiver and read with its root
+ * timings (`@intentius/chant-lexicon-terraform/engine-timings`, chant#4887),
+ * and the report names the slowest roots and, in each root, the slowest
+ * resources and provider calls.
  */
 import { spawnSync } from "node:child_process";
 import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Attrs, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
@@ -16,7 +18,10 @@ import type { TerraformCommandHook } from "@intentius/chant-lexicon-terraform/co
 import type { Report } from "./schema";
 import { drifted } from "./drift";
 import { waveGauges, waveResult, type WaveFacts } from "./wave-telemetry";
-import { rootTimings, runTimings, SpanReceiver } from "./spans";
+import { rootTimings, runTimings, SpanReceiver } from "@intentius/chant-lexicon-terraform/engine-timings";
+
+/** The receiver's key for one root's runs of one command. */
+const runKey = (root: string, command: string): string => `${root}\u0000${command}`;
 
 /** One module call's pin in a root, as the Estate and Rollouts dashboards count them. */
 export interface ModulePin {
@@ -277,7 +282,7 @@ export class StageObserver {
     const traced = span ? binaryEnv(env, this.trace!, span, path) : env;
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(traced)) if (v !== undefined && env[k] !== v) out[k] = v;
-    return { ...out, ...(this.receiver?.exporter(path, command) ?? {}) };
+    return { ...out, ...(this.receiver?.exporter(runKey(path, command)) ?? {}) };
   }
 
   /** Run the binary inside a root, as a span of its own when tracing. */
@@ -298,7 +303,7 @@ export class StageObserver {
     const start = nowNanos();
     const span = this.trace && t.span ? this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, { kind: 3 }) : undefined;
     let runEnv = span ? binaryEnv(env, this.trace!, span, t.path) : env;
-    if (this.receiver) runEnv = this.receiver.env(runEnv, t.path, args[0]);
+    if (this.receiver) runEnv = { ...runEnv, ...this.receiver.exporter(runKey(t.path, args[0])) };
     const r = await spawn(runEnv);
     t.commands.push({ command: args[0], seconds: seconds(start, nowNanos()) });
     if (span) this.trace!.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
@@ -326,7 +331,7 @@ export class StageObserver {
       if (t.end !== undefined && c.method !== "plan") this.reopen(t);
       const span = this.trace && t.span ? this.trace.start(`${c.binary} ${c.name}`, t.span, { "process.executable.name": c.binary, "process.command_args": c.args.join(" ") }, { kind: 3 }) : undefined;
       let runEnv: NodeJS.ProcessEnv = span ? binaryEnv(c.env, this.trace!, span, t.path) : c.env;
-      if (this.receiver) runEnv = this.receiver.env(runEnv, t.path, c.name);
+      if (this.receiver) runEnv = { ...runEnv, ...this.receiver.exporter(runKey(t.path, c.name)) };
       const env: Record<string, string> = {};
       for (const [k, v] of Object.entries(runEnv)) if (v !== undefined && c.env[k] !== v) env[k] = v;
       return {
@@ -354,13 +359,13 @@ export class StageObserver {
       const t = this.roots.find((x) => x.path === r.path);
       if (!t || t.end === undefined) {
         const unit = this.units.get(r.path);
-        if (unit !== undefined) r.timings = rootTimings(this.receiver?.spansOf(r.path, "plan") ?? [], { binary, seconds: unit, planSeconds: unit, source: "terragrunt" });
+        if (unit !== undefined) r.timings = rootTimings(this.receiver?.spansOf(runKey(r.path, "plan")) ?? [], { binary, seconds: unit, planSeconds: unit, source: "terragrunt" });
         continue;
       }
       const ran = (c: string) => t.commands.filter((x) => x.command === c).reduce<number | undefined>((n, x) => (n ?? 0) + x.seconds, undefined);
       const plan = ran("plan");
       const apply = commands.includes("apply") ? ran("apply") : undefined;
-      r.timings = rootTimings(commands.flatMap((c) => this.receiver?.spansOf(t.path, c) ?? []), {
+      r.timings = rootTimings(commands.flatMap((c) => this.receiver?.spansOf(runKey(t.path, c)) ?? []), {
         binary,
         seconds: seconds(t.start, t.end) - Number(t.idle) / 1e9,
         ...(plan !== undefined ? { planSeconds: plan } : {}),

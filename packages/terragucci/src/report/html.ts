@@ -11,7 +11,7 @@
  */
 import { groupAnchor, rootAnchor } from "./build";
 import { actionWord, binaryText, type Report, type ReportChange, type ReportGroup, type ReportNamed, type ReportRoot, type ReportRootTimings } from "./schema";
-import { duration } from "./spans";
+import { duration } from "@intentius/chant-lexicon-terraform/engine-timings";
 import { stepResult } from "./views";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
