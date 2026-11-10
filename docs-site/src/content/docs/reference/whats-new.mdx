@@ -10,9 +10,19 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 | Each repo | `npx @intentius/terragucci@0.4.53 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
+## In 0.4.57
+
+terragucci and its CI images run on chant `0.124.88`.
+
+Cloud login in the jobs terragucci writes is chant's. On GitHub and Forgejo each step that logs in starts again without the token request variables, so the engine and the change's code can't ask for another token, and the login's token files are emptied when the step ends. GitLab's `id_tokens` are named `CHANT_ID_TOKEN_*`. Run `terragucci ci` to write the pipelines again.
+
+The `tf-check` job runs chant's check stage through `terragucci ci check`, and the `check-hooks` command is gone. The OpenTofu and Terragrunt installs in CI are chant's, and each download is checked against a recorded sum. `just ci-check` runs `chant dev generated-check`.
+
+A Terragrunt unit, a live root and a state migration's history are read through the terraform lexicon, the engine runs without the forge's tokens or chant's own token variables, and a wave's engine timings come from the lexicon's receiver. A resume that a signal killed exits 128.
+
 ## In 0.4.56
 
-The package and each CI image now pin chant 0.124.88.
+The package and each CI image now pin chant 0.124.87.
 
 `terragucci notify relay` refuses a click when the signers file's history at the default branch doesn't verify, such as a signer added straight to main without a signed rotation, and records nothing. A repository that added a signer that way adds it again with `chant workspace signers rotate`.
 
