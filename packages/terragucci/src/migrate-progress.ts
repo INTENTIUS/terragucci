@@ -8,9 +8,10 @@
  *    "outcome": "moved" | "stamped" | "refused" | "skipped",
  *    "reason": "...", "follows": "..."}
  *
- * `reason` and `follows` are left out when empty. The flag is passed only
- * when the binary's `live-mv -help` names it, so an older choudoufu runs the
- * migration as it did, with no lines.
+ * `reason` and `follows` are left out when empty. The terraform lexicon
+ * passes the flag only when the binary's `live-mv -help` names it
+ * (`takesProgressJson`), so an older choudoufu runs the migration as it
+ * did, with no lines.
  *
  * Each line goes, with the migration's name and its counts so far, to
  * `terragucci-report/migrations/<name>/progress.jsonl` as it arrives, and as
@@ -23,9 +24,6 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { progressInterval } from "./apply-progress";
-import type { BinaryExec } from "./migrate";
-
-export const PROGRESS_FLAG = "-progress-json";
 
 export const PROGRESS_OUTCOMES = ["moved", "stamped", "refused", "skipped"] as const;
 export type ProgressOutcome = (typeof PROGRESS_OUTCOMES)[number];
@@ -102,25 +100,6 @@ export function countsLine(name: string, c: MigrationCounts, change: "retag" | "
   const done = change === "retag" ? `${c.moved} of ${total} moved` : `${c.stamped} of ${total} stamped`;
   const rest = [c.refused ? `${c.refused} refused` : "", c.skipped ? `${c.skipped} skipped` : ""].filter(Boolean);
   return `${name}: ${done}${rest.length ? `, ${rest.join(", ")}` : ""}`;
-}
-
-/**
- * Whether the binary takes `-progress-json`: its `live-mv -help` names the
- * flag. Asked once per binary; a binary that cannot answer does not.
- */
-const supported = new WeakMap<BinaryExec, Map<string, Promise<boolean>>>();
-export function takesProgressJson(exec: BinaryExec, binary: string, dir: string, env: NodeJS.ProcessEnv): Promise<boolean> {
-  let byBinary = supported.get(exec);
-  if (!byBinary) supported.set(exec, (byBinary = new Map()));
-  let got = byBinary.get(binary);
-  if (!got) {
-    got = exec(binary, ["live-mv", "-help"], dir, env).then(
-      (r) => new RegExp(`(^|\\s)${PROGRESS_FLAG}(\\s|=|$)`, "m").test(r.out),
-      () => false,
-    );
-    byBinary.set(binary, got);
-  }
-  return got;
 }
 
 /** Where a migration's progress goes beyond the report directory. Each is optional, and none throws into the migration. */

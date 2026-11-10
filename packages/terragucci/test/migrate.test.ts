@@ -2,41 +2,27 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-/** The reader of a gated request's stored proof, when a case stands one in. */
-const proof = vi.hoisted((): { read?: (dir: string, file: string) => Promise<string | null> } => ({}));
-vi.mock("@intentius/chant/lifecycle/git", async (real: () => Promise<Record<string, unknown>>) => {
-  const m = await real();
-  return { ...m, readBlobFromPath: (dir: string, file: string, opts?: unknown) => (proof.read ? proof.read(dir, file) : (m.readBlobFromPath as (d: string, f: string, o?: unknown) => Promise<string | null>)(dir, file, opts)) };
-});
 import { writeLedger, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
 import {
-  addressMatches,
-  applyMigration,
-  derivedLineage,
   doneMigrations,
-  lockKey,
-  lockInfo,
   MIGRATE_DONE,
   MIGRATE_LEDGER,
   beforeMembers,
   migrateApproveCommand,
-  moveResources,
   movedSinceApproval,
-  movedSinceChantApproval,
-  type MigrationRoot,
   OVERRIDE_FILE,
   parseMigration,
   planMigration,
   refusal,
-  resourceChanges,
   runMigrations,
+  writtenRecord,
   type BinaryExec,
   type StateFile,
   type StateResource,
 } from "../src/migrate";
 import { ledgerEntries, MIGRATE_DONE_FILE, MIGRATE_LEDGER_FILE } from "../src/report/audit";
-import { S3Client, type S3Fetch } from "@intentius/chant/object-store";
+import { writeStateMigration } from "@intentius/chant/state-migration";
+import { derivedLineage } from "@intentius/chant-lexicon-terraform/state-migration";
 import { tmp, write } from "./helpers";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 
@@ -88,52 +74,6 @@ describe("a migration file", () => {
     expect(msg).toContain("moves[1].addresses must list");
     expect(msg).toContain("moves[1].rename is not a key of a move");
     expect(() => parseMigration("migrations/x.yml", "{}")).toThrow("moves is missing or empty");
-  });
-});
-
-describe("moving resources between states", () => {
-  it("matches a resource by its address and a module call with every module and instance under it", () => {
-    expect(addressMatches("aws_sqs_queue.jobs", res("aws_sqs_queue", "jobs"))).toBe(true);
-    expect(addressMatches("aws_sqs_queue.jobs", res("aws_sqs_queue", "jobs", "module.a"))).toBe(false);
-    expect(addressMatches("module.a.aws_sqs_queue.jobs", res("aws_sqs_queue", "jobs", 'module.a["x"]'))).toBe(true);
-    expect(addressMatches("module.a", res("aws_sqs_queue", "jobs", 'module.a["x"].module.b'))).toBe(true);
-    expect(addressMatches("module.a", res("aws_caller_identity", "me", "module.a", "data"))).toBe(true);
-    expect(addressMatches("module.a", res("aws_sqs_queue", "jobs", "module.ab"))).toBe(false);
-    expect(addressMatches("aws_caller_identity.me", res("aws_caller_identity", "me", undefined, "data"))).toBe(false);
-  });
-
-  it("takes the resources out of one state and into the other: a changed state keeps its lineage and gets the next serial", () => {
-    const before = new Map<string, StateFile | null>([
-      ["one", state("L1", 7, [res("terraform_data", "a"), res("terraform_data", "b")])],
-      ["two", state("L2", 3, [res("terraform_data", "c")])],
-    ]);
-    const after = moveResources("m", [{ from: "one", to: "two", addresses: ["terraform_data.b"] }], before);
-    expect(after.get("one")).toMatchObject({ lineage: "L1", serial: 8 });
-    expect(after.get("one")!.resources.map((r) => r.name)).toEqual(["a"]);
-    expect(after.get("two")).toMatchObject({ lineage: "L2", serial: 4 });
-    expect(after.get("two")!.resources.map((r) => r.name)).toEqual(["c", "b"]);
-    // The states read are left as they were.
-    expect(before.get("one")!.resources).toHaveLength(2);
-  });
-
-  it("gives a root with no state a new one, its lineage the same each time it is planned", () => {
-    const before = new Map<string, StateFile | null>([["one", state("L1", 1, [res("terraform_data", "a")])], ["new", null]]);
-    const a = moveResources("m", [{ from: "one", to: "new", addresses: ["terraform_data.a"] }], before).get("new")!;
-    const b = moveResources("m", [{ from: "one", to: "new", addresses: ["terraform_data.a"] }], before).get("new")!;
-    expect(a).toMatchObject({ version: 4, serial: 1, terraform_version: "1.13.1", lineage: derivedLineage("m", "new") });
-    expect(a.lineage).toBe(b.lineage);
-    expect(a.lineage).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
-  });
-
-  it("refuses an address that is in no state, or already in the root it moves to", () => {
-    const before = new Map<string, StateFile | null>([["one", state("L1", 1, [res("terraform_data", "a")])], ["two", state("L2", 1, [res("terraform_data", "a")])]]);
-    expect(() => moveResources("m", [{ from: "one", to: "two", addresses: ["terraform_data.a", "terraform_data.z"] }], before)).toThrow(/terraform_data\.a is already in the state of two[\s\S]*terraform_data\.z is not in the state of one/);
-    expect(() => moveResources("m", [{ from: "none", to: "two", addresses: ["terraform_data.a"] }], new Map([["none", null]]))).toThrow("none has no state to move");
-  });
-
-  it("counts only resource changes: no-ops and reads are not", () => {
-    expect(resourceChanges({ resource_changes: [{ address: "a.x", change: { actions: ["no-op"] } }, { address: "data.b.y", change: { actions: ["read"] } }, { address: "c.z", change: { actions: ["delete", "create"] } }] })).toEqual(["c.z: delete+create"]);
-    expect(resourceChanges({})).toEqual([]);
   });
 });
 
@@ -260,10 +200,11 @@ describe("running a migration from wave 1", () => {
     // The plan record kept beside the ledger holds digests, never a state's contents: on chant's gate it is the request's attachment.
     const kept = git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${digest.replace(/:/g, "_")}.json`);
     expect(kept).not.toContain("secret-");
-    // A pull request's plan job proves the same proof, read only: on chant's gate the request binds that proof, under a digest of chant's.
+    // A pull request's plan job proves the same proof, read only: on chant's gate the request binds each root's plan, under a digest of chant's.
+    expect(JSON.parse(kept)).toMatchObject({ name: "split-b", roots: [{ root: "one" }, { root: "two" }] });
     const planned = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, planOnly: true, log });
     expect(planned.code).toBe(0);
-    expect(planned.records[0]).toMatchObject({ status: "planned", digest: JSON.parse(kept).digest });
+    expect(planned.records[0]).toMatchObject({ status: "planned" });
 
     await approve(work, "split-b", digest, T(2));
     const second = await runMigrations(work, { binary: "tofu", exec: fake, env: {}, now: T(3), log });
@@ -385,36 +326,6 @@ describe("running a migration from wave 1", () => {
     expect(movedSinceApproval(ledger, "move-backends", undefined, now, ["pg", "s3", "tfe"])).toEqual(["pg", "s3", "tfe"]);
   });
 
-  it("on chant's gate, names the roots whose state moved since the approved request's stored proof", async () => {
-    const root = (name: string, version: string): MigrationRoot => ({ root: name, before: { version_id: version, digest: `sha256:${name}${version}` } }) as unknown as MigrationRoot;
-    const request = (digest: string, at: string, approvals: { resolvedBy: string; timestamp: string }[], applied?: boolean) => ({
-      op: "tf-migrate",
-      gate: "split-b",
-      digest,
-      request: { kind: "migrate", subject: "split-b", by: "bob", at, fields: {} },
-      pending: { timestamp: at },
-      approvals,
-      ...(applied ? { applied: { timestamp: T(4) } } : {}),
-    });
-    const requests = (old: ReturnType<typeof request>) => ({ readGatedRequests: async () => [old, request("sha256:new", T(3), [])] });
-    const approved = request("sha256:old", T(1), [{ resolvedBy: "alice", timestamp: T(2) }]);
-    const now = [root("one", "v2"), root("two", "v1")];
-    // chant kept the approved request's proof: only the root whose state before differs moved.
-    const kept = new Map([["_gates/tf-migrate/requests/sha256_old.json", JSON.stringify({ roots: [root("one", "v1"), root("two", "v1")] })]]);
-    proof.read = async (dir: string, file: string) => kept.get(`${dir}/${file}`) ?? null;
-    restoreChant.push(() => void delete proof.read);
-    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved))).toEqual({ approved: "sha256:old", by: "alice", moved: ["one"] });
-    // No approval, the requester's own, or one spent already: the new request only waits.
-    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [])))).toBeUndefined();
-    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [{ resolvedBy: "Bob", timestamp: T(2) }])))).toBeUndefined();
-    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(request("sha256:old", T(1), [{ resolvedBy: "alice", timestamp: T(2) }], true)))).toBeUndefined();
-    // A later run finds the new request asked already, newer than the approval: it waits for that digest's approval.
-    expect(await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(5), now, requests(approved))).toBeUndefined();
-    // With no proof to compare, every root moved.
-    kept.clear();
-    expect((await movedSinceChantApproval(tmp(), "split-b", "sha256:new", T(3), now, requests(approved)))?.moved).toEqual(["one", "two"]);
-  });
-
   it("under chant run wave, wave 1 refused for a state written after the approval names the root", async () => {
     const { work } = repo();
     const log = () => {};
@@ -452,7 +363,7 @@ describe("running a migration from wave 1", () => {
     const { work } = repo();
     const plan = await planMigration(work, parseMigration("migrations/split-b.yml", readFileSync(join(work, "migrations", "split-b.yml"), "utf-8")), { binary: "tofu", exec: fake, env: {}, work: tmp() });
     writeFileSync(join(work, "two", "terraform.tfstate"), JSON.stringify(state("L2", 3, [res("terraform_data", "c")])));
-    const out = await applyMigration(work, plan, { binary: "tofu", exec: fake, env: {}, work: tmp(), now: T(1) });
+    const out = writtenRecord(plan, await writeStateMigration(plan.engine, plan.roots));
     expect(out).toMatchObject({ status: "refused", moved: ["two"] });
     expect(names(work, "one")).toEqual(["a", "b"]);
   });
@@ -463,7 +374,8 @@ describe("running a migration from wave 1", () => {
     const plan = await planMigration(work, parseMigration("migrations/split-b.yml", readFileSync(join(work, "migrations", "split-b.yml"), "utf-8")), { binary: "tofu", exec: fake, env: {}, work: tmp() });
     expect(plan.record.status).toBe("planned");
     expect(plan.record.roots.find((r) => r.root === "three")?.before).toEqual({ digest: null });
-    expect(plan.files.get("three")?.state).toMatchObject({ serial: 1, lineage: derivedLineage("split-b", "three") });
+    expect((await writeStateMigration(plan.engine, plan.roots)).status).toBe("applied");
+    expect(JSON.parse(readFileSync(join(work, "three", "terraform.tfstate"), "utf-8"))).toMatchObject({ serial: 1, lineage: derivedLineage("split-b", "three") });
   });
 
   it("does nothing in a repo with no migrations", async () => {
@@ -511,27 +423,6 @@ describe("a migration in the audit trail", () => {
     // The gate's own lines read as any gate's: a request and an approval of the migration's digest.
     const pending = JSON.stringify({ version: 1, kind: "pending", op: "tf-migrate", gate: "split-b", timestamp: T(1), expiresAt: T(9), planDigest: "d", members: [{ member: "one", planDigest: "x" }] });
     expect(ledgerEntries("p", MIGRATE_LEDGER_FILE, [{ text: pending, commit: "c0", added: { at: T(1), by: "t" } }])[0]).toMatchObject({ kind: "approval-requested", what: "split-b", detail: { roots: ["one"] } });
-  });
-});
-
-describe("the S3 lock a migration holds", () => {
-  it("is the state's lock file, taken only when absent and never without the condition", async () => {
-    expect(lockKey("envs/dev/platform.tfstate")).toBe("envs/dev/platform.tfstate.tflock");
-    expect(JSON.parse(lockInfo("b/k", T(1), "me"))).toMatchObject({ Operation: "terragucci migrate", Who: "me", Created: T(1), Path: "b/k" });
-    const answer = (status: number): S3Fetch => async (_u, init) => {
-      expect(init.headers["if-none-match"]).toBe("*");
-      return { ok: status < 300, status, text: async () => "" };
-    };
-    const client = (f: S3Fetch) => new S3Client({ bucket: "b", endpoint: "http://minio:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" }, f);
-    expect(await client(answer(200)).putIfAbsent("k.tflock", "{}", "application/json")).toBe(true);
-    expect(await client(answer(412)).putIfAbsent("k.tflock", "{}", "application/json")).toBe(false);
-    await expect(client(answer(501)).putIfAbsent("k.tflock", "{}", "application/json")).rejects.toThrow("does not take a conditional write");
-    const seen: string[] = [];
-    await client(async (u, init) => {
-      seen.push(`${init.method} ${u}`);
-      return { ok: false, status: 404, text: async () => "" };
-    }).remove("k.tflock");
-    expect(seen).toEqual(["DELETE http://minio:9000/b/k.tflock"]);
   });
 });
 

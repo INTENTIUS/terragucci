@@ -177,6 +177,7 @@ import { parseLayers, runStage } from "./report/stage";
 import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
 import { exportState } from "./export";
 import { StoreError } from "@intentius/chant/object-store";
+import { StateSourceError } from "@intentius/chant-lexicon-terraform/state";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";
@@ -1715,7 +1716,7 @@ export async function main(argv: string[]): Promise<number> {
         return USAGE_EXIT;
     }
   } catch (e) {
-    if (e instanceof ConfigError || e instanceof RenderError || e instanceof StoreError) {
+    if (e instanceof ConfigError || e instanceof RenderError || e instanceof StoreError || e instanceof StateSourceError) {
       if (json) return emit(envelope(cmd === "config" ? (args[0] === "identities" ? "config identities" : "config check") : cmd === "forge" ? "forge check" : cmd, USAGE_EXIT, null, e.message));
       console.error(`terragucci: ${e.message}`);
       return USAGE_EXIT;
