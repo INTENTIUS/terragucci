@@ -16,7 +16,7 @@
  */
 
 import { Workflow, Job, Step, Checkout, SetupNode } from "@intentius/chant-lexicon-github";
-import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, TEST_TERRAGRUNT, installJust, installTerragrunt, installTofu, setupGo } from "../workflows/shared";
+import { CHECKOUT, SETUP_NODE, NODE_VERSION, GO_VERSION, installJust, installTerragrunt, installTofu, setupGo, testTerragrunt } from "../workflows/shared";
 import { TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 export const workflow = new Workflow({
@@ -80,6 +80,6 @@ export const test = new Job({
     installTofu(TOOL_VERSIONS.tofu),
     installTerragrunt(TOOL_VERSIONS.terragrunt),
     new Step({ name: "Install", run: "npm ci" }),
-    new Step({ name: "Test", run: "just test-shard ${{ matrix.shard }} 3", env: { TERRAGUCCI_TEST_TERRAGRUNT: TEST_TERRAGRUNT } }),
+    new Step({ name: "Test", run: "just test-shard ${{ matrix.shard }} 3", env: { TERRAGUCCI_TEST_TERRAGRUNT: testTerragrunt(TOOL_VERSIONS.terragrunt) } }),
   ],
 });

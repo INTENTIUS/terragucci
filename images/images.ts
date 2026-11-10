@@ -5,8 +5,7 @@
  *
  * chant's productImageStages (chant issue 4784) writes each CI image: a fetch
  * stage that downloads every engine and checks it against its release's
- * checksums file and the sha256 recorded for it (chant's, or TOOL_SHA256
- * here), so curl never reaches the final image; then node:22-bookworm-slim
+ * checksums file and the sha256 chant records for it (CI_TOOL_SHA256), so curl never reaches the final image; then node:22-bookworm-slim
  * with git and CA certificates, the engines under /opt/terragucci linked onto
  * PATH, chant's wave runtime and the terragucci bundle
  * (packages/terragucci/dist, built by `just build-cli` first). Tool versions
@@ -16,7 +15,7 @@
 import { CI_IMAGE_LABEL_ARG, productImageStages, type CiImageTool } from "@intentius/chant/ci-image";
 import { Dockerfile } from "@intentius/chant-lexicon-docker";
 import pkg from "../packages/terragucci/package.json" with { type: "json" };
-import { DECIDE_IMAGE, LAYA_MODEL, TOOL_SHA256, TOOL_VERSIONS } from "../packages/terragucci/src/images";
+import { DECIDE_IMAGE, LAYA_MODEL, TOOL_VERSIONS } from "../packages/terragucci/src/images";
 
 /** The build argument a release passes its label in (chant's release.version): each image's version label reads it. */
 export const RELEASE_LABEL_ARG = CI_IMAGE_LABEL_ARG;
@@ -24,10 +23,7 @@ export const RELEASE_LABEL_ARG = CI_IMAGE_LABEL_ARG;
 /** Python by index digest, for the decide image, so a rebuild cannot change underneath a tag. */
 const PYTHON = "python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3";
 
-const engine = (tool: keyof typeof TOOL_VERSIONS): CiImageTool => {
-  const sha256 = TOOL_SHA256[tool];
-  return { tool, version: TOOL_VERSIONS[tool], ...(sha256 ? { sha256 } : {}) };
-};
+const engine = (tool: keyof typeof TOOL_VERSIONS): CiImageTool => ({ tool, version: TOOL_VERSIONS[tool] });
 
 const ciImage = (name: string, description: string, tools: CiImageTool[]): Dockerfile =>
   new Dockerfile({

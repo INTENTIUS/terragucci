@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ciToolSha256, type CiTool } from "@intentius/chant/ci-image";
-import { TOOL_SHA256, TOOL_VERSIONS } from "../src/images";
+import { TOOL_VERSIONS } from "../src/images";
 import { assertLinux, install, installDir } from "../src/install";
 
 describe("install", () => {
@@ -19,9 +19,9 @@ describe("install", () => {
     await expect(install("tofu", "1.2.3; rm -rf /")).rejects.toThrow(/not a release version/);
   });
 
-  // An image needs a recorded sha256 for both architectures (chant issue 4784): chant's, or terragucci's own.
+  // An image needs a recorded sha256 for both architectures (chant issue 4784), and chant records each image release's (4908).
   it.each(Object.entries(TOOL_VERSIONS))("%s %s has a recorded sha256 for amd64 and arm64", (tool, version) => {
-    const sums = ciToolSha256(tool as CiTool, version, TOOL_SHA256[tool as keyof typeof TOOL_VERSIONS]);
+    const sums = ciToolSha256(tool as CiTool, version);
     expect(Object.keys(sums).sort()).toEqual(["amd64", "arm64"]);
   });
 });
