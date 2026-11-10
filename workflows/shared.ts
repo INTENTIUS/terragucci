@@ -9,6 +9,7 @@
  * not Declarables, so a stray build picks up nothing from it.
  */
 
+import { CI_TOOL_ROOT, ciToolBin, ciToolInstallLine } from "@intentius/chant/ci-image";
 import { Step } from "@intentius/chant-lexicon-github";
 
 /**
@@ -62,36 +63,23 @@ export const installAct = (): InstanceType<typeof Step> =>
 /**
  * OpenTofu at the version the tofu image carries, for the tests that run the
  * real binary (they skip where `tofu` is missing, so the check job installs
- * it: a laptop has it, a fresh runner does not).
+ * it: a laptop has it, a fresh runner does not). chant's install line checks
+ * it against the release's checksums file and the sha256 chant records.
  */
 export const installTofu = (version: string): InstanceType<typeof Step> =>
   new Step({
     name: "Install OpenTofu",
-    run: [
-      `arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac`,
-      `curl -fsSL -o /tmp/tofu.tar.gz https://github.com/opentofu/opentofu/releases/download/v${version}/tofu_${version}_linux_$arch.tar.gz`,
-      `tar -xzf /tmp/tofu.tar.gz -C /tmp tofu`,
-      `sudo mv /tmp/tofu /usr/local/bin/tofu`,
-      `tofu version`,
-    ].join("\n"),
+    run: [ciToolInstallLine("tofu", version, { sudo: true }), `tofu version`].join("\n"),
   });
 
 /** Where installTerragrunt puts Terragrunt: off the path, so the tests that find no Terragrunt on it stay as they are. */
-export const TEST_TERRAGRUNT = "/opt/terragrunt/terragrunt";
+export const testTerragrunt = (version: string): string => ciToolBin("terragrunt", version, CI_TOOL_ROOT);
 
-/** Terragrunt for the tests that run it (TERRAGUCCI_TEST_TERRAGRUNT), checked against the release's SHA256SUMS. */
+/** Terragrunt for the tests that run it (TERRAGUCCI_TEST_TERRAGRUNT), checked as installTofu checks OpenTofu, and not linked onto the path. */
 export const installTerragrunt = (version: string): InstanceType<typeof Step> =>
   new Step({
     name: "Install Terragrunt",
-    run: [
-      `arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac`,
-      `cd /tmp`,
-      `curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v${version}/terragrunt_linux_$arch`,
-      `curl -fsSL -O https://github.com/gruntwork-io/terragrunt/releases/download/v${version}/SHA256SUMS`,
-      `grep " terragrunt_linux_$arch\\$" SHA256SUMS | sha256sum -c -`,
-      `sudo install -D -m 0755 terragrunt_linux_$arch ${TEST_TERRAGRUNT}`,
-      `${TEST_TERRAGRUNT} --version`,
-    ].join("\n"),
+    run: [ciToolInstallLine("terragrunt", version, { sudo: true, link: false }), `${testTerragrunt(version)} --version`].join("\n"),
   });
 
 /** Go for the provider's tests (`just provider-test`), at the version its go.mod names. */

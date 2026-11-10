@@ -3,15 +3,14 @@
  * it, and print the directory it is in. chant's installCiTool (chant issue
  * 4784) does the work: it needs only Node, so it runs in terragucci's images,
  * which carry no curl or unzip, and it checks the archive against the
- * release's checksums file and, for the releases TOOL_SHA256 or chant
- * records, that sha256 too. A pipeline uses it when a repo pins a version its
+ * release's checksums file and, for the releases chant records
+ * (CI_TOOL_SHA256), that sha256 too. A pipeline uses it when a repo pins a version its
  * image does not carry. It fetches Linux builds only (see assertLinux).
  */
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installCiTool } from "@intentius/chant/ci-image";
 import { ConfigError } from "./config";
-import { TOOL_SHA256, TOOL_VERSIONS } from "./images";
 
 export type Tool = "tofu" | "terraform" | "terragrunt" | "choudoufu" | "infracost" | "cosign" | "atmos" | "terramate";
 
@@ -37,18 +36,11 @@ export function installDir(tool: Tool, version: string, env = process.env): stri
   return join(root, `${tool}-${version}`);
 }
 
-/** The sha256 terragucci records for `tool` at `version`, when it is an image's release. */
-function recorded(tool: Tool, version: string): { amd64: string; arm64: string } | undefined {
-  const t = tool as keyof typeof TOOL_VERSIONS;
-  return TOOL_VERSIONS[t] === version ? TOOL_SHA256[t] : undefined;
-}
-
 /** Install `tool` at `version` and return the directory holding it. An existing install is reused. */
 export async function install(tool: Tool, version: string, env = process.env): Promise<string> {
   if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(version)) throw new ConfigError(`"${version}" is not a release version`);
-  const sha256 = recorded(tool, version);
   try {
-    const { dir } = await installCiTool(tool, version, { root: dirname(installDir(tool, version, env)), ...(sha256 ? { sha256 } : {}) });
+    const { dir } = await installCiTool(tool, version, { root: dirname(installDir(tool, version, env)) });
     return dir;
   } catch (e) {
     throw new ConfigError((e as Error).message);
