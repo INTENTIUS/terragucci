@@ -16,15 +16,13 @@
  * `init` writes the hook into chant.workspace.json and the check job runs
  * it through chant, read from the declaration at base.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as checkHooksLib from "@intentius/chant/components/check-hooks";
 import { CI_CHECK_HOOK_FLOOR } from "@intentius/chant/components/check-hooks";
-import type { ChantCheckHook, ChantCheckHooks, ChantCheckHooksReport } from "./chant-next";
-import { CHECK_DIR, type CheckResult } from "./check";
-import { ConfigError, type Binary } from "./config";
-import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
+import type { ChantCheckHook, ChantCheckHooks } from "./chant-next";
+import { CHECK_DIR } from "./check";
+import type { Binary } from "./config";
 
 /** The hook's name in chant.workspace.json, which a later init replaces by. */
 export const PRE_COMMIT_HOOK = "terragucci-pre-commit";
@@ -136,63 +134,4 @@ export function withoutPreCommitHook(text: string): string | undefined {
   if (Object.keys(hooks).length === 0) delete doc.ci!.hooks;
   if (Object.keys(doc.ci!).length === 0) delete doc.ci;
   return `${JSON.stringify(doc, null, 2)}\n`;
-}
-
-/** The check report's lines for what the check hooks came to. */
-export function checkHooksResult(report: Pick<ChantCheckHooksReport, "status" | "hooks" | "failed" | "note" | "base">): CheckResult {
-  const log: string[] = [];
-  if (report.note) log.push(report.note);
-  if (report.status === "none") return { ok: true, log, report: [] };
-  const at = report.base === "HEAD" ? "" : ` (read at ${report.base.length === 40 ? report.base.slice(0, 12) : report.base})`;
-  const lines = report.hooks.map((h) => `${h.outcome === "failed" ? "failed" : h.outcome}: \`${h.name}\`${h.target ? ` for \`${h.target}\`` : ""}${h.outcome === "failed" ? `, exit ${h.exit}` : ""}${h.reason ? ` (${h.reason})` : ""}`);
-  log.push(...lines.map((l) => `check hook ${l.replace(/`/g, "")}`));
-  if (report.failed) log.push(`FAILED check hooks: ${report.failed}`);
-  return { ok: report.status !== "failed", log, report: [`### Check hooks${at}`, "", ...lines.map((l) => `- ${l}`), ...(report.failed ? [`- ${report.failed}`] : []), ""] };
-}
-
-/** The job's environment without forge tokens, OIDC request variables or registry tokens, for the preset's own run. */
-export function hookEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const drop = new Set<string>([...FORGE_TOKEN_VARS, "TG_TOKEN", "TG_MERGE_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]);
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(env)) if (v !== undefined && !drop.has(k) && !k.startsWith("TF_TOKEN_")) out[k] = v;
-  return out;
-}
-
-export interface CheckHooksOptions {
-  /** The commit the hooks are read at, and the change measured from. */
-  base: string;
-  /** The roots (or units), for a `perRun` hook. */
-  targets: readonly string[];
-  binary: Binary;
-  /** `check.pre_commit` is on: a base whose declaration lacks the preset's hook is named in the log. */
-  preCommit: boolean;
-  env?: NodeJS.ProcessEnv;
-  log?: (line: string) => void;
-  /** For tests: the chant check moment. Default: chant's (`components/check-hooks`). */
-  chant?: ChantCheckHooks;
-}
-
-/**
- * tf-check's check hooks: chant's check moment (`ci.hooks.check` at base).
- */
-export async function checkHooks(repo: string, options: CheckHooksOptions): Promise<CheckResult> {
-  const env = options.env ?? process.env;
-  const log = options.log ?? ((line: string) => console.log(line));
-  const chant = options.chant ?? (checkHooksLib as unknown as ChantCheckHooks);
-  {
-    mkdirSync(join(repo, CHECK_HOOKS_OUT), { recursive: true });
-    let report: ChantCheckHooksReport;
-    try {
-      report = chant.runCheckHooks({ base: options.base, targets: options.targets, cwd: repo, dir: CHECK_HOOKS_OUT, log });
-    } catch (e) {
-      const msg = (e as Error).message;
-      return { ok: false, log: [`FAILED check hooks: ${msg}`], report: ["### Check hooks", "", `- failed: ${msg}`, ""] };
-    }
-    const result = checkHooksResult(report);
-    // The preset is on and the base's declaration does not carry its hook yet: the change that adds it runs it once merged.
-    if (options.preCommit && !report.hooks.some((h) => h.name === PRE_COMMIT_HOOK) && report.status !== "failed") {
-      result.log.push(`check.pre_commit: chant.workspace.json at ${options.base} has no ${PRE_COMMIT_HOOK} check hook, so pre-commit does not run; terragucci init adds it, and it runs once that change is on the base`);
-    }
-    return result;
-  }
 }

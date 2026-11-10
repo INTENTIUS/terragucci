@@ -308,7 +308,7 @@ export interface PipelineInput {
   /** `parallelism` from terragucci.yml: at most this many roots check at once. Unset: all of them. */
   parallelism?: number;
   /**
-   * The check job runs `terragucci check-hooks` last: chant's `ci.hooks.check`, read at base, with the history that
+   * The check job runs `terragucci ci check` last: chant's `ci.hooks.check`, read at base, with the history that
    * reads it. Set when `check.pre_commit` is on (`preCommit`, ./pre-commit.ts) or chant.workspace.json names check hooks.
    */
   checkHooks?: { preCommit: boolean };
@@ -794,11 +794,11 @@ export function checkScript(binary: Binary, roots: string[], synth?: string, roo
 }
 
 /**
- * tf-check's last step with `checkHooks` set: `terragucci check-hooks`, which
- * runs chant's `ci.hooks.check` (or, on a chant without the moment, the
- * pre-commit preset itself) over the roots, and fails the check when a hook
- * fails. A Terragrunt check stops at its first failing line, so the step is
- * its last line there; a plain check counts it with the rest.
+ * tf-check's last step with `checkHooks` set: `terragucci ci check`, chant's
+ * check stage (chant issue 4914), which runs `ci.hooks.check` read at base
+ * over the roots, appends its section to the check report and fails the check
+ * when a hook fails. A Terragrunt check stops at its first failing line, so
+ * the step is its last line there; a plain check counts it with the rest.
  */
 /**
  * With `control` set, the check job holds the project's consumers.json to its
@@ -815,9 +815,9 @@ export function withConsumersCheck(body: string, control: boolean, terragrunt: b
   return [...lines, `${line} || failed=1`, last].join("\n");
 }
 
-export function withCheckHooks(body: string, binary: Binary, roots: readonly string[], hooks: PipelineInput["checkHooks"], terragrunt: boolean): string {
+export function withCheckHooks(body: string, roots: readonly string[], hooks: PipelineInput["checkHooks"], terragrunt: boolean): string {
   if (!hooks) return body;
-  const line = `terragucci check-hooks --binary ${binary}${hooks.preCommit ? " --pre-commit" : ""} --targets ${sh(roots.join(","))}`;
+  const line = `terragucci ci check --output ${CHECK_DIR}/hooks --summary ${CHECK_DIR}/report.md${roots.map((r) => ` ${sh(r)}`).join("")}`;
   if (terragrunt) return `${body}\n${line}`;
   const lines = body.split("\n");
   const last = lines.pop();
@@ -2557,7 +2557,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   ];
   const installStep = installs.length > 0 ? installs.map((i) => installScript(i.tool, i.version, forge)).join("\n") : undefined;
   const installName = `Install ${installs.map((i) => `${i.tool} ${i.version}`).join(", ")}`;
-  const checkBody = withConsumersCheck(withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), binary, roots, input.checkHooks, tg !== undefined), input.control !== undefined, tg !== undefined);
+  const checkBody = withConsumersCheck(withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), roots, input.checkHooks, tg !== undefined), input.control !== undefined, tg !== undefined);
   // The check hooks are read from the declaration at base, so the check job takes the history, as the policy tests do.
   const checkHistory = Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true || input.checkHooks !== undefined;
   const synth = input.synth ? { synth: input.synth } : {};

@@ -19,9 +19,8 @@
  *
  * Newer than the pin too (chant#4556, terragucci#1284): the check moment,
  * `ci.hooks.check`, from `@intentius/chant/components/check-hooks`: the
- * writer `init` adds the pre-commit preset's hook with, and the runner the
- * check job calls. Without it init writes no hook, and `terragucci
- * check-hooks` runs the preset's hook itself (./pre-commit.ts).
+ * writer `init` adds the pre-commit preset's hook with. The check job runs
+ * the hooks through chant's `ci check` (chant issue 4914).
  *
  * Newer than the pin too (terragucci#1285): chant core's shared bucket check
  * (`@intentius/chant/bucket-check`, chant#4558), which `init` runs on the
@@ -286,32 +285,8 @@ export interface ChantCheckHook {
   targets?: string[];
 }
 
-/** What chant's check hooks came to (`CheckHooksReport`). */
-export interface ChantCheckHooksReport {
-  version: 1;
-  moment: "check";
-  base: string;
-  targets: string[];
-  status: "passed" | "failed" | "none";
-  hooks: { name: string; target?: string; exit: number; outcome: "passed" | "failed" | "skipped"; reason?: string }[];
-  failed?: string;
-  note?: string;
-}
-
-/**
- * chant's check moment (`/components/check-hooks`, chant#4556): the hooks
- * read from the workspace declaration at base, run without forge tokens or
- * cloud credentials, and the writer a product's init adds a hook with.
- */
+/** chant's check moment (`/components/check-hooks`, chant#4556): the writer a product's init adds a hook with. */
 export interface ChantCheckHooks {
-  runCheckHooks(options: {
-    base: string;
-    targets?: readonly string[];
-    cwd?: string;
-    dir?: string;
-    env?: Record<string, string>;
-    log?: (line: string) => void;
-  }): ChantCheckHooksReport;
   writeCiHook(root: string, moment: "check", hook: ChantCheckHook, opts?: { member?: string }): { file: string; replaced: boolean };
 }
 
