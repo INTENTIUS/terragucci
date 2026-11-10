@@ -58,7 +58,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
-import { dataDir } from "./backend";
+import { dataDir } from "@intentius/chant-lexicon-terraform/state";
 import { ConfigError, resolveProject, resolveRepo, type SourceProxy, type SourcesSettings } from "./config";
 import * as registryLib from "@intentius/chant-lexicon-terraform/registry";
 import type { ChantRegistryProxies, ChantRegistryProxy, ChantSourceForms } from "./chant-next";

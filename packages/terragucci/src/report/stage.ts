@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { rootRoleEnv } from "../cloud-identity";
 import { rootSecretEnv } from "../root-secrets";
-import { workspaceEnv, workspaceInit } from "../backend";
+import { workspaceEnv, workspaceInit } from "../workspace";
 import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";

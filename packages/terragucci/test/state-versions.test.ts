@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { initialisedBackend, s3StateKey, stateObject, stateVersion, workspaceOf } from "../src/backend";
 import { estate } from "../src/estate";
 import { reportEntry } from "../src/report/audit";
 import { buildReport } from "../src/report/build";
@@ -36,102 +35,6 @@ function headOnly(status: number, headers: Record<string, string> = {}) {
   };
   return { fetch, seen };
 }
-
-describe("where a root's state is", () => {
-  it("reads the backend init recorded, s3 with its bucket, key, region and endpoint", () => {
-    const dir = initialised("s3", S3_CONFIG);
-    expect(initialisedBackend(dir)?.type).toBe("s3");
-    const o = stateObject(dir, ENV);
-    expect(o).toMatchObject({ backend: "s3", bucket: "acme-state", key: "envs/dev/platform.tfstate", region: "eu-west-1", endpoint: "http://floci:4566", lockfile: true, dynamodb: false });
-  });
-
-  it("takes the endpoint from AWS_ENDPOINT_URL when the backend names none, and the key of another workspace", () => {
-    const dir = initialised("s3", { ...S3_CONFIG, endpoints: null, workspace_key_prefix: "ws" });
-    const o = stateObject(dir, { ...ENV, AWS_ENDPOINT_URL: "http://floci:4566/", TF_WORKSPACE: "blue" });
-    expect(o).toMatchObject({ endpoint: "http://floci:4566", key: "ws/blue/envs/dev/platform.tfstate" });
-    expect(s3StateKey("k", "default")).toBe("k");
-    expect(s3StateKey("k", "green")).toBe("env:/green/k");
-  });
-
-  it("reads the workspace select recorded, and TF_DATA_DIR in place of .terraform", () => {
-    const dir = write(tmp(), { "data/terraform.tfstate": JSON.stringify({ backend: { type: "s3", config: S3_CONFIG } }), "data/environment": "green\n" });
-    expect(workspaceOf(dir, { TF_DATA_DIR: "data" })).toBe("green");
-    expect(stateObject(dir, { ...ENV, TF_DATA_DIR: "data" })).toMatchObject({ key: "env:/green/envs/dev/platform.tfstate" });
-  });
-
-  it("is a local file when init recorded no backend or a local one", () => {
-    expect(stateObject(tmp(), ENV)).toEqual({ backend: "local", path: "terraform.tfstate" });
-    expect(stateObject(initialised("local", { path: "state/x.tfstate" }), ENV)).toEqual({ backend: "local", path: "state/x.tfstate" });
-  });
-
-  it("names any other backend as one it does not read versions from", () => {
-    expect(stateObject(initialised("cos", { bucket: "b", prefix: "p" }), ENV)).toMatchObject({ backend: "cos", unsupported: expect.stringContaining("s3, gcs, azurerm, local and GitLab-managed http backends") });
-  });
-});
-
-describe("the version an apply leaves", () => {
-  it("is the object's version id when the bucket keeps versions, read by HEAD and never by GET", async () => {
-    const dir = initialised("s3", S3_CONFIG);
-    const { fetch, seen } = headOnly(200, { "x-amz-version-id": "v-3", etag: '"e"' });
-    expect(await stateVersion(dir, ENV, fetch)).toEqual({ backend: "s3", location: "s3://acme-state/envs/dev/platform.tfstate", version_id: "v-3", versioning: "on" });
-    expect(seen).toEqual([{ method: "HEAD", url: "http://floci:4566/acme-state/envs/dev/platform.tfstate" }]);
-  });
-
-  it("says versions are off when the bucket sends no version id, or null for a suspended bucket", async () => {
-    const dir = initialised("s3", S3_CONFIG);
-    for (const headers of [{}, { "x-amz-version-id": "null" }] as Record<string, string>[]) {
-      const v = await stateVersion(dir, ENV, headOnly(200, headers).fetch);
-      expect(v).toMatchObject({ backend: "s3", versioning: "off" });
-      expect(v.version_id).toBeUndefined();
-      expect(v.note).toContain("bucket versioning is off for acme-state");
-    }
-  });
-
-  it("is unknown, with why, when the object is missing or the job may not read it, and never throws", async () => {
-    const dir = initialised("s3", S3_CONFIG);
-    expect(await stateVersion(dir, ENV, headOnly(404).fetch)).toMatchObject({ versioning: "unknown", note: "the state object is not in the bucket" });
-    expect(await stateVersion(dir, ENV, headOnly(403).fetch)).toMatchObject({ versioning: "unknown", note: expect.stringContaining("403") });
-    expect(await stateVersion(dir, {}, headOnly(200).fetch)).toMatchObject({ versioning: "unknown", note: expect.stringContaining("no credentials") });
-  });
-
-  it("signs with the backend's own static keys when its configuration names them", async () => {
-    const dir = initialised("s3", { ...S3_CONFIG, access_key: "BACKENDKEY", secret_key: "s" });
-    let auth = "";
-    await stateVersion(dir, ENV, async (_u, init) => {
-      auth = init.headers.authorization;
-      return { ok: true, status: 200, text: async () => "", headers: { get: () => null } };
-    });
-    expect(auth).toContain("Credential=BACKENDKEY/");
-  });
-
-  it("is off for a local backend, and unknown for one it does not read", async () => {
-    expect(await stateVersion(tmp(), ENV)).toMatchObject({ backend: "local", versioning: "off", location: "terraform.tfstate" });
-    expect(await stateVersion(initialised("azurerm", {}), ENV)).toMatchObject({ backend: "azurerm", versioning: "unknown" });
-  });
-
-  it("is off for a backend that keeps no history, and unknown for one that keeps versions it does not read", async () => {
-    const pg = await stateVersion(initialised("pg", { conn_str: "postgres://tf:secret@db.internal:5432/states", schema_name: "net" }), ENV);
-    expect(pg).toMatchObject({ backend: "pg", versioning: "off", location: "pg:db.internal:5432/states/net.states", note: expect.stringContaining("which each write replaces") });
-    expect(JSON.stringify(pg)).not.toContain("secret");
-    expect(await stateVersion(initialised("kubernetes", { secret_suffix: "net", namespace: "infra" }), ENV)).toMatchObject({ backend: "kubernetes", versioning: "off", location: "kubernetes:infra/net" });
-    expect(await stateVersion(initialised("consul", { address: "consul:8500", path: "tf/net" }), ENV)).toMatchObject({ backend: "consul", versioning: "off", location: "consul:consul:8500/tf/net" });
-    expect(await stateVersion(initialised("http", { address: "https://state.example.com/net" }), ENV)).toMatchObject({ backend: "http", versioning: "off", note: expect.stringContaining("names no versions") });
-    // GitLab's state API keeps each version by serial, which is read (gitlab-state.test.ts); a GitLab that cannot be read is unknown.
-    const gitlab = await stateVersion(initialised("http", { address: "https://gitlab.com/api/v4/projects/42/terraform/state/net" }), ENV, headOnly(401).fetch);
-    expect(gitlab).toMatchObject({ backend: "http", location: "https://gitlab.com/api/v4/projects/42/terraform/state/net", versioning: "unknown", note: expect.stringContaining("GitLab answered 401") });
-    expect(await stateVersion(initialised("cos", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "cos", versioning: "unknown", note: "a cos backend can keep versions of the state, which terragucci does not read" });
-    // A gcs backend the job has no credentials for: unknown, with why.
-    expect(await stateVersion(initialised("gcs", { bucket: "b", prefix: "net" }), ENV)).toMatchObject({ backend: "gcs", versioning: "unknown", note: expect.stringContaining("no credentials to read gs://b") });
-    expect(await stateVersion(initialised("remote", { organization: "acme", workspaces: [{ name: "net" }] }), ENV)).toMatchObject({ backend: "remote", versioning: "unknown", location: "remote:app.terraform.io/acme/net" });
-    // A refusal elsewhere (export, migrations) still names the backend it does not read.
-    expect(stateObject(initialised("pg", { conn_str: "postgres://db/states" }))).toMatchObject({ unsupported: expect.stringContaining("this root's backend is pg") });
-  });
-
-  it("an S3 HEAD answers whether the object exists, its ETag and its version id", async () => {
-    const s3 = new S3Client({ bucket: "b", endpoint: "http://minio:9000", region: "us-east-1", accessKeyId: "AK", secretAccessKey: "SK" }, headOnly(200, { "x-amz-version-id": "v1", etag: '"abc"' }).fetch);
-    expect(await s3.head("k")).toEqual({ exists: true, etag: '"abc"', versionId: "v1" });
-  });
-});
 
 const ON = (id: string): ReportStateVersion => ({ backend: "s3", location: "s3://acme-state/app.tfstate", version_id: id, versioning: "on" });
 const OFF: ReportStateVersion = { backend: "s3", location: "s3://acme-state/app.tfstate", versioning: "off", note: "bucket versioning is off for acme-state, so it keeps only the latest state" };

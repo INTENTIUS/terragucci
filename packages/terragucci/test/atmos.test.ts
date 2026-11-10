@@ -34,7 +34,7 @@ import { runStage } from "../src/report/stage";
 import { synthAffected } from "../src/synth";
 import { resolveRepo, validateConfig } from "../src/config";
 import { detectShape } from "../src/shape";
-import { workspaceEnv, workspaceInit, WORKSPACE_FILE } from "../src/backend";
+import { workspaceEnv, workspaceInit, WORKSPACE_FILE } from "../src/workspace";
 import { applyWave } from "../src/apply";
 import { ROOTS_NOT_ATMOS } from "../src/config";
 import { init } from "../src/init";

@@ -3,8 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
-import { backendRefusal, isPulled, MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
-import { stateObject } from "../src/backend";
+import { backendRefusal, isPulled, stateObject, MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 

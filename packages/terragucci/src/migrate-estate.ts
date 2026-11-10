@@ -49,7 +49,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { stateClient, stateObject, type StateObject } from "./backend";
+import { S3Client } from "@intentius/chant/object-store";
 import { ConfigError, resolveRepo } from "./config";
 import { backendBlock, estateOf } from "./detect";
 import { readLiveSetup } from "./live-setup";
@@ -58,6 +58,8 @@ import {
   backendRefusal,
   firstLine,
   locationOf,
+  stateObject,
+  type StateObject,
   migrationDigest,
   placesOf,
   planChanges,
@@ -80,7 +82,6 @@ import {
 import { MigrationProgress, PROGRESS_FLAG, takesProgressJson } from "./migrate-progress";
 import { detectShape } from "./shape";
 import { rosterOf, type RosterFacts } from "./report/roster";
-import type { S3Target } from "@intentius/chant/object-store";
 
 /** One resource instance a retag moves: its address in both roots, the estates, and the live resource the markers are on. */
 export interface Retag {
@@ -397,7 +398,7 @@ async function planAdopt(m: Migration, estates: Map<string, string>, places: Map
       out.push(got.root);
       stamps.push(...got.stamps);
       adopts.push(got.adopt);
-      files.set(b.root, { path: "", object: { backend: "estate", unsupported: "an estate keeps no state file" }, state: { version: 4, serial: 0, lineage: "", resources: [] }, beforeCount: 0, source: { object: source, block: "", data: "" } });
+      files.set(b.root, { path: "", object: { backend: "estate", refused: "backend", reason: "an estate keeps no state file" }, state: { version: 4, serial: 0, lineage: "", resources: [] }, beforeCount: 0, source: { object: source, block: "", data: "" } });
       continue;
     }
     const read = await readSource(source, place.dir, options);
@@ -420,7 +421,7 @@ async function planAdopt(m: Migration, estates: Map<string, string>, places: Map
       proof: { changes: unverified, summary: ratificationSummary(entries) },
     });
     adopts.push({ root: b.root, estate, state: path, source, ...(read.version ? { version: read.version } : {}), digest });
-    files.set(b.root, { path, object: { backend: "estate", unsupported: "an estate keeps no state file" }, state: read.state, beforeCount: 0, source: { object: source, block: "", data: "" } });
+    files.set(b.root, { path, object: { backend: "estate", refused: "backend", reason: "an estate keeps no state file" }, state: read.state, beforeCount: 0, source: { object: source, block: "", data: "" } });
     const verified = entries.length - unverified.length;
     log(`${b.root}: ${verified} of ${entries.length} resource instances in ${locationOf(source)} verify against the live system${unverified.length ? `; ${unverified.length} do${unverified.length === 1 ? "es" : ""} not: ${unverified.join(", ")}` : ", so the stamp adopts each one"}`);
   }
@@ -482,9 +483,9 @@ async function readSource(o: StateObject, dir: string, options: MigrateOptions):
   let text: string | undefined;
   let version: string | undefined;
   if (o.backend === "s3" && "target" in o) {
-    const s3 = o as Extract<StateObject, { target: S3Target }>;
+    const s3 = new S3Client(o.target, options.fetch);
     version = await versionOf(o, options.fetch);
-    text = version ? await stateClient(s3, options.fetch).readVersion(s3.key, version) : await stateClient(s3, options.fetch).get(s3.key);
+    text = version ? await s3.readVersion(o.key, version) : await s3.get(o.key);
   } else if (o.backend === "local" && "path" in o) {
     try {
       text = readFileSync(resolve(dir, (o as { path: string }).path), "utf-8");

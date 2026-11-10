@@ -2047,8 +2047,8 @@ gitlab_claim_state/versions() {
   # again with a new input. Each wave's log names app's state at its GitLab
   # address with the serial GitLab holds then, the second one greater, and
   # GitLab keeps both versions by those serials.
-  # BREAK: the bundle reads no GitLab-managed state (backend.ts), so the log
-  # names no serial.
+  # BREAK: the bundle reads the state without the job's environment, so
+  # without its token (apply.ts), and the log names no serial.
   log() { echo "[smoke gitlab gl-state-versions] $*" >&2; }
   gl_load || return 1
   # shellcheck source=lib.sh
@@ -2057,7 +2057,7 @@ gitlab_claim_state/versions() {
   gl_state_setup gl-state-versions || return 1
   if [ -n "${BREAK:-}" ]; then
     GL_STATE_BUNDLE="$WORK/break.mjs"
-    break_bundle "$GL_STATE_BUNDLE" backend.ts '    if (gitlab) return { backend: "http", gitlab' '    if (gitlab && false) return { backend: "http", gitlab' || { drop_work "$WORK"; return 1; }
+    break_bundle "$GL_STATE_BUNDLE" apply.ts 'await readStateVersion(join(repo, run.target), own.env,' 'await readStateVersion(join(repo, run.target), {},' || { drop_work "$WORK"; return 1; }
   fi
   for n in 1 2; do
     [ $rc = 0 ] || break

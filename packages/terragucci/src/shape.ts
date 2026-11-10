@@ -20,7 +20,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { ATMOS_MARKER, ATMOS_WRITE, atmosEdges, atmosInstances, describeStacks, detectAtmos, instanceStates, instanceWaves, type AtmosInstance } from "./atmos";
-import { rootWorkspace, workspaceEnv, workspaceInit } from "./backend";
+import { rootWorkspace, workspaceEnv, workspaceInit } from "./workspace";
 import { ConfigError, type Binary, type ResolvedSettings } from "./config";
 import { applyLayers, detectBinary, explicitOrder, findRootsWithReasons, rootDependencies, rootOrder, rootStates, type Detected, type WavesAfter, type RootReason, type StateAddress } from "./detect";
 import { refusal, shapeProblems, type Feature, type ShapeKind } from "./refusals";

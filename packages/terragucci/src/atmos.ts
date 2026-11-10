@@ -12,7 +12,7 @@
  * `<stack>/<component>`, with the varfile, backend and provider override
  * Atmos would generate for it, and the instance's Terraform workspace in
  * `.terragucci-workspace`. The jobs run the binary there with `TF_WORKSPACE`
- * set to it (workspaceEnv in ./backend.ts), so each instance plans and
+ * set to it (workspaceEnv in ./workspace.ts), so each instance plans and
  * applies its own state, never the `default` workspace's.
  *
  * The waves are the dependency layers of the instances, as Terragrunt units'
@@ -32,7 +32,7 @@ import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
-import { WORKSPACE_FILE, workspaceInit } from "./backend";
+import { WORKSPACE_FILE, workspaceInit } from "./workspace";
 import { binaryEnv, terragruntExec } from "./binary-env";
 import { ConfigError } from "./config";
 import { unitWaves } from "./terragrunt";

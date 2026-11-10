@@ -3225,7 +3225,7 @@ claim_apply/atmos_workspace() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
-    break_bundle "$bundle" backend.ts '  return ws || undefined;' '  return undefined;' \
+    break_bundle "$bundle" workspace.ts '  return ws || undefined;' '  return undefined;' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   atmos_bucket "$bucket"

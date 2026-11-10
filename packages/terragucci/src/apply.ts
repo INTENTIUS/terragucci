@@ -50,7 +50,7 @@
  * wave's plans, and each root's timings, the plan's and the apply's, from the
  * binary's spans as `stage tf-plan` reads them. For each root that applied,
  * or had nothing to apply, it names the state version the root's backend
- * holds afterwards (./backend.ts): an S3 version id, read from the state
+ * holds afterwards (the terraform lexicon's readStateVersion): an S3 version id, read from the state
  * object's metadata, never from its contents, and the provider and module
  * versions its lock file and modules.json hold (./report/versions.ts).
  *
@@ -152,7 +152,9 @@ import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec, tokenlessBinary } from "./binary-env";
 import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits } from "./generate";
-import { rootWorkspace, stateVersion, workspaceEnv } from "./backend";
+import { readStateVersion } from "@intentius/chant-lexicon-terraform/state";
+import { rootWorkspace, workspaceEnv } from "./workspace";
+import { STORE_WORDS } from "./report/object-store";
 import { atmosEdges, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./cloud-identity";
 import { rootSecretEnv } from "./root-secrets";
@@ -1454,7 +1456,7 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
       const p = w.planned?.find((x) => x.root === run.target);
       if (!p) return;
       const planned = { ...(p as PlannedRoot), env: own.env, binary: own.binary };
-      (w.states ??= new Map()).set(run.target, await stateVersion(join(repo, run.target), own.env));
+      (w.states ??= new Map()).set(run.target, await readStateVersion(join(repo, run.target), own.env, { words: STORE_WORDS }));
       logStateVersions([run.target], w.states);
       const versions = await listRecordVersions(repo, [planned], 1);
       if (versions.has(run.target)) (w.recordVersions ??= new Map()).set(run.target, versions.get(run.target)!);
@@ -3602,11 +3604,11 @@ async function recordUnitStateVersions(
     const backend = typeof rendered.remote_state?.backend === "string" && rendered.remote_state.backend ? rendered.remote_state.backend : undefined;
     if (backend) {
       const config = rendered.remote_state?.config && typeof rendered.remote_state.config === "object" ? (rendered.remote_state.config as Record<string, unknown>) : {};
-      out.set(unit, await stateVersion(dir, env, undefined, { type: backend, config }));
+      out.set(unit, await readStateVersion(dir, env, { backend: { type: backend, config }, words: STORE_WORDS }));
       return;
     }
     if (typeof rendered.terraform?.source !== "string" || !rendered.terraform.source) {
-      out.set(unit, await stateVersion(dir, env));
+      out.set(unit, await readStateVersion(dir, env, { words: STORE_WORDS }));
       return;
     }
     out.set(unit, { backend: "unknown", versioning: "unknown", note: "the unit names no remote_state block and runs from Terragrunt's cache, so its backend cannot be read" });

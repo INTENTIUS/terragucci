@@ -46,7 +46,7 @@ import { type ChantCompose, type ChantComposedRoot, type ChantComposeRun, type C
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { DriverComponent } from "@intentius/chant/components";
 import { backendConfigArgs, explicitOrder, initBackendConfigs, type WavesAfter } from "./detect";
-import { rootWorkspace } from "./backend";
+import { rootWorkspace } from "./workspace";
 import { rootRoleEnv } from "./cloud-identity";
 import type { BinaryExec } from "./migrate";
 import type { ReportCompose, ReportComposedMember, ReportRead } from "./report/schema";

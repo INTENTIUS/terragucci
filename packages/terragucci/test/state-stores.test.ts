@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
-import { stateObject, stateStore, stateVersion, type StoredState } from "../src/backend";
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
 import { MIGRATE_LEDGER, OVERRIDE_FILE, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
@@ -148,95 +147,6 @@ const initialised = (type: string, config: Record<string, unknown>): string => w
 
 const GCS = { bucket: "acme-state", prefix: "envs/dev/app", storage_custom_endpoint: "http://gcs.test/storage/v1/", access_token: "backend-token" };
 const AZ = { storage_account_name: "acme", container_name: "tfstate", key: "app.tfstate", access_key: Buffer.from("key").toString("base64") };
-
-describe("where a gcs or azurerm root's state is", () => {
-  it("names a gcs state <prefix>/<workspace>.tfstate, its lock beside it, with the backend's own credentials first", () => {
-    const o = stateObject(initialised("gcs", GCS), { GOOGLE_APPLICATION_CREDENTIALS: "/job/creds.json" });
-    expect(o).toMatchObject({ backend: "gcs", bucket: "acme-state", key: "envs/dev/app/default.tfstate", lock: "envs/dev/app/default.tflock", target: { endpoint: "http://gcs.test", accessToken: "backend-token" } });
-    const blue = stateObject(initialised("gcs", { bucket: "b", prefix: "p/" }), { TF_WORKSPACE: "blue", GOOGLE_APPLICATION_CREDENTIALS: "/job/creds.json" });
-    expect(blue).toMatchObject({ key: "p/blue.tfstate", lock: "p/blue.tflock", target: { endpoint: "https://storage.googleapis.com", credentialsFile: "/job/creds.json" } });
-    expect(stateObject(initialised("gcs", { bucket: "b" }), { GOOGLE_CREDENTIALS: '{"type":"service_account"}' })).toMatchObject({ key: "default.tfstate", target: { credentialsJson: '{"type":"service_account"}' } });
-    expect(stateObject(initialised("gcs", { bucket: "b", impersonate_service_account: "sa@p.iam.gserviceaccount.com" }), { GOOGLE_OAUTH_ACCESS_TOKEN: "t" })).toMatchObject({ target: { accessToken: "t", impersonate: "sa@p.iam.gserviceaccount.com" } });
-    expect(stateObject(initialised("gcs", { bucket: "b" }), {})).toMatchObject({ backend: "gcs", unsupported: expect.stringContaining("give the job oidc.gcp") });
-  });
-
-  it("names an azurerm blob by its key, <key>env:<workspace> in another workspace, at the cloud's endpoint, with the key, a SAS or the job's OIDC identity", () => {
-    expect(stateObject(initialised("azurerm", AZ), {})).toMatchObject({ backend: "azurerm", account: "acme", container: "tfstate", key: "app.tfstate", endpoint: "https://acme.blob.core.windows.net", auth: { accountKey: AZ.access_key } });
-    expect(stateObject(initialised("azurerm", { ...AZ, access_key: null, environment: "usgovernment" }), { TF_WORKSPACE: "blue", ARM_SAS_TOKEN: "sv=x&sig=y" })).toMatchObject({ key: "app.tfstateenv:blue", endpoint: "https://acme.blob.core.usgovcloudapi.net", auth: { sas: "sv=x&sig=y" } });
-    const oidc = { ARM_TENANT_ID: "tenant", ARM_CLIENT_ID: "client", ARM_OIDC_TOKEN_FILE_PATH: "/t" };
-    expect(stateObject(initialised("azurerm", { ...AZ, access_key: null, metadata_host: "meta.test", snapshot: true }), oidc)).toMatchObject({ metadataHost: "meta.test", snapshot: true, auth: { oidc: { tenantId: "tenant", clientId: "client", tokenFile: "/t", authority: "https://login.microsoftonline.com" } } });
-    expect(stateObject(initialised("azurerm", { ...AZ, access_key: null }), {})).toMatchObject({ unsupported: expect.stringContaining("give the job oidc.azure") });
-    expect(stateObject(initialised("azurerm", { key: "k" }), {})).toMatchObject({ unsupported: expect.stringContaining("storage_account_name, container_name or key") });
-  });
-});
-
-describe("the version a gcs or azurerm apply leaves", () => {
-  it("is the gcs object's generation when the bucket keeps them, read from its metadata with the backend's token", async () => {
-    const g = fakeGcs();
-    const gen = g.put("acme-state/envs/dev/app/default.tfstate", "{}");
-    expect(await stateVersion(initialised("gcs", GCS), {}, g.fetch)).toEqual({ backend: "gcs", location: "gs://acme-state/envs/dev/app/default.tfstate", version_id: gen, versioning: "on" });
-    expect(g.seen.every((s) => s.method === "GET" && !s.url.includes("alt=media") && s.auth === "Bearer backend-token")).toBe(true);
-  });
-
-  it("says versions are off for a bucket without object versioning, and unknown when there is no state", async () => {
-    const g = fakeGcs(false);
-    g.put("acme-state/envs/dev/app/default.tfstate", "{}");
-    expect(await stateVersion(initialised("gcs", GCS), {}, g.fetch)).toMatchObject({ versioning: "off", note: "object versioning is off for acme-state, so it keeps only the latest state" });
-    expect(await stateVersion(initialised("gcs", { ...GCS, prefix: "none" }), {}, g.fetch)).toMatchObject({ versioning: "unknown", note: "the state object is not in the bucket" });
-  });
-
-  it("is the blob's version id when the account keeps versions, else a snapshot when the backend takes them, else off", async () => {
-    const v = fakeAzure(true);
-    const id = v.write("tfstate/app.tfstate", "{}");
-    expect(await stateVersion(initialised("azurerm", AZ), {}, v.fetch)).toEqual({ backend: "azurerm", location: "az://acme/tfstate/app.tfstate", version_id: id, versioning: "on" });
-    const s = fakeAzure();
-    s.write("tfstate/app.tfstate", '{"serial":1}');
-    const snap = await stateVersion(initialised("azurerm", { ...AZ, snapshot: true }), {}, s.fetch);
-    expect(snap).toMatchObject({ versioning: "on", version_id: s.blobs.get("tfstate/app.tfstate")!.snapshots[0]!.id });
-    expect(await stateVersion(initialised("azurerm", AZ), {}, s.fetch)).toMatchObject({ versioning: "off", note: expect.stringContaining("takes no snapshots (snapshot = true)") });
-  });
-
-  it("finds the account's endpoint through the cloud's metadata when the backend names a metadata_host", async () => {
-    const s = fakeAzure(true);
-    s.write("tfstate/app.tfstate", "{}");
-    const fetch: StoreFetch = async (url, init) => (url.startsWith("https://meta.test/metadata/endpoints?") ? answer(200, JSON.stringify({ suffixes: { storage: "blob.core.windows.net".slice(5) } })) : s.fetch(url, init));
-    expect(await stateVersion(initialised("azurerm", { ...AZ, metadata_host: "meta.test" }), {}, fetch)).toMatchObject({ versioning: "on" });
-  });
-});
-
-describe("a gcs or azurerm state's lock", () => {
-  it("is the gcs lock object, whose generation is the ID force-unlock takes; a migration takes it only when there is none", async () => {
-    const g = fakeGcs();
-    const store = await stateStore(stateObject(initialised("gcs", GCS), {}) as StoredState, g.fetch);
-    expect(store.lockLocation).toBe("gs://acme-state/envs/dev/app/default.tflock");
-    expect(await store.heldLock()).toBeUndefined();
-    const gen = g.put("acme-state/envs/dev/app/default.tflock", lockText("uuid-1", T(1), "gs://acme-state/envs/dev/app/default.tflock"));
-    expect(await store.heldLock()).toMatchObject({ id: gen });
-    expect(await store.lock(lockText("mine", T(2), "x"))).toBe(false);
-    g.objects.delete("acme-state/envs/dev/app/default.tflock");
-    expect(await store.lock(lockText("mine", T(2), "x"))).toBe(true);
-    expect(g.seen.some((s) => s.url.includes("ifGenerationMatch=0"))).toBe(true);
-    await store.unlock();
-    expect(g.objects.has("acme-state/envs/dev/app/default.tflock")).toBe(false);
-  });
-
-  it("is the azurerm blob's lease, with the lock info in its metadata, and a write under the lease snapshots first when the backend takes snapshots", async () => {
-    const s = fakeAzure();
-    const store = await stateStore(stateObject(initialised("azurerm", { ...AZ, snapshot: true }), {}) as StoredState, s.fetch);
-    // No blob yet: an empty one is made to lease, as the backend makes it.
-    expect(await store.lock(lockText("lease-1", T(1), "az"))).toBe(true);
-    const blob = s.blobs.get("tfstate/app.tfstate")!;
-    expect(blob.lease).toBe("lease-1");
-    expect(JSON.parse(Buffer.from(blob.meta.terraformlockid!, "base64").toString())).toMatchObject({ ID: "lease-1" });
-    expect(await store.heldLock()).toMatchObject({ id: "lease-1" });
-    await store.write!('{"serial":2}');
-    expect(blob.snapshots).toHaveLength(1);
-    expect(s.blobs.get("tfstate/app.tfstate")!.body).toBe('{"serial":2}');
-    await store.unlock();
-    expect(s.blobs.get("tfstate/app.tfstate")!.lease).toBeUndefined();
-    expect(await store.heldLock()).toBeUndefined();
-  });
-});
 
 /** A clone with one root, app, initialised with `backend`, and a bare origin for chant/lifecycle. */
 function repo(backend: { type: string; config: Record<string, unknown> }, files: Record<string, string> = {}) {
