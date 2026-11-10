@@ -356,8 +356,6 @@ export interface ChantCheckHooks {
     log?: (line: string) => void;
   }): ChantCheckHooksReport;
   writeCiHook(root: string, moment: "check", hook: ChantCheckHook, opts?: { member?: string }): { file: string; replaced: boolean };
-  /** The first chant that reads `ci.hooks.check`: a declaration that uses it sets `minReader` to it. */
-  CI_CHECK_HOOK_FLOOR: string;
 }
 
 // ── bucket-check ───────────────────────────────────────────────────────────
@@ -554,7 +552,6 @@ export interface ChantCiControl {
       fetch?: (url: string, init?: RequestInit) => Promise<Response>;
     },
   ): Promise<ChantReconcileOutcome[]>;
-  CI_CONTROL_FLOOR: string;
 }
 
 /** A forge lexicon's control repo pipeline (`components/control-pipeline`, chant#4568). */
@@ -658,7 +655,6 @@ export interface ChantReleaseCatalog {
   appendReleaseStatus(input: Omit<ChantReleaseStatusRecord, "version">, opts?: { cwd?: string }): Promise<{ commit: string; record: ChantReleaseStatusRecord }>;
   releaseChangelog(commits: readonly { sha: string; message: string }[]): { bump: "major" | "minor" | "patch"; entries: { kind: string; sha: string; subject: string; scope?: string }[] };
   RELEASE_STATUS_FILE: string;
-  RELEASE_CATALOG_FLOOR: string;
 }
 
 /** A module call the terraform lexicon's scan found (`ModuleConsumer`, chant#4599). */
@@ -788,20 +784,6 @@ export interface ChantRegistryProxies {
 
 // ── part f: forge check, relay, estate, policy source, stand-down ─────────
 
-/** A newer commit on the run's branch (`OpWaveNewerCommit`). */
-export interface ChantNewerCommit {
-  branch: string;
-  head: string;
-  tip: string;
-}
-
-/** chant's op-wave stand-down (`newerCommitOnBranch` in `@intentius/chant/op`, chant#4581). */
-export interface ChantOpStandDown {
-  newerCommitOnBranch(cwd: string, env?: NodeJS.ProcessEnv, head?: string): Promise<ChantNewerCommit | undefined>;
-  tipAppliesTargets(atTip: unknown, branch: string, waveName: string, targets: readonly string[]): boolean;
-  OP_WAVE_STAND_DOWN_FLOOR: string;
-}
-
 // ── used sources (chant#3924) ─────────────────────────────────────────────
 
 /** A source a root uses, as the terraform lexicon reads it (`UsedSource`, chant#3924). */
@@ -879,18 +861,6 @@ export interface ChantGatedRequestRead {
   approvals: { resolvedBy: string; timestamp: string }[];
   applied?: { timestamp: string; approvedBy?: string; approvedAt?: string };
   finished?: { result: string; timestamp: string; detail?: Record<string, string | number | boolean> };
-}
-
-/**
- * chant's recorded op-wave hold (chant#4623): a hold file with `record: true`
- * has chant write the held gate's applied line before the approved re-run
- * and its finished line after, from what the re-run writes to
- * `CHANT_HOLD_FINISHED`, and store the hold's `attachment` at
- * {@link ChantHoldRecord.gatedRequestAttachmentPath}.
- */
-export interface ChantHoldRecord {
-  OP_WAVE_HOLD_RECORD_FLOOR: string;
-  gatedRequestAttachmentPath(op: string, digest: string): { dir: string; file: string };
 }
 
 /**
@@ -1062,7 +1032,6 @@ export interface ChantTemplateRequestRefusal {
 
 /** chant core's template request (`@intentius/chant/template-request`, chant#4651). */
 export interface ChantTemplateRequests {
-  TEMPLATE_REQUEST_FLOOR: string;
   makeTemplateRequest(input: Omit<ChantTemplateRequest, "$schema" | "contract">): ChantTemplateRequest;
   checkTemplateRequest(
     request: unknown,

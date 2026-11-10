@@ -129,17 +129,6 @@ describe("the gate between the harness and the fallback", () => {
     expect(r.stderr).toContain("auto (the default), harness or fallback");
   });
 
-  it("falls back with a line saying so when the installed chant has no harness", async () => {
-    const { loadHarness } = await import("../stack/harness/harness");
-    if (await loadHarness()) return; // a local chant with the harness builds its compose instead
-    const r = inInstance('tg_forge_compose; echo "$TG_FORGE_COMPOSE"', { TG_STATE: state() });
-    expect(r.status).toBe(0);
-    expect(r.stdout.trim()).toBe(join(stack, "forge-fallback.yml"));
-    expect(r.stderr).toContain("needs a chant with @intentius/chant/e2e-harness");
-    const forced = inInstance("tg_forge_compose", { TG_HARNESS: "harness", TG_STATE: state() });
-    expect(forced.status).not.toBe(0);
-  });
-
   it("keeps the file per project, so the capture stack never reads the shared stack's", () => {
     const r = inInstance('TG_FORGE_COMPOSE=/elsewhere.yml TG_FORGE_COMPOSE_FOR=terragucci-capture; tg_forge_compose; echo "$TG_FORGE_COMPOSE_FOR $TG_FORGE_COMPOSE"', { TG_HARNESS: "fallback", TG_STATE: state() });
     expect(r.stdout.trim()).toBe(`terragucci ${join(stack, "forge-fallback.yml")}`);

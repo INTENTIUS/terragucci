@@ -64,6 +64,7 @@ import { unitTerragruntPin } from "./unit-pins";
 import { withEnvironmentRoles } from "./environments";
 import type { ChantCheckHooks } from "./chant-next";
 import * as checkHooksLib from "@intentius/chant/components/check-hooks";
+import { CI_CHECK_HOOK_FLOOR } from "@intentius/chant/components/check-hooks";
 import { CHANT_AGENT_PATHS } from "./render-chant-agent";
 import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
@@ -498,11 +499,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // Under approval: sealed every tf-apply wave gate is listed, so chant approve asks for --sign. A Terragrunt repo's layers are its waves.
   const decl = declaration(repo, tgMode || atmos || terramate ? layers.length : applyWaves(layers, settings.waves?.canary).length, approval.value === "sealed" ? "seal" : approval.explicit ? "unseal" : "leave", options.name);
   if (decl) files.push(decl);
-  // The preset's hook goes into ci.hooks.check with chant's writer when the installed chant reads that moment; turned
-  // off, the hook an earlier init wrote goes. On a chant without the moment, check-hooks runs the preset itself.
+  // The preset's hook goes into ci.hooks.check with chant's writer; turned off, the hook an earlier init wrote goes.
   const declSoFar = decl?.content ?? declText;
   const hooked = preCommitOn
-    ? withPreCommitHook(chantHooks, basename(declFile), declSoFar ?? `${JSON.stringify({ name: workspaceName(repo, options.name), schema: 1, minReader: chantHooks.CI_CHECK_HOOK_FLOOR, members: [] }, null, 2)}\n`, binary.value)
+    ? withPreCommitHook(chantHooks, basename(declFile), declSoFar ?? `${JSON.stringify({ name: workspaceName(repo, options.name), schema: 1, minReader: CI_CHECK_HOOK_FLOOR, members: [] }, null, 2)}\n`, binary.value)
     : !preCommitOn && declSoFar !== undefined && !declFile.endsWith(".jsonc") ? withoutPreCommitHook(declSoFar) : undefined;
   if (hooked !== undefined) {
     const change = plan(declFile, hooked);

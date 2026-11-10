@@ -12,7 +12,6 @@ import { git, twoRootRepo, write } from "./helpers";
 /** A stand-in for chant's check moment: the writer puts the hook in the file as chant's does, and the runner reports what it is told. */
 function fakeChant(report?: Partial<ChantCheckHooksReport>, seen: unknown[] = []): ChantCheckHooks {
   return {
-    CI_CHECK_HOOK_FLOOR: "0.124.55",
     writeCiHook(root: string, _moment: "check", hook: ChantCheckHook) {
       const file = join(root, "chant.workspace.json");
       const doc = JSON.parse(readFileSync(file, "utf-8"));
@@ -100,15 +99,12 @@ describe("check.pre_commit", () => {
     expect(withCheckHooks("body", "tofu", ["a"], undefined, false)).toBe("body");
   });
 
-  it("runs the hooks through chant's check moment at base when the installed chant has it", async () => {
+  it("runs the hooks through chant's check moment at base", async () => {
     const seen: unknown[] = [];
     const chant = fakeChant({ status: "passed", hooks: [{ name: PRE_COMMIT_HOOK, exit: 0, outcome: "passed" }] }, seen);
-    const ran: string[][] = [];
-    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: ["a", "b"], binary: "tofu", preCommit: true, chant, exec: (argv) => (ran.push(argv), 0), log: () => {} });
+    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: ["a", "b"], binary: "tofu", preCommit: true, chant, log: () => {} });
     expect(result.ok).toBe(true);
     expect(seen).toMatchObject([{ base: "origin/main", targets: ["a", "b"], dir: "terragucci-check/hooks" }]);
-    // chant ran the hook; terragucci ran nothing of its own.
-    expect(ran).toEqual([]);
     expect(result.report).toContain("- passed: `terragucci-pre-commit`");
   });
 

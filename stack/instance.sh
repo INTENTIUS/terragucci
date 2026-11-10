@@ -54,8 +54,8 @@ export TG_STACK TG_PROJECT TG_NETWORK TG_STATE
 
 # floci, Forgejo and forgejo-runner come from chant's e2e harness
 # (terragucci#1295): stack/harness/harness.ts builds them under this
-# instance's project into $TG_STATE/harness-compose.yml. On a chant without
-# the harness, stack/forge-fallback.yml, the services as the stack ran them
+# instance's project into $TG_STATE/harness-compose.yml. With no tsx in
+# node_modules, stack/forge-fallback.yml, the services as the stack ran them
 # before, stands in, and a line on stderr says so. TG_HARNESS=fallback picks
 # the fallback; TG_HARNESS=harness refuses to run without the harness.
 # Worked out once per run and instance: TG_FORGE_COMPOSE is exported to

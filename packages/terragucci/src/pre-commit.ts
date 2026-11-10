@@ -13,16 +13,14 @@
  * does), and skips `terraform_fmt`, which tf-check's format check and the
  * fmt job already cover.
  *
- * With a chant that has the check moment, `init` writes the hook into
- * chant.workspace.json and the check job runs it through chant, read from
- * the declaration at base. With one that lacks it, init writes no hook and
- * `terragucci check-hooks --pre-commit` runs the same command itself.
+ * `init` writes the hook into chant.workspace.json and the check job runs
+ * it through chant, read from the declaration at base.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as checkHooksLib from "@intentius/chant/components/check-hooks";
+import { CI_CHECK_HOOK_FLOOR } from "@intentius/chant/components/check-hooks";
 import type { ChantCheckHook, ChantCheckHooks, ChantCheckHooksReport } from "./chant-next";
 import { CHECK_DIR, type CheckResult } from "./check";
 import { ConfigError, type Binary } from "./config";
@@ -113,8 +111,8 @@ export function withPreCommitHook(chant: ChantCheckHooks, name: string, before: 
     const text = readFileSync(join(scratch, name), "utf-8");
     if (name.endsWith(".jsonc")) return text;
     const doc = JSON.parse(text) as { minReader?: unknown };
-    if (!older(doc.minReader, chant.CI_CHECK_HOOK_FLOOR)) return text;
-    doc.minReader = chant.CI_CHECK_HOOK_FLOOR;
+    if (!older(doc.minReader, CI_CHECK_HOOK_FLOOR)) return text;
+    doc.minReader = CI_CHECK_HOOK_FLOOR;
     return `${JSON.stringify(doc, null, 2)}\n`;
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -166,21 +164,13 @@ export interface CheckHooksOptions {
   /** The roots (or units), for a `perRun` hook. */
   targets: readonly string[];
   binary: Binary;
-  /** `check.pre_commit` is on: the fallback runs the preset's hook when chant has no check moment. */
+  /** `check.pre_commit` is on: a base whose declaration lacks the preset's hook is named in the log. */
   preCommit: boolean;
   env?: NodeJS.ProcessEnv;
   log?: (line: string) => void;
   /** For tests: the chant check moment. Default: chant's (`components/check-hooks`). */
   chant?: ChantCheckHooks;
-  /** For tests: runs the fallback's argv. */
-  exec?: (argv: string[], cwd: string, env: Record<string, string>) => number;
 }
-
-const run = (argv: string[], cwd: string, env: Record<string, string>): number => {
-  const r = spawnSync(argv[0]!, argv.slice(1), { cwd, stdio: "inherit", env });
-  if (r.error) throw r.error;
-  return r.status ?? 1;
-};
 
 /**
  * tf-check's check hooks: chant's check moment (`ci.hooks.check` at base).
