@@ -41,14 +41,17 @@ const NOT_VARIABLES = new Set([
   "TG_REVIEW_WORDS",
   // chant's GitLab role words, which the comment jobs compare (chant#4785).
   "GITLAB_ROLES",
+  // chant's recorded sha256 of each CI engine release (chant#4784).
+  "CI_TOOL_SHA256",
 ]);
 // Variables chant's forge check reads for `terragucci forge check` (chant#4608): on the page, and named
 // only in chant since terragucci calls chant's check directly.
 const CHANT_FORGE_CHECK_VARIABLES = new Set(["AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL_IAM", "AZURE_GRAPH_TOKEN"]);
 // The control dispatch's variables (see UNDOCUMENTED_KEYS above).
-// Variables the terraform lexicon's state stores read (GitLab-managed state's http backend): on the page, and
-// named only in chant since terragucci's export, unlock and state reads call chant's stores.
-const CHANT_STATE_VARIABLES = /^TF_HTTP_/;
+// Variables the terraform lexicon's state stores read (GitLab-managed state's http backend, and the gcs
+// backend's credentials, impersonation and endpoint): on the page, and named only in chant since terragucci's
+// export, unlock, state reads and migrations call chant's stores (chant issues 4793 and 4806).
+const CHANT_STATE_VARIABLES = /^(TF_HTTP_|GOOGLE_(BACKEND_)?(CREDENTIALS|IMPERSONATE_SERVICE_ACCOUNT|STORAGE_CUSTOM_ENDPOINT)$)/;
 const UNDOCUMENTED_VARIABLES = new Set(["TERRAGUCCI_CONTROL_TOKEN", "TG_CONTROL_TOKEN", "TG_CONTROL_READ", "TERRAGUCCI_MEMBER", "TERRAGUCCI_OP", "TERRAGUCCI_SHA"]);
 const NAME = /\b(?:(?:TG|TERRAGUCCI|TOFU|TF|OTEL|AWS|ARM|AZURE|GOOGLE|GITHUB|GITLAB|FORGEJO|GITEA|CI|RUNNER|ACTIONS|ANTHROPIC)_[A-Z0-9_]*[A-Z0-9]|TRACEPARENT)\b/g;
 
