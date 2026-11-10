@@ -2,15 +2,15 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CI_CHECK_HOOK_FLOOR } from "@intentius/chant/components/check-hooks";
-import type { ChantCheckHook, ChantCheckHooks, ChantCheckHooksReport } from "../src/chant-next";
+import type { ChantCheckHook, ChantCheckHooks } from "../src/chant-next";
 import { ConfigError, validateConfig } from "../src/config";
 import { init } from "../src/init";
-import { checkHooks, checkHooksResult, namesCheckHooks, PRE_COMMIT_HOOK, preCommitHook, preCommitScript, withoutPreCommitHook, withPreCommitHook } from "../src/pre-commit";
+import { namesCheckHooks, PRE_COMMIT_HOOK, preCommitHook, preCommitScript, withoutPreCommitHook, withPreCommitHook } from "../src/pre-commit";
 import { withCheckHooks } from "../src/render";
 import { git, twoRootRepo, write } from "./helpers";
 
-/** A stand-in for chant's check moment: the writer puts the hook in the file as chant's does, and the runner reports what it is told. */
-function fakeChant(report?: Partial<ChantCheckHooksReport>, seen: unknown[] = []): ChantCheckHooks {
+/** A stand-in for chant's check moment: the writer puts the hook in the file as chant's does. */
+function fakeChant(): ChantCheckHooks {
   return {
     writeCiHook(root: string, _moment: "check", hook: ChantCheckHook) {
       const file = join(root, "chant.workspace.json");
@@ -21,10 +21,6 @@ function fakeChant(report?: Partial<ChantCheckHooksReport>, seen: unknown[] = []
       doc.ci = { ...doc.ci, hooks: { ...doc.ci?.hooks, check: next } };
       writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
       return { file, replaced: at >= 0 };
-    },
-    runCheckHooks(options) {
-      seen.push(options);
-      return { version: 1, moment: "check", base: options.base, targets: [...(options.targets ?? [])], status: "none", hooks: [], ...report };
     },
   };
 }
@@ -91,42 +87,12 @@ describe("check.pre_commit", () => {
     expect(withoutPreCommitHook(JSON.stringify({ name: "infra", members: [] }))).toBeUndefined();
   });
 
-  it("puts check-hooks last in tf-check: counted with the rest in a plain check, the last line of a Terragrunt one", () => {
-    const plain = withCheckHooks('set -eu\nfailed=0\nexit "$failed"', "tofu", ["a", "b"], { preCommit: true }, false);
-    expect(plain.split("\n").slice(-2)).toEqual(["terragucci check-hooks --binary tofu --pre-commit --targets 'a,b' || failed=1", 'exit "$failed"']);
-    const tg = withCheckHooks("set -eu\nterragucci check-policy", "terraform", ["live/a"], { preCommit: false }, true);
-    expect(tg.split("\n").at(-1)).toBe("terragucci check-hooks --binary terraform --targets 'live/a'");
-    expect(withCheckHooks("body", "tofu", ["a"], undefined, false)).toBe("body");
-  });
-
-  it("runs the hooks through chant's check moment at base", async () => {
-    const seen: unknown[] = [];
-    const chant = fakeChant({ status: "passed", hooks: [{ name: PRE_COMMIT_HOOK, exit: 0, outcome: "passed" }] }, seen);
-    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: ["a", "b"], binary: "tofu", preCommit: true, chant, log: () => {} });
-    expect(result.ok).toBe(true);
-    expect(seen).toMatchObject([{ base: "origin/main", targets: ["a", "b"], dir: "terragucci-check/hooks" }]);
-    expect(result.report).toContain("- passed: `terragucci-pre-commit`");
-  });
-
-  it("says so when the base's declaration does not carry the preset's hook yet", async () => {
-    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: [], binary: "tofu", preCommit: true, chant: fakeChant(), log: () => {} });
-    expect(result.ok).toBe(true);
-    expect(result.log.join("\n")).toContain(`has no ${PRE_COMMIT_HOOK} check hook, so pre-commit does not run`);
-  });
-
-  it("fails the check when chant reports a failed hook", async () => {
-    const chant = fakeChant({ status: "failed", hooks: [{ name: "tflint", exit: 2, outcome: "failed" }], failed: "a check hook failed: tflint" });
-    const result = await checkHooks(twoRootRepo(), { base: "origin/main", targets: [], binary: "tofu", preCommit: false, chant, log: () => {} });
-    expect(result.ok).toBe(false);
-    expect(result.log).toContain("FAILED check hooks: a check hook failed: tflint");
-  });
-
-
-
-
-
-  it("reports nothing when no check hook is declared", () => {
-    expect(checkHooksResult({ base: "HEAD", status: "none", hooks: [] })).toEqual({ ok: true, log: [], report: [] });
+  it("puts chant's ci check last in tf-check: counted with the rest in a plain check, the last line of a Terragrunt one", () => {
+    const plain = withCheckHooks('set -eu\nfailed=0\nexit "$failed"', ["a", "b"], { preCommit: true }, false);
+    expect(plain.split("\n").slice(-2)).toEqual(["terragucci ci check --output terragucci-check/hooks --summary terragucci-check/report.md 'a' 'b' || failed=1", 'exit "$failed"']);
+    const tg = withCheckHooks("set -eu\nterragucci check-policy", ["live/a"], { preCommit: false }, true);
+    expect(tg.split("\n").at(-1)).toBe("terragucci ci check --output terragucci-check/hooks --summary terragucci-check/report.md 'live/a'");
+    expect(withCheckHooks("body", ["a"], undefined, false)).toBe("body");
   });
 });
 
@@ -142,17 +108,17 @@ describe("init with check.pre_commit", () => {
     const dir = repo("binary: tofu\n", { ".pre-commit-config.yaml": "repos: []\n" });
     const r = await init(dir, { binary: "tofu" });
     expect(r.notes.some((n) => n.startsWith("tip: .pre-commit-config.yaml is here; set check.pre_commit: true"))).toBe(true);
-    expect(readFileSync(join(dir, ".github/workflows/terragucci.yml"), "utf-8")).not.toContain("terragucci check-hooks");
+    expect(readFileSync(join(dir, ".github/workflows/terragucci.yml"), "utf-8")).not.toContain("terragucci ci check");
   });
 
-  it("writes the hook into chant.workspace.json with chant's writer and runs check-hooks in tf-check", async () => {
+  it("writes the hook into chant.workspace.json with chant's writer and runs chant's ci check in tf-check", async () => {
     const dir = repo("binary: tofu\ncheck:\n  pre_commit: true\n", { ".pre-commit-config.yaml": "repos: []\n" });
     const r = await init(dir, { binary: "tofu" });
     const decl = JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8"));
     expect(decl.ci.hooks.check).toEqual([preCommitHook("tofu")]);
     expect(decl.minReader).toBe(CI_CHECK_HOOK_FLOOR);
     const pipeline = readFileSync(join(dir, ".github/workflows/terragucci.yml"), "utf-8");
-    expect(pipeline).toContain("terragucci check-hooks --binary tofu --pre-commit");
+    expect(pipeline).toContain("terragucci ci check --output terragucci-check/hooks --summary terragucci-check/report.md");
     expect(pipeline).toContain("fetch-depth: 0");
     expect(r.notes.some((n) => n.startsWith("tip:"))).toBe(false);
     // The second init changes nothing.

@@ -355,7 +355,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
   const control = settings.control ? resolveControl(settings.control, options.name ?? basename(resolve(repo))) : undefined;
   // check.pre_commit: tf-check runs the repo's pre-commit hooks as a chant check hook (./pre-commit.ts). The check
-  // job also runs check-hooks when the declaration already names check hooks of its own.
+  // job also runs chant's ci check when the declaration already names check hooks of its own.
   const preCommitOn = settings.check?.pre_commit === true;
   const chantHooks = checkHooksLib as unknown as ChantCheckHooks;
   const declFile = declarationFile(repo) ?? declPath;
