@@ -50,12 +50,11 @@
  *
  * Neither approves anything: the wave's own gate decides again when it runs.
  */
-import { spawn, spawnSync } from "node:child_process";
-import { delimiter, join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { resumeGateRun, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { planGateResumes, type GateResumeCandidate } from "@intentius/chant/op/gate-resume-plan";
 import type { PendingGateRecord, PointQuestionState } from "@intentius/chant/point-decision";
-import { chantCommand } from "@intentius/chant/chant-install";
+import { runChant } from "@intentius/chant/chant-install";
 import { MIGRATE_OP } from "./migrate";
 import { APPLY_OP, runOf, type GateLedger, type PendingRecord } from "./apply";
 import { forgeLiveness, type Liveness } from "./apply-rows";
@@ -229,24 +228,14 @@ export async function resumeWithChant(repo: string, env: NodeJS.ProcessEnv, o: {
   let code = 0;
   for (const op of RESUMED_OPS) {
     log(`terragucci resume: chant run resume --op ${op}`);
-    const r = await runChant(repo, ["run", "resume", "--op", op], { ...env, ...(token ? { CHANT_FORGE_TOKEN: token } : {}) }, o.chant, "inherit");
-    if (r.error) {
-      log(`terragucci resume: chant run resume did not start (${r.error.message}); install terragucci again, which installs chant with it`);
+    try {
+      // The chant terragucci installs (or the repository's), its bin first on PATH, the output in the job's log.
+      const r = await runChant(["run", "resume", "--op", op], { cwd: repo, env: { ...env, ...(token ? { CHANT_FORGE_TOKEN: token } : {}) }, ...(o.chant ? { chant: o.chant } : {}), from: [repo], stdio: "inherit" });
+      if (r.code !== 0) code = r.code;
+    } catch (e) {
+      log(`terragucci resume: chant run resume did not start (${(e as Error).message}); install terragucci again, which installs chant with it`);
       code = 1;
-    } else if (r.status !== 0) code = r.status ?? 1;
+    }
   }
   return code;
-}
-
-/** Run the chant bin terragucci installs, without blocking: its output piped back, or inherited by the job's log. */
-function runChant(repo: string, args: string[], env: NodeJS.ProcessEnv, chant: string | undefined, stdio: "pipe" | "inherit"): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
-  return new Promise((done) => {
-    const child = spawn(chantCommand({ ...(chant ? { chant } : {}), from: [repo] }), args, { cwd: repo, stdio: ["ignore", stdio, stdio], env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (d) => (stdout += d));
-    child.stderr?.on("data", (d) => (stderr += d));
-    child.on("error", (error) => done({ status: null, stdout, stderr, error }));
-    child.on("close", (status) => done({ status, stdout, stderr }));
-  });
 }
