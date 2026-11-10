@@ -35,7 +35,8 @@ import { join } from "node:path";
 import { fitNote, noteLimit } from "@intentius/chant/plan-summary";
 import { jobReads, poster, type Fetch } from "./forge";
 import { FORGED, PLAN_MARK, PLAN_NOTE_FILE, PLAN_STATUS_FILE, planStatus, ROOTS_LINE } from "./plan-note-gitlab";
-import { DRIFT_SCHEDULE_FILE, driftOverdue, driftRuns } from "./report/overdue";
+import { overdueVerdict } from "@intentius/chant/op/schedule-overdue";
+import { DRIFT_SCHEDULE_FILE, driftRuns, driftWatch } from "./report/overdue";
 
 export { DRIFT_SCHEDULE_FILE };
 import { targetFromEnv } from "./report/drift";
@@ -100,7 +101,7 @@ async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: 
   try {
     // The plan job names the drift job's workflow file (chant's drift Op's, chant issue 4622); a file written before names none.
     const workflow = typeof left.workflow === "string" && /^\.(github|forgejo)\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/.test(left.workflow) ? left.workflow : undefined;
-    const found = driftOverdue(left.cron, o.forge, await driftRuns(doFetch, target, ...(workflow ? [workflow] : [])), added, o.now ?? new Date());
+    const found = overdueVerdict(driftWatch(left.cron, o.forge), o.forge, await driftRuns(doFetch, target, ...(workflow ? [workflow] : [])), added, o.now ?? new Date());
     if (found) log(found.message);
     return found?.message;
   } catch (e) {
