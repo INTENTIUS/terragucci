@@ -123,91 +123,12 @@ render-images:
     rm -rf "$dir"
     echo "  ✓ images/Dockerfile.* rendered"
 
+# GitHub reads the YAML, so the rendered file is committed. chant renders each
+# file chantGenerated in package.json declares into a temp tree and fails naming
+# each one that differs (chant issue 4909).
 [doc("Fail if any committed workflow, Dockerfile or stack config has drifted from its declaration.")]
 ci-check:
-    #!/usr/bin/env bash
-    # GitHub reads the YAML, so the rendered file is committed. This gate keeps
-    # the TypeScript the source of truth: a hand edit to the YAML fails here.
-    # Every render writes into its own place under one temp dir and they run
-    # side by side; the comparisons then run in order.
-    set -uo pipefail
-    out="$(mktemp -d -t terragucci-ci-XXXX)"
-    trap 'rm -rf "$out"' EXIT
-    # render NAME COMMAND...: run COMMAND in the background, its output in $out/NAME.log.
-    render() { local name="$1"; shift; ( "$@" >"$out/$name.log" 2>&1; echo $? >"$out/$name.rc" ) & }
-    # rendered NAME: whether NAME's render succeeded; prints its output when it did not.
-    rendered() {
-      [ "$(cat "$out/$1.rc")" = 0 ] && return 0
-      cat "$out/$1.log"; echo "  rendering $1 failed"; return 1
-    }
-    # same COMMITTED RENDERED SOURCE: compare one committed file with its render.
-    same() {
-      if diff -u "$1" "$2"; then
-        echo "  ✓ $1 matches $3"
-      else
-        echo "  $1 is not what $3 renders. Run 'just ci' and commit the result."
-        return 1
-      fi
-    }
-    workflows=("ci:.github/workflows/ci.yml" "pages:.github/workflows/pages.yml" "image-ci:.github/workflows/images.yml" "ci-red:.github/workflows/ci-red.yml" "diff-guard:.github/workflows/diff-guard.yml" "scale:.github/workflows/scale.yml")
-    for pair in "${workflows[@]}"; do
-      src="${pair%%:*}"
-      render "$src" npx chant build "$src" -o "$out/$src.yml" --format yaml
-    done
-    # The green tick, from chant.workspace.json and the committed workflows.
-    render green npx chant ci workflow --token-secret CI_GREEN_TOKEN --output "$out/chant-ci-green.yml"
-    # The release workflow, from release.workflow in chant.config.ts.
-    render release npx chant release workflow --forge github --output "$out/publish.yml"
-    # The Dockerfiles: the docker lexicon writes them beside its (empty) compose output.
-    mkdir "$out/images"
-    render images npx chant build images -o "$out/images/compose.yml" --format yaml
-    # The stack's collector and Prometheus configs, from observability/.
-    render observability npx chant build observability --lexicon-output "otel=$out/collector.yaml" --lexicon-output "prometheus=$out/prometheus.yml" --format yaml
-    # The reports front door's template, which the site offers for download.
-    render front-door npx chant build front-door -o "$out/front-door.json" --format json
-    # The dashboards, rules and Grafana datasources the stack's Grafana and Prometheus read.
-    render dashboards npx tsx scripts/render-dashboards.ts --check
-    wait
-    rc=0
-    for pair in "${workflows[@]}"; do
-      src="${pair%%:*}"; committed="${pair#*:}"
-      if rendered "$src"; then same "$committed" "$out/$src.yml" "$src/pipeline.ts" || rc=1; else rc=1; fi
-    done
-    if rendered green; then
-      # chant names --output in the file's first line; the committed file was written without it.
-      sed '1s# --output [^ ]*##' "$out/chant-ci-green.yml" >"$out/chant-ci-green.norm.yml"
-      same .github/workflows/chant-ci-green.yml "$out/chant-ci-green.norm.yml" chant.workspace.json || rc=1
-    else
-      rc=1
-    fi
-    if rendered release; then
-      # chant names --output in the file's first line; the committed file was written without it.
-      sed '1s# --output [^ ]*##' "$out/publish.yml" >"$out/publish.norm.yml"
-      same .github/workflows/publish.yml "$out/publish.norm.yml" "chant.config.ts's release.workflow" || rc=1
-    else
-      rc=1
-    fi
-    if rendered images; then
-      for f in "$out/images"/Dockerfile.*; do
-        same "images/$(basename "$f")" "$f" images/images.ts || rc=1
-      done
-    else
-      rc=1
-    fi
-    if rendered observability; then
-      same stack/observability/collector.yaml "$out/collector.yaml" observability/collector.ts || rc=1
-      same stack/observability/prometheus.yml "$out/prometheus.yml" observability/prometheus.ts || rc=1
-    else
-      rc=1
-    fi
-    if rendered front-door; then
-      same docs-site/public/reports-front-door.json "$out/front-door.json" front-door/stack.ts || rc=1
-    else
-      rc=1
-    fi
-    cat "$out/dashboards.log"
-    [ "$(cat "$out/dashboards.rc")" = 0 ] || rc=1
-    exit $rc
+    npx chant dev generated-check
 
 # ── the published site ─────────────────────────────────────────────────────
 
