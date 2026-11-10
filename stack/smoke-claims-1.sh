@@ -4032,9 +4032,9 @@ claim_oidc/audience_stages() {
   # pull request runs the plan job. Each job's token must carry its stage's
   # audience, the apply role's trust must refuse the plan job's token, and
   # neither probe may see a token-request variable.
-  # BREAK: init runs a bundle whose stageTokens fetches the tokens but leaves
-  # out the restart without the token-request variables, so the step, the
-  # binary and the probe keep them.
+  # BREAK: init runs a bundle whose login (chant's ci-login) fetches the
+  # tokens but leaves out the restart without the token-request variables, so
+  # the step, the binary and the probe keep them.
   log() { echo "[smoke audience-stages] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -4044,7 +4044,7 @@ claim_oidc/audience_stages() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      render.ts '    restartWithout("bash", OIDC_REQUEST_VARS, OIDC_RESTART),' '' \
+      render.ts 'forge === "gitlab" ? { sameStep: true } : { restart: true }' '{ sameStep: true }' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   fresh_repo audience-stages || { drop_work "$work"; return 1; }
@@ -4174,12 +4174,12 @@ JS
     "$plan_role" "$apply_role" > "$work/tree/terragucci.yml"
   (cd "$work/tree" && "$TERRAGUCCI" init >/dev/null && rm -f terragucci.yml) || { log "init failed"; drop_work "$work"; return 1; }
   wf="$work/tree/.forgejo/workflows/terragucci.yml"
-  grep -q "tg oidc \"\$TERRAGUCCI_OIDC_FILE\" 'terragucci-plan'" "$wf" && grep -q "tg oidc \"\$TERRAGUCCI_OIDC_FILE\" 'terragucci-apply'" "$wf" \
+  grep -q '"audience":"terragucci-plan"' "$wf" && grep -q '"audience":"terragucci-apply"' "$wf" \
     || { log "the pipeline asks for no token for the plan or the apply audience"; drop_work "$work"; return 1; }
   if [ -n "${BREAK:-}" ]; then
-    ! grep -q 'TG_NO_OIDC_REQUEST=1' "$wf" || { break_setup_failed "the BREAK pipeline still restarts without the token-request variables"; drop_work "$work"; return 1; }
+    ! grep -q 'CHANT_CLOUD_LOGGED_IN=1' "$wf" || { break_setup_failed "the BREAK pipeline still restarts without the token-request variables"; drop_work "$work"; return 1; }
   else
-    grep -q 'exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN TG_NO_OIDC_REQUEST=1' "$wf" \
+    grep -q 'exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN CHANT_CLOUD_LOGGED_IN=1' "$wf" \
       || { log "the pipeline does not restart without the token-request variables"; drop_work "$work"; return 1; }
   fi
   # A mark from a job of STAGE: a verified token for SUB with that stage's

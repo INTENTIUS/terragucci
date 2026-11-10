@@ -2419,7 +2419,7 @@ gitlab_claim_affected/tofu() {
 gitlab_claim_oidc/gitlab() {
   # oidc names a plan role and an apply role, and app, on a local backend,
   # reads a data source whose program (probe.mjs) checks the job it runs in:
-  # the job's TERRAGUCCI_OIDC id_token, in AWS_WEB_IDENTITY_TOKEN_FILE, must
+  # the job's CHANT_ID_TOKEN_AWS id_token, in AWS_WEB_IDENTITY_TOKEN_FILE, must
   # verify against the lab's published keys and name this project, pipeline,
   # job, commit and ref, for the audience sts.amazonaws.com, and AWS_ROLE_ARN
   # must be the role of the job's kind. Nothing trades the token with STS.
@@ -2516,8 +2516,8 @@ JS
   printf 'forge: gitlab\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/%s\n  apply_role: arn:aws:iam::000000000000:role/%s\n' \
     "$plan_role" "$apply_role" > "$work/tree/terragucci.yml"
   (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
-  grep -A1 '^    TERRAGUCCI_OIDC:$' "$work/tree/.gitlab/terragucci.yml" | grep -q 'aud: sts.amazonaws.com' \
-    || { log "the pipeline asks for no TERRAGUCCI_OIDC token for sts.amazonaws.com"; drop_work "$work"; return 1; }
+  grep -A1 '^    CHANT_ID_TOKEN_AWS:$' "$work/tree/.gitlab/terragucci.yml" | grep -q 'aud: sts.amazonaws.com' \
+    || { log "the pipeline asks for no CHANT_ID_TOKEN_AWS token for sts.amazonaws.com"; drop_work "$work"; return 1; }
   # What the probe found in a job, from its report artifact.
   probe_found() { # job kind
     gl_artifact "$project" "$1" "terragucci-report/oidc-$2.json" 2>/dev/null | jq -c . 2>/dev/null || true
@@ -2553,9 +2553,9 @@ JS
 gitlab_claim_oidc/audience_stages() {
   # oidc.audience as a map: plan terragucci-plan, apply terragucci-apply,
   # drift terragucci-drift. app, on a local backend, reads a data source whose
-  # program (probe.mjs) reads the job's TERRAGUCCI_OIDC id_token from its own
-  # environment, checks that AWS_WEB_IDENTITY_TOKEN_FILE holds the same token,
-  # verifies it against the lab's published keys, and evaluates on its aud and
+  # program (probe.mjs) reads the job's CHANT_ID_TOKEN_AWS id_token from
+  # AWS_WEB_IDENTITY_TOKEN_FILE, where chant's login put it, checks that the
+  # login unset the variable, verifies it against the lab's published keys, and evaluates on its aud and
   # sub the trust of two roles: terragucci-plan's, which admits only the plan
   # audience, and terragucci-apply's, which admits only the apply audience, for
   # this project. The trust documents are in the tree beside the probe; the lab
@@ -2607,8 +2607,8 @@ TF
       Condition: {StringEquals: {"gitlab:8929:aud": $aud}, StringLike: {"gitlab:8929:sub": $sub}}}]}' > "$work/tree/app/trust-$stage.json"
   done
   cat > "$work/tree/app/probe.mjs" <<'JS'
-// In a GitLab job: the TERRAGUCCI_OIDC id_token, the same token in
-// AWS_WEB_IDENTITY_TOKEN_FILE, verified against the instance's keys, and the
+// In a GitLab job: the CHANT_ID_TOKEN_AWS id_token, which chant's login moved
+// to AWS_WEB_IDENTITY_TOKEN_FILE, verified against the instance's keys, and the
 // verdict of each role's trust (trust-plan.json, trust-apply.json) on its aud
 // and sub. What it found goes to terragucci-report/audience-<plan|apply>.json,
 // which the job keeps as an artifact. Outside a job it checks nothing. It
@@ -2628,12 +2628,13 @@ const done = (code) => {
   console.log(JSON.stringify({ aud: String(found.aud), role: found.role }));
   process.exit(0);
 };
-const jwt = (e.TERRAGUCCI_OIDC || "").trim();
-if (!jwt) { found.problems.push("no TERRAGUCCI_OIDC in the job's environment"); done(1); }
-found.same_file = !!e.AWS_WEB_IDENTITY_TOKEN_FILE && readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim() === jwt;
-if (!found.same_file) found.problems.push("AWS_WEB_IDENTITY_TOKEN_FILE does not hold the TERRAGUCCI_OIDC token");
+// chant's login unsets the id_token once it is in AWS_WEB_IDENTITY_TOKEN_FILE, so the file is where it is read.
+const jwt = e.AWS_WEB_IDENTITY_TOKEN_FILE ? readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim() : "";
+if (!jwt) { found.problems.push("no token in AWS_WEB_IDENTITY_TOKEN_FILE"); done(1); }
+found.same_file = !e.CHANT_ID_TOKEN_AWS;
+if (!found.same_file) found.problems.push("CHANT_ID_TOKEN_AWS is still in the job's environment");
 const [h, p, s] = jwt.split(".");
-if (!s) { found.problems.push("TERRAGUCCI_OIDC holds no JWT"); done(1); }
+if (!s) { found.problems.push("AWS_WEB_IDENTITY_TOKEN_FILE holds no JWT"); done(1); }
 const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
 const head = dec(h), c = dec(p);
 const ISS = e.CI_SERVER_URL;
@@ -2670,9 +2671,9 @@ JS
   printf 'forge: gitlab\nbinary: tofu\ngate: never\noidc:\n  plan_role: arn:aws:iam::000000000000:role/terragucci-plan\n  apply_role: arn:aws:iam::000000000000:role/terragucci-apply\n  audience:\n    plan: terragucci-plan\n    apply: terragucci-apply\n    drift: terragucci-drift\n' > "$work/tree/terragucci.yml"
   (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
   wf="$work/tree/.gitlab/terragucci.yml"
-  # The audience a job's TERRAGUCCI_OIDC id_token asks for, as init wrote it.
+  # The audience a job's CHANT_ID_TOKEN_AWS id_token asks for, as init wrote it.
   job_aud() { # job
-    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    TERRAGUCCI_OIDC:$/ { want = 1; next } inside && want && /^      aud: / { print $2; exit }' "$wf"
+    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    CHANT_ID_TOKEN_AWS:$/ { want = 1; next } inside && want && /^      aud: / { print $2; exit }' "$wf"
   }
   [ "$(job_aud plan)" = terragucci-plan ] && [ "$(job_aud apply-wave-1)" = terragucci-apply ] \
     || { log "the pipeline's id_tokens ask for $(job_aud plan) in plan and $(job_aud apply-wave-1) in apply-wave-1"; drop_work "$work"; return 1; }
@@ -2730,9 +2731,10 @@ gitlab_claim_apply/groups() {
   # holds both: init renders apply-wave-1, which plans both with the plan
   # roles and decides the gate, then apply-wave-1-prod (environment: prod)
   # and apply-wave-1-dev (environment: dev), each declaring its own
-  # TERRAGUCCI_OIDC audience. Each root reads a data source whose program
-  # (probe.mjs) reads the job's TERRAGUCCI_OIDC id_token, checks it is the one
-  # in AWS_WEB_IDENTITY_TOKEN_FILE, verifies it against the lab's keys, and
+  # CHANT_ID_TOKEN_AWS audience. Each root reads a data source whose program
+  # (probe.mjs) reads the job's CHANT_ID_TOKEN_AWS id_token from
+  # AWS_WEB_IDENTITY_TOKEN_FILE, checks that chant's login unset the variable,
+  # verifies it against the lab's keys, and
   # evaluates two trusts per environment on it, both kept beside it in the
   # tree: an AWS trust (trust-<env>.json) on aud, the environment's audience,
   # and sub, main of this project, which is what AWS can read of a GitLab
@@ -2799,8 +2801,8 @@ TF
   done
   for env in prod dev; do
     cat > "$work/tree/envs/$env/app/probe.mjs" <<'JS'
-// In a GitLab job: the TERRAGUCCI_OIDC id_token, the same token in
-// AWS_WEB_IDENTITY_TOKEN_FILE, verified against the instance's keys; its
+// In a GitLab job: the CHANT_ID_TOKEN_AWS id_token, which chant's login moved
+// to AWS_WEB_IDENTITY_TOKEN_FILE, verified against the instance's keys; its
 // environment claims; the roles by root glob the job handed the binary and
 // this root's role; and, for prod and dev, the verdict of the AWS trust
 // (trust-<env>.json, on aud and sub) and of the GCP attribute condition
@@ -2824,14 +2826,16 @@ const done = (code) => {
   console.log(JSON.stringify({ env }));
   process.exit(0);
 };
-try { found.roles = JSON.parse(e.TERRAGUCCI_ROOT_ROLES || "[]"); } catch { found.problems.push("TERRAGUCCI_ROOT_ROLES is not JSON"); done(1); }
+// The roles by root glob are in the file chant's login names, CHANT_CLOUD_TARGETS.
+try { found.roles = e.CHANT_CLOUD_TARGETS ? (JSON.parse(readFileSync(e.CHANT_CLOUD_TARGETS, "utf8")).clouds.aws?.targets ?? []).map((t) => [t.targets[0], t.identity]) : []; } catch { found.problems.push("CHANT_CLOUD_TARGETS is not a targets file"); done(1); }
 found.role = (e.AWS_ROLE_ARN || "").split("/").pop();
-const jwt = (e.TERRAGUCCI_OIDC || "").trim();
-if (!jwt) { found.problems.push("no TERRAGUCCI_OIDC in the job's environment"); done(1); }
-found.same_file = !!e.AWS_WEB_IDENTITY_TOKEN_FILE && readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim() === jwt;
-if (!found.same_file) found.problems.push("AWS_WEB_IDENTITY_TOKEN_FILE does not hold the TERRAGUCCI_OIDC token");
+// chant's login unsets the id_token once it is in AWS_WEB_IDENTITY_TOKEN_FILE, so the file is where it is read.
+const jwt = e.AWS_WEB_IDENTITY_TOKEN_FILE ? readFileSync(e.AWS_WEB_IDENTITY_TOKEN_FILE, "utf8").trim() : "";
+if (!jwt) { found.problems.push("no token in AWS_WEB_IDENTITY_TOKEN_FILE"); done(1); }
+found.same_file = !e.CHANT_ID_TOKEN_AWS;
+if (!found.same_file) found.problems.push("CHANT_ID_TOKEN_AWS is still in the job's environment");
 const [h, p, s] = jwt.split(".");
-if (!s) { found.problems.push("TERRAGUCCI_OIDC holds no JWT"); done(1); }
+if (!s) { found.problems.push("AWS_WEB_IDENTITY_TOKEN_FILE holds no JWT"); done(1); }
 const dec = (x) => JSON.parse(Buffer.from(x, "base64url").toString());
 const head = dec(h), c = dec(p);
 const ISS = e.CI_SERVER_URL;
@@ -2881,12 +2885,12 @@ JS
   } > "$work/tree/terragucci.yml"
   (cd "$work/tree" && git init -q -b main && "$TERRAGUCCI" init >/dev/null) || { log "init failed"; drop_work "$work"; return 1; }
   wf="$work/tree/.gitlab/terragucci.yml"
-  # A job's environment name and TERRAGUCCI_OIDC audience, as init wrote them.
+  # A job's environment name and CHANT_ID_TOKEN_AWS audience, as init wrote them.
   job_env() { # job
     awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^  environment:$/ { want = 1; next } inside && want && /^    name: / { print $2; exit }' "$wf"
   }
   job_aud() { # job
-    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    TERRAGUCCI_OIDC:$/ { want = 1; next } inside && want && /^      aud: / { print $2; exit }' "$wf"
+    awk -v j="$1:" '/^[^ #][^:]*:$/ { inside = ($0 == j) } inside && /^    CHANT_ID_TOKEN_AWS:$/ { want = 1; next } inside && want && /^      aud: / { print $2; exit }' "$wf"
   }
   for job in apply-wave-1 apply-wave-1-prod apply-wave-1-dev; do
     grep -q "^$job:\$" "$wf" || { log "init wrote no $job job"; drop_work "$work"; return 1; }
@@ -2917,7 +2921,7 @@ JS
     jq -e --arg o "$other" '.condition[$o] == false' <<<"$1" >/dev/null || { log "the condition of $other admits apply-wave-1-$2's token"; return 1; }
     jq -e --arg o "$other" '.trust[$o] == false' <<<"$1" >/dev/null || { log "the AWS trust of $other admits apply-wave-1-$2's token"; return 1; }
     jq -e --arg r "terragucci-grp-$2-apply" '.role == $r' <<<"$1" >/dev/null || { log "envs/$2/app took $(jq -r .role <<<"$1") in apply-wave-1-$2"; return 1; }
-    jq -e --arg g "envs/$2/**" --arg r "$prefix-$2-apply" '.roles == [[$g, $r]]' <<<"$1" >/dev/null || { log "apply-wave-1-$2's TERRAGUCCI_ROOT_ROLES is $(jq -c .roles <<<"$1"), not $2's apply role alone"; return 1; }
+    jq -e --arg g "envs/$2/**" --arg r "$prefix-$2-apply" '.roles == [[$g, $r]]' <<<"$1" >/dev/null || { log "apply-wave-1-$2's roles by root glob are $(jq -c .roles <<<"$1"), not $2's apply role alone"; return 1; }
     jq -e '.problems == []' <<<"$1" >/dev/null || { log "apply-wave-1-$2's probe: $(jq -c .problems <<<"$1")"; return 1; }
   }
   # The deciding job's record: ENV's plan role, no apply role in the job's

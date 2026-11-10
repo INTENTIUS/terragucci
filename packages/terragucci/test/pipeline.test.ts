@@ -10,7 +10,8 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { CHANT_AGENT_PATHS } from "../src/render-chant-agent";
-import { applyScript, AWS_CLI, forgejoSkipLevels, stageTokens, needsDepths, runnerEvaluatedIf, cloudScripts, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { cloudLoginSpec, LOGIN_RESTART_MARKER, LOGIN_SPEC_ENV } from "@intentius/chant/ci-login";
+import { applyScript, AWS_CLI, forgejoSkipLevels, cloudLoginLines, needsDepths, runnerEvaluatedIf, loginSpec, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import type { ForgeName } from "../src/config";
 import { driftOp, git, tmp } from "./helpers";
 
@@ -410,8 +411,10 @@ describe("the comment trigger", () => {
     const at = (s: string): number => script.indexOf(s);
     expect(at("terragucci comment-apply --layers")).toBeGreaterThan(-1);
     expect(at("terragucci comment-apply")).toBeLessThan(at('git checkout --quiet --detach "$TG_SHA"'));
-    expect(at('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(at("tg oidc"));
-    expect(at("tg oidc")).toBeLessThan(at("terragucci stage tf-apply"));
+    // The login comes once the comment is decided, and its restart before the change is checked out and runs.
+    expect(script.lastIndexOf("terragucci comment-apply")).toBeLessThan(at(`export ${LOGIN_SPEC_ENV}=`));
+    expect(at(`${LOGIN_RESTART_MARKER}=1`)).toBeLessThan(at('git checkout --quiet --detach "$TG_SHA"'));
+    expect(at(`export ${LOGIN_SPEC_ENV}=`)).toBeLessThan(at("terragucci stage tf-apply"));
     expect(script).toContain('terragucci stage tf-apply --wave "$wave" --layers');
     expect(script).toContain("--gate always");
     expect(script).not.toContain("tg stale");
@@ -432,7 +435,9 @@ describe("the comment trigger", () => {
     expect(script).not.toContain("standing down");
     expect(script.match(/terragucci comment-apply [^\n]* --forge forgejo/g)).toHaveLength(2);
     expect(at("refs/tags/terragucci-apply-lock")).toBeLessThan(script.lastIndexOf("terragucci comment-apply"));
-    expect(script.lastIndexOf("terragucci comment-apply")).toBeLessThan(at("tg oidc"));
+    expect(script.lastIndexOf("terragucci comment-apply")).toBeLessThan(at(`export ${LOGIN_SPEC_ENV}=`));
+    // The step starts again past the login, and holds the lock's release there too.
+    expect(script.lastIndexOf("trap 'git push -q --force-with-lease")).toBeGreaterThan(at(`${LOGIN_RESTART_MARKER}=1`));
   });
 
   describe("an apply a comment started", () => {
@@ -1118,13 +1123,13 @@ describe("credentials", () => {
     }
     expect(doc.jobs.check["enable-openid-connect"]).toBeUndefined();
     expect(doc["enable-openid-connect"]).toBeUndefined();
-    expect(text).toContain("tg oidc");
-    // A runner that serves no token stops the job and says what Forgejo needs.
-    expect(text).toContain('if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then');
-    expect(text).toContain("Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true");
-    expect(text).toContain("|| exit 1");
+    // chant's login, which tells a runner that serves no token what Forgejo needs, and stops the job.
+    expect(text).toContain(`export ${LOGIN_SPEC_ENV}=`);
+    expect(text).toContain("Forgejo Runner 12.5 or later");
+    expect(text).toContain("forgejo)\" || exit 1");
     expect(render("forgejo")).not.toContain("enable-openid-connect");
-    expect(render("github", OIDC)).not.toContain("enable-openid-connect");
+    // chant's login names the setting in what it tells a Forgejo job with no token; GitHub's jobs set no such key.
+    expect(render("github", OIDC)).not.toMatch(/^\s*enable-openid-connect:/m);
   });
 
   it.each(["github", "forgejo"] as const)("%s: a fork's pull request runs no plan, so no token or OIDC reaches it", (forge) => {
@@ -1137,8 +1142,8 @@ describe("credentials", () => {
 
   it("gitlab: id_tokens on plan and apply, and plan skips a fork's merge request", () => {
     const doc = body(render("gitlab", OIDC));
-    expect(doc.plan.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
-    expect(doc["apply-wave-1"].id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
+    expect(doc.plan.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
+    expect(doc["apply-wave-1"].id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
     expect(doc.check.id_tokens).toBeUndefined();
     expect(doc.plan.rules[0].if).toContain("$CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH");
   });
@@ -2572,16 +2577,16 @@ describe("GCP and Azure credentials", () => {
     const jobs = forge === "gitlab" ? doc : doc.jobs;
     const flat = (j: unknown): string => JSON.stringify(j);
     expect(flat(jobs.plan)).toContain(GCP.plan_service_account);
-    expect(flat(jobs.plan)).toContain("ARM_CLIENT_ID='client-plan'");
+    expect(flat(jobs.plan)).toContain('\\"clientId\\":\\"client-plan\\"');
     expect(flat(jobs.plan)).not.toContain(GCP.apply_service_account);
     expect(flat(jobs.plan)).not.toContain("client-apply");
     expect(flat(jobs["apply-wave-1"])).toContain(GCP.apply_service_account);
-    expect(flat(jobs["apply-wave-1"])).toContain("ARM_CLIENT_ID='client-apply'");
+    expect(flat(jobs["apply-wave-1"])).toContain('\\"clientId\\":\\"client-apply\\"');
     expect(flat(jobs["apply-wave-1"])).not.toContain(GCP.plan_service_account);
     expect(flat(jobs["apply-wave-1"])).not.toContain("client-plan");
-    expect(flat(jobs.check)).not.toMatch(/GOOGLE_APPLICATION_CREDENTIALS|ARM_|id_tokens|id-token/);
-    // No AWS role is set, so none is assumed.
-    expect(flat(jobs.plan)).not.toContain("AWS_ROLE_ARN");
+    expect(flat(jobs.check)).not.toMatch(/CHANT_CLOUD_LOGIN|id_tokens|id-token/);
+    // No AWS role is set, so the login has no AWS part.
+    expect(flat(jobs.plan)).not.toContain('CHANT_CLOUD_LOGIN=\'{\\"aws\\"');
   });
 
   it.each(["github", "forgejo"] as const)("%s: one token request per audience, with the job's id-token permission", (forge) => {
@@ -2592,18 +2597,10 @@ describe("GCP and Azure credentials", () => {
       if (forge === "forgejo") expect(doc.jobs[j]["enable-openid-connect"]).toBe(true);
     }
     const plan = doc.jobs.plan.steps.map((s: any) => s.run).filter(Boolean).join("\n");
-    if (forge === "github") {
-      expect(plan).toContain(`tg oidc "$TERRAGUCCI_GCP_TOKEN_FILE" 'https://iam.googleapis.com/${PROVIDER}' || exit 1`);
-      expect(plan).toContain(`tg oidc "$ARM_OIDC_TOKEN_FILE_PATH" 'api://AzureADTokenExchange' || exit 1`);
-      expect(plan.match(/tg oidc /g)).toHaveLength(2);
-    } else {
-      // Forgejo fetches every token first, then starts again without the request variables, which carry the run's token.
-      expect(plan).toContain(`tg oidc "$TERRAGUCCI_OIDC_GCP_FILE" 'https://iam.googleapis.com/${PROVIDER}'`);
-      expect(plan).toContain(`tg oidc "$TERRAGUCCI_OIDC_AZURE_FILE" 'api://AzureADTokenExchange'`);
-      expect(plan).toContain('mv -f "$TERRAGUCCI_OIDC_GCP_FILE" "$TERRAGUCCI_GCP_TOKEN_FILE"');
-      expect(plan).toContain('mv -f "$TERRAGUCCI_OIDC_AZURE_FILE" "$ARM_OIDC_TOKEN_FILE_PATH"');
-      expect(plan).toContain("TG_NO_OIDC_REQUEST=1");
-    }
+    // One login, with both clouds; it starts the step again without the request variables, which on Forgejo carry the run's token.
+    const specs = [...plan.matchAll(new RegExp(`export ${LOGIN_SPEC_ENV}='([^']*)'`, "g"))].map((m) => JSON.parse(m[1]!));
+    expect(specs).toEqual([cloudLoginSpec(loginSpec(CLOUDS, "plan", "terragucci-plan"))]);
+    expect(plan).toContain(`${LOGIN_RESTART_MARKER}=1`);
     // A fork's pull request still gets no plan job, and apply runs only on the default branch.
     expect(doc.jobs.plan.if).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(doc.jobs["apply-wave-1"].if).toContain("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
@@ -2612,23 +2609,23 @@ describe("GCP and Azure credentials", () => {
   it("gitlab: an id_token per cloud, each with its audience, on plan, apply and drift", () => {
     const out = renderWithOut("gitlab", CLOUDS, { drift: "0 6 * * *" });
     const doc = body(out.content);
-    const want = { TERRAGUCCI_OIDC_GCP: { aud: `https://iam.googleapis.com/${PROVIDER}` }, TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchange" } };
+    const want = { CHANT_ID_TOKEN_GCP: { aud: `https://iam.googleapis.com/${PROVIDER}` }, CHANT_ID_TOKEN_AZURE: { aud: "api://AzureADTokenExchange" } };
     for (const j of ["plan", "apply-wave-1"]) expect(doc[j].id_tokens).toEqual(want);
     expect(driftOp(out, "gitlab")!.job.id_tokens).toEqual(want);
     expect(doc.check.id_tokens).toBeUndefined();
-    expect(doc.plan.script.join("\n")).toContain('printf \'%s\' "$TERRAGUCCI_OIDC_GCP" >"$TERRAGUCCI_GCP_TOKEN_FILE"');
-    expect(doc.plan.script.join("\n")).toContain('printf \'%s\' "$TERRAGUCCI_OIDC_AZURE" >"$ARM_OIDC_TOKEN_FILE_PATH"');
-    // Beside AWS, all three tokens, AWS's under its old name.
+    // chant's login reads them and unsets them in the script.
+    expect(doc.plan.script.join("\n")).toContain("unset CHANT_CLOUD_LOGIN_VARS CHANT_CLOUD_LOGIN CHANT_ID_TOKEN_GCP CHANT_ID_TOKEN_AZURE");
+    // Beside AWS, all three tokens.
     const all = body(renderWith("gitlab", { ...OIDC, ...CLOUDS }));
-    expect(all.plan.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" }, ...want });
+    expect(all.plan.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" }, ...want });
     expect(JSON.stringify(all.plan)).toContain(OIDC.plan_role);
   });
 
   it("gitlab: the Azure id_token carries oidc.azure.audience, as GitHub's and Forgejo's token request does", () => {
     const out = renderWithOut("gitlab", { azure: { ...AZURE, audience: "api://AzureADTokenExchangeUSGov" } }, { drift: "0 6 * * *" });
     const doc = body(out.content);
-    for (const j of ["plan", "apply-wave-1"]) expect(doc[j].id_tokens).toEqual({ TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
-    expect(driftOp(out, "gitlab")!.job.id_tokens).toEqual({ TERRAGUCCI_OIDC_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
+    for (const j of ["plan", "apply-wave-1"]) expect(doc[j].id_tokens).toEqual({ CHANT_ID_TOKEN_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
+    expect(driftOp(out, "gitlab")!.job.id_tokens).toEqual({ CHANT_ID_TOKEN_AZURE: { aud: "api://AzureADTokenExchangeUSGov" } });
   });
 
   it.each(FORGES)("%s: drift takes the plan identities", (forge) => {
@@ -2643,16 +2640,15 @@ describe("GCP and Azure credentials", () => {
     const api = await stubApi((hit) => ({ value: "jwt-for-" + new URL(hit.url, "http://x").searchParams.get("audience") }));
     try {
       const script = [
-        forgeApi("github"),
-        ...cloudScripts("github", CLOUDS, "plan", "terragucci-plan"),
+        ...cloudLoginLines("github", CLOUDS, "plan", "terragucci-plan"),
         'cat "$GOOGLE_APPLICATION_CREDENTIALS"',
         'echo "gcp-token=$(cat "$(node -e \'console.log(JSON.parse(require("fs").readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,"utf-8")).credential_source.file)\')")"',
         'echo "azure-token=$(cat "$ARM_OIDC_TOKEN_FILE_PATH")"',
         'echo "arm=$ARM_USE_OIDC,$ARM_CLIENT_ID,$ARM_TENANT_ID,$ARM_SUBSCRIPTION_ID"',
       ].join("\n");
-      const r = await run(script, { ACTIONS_ID_TOKEN_REQUEST_URL: `${api.url}/token?api-version=2.0`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req" });
+      const r = await run(script, { ACTIONS_ID_TOKEN_REQUEST_URL: `${api.url}/token?api-version=2.0`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req", RUNNER_TEMP: mkdtempSync(join(tmpdir(), "tg-login-")) });
       expect(r.status, r.out).toBe(0);
-      const lines = r.out.trim().split("\n");
+      const lines = r.out.trim().split("\n").filter((l) => !l.startsWith("chant: "));
       const cred = JSON.parse(lines[0]);
       expect(cred).toMatchObject({
         type: "external_account",
@@ -2670,41 +2666,32 @@ describe("GCP and Azure credentials", () => {
     }
   });
 
-  it("gitlab: the token step writes each cloud's id_token to its file", async () => {
+  it("gitlab: the login writes each cloud's id_token to its file", async () => {
     const script = [
-      ...cloudScripts("gitlab", CLOUDS, "apply", "terragucci-apply"),
+      ...cloudLoginLines("gitlab", CLOUDS, "apply", "terragucci-apply"),
       'node -e \'const c=JSON.parse(require("fs").readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,"utf-8"));console.log(require("fs").readFileSync(c.credential_source.file,"utf-8"),c.service_account_impersonation_url)\'',
       'echo "$(cat "$ARM_OIDC_TOKEN_FILE_PATH") $ARM_CLIENT_ID"',
+      'echo "left=${CHANT_ID_TOKEN_GCP:-none}"',
     ].join("\n");
-    const r = await run(script, { TERRAGUCCI_OIDC_GCP: "gcp-jwt", TERRAGUCCI_OIDC_AZURE: "azure-jwt" });
+    const r = await run(script, { CHANT_ID_TOKEN_GCP: "gcp-jwt", CHANT_ID_TOKEN_AZURE: "azure-jwt", RUNNER_TEMP: mkdtempSync(join(tmpdir(), "tg-login-")) });
     expect(r.status, r.out).toBe(0);
     expect(r.out).toContain(`gcp-jwt https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP.apply_service_account}:generateAccessToken`);
     expect(r.out).toContain("azure-jwt client-apply");
+    expect(r.out).toContain("left=none");
   });
 
   it("a runner that serves no token stops the job before it plans", async () => {
-    const r = await run([...stageTokens("forgejo", { gcp: GCP }, "plan"), forgeApi("forgejo"), ...cloudScripts("forgejo", { gcp: GCP }, "plan", "terragucci-plan"), "echo planned"].join("\n"), { ACTIONS_ID_TOKEN_REQUEST_URL: "" });
+    const r = await run([...cloudLoginLines("forgejo", { gcp: GCP }, "plan", "terragucci-plan"), "echo planned"].join("\n"), { ACTIONS_ID_TOKEN_REQUEST_URL: "", RUNNER_TEMP: mkdtempSync(join(tmpdir(), "tg-login-")) });
     expect(r.status).toBe(1);
     expect(r.out).not.toContain("planned");
   });
 
-  it("a regional token URL and a sovereign audience reach the credential file and the token request", () => {
+  it("a regional token URL and a sovereign audience reach the login", () => {
     const oidc = { gcp: { ...GCP, token_url: "https://sts.europe-west3.rep.googleapis.com/v1/token" }, azure: { ...AZURE, audience: "api://AzureADTokenExchangeUSGov" } };
-    const run = cloudScripts("github", oidc, "plan", "terragucci-plan").join("\n");
-    expect(run).toContain('"https://sts.europe-west3.rep.googleapis.com/v1/token"');
-    expect(run).not.toContain("https://sts.googleapis.com/v1/token");
-    expect(run).toContain(`tg oidc "$ARM_OIDC_TOKEN_FILE_PATH" 'api://AzureADTokenExchangeUSGov' || exit 1`);
-    expect(run).not.toContain("'api://AzureADTokenExchange'");
-    expect(cloudScripts("github", CLOUDS, "plan", "terragucci-plan").join("\n")).toContain('"https://sts.googleapis.com/v1/token"');
-  });
-
-  it.each(["github", "forgejo"] as const)("%s: the no-token check runs once per script however many clouds are set", (forge) => {
-    // On Forgejo the check is in the lines that fetch the tokens first (stageTokens), and the cloud scripts copy them.
-    const count = (s: string): number => s.split("ACTIONS_ID_TOKEN_REQUEST_URL:-").length - 1;
-    const step = (oidc: Parameters<typeof cloudScripts>[1], stage: "plan" | "apply"): string => [...stageTokens(forge, oidc, stage), ...cloudScripts(forge, oidc, stage, `terragucci-${stage}`)].join("\n");
-    expect(count(step({ ...OIDC, ...CLOUDS }, "plan"))).toBe(1);
-    expect(count(step(CLOUDS, "apply"))).toBe(1);
-    expect(count(step(OIDC, "plan"))).toBe(1);
+    const spec = loginSpec(oidc, "plan", "terragucci-plan");
+    expect(spec.gcp?.stsEndpoint).toBe("https://sts.europe-west3.rep.googleapis.com/v1/token");
+    expect(spec.azure?.audience).toBe("api://AzureADTokenExchangeUSGov");
+    expect(loginSpec(CLOUDS, "plan", "terragucci-plan").gcp?.stsEndpoint).toBeUndefined();
   });
 
   it("the config takes a token_url and an audience, and refuses empty or non-https ones", () => {

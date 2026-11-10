@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
 import { ConfigError, validateConfig, type SecretSource } from "../src/config";
 import { configSchemaProblems } from "../src/config-schema";
 import { shapeProblems } from "../src/refusals";
-import { rootRoleEnv, ROOT_GCP_ENV, ROOT_ROLES_ENV } from "../src/cloud-identity";
+import { CLOUD_TARGETS_ENV, type CloudTargetsFile } from "@intentius/chant/ci-identity";
+import { rootRoleEnv } from "../src/cloud-identity";
 import { rootSecretEnv, SecretError, secretRootProblems, secretsOf, vaultOf } from "../src/root-secrets";
 import { holdSecretValue, scrubText, secretValues } from "../src/secret-values";
 import { redactPlan, sensitiveStrings } from "../src/report/redact";
@@ -57,15 +58,29 @@ function stores(secrets: Record<string, string>, deny: string[] = []): { fetchFn
 }
 
 /** A job with an OIDC token file and the dev and prod plan roles by glob, as the plan stage gets them. */
+/** The CHANT_CLOUD_TARGETS file a step's login (or a re-plan's trade) writes: each cloud's identities by root glob, and their variables. */
+function targetsFile(clouds: CloudTargetsFile["clouds"]): string {
+  const file = join(mkdtempSync(join(tmpdir(), "secrets-targets-")), "targets.json");
+  writeFileSync(file, JSON.stringify({ version: 1, clouds }));
+  return file;
+}
+
+/** Each glob's identity, and the variables the login gives it. */
+const byGlob = (pairs: [string, string][], vars: (id: string) => Record<string, string>): NonNullable<CloudTargetsFile["clouds"]["aws"]> => ({
+  targets: pairs.map(([g, id]) => ({ targets: [g], identity: id })),
+  vars: Object.fromEntries(pairs.map(([, id]) => [id, vars(id)])),
+});
+
 function awsJob(): NodeJS.ProcessEnv {
   const dir = mkdtempSync(join(tmpdir(), "secrets-"));
   writeFileSync(join(dir, "token"), "the-jwt\n");
+  const token = join(dir, "token");
   return {
-    AWS_WEB_IDENTITY_TOKEN_FILE: join(dir, "token"),
+    AWS_WEB_IDENTITY_TOKEN_FILE: token,
     AWS_ENDPOINT_URL_STS: "http://sts.local",
     AWS_ENDPOINT_URL_SECRETS_MANAGER: "http://sm.local",
     AWS_REGION: "eu-west-1",
-    [ROOT_ROLES_ENV]: JSON.stringify([["envs/prod/**", PROD_PLAN], ["envs/dev/**", DEV_PLAN]]),
+    [CLOUD_TARGETS_ENV]: targetsFile({ aws: byGlob([["envs/prod/**", PROD_PLAN], ["envs/dev/**", DEV_PLAN]], (role) => ({ AWS_ROLE_ARN: role, AWS_WEB_IDENTITY_TOKEN_FILE: token, AWS_ROLE_SESSION_NAME: "terragucci-plan" })) }),
   };
 }
 
@@ -128,7 +143,7 @@ describe("reading a root's values", () => {
 
   it("aws: a re-plan's traded keys sign the read, with no token to assume", async () => {
     const { fetchFn, asked } = stores({ "prod/app/db": JSON.stringify({ password: "prod-db-password-1" }) });
-    const env = { AWS_ACCESS_KEY_ID: "AK-traded", AWS_SECRET_ACCESS_KEY: "SK-traded", AWS_SESSION_TOKEN: "ST-traded", AWS_ENDPOINT_URL_SECRETS_MANAGER: "http://sm.local", [ROOT_ROLES_ENV]: JSON.stringify([["envs/prod/**", PROD_PLAN]]) };
+    const env = { AWS_ACCESS_KEY_ID: "AK-traded", AWS_SECRET_ACCESS_KEY: "SK-traded", AWS_SESSION_TOKEN: "ST-traded", AWS_ENDPOINT_URL_SECRETS_MANAGER: "http://sm.local", [CLOUD_TARGETS_ENV]: targetsFile({ aws: byGlob([["envs/prod/**", PROD_PLAN]], () => ({ AWS_ACCESS_KEY_ID: "AK-traded", AWS_SECRET_ACCESS_KEY: "SK-traded", AWS_SESSION_TOKEN: "ST-traded" })) }) };
     const out = await rootSecretEnv(env, "envs/prod/app", SOURCES, { fetchFn, hold: () => undefined });
     expect(out.TF_VAR_db_password).toBe("prod-db-password-1");
     expect(asked.some((a) => a.url.startsWith("http://sts.local"))).toBe(false);
@@ -160,7 +175,7 @@ describe("reading a root's values", () => {
     const { fetchFn, asked } = stores({ "projects/acme-dev/secrets/db/versions/latest": "gcp-dev-password-1", "projects/acme-dev/secrets/key/versions/3": "gcp-dev-key-3" });
     const sources: SecretSource[] = [{ roots: ["envs/dev/**"], from: "gcp", values: { TF_VAR_db_password: "projects/acme-dev/secrets/db", TF_VAR_api_key: "projects/acme-dev/secrets/key/versions/3" } }];
     // A re-plan's traded token for the root's service account, as rootRoleEnv leaves it.
-    const env = { GOOGLE_OAUTH_ACCESS_TOKEN: "ya29.dev", [ROOT_GCP_ENV]: JSON.stringify([["envs/dev/**", "dev-plan@acme-dev.iam.gserviceaccount.com"]]) };
+    const env = { GOOGLE_OAUTH_ACCESS_TOKEN: "ya29.dev", [CLOUD_TARGETS_ENV]: targetsFile({ gcp: byGlob([["envs/dev/**", "dev-plan@acme-dev.iam.gserviceaccount.com"]], () => ({ GOOGLE_OAUTH_ACCESS_TOKEN: "ya29.dev" })) }) };
     const out = await rootSecretEnv(env, "envs/dev/app", sources, { fetchFn, hold: () => undefined });
     expect(out.TF_VAR_db_password).toBe("gcp-dev-password-1");
     expect(out.TF_VAR_api_key).toBe("gcp-dev-key-3");
@@ -173,7 +188,7 @@ describe("reading a root's values", () => {
   it("gcp: a denied read names the service account", async () => {
     const { fetchFn } = stores({}, ["projects/acme-prod/secrets/db/versions/latest"]);
     const sources: SecretSource[] = [{ roots: ["envs/prod/**"], from: "gcp", values: { TF_VAR_db_password: "projects/acme-prod/secrets/db" } }];
-    const env = { GOOGLE_OAUTH_ACCESS_TOKEN: "ya29.prod", [ROOT_GCP_ENV]: JSON.stringify([["envs/prod/**", "prod-plan@acme-prod.iam.gserviceaccount.com"]]) };
+    const env = { GOOGLE_OAUTH_ACCESS_TOKEN: "ya29.prod", [CLOUD_TARGETS_ENV]: targetsFile({ gcp: byGlob([["envs/prod/**", "prod-plan@acme-prod.iam.gserviceaccount.com"]], () => ({ GOOGLE_OAUTH_ACCESS_TOKEN: "ya29.prod" })) }) };
     const msg = await rootSecretEnv(env, "envs/prod/app", sources, { fetchFn, hold: () => undefined }).catch((e: Error) => e.message);
     expect(msg).toBe("TF_VAR_db_password: cannot read projects/acme-prod/secrets/db from gcp as prod-plan@acme-prod.iam.gserviceaccount.com: Secret Manager answered 403 Permission 'secretmanager.versions.access' denied");
   });

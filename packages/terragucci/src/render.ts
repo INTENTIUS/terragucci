@@ -181,7 +181,8 @@ import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import { controlCloneScript, controlReadSteps, dispatchScript, type ResolvedControl } from "./control-repo";
-import { ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
+import { ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
+import { cloudLogin, LOGIN_RESTART_MARKER, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import { MR_VAR } from "./comment-apply-gitlab";
 import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
 import type { AgentCommentInput } from "./agent-comment";
@@ -496,9 +497,8 @@ export function actionDecideScript(layers: string[][], forge: Exclude<ForgeName,
  */
 export function actionRunScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcSettings | undefined): string {
   return [
-    ...stageTokens(forge, oidc, "apply"),
+    ...cloudLoginLines(forge, oidc, "apply", "terragucci-action"),
     "set -uo pipefail",
-    ...cloudScripts(forge, oidc, "apply", "terragucci-action"),
     `terragucci action --from terragucci-action.json${forge === "forgejo" ? " --forge forgejo" : ""}`,
     "code=$?",
     '[ "$code" -eq 3 ] && exit 0',
@@ -509,15 +509,15 @@ export function actionRunScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcS
 /**
  * The resume job's action step: `terragucci action --resume --dry-run` lists
  * the requests an approval now stands for, and with none the step stops
- * before any credential; otherwise each runs as the person who asked.
+ * before any credential; otherwise each runs as the person who asked. The
+ * login's restart runs the step again from its top, past the list it made.
  */
 export function actionResumeScript(forge: Exclude<ForgeName, "gitlab">, oidc: OidcSettings | undefined): string {
+  const login = cloudLoginLines(forge, oidc, "apply", "terragucci-action");
   return [
-    ...stageTokens(forge, oidc, "apply"),
     "set -uo pipefail",
-    "terragucci action --resume --dry-run --out terragucci-actions.txt || exit 1",
-    "[ -s terragucci-actions.txt ] || exit 0",
-    ...cloudScripts(forge, oidc, "apply", "terragucci-action"),
+    ...onceBeforeLogin(login, forge, ["terragucci action --resume --dry-run --out terragucci-actions.txt || exit 1", "[ -s terragucci-actions.txt ] || exit 0"]),
+    ...login,
     "terragucci action --resume",
   ].join("\n");
 }
@@ -536,8 +536,7 @@ export const EPHEMERAL_PATHS: Record<Exclude<ForgeName, "gitlab">, string> = {
  */
 export function ephemeralScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
   return [
-    ...stageTokens(forge, oidc, "apply"),
-    ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"),
+    ...cloudLoginLines(forge, oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
     'if [ "${TG_ACTION:-}" = closed ]; then',
     `  terragucci ephemeral down --pr "$TG_PR" --reason closed --binary ${binary}`,
@@ -557,7 +556,7 @@ export function gitlabEphemeralScript(oidc: OidcSettings | undefined, binary: Bi
   return [
     gitlabPushRemote,
     'git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"',
-    ...cloudScripts("gitlab", oidc, "apply", "terragucci-ephemeral"),
+    ...cloudLoginLines("gitlab", oidc, "apply", "terragucci-ephemeral"),
     ...(prelude ? [prelude] : []),
     `terragucci ephemeral up --pr "$CI_MERGE_REQUEST_IID" --head "\${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA:-$CI_COMMIT_SHA}" --base "origin/\${CI_DEFAULT_BRANCH}" --binary ${binary}`,
   ].join("\n");
@@ -565,7 +564,7 @@ export function gitlabEphemeralScript(oidc: OidcSettings | undefined, binary: Bi
 
 /** The sweep: destroy every copy whose TTL passed or whose pull request closed. */
 export function ephemeralSweepScript(forge: ForgeName, oidc: OidcSettings | undefined, binary: Binary, prelude?: string): string {
-  return [...stageTokens(forge, oidc, "apply"), ...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudScripts(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), `terragucci ephemeral sweep --binary ${binary}`].join("\n");
+  return [...(forge === "gitlab" ? [gitlabPushRemote] : []), ...cloudLoginLines(forge, oidc, "apply", "terragucci-ephemeral"), ...(prelude ? [prelude] : []), `terragucci ephemeral sweep --binary ${binary}`].join("\n");
 }
 
 /** The cron for `apply.resume`'s minutes. */
@@ -825,22 +824,17 @@ export function withCheckHooks(body: string, binary: Binary, roots: readonly str
 }
 
 /**
- * The two forge calls the pipeline makes that are not something said on a
- * pull request or commit: the OIDC token, and whether a run still runs
- * (`tg alive`, for the shared apply lock of waves.jobs). Plain Node, because
- * the CI images carry node and git but not curl or jq. A failed token request
- * fails the job.
+ * The forge call the pipeline makes that is not something said on a pull
+ * request or commit: whether a run still runs (`tg alive`, for the shared
+ * apply lock of waves.jobs). Plain Node, because the CI images carry node
+ * and git but not curl or jq. The OIDC token is chant's login's
+ * (cloudLoginLines).
  */
 const FORGE_API_JS = [
-  'import { writeFileSync } from "node:fs";',
   "const [cmd, ...a] = process.argv.slice(1);",
   "const e = process.env, gl = e.TG_FORGE === \"gitlab\", tok = e.TG_TOKEN;",
   "try {",
-  '  if (cmd === "oidc") {',
-  '    const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });',
-  '    if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");',
-  "    writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });",
-  "  } else if (!tok) {",
+  "  if (!tok) {",
   '    console.log("terragucci: no forge token, so no " + cmd);',
   '  } else if (cmd === "alive") {',
   '    const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";',
@@ -852,7 +846,6 @@ const FORGE_API_JS = [
   "  }",
   "} catch (err) {",
   '  console.log("terragucci: " + cmd + " failed: " + err.message);',
-  '  if (cmd === "oidc") process.exit(1);',
   "}",
 ].join("\n");
 
@@ -868,8 +861,7 @@ const FORGE_API_JS_GITLAB = FORGE_API_JS.replace(
 /**
  * Shell that defines `tg`. What a job says on the forge (`tg status`, `tg
  * note`, `tg reply`, `tg stale`) goes through `terragucci post`, which the
- * job's image carries (forge-post.ts); `tg oidc` and `tg alive` are the Node
- * above.
+ * job's image carries (forge-post.ts); `tg alive` is the Node above.
  */
 export function forgeApi(forge: ForgeName): string {
   return [
@@ -887,173 +879,119 @@ export function stageAudience(oidc: OidcSettings | undefined, stage: AudienceSta
   return typeof a === "string" ? a : (a[stage] ?? AUDIENCE);
 }
 
-/** Whether `oidc.audience` is the map, which gives each stage's jobs their own audience. */
-export const audienceByStage = (oidc: OidcSettings | undefined): boolean => oidc?.audience !== undefined && typeof oidc.audience !== "string";
-
-/**
- * With `oidc.audience` a map on GitHub, and with any `oidc` on Forgejo, a step
- * that takes cloud credentials asks for its tokens before anything else, and
- * restarts without the token-request variables (ACTIONS_ID_TOKEN_REQUEST_URL
- * and _TOKEN). The change's code and the binary then cannot ask for a token
- * for another stage's audience. On Forgejo the request token is the run's
- * runtime token, which the forge takes as the run's token, so no step that
- * runs the change's code may keep it. GitLab declares each job's audience in
- * its `id_tokens`.
- */
-const fetchesFirst = (forge: ForgeName, oidc: OidcSettings | undefined): boolean => (forge === "forgejo" ? oidc !== undefined : forge === "github" && audienceByStage(oidc));
-
-/** What a job that got no OIDC token needs, by forge. */
-const NO_TOKEN: Record<Exclude<ForgeName, "gitlab">, string> = {
-  github: "the job needs permissions: id-token: write",
-  forgejo: "Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true; on an older Forgejo leave oidc unset and give the runner static credentials",
-};
-
-/**
- * Write the job's OIDC token for one audience to `file` (by default
- * `$AWS_WEB_IDENTITY_TOKEN_FILE`), or stop the job: the scripts that read a
- * stage's exit code turn `-e` off (READS_EXIT), and a job that went on would
- * plan or apply with whatever credentials the runner happens to hold. On GitLab the token is the job's
- * `id_tokens` entry `gitlabVar`, one per audience.
- */
-export function tokenScript(forge: ForgeName, audience = AUDIENCE, file = "$AWS_WEB_IDENTITY_TOKEN_FILE", gitlabVar = "TERRAGUCCI_OIDC", check = true, fetched = false): string {
-  if (forge === "gitlab") return `printf '%s' "$${gitlabVar}" >"${file}"`;
-  // Fetched at the top of the step (stageTokens), into the file `${gitlabVar}_FILE` names. Moved, so no copy stays
-  // behind once whatever reads `file` deletes it (a re-plan's trade).
-  if (fetched) return `mv -f "$${gitlabVar}_FILE" "${file}" || exit 1`;
-  return [...(check ? [tokenCheck(forge)] : []), `tg oidc "${file}" ${sh(audience)} || exit 1`].join("\n");
-}
-
-/** Stops the job when the runner served no token. A script that fetches several tokens runs it once, before the first. GitLab has none: its tokens are job variables. */
-export function tokenCheck(forge: ForgeName): string {
-  if (forge === "gitlab") return "";
-  return [
-    'if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then',
-    `  echo ${sh(`terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); ${NO_TOKEN[forge]}`)} >&2`,
-    "  exit 1",
-    "fi",
-  ].join("\n");
-}
-
-export function oidcScript(forge: ForgeName, role: string, session: string, audience = AUDIENCE, check = true, fetched = false): string {
-  const token = tokenScript(forge, audience, undefined, undefined, check, fetched);
-  return [
-    `export AWS_ROLE_ARN=${sh(role)} AWS_ROLE_SESSION_NAME=${sh(session)}`,
-    'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"',
-    token,
-  ].join("\n");
-}
-
-/** Google's global STS endpoint; `oidc.gcp.token_url` names a regional one. */
-export const GCP_TOKEN_URL = "https://sts.googleapis.com/v1/token";
-
 /** The audience GCP's Workload Identity Federation accepts by default: the provider's full name. */
 export const gcpAudience = (provider: string): string => `https://iam.googleapis.com/${provider}`;
 
 /** The audience Entra ID accepts on a federated credential in the public cloud; `oidc.azure.audience` names a sovereign cloud's. */
 export const AZURE_AUDIENCE = "api://AzureADTokenExchange";
 
-/** GitLab's `id_tokens` entries for GCP's and Azure's tokens. AWS's (and Terragrunt's) is TERRAGUCCI_OIDC. */
-const GITLAB_GCP_TOKEN = "TERRAGUCCI_OIDC_GCP";
-const GITLAB_AZURE_TOKEN = "TERRAGUCCI_OIDC_AZURE";
-
-/**
- * GCP: the job's token for the Workload Identity Federation provider, and an
- * `external_account` credential file that trades it at Google's STS and
- * impersonates the stage's service account. The google provider, the gcs
- * backend and the gcloud tools read it through GOOGLE_APPLICATION_CREDENTIALS.
- */
-export function gcpScript(forge: ForgeName, provider: string, serviceAccount: string, tokenUrl = GCP_TOKEN_URL, check = true, fetched = false): string {
-  const json = (v: string): string => sh(JSON.stringify(v));
-  return [
-    'export TERRAGUCCI_GCP_TOKEN_FILE="$(mktemp)" GOOGLE_APPLICATION_CREDENTIALS="$(mktemp)"',
-    tokenScript(forge, gcpAudience(provider), "$TERRAGUCCI_GCP_TOKEN_FILE", GITLAB_GCP_TOKEN, check, fetched),
-    "printf '" +
-      '{"type":"external_account","audience":%s,"subject_token_type":"urn:ietf:params:oauth:token-type:jwt","token_url":%s,' +
-      '"service_account_impersonation_url":%s,"credential_source":{"file":"%s"}}\\n' +
-      `' ${json(`//iam.googleapis.com/${provider}`)} ${json(tokenUrl)} ${json(`https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`)} "$TERRAGUCCI_GCP_TOKEN_FILE" >"$GOOGLE_APPLICATION_CREDENTIALS"`,
-  ].join("\n");
-}
-
-/** Azure: the job's token for Entra ID in a file, and the ARM_* variables the azurerm provider and backend read for OIDC. */
-export function azureScript(forge: ForgeName, azure: NonNullable<OidcSettings["azure"]>, clientId: string, check = true, fetched = false): string {
-  return [
-    `export ARM_USE_OIDC=true ARM_CLIENT_ID=${sh(clientId)} ARM_TENANT_ID=${sh(azure.tenant_id)} ARM_SUBSCRIPTION_ID=${sh(azure.subscription_id)}`,
-    'export ARM_OIDC_TOKEN_FILE_PATH="$(mktemp)"',
-    tokenScript(forge, azure.audience ?? AZURE_AUDIENCE, "$ARM_OIDC_TOKEN_FILE_PATH", GITLAB_AZURE_TOKEN, check, fetched),
-  ].join("\n");
-}
-
 /** Whether `oidc` names AWS roles: a pair for every root, or roles by root glob. */
 const hasAws = (oidc: OidcSettings | undefined): boolean => Boolean((oidc?.plan_role && oidc.apply_role) || hasRootRoles(oidc));
 
 const hasRootRoles = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.roles && Object.keys(oidc.roles).length > 0);
 
-/**
- * The AWS step of a stage: the job's role (`plan_role` or `apply_role`) when
- * one is set, the token file, and with `oidc.roles` the stage's roles by root
- * glob in ROOT_ROLES_ENV, which the stage hands each root's binary
- * (rootRoleEnv in ./cloud-identity.ts).
- */
-function awsScript(forge: ForgeName, oidc: OidcSettings, stage: "plan" | "apply", session: string, check: boolean, audience: string, fetched: boolean): string {
-  const role = stage === "plan" ? oidc.plan_role : oidc.apply_role;
-  const roles = hasRootRoles(oidc) ? [`export ${ROOT_ROLES_ENV}=${sh(JSON.stringify(rootRoles(oidc.roles!, stage)))}`] : [];
-  if (role) return [oidcScript(forge, role, session, audience, check, fetched), ...roles].join("\n");
-  return [`export AWS_ROLE_SESSION_NAME=${sh(session)}`, 'export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', tokenScript(forge, audience, undefined, undefined, check, fetched), ...roles].join("\n");
-}
-
-/** A stage's GCP service accounts or Azure clients by root glob, exported for the stage to hand each root's binary (rootRoleEnv in ./cloud-identity.ts). */
+/** A stage's GCP service accounts by root glob, exported for a re-plan's trade (./oidc-trade.ts). */
 const cloudRoles = (name: string, roles: Record<string, { plan: string; apply: string }> | undefined, stage: "plan" | "apply"): string[] =>
   roles && Object.keys(roles).length > 0 ? [`export ${name}=${sh(JSON.stringify(rootRoles(roles, stage)))}`] : [];
 
 /**
- * Shell for a stage's cloud identities: the AWS role, the GCP service
- * account and the Azure client `oidc` names for it, each with the forge's
- * token for that cloud's audience, and with `roles` under `gcp` or `azure`
- * the stage's identities by root glob. Drift takes the plan identities.
- * The AWS token carries the audience of `audienceStage`, the job's stage
- * (jobStage): drift's for drift, and apply's for confirm, which plans with the
- * plan identities from an apply job. With `oidc.audience` a map on GitHub and
- * Forgejo the tokens were fetched at the top of the step (stageTokens), and
- * are copied from there.
+ * `oidc` as the pipeline's steps log in with it. `terragruntToken`: a
+ * Terragrunt repo's `credentials` name roles and `oidc` names no AWS role,
+ * so the login writes the AWS token file alone, which the auth provider
+ * assumes each unit's role with.
  */
-export function cloudScripts(forge: ForgeName, oidc: OidcSettings | undefined, stage: "plan" | "apply", session: string, audienceStage: AudienceStage = stage): string[] {
-  if (!oidc) return [];
+export type LoginOidc = OidcSettings & { terragruntToken?: boolean };
+
+/** `oidc`, with the AWS token file alone added when a Terragrunt repo's `credentials` need it and `oidc` names no AWS role. */
+export function withTerragruntToken(oidc: OidcSettings | undefined, credentials: Record<string, RolePair> | undefined): LoginOidc | undefined {
+  return credentials && Object.keys(credentials).length > 0 && !hasAws(oidc) ? { ...(oidc ?? {}), terragruntToken: true } : oidc;
+}
+
+/** The glob rules of one stage, as chant's login takes a cloud's `targets`. */
+const loginTargets = <K extends string>(roles: Record<string, RolePair> | undefined, stage: "plan" | "apply", key: K): Array<{ targets: string[] } & Record<K, string>> | undefined =>
+  roles && Object.keys(roles).length > 0 ? rootRoles(roles, stage).map(([glob, id]) => ({ targets: [glob], [key]: id }) as { targets: string[] } & Record<K, string>) : undefined;
+
+/**
+ * A stage's identities as chant's login spec (`@intentius/chant/ci-login`):
+ * the AWS role, the GCP service account and the Azure client `oidc` names
+ * for it, and with `roles` (under `oidc`, `gcp` or `azure`) the stage's
+ * identities by root glob as each cloud's `targets`, which chant writes to
+ * the CHANT_CLOUD_TARGETS file and rootRoleEnv hands each root (chant's
+ * targetCloudEnv). Drift takes the plan identities. The AWS token carries
+ * the audience of `audienceStage`, the job's stage (jobStage): drift's for
+ * drift, and apply's for confirm, which plans with the plan identities from
+ * an apply job. `oidc.gcp.token_url` is chant's `stsEndpoint`.
+ */
+export function loginSpec(oidc: LoginOidc | undefined, stage: "plan" | "apply", session: string, audienceStage: AudienceStage = stage): CloudLoginSpec {
+  if (!oidc) return {};
   const plan = stage === "plan";
-  const fetched = fetchesFirst(forge, oidc);
-  // With GCP or Azure the check runs once, ahead of every token; an AWS-only script keeps it inside the AWS step. Tokens fetched first were checked there.
-  const shared = Boolean(oidc.gcp || oidc.azure) && forge !== "gitlab" && !fetched;
-  const check = !shared && !fetched;
-  return [
-    ...(shared ? [tokenCheck(forge)] : []),
-    ...(hasAws(oidc) ? [awsScript(forge, oidc, stage, session, check, stageAudience(oidc, audienceStage), fetched)] : []),
-    ...(oidc.gcp ? [gcpScript(forge, oidc.gcp.workload_identity_provider, plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account, oidc.gcp.token_url, check, fetched), ...cloudRoles(ROOT_GCP_ENV, oidc.gcp.roles, stage)] : []),
-    ...(oidc.azure ? [azureScript(forge, oidc.azure, plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id, check, fetched), ...cloudRoles(ROOT_AZURE_ENV, oidc.azure.roles, stage)] : []),
-  ];
+  const spec: CloudLoginSpec = {};
+  if (hasAws(oidc) || oidc.terragruntToken) {
+    const role = hasAws(oidc) ? (plan ? oidc.plan_role : oidc.apply_role) : undefined;
+    const targets = loginTargets(oidc.roles, stage, "role");
+    spec.aws = { ...(role ? { role } : {}), ...(targets ? { targets } : {}), audience: stageAudience(oidc, audienceStage), sessionName: session };
+  }
+  if (oidc.gcp) {
+    const targets = loginTargets(oidc.gcp.roles, stage, "serviceAccount");
+    spec.gcp = {
+      provider: oidc.gcp.workload_identity_provider,
+      serviceAccount: plan ? oidc.gcp.plan_service_account : oidc.gcp.apply_service_account,
+      ...(targets ? { targets } : {}),
+      ...(oidc.gcp.token_url ? { stsEndpoint: oidc.gcp.token_url } : {}),
+    };
+  }
+  if (oidc.azure) {
+    const targets = loginTargets(oidc.azure.roles, stage, "clientId");
+    spec.azure = {
+      tenantId: oidc.azure.tenant_id,
+      clientId: plan ? oidc.azure.plan_client_id : oidc.azure.apply_client_id,
+      subscriptionId: oidc.azure.subscription_id,
+      ...(targets ? { targets } : {}),
+      ...(oidc.azure.audience ? { audience: oidc.azure.audience } : {}),
+    };
+  }
+  return spec;
 }
 
 /**
- * With `oidc.audience` a map on GitHub, or any `oidc` on Forgejo (fetchesFirst), the first
- * lines of a step that takes cloud credentials: the job's tokens, the AWS one
- * for the stage's audience alone, each in a file TERRAGUCCI_OIDC_FILE (and
- * TERRAGUCCI_OIDC_GCP_FILE, TERRAGUCCI_OIDC_AZURE_FILE) names, then the
- * step's restart without the token-request variables, as dropForgeTokens
- * restarts it without the forge tokens. The restarted step skips the fetch,
- * and cloudScripts copies the tokens from those files. Otherwise, nothing.
+ * A step's cloud login, chant's (chant issues 4788, 4912 and 4930): per
+ * cloud the forge's OIDC token in a file of its own and the variables the
+ * cloud's tools read, in the step that runs them. On GitHub and Forgejo the
+ * step logs in once, then starts again from its first line without the
+ * token-request variables (ACTIONS_ID_TOKEN_REQUEST_URL and _TOKEN), so the
+ * change's code (the synth command among it) and the binary cannot ask for
+ * another token, on Forgejo the run's runtime token among them: the lines
+ * go before any of that code (loginFirst), and a line above them that must
+ * run once goes in onceBeforeLogin. On GitLab the job's `id_tokens` are read
+ * and unset where the lines stand (loginInline). Nothing when the stage
+ * names no identity.
  */
-export function stageTokens(forge: ForgeName, oidc: OidcSettings | undefined, stage: AudienceStage): string[] {
-  if (!oidc || !fetchesFirst(forge, oidc)) return [];
-  const fetch = (name: string, audience: string): string[] => [`export ${name}_FILE="$(mktemp)"`, tokenScript(forge, audience, `$${name}_FILE`, name, false)];
-  return [
-    `if [ -z "\${${OIDC_RESTART}:-}" ]; then`,
-    forgeApi(forge),
-    tokenCheck(forge),
-    // The AWS token is the Terragrunt auth provider's too, so it is fetched whenever the step fetches first.
-    ...fetch("TERRAGUCCI_OIDC", stageAudience(oidc, stage)),
-    ...(oidc.gcp ? fetch(GITLAB_GCP_TOKEN, gcpAudience(oidc.gcp.workload_identity_provider)) : []),
-    ...(oidc.azure ? fetch(GITLAB_AZURE_TOKEN, oidc.azure.audience ?? AZURE_AUDIENCE) : []),
-    "fi",
-    restartWithout("bash", OIDC_REQUEST_VARS, OIDC_RESTART),
-  ];
+export function cloudLoginLines(forge: ForgeName, oidc: LoginOidc | undefined, stage: "plan" | "apply", session: string, audienceStage: AudienceStage = stage): string[] {
+  const spec = loginSpec(oidc, stage, session, audienceStage);
+  if (Object.keys(spec).length === 0) return [];
+  return cloudLogin(forge, spec, forge === "gitlab" ? { sameStep: true } : { restart: true }).steps.flatMap((s) => s.run);
+}
+
+/**
+ * `lines`, above a step's login, run once: on GitHub and Forgejo the login
+ * starts the step again (cloudLoginLines), and the second pass skips them.
+ * terragucci's own decision, say, runs before any credential.
+ */
+function onceBeforeLogin(login: readonly string[], forge: ForgeName, lines: string[]): string[] {
+  return forge !== "gitlab" && login.length > 0 && lines.length > 0 ? [`if [ -z "\${${LOGIN_RESTART_MARKER}:-}" ]; then`, ...lines, "fi"] : lines;
+}
+
+/** A step's login (cloudLoginLines) at its top on GitHub and Forgejo, before the change's code; on GitLab, none (loginInline). */
+const loginFirst = (forge: ForgeName, login: string[]): string[] => (forge === "gitlab" ? [] : login);
+
+/** A step's login where a GitLab script logs in, after the synth command; on GitHub and Forgejo, none (loginFirst). */
+const loginInline = (forge: ForgeName, login: string[]): string[] => (forge === "gitlab" ? login : []);
+
+/** A GitLab job's `id_tokens:` for a stage's login, each `{ aud }`; none when the stage names no identity. */
+export function loginIdTokens(oidc: LoginOidc | undefined, stage: "plan" | "apply", audienceStage: AudienceStage = stage): Record<string, { aud: string }> {
+  const spec = loginSpec(oidc, stage, "terragucci", audienceStage);
+  if (Object.keys(spec).length === 0) return {};
+  return Object.fromEntries(Object.entries(cloudLogin("gitlab", spec).idTokens).map(([v, aud]) => [v, { aud }]));
 }
 
 /**
@@ -1345,13 +1283,14 @@ export function applyScript(
   ];
   // With --rest the wave that stopped may be a later one: its outcome line names it.
   const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
+  const login = cloudLoginLines(forge, oidc, stage, "terragucci-apply");
   return [
     ...(input.checkJob ? [input.checkJob] : []),
-    ...stageTokens(forge, oidc, stage),
+    ...loginFirst(forge, login),
     READS_EXIT,
     forgeApi(forge),
     ...(input.synth ? [synthScript(input.synth, first ? "terragucci/apply" : undefined)] : []),
-    ...cloudScripts(forge, oidc, stage, "terragucci-apply", stage),
+    ...loginInline(forge, login),
     ...(tg ? [tg.prelude] : []),
     ...(first
       ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
@@ -1629,7 +1568,7 @@ export function gitlabApplyScript(binary: Binary, layers: string[][], oidc?: Pip
     'tf_base="--base origin/$TG_BASE"',
     'git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the head ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }',
     ...(input.synth ? [synthScript(input.synth)] : []),
-    ...cloudScripts("gitlab", oidc, "apply", "terragucci-apply"),
+    ...cloudLoginLines("gitlab", oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     ...waveLoop(binary, layers, input, "$tf_base", COMMENT_AGAIN, false, applyScope(binary) !== "repo"),
     ...openReply(count, input.merge, "gitlab"),
@@ -1670,14 +1609,15 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
   const decide = decideWith("");
   const decisionJs = prMode ? PR_DECISION_JS : APPLY_DECISION_JS;
   const locks = applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag);
-  // Tokens fetched first (stageTokens) are fetched once the decision and the lock are made, so none waits out the lock.
-  // The step then starts again past them: the decision's values and the lock's names go on in its environment.
-  const first = stageTokens(forge, oidc, "apply");
-  const once = first.length > 0;
+  // The login (cloudLoginLines) comes once the decision and the lock are made, so no token waits out the lock, and before
+  // the checkout and the change's code. The step then starts again past them: the decision's values and the lock's names
+  // go on in its environment, and the lock's release is set again.
+  const login = cloudLoginLines(forge, oidc, "apply", "terragucci-apply");
+  const once = login.length > 0;
   return [
     READS_EXIT,
     forgeApi(forge),
-    ...(once ? [`if [ -z "\${${OIDC_RESTART}:-}" ]; then`] : []),
+    ...(once ? [`if [ -z "\${${LOGIN_RESTART_MARKER}:-}" ]; then`] : []),
     // Before any credential: the comment, the commenter, the pull request and the merge commit (or, open, the head and its locks).
     decide,
     prMode ? "read -r TG_PR TG_SHA TG_WAVE TG_OPEN TG_BASE <<EOF" : "read -r TG_PR TG_SHA TG_WAVE <<EOF",
@@ -1696,7 +1636,7 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
           '[ -n "$again" ] || exit 0',
         ]
       : []),
-    ...(once ? [`export TG_PR TG_SHA TG_WAVE${prMode ? " TG_OPEN TG_BASE" : ""}${locks ? " lock_ref mine" : ""}`, "fi", ...first, ...(locks ? [LOCK_RELEASE] : [])] : []),
+    ...(once ? [`export TG_PR TG_SHA TG_WAVE${prMode ? " TG_OPEN TG_BASE" : ""}${locks ? " lock_ref mine" : ""}`, "fi", ...login, ...(locks ? [LOCK_RELEASE] : [])] : []),
     'export TG_PR TG_SHA',
     `last=${count}`,
     '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
@@ -1710,7 +1650,6 @@ export function commentApplyScript(binary: Binary, layers: string[][], forge: Ex
         ]
       : ['git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }']),
     ...(input.synth ? [synthScript(input.synth)] : []),
-    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "applying on a comment"',
     ...waveLoop(binary, layers, input, prMode ? "$tf_base" : "", COMMENT_AGAIN, true, applyScope(binary) !== "repo"),
@@ -1762,7 +1701,7 @@ export function groupedCommentScript(layers: string[][], forge: Exclude<ForgeNam
  * GitHub and Forgejo the push event's default branch (TG_BRANCH). On GitHub
  * the forge environment is read from an OIDC token's claims, so it is checked
  * only in a job that may request one. On GitHub and Forgejo the step restarts
- * once its tokens are fetched (stageTokens), and the check runs before that,
+ * once it has logged in (cloudLoginLines), and the check runs before that,
  * once. The line exits with check-job's own code, so a refusal that exits 9
  * (chant's `misplaced`) is not turned back into 1: GitLab's op-wave jobs allow
  * exit 1 alone, and a refused job must fail and stop the waves.
@@ -1778,7 +1717,7 @@ export function checkJobLine(forge: ForgeName, group: ApplyGroup, runner: Runner
     ...(forge !== "gitlab" && labels.includes("self-hosted") ? ["--self-hosted"] : []),
   ];
   const line = `terragucci check-job ${args.join(" ")} || exit $?`;
-  return forge === "gitlab" ? line : `if [ -z "\${${OIDC_RESTART}:-}" ]; then ${line}; fi`;
+  return forge === "gitlab" ? line : `if [ -z "\${${LOGIN_RESTART_MARKER}:-}" ]; then ${line}; fi`;
 }
 
 /** The line that gives the job telling the control repo the commit whose every wave applied (the step's id is `apply`). */
@@ -1798,12 +1737,22 @@ const RESUME_AGAIN = "Approve the plans with \\`$cmd\\`; the resume job applies 
 export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
   const total = layers.flat().length;
   const count = applyWaves(layers, input.canary).length;
+  // The login comes once there is something to resume and the lock is held, so no token waits out the lock, and before
+  // the change's code. Its restart runs the step again from its top, past the read and the lock, and sets the lock's
+  // release again.
+  const login = cloudLoginLines(forge, oidc, "apply", "terragucci-apply");
+  const locks = applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag);
+  const once = login.length > 0;
   return [
-    ...stageTokens(forge, oidc, "apply"),
     READS_EXIT,
     forgeApi(forge),
-    `terragucci resume --forge ${forge} --out terragucci-resume.env || exit 1`,
-    "[ -s terragucci-resume.env ] || exit 0",
+    ...onceBeforeLogin(login, forge, [
+      `terragucci resume --forge ${forge} --out terragucci-resume.env || exit 1`,
+      "[ -s terragucci-resume.env ] || exit 0",
+      ...(locks ? [forgejoLock(false), ...(once ? ["export lock_ref mine"] : [])] : []),
+    ]),
+    ...login,
+    ...(once && locks ? [LOCK_RELEASE] : []),
     ". ./terragucci-resume.env",
     "export TG_PR TG_SHA",
     // A commit no pull request made has nowhere to reply: its replies are log lines.
@@ -1812,10 +1761,8 @@ export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<
     `last=${count}`,
     'TG_WAVE="-"',
     'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    ...(applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag) ? [forgejoLock(false)] : []),
     'git checkout --quiet --detach "$TG_SHA" || { echo "terragucci: could not check out ${TG_SHA:0:8}" >&2; exit 1; }',
     ...(input.synth ? [synthScript(input.synth)] : []),
-    ...cloudScripts(forge, oidc, "apply", "terragucci-apply"),
     ...(input.terragrunt ? [input.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "applying after an approval"',
     ...waveLoop(binary, layers, input, "", RESUME_AGAIN),
@@ -1867,11 +1814,10 @@ export function planLockScript(layers: string[][], forge: Exclude<ForgeName, "gi
   ].join("\n");
 }
 
-/** Shell for a Terragrunt job's credentials: the auth provider, and the AWS OIDC token when `oidc` did not fetch it. */
-function terragruntCredentials(forge: ForgeName, phase: "plan" | "apply", oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>): string[] {
+/** Shell for a Terragrunt job's credentials: the auth provider, with the AWS token file the step's login wrote (LoginOidc's `terragruntToken`). */
+function terragruntCredentials(phase: "plan" | "apply", credentials?: Record<string, RolePair>): string[] {
   if (!credentials || Object.keys(credentials).length === 0) return [];
-  const fetched = fetchesFirst(forge, oidc);
-  return [credentialsScript(credentials, phase, hasAws(oidc) ? undefined : tokenScript(forge, stageAudience(oidc, phase), undefined, undefined, !(oidc?.gcp || oidc?.azure) && !fetched, fetched))];
+  return [credentialsScript(credentials, phase)];
 }
 
 /** Where a plan job's report is kept, and what the stage needs beyond the roots. */
@@ -1957,12 +1903,13 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
+  const login = cloudLoginLines(forge, oidc, "plan", "terragucci-plan");
   return [
-    ...stageTokens(forge, oidc, "plan"),
+    ...loginFirst(forge, login),
     READS_EXIT,
     forgeApi(forge),
     ...(report.synth ? [synthScript(report.synth, "terragucci/plan")] : []),
-    ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
+    ...loginInline(forge, login),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/plan pending "planning"',
     `terragucci stage tf-plan ${args.join(" ")}`,
@@ -2011,18 +1958,17 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
+  // A re-plan's plan step that reads traded credentials asks for no token.
+  const login = options.traded ? [] : cloudLoginLines(forge, oidc, "plan", "terragucci-plan");
   return [
     // Off first: every later line reads an exit code itself.
     READS_EXIT,
-    // A re-plan's plan step that reads traded credentials asks for no token.
-    ...(options.traded ? [] : stageTokens(forge, oidc, "plan")),
+    ...loginFirst(forge, login),
     ...(options.tokenCheck ? [options.tokenCheck] : []),
     // A re-plan that holds no token: what the change's code leaves running dies with the step.
     ...(options.replan && options.sweep !== false ? [LEFTOVER_SWEEP] : []),
     // On GitHub and Forgejo the step is the job's last: its report goes on as the job's outputs (./handover.ts).
     ...(forge !== "gitlab" ? handoverTrap(REPORT_DIR, forge, options.replan && options.sweep !== false) : []),
-    // The OIDC token request; no forge token is in the job. A re-plan's identities were traded before this step.
-    ...(forge !== "gitlab" && oidc && !options.traded ? [forgeApi(forge)] : []),
     ...(options.replan ? ['if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi'] : []),
     // The plan identities' credentials the trade step left; this step holds no OIDC token and cannot ask for one.
     ...(options.traded ? [`if [ -f ${TRADED_FILE} ]; then . ${TRADED_FILE}; : >${TRADED_FILE}; fi`] : []),
@@ -2032,7 +1978,7 @@ export function planFilesScript(binary: Binary, layers: string[][], forge: Forge
           `( set -e; ${report.synth} ) || { mkdir -p ${REPORT_DIR} && echo "failure the synth command failed" >${status}; echo "terragucci: the synth command failed" >&2; exit 1; }`,
         ]
       : []),
-    ...(options.traded ? rootIdentityExports(oidc, "plan") : cloudScripts(forge, oidc, "plan", "terragucci-plan")),
+    ...loginInline(forge, login),
     ...(report.terragrunt ? [options.traded ? report.terragrunt.tradedPrelude ?? report.terragrunt.prelude : report.terragrunt.prelude] : []),
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
@@ -2091,19 +2037,6 @@ export function dropForgeTokens(shell: "bash" | "sh" = "bash", oidcRequest = fal
   return chantDropForgeTokens(shell, ["TG_TOKEN", "TG_MERGE_TOKEN", ...(oidcRequest ? OIDC_REQUEST_VARS : [])]);
 }
 
-/** The marker of a step stageTokens restarted: its tokens are fetched, and the token-request variables gone. */
-const OIDC_RESTART = "TG_NO_OIDC_REQUEST";
-
-/**
- * Restart the step's shell, once (`marker` says it did), without `vars` in
- * its process environment, or, when it cannot restart, unset them; see dropForgeTokens.
- */
-function restartWithout(shell: "bash" | "sh", vars: readonly string[], marker: string): string {
-  const again = shell === "bash" ? 'bash --noprofile --norc -e -o pipefail "$0"' : 'sh -e "$0"';
-  const can = `[ -z "\${${marker}:-}" ] && [ "\${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "\${0##*/}" = sh ] || [ "\${0##*/}" = bash ] || [ "\${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v ${shell} >/dev/null 2>&1`;
-  return `if ${can}; then exec env ${vars.map((v) => `-u ${v}`).join(" ")} ${marker}=1 ${again}; fi; unset ${vars.join(" ")}`;
-}
-
 /**
  * A re-plan's trade step, before the head's checkout: the job's OIDC tokens
  * for the plan identities, traded by `terragucci oidc-trade` (one run of
@@ -2119,13 +2052,11 @@ export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: Pip
   const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
   const refuse = (why: string): string => `echo ${sh(`terragucci: ${why}`)} >&2; mkdir -p ${REPORT_DIR} && echo ${sh(`failure ${why}`)} >${status}; exit 1`;
   return [
-    ...stageTokens(forge, oidc, "plan"),
-    forgeApi(forge),
-    ...cloudScripts(forge, oidc, "plan", "terragucci-plan"),
-    ...terragruntCredentials(forge, "plan", oidc, credentials),
+    ...cloudLoginLines(forge, withTerragruntToken(oidc, credentials), "plan", "terragucci-plan"),
+    // The trade reads the stage's identities by root glob from these.
+    ...rootIdentityExports(oidc, "plan"),
+    ...terragruntCredentials("plan", credentials),
     `terragucci oidc-trade --out ${TRADED_FILE}${reportsRole ? ` --reports-role ${sh(reportsRole)}` : ""} || { ${refuse("the re-plan could not trade the job's OIDC token for the plan identities")}; }`,
-    // A token fetched first (stageTokens) that no cloud script moved, such as the AWS one beside GCP alone, goes too.
-    ...(forge === "forgejo" ? ['for f in "${TERRAGUCCI_OIDC_FILE:-}" "${TERRAGUCCI_OIDC_GCP_FILE:-}" "${TERRAGUCCI_OIDC_AZURE_FILE:-}"; do [ -z "$f" ] || rm -f "$f"; done'] : []),
   ].join("\n");
 }
 
@@ -2303,12 +2234,13 @@ export function driftScript(binary: Binary, layers: string[][], forge: ForgeName
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
+  const login = cloudLoginLines(forge, oidc, "plan", "terragucci-drift", "drift");
   return [
-    ...stageTokens(forge, oidc, "drift"),
+    ...loginFirst(forge, login),
     READS_EXIT,
-    // The stage keeps the issue itself; the forge calls here are only for the OIDC token.
+    // The stage keeps the issue itself.
     ...(report.synth ? [synthScript(report.synth)] : []),
-    ...(oidc ? [forgeApi(forge), ...cloudScripts(forge, oidc, "plan", "terragucci-drift", "drift")] : []),
+    ...loginInline(forge, login),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     `terragucci stage tf-drift ${args.join(" ")}`,
     ...(pullRequest || notify || agent ? ["rc=$?"] : []),
@@ -2351,13 +2283,14 @@ export function confirmScript(binary: Binary, layers: string[][], forge: ForgeNa
     ...(report.cost ? ["--no-cost"] : []),
   ];
   const what = report.terragrunt ? "unit" : "root";
+  // confirm is an apply job (jobStage): the plan identities, with the apply audience.
+  const login = cloudLoginLines(forge, oidc, "plan", "terragucci-confirm", "apply");
   return [
-    ...stageTokens(forge, oidc, "apply"),
+    ...loginFirst(forge, login),
     READS_EXIT,
     forgeApi(forge),
     ...(report.synth ? [synthScript(report.synth, "terragucci/apply")] : []),
-    // confirm is an apply job (jobStage): the plan identities, with the apply audience.
-    ...cloudScripts(forge, oidc, "plan", "terragucci-confirm", "apply"),
+    ...loginInline(forge, login),
     ...(report.terragrunt ? [report.terragrunt.prelude] : []),
     'tg status terragucci/apply pending "confirming the merge applied"',
     `terragucci stage tf-plan ${args.join(" ")}`,
@@ -2491,7 +2424,7 @@ function commentWords(input: PipelineInput, forge: ForgeName, prApply: boolean, 
 const definedEnv = (env: Record<string, string | undefined>): Record<string, string> => Object.fromEntries(Object.entries(env).filter((e): e is [string, string] => e[1] !== undefined));
 
 export function renderPipeline(input: PipelineInput): RenderedPipeline {
-  const { forge, binary, image, install, layers, env, oidc, tokenEnv, headersSecret } = input;
+  const { forge, binary, image, install, layers, env, tokenEnv, headersSecret } = input;
   const tg = input.terragrunt;
   // init validates both keys with the config; this holds for a pipeline input built another way, and for the forge init settled on.
   const keyProblems = [...(input.runner !== undefined ? runnerProblems(input.runner, "runner", forge) : []), ...(input.pass !== undefined ? passProblems(input.pass, "pass", env) : [])];
@@ -2502,12 +2435,14 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const waveJobs = input.waveJobs !== undefined && input.waveJobs > 1 ? input.waveJobs : undefined;
   if (waveJobs && input.applyWhen === "pull-request") throw new RenderError(`waves.jobs: ${WAVE_JOBS_NOT_PR_APPLY}`);
   const credentials = tg?.credentials && Object.keys(tg.credentials).length > 0 ? tg.credentials : undefined;
+  // The steps' login: with Terragrunt's credentials and no AWS role in oidc, the AWS token file alone, which the auth provider reads.
+  const oidc = withTerragruntToken(input.oidc, credentials);
   const applyBranches = input.applyBranches && Object.keys(input.applyBranches).length > 0 ? input.applyBranches : undefined;
   if (applyBranches && input.applyWhen === "pull-request") throw new RenderError(`apply.branches: ${BRANCHES_NOT_PR_APPLY}`);
   const branchNames = applyBranches ? Object.keys(applyBranches) : [];
   const ephemeral = input.ephemeral;
   // ephemeral in a Terragrunt repo: the jobs prepare units through Terragrunt, with the caches and the apply roles every apply job has.
-  const ephemeralPrelude = ephemeral && tg ? [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") : undefined;
+  const ephemeralPrelude = ephemeral && tg ? [cacheExports(), ...terragruntCredentials("apply", credentials)].join("\n") : undefined;
   if (ephemeral && forge === "gitlab" && input.gitlabToken === "protected") throw new RenderError(`ephemeral: ${EPHEMERAL_NOT_PROTECTED}`);
   // approval: pr-review posts terragucci/approval from the plan job and a review job on GitHub and Forgejo; GitLab's approval rules do that there.
   const prReview = input.prReview === true && forge !== "gitlab";
@@ -2525,8 +2460,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(tg
       ? {
           terragrunt: {
-            prelude: [cacheExports(), ...terragruntCredentials(forge, "plan", oidc, credentials)].join("\n"),
-            tradedPrelude: [cacheExports(), ...(credentials && Object.keys(credentials).length > 0 ? [credentialsScript(credentials, "plan", undefined, true)] : [])].join("\n"),
+            prelude: [cacheExports(), ...terragruntCredentials("plan", credentials)].join("\n"),
+            tradedPrelude: [cacheExports(), ...(credentials && Object.keys(credentials).length > 0 ? [credentialsScript(credentials, "plan", true)] : [])].join("\n"),
           },
         }
       : {}),
@@ -2583,7 +2518,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
   const gate = input.gate ?? "on-destructive";
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
-  const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials(forge, "apply", oidc, credentials)].join("\n") } } : {};
+  const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials("apply", credentials)].join("\n") } } : {};
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
   // A Terragrunt repo's layers are its waves already; the stage splits a wave's units across its share jobs as it cuts them.
@@ -2630,7 +2565,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         const mine = cut[i]!.filter((r) => g.roots.includes(r));
         if (mine.length === 0) continue;
         const n = waveJobs ? shareCount(mine, waveJobs) : 1;
-        const jobOidc = audienceMap(g.oidc, g.audience);
+        const jobOidc = audienceMap(withTerragruntToken(g.oidc, credentials), g.audience);
         // An environment's job checks first that it runs where the environment's apply is set to run (./check-job.ts).
         const checkJob = g.environment !== undefined ? checkJobLine(forge, g, g.runner ?? runnerOf(input.runner, "apply"), branchNames, needsToken) : undefined;
         const own: Partial<ApplyJob> = { group: g.name, ...(jobOidc ? { oidc: jobOidc } : {}), ...(g.runner !== undefined ? { runner: g.runner } : {}), ...(g.forgeEnvironment !== undefined && forge !== "forgejo" ? { environment: g.forgeEnvironment } : {}) };
@@ -2722,17 +2657,11 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       TG_SHA: "$CI_COMMIT_SHA",
       TG_BRANCH: "$CI_DEFAULT_BRANCH",
     };
-    // One id_token per audience: AWS's (which the Terragrunt auth provider uses too), GCP's provider, Entra ID.
-    // AWS's is the job's stage's (jobStage), which with oidc.audience a map differs by stage.
-    // A group's job (./cloud-identity.ts) declares its own identities' tokens, with its environment's audience.
-    const idTokens = (stage: AudienceStage, o: OidcSettings | undefined = oidc): Record<string, unknown> => needsToken
-      ? {
-          id_tokens: {
-            ...(hasAws(o) || credentials ? { TERRAGUCCI_OIDC: { aud: stageAudience(o, stage) } } : {}),
-            ...(o?.gcp ? { [GITLAB_GCP_TOKEN]: { aud: gcpAudience(o.gcp.workload_identity_provider) } } : {}),
-            ...(o?.azure ? { [GITLAB_AZURE_TOKEN]: { aud: o.azure.audience ?? AZURE_AUDIENCE } } : {}),
-          },
-        }
+    // One id_token per cloud the job logs in to, as chant's login reads them: AWS's (which the Terragrunt auth provider
+    // uses too), GCP's provider, Entra ID. AWS's is the job's stage's (jobStage), which with oidc.audience a map differs
+    // by stage. A group's job (./cloud-identity.ts) declares its own identities' tokens, with its environment's audience.
+    const idTokens = (stage: AudienceStage, o: LoginOidc | undefined = oidc): Record<string, unknown> => needsToken
+      ? { id_tokens: loginIdTokens(o, stage === "drift" ? "plan" : stage, stage) }
       : {};
     // A scheduled pipeline is drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
     const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);

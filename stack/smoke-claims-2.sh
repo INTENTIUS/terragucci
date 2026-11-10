@@ -1224,8 +1224,9 @@ for (const job of ["plan", "apply-wave-1"]) {
   let lines = run.split("\n");
   lines = lines.slice(0, lines.findIndex((l) => /^(lock_ref=|tg status terragucci\/|terragucci stage )/.test(l)));
   if (brk) {
-    const a = lines.findIndex((l) => l.startsWith("export TERRAGUCCI_GCP_TOKEN_FILE=")), b = lines.findIndex((l) => l.startsWith("tg oidc \"$ARM_OIDC_TOKEN_FILE_PATH\""));
-    if (a >= 0 && b >= a) lines.splice(a, b - a + 1);
+    // The login of chant, from its spec to the unset of what held its variables; a colon keeps the if around it a command.
+    const a = lines.findIndex((l) => l.startsWith("export CHANT_CLOUD_LOGIN=")), b = lines.findIndex((l) => l.startsWith("unset CHANT_CLOUD_LOGIN_VARS"));
+    if (a >= 0 && b >= a) lines.splice(a, b - a + 1, ":");
   }
   writeFileSync(out + "/" + job + ".sh", lines.join("\n") + "\n");
 }' "$work/tree/.forgejo/workflows/terragucci.yml" "$work" "${BREAK:-}") || { log "could not read the jobs' scripts from the pipeline"; drop_work "$work"; return 1; }

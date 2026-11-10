@@ -144,14 +144,17 @@ describe("the token-request variables", () => {
       expect(restart, name).toBeGreaterThanOrEqual(0);
       const before = lines.slice(0, restart).join("\n");
       expect(before, name).not.toMatch(/terragucci stage|synth|terragrunt |tofu /);
-      expect(lines.slice(restart + 1).join("\n"), name).not.toMatch(/tg oidc |ACTIONS_ID_TOKEN_REQUEST_URL:-/);
+      expect(lines.slice(restart + 1).join("\n"), name).not.toContain("CHANT_CLOUD_LOGIN=");
     }
   });
 
-  it("github keeps them in its plan step with plain oidc, as before", () => {
+  it("github drops them too in its plan step with plain oidc, once chant's login has its token", () => {
     const run = (render("github", { oidc: OIDC }).jobs.plan.steps as Step[]).find(runsCode)!.run!;
-    expect(run).not.toContain("TG_NO_OIDC_REQUEST");
-    expect(run).toContain('tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE"');
+    const lines = run.split("\n");
+    const restart = lines.findIndex((l) => l.includes("exec env") && l.includes("CHANT_CLOUD_LOGGED_IN=1"));
+    expect(restart).toBeGreaterThan(0);
+    expect(lines.slice(0, restart).join("\n")).toContain("CHANT_CLOUD_LOGIN=");
+    expect(lines.slice(0, restart).join("\n")).not.toMatch(/terragucci stage|synth/);
   });
 });
 

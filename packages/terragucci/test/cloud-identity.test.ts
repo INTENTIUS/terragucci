@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { CLOUD_TARGETS_ENV, type CloudTargetsFile } from "@intentius/chant/ci-identity";
 import { main } from "../src/cli";
 import { validateConfig } from "../src/config";
-import { cloudScripts, renderPipeline } from "../src/render";
-import { gcpCredentials, ROOT_AZURE_ENV, ROOT_GCP_ENV, ROOT_ROLES_ENV, rolesFromEnv, rootRoleEnv, rootRoles } from "../src/cloud-identity";
+import { loginSpec, renderPipeline } from "../src/render";
+import { ROOT_ROLES_ENV, rolesFromEnv, rootIdentities, rootRoleEnv } from "../src/cloud-identity";
 import { credentialWarnings, stateAccess } from "../src/state-access";
 import { backend, remoteState, tmp, write } from "./helpers";
 
@@ -58,35 +58,45 @@ describe("oidc.roles in the config", () => {
 });
 
 describe("the pipeline carries each stage's roles", () => {
-  it("plan gets the plan roles and apply the apply roles, with the token file and no job role when no pair is set", () => {
-    const plan = cloudScripts("github", { roles: ROLES }, "plan", "terragucci-plan").join("\n");
-    expect(plan).toContain(`export ${ROOT_ROLES_ENV}='${JSON.stringify(rootRoles(ROLES, "plan"))}'`);
-    expect(plan).toContain('export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"');
-    expect(plan).toContain('tg oidc "$AWS_WEB_IDENTITY_TOKEN_FILE"');
-    expect(plan).not.toContain("AWS_ROLE_ARN");
-    expect(plan).not.toContain("apply");
-    const apply = cloudScripts("forgejo", { plan_role: "p", apply_role: "a", roles: ROLES }, "apply", "terragucci-apply").join("\n");
-    expect(apply).toContain("export AWS_ROLE_ARN='a'");
-    expect(apply).toContain(PROD.apply);
-    expect(apply).not.toContain(PROD.plan);
+  it("plan gets the plan roles and apply the apply roles, as the login's targets, with no job role when no pair is set", () => {
+    const plan = loginSpec({ roles: ROLES }, "plan", "terragucci-plan");
+    expect(plan.aws).toEqual({ targets: [{ targets: ["envs/dev/**"], role: DEV.plan }, { targets: ["envs/prod/**"], role: PROD.plan }], audience: "sts.amazonaws.com", sessionName: "terragucci-plan" });
+    const apply = loginSpec({ plan_role: "p", apply_role: "a", roles: ROLES }, "apply", "terragucci-apply");
+    expect(apply.aws).toMatchObject({ role: "a", targets: [{ targets: ["envs/dev/**"], role: DEV.apply }, { targets: ["envs/prod/**"], role: PROD.apply }] });
+    expect(JSON.stringify(apply)).not.toContain(PROD.plan);
   });
 
   it("gitlab asks for the AWS token when only roles are set", () => {
     const text = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["envs/dev/app", "envs/prod/app"]], env: {}, oidc: { roles: ROLES } }).content;
-    expect(text).toContain("TERRAGUCCI_OIDC:");
+    expect(text).toContain("CHANT_ID_TOKEN_AWS:");
     expect(text).toContain(DEV.apply);
   });
 });
 
+/** The targets file chant's login writes for `cloud`: the job's own identity, each glob's, and each identity's variables. */
+function targetsFile(clouds: CloudTargetsFile["clouds"]): string {
+  return write(tmp(), { "targets.json": JSON.stringify({ version: 1, clouds }) }) + "/targets.json";
+}
+
 describe("each root's binary takes its own role", () => {
-  const env = { [ROOT_ROLES_ENV]: JSON.stringify(rootRoles(ROLES, "apply")), AWS_ROLE_ARN: "job-role", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s", AWS_WEB_IDENTITY_TOKEN_FILE: "/t" };
+  const vars = (role: string) => ({ AWS_ROLE_ARN: role, AWS_WEB_IDENTITY_TOKEN_FILE: "/t", AWS_ROLE_SESSION_NAME: "terragucci-apply" });
+  const file = targetsFile({
+    aws: {
+      default: "job-role",
+      targets: [{ targets: ["envs/dev/**"], identity: DEV.apply }, { targets: ["envs/prod/**"], identity: PROD.apply }],
+      vars: { "job-role": vars("job-role"), [DEV.apply]: vars(DEV.apply), [PROD.apply]: vars(PROD.apply) },
+    },
+  });
+  const env = { [CLOUD_TARGETS_ENV]: file, AWS_ROLE_ARN: "job-role", AWS_ACCESS_KEY_ID: "k", AWS_SECRET_ACCESS_KEY: "s", AWS_WEB_IDENTITY_TOKEN_FILE: "/t" };
 
   it("the first glob a root matches, its static keys dropped; a root no glob matches keeps the job's", () => {
     expect(rootRoleEnv(env, "envs/prod/app")).toMatchObject({ AWS_ROLE_ARN: PROD.apply, AWS_WEB_IDENTITY_TOKEN_FILE: "/t" });
     expect(rootRoleEnv(env, "envs/prod/app").AWS_ACCESS_KEY_ID).toBeUndefined();
     expect(rootRoleEnv(env, "envs/dev/app").AWS_ROLE_ARN).toBe(DEV.apply);
-    expect(rootRoleEnv(env, "shared/dns")).toBe(env);
+    expect(rootRoleEnv(env, "shared/dns")).toEqual(env);
     expect(rootRoleEnv({ A: "1" }, "envs/prod/app")).toEqual({ A: "1" });
+    expect(rootIdentities(env, "envs/dev/app")).toEqual({ aws: DEV.apply });
+    expect(rootIdentities(env, "shared/dns")).toEqual({});
   });
 
   it("refuses roles that are not [glob, role] pairs", () => {
@@ -159,38 +169,30 @@ describe("GCP service accounts and Azure clients by root glob", () => {
     expect(() => validateConfig({ terragrunt: {}, oidc: { gcp: { ...GCP, roles: GCP_ROLES } } }, "t")).toThrow(/oidc.gcp.roles: identities by root glob are for plain roots/);
   });
 
-  it("the pipeline carries each stage's service accounts and clients", () => {
-    const plan = cloudScripts("github", { gcp: { ...GCP, roles: GCP_ROLES }, azure: { ...AZURE, roles: AZURE_ROLES } }, "plan", "terragucci-plan").join("\n");
-    expect(plan).toContain(`export ${ROOT_GCP_ENV}='${JSON.stringify([["envs/prod/**", SA("prod-plan")]])}'`);
-    expect(plan).toContain(`export ${ROOT_AZURE_ENV}='${JSON.stringify([["envs/prod/**", "prod-plan-client"]])}'`);
-    expect(plan).not.toContain("prod-apply");
-    expect(cloudScripts("github", { gcp: GCP }, "apply", "s").join("\n")).not.toContain(ROOT_GCP_ENV);
+  it("the pipeline carries each stage's service accounts and clients, as the login's targets", () => {
+    const plan = loginSpec({ gcp: { ...GCP, roles: GCP_ROLES }, azure: { ...AZURE, roles: AZURE_ROLES } }, "plan", "terragucci-plan");
+    expect(plan.gcp).toEqual({ provider: GCP.workload_identity_provider, serviceAccount: SA("plan"), targets: [{ targets: ["envs/prod/**"], serviceAccount: SA("prod-plan") }] });
+    expect(plan.azure).toEqual({ tenantId: "tenant", clientId: "client-plan", subscriptionId: "sub", targets: [{ targets: ["envs/prod/**"], clientId: "prod-plan-client" }] });
+    expect(JSON.stringify(plan)).not.toContain("prod-apply");
+    expect(loginSpec({ gcp: GCP }, "apply", "s").gcp?.targets).toBeUndefined();
+    // A regional token URL is chant's stsEndpoint.
+    expect(loginSpec({ gcp: { ...GCP, token_url: "https://sts.europe-west3.rep.googleapis.com/v1/token" } }, "plan", "s").gcp?.stsEndpoint).toBe("https://sts.europe-west3.rep.googleapis.com/v1/token");
   });
 
-  it("a root's binary impersonates its service account through a copy of the job's credentials file, and takes its Azure client", () => {
-    const dir = tmp();
-    const job = {
-      type: "external_account",
-      audience: "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/f",
-      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
-      token_url: "https://sts.googleapis.com/v1/token",
-      service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA("apply")}:generateAccessToken`,
-      credential_source: { file: "/tok" },
-    };
-    write(dir, { "creds.json": JSON.stringify(job) });
-    const env = { GOOGLE_APPLICATION_CREDENTIALS: join(dir, "creds.json"), [ROOT_GCP_ENV]: JSON.stringify([["envs/prod/**", SA("prod-apply")]]), ARM_CLIENT_ID: "client-apply", [ROOT_AZURE_ENV]: JSON.stringify([["envs/prod/**", "prod-apply-client"]]) };
+  it("a root's binary takes the credentials file of its service account and its Azure client, from the login's targets file", () => {
+    const gcpVars = (sa: string) => ({ GOOGLE_APPLICATION_CREDENTIALS: `/creds-${sa}.json`, CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: `/creds-${sa}.json` });
+    const azVars = (id: string) => ({ AZURE_CLIENT_ID: id, AZURE_TENANT_ID: "tenant", ARM_USE_OIDC: "true", ARM_CLIENT_ID: id, ARM_TENANT_ID: "tenant", ARM_OIDC_TOKEN_FILE_PATH: "/az" });
+    const file = targetsFile({
+      gcp: { default: SA("apply"), targets: [{ targets: ["envs/prod/**"], identity: SA("prod-apply") }], vars: { [SA("apply")]: gcpVars(SA("apply")), [SA("prod-apply")]: gcpVars(SA("prod-apply")) } },
+      azure: { default: "client-apply", targets: [{ targets: ["envs/prod/**"], identity: "prod-apply-client" }], vars: { "client-apply": azVars("client-apply"), "prod-apply-client": azVars("prod-apply-client") } },
+    });
+    const env = { [CLOUD_TARGETS_ENV]: file, ...gcpVars(SA("apply")), ...azVars("client-apply") };
     const prod = rootRoleEnv(env, "envs/prod/app");
     expect(prod.ARM_CLIENT_ID).toBe("prod-apply-client");
-    expect(prod.GOOGLE_APPLICATION_CREDENTIALS).not.toBe(env.GOOGLE_APPLICATION_CREDENTIALS);
-    const copy = JSON.parse(readFileSync(prod.GOOGLE_APPLICATION_CREDENTIALS!, "utf-8"));
-    expect(copy).toEqual({ ...job, service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA("prod-apply")}:generateAccessToken` });
-    expect(statSync(prod.GOOGLE_APPLICATION_CREDENTIALS!).mode & 0o777).toBe(0o600);
-    expect(rootRoleEnv(env, "envs/prod/app").GOOGLE_APPLICATION_CREDENTIALS).toBe(prod.GOOGLE_APPLICATION_CREDENTIALS);
-    expect(rootRoleEnv(env, "envs/dev/app")).toBe(env);
-    expect(gcpCredentials(env, SA("apply"))).toBe(env.GOOGLE_APPLICATION_CREDENTIALS);
-    write(dir, { "key.json": JSON.stringify({ type: "service_account", client_email: SA("k"), private_key: "x" }) });
-    expect(() => rootRoleEnv({ ...env, GOOGLE_APPLICATION_CREDENTIALS: join(dir, "key.json") }, "envs/prod/app")).toThrow(/not an external_account file that impersonates a service account/);
-    expect(() => rootRoleEnv({ [ROOT_GCP_ENV]: env[ROOT_GCP_ENV] }, "envs/prod/app")).toThrow(/GOOGLE_APPLICATION_CREDENTIALS is not set/);
+    expect(prod.AZURE_CLIENT_ID).toBe("prod-apply-client");
+    expect(prod.GOOGLE_APPLICATION_CREDENTIALS).toBe(`/creds-${SA("prod-apply")}.json`);
+    expect(rootRoleEnv(env, "envs/dev/app")).toEqual(env);
+    expect(rootIdentities(env, "envs/prod/app")).toEqual({ gcp: SA("prod-apply"), azure: "prod-apply-client" });
   });
 
   /** envs/<env>/gcs on gcs state and envs/<env>/az on azurerm state; with `reads`, prod's gcs root reads dev's gcs state. */

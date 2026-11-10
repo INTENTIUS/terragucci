@@ -16,17 +16,13 @@
  *                                        every other root
  *
  * Every lookup is chant's: resolveTargetCloudIdentity gives a root its
- * identities, cloudIdentityGroups splits roots into apply groups, and a
- * re-plan's traded credentials reach each root through targetCloudEnv.
+ * identities, cloudIdentityGroups splits roots into apply groups, and each
+ * root's credentials, from the step's login (chant's ci-login) or a re-plan's
+ * trade, reach its binary through targetCloudEnv.
  *
- * What is terragucci's own here is the pipeline around them: the variables a
- * job carries its stage's identities by root glob in (ROOT_ROLES_ENV, read
- * back by rootIdentities), the copy of the job's GCP credentials file that
- * impersonates a root's service account (gcpCredentials), and each apply
+ * What is terragucci's own here is the pipeline around them: each apply
  * group's environment: its runner, forge environment and audience.
  */
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   CLOUD_TARGETS_ENV,
   cloudIdentityGroups,
@@ -116,14 +112,10 @@ export function rootIdentity(decl: CloudIdentityDeclaration | undefined, root: s
 
 // ── a job's identities by root ─────────────────────────────────────────────
 
-/** The job's variable that holds one stage's roles by root glob, as JSON `[[glob, role], ...]`. */
+/** A re-plan's trade step's variable that holds one stage's roles by root glob, as JSON `[[glob, role], ...]` (./oidc-trade.ts). */
 export const ROOT_ROLES_ENV = "TERRAGUCCI_ROOT_ROLES";
 /** One stage's GCP service accounts by root glob, as ROOT_ROLES_ENV holds roles. */
 export const ROOT_GCP_ENV = "TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS";
-/** One stage's Azure client ids by root glob, as ROOT_ROLES_ENV holds roles. */
-export const ROOT_AZURE_ENV = "TERRAGUCCI_ROOT_AZURE_CLIENTS";
-
-const ROOT_VARS: Record<Cloud, string> = { aws: ROOT_ROLES_ENV, gcp: ROOT_GCP_ENV, azure: ROOT_AZURE_ENV };
 
 /** One stage's roles by root glob, in the order the config lists them, as the pipeline exports them. */
 export function rootRoles(roles: Record<string, RolePair>, stage: "plan" | "apply"): [string, string][] {
@@ -144,46 +136,34 @@ export function rolesFromEnv(env: NodeJS.ProcessEnv, name = ROOT_ROLES_ENV): [st
 }
 
 /**
- * The declaration a job's variables make: per cloud, a rule per glob the
- * stage's variable lists, plan and apply both its identity, with no rule for
- * the job's own. A root no glob matches then takes nothing from it.
+ * The identities `root` takes by root glob, per cloud, from the job's
+ * CLOUD_TARGETS_ENV file (chant's login, or a re-plan's trade): none for a
+ * cloud where it matches no glob, which keeps the job's own.
  */
-function jobDeclaration(env: NodeJS.ProcessEnv): CloudIdentityDeclaration {
-  const rules = (c: Cloud): CloudIdentityRule[] => rolesFromEnv(env, ROOT_VARS[c]).map(([g, id]) => ({ targets: [g], plan: id, apply: id }));
-  return { aws: { rules: rules("aws") }, gcp: { provider: "", rules: rules("gcp") }, azure: { tenantId: "", rules: rules("azure") } };
-}
-
-/** The identities `root` takes from the job's variables, per cloud: none for a cloud where it matches no glob, which keeps the job's own. */
 export function rootIdentities(env: NodeJS.ProcessEnv, root: string): Partial<Record<Cloud, string>> {
-  return rootIdentity(jobDeclaration(env), root, "plan");
+  const path = env[CLOUD_TARGETS_ENV];
+  if (!path) return {};
+  const file = readTargetsFile(path);
+  const out: Partial<Record<Cloud, string>> = {};
+  for (const c of ["aws", "gcp", "azure"] as const) {
+    const id = file.clouds[c]?.targets.find((t) => t.targets.some((g) => targetGlobMatch(g, root)))?.identity;
+    if (id !== undefined) out[c] = id;
+  }
+  return out;
 }
 
 /**
- * `env` for one root's binary. A re-plan, which holds no OIDC token, hands
- * each root the credentials its trade step left (chant's targetCloudEnv over
- * the CLOUD_TARGETS_ENV file). Otherwise, for each cloud whose variable
- * names a glob the root matches, that identity: AWS `AWS_ROLE_ARN`, assumed
- * with the job's token file (static keys in the job's environment would win
- * over the role in the AWS SDKs, so they are dropped for that root); GCP
- * GOOGLE_APPLICATION_CREDENTIALS, gcpCredentials' copy of the job's file.
- * Azure, which a re-plan does not trade: `ARM_CLIENT_ID`, the client the
- * job's token is traded for.
+ * `env` for one root's binary: chant's targetCloudEnv over the
+ * CLOUD_TARGETS_ENV file, which the step's login (chant's ci-login) wrote
+ * with each identity the stage names by root glob, or which a re-plan's
+ * trade step left with each traded identity's credentials. A root no glob
+ * matches keeps the job's own.
  */
 export function rootRoleEnv(env: NodeJS.ProcessEnv, root: string): NodeJS.ProcessEnv {
-  const ids = rootIdentities(env, root);
-  let out: NodeJS.ProcessEnv = env;
-  if (env[CLOUD_TARGETS_ENV]) {
-    out = targetCloudEnv(env, root) as NodeJS.ProcessEnv;
-    // A root with a token of its own reads it, never the job's credentials file, which the trade deleted.
-    if (out.GOOGLE_OAUTH_ACCESS_TOKEN !== env.GOOGLE_OAUTH_ACCESS_TOKEN) delete out.GOOGLE_APPLICATION_CREDENTIALS;
-  } else {
-    if (ids.aws) {
-      const { AWS_ACCESS_KEY_ID: _a, AWS_SECRET_ACCESS_KEY: _s, AWS_SESSION_TOKEN: _t, ...rest } = out;
-      out = { ...rest, AWS_ROLE_ARN: ids.aws };
-    }
-    if (ids.gcp) out = { ...out, GOOGLE_APPLICATION_CREDENTIALS: gcpCredentials(env, ids.gcp) };
-  }
-  if (ids.azure) out = { ...out, ARM_CLIENT_ID: ids.azure, ...(env.AZURE_CLIENT_ID ? { AZURE_CLIENT_ID: ids.azure } : {}) };
+  if (!env[CLOUD_TARGETS_ENV]) return env;
+  const out = targetCloudEnv(env, root) as NodeJS.ProcessEnv;
+  // A root with a traded token of its own reads it, never the job's credentials file, which the trade deleted.
+  if (out.GOOGLE_OAUTH_ACCESS_TOKEN !== env.GOOGLE_OAUTH_ACCESS_TOKEN) delete out.GOOGLE_APPLICATION_CREDENTIALS;
   return out;
 }
 
@@ -214,34 +194,6 @@ export function tradedIdentities(env: NodeJS.ProcessEnv, cloud: Cloud): Record<s
   } catch (e) {
     throw new StoreError((e as Error).message);
   }
-}
-
-/** The service account in an impersonation URL: `.../serviceAccounts/<email>:generateAccessToken`. */
-const IMPERSONATED = /\/serviceAccounts\/([^/:]+):generateAccessToken$/;
-
-/**
- * The credentials file that impersonates `sa`: the job's external_account
- * file (what `oidc.gcp` writes) with its impersonation URL naming `sa`,
- * written once beside it, mode 0600. The job's file when it names `sa`
- * already.
- */
-export function gcpCredentials(env: NodeJS.ProcessEnv, sa: string): string {
-  const file = env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!file) throw new Error(`${ROOT_GCP_ENV} gives this root ${sa}, and GOOGLE_APPLICATION_CREDENTIALS is not set: the job needs oidc.gcp`);
-  let c: Record<string, unknown>;
-  try {
-    c = JSON.parse(readFileSync(file, "utf-8")) as Record<string, unknown>;
-  } catch (e) {
-    throw new Error(`${ROOT_GCP_ENV} gives this root ${sa}, and ${file} cannot be read: ${(e as Error).message}`);
-  }
-  const url = c.service_account_impersonation_url;
-  if (c.type !== "external_account" || typeof url !== "string" || !IMPERSONATED.test(url)) {
-    throw new Error(`${ROOT_GCP_ENV} gives this root ${sa}, and ${file} is not an external_account file that impersonates a service account, as oidc.gcp writes`);
-  }
-  if (decodeURIComponent(IMPERSONATED.exec(url)![1]) === sa) return file;
-  const out = `${file}.${createHash("sha256").update(sa).digest("hex").slice(0, 12)}.json`;
-  if (!existsSync(out)) writeFileSync(out, JSON.stringify({ ...c, service_account_impersonation_url: url.replace(IMPERSONATED, `/serviceAccounts/${sa}:generateAccessToken`) }) + "\n", { mode: 0o600 });
-  return out;
 }
 
 // ── apply groups ───────────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ Each root runs every command, steps included, with its environment's roles. In d
 | Where | What it shows |
 |---|---|
 | `terragucci config check` | each role, the roots that take it and the state keys it needs; a warning for each role that reaches another environment's state |
-| the plan and apply jobs | `TERRAGUCCI_ROOT_ROLES`, the stage's roles by glob; each root's binary gets its role as `AWS_ROLE_ARN` |
+| the plan and apply jobs | the stage's roles by glob, in the file `CHANT_CLOUD_TARGETS` names; each root's binary gets its role as `AWS_ROLE_ARN` |
 | the [threat model](/terragucci/reference/threat-model/#state-access-per-environment) | what a role per environment stops, and what it does not |
 
 ## Prerequisites

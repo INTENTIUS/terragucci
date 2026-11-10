@@ -16,7 +16,7 @@
  *           the plan audience. Null when a wave applies in one job.
  *   confirm with `apply.when: pull-request`, the job the push after a merge
  *           runs on the default branch: the plan identities, on the apply
- *           audience (cloudScripts). Null otherwise; environments refuse
+ *           audience (loginSpec in ./render.ts). Null otherwise; environments refuse
  *           that setting, so only `default` has it.
  *   apply   the default branch's apply jobs: the apply identities, in the
  *           environment's forge environment on GitHub and GitLab, on its

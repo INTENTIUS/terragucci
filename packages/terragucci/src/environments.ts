@@ -11,8 +11,8 @@
  *
  *   oidc         each environment's pair joins `oidc.roles`, `oidc.gcp.roles`
  *                and `oidc.azure.roles` by its root globs (withEnvironmentRoles),
- *                so the pipeline carries it in ROOT_ROLES_ENV and its kin, as
- *                it carries any glob's pair
+ *                so the steps' login carries it in its targets (chant's
+ *                CHANT_CLOUD_TARGETS file), as it carries any glob's pair
  *   gate         read at base by the wave's job: a wave takes the strictest
  *                gate of its roots (waveGate), where a root in no environment
  *                takes the stricter of --gate and the top-level gate at base

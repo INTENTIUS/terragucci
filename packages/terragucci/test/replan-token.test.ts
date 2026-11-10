@@ -49,10 +49,10 @@ describe("the re-plan's rendered steps", () => {
     expect(s.indexOf(t)).toBeLessThan(head);
     expect(s.indexOf(t)).toBeLessThan(s.indexOf(planStep(s)));
     expect(t.if).toBe("steps.decide.outputs.go == '1'");
-    // The trade step runs terragucci alone: the token request, the trade, and none of the change's code.
-    // Forgejo fetches the token first and starts again without the request variables (stageTokens).
-    expect(t.run).toContain(forge === "forgejo" ? "tg oidc \"$TERRAGUCCI_OIDC_FILE\" 'sts.amazonaws.com'" : "tg oidc \"$AWS_WEB_IDENTITY_TOKEN_FILE\" 'sts.amazonaws.com'");
-    expect(t.run).toContain(`export AWS_ROLE_ARN='${PLAN}'`);
+    // The trade step runs terragucci alone: chant's login, the trade, and none of the change's code. The login starts
+    // the step again without the request variables.
+    expect(t.run).toContain(`export CHANT_CLOUD_LOGIN='{"aws":{"role":"${PLAN}","audience":"sts.amazonaws.com","sessionName":"terragucci-plan"}}'`);
+    expect(t.run).toContain("CHANT_CLOUD_LOGGED_IN=1");
     expect(t.run).toContain(`terragucci oidc-trade --out ${TRADED_FILE}`);
     expect(t.run).not.toContain(APPLY);
     expect(t.run).not.toMatch(/terragucci stage|synth|tofu |terragrunt /);
@@ -60,7 +60,7 @@ describe("the re-plan's rendered steps", () => {
     const run = planStep(s).run!;
     expect(run.split("\n")[0]).toBe(dropForgeTokens("bash", true));
     for (const v of OIDC_REQUEST_VARS) expect(run.split("\n")[0]).toContain(`-u ${v}`);
-    expect(after(run)).not.toMatch(/ACTIONS_ID_TOKEN_REQUEST|AWS_WEB_IDENTITY_TOKEN_FILE|tg oidc|AWS_ROLE_ARN/);
+    expect(after(run)).not.toMatch(/ACTIONS_ID_TOKEN_REQUEST|AWS_WEB_IDENTITY_TOKEN_FILE|CHANT_CLOUD_LOGIN|AWS_ROLE_ARN/);
     expect(after(run)).toContain(`. ${TRADED_FILE}`);
     expect(after(run)).toContain(LEFTOVER_SWEEP);
     // The traded file is read before the change's own code (synth, the stage) runs.
@@ -71,7 +71,7 @@ describe("the re-plan's rendered steps", () => {
     const doc = render(forge, { oidc: OIDC });
     // The pull request's own plan job carries the pull request's subject, which the apply role does not trust.
     const plan = planStep(steps(doc, "plan")).run!;
-    expect(plan).toContain("tg oidc");
+    expect(plan).toContain("CHANT_CLOUD_LOGIN=");
     expect(plan.split("\n")[0]).toBe(dropForgeTokens());
     expect(tradeStep(steps(doc, "plan"))).toBeUndefined();
     for (const [name, job] of Object.entries(doc.jobs) as [string, { steps?: Step[] }][]) {
@@ -87,22 +87,21 @@ describe("the re-plan's rendered steps", () => {
     expect(planStep(s).run).not.toContain(TRADED_FILE);
   });
 
-  it("roles by root glob: the trade step exports them to trade, and the plan step exports them with no token", () => {
+  it("roles by root glob: the trade step exports them to trade, and the plan step reads each root's from the trade's targets file", () => {
     const roles = { "envs/dev/*": { plan: "arn:aws:iam::111111111111:role/dev-plan", apply: "arn:aws:iam::111111111111:role/dev-apply" } };
     const s = steps(render("github", { oidc: { ...OIDC, roles } }), "replan");
     expect(tradeStep(s)!.run).toContain(`export ${ROOT_ROLES_ENV}='[["envs/dev/*","arn:aws:iam::111111111111:role/dev-plan"]]'`);
     const run = after(planStep(s).run!);
-    expect(run).toContain(`export ${ROOT_ROLES_ENV}='[["envs/dev/*","arn:aws:iam::111111111111:role/dev-plan"]]'`);
-    expect(run).not.toMatch(/dev-apply|tg oidc|AWS_WEB_IDENTITY_TOKEN_FILE/);
+    expect(run).not.toContain(ROOT_ROLES_ENV);
+    expect(run).not.toMatch(/dev-apply|CHANT_CLOUD_LOGIN|AWS_WEB_IDENTITY_TOKEN_FILE/);
   });
 
-  it("gcp: the trade step writes the external_account file; the plan step names neither it nor the token", () => {
+  it("gcp: the trade step's login writes the external_account file; the plan step names neither it nor the token", () => {
     const gcp = { workload_identity_provider: "projects/1/locations/global/workloadIdentityPools/p/providers/f", plan_service_account: "plan@p.iam.gserviceaccount.com", apply_service_account: "apply@p.iam.gserviceaccount.com" };
     const s = steps(render("forgejo", { oidc: { gcp } }), "replan");
-    expect(tradeStep(s)!.run).toContain("GOOGLE_APPLICATION_CREDENTIALS");
-    expect(tradeStep(s)!.run).toContain("plan@p.iam.gserviceaccount.com");
+    expect(tradeStep(s)!.run).toContain('"gcp":{"provider":"projects/1/locations/global/workloadIdentityPools/p/providers/f","serviceAccount":"plan@p.iam.gserviceaccount.com"');
     const run = after(planStep(s).run!);
-    expect(run).not.toMatch(/GOOGLE_APPLICATION_CREDENTIALS|TERRAGUCCI_GCP_TOKEN_FILE|tg oidc|apply@/);
+    expect(run).not.toMatch(/GOOGLE_APPLICATION_CREDENTIALS|CHANT_CLOUD_LOGIN|apply@/);
   });
 
   it.each(["github", "forgejo"] as const)("%s azure: the re-plan plans with the job's token as before, and its log warns and names the workaround", (forge) => {
@@ -114,8 +113,7 @@ describe("the re-plan's rendered steps", () => {
     // The step as it was before the trade: the forge tokens dropped, the token fetched in the step, no traded file.
     expect(run.split("\n")[0]).toBe(dropForgeTokens());
     expect(run.split("\n")[1]).toBe(REPLAN_AZURE_WARNING);
-    expect(after(run)).toContain("tg oidc");
-    expect(after(run)).toContain("ARM_OIDC_TOKEN_FILE_PATH");
+    expect(after(run)).toContain('"azure":{"tenantId":"t","clientId":"p","subscriptionId":"s"');
     expect(after(run)).not.toContain(TRADED_FILE);
     expect(after(run)).not.toContain(LEFTOVER_SWEEP);
     expect(REPLAN_AZURE_WARNING).toMatch(/^echo '::warning::.*oidc\.azure.*default branch subject.*push to the pull request instead of commenting.*' >&2$/);
@@ -135,11 +133,12 @@ describe("the re-plan's rendered steps", () => {
     const terragrunt = { version: "0.99.0", parallelism: 4, exclude: [], installs: [{ tool: "terragrunt", version: "0.99.0" }], credentials };
     const s = steps(render("github", { layers: [["live/prod/app"]], terragrunt } as never), "replan");
     const t = tradeStep(s)!.run!;
-    expect(t).toContain("tg oidc");
+    // No AWS role in oidc: the login writes the token file alone, for the units' roles.
+    expect(t).toContain('export CHANT_CLOUD_LOGIN=\'{"aws":{"audience":"sts.amazonaws.com","sessionName":"terragucci-plan"}}\'');
     expect(t).toContain(`${ROLES_ENV}='[["live/prod/*","arn:aws:iam::111111111111:role/prod-plan"]]'`);
     const run = after(planStep(s).run!);
     expect(run).toContain('export TG_AUTH_PROVIDER_CMD="terragucci auth-provider"');
-    expect(run).not.toMatch(/TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN|AWS_WEB_IDENTITY_TOKEN_FILE|tg oidc|prod-apply/);
+    expect(run).not.toMatch(/TG_IAM_ASSUME_ROLE_WEB_IDENTITY_TOKEN|AWS_WEB_IDENTITY_TOKEN_FILE|CHANT_CLOUD_LOGIN|prod-apply/);
   });
 
   it("reports.role is traded in the trade step, not assumed in the plan step", () => {
