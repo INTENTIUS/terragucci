@@ -95,7 +95,7 @@ Every workflow in this repo is a chant declaration. The YAML is rendered from it
 
 ```bash
 just ci          # render every workflow
-just ci-check    # fail if a committed workflow differs from its declaration
+just ci-check    # fail if a committed file differs from its render (chant dev generated-check, the renders in package.json's chantGenerated)
 ```
 
 | Declaration | Rendered |

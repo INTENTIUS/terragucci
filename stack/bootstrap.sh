@@ -163,24 +163,19 @@ if [ "$PROFILE" = fountain ]; then
   # change to any of them rebuilds it.
   ensure_ci_image
   fountain_version="$(sed -n 's#.*image: ghcr.io/managoat/fountain:\(v[0-9.]*\)@.*#\1#p' "$HERE/docker-compose.yml")"
-  chant_version="$(jq -r '.devDependencies["@intentius/chant"]' "$HERE/../package.json")"
-  [ -n "$fountain_version" ] && [ "$chant_version" != null ] || die "cannot read the fountain or chant version to build the steward image"
-  # After `just chant-local`, node_modules holds a local chant build marked
-  # with its commit; the steward installs the same build from .chant-local/.
-  chant_local="$(jq -r '.chantLocal.commit // empty' "$HERE/../node_modules/@intentius/chant/package.json" 2>/dev/null || true)"
-  local_args=()
-  if [ -n "$chant_local" ]; then
-    [ -f "$HERE/../.chant-local/intentius-chant-lexicon-fountain.tgz" ] || die "node_modules has chant $chant_local but .chant-local/ has no fountain tarball; run 'just chant-local' again"
-    chant_version="local-$chant_local"
-    local_args=(--build-context "chant-local=$HERE/../.chant-local")
-  fi
+  [ -n "$fountain_version" ] || die "cannot read the fountain version to build the steward image"
+  # The chant the image installs is the pin, or `local-<commit>` after
+  # `just chant-local`, which chant's `dev local-image` answers and, for a
+  # local build, passes .chant-local/ to docker as the `chant-local` context.
+  chant_version="$(cd "$HERE/.." && npx chant dev local-image --with @intentius/chant-lexicon-fountain)" \
+    || die "cannot read the chant version to build the steward image"
   want="$CI_IMAGE fountain=$fountain_version chant=$chant_version"
   have="$(docker image inspect -f '{{index .Config.Labels "terragucci.steward"}}' "$STEWARD_IMAGE" 2>/dev/null || true)"
   if [ "$have" != "$want" ]; then
     log "building $STEWARD_IMAGE (fountain $fountain_version, chant $chant_version)…"
-    docker build -q --label "terragucci.steward=$want" ${local_args[@]+"${local_args[@]}"} \
-      --build-arg "BASE=$CI_IMAGE" --build-arg "FOUNTAIN_VERSION=$fountain_version" --build-arg "CHANT_VERSION=$chant_version" \
-      -t "$STEWARD_IMAGE" "$HERE/fountain" >&2 || die "the steward image did not build"
+    (cd "$HERE/.." && npx chant dev local-image --with @intentius/chant-lexicon-fountain -- -q --label "terragucci.steward=$want" \
+      --build-arg "BASE=$CI_IMAGE" --build-arg "FOUNTAIN_VERSION=$fountain_version" \
+      -t "$STEWARD_IMAGE" "$HERE/fountain") >&2 || die "the steward image did not build"
   fi
 
   log "starting floci, fountain and its database…"

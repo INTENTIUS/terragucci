@@ -11,8 +11,8 @@
 #   CHANT_VERSION     @intentius/chant and @intentius/chant-lexicon-fountain,
 #                     the version terragucci's package.json pins
 #
-# After `just chant-local`, bootstrap.sh passes .chant-local/ as the build
-# context `chant-local`, and the image installs chant and its fountain lexicon
+# After `just chant-local`, chant's `dev local-image` (run by bootstrap.sh) passes
+# .chant-local/ as the build context `chant-local`, and the image installs chant and its fountain lexicon
 # from those tarballs instead of from npm. Without it, the stage below is empty.
 #
 # The sandboxes are directories in this container (fountain's process backend,
