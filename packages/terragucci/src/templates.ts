@@ -35,7 +35,8 @@ import * as templateRenderLib from "@intentius/chant-lexicon-terraform/template"
 import { type ChantTemplateRequests, type ChantCatalogComponent, type ChantCatalogVersion, type ChantReleaseCatalogDoc, type ChantTemplateInput, type ChantTemplateRender, type ChantTemplateRequest, type ChantTemplateRequestRefusal, type ChantTemplateSpec } from "./chant-next";
 import { productWords } from "./ci-words";
 import { globMatch } from "./detect";
-import { defaultBranch, DEFAULT_TOKEN_ENV, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
+import { forgeClient, type ForgeTarget } from "@intentius/chant/pr-forge";
+import { defaultBranch, DEFAULT_TOKEN_ENV, openPullRequest, type Fetch } from "./forge";
 import { GENERATED_FILES, renderRoot, rootSettings } from "./generate";
 import { findComponent, readCatalog } from "./publish/catalog";
 import { IDENTITY } from "./reconcile";
@@ -266,7 +267,7 @@ async function requestBase(o: RequestOptions, env: NodeJS.ProcessEnv): Promise<R
   if (o.dryRun) return { dryRun: true, files: checkoutFiles(o.cwd) };
   const forge = forgeOf(o.cwd, o.settings, env);
   const token = env.TG_TOKEN || forge.token;
-  if (!token) throw new ConfigError(`${o.settings.token_env ?? DEFAULT_TOKEN_ENV[forge.forge]} (or TG_TOKEN) is not set; it holds the forge token the pull request is opened with`);
+  if (!token) throw new ConfigError(`${o.settings.token_env ?? DEFAULT_TOKEN_ENV[forge.kind]} (or TG_TOKEN) is not set; it holds the forge token the pull request is opened with`);
   const target = { ...forge, token };
   const fetch = o.fetch ?? (globalThis.fetch as unknown as Fetch);
   const base = await defaultBranch(fetch, target);
@@ -345,7 +346,7 @@ export async function request(o: RequestOptions): Promise<RequestResult> {
 
   const { title, files } = planned;
   const body = [core.requestBody(checked, productWords()), o.footer?.trim()].filter(Boolean).join("\n\n");
-  const open = await prForgeOf(at.target, at.fetch).findPullRequest(branch);
+  const open = await forgeClient(at.target, at.fetch).findPullRequest(branch);
   if (open) return { ok: true, dryRun: false, branch, files: paths, title, pull_request: open.number, url: open.url ?? "", existing: true, request: checked };
 
   const tree = worktree(o.cwd, at.tip);

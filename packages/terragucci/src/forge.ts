@@ -5,10 +5,11 @@
  *
  * Pull requests, notes, statuses, replies and the drift issue go through
  * chant's forge clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
- * prForgeOf, for a target built here (chant's `forgeTargetFromFlags`). What they say stays with terragucci.
+ * chant's `forgeClient` for a target built with `forgeTargetFromFlags` or `jobForgeTarget`
+ * (chant issue 4888). What they say stays with terragucci.
  */
 import { forgeTargetFromFlags } from "@intentius/chant/forge-flags";
-import { ForgeEnvironmentError, forgeClient, forgeTargetFromEnv, type ForgeTarget as ChantForgeTarget, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
+import { ForgeEnvironmentError, forgeClient, forgeTargetFromEnv, type ForgeTarget, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
 import { forgeReadsFor, type ForgeReads } from "@intentius/chant/pr-forge-reads";
 import { ConfigError, type ForgeName } from "./config";
 
@@ -18,17 +19,6 @@ export type Fetch = (url: string, init?: { method?: string; headers?: Record<str
   json(): Promise<unknown>;
   text(): Promise<string>;
 }>;
-
-export interface ForgeTarget {
-  forge: ForgeName;
-  /** https://host or http://host:port, with no path. */
-  origin: string;
-  /** owner/name, or a GitLab group path and name. */
-  path: string;
-  token: string;
-  /** The API's base URL, when the runner names it (GITHUB_API_URL) and the origin alone does not give it. */
-  api?: string;
-}
 
 export interface PullRequest {
   url: string;
@@ -43,19 +33,18 @@ export class ForgeError extends Error {
 }
 
 /**
- * chant's target for one terragucci built itself (report/drift.ts's
- * targetFromEnv, the config's origin and path): the origin as `--url`, the
- * runner's API base as `--api-url`. A target with no token reads a public
+ * chant's target for the repository at `origin` and `path` the config or the
+ * origin remote names, with `token`. A target with no token reads a public
  * repository and sends no credential.
  */
-export function chantTargetOf(t: ForgeTarget): ChantForgeTarget {
-  return forgeTargetFromFlags({ forge: t.forge, repo: t.path, url: t.origin, ...(t.api ? { apiUrl: t.api } : {}), ...(t.token ? { token: t.token } : {}) }, {}, { tokenOptional: true });
+export function targetAt(forge: ForgeName, origin: string, path: string, token: string): ForgeTarget {
+  return forgeTargetFromFlags({ forge, repo: path, url: origin, ...(token ? { token } : {}) }, {}, { tokenOptional: true });
 }
 
 /** The repo's default branch, as chant's forge client reads it (chant#4554). */
 export async function defaultBranch(fetch: Fetch, t: ForgeTarget): Promise<string> {
-  const forge = prForgeOf(t, fetch);
-  if (!forge.defaultBranch) throw new ForgeError(`chant's ${t.forge} client reads no default branch`);
+  const forge = forgeClient(t, fetch);
+  if (!forge.defaultBranch) throw new ForgeError(`chant's ${t.kind} client reads no default branch`);
   return forge.defaultBranch();
 }
 
@@ -78,7 +67,7 @@ export async function openPullRequest(
   t: ForgeTarget,
   pr: { head: string; base: string; title: string; body: string },
 ): Promise<PullRequest> {
-  const forge = prForgeOf(t, fetch);
+  const forge = forgeClient(t, fetch);
   const open = await forge.findPullRequest(pr.head);
   if (open) return { url: open.url ?? "", number: open.number, existing: true };
   const made = await forge.openPullRequest(pr);
@@ -97,21 +86,6 @@ export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, t
     if (e instanceof ForgeEnvironmentError) throw new ConfigError(e.message);
     throw e;
   }
-}
-
-/** chant's client for a target terragucci built itself. */
-export function prForgeOf(t: ForgeTarget, fetch?: Fetch): PrForge {
-  return forgeClient(chantTargetOf(t), fetch);
-}
-
-/**
- * chant's reads (`@intentius/chant/pr-forge-reads`) for a target terragucci
- * built itself: the token's user, a pull request in any state, the pull
- * requests from a branch, notes, check runs, commits, a collaborator's
- * permission and the open pull requests.
- */
-export function readsOf(t: ForgeTarget, fetch?: Fetch): ForgeReads {
-  return forgeReadsFor(chantTargetOf(t), fetch);
 }
 
 /** chant's reads for the forge a job runs on, with the job's TG_TOKEN (or the variable `tokenEnv` names), as poster builds its client. */

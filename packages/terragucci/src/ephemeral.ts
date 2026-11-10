@@ -104,12 +104,13 @@ import {
 } from "./config";
 import { applyLayers, backendBlock, findRoots, globMatch } from "./detect";
 import { detectShape, type Shape } from "./shape";
-import { prForgeOf, type Fetch } from "./forge";
+import { jobForgeTarget } from "@intentius/chant/forge-flags";
+import { forgeClient } from "@intentius/chant/pr-forge";
+import type { Fetch } from "./forge";
 import { isGitLabAddress, shownUrl, suffixedGitLabAddress } from "@intentius/chant-lexicon-terraform/state/gitlab";
 import { unitPlace } from "./migrate";
 import { RootBinaries } from "./pins";
 import { storeFromEnv } from "./report/bucket";
-import { targetFromEnv } from "./report/drift";
 import { configAtBase } from "./report/policy";
 import { runFacts } from "./report/stage";
 import { updateJson } from "./report/store";
@@ -442,10 +443,10 @@ export function readLive(repo: string): Map<number, LivePrEnvironment> {
 
 /** Whether the forge says pull request `pr` is open. Throws when it cannot be read, so the TTL decides. */
 async function pullState(fetchFn: Fetch, r: Ready, pr: number): Promise<"open" | "closed" | "merged"> {
-  const t = targetFromEnv(r.forge, r.env, r.env.TG_TOKEN, true);
+  const t = jobForgeTarget({ forge: r.forge, tokenEnv: "TG_TOKEN" }, r.env, { tokenOptional: true });
   if (!t) throw new Error("no forge token or repository in the job");
-  const forge = prForgeOf(t, fetchFn);
-  if (!forge.pullRequestState) throw new Error(`chant's ${t.forge} client reads no pull request's state`);
+  const forge = forgeClient(t, fetchFn);
+  if (!forge.pullRequestState) throw new Error(`chant's ${t.kind} client reads no pull request's state`);
   return forge.pullRequestState(pr);
 }
 

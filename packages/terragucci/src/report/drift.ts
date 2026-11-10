@@ -11,8 +11,6 @@
 import { driftIssueBody, keepDriftIssue, type DriftIssueInput, type DriftIssueRecord, type DriftIssueWords } from "@intentius/chant/drift-issue";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import { terraformPlanDriftCount, terraformPlanDriftNames } from "@intentius/chant-lexicon-terraform/drift-rows";
-import type { ForgeTarget } from "../forge";
-import type { ForgeName } from "../config";
 import type { Attributed } from "../respond/attribute";
 import type { Report } from "./schema";
 
@@ -160,24 +158,4 @@ export async function trackDrift(forge: PrForge, report: Report, options: IssueO
   if (r.action === "left" && r.number !== undefined) return { action: "left-open", issue };
   if (r.action === "closed") return { action: "closed", issue };
   return { action: "none" };
-}
-
-/** The forge a run is on, from the CI environment. */
-export function targetFromEnv(forge: ForgeName | undefined, env: NodeJS.ProcessEnv, token: string | undefined, readOnly = false): ForgeTarget | undefined {
-  // Without a token the target can only read, which a public repo answers.
-  if (!token && !readOnly) return undefined;
-  token ??= "";
-  if (env.GITHUB_REPOSITORY && env.GITHUB_SERVER_URL) {
-    return {
-      forge: forge === "forgejo" ? "forgejo" : "github",
-      origin: env.GITHUB_SERVER_URL,
-      path: env.GITHUB_REPOSITORY,
-      token,
-      ...(env.GITHUB_API_URL ? { api: env.GITHUB_API_URL } : {}),
-    };
-  }
-  if (env.CI_PROJECT_PATH && env.CI_SERVER_URL) {
-    return { forge: "gitlab", origin: env.CI_SERVER_URL, path: env.CI_PROJECT_PATH, token };
-  }
-  return undefined;
 }

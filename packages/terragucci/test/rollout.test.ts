@@ -6,7 +6,7 @@ import { appliedState, fetchForge, type CommitCheck, type RolloutForge, type Wav
 import { SYNTH_ROLLOUTS } from "../src/config";
 import { moveConstraint, readLock } from "../src/rollout/lock";
 import { namesModule, shapePin } from "../src/rollout/pins";
-import type { Fetch } from "../src/forge";
+import { targetAt, type Fetch } from "../src/forge";
 import { backend, bareFrom, git, remoteState, tmp, write } from "./helpers";
 
 const GIT_MODULE = "git::https://example.com/acme/infra.git//modules/network";
@@ -454,7 +454,7 @@ describe("the forge", () => {
       const body = answers[path];
       return { ok: body !== undefined, status: body ? 200 : 404, json: async () => body, text: async () => JSON.stringify(body) };
     };
-    const f = fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
+    const f = fetchForge(fetch, targetAt("forgejo", "https://forge.example.com", "acme/infra", ""));
     const pr = await f.findPullRequest("w1");
     expect(pr).toEqual({ url: "u/1", state: "merged", body: "b", mergeCommit: "abc" });
     const checks = await f.commitChecks("abc");
@@ -469,7 +469,7 @@ describe("the forge", () => {
         const repo = there && url.endsWith("/api/v1/repos/acme/infra");
         return { ok: repo, status: repo ? 200 : 404, json: async () => ({ empty: true }), text: async () => (repo ? JSON.stringify({ empty: true }) : "The target couldn't be found.") };
       };
-      return fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
+      return fetchForge(fetch, targetAt("forgejo", "https://forge.example.com", "acme/infra", ""));
     };
     expect(await forge(true).findPullRequest("w1")).toBeNull();
     await expect(forge(false).findPullRequest("w1")).rejects.toThrow(/answered 404/);
@@ -487,9 +487,9 @@ describe("the forge", () => {
       ],
     };
     const fetch: Fetch = async (url) => ({ ok: true, status: 200, json: async () => answers[url], text: async () => JSON.stringify(answers[url] ?? []) });
-    const gh = fetchForge(fetch, { forge: "github", origin: "https://github.com", path: "acme/infra", token: "" });
+    const gh = fetchForge(fetch, targetAt("github", "https://github.com", "acme/infra", ""));
     expect(await gh.listPullRequests("terragucci/rollout/")).toEqual([{ branch: "terragucci/rollout/x-1.4.0/wave-1", url: "g/2", title: "t2", state: "merged", body: "b2" }]);
-    const gl = fetchForge(fetch, { forge: "gitlab", origin: "https://gitlab.example.com", path: "acme/infra", token: "" });
+    const gl = fetchForge(fetch, targetAt("gitlab", "https://gitlab.example.com", "acme/infra", ""));
     expect((await gl.listPullRequests("terragucci/rollout/")).map((p) => [p.url, p.state])).toEqual([["l/1", "open"], ["l/0", "closed"]]);
   });
 
@@ -507,7 +507,7 @@ describe("the forge", () => {
         }
         return { ok: true, status: 201, json: async () => ({ html_url: "u/1", number: 1 }), text: async () => JSON.stringify({ html_url: "u/1", number: 1 }) };
       };
-      const f = fetchForge(fetch, { forge: "forgejo", origin: "https://forge.example.com", path: "acme/infra", token: "" });
+      const f = fetchForge(fetch, targetAt("forgejo", "https://forge.example.com", "acme/infra", ""));
       const url = await f.createPullRequest({ base: "main", head: "w1", title: "t", body: "b" });
       return { url, asked };
     };

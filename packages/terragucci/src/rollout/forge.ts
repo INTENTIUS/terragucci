@@ -4,7 +4,9 @@
  * merge made, through chant's forge client and reads, with the same `fetch`
  * the rest of terragucci uses.
  */
-import { commitStatuses, defaultBranch, openPullRequest, prForgeOf, readsOf, type Fetch, type ForgeTarget } from "../forge";
+import { forgeClient, type ForgeTarget } from "@intentius/chant/pr-forge";
+import { forgeReadsFor } from "@intentius/chant/pr-forge-reads";
+import { commitStatuses, defaultBranch, openPullRequest, type Fetch } from "../forge";
 
 export interface WavePullRequest {
   url: string;
@@ -63,7 +65,7 @@ const STATE: Record<string, CommitCheck["state"]> = {
 const checkState = (s: string | undefined): CommitCheck["state"] => STATE[s ?? ""] ?? "pending";
 
 export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
-  const reads = readsOf(t, fetch);
+  const reads = forgeReadsFor(t, fetch);
   return {
     defaultBranch: () => defaultBranch(fetch, t),
 
@@ -88,7 +90,7 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
       for (const r of await reads.checkRuns(sha)) {
         checks.push({ name: r.name, state: r.status === "completed" ? (STATE[r.conclusion ?? ""] ?? "failure") : "pending" });
       }
-      for (const st of await commitStatuses(prForgeOf(t, fetch), sha)) checks.push({ name: st.context, state: checkState(st.state) });
+      for (const st of await commitStatuses(forgeClient(t, fetch), sha)) checks.push({ name: st.context, state: checkState(st.state) });
       return checks;
     },
   };
