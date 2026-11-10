@@ -46,11 +46,8 @@ export default {
       build: "node scripts/build-cli.mjs",
       chant: "npx chant",
       // chant adds packages: write and this run's token for the GHCR oci targets, and npm 11.5.1 or later for
-      // trusted publishing, from the targets (chant issue 4786).
-      setup: [
-        // QEMU, so an amd64 runner builds the arm64 half of each image.
-        { uses: "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0", with: { platforms: "arm64" } },
-      ],
+      // trusted publishing, from the targets (chant issue 4786), and QEMU for the arm64 half of each image
+      // (chant issue 4876).
       file: ".github/workflows/publish.yml",
     },
     // chant builds each image from its Dockerfile (chant issue 4819): reproducibly, as an OCI archive at
