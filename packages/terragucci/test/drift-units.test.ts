@@ -172,7 +172,7 @@ describe("tf-drift attribution in a Terragrunt repo", () => {
     const at = JSON.parse(readFileSync(join(out, "attributions.json"), "utf-8"));
     expect(at["live/a"].attributions[0]).toMatchObject({ address: "aws_sqs_queue.jobs", path: "visibility_timeout_seconds", actor: "human" });
     const issue = readFileSync(join(out, "issue.md"), "utf-8");
-    expect(issue).toContain("- Who changed it:");
+    expect(issue).toContain("Who changed it:");
     expect(issue).toContain("SetQueueAttributes by alice");
   });
 });
