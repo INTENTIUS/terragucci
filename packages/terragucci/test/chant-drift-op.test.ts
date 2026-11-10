@@ -60,7 +60,7 @@ describe("the drift job as a chant drift Op", () => {
     expect(spec.findingMode).toBe("report");
     expect(spec.permissions).toBeUndefined();
     expect(spec.gitlab).toEqual({
-      idTokens: { TERRAGUCCI_OIDC: { aud: "drift-aud" } },
+      idTokens: { CHANT_ID_TOKEN_AWS: { aud: "drift-aud" } },
       cache: [{ key: "terragucci-terragrunt", paths: [".terragrunt-cache/"] }],
       scheduleRule: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"',
     });

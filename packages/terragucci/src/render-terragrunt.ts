@@ -122,17 +122,16 @@ export function terragruntCheckScript(tg: TerragruntPipelineInput, binary: Binar
 }
 
 /**
- * Shell that sets up the auth provider for one phase. Without `oidc`, it
- * also fetches the job's OIDC token, which `oidc` would have fetched.
+ * Shell that sets up the auth provider for one phase, after the step's
+ * login wrote the AWS token file (with no AWS role in `oidc`, the file
+ * alone: ../render.ts, LoginOidc).
  */
 export function credentialsScript(
   credentials: Record<string, RolePair>,
   phase: "plan" | "apply",
-  token: string | undefined,
   traded = false,
 ): string {
   return [
-    ...(token ? ['export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"', token] : []),
     `export TERRAGUCCI_REPO="$PWD" TERRAGUCCI_PHASE=${phase} ${ROLES_ENV}=${sh(JSON.stringify(rolesFor(credentials, phase)))}`,
     'export TG_AUTH_PROVIDER_CMD="terragucci auth-provider"',
     // A re-plan's plan step holds no token: the auth provider hands each unit its role's traded keys (../oidc-trade.ts).

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LOGIN_RESTART_MARKER } from "@intentius/chant/ci-login";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, SYNTH_DRIFT_PR_SHORT, synthProblems, validateConfig } from "../src/config";
 import { findRootsWithReasons } from "../src/detect";
@@ -33,15 +34,19 @@ describe("synth: roots a command writes", () => {
     expect(() => validateConfig({ synth: " " }, "t")).toThrow(ConfigError);
   });
 
-  it("runs the command after the checkout and before any credential, in every job that reads the roots", () => {
+  it("runs the command after the checkout and the login's restart, which leaves no token-request variable, in every job that reads the roots", () => {
     const step = synthScript(SYNTH);
     const oidc = { plan_role: "arn:aws:iam::1:role/plan", apply_role: "arn:aws:iam::1:role/apply" };
     const before = (script: string, what: string): void => {
       expect(script).toContain(`( set -e; ${SYNTH} )`);
       expect(script.indexOf(`( set -e; ${SYNTH} )`)).toBeLessThan(script.indexOf(what));
     };
-    before(planScript("tofu", layers, "github", oidc, { synth: SYNTH }), "export AWS_ROLE_ARN");
-    before(planScript("tofu", layers, "github", oidc, { synth: SYNTH }), "terragucci stage tf-plan");
+    const plan = planScript("tofu", layers, "github", oidc, { synth: SYNTH });
+    expect(plan.indexOf(`${LOGIN_RESTART_MARKER}=1`)).toBeGreaterThan(-1);
+    expect(plan.indexOf(`${LOGIN_RESTART_MARKER}=1`)).toBeLessThan(plan.indexOf(`( set -e; ${SYNTH} )`));
+    // On GitLab, whose job holds its id_tokens and no request variables, the login comes after it.
+    before(planScript("tofu", layers, "gitlab", oidc, { synth: SYNTH }), "CHANT_CLOUD_LOGIN=");
+    before(plan, "terragucci stage tf-plan");
     before(planFilesScript("tofu", layers, "github", undefined, { synth: SYNTH }, { replan: true }), "terragucci stage tf-plan");
     const replan = planFilesScript("tofu", layers, "github", undefined, { synth: SYNTH }, { replan: true });
     expect(replan.indexOf('git rev-parse HEAD')).toBeLessThan(replan.indexOf(SYNTH));

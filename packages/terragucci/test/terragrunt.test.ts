@@ -394,7 +394,7 @@ describe("init in a Terragrunt repo", () => {
         expect(plan.permissions["id-token"]).toBe("write");
         expect(apply.permissions["id-token"]).toBe("write");
       } else {
-        expect(plan.id_tokens.TERRAGUCCI_OIDC.aud).toBe("sts.amazonaws.com");
+        expect(plan.id_tokens.CHANT_ID_TOKEN_AWS.aud).toBe("sts.amazonaws.com");
         expect(plan.cache[0].paths).toEqual([".terragrunt-cache/"]);
       }
       expect(script(plan)).toContain('export TG_AUTH_PROVIDER_CMD="terragucci auth-provider"');

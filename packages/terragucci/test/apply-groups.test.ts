@@ -184,7 +184,7 @@ describe("apply groups: the pipeline", () => {
     expect(p).toContain(PROD.apply_role);
     for (const r of [DEV.apply_role, DEV.plan_role, TOP.apply_role, PROD.plan_role]) expect(p).not.toContain(r);
     // An environment's audience: the job asks for its tokens first, for its audience, and drops the token-request variables.
-    expect(p).toContain("'sts.amazonaws.com/prod'");
+    expect(p).toContain('"audience":"sts.amazonaws.com/prod"');
     expect(p).toContain("unset ACTIONS_ID_TOKEN_REQUEST_URL");
     expect(jobs["apply-wave-1-dev"].environment).toBe("development");
     expect(jobs["apply-wave-1-default"].environment).toBeUndefined();
@@ -199,13 +199,13 @@ describe("apply groups: the pipeline", () => {
 
   it("gitlab: each group's job declares its own audience and runs in its environment", () => {
     const jobs = jobsOf(renderPipeline(input("gitlab")).content);
-    expect(jobs["apply-wave-1"].id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
+    expect(jobs["apply-wave-1"].id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
     expect(jobs["apply-wave-1"].environment).toBeUndefined();
-    expect(jobs["apply-wave-1-prod"].id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com/prod" } });
+    expect(jobs["apply-wave-1-prod"].id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com/prod" } });
     expect(jobs["apply-wave-1-prod"].environment).toEqual({ name: "prod" });
     expect(jobs["apply-wave-1-prod"].tags).toEqual(["self-hosted", "prod"]);
     expect(jobs["apply-wave-1-dev"].environment).toEqual({ name: "development" });
-    expect(jobs["apply-wave-1-dev"].id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: "sts.amazonaws.com" } });
+    expect(jobs["apply-wave-1-dev"].id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
     expect(jobs["apply-wave-1-prod"].needs).toEqual(["apply-wave-1"]);
   });
 

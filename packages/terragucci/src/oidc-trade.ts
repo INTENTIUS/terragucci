@@ -63,7 +63,7 @@ export function awsRoles(env: NodeJS.ProcessEnv, reportsRole?: string): string[]
   return [...new Set(all.filter((r): r is string => Boolean(r)))];
 }
 
-/** What oidc.gcp's external_account file (gcpScript in ./render.ts) says: the service account, the provider, the token file and the endpoints. */
+/** What oidc.gcp's external_account file (chant's login writes it) says: the service account, the provider, the token file and the endpoints. */
 interface ExternalAccount {
   serviceAccount?: string;
   provider?: string;

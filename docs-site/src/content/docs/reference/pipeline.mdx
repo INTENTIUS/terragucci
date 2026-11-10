@@ -223,7 +223,7 @@ oidc:
     "envs/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
 ```
 
-The job fetches its token as before and carries the stage's roles in `TERRAGUCCI_ROOT_ROLES`. The stage sets `AWS_ROLE_ARN` to the role of the first glob a root matches, for:
+The job logs in as before, and the login writes the stage's roles by glob to the file `CHANT_CLOUD_TARGETS` names. The stage sets `AWS_ROLE_ARN` to the role of the first glob a root matches, for:
 
 - the root's init, plan and apply
 - its [hooks](/terragucci/guides/run-steps/)

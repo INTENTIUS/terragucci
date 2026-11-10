@@ -55,15 +55,10 @@
         run: |
           set +e -uo pipefail
           export TG_FORGE=forgejo
-          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
-          const [cmd, ...a] = process.argv.slice(1);
+          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'const [cmd, ...a] = process.argv.slice(1);
           const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
           try {
-            if (cmd === "oidc") {
-              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
-              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
-              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
-            } else if (!tok) {
+            if (!tok) {
               console.log("terragucci: no forge token, so no " + cmd);
             } else if (cmd === "alive") {
               const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
@@ -75,7 +70,6 @@
             }
           } catch (err) {
             console.log("terragucci: " + cmd + " failed: " + err.message);
-            if (cmd === "oidc") process.exit(1);
           }' -- "$@" ;; esac; }
           terragucci comment --layers 'live/dev/app;live/prod/app' --forge forgejo --out terragucci-comment.json || exit 1
           read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
@@ -90,66 +84,15 @@
         name: Trade the job's OIDC token for the plan identities
         shell: bash
         run: |
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ]; then
-          export TG_FORGE=forgejo
-          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
-          const [cmd, ...a] = process.argv.slice(1);
-          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          try {
-            if (cmd === "oidc") {
-              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
-              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
-              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
-            } else if (!tok) {
-              console.log("terragucci: no forge token, so no " + cmd);
-            } else if (cmd === "alive") {
-              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-              const run = await r.json();
-              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-            }
-          } catch (err) {
-            console.log("terragucci: " + cmd + " failed: " + err.message);
-            if (cmd === "oidc") process.exit(1);
-          }' -- "$@" ;; esac; }
-          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo 'terragucci: the runner served this job no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job that sets enable-openid-connect: true; on an older Forgejo leave oidc unset and give the runner static credentials' >&2
-            exit 1
+          if [ -z "${CHANT_CLOUD_LOGGED_IN:-}" ]; then
+          export CHANT_CLOUD_LOGIN='{"aws":{"role":"arn:aws:iam::111111111111:role/plan-ro","audience":"sts.amazonaws.com","sessionName":"terragucci-plan"}}'
+          CHANT_CLOUD_LOGIN_VARS="$(cd / && node -e 'const fs=require("fs"),crypto=require("crypto");const [out,format,forge]=process.argv.slice(1);const Q=String.fromCharCode(39);const fail=(m)=>{console.error("chant: the cloud login failed: "+m);process.exit(1)};let spec;try{spec=JSON.parse(process.env.CHANT_CLOUD_LOGIN||"")}catch{fail("CHANT_CLOUD_LOGIN is not JSON")}const clean=(v)=>typeof v==="string"&&/^[\x21-\x7e]+$/.test(v);const trim=(u)=>String(u).replace(/\/+$/,"");const tmp=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp");const rand=()=>crypto.randomBytes(8).toString("hex");const NO={github:"it needs permissions: id-token: write, and a pull request from a fork gets none",forgejo:"Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job with enable-openid-connect: true; on an older Forgejo give the cloud a tokenFile the runner provides"};const mine=[];const tokenFile=async(cloud,s)=>{if(s.tokenFile){const f=s.tokenFile.replace(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/,(m,v)=>process.env[v]||"");let t;try{t=fs.readFileSync(f,"utf8").trim()}catch{throw new Error(cloud+"\u0027s tokenFile "+f+" cannot be read")}if(!t)throw new Error(cloud+"\u0027s tokenFile "+f+" is empty");return f}const name="CHANT_ID_TOKEN_"+cloud.toUpperCase();let v=process.env[name];if(!v){if(forge==="gitlab")throw new Error("the job has no "+name+": it needs id_tokens: "+name+": aud: "+s.audience);const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,k=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!k)throw new Error("the job can request no OIDC token for "+cloud+": "+(NO[forge]||NO.github));const r=await fetch(u+(u.includes("?")?"&":"?")+"audience="+encodeURIComponent(s.audience),{headers:{authorization:"bearer "+k,accept:"application/json"}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);try{v=JSON.parse(await r.text()).value}catch{throw new Error("the OIDC token request answered with no JSON")}}if(!clean(v))throw new Error("the job\u0027s OIDC token for "+cloud+" is not a token");const f=tmp+"/chant-oidc-"+cloud+"-"+rand();fs.writeFileSync(f,v,{mode:0o600,flag:"wx"});mine.push(f);return f};const KEY={"aws":"role","gcp":"serviceAccount","azure":"clientId","pulumi":"token"};const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);return l};const vars={},said=[],by={};const run=async()=>{if(spec.aws){const a=spec.aws;const f=await tokenFile("aws",a);by.aws={};const base={AWS_WEB_IDENTITY_TOKEN_FILE:f,AWS_ROLE_SESSION_NAME:a.sessionName||"chant",...(a.region?{AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region}:{}),...(a.endpoint?{AWS_ENDPOINT_URL_STS:trim(a.endpoint)}:{})};for(const role of ids("aws")){by.aws[role]={AWS_ROLE_ARN:role,...base};said.push(role)}if(a.role)Object.assign(vars,by.aws[a.role]);else{Object.assign(vars,base);console.error("chant: wrote the aws OIDC token file, with no role of the job\u0027s own")}}if(spec.gcp){const c=spec.gcp;const f=await tokenFile("gcp",c);by.gcp={};const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");const tu=/\/token$/.test(sts)?sts:sts+"/v1/token";for(const sa of ids("gcp")){const cf=tmp+"/chant-gcp-"+rand()+".json";fs.writeFileSync(cf,JSON.stringify({type:"external_account",audience:"//iam.googleapis.com/"+c.provider,subject_token_type:"urn:ietf:params:oauth:token-type:jwt",token_url:tu,service_account_impersonation_url:iam+"/v1/projects/-/serviceAccounts/"+sa+":generateAccessToken",credential_source:{file:f}})+"\n",{mode:0o600,flag:"wx"});by.gcp[sa]={GOOGLE_APPLICATION_CREDENTIALS:cf,CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:cf};said.push(sa)}if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}if(spec.azure){const z=spec.azure;const f=await tokenFile("azure",z);by.azure={};for(const cid of ids("azure")){by.azure[cid]={AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,AZURE_FEDERATED_TOKEN_FILE:f,ARM_USE_OIDC:"true",ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,ARM_OIDC_TOKEN_FILE_PATH:f,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{}),...(z.authority?{AZURE_AUTHORITY_HOST:trim(z.authority)}:{})};said.push(cid)}if(z.clientId)Object.assign(vars,by.azure[z.clientId]);if(z.cli){const r=require("child_process").spawnSync("az",["login","--service-principal","--username",z.clientId,"--tenant",z.tenantId,"--federated-token",fs.readFileSync(f,"utf8").trim(),"--allow-no-subscriptions","--output","none"],{stdio:["ignore","ignore","inherit"]});if(r.error)throw new Error("az login could not run: "+r.error.message);if(r.status!==0)throw new Error("az login exited "+r.status);if(z.subscriptionId){const s=require("child_process").spawnSync("az",["account","set","--subscription",z.subscriptionId],{stdio:["ignore","ignore","inherit"]});if(s.status!==0)throw new Error("az account set exited "+s.status)}}}const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}const tf=tmp+"/chant-cloud-targets-"+rand()+".json";fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.CHANT_CLOUD_TARGETS=tf}if(mine.length)vars.CHANT_CLOUD_TOKEN_FILES=mine.join(":");for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");if(format==="github-env")fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\n").join(""));else process.stdout.write(Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\"+Q+Q)+Q+"\n").join(""));for(const s of said)console.error("chant: logged in from the OIDC token file as "+s)};run().catch((e)=>fail(e&&e.message?e.message:String(e)));' "-" sh forgejo)" || exit 1
+          eval "$CHANT_CLOUD_LOGIN_VARS"
+          unset CHANT_CLOUD_LOGIN_VARS CHANT_CLOUD_LOGIN
           fi
-          export TERRAGUCCI_OIDC_FILE="$(mktemp)"
-          tg oidc "$TERRAGUCCI_OIDC_FILE" 'sts.amazonaws.com' || exit 1
-          fi
-          if [ -z "${TG_NO_OIDC_REQUEST:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN TG_NO_OIDC_REQUEST=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          export TG_FORGE=forgejo
-          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'import { writeFileSync } from "node:fs";
-          const [cmd, ...a] = process.argv.slice(1);
-          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          try {
-            if (cmd === "oidc") {
-              const r = await fetch(e.ACTIONS_ID_TOKEN_REQUEST_URL + "&audience=" + encodeURIComponent(a[1]), { headers: { authorization: "bearer " + e.ACTIONS_ID_TOKEN_REQUEST_TOKEN } });
-              if (!r.ok) throw new Error("the OIDC token request answered " + r.status + "; the job needs permission to request an OIDC token");
-              writeFileSync(a[0], (await r.json()).value, { mode: 0o600 });
-            } else if (!tok) {
-              console.log("terragucci: no forge token, so no " + cmd);
-            } else if (cmd === "alive") {
-              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-              const run = await r.json();
-              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-            }
-          } catch (err) {
-            console.log("terragucci: " + cmd + " failed: " + err.message);
-            if (cmd === "oidc") process.exit(1);
-          }' -- "$@" ;; esac; }
-          export AWS_ROLE_ARN='arn:aws:iam::111111111111:role/plan-ro' AWS_ROLE_SESSION_NAME='terragucci-plan'
-          export AWS_WEB_IDENTITY_TOKEN_FILE="$(mktemp)"
-          mv -f "$TERRAGUCCI_OIDC_FILE" "$AWS_WEB_IDENTITY_TOKEN_FILE" || exit 1
+          if [ -z "${CHANT_CLOUD_LOGGED_IN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN CHANT_CLOUD_LOGGED_IN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          trap '(set -f; IFS=:; for f in ${CHANT_CLOUD_TOKEN_FILES:-}; do [ ! -f "$f" ] || : > "$f"; done)' EXIT
           terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
-          for f in "${TERRAGUCCI_OIDC_FILE:-}" "${TERRAGUCCI_OIDC_GCP_FILE:-}" "${TERRAGUCCI_OIDC_AZURE_FILE:-}"; do [ -z "$f" ] || rm -f "$f"; done
       - if: steps.decide.outputs.go == '1'
         name: Check out the pull request's head
         shell: bash

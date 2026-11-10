@@ -1,18 +1,18 @@
 // oidc.audience as a map gives each stage's jobs their own AWS token audience: plan for the jobs that plan a
 // change, apply for the jobs that apply (confirm among them), drift for drift. On GitLab each job's id_tokens
-// declares its stage's audience alone. On GitHub and Forgejo a step that takes credentials asks for its tokens
-// first and restarts without the token-request variables, so nothing it runs can ask for another audience.
-// A string, or no audience, renders what it always did on GitHub and GitLab; Forgejo fetches first with any oidc.
+// declares its stage's audience alone. On GitHub and Forgejo a step that takes credentials logs in first with
+// chant's login and restarts without the token-request variables, so nothing it runs can ask for another audience.
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LOGIN_RESTART_MARKER, LOGIN_SPEC_ENV } from "@intentius/chant/ci-login";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, validateConfig } from "../src/config";
 import { configSchemaProblems } from "../src/config-schema";
-import { cloudScripts, OIDC_REQUEST_VARS, renderPipeline, stageAudience, stageTokens, type PipelineInput } from "../src/render";
+import { cloudLoginLines, OIDC_REQUEST_VARS, renderPipeline, stageAudience, type PipelineInput } from "../src/render";
 
 const PLAN = "arn:aws:iam::111111111111:role/plan-ro";
 const APPLY = "arn:aws:iam::111111111111:role/apply-rw";
@@ -36,6 +36,11 @@ const rendered = (forge: PipelineInput["forge"], oidc: PipelineInput["oidc"], ex
   if (forge === "gitlab") return Object.assign({}, ...docs);
   return { ...docs[0], jobs: Object.assign({}, ...docs.map((d) => d.jobs ?? {})) };
 };
+
+/** The AWS audiences and roles chant's login specs in `text` name. */
+function logins(text: string): { audience?: string; role?: string }[] {
+  return [...text.matchAll(new RegExp(`export ${LOGIN_SPEC_ENV}='([^']*)'`, "g"))].map((m) => (JSON.parse(m[1]!) as { aws?: { audience?: string; role?: string } }).aws ?? {});
+}
 
 /** Every problem config.ts finds in `oidc`, or none. */
 function problems(oidc: unknown): string[] {
@@ -80,44 +85,41 @@ describe("oidc.audience as a map: GitLab", () => {
   it("each job's id_tokens declares its stage's audience alone", () => {
     const doc = rendered("gitlab", MAP, { ephemeral: { roots: ["app"] } as never });
     const aud = (job: string): unknown => doc[job].id_tokens;
-    expect(aud("plan")).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.plan } });
-    for (const j of ["apply-wave-1", "apply-wave-2", "ephemeral", "ephemeral-sweep"]) expect(aud(j), j).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.apply } });
+    expect(aud("plan")).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.plan } });
+    for (const j of ["apply-wave-1", "apply-wave-2", "ephemeral", "ephemeral-sweep"]) expect(aud(j), j).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.apply } });
     // The drift job is chant's Op (terragucci#1305), with the drift stage's id_token (chant issue 4753).
-    expect(aud("terragucci-drift")).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.drift } });
+    expect(aud("terragucci-drift")).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.drift } });
     expect(doc.check.id_tokens).toBeUndefined();
     // GitLab's jobs read their token from id_tokens; none asks the forge for one or restarts.
-    expect(JSON.stringify(doc)).not.toMatch(/tg oidc|TG_NO_OIDC_REQUEST/);
+    expect(JSON.stringify(doc)).not.toContain(LOGIN_RESTART_MARKER);
   });
 
   it("confirm and mr-apply, apply jobs, declare the apply audience", () => {
     const doc = rendered("gitlab", MAP, { applyWhen: "pull-request", applyMerge: "manual", comments: "*/5 * * * *", applyMergeTokenEnv: "MERGE_TOKEN" } as never);
-    for (const j of ["confirm", "mr-apply"]) expect(doc[j].id_tokens, j).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.apply } });
-    expect(doc.plan.id_tokens).toEqual({ TERRAGUCCI_OIDC: { aud: AUD.plan } });
+    for (const j of ["confirm", "mr-apply"]) expect(doc[j].id_tokens, j).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.apply } });
+    expect(doc.plan.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.plan } });
   });
 });
 
 describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (forge) => {
   type Step = { name?: string; run?: string; uses?: string };
-  const runs = (doc: Record<string, any>, job: string): string[] => (doc.jobs[job].steps as Step[]).map((s) => s.run ?? "").filter((r) => r.includes("TG_NO_OIDC_REQUEST"));
+  const runs = (doc: Record<string, any>, job: string): string[] => (doc.jobs[job].steps as Step[]).map((s) => s.run ?? "").filter((r) => r.includes(LOGIN_SPEC_ENV));
 
-  it("each job's step asks for its stage's audience, first, and restarts without the token-request variables", () => {
+  it("each job's step logs in for its stage's audience, and restarts without the token-request variables", () => {
     const doc = rendered(forge, MAP, { ephemeral: { roots: ["app"] } as never });
     const want: Record<string, string> = { plan: AUD.plan, replan: AUD.plan, "apply-wave-1": AUD.apply, "apply-wave-2": AUD.apply, "apply-comment": AUD.apply, ephemeral: AUD.apply, drift: AUD.drift };
-    // The drift job is chant's Op (terragucci#1305): its token request is in the script the Op's step runs.
+    // The drift job is chant's Op (terragucci#1305): its login is in the script the Op's step runs.
     const driftScript = renderPipeline(input(forge, MAP, { ephemeral: { roots: ["app"] } as never })).extra!.find((e) => e.path === ".chant/ops/terragucci-drift.sh")!.content;
     for (const [job, aud] of Object.entries(want)) {
       const steps = job === "drift" ? [driftScript] : runs(doc, job);
       expect(steps.length, job).toBeGreaterThan(0);
       for (const run of steps) {
-        const asks = [...run.matchAll(/tg oidc "\$TERRAGUCCI_OIDC_FILE" '([^']*)'/g)].map((m) => m[1]);
-        expect(asks, job).toEqual([aud]);
-        const restart = run.split("\n").findIndex((l) => l.includes("exec env") && l.includes("TG_NO_OIDC_REQUEST=1"));
+        expect(logins(run).map((l) => l.audience), job).toEqual([aud]);
+        const restart = run.split("\n").findIndex((l) => l.includes("exec env") && l.includes(`${LOGIN_RESTART_MARKER}=1`));
         expect(restart, job).toBeGreaterThan(0);
         for (const v of OIDC_REQUEST_VARS) expect(run.split("\n")[restart], job).toContain(`-u ${v}`);
-        // Past the restart, nothing asks for a token or reads the request variables.
-        const rest = run.split("\n").slice(restart + 1).join("\n");
-        expect(rest, job).not.toMatch(/tg oidc |ACTIONS_ID_TOKEN_REQUEST_URL:-/);
-        expect(rest, job).toContain('mv -f "$TERRAGUCCI_OIDC_FILE" "$AWS_WEB_IDENTITY_TOKEN_FILE"');
+        // Past the restart, nothing logs in again.
+        expect(run.split("\n").slice(restart + 1).join("\n"), job).not.toContain(LOGIN_SPEC_ENV);
       }
     }
     // The plan job assumes the plan role, the apply jobs the apply role, as before.
@@ -127,44 +129,41 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
 
   it("confirm, the resume and the sweep take the apply audience", () => {
     const pr = rendered(forge, MAP, { applyWhen: "pull-request", applyMerge: "manual" } as never);
-    expect(runs(pr, "confirm").join("\n")).toContain(`tg oidc "$TERRAGUCCI_OIDC_FILE" '${AUD.apply}'`);
-    expect(runs(pr, "confirm").join("\n")).toContain(PLAN);
+    expect(logins(runs(pr, "confirm").join("\n")).map((l) => [l.audience, l.role])).toEqual([[AUD.apply, PLAN]]);
     const r = renderPipeline(input(forge, MAP, { resume: 15, ephemeral: { roots: ["app"] } as never }));
     // The resume and the sweep workflows; the drift Op's files, which take the drift audience, are tested above.
     const extra = (r.extra ?? []).filter((e) => !e.path.includes("terragucci-drift")).map((e) => e.content).join("\n");
-    expect(extra.match(/tg oidc "\$TERRAGUCCI_OIDC_FILE" '([^']*)'/g)?.every((l) => l.includes(AUD.apply))).toBe(true);
-    expect(extra).toContain("TG_NO_OIDC_REQUEST=1");
+    expect(logins(extra).length).toBeGreaterThan(0);
+    expect(logins(extra).every((l) => l.audience === AUD.apply)).toBe(true);
+    expect(extra).toContain(`${LOGIN_RESTART_MARKER}=1`);
   });
 
-  it("the re-plan's plan step, which reads traded credentials, asks for no token", () => {
+  it("the re-plan's plan step, which reads traded credentials, logs in nowhere", () => {
     const doc = rendered(forge, MAP);
     const plan = (doc.jobs.replan.steps as Step[]).find((s) => s.run?.includes("terragucci stage tf-plan"))!.run!;
-    expect(plan).not.toMatch(/tg oidc|TERRAGUCCI_OIDC_FILE/);
+    expect(plan).not.toContain(LOGIN_SPEC_ENV);
   });
 
-  it("the restarted step holds the stage's token and no token-request variable, and a copy of the token nowhere else", async () => {
+  it("the restarted step holds the stage's token and no token-request variable", async () => {
     const api = await tokenApi();
     try {
       const dir = mkdtempSync(join(tmpdir(), "terragucci-aud-"));
       const file = join(dir, "step.sh");
       writeFileSync(file, [
-        ...stageTokens(forge, MAP, "apply"),
+        ...cloudLoginLines(forge, MAP, "apply", "terragucci-apply"),
         "echo began",
-        ...cloudScripts(forge, MAP, "apply", "terragucci-apply"),
         'echo "token=$(cat "$AWS_WEB_IDENTITY_TOKEN_FILE")"',
         'echo "role=$AWS_ROLE_ARN"',
         "env | grep '^ACTIONS_ID_TOKEN_REQUEST' || echo 'no request variables'",
         "bash -c \"env | grep '^ACTIONS_ID_TOKEN_REQUEST' || echo 'none in a child'\"",
-        '[ -e "$TERRAGUCCI_OIDC_FILE" ] && echo "fetched file kept" || echo "fetched file moved"',
       ].join("\n"));
-      const r = await step(file, { ACTIONS_ID_TOKEN_REQUEST_URL: `${api.url}/token?api-version=2.0`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req" });
+      const r = await step(file, { ACTIONS_ID_TOKEN_REQUEST_URL: `${api.url}/token?api-version=2.0`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "req", RUNNER_TEMP: dir });
       expect(r.status, r.out).toBe(0);
       expect(r.out.match(/^began$/gm)).toHaveLength(1);
       expect(r.out).toContain(`token=jwt-for-${AUD.apply}`);
       expect(r.out).toContain(`role=${APPLY}`);
       expect(r.out).toContain("no request variables");
       expect(r.out).toContain("none in a child");
-      expect(r.out).toContain("fetched file moved");
       expect(api.audiences).toEqual([AUD.apply]);
     } finally {
       api.close();
@@ -174,38 +173,25 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
   it("a runner that serves no token stops the step before anything else runs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "terragucci-aud-"));
     const file = join(dir, "step.sh");
-    writeFileSync(file, [...stageTokens(forge, MAP, "plan"), "echo planned"].join("\n"));
-    const r = await step(file, { ACTIONS_ID_TOKEN_REQUEST_URL: "" });
-    expect(r.status).toBe(1);
+    writeFileSync(file, [...cloudLoginLines(forge, MAP, "plan", "terragucci-plan"), "echo planned"].join("\n"));
+    const r = await step(file, { ACTIONS_ID_TOKEN_REQUEST_URL: "", RUNNER_TEMP: dir });
+    expect(r.status).not.toBe(0);
     expect(r.out).not.toContain("planned");
   });
 });
 
-describe("opt in", () => {
-  it.each(["github", "gitlab"] as const)("%s: a string or no audience renders no stage tokens and one audience everywhere", (forge) => {
+describe.each(["github", "gitlab", "forgejo"] as const)("one audience: %s", (forge) => {
+  it("a string or no audience logs in with one audience everywhere", () => {
     for (const oidc of [{ plan_role: PLAN, apply_role: APPLY }, { plan_role: PLAN, apply_role: APPLY, audience: "custom.example" }]) {
       const text = render(forge, oidc);
-      expect(text).not.toMatch(/TG_NO_OIDC_REQUEST|TERRAGUCCI_OIDC_FILE/);
-      expect(stageTokens(forge, oidc, "apply")).toEqual([]);
       const aud = oidc.audience ?? "sts.amazonaws.com";
-      if (forge === "gitlab") expect([...text.matchAll(/aud: (.*)/g)].map((m) => m[1]).every((a) => a === aud)).toBe(true);
-      else expect([...text.matchAll(/tg oidc "\$AWS_WEB_IDENTITY_TOKEN_FILE" '([^']*)'/g)].map((m) => m[1]).every((a) => a === aud)).toBe(true);
-    }
-  });
-});
-
-describe("forgejo: any oidc fetches first", () => {
-  // Forgejo's token-request token is the run's runtime token, which the forge takes as the run's token.
-  it("a string or no audience still fetches the tokens first, with one audience everywhere, and restarts without the request variables", () => {
-    for (const oidc of [{ plan_role: PLAN, apply_role: APPLY }, { plan_role: PLAN, apply_role: APPLY, audience: "custom.example" }]) {
-      const text = render("forgejo", oidc);
-      expect(text).toContain("TG_NO_OIDC_REQUEST=1");
-      expect(stageTokens("forgejo", oidc, "apply").at(-1)).toContain("-u ACTIONS_ID_TOKEN_REQUEST_TOKEN");
-      const aud = oidc.audience ?? "sts.amazonaws.com";
-      const asked = [...text.matchAll(/tg oidc "\$TERRAGUCCI_OIDC_FILE" '([^']*)'/g)].map((m) => m[1]);
+      if (forge === "gitlab") expect([...text.matchAll(/^\s+aud: (.*)$/gm)].map((m) => m[1]).every((a) => a === aud)).toBe(true);
+      const asked = logins(text).map((l) => l.audience);
       expect(asked.length).toBeGreaterThan(0);
       expect(asked.every((a) => a === aud)).toBe(true);
-      expect(text).not.toMatch(/tg oidc "\$AWS_WEB_IDENTITY_TOKEN_FILE"/);
+      // GitHub and Forgejo restart past the login whatever the audience; GitLab's script is no file to restart.
+      if (forge === "gitlab") expect(text).not.toContain(LOGIN_RESTART_MARKER);
+      else expect(text).toContain(`${LOGIN_RESTART_MARKER}=1`);
     }
   });
 });
