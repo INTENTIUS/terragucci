@@ -17,7 +17,7 @@ import { notePreviews } from "../tg-preview";
 import { signed } from "./cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
 import { perpetualChanges } from "./perpetual";
-import { duration } from "./spans";
+import { duration } from "@intentius/chant-lexicon-terraform/engine-timings";
 import { TACO_NOTE_URL } from "./taco";
 
 /** chant's plan summary, rebuilt from the report. */

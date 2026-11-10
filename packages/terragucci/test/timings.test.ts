@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
 import { runStage } from "../src/report/stage";
 import { REPORT_MINOR } from "../src/report/schema";
-import { decodeTracesJson, decodeTracesProto, duration, rootTimings, SpanReceiver, type CollectedSpan } from "../src/report/spans";
+import { decodeTracesJson, decodeTracesProto, duration, rootTimings, SpanReceiver, type CollectedSpan } from "@intentius/chant-lexicon-terraform/engine-timings";
 import { git, tmp, write } from "./helpers";
 import { plan as planJson, rc } from "./report-fixtures";
 
@@ -208,7 +208,7 @@ describe("the span receiver", () => {
     const rx = new SpanReceiver();
     expect(await rx.listen()).toBeUndefined();
     try {
-      const env = rx.env({ OTEL_TRACES_EXPORTER: "none", KEEP: "1" }, "envs/a", "plan");
+      const env: NodeJS.ProcessEnv = { OTEL_TRACES_EXPORTER: "none", KEEP: "1", ...rx.exporter("envs/a plan") };
       expect(env).toMatchObject({ KEEP: "1", OTEL_TRACES_EXPORTER: "otlp", OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf" });
       const [hk, hv] = env.OTEL_EXPORTER_OTLP_TRACES_HEADERS!.split("=");
       const url = env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT!;
@@ -217,8 +217,8 @@ describe("the span receiver", () => {
       expect((await post(gzipSync(otlpProto(DETAILED.slice(3, 6))), { "content-type": "application/x-protobuf", "content-encoding": "gzip", [hk]: hv })).status).toBe(200);
       expect((await post(JSON.stringify(otlpJson(DETAILED.slice(6))), { "content-type": "application/json", [hk]: hv })).status).toBe(200);
       expect((await post(otlpProto(DETAILED), { "content-type": "application/x-protobuf", [hk]: "not-a-run" })).status).toBe(401);
-      expect(rx.spansOf("envs/a", "plan").map((s) => s.spanId)).toEqual(DETAILED.map((s) => s.id));
-      expect(rx.spansOf("envs/a", "show")).toEqual([]);
+      expect(rx.spansOf("envs/a plan").map((s) => s.spanId)).toEqual(DETAILED.map((s) => s.id));
+      expect(rx.spansOf("envs/a show")).toEqual([]);
     } finally {
       expect(await rx.close()).toEqual([]);
     }
@@ -232,7 +232,7 @@ describe("the span receiver", () => {
     }) as unknown as typeof fetch;
     const rx = new SpanReceiver({ url: "http://collector:4318/v1/traces", headers: { "x-key": "k" } }, fake);
     await rx.listen();
-    const env = rx.env({}, "a", "plan");
+    const env: NodeJS.ProcessEnv = rx.exporter("a plan");
     const [hk, hv] = env.OTEL_EXPORTER_OTLP_TRACES_HEADERS!.split("=");
     const body = otlpProto(DETAILED);
     await fetch(env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT!, { method: "POST", headers: { "content-type": "application/x-protobuf", [hk]: hv }, body: new Uint8Array(body) });
