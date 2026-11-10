@@ -11,7 +11,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { applyWave, EXIT, readLedger } from "../src/apply";
-import { chantCommand } from "../src/chant-bin";
+import { chantCommand } from "@intentius/chant/chant-install";
 import { pointQuestions } from "../src/point-gate";
 import { resumable } from "../src/resume";
 import { relayToken } from "@intentius/chant/notify";
@@ -115,7 +115,7 @@ const click = (user: string, plan: string) => ({
 const chantJson = (cwd: string, ...args: string[]): any => {
   let out: string;
   try {
-    out = execFileSync(chantCommand(cwd), args, { cwd, encoding: "utf-8", env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    out = execFileSync(chantCommand({ from: [cwd] }), args, { cwd, encoding: "utf-8", env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
     out = String((e as { stdout?: string }).stdout ?? "");
   }

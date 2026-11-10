@@ -8,7 +8,6 @@ vi.mock("@intentius/chant/bucket-check", async (real: () => Promise<Record<strin
   return { ...m, checkBucket: (...a: unknown[]) => (stand.checkBucket ?? (m.checkBucket as (...x: unknown[]) => Promise<unknown>))(...a) };
 });
 import { describeInit, init } from "../src/init";
-import { liveImportReadsBackend } from "../src/migrate-estate";
 import type { BinaryExec } from "../src/migrate";
 import { codeRules } from "../src/tips/index";
 import type { PolicyExec } from "../src/report/policy";
@@ -205,14 +204,6 @@ describe("init under choudoufu", () => {
     };
     const r = await init(repo, { binary: "tofu", forge: "github", dryRun: true, liveExec: exec });
     expect(r.records).toEqual([]);
-  });
-});
-
-describe("live-import reads the backend", () => {
-  it("is told by live-import -help", async () => {
-    const help = (out: string): BinaryExec => async () => ({ code: 0, stdout: out, out });
-    expect(await liveImportReadsBackend(help("  -state=path   The tfstate file to read. Defaults to the state the backend block names.\n"), "choudoufu", ".", {})).toBe(true);
-    expect(await liveImportReadsBackend(help("  -state=path   The tfstate file to read, once, read-only.\n"), "choudoufu", ".", {})).toBe(false);
   });
 });
 

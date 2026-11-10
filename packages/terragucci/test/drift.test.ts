@@ -125,7 +125,8 @@ describe("terragucci stage tf-drift", () => {
     const issue = readFileSync(join(dir, "issue.md"), "utf-8");
     expect(issue).toContain("1 of 2 roots have drifted");
     expect(issue).toContain("`envs/orders`");
-    expect(issue).toContain("`module.service.aws_sqs_queue.jobs` (`shop-staging-orders-jobs`): no longer exists");
+    expect(issue).toContain("| `module.service.aws_sqs_queue.jobs` | missing |");
+    expect(issue).toContain("- `envs/orders` `module.service.aws_sqs_queue.jobs` is `shop-staging-orders-jobs`");
     expect(issue).not.toContain("envs/search");
     expect(existsSync(join(dir, "report.html"))).toBe(true);
     expect(renderHtml(report)).toContain("deleted outside Terraform");
@@ -145,7 +146,7 @@ describe("terragucci stage tf-drift", () => {
     const result = await runStage("tf-drift", repo, { binary: fakeTofu(tmp()), env: { PATH: process.env.PATH }, audit }, () => {});
     const issue = readFileSync(join(result.dir, "issue.md"), "utf-8");
     expect(asked).toEqual([{ type: "aws_s3_bucket", ref: "logs" }]);
-    expect(issue).toContain("- Who changed it:");
+    expect(issue).toContain("Who changed it:");
     expect(issue).toContain("`aws_s3_bucket.logs` `tags`: a person (audit log: PutBucketTagging by alice@example.com at 2026-10-01T09:00:00Z)");
   });
 

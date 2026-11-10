@@ -4,8 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
 import {
-  applyMigration,
-  backendBlock,
+  writtenRecord,
   MIGRATE_DONE,
   MIGRATE_LEDGER,
   OVERRIDE_FILE,
@@ -19,6 +18,7 @@ import {
   type StateResource,
 } from "../src/migrate";
 import { sign, type S3Fetch } from "@intentius/chant/object-store";
+import { writeStateMigration } from "@intentius/chant/state-migration";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -167,12 +167,11 @@ describe("a backend move", () => {
 
   it("parses the root and the backend it moves from, and refuses one with no bucket or of another type", () => {
     expect(parseMigration("migrations/move-app.yml", file)).toMatchObject({ kind: "backends", backends: [{ root: "app", from: { backend: "s3", config: { bucket: "state", key: "old/app.tfstate" } } }] });
-    expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: oss\n      config: {}\n")).toThrow(/from.backend must be s3, gcs, azurerm, local, pg, kubernetes, consul, http, remote, cloud, file/);
+    expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: oss\n      config: {}\n")).toThrow(/from.backend must be s3, gcs, azurerm, local, http, pg, kubernetes, consul, remote, cloud, file/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: gcs\n      config: {}\n")).toThrow(/must name the bucket of the state/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: azurerm\n      config: { storage_account_name: a }\n")).toThrow(/must name the storage_account_name, container_name and key of the state/);
     expect(() => parseMigration("migrations/x.yml", "backends:\n  - root: app\n    from:\n      backend: s3\n      config: { bucket: b }\n")).toThrow(/must name the bucket and key/);
     expect(() => parseMigration("migrations/x.yml", "moves: []\nbackends: []\n")).toThrow(/one kind of change/);
-    expect(backendBlock("s3", { bucket: "b", key: "k", use_lockfile: true, endpoints: { s3: "http://x" }, nothing: null })).toBe('terraform {\n  backend "s3" {\n    bucket = "b"\n    key = "k"\n    use_lockfile = true\n    endpoints = { s3 = "http://x" }\n  }\n}\n');
   });
 
   it("copies the state to the backend the code names under both locks, leaves the old one where it was, and records both versions", async () => {
@@ -277,7 +276,7 @@ describe("a revert", () => {
     const text = `revert: split-b\nrestores:\n  - root: one\n    location: s3://state/one.tfstate\n    version_id: ${was}\n    from_version_id: ${left}\n`;
     const { work } = repo({ "one/main.tf": "", "one/want.json": JSON.stringify(["terraform_data.a", "terraform_data.b"]), "one/backend.json": s3("one.tfstate") }, { "migrations/split-b-revert.yml": text });
     const out = await planMigration(work, parseMigration("migrations/split-b-revert.yml", text), { binary: "tofu", exec: w.exec, fetch: w.fetch, env: ENV, work: tmp() }).catch((e: Error) => e.message);
-    expect(out).toContain(`one's state is at version v3, and split-b left ${left}; it moved since`);
+    expect(out).toContain(`one's state is at version v3, and the migration it reverts left ${left}; it moved since`);
   });
 
   it("refuses under the lock a state that moved between the plan and the write", async () => {
@@ -290,7 +289,7 @@ describe("a revert", () => {
     const plan = await planMigration(work, parseMigration("migrations/split-b-revert.yml", text), opts);
     expect(plan.record.status).toBe("planned");
     w.put("state/one.tfstate", JSON.stringify(state("L1", 5, ["a"])));
-    expect(await applyMigration(work, plan, { ...opts, now: T(1) })).toMatchObject({ status: "refused", moved: ["one"] });
+    expect(writtenRecord(plan, await writeStateMigration(plan.engine, plan.roots))).toMatchObject({ status: "refused", moved: ["one"] });
     expect(w.locks.size).toBe(0);
   });
 });
@@ -355,7 +354,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
   });
 
   it("follows discovery to an API on another host with the token, and sends no token to a download elsewhere", async () => {
-    const { workspaceSource } = await import("../src/state-source");
+    const { workspaceSource } = await import("@intentius/chant-lexicon-terraform/state");
     const seen: { url: string; auth?: string }[] = [];
     const fetch: S3Fetch = async (url, init) => {
       seen.push({ url, ...(init.headers.authorization ? { auth: init.headers.authorization } : {}) });
@@ -376,7 +375,7 @@ describe("a backend move from a TFE-API workspace or a state file", () => {
   });
 
   it("names the variable Terraform reads a host's token from", async () => {
-    const { tokenVariable } = await import("../src/state-source");
+    const { tokenVariable } = await import("@intentius/chant-lexicon-terraform/state");
     expect(tokenVariable("app.terraform.io")).toBe("TF_TOKEN_app_terraform_io");
     expect(tokenVariable("my-tfe.example.com")).toBe("TF_TOKEN_my__tfe_example_com");
   });

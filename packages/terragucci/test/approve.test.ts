@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { approve, approveGate, chantCommand, describeMigration, describeStored, installedChant, isGateKeyword, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
+import { approve, approveGate, describeMigration, describeStored, isGateKeyword, overrideDenial, waitingMigrations, waitingWaves } from "../src/approve";
 import { keptPath } from "../src/migrate";
 import { approvedPath, parseLedger } from "../src/apply";
 import { init, signerLine } from "../src/init";
@@ -338,14 +338,3 @@ describe("terragucci approve export|unlock|ephemeral", () => {
   });
 });
 
-describe("the chant approve runs", () => {
-  it("is the bin of the @intentius/chant package installed with terragucci, before any chant on the path", () => {
-    const dir = tmp("tg-chant-bin-");
-    write(dir, { "node_modules/@intentius/chant/package.json": JSON.stringify({ name: "@intentius/chant", bin: { chant: "./bin/chant" } }), "node_modules/@intentius/chant/bin/chant": "#!/bin/sh\n", "a/b/c/.keep": "" });
-    expect(realpathSync(installedChant([join(dir, "a", "b", "c")])!)).toBe(realpathSync(join(dir, "node_modules/@intentius/chant/bin/chant")));
-    expect(installedChant([tmp("tg-no-chant-")])).toBeUndefined();
-    expect(chantCommand(dir, { chant: "/x/chant" })).toBe("/x/chant");
-    // From this checkout, the package the repo installs.
-    expect(chantCommand(tmp("tg-anywhere-"))).toMatch(/@intentius[\\/]chant[\\/]bin[\\/]chant$/);
-  });
-});

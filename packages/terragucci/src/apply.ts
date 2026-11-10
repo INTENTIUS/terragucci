@@ -50,7 +50,7 @@
  * wave's plans, and each root's timings, the plan's and the apply's, from the
  * binary's spans as `stage tf-plan` reads them. For each root that applied,
  * or had nothing to apply, it names the state version the root's backend
- * holds afterwards (./backend.ts): an S3 version id, read from the state
+ * holds afterwards (the terraform lexicon's readStateVersion): an S3 version id, read from the state
  * object's metadata, never from its contents, and the provider and module
  * versions its lock file and modules.json hold (./report/versions.ts).
  *
@@ -152,7 +152,9 @@ import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { UnitBinaries, type UnitTools } from "./unit-pins";
 import { binaryEnv, terragruntExec, tokenlessBinary } from "./binary-env";
 import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits } from "./generate";
-import { rootWorkspace, stateVersion, workspaceEnv } from "./backend";
+import { readStateVersion } from "@intentius/chant-lexicon-terraform/state";
+import { rootWorkspace, workspaceEnv } from "./workspace";
+import { STORE_WORDS } from "./report/object-store";
 import { atmosEdges, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./cloud-identity";
 import { rootSecretEnv } from "./root-secrets";
@@ -1167,7 +1169,7 @@ function stepBinary(work: string, resolved: string, job: NodeJS.ProcessEnv): { b
   return { binary: "choudoufu", path: (was) => [dirname(script), was ?? ""].filter(Boolean).join(delimiter) };
 }
 
-function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache, work: string, c?: Composition, env: NodeJS.ProcessEnv = process.env): CapabilityRegistry {
+function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache, work: string, observer: StageObserver, c?: Composition, env: NodeJS.ProcessEnv = process.env): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   const job = { ...process.env, ...env };
   const cap = terraformApplyCapabilityWith({
@@ -1176,6 +1178,8 @@ function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache
       const readEnv = binaryEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), join(repo, root)));
       return { binary: run.binary, readEnv: definedEnv(run.path ? { ...readEnv, PATH: run.path(readEnv.PATH) } : readEnv) };
     },
+    // Each root's plan and apply timings and spans, from chant's hook around the engine's commands (chant issue 4865).
+    onCommand: observer.commandHook(),
   });
   const terraform = c?.terraform;
   // The composed run takes the project's binary by name, and the job's environment less its forge tokens.
@@ -1205,8 +1209,9 @@ interface StepRoot {
 
 /** A root's plan as terragucci's report reads it, from the plan file chant's step wrote and its `show -json` (terragucci#1303). */
 function stepPlannedRoot(repo: string, options: ApplyWaveOptions, w: WaveRun, run: { target: string; planDigest: string; plan: string; planJson?: string }, own?: StepRoot): PlannedRoot {
-  const timing = w.observer.root(run.target);
-  w.observer.endRoot(timing);
+  // Timed by the hook around the engine's commands (waveCapabilities); a root it saw no command of is timed as nothing.
+  const timing = w.observer.timed(run.target);
+  if (timing.end === undefined) w.observer.endRoot(timing);
   let file: { artifact?: { planFile?: string }; changeSet?: { entries?: { action: string }[] } } = {};
   try {
     file = JSON.parse(readFileSync(join(repo, run.plan), "utf-8")) as typeof file;
@@ -1454,7 +1459,7 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
       const p = w.planned?.find((x) => x.root === run.target);
       if (!p) return;
       const planned = { ...(p as PlannedRoot), env: own.env, binary: own.binary };
-      (w.states ??= new Map()).set(run.target, await stateVersion(join(repo, run.target), own.env));
+      (w.states ??= new Map()).set(run.target, await readStateVersion(join(repo, run.target), own.env, { words: STORE_WORDS }));
       logStateVersions([run.target], w.states);
       const versions = await listRecordVersions(repo, [planned], 1);
       if (versions.has(run.target)) (w.recordVersions ??= new Map()).set(run.target, versions.get(run.target)!);
@@ -1911,6 +1916,8 @@ async function runStepWave(
   if (terragrunt) s.units = stepUnits(s, terragrunt);
   // chant stores the change set on the local ledger before its gate fetches the remote one: bring a stale copy up to date first.
   await fetchLifecycleStatus({ cwd: repo });
+  // The binary's spans, for each root's per-resource timings: the hook around the engine's commands points the binary at the receiver.
+  if (!s.units) await s.jobOf(options.wave).w.observer.collectSpans((l) => console.log(`wave ${options.wave}: ${l}`));
   let result: RunOpWaveResult;
   // The terraform lexicon checks choudoufu's release by name on the job's own PATH: the job's choudoufu, through its tokenless script.
   const job = stepBinary(ctx.work, options.binary, { ...process.env, ...env });
@@ -1926,7 +1933,7 @@ async function runStepWave(
     ...((options.shares !== undefined || at.grouped) && options.share === undefined && options.group === undefined ? { decide: true } : {}),
     ...(options.group !== undefined ? { group: options.group } : {}),
     ...(options.share !== undefined ? { share: options.share } : {}),
-    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache, ctx.work, c, env)) as never,
+    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache, ctx.work, s.jobOf(options.wave).w.observer, c, env)) as never,
     // The migration and gate hooks call back into this process: the job waits for them without blocking it.
     hookExec: at.chant.spawnExecAsync,
     afterPlan: stepAfterPlan(s),
@@ -3602,11 +3609,11 @@ async function recordUnitStateVersions(
     const backend = typeof rendered.remote_state?.backend === "string" && rendered.remote_state.backend ? rendered.remote_state.backend : undefined;
     if (backend) {
       const config = rendered.remote_state?.config && typeof rendered.remote_state.config === "object" ? (rendered.remote_state.config as Record<string, unknown>) : {};
-      out.set(unit, await stateVersion(dir, env, undefined, { type: backend, config }));
+      out.set(unit, await readStateVersion(dir, env, { backend: { type: backend, config }, words: STORE_WORDS }));
       return;
     }
     if (typeof rendered.terraform?.source !== "string" || !rendered.terraform.source) {
-      out.set(unit, await stateVersion(dir, env));
+      out.set(unit, await readStateVersion(dir, env, { words: STORE_WORDS }));
       return;
     }
     out.set(unit, { backend: "unknown", versioning: "unknown", note: "the unit names no remote_state block and runs from Terragrunt's cache, so its backend cannot be read" });

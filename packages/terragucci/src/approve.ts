@@ -70,10 +70,8 @@ import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { ACTION_LEDGER, ACTION_OP, approveActionArgs } from "./action";
 import { ephemeralOp } from "./ephemeral";
 import { PR_ENV_GATE } from "@intentius/chant/components/pr-environment";
-import { chantCommand, installedChant } from "./chant-bin";
+import { chantCommand } from "@intentius/chant/chant-install";
 import type { GateRunLocator } from "@intentius/chant/gate-resume-run";
-
-export { chantCommand, installedChant };
 
 export interface WaitingWave {
   wave: number;
@@ -263,7 +261,9 @@ export function describeMigration(text: string | undefined): string[] {
     if (r.change === "adopt") return [...(r.roots ?? []).map((x) => `  adopts ${x.source?.location ?? "the state"}${x.source?.version_id ? ` at version ${x.source.version_id}` : ""} into ${x.location ?? x.root}, ${(r.stamps ?? []).filter((s) => s.root === x.root).length} resource instances`), "  every resource verified against the live system"];
     const lines = (r.moves ?? []).map((m) => `  moves ${m.addresses.join(", ")} from ${m.from} to ${m.to}`);
     for (const x of r.roots ?? []) lines.push(`  ${x.root}: ${x.location ?? "state"}${x.before?.version_id ? ` at version ${x.before.version_id}` : ""}${x.before?.digest ? "" : ", no state yet"}`);
-    lines.push("  every root planned with no change against its new state");
+    // chant's gated migration keeps each root's plan alone (chant issue 4806): an estate root's location is its estate.
+    const estates = !r.change && (r.roots ?? []).length > 0 && (r.roots ?? []).every((x) => x.location?.startsWith("estate "));
+    lines.push(estates ? "  every root's proof showed no change the migration does not account for" : "  every root planned with no change against its new state");
     return lines;
   } catch {
     return ["  (the migration's plan record could not be read)"];
@@ -310,7 +310,7 @@ function runChant(repo: string, args: string[], command: string, o: { chant?: st
   const env = o.env ?? process.env;
   // terragucci reads who may override from policy.override at base, so chant does not look for .chant/overriders (chant#3824).
   const overriders = args[1] === OVERRIDE_OP ? { CHANT_OVERRIDERS_FROM: "policy.override in terragucci.yml" } : {};
-  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, ...overriders, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+  const r = spawnSync(chantCommand({ ...(o.chant ? { chant: o.chant } : {}), from: [repo] }), args, { cwd: repo, stdio: "inherit", env: { ...env, ...overriders, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
   if (r.error) throw new ConfigError(`could not record the approval (${r.error.message}): the @intentius/chant package that @intentius/terragucci installs with itself is missing; install terragucci again with npm i -D @intentius/terragucci`);
   return r.status ?? 1;
 }

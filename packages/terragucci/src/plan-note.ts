@@ -32,9 +32,11 @@
 import { terragucciStatus } from "./ci-words";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fitNote, noteLimit } from "@intentius/chant/plan-summary";
 import { jobReads, poster, type Fetch } from "./forge";
 import { FORGED, PLAN_MARK, PLAN_NOTE_FILE, PLAN_STATUS_FILE, planStatus, ROOTS_LINE } from "./plan-note-gitlab";
-import { DRIFT_SCHEDULE_FILE, driftOverdue, driftRuns } from "./report/overdue";
+import { overdueVerdict } from "@intentius/chant/op/schedule-overdue";
+import { DRIFT_SCHEDULE_FILE, driftRuns, driftWatch } from "./report/overdue";
 
 export { DRIFT_SCHEDULE_FILE };
 import { targetFromEnv } from "./report/drift";
@@ -43,8 +45,6 @@ import { approvalStatus } from "./review";
 
 /** How the note says the drift job is overdue (chant's overdueVerdict, report/overdue.ts). */
 const OVERDUE = "Op `tf-drift` is overdue:";
-/** GitHub keeps a comment to 65536 characters. */
-const MAX_NOTE = 65_000;
 
 export interface PlanNoteOptions {
   forge: "github" | "forgejo";
@@ -65,12 +65,13 @@ export interface PlanNoteOptions {
 }
 
 /** The note as the job posts it: its own first line, the plan job's body with no marker but the waves marker and the description flag. */
-export function planNoteBodyOf(file: string): string {
+export function planNoteBodyOf(file: string, forge: PlanNoteOptions["forge"] = "github"): string {
   const lines = file.replace(/\r\n/g, "\n").split("\n");
   const roots = ROOTS_LINE.exec(lines[0] ?? "")?.[1];
   const rest = (roots !== undefined ? lines.slice(1) : lines).join("\n").replace(FORGED, "<!-- ").trimEnd();
-  const body = rest.length > MAX_NOTE ? `${rest.slice(0, MAX_NOTE)}\n\nThe note was cut at ${MAX_NOTE} characters; the run's report has all of it.` : rest;
-  return `${PLAN_MARK} roots=${roots ?? ""} -->\n${body}`;
+  const markerLine = `${PLAN_MARK} roots=${roots ?? ""} -->\n`;
+  // chant's cut (chant issue 4800): the forge's note limit, less the marker line, with chant's closing line.
+  return markerLine + fitNote(rest, { limit: noteLimit(forge) - markerLine.length });
 }
 
 /** The note with `> line` added under its counts, where the plan job puts its notices. */
@@ -100,7 +101,7 @@ async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: 
   try {
     // The plan job names the drift job's workflow file (chant's drift Op's, chant issue 4622); a file written before names none.
     const workflow = typeof left.workflow === "string" && /^\.(github|forgejo)\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/.test(left.workflow) ? left.workflow : undefined;
-    const found = driftOverdue(left.cron, o.forge, await driftRuns(doFetch, target, ...(workflow ? [workflow] : [])), added, o.now ?? new Date());
+    const found = overdueVerdict(driftWatch(left.cron, o.forge), o.forge, await driftRuns(doFetch, target, ...(workflow ? [workflow] : [])), added, o.now ?? new Date());
     if (found) log(found.message);
     return found?.message;
   } catch (e) {
@@ -174,7 +175,7 @@ export async function postPlanNoteFromReport(o: PlanNoteOptions): Promise<string
 
   const noteFile = read(PLAN_NOTE_FILE);
   if (noteFile !== undefined) {
-    let body = planNoteBodyOf(noteFile);
+    let body = planNoteBodyOf(noteFile, o.forge);
     if (!body.includes(OVERDUE)) {
       const late = await driftNotice(o, env, doFetch, log);
       if (late) body = withNotice(body, late);

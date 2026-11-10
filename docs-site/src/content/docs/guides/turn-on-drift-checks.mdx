@@ -76,11 +76,11 @@ A scheduled `tf-drift` run that plans every root, and one issue that groups what
 
 5. Read the issue.
 
-   Each project has at most one open issue, `terragucci: drift found`, which every run updates. A root that cannot be refreshed fails the job; drift alone does not.
+   Each project has at most one open issue, `terragucci: drift found`, which a run updates when what drifted changed. A root that cannot be refreshed fails the job; drift alone does not.
 
    | Event | The issue |
    |---|---|
-   | Drift found | opened, or updated if one is open |
+   | Drift found | opened, or updated if one is open and the drift moved |
    | Every root clean | closed |
    | A root could not be planned | left as it is |
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
 import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
-import { ESTATE_PARALLELISM, isChoudoufu, parseRatification, stampFailures } from "../src/migrate-estate";
+import { ESTATE_PARALLELISM, isEstateBinary as isChoudoufu, parseRatification, stampFailures } from "@intentius/chant-lexicon-terraform/estate-migration";
 import { runStage } from "../src/report/stage";
 import { renderNote } from "../src/report/views";
 import { chantGated, migrationRecord } from "./gated-helpers";
@@ -267,9 +267,10 @@ describe("a move between two estates", () => {
     const { line: done, text } = migrationRecord(work, "carve-jobs");
     expect(done).toMatchObject({ gate: "carve-jobs", result: "applied", change: "retag" });
     const retags = [{ address: "aws_sqs_queue.jobs", from_estate: "mono", to_estate: "team", live_id: "q-jobs" }];
-    // chant's finished line keeps flat facts; the retags are in the proof the approval bound, stored as the request's attachment.
+    // chant's finished line keeps flat facts, and the request's attachment binds each root's plan; the retags are in the record.
     const proof = JSON.parse(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${rec.digest.replace(/:/g, "_")}.json`));
-    expect(proof).toMatchObject({ name: "carve-jobs", change: "retag", retags });
+    expect(proof).toMatchObject({ name: "carve-jobs", roots: [{ root: "mono", location: "estate mono" }, { root: "team", location: "estate team" }] });
+    expect(JSON.parse(readFileSync(join(work, "terragucci-report", "migrations", "carve-jobs.json"), "utf-8"))).toMatchObject({ change: "retag", retags });
     expect(() => revertMigration("carve-jobs", text)).toThrow(/moves migration the other way/);
   });
 
@@ -323,7 +324,7 @@ describe("a move between two estates", () => {
     expect(rec).toMatchObject({ change: "retag", status: "waiting", retags: [{ address: "aws_sqs_queue.jobs", live_id: "q-jobs" }] });
     expect(rec.roots.find((r) => r.root === "team")!.proof).toEqual({ changes: [], summary: "live-mv -dry-run: 1 resource found in the estate it leaves" });
     expect(calls.filter((c) => c.startsWith("team: plan"))).toEqual([]);
-    expect(lines.join("\n")).toContain("team: not planned before the retag; live-mv -dry-run found the resource that joins it");
+    expect(lines.join("\n")).toContain("team: live-mv -dry-run: 1 resource found in the estate it leaves");
 
     await approve(work, "carve-jobs", rec.digest, T(2));
     calls.length = 0;

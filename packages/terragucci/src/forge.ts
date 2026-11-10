@@ -5,10 +5,11 @@
  *
  * Pull requests, notes, statuses, replies and the drift issue go through
  * chant's forge clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
- * prForgeOf, for a target built here. What they say stays with terragucci.
+ * prForgeOf, for a target built here (chant's `forgeTargetFromFlags`). What they say stays with terragucci.
  */
-import { ForgeEnvironmentError, forgeClient, forgejoForge, forgeTargetFromEnv, githubForge, gitlabForge, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
-import { forgeReadsFor, forgejoReads, githubReads, gitlabReads, type ForgeReads } from "@intentius/chant/pr-forge-reads";
+import { forgeTargetFromFlags } from "@intentius/chant/forge-flags";
+import { ForgeEnvironmentError, forgeClient, forgeTargetFromEnv, type ForgeTarget as ChantForgeTarget, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
+import { forgeReadsFor, type ForgeReads } from "@intentius/chant/pr-forge-reads";
 import { ConfigError, type ForgeName } from "./config";
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
@@ -41,13 +42,14 @@ export class ForgeError extends Error {
   }
 }
 
-export function apiBase(t: ForgeTarget): string {
-  if (t.api) return t.api.replace(/\/+$/, "");
-  if (t.forge === "github") {
-    return /^https?:\/\/github\.com$/i.test(t.origin) ? "https://api.github.com" : `${t.origin}/api/v3`;
-  }
-  if (t.forge === "gitlab") return `${t.origin}/api/v4`;
-  return `${t.origin}/api/v1`;
+/**
+ * chant's target for one terragucci built itself (report/drift.ts's
+ * targetFromEnv, the config's origin and path): the origin as `--url`, the
+ * runner's API base as `--api-url`. A target with no token reads a public
+ * repository and sends no credential.
+ */
+export function chantTargetOf(t: ForgeTarget): ChantForgeTarget {
+  return forgeTargetFromFlags({ forge: t.forge, repo: t.path, url: t.origin, ...(t.api ? { apiUrl: t.api } : {}), ...(t.token ? { token: t.token } : {}) }, {}, { tokenOptional: true });
 }
 
 /** The repo's default branch, as chant's forge client reads it (chant#4554). */
@@ -97,17 +99,9 @@ export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, t
   }
 }
 
-/**
- * chant's client for a target terragucci built itself (report/drift.ts's
- * targetFromEnv). A target with no token reads a public repository and sends
- * no credential.
- */
+/** chant's client for a target terragucci built itself. */
 export function prForgeOf(t: ForgeTarget, fetch?: Fetch): PrForge {
-  const host = new URL(t.origin).host.toLowerCase();
-  const common = { apiBase: apiBase(t), ...(t.token ? { token: t.token } : {}), host, ...(fetch ? { fetch } : {}) };
-  if (t.forge === "gitlab") return gitlabForge({ ...common, project: t.path });
-  if (t.forge === "forgejo") return forgejoForge({ ...common, repo: t.path });
-  return githubForge({ ...common, repo: t.path });
+  return forgeClient(chantTargetOf(t), fetch);
 }
 
 /**
@@ -117,11 +111,7 @@ export function prForgeOf(t: ForgeTarget, fetch?: Fetch): PrForge {
  * permission and the open pull requests.
  */
 export function readsOf(t: ForgeTarget, fetch?: Fetch): ForgeReads {
-  const host = new URL(t.origin).host.toLowerCase();
-  const common = { apiBase: apiBase(t), ...(t.token ? { token: t.token } : {}), host, ...(fetch ? { fetch } : {}) };
-  if (t.forge === "gitlab") return gitlabReads({ ...common, project: t.path });
-  if (t.forge === "forgejo") return forgejoReads({ ...common, repo: t.path });
-  return githubReads({ ...common, repo: t.path });
+  return forgeReadsFor(chantTargetOf(t), fetch);
 }
 
 /** chant's reads for the forge a job runs on, with the job's TG_TOKEN (or the variable `tokenEnv` names), as poster builds its client. */

@@ -8,7 +8,7 @@
  * `migration` entries, from `_gates/tf-migrate/done.jsonl`). A version the
  * state's store lists that is neither is a write from somewhere else, such
  * as an apply from a laptop. For each root, `terragucci audit` lists the
- * versions of its state where it is now (../backend.ts listStateVersions)
+ * versions of its state where it is now (the terraform lexicon's listStateVersions)
  * and adds one entry per version that is:
  *
  *   newer than the oldest version terragucci recorded for the root that the
@@ -24,7 +24,7 @@
  * not read, is skipped and counted. Only ids and times are read, never a
  * state's contents.
  */
-import type { StateVersionList } from "../backend";
+import type { StateVersionList } from "@intentius/chant-lexicon-terraform/state";
 import type { StateWriters } from "../state-writers";
 import { AUDIT_SCHEMA, sha, type AuditEntry } from "./audit";
 import type { ObjectVersion } from "@intentius/chant/object-store";

@@ -1,9 +1,11 @@
-// Drift checks that stopped: chant's verdict on the drift job, what each forge
-// says about its runs, and the plan note that says it is overdue.
+// Drift checks that stopped: the drift job's watch for chant's check, what
+// each forge says about its runs, and the plan note that says it is overdue.
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { checkDriftSchedule, driftOverdue as overdue, driftRuns, driftWorkflowPath, pipelineAdded } from "../src/report/overdue";
+import { opPipelineFile } from "@intentius/chant/op/schedule-overdue";
+import { checkDriftSchedule, driftRuns, driftWatch } from "../src/report/overdue";
 import type { Fetch, ForgeTarget } from "../src/forge";
+import { OTHER_SCHEDULES } from "../src/render";
 import { renderNote } from "../src/report/views";
 import { buildReport } from "../src/report/build";
 import { RUN } from "./report-fixtures";
@@ -25,44 +27,6 @@ function forge(answers: [string, unknown][], status = 200): { fetch: Fetch; aske
 
 const target = (f: ForgeTarget["forge"]): ForgeTarget => ({ forge: f, origin: f === "github" ? "https://github.com" : "https://git.example.com", path: "acme/infra", token: "t" });
 
-describe("overdue", () => {
-  const now = at("2026-10-07T12:00:00Z");
-
-  it("counts the scheduled times since the last run: one missed is on time, two are overdue", () => {
-    // One late or dropped run (October 7th's) is not enough.
-    expect(overdue("0 6 * * *", "github", { last: "2026-10-06T06:03:00Z" }, undefined, now)).toBeUndefined();
-    // Two are: October 6th's and 7th's.
-    expect(overdue("0 6 * * *", "github", { last: "2026-10-05T06:03:00Z" }, undefined, now)).toBeDefined();
-  });
-
-  it("is overdue once the schedule came round twice with no run, and names the last one", () => {
-    const o = overdue("0 6 * * *", "github", { last: "2026-08-01T06:03:00Z" }, undefined, now);
-    expect(o?.since).toBe("2026-08-01T06:03:00Z");
-    expect(o).toMatchObject({ op: "tf-drift", cron: "0 6 * * *" });
-    expect(o?.message).toMatch(/Op `tf-drift` is overdue: its schedule `0 6 \* \* \*` has fired at least twice and its last run was on 2026-08-01/);
-    expect(o?.message).toMatch(/GitHub turns a scheduled workflow off after 60 days/);
-  });
-
-  it("counts from the pipeline file's commit when the drift job never ran", () => {
-    expect(overdue("0 6 * * *", "forgejo", {}, "2026-10-07T00:00:00Z", now)).toBeUndefined();
-    const o = overdue("0 6 * * *", "forgejo", {}, "2026-01-01T00:00:00Z", now);
-    expect(o?.neverRan).toBe(true);
-    expect(o?.message).toMatch(/no run is on record since its pipeline was added on 2026-01-01/);
-  });
-
-  it("says why when the forge does: a workflow GitHub turned off; a GitLab project with no schedule gets the Schedules line", () => {
-    expect(overdue("0 6 * * *", "github", { last: "2026-01-01T06:00:00Z", disabled: "disabled_inactivity" }, undefined, now)?.message).toMatch(/GitHub has turned the workflow off \(disabled_inactivity\)/);
-    const gitlab = overdue("17 4 * * *", "gitlab", { noSchedule: true }, "2026-01-01T00:00:00Z", now)?.message;
-    expect(gitlab).toMatch(/Check its schedule under CI\/CD > Schedules/);
-    expect(gitlab).not.toContain("CHANT_SCHEDULED_OP");
-  });
-
-  it("says nothing for a schedule it cannot read, or with nothing to count from", () => {
-    expect(overdue("@daily", "github", { last: "2026-01-01T00:00:00Z" }, undefined, now)).toBeUndefined();
-    expect(overdue("0 6 * * *", "github", {}, undefined, now)).toBeUndefined();
-  });
-});
-
 describe("driftRuns", () => {
   it("github: the newest scheduled or manual run of the terragucci workflow, and whether it is off", async () => {
     const { fetch, asked } = forge([
@@ -76,12 +40,14 @@ describe("driftRuns", () => {
 
   it("asks about chant's drift Op workflow once the checkout has it (chant issue 4622)", async () => {
     const repo = tmp();
-    expect(driftWorkflowPath(repo, "github")).toBe(".github/workflows/terragucci.yml");
+    const file = (f: "github" | "forgejo") => opPipelineFile(repo, f, driftWatch("0 6 * * *", f));
+    write(repo, { ".github/workflows/terragucci.yml": "on: push\n", ".forgejo/workflows/terragucci.yml": "on: push\n" });
+    expect(file("github")).toBe(".github/workflows/terragucci.yml");
     write(repo, { ".github/workflows/terragucci-drift.yml": "name: terragucci-drift\n" });
-    expect(driftWorkflowPath(repo, "github")).toBe(".github/workflows/terragucci-drift.yml");
-    expect(driftWorkflowPath(repo, "forgejo")).toBe(".forgejo/workflows/terragucci.yml");
+    expect(file("github")).toBe(".github/workflows/terragucci-drift.yml");
+    expect(file("forgejo")).toBe(".forgejo/workflows/terragucci.yml");
     const { fetch, asked } = forge([["runs?event=schedule", { workflow_runs: [{ created_at: "2026-07-01T06:01:00Z" }] }]]);
-    await driftRuns(fetch, target("github"), driftWorkflowPath(repo, "github"));
+    await driftRuns(fetch, target("github"), file("github"));
     expect(asked[0]).toBe("https://api.github.com/repos/acme/infra/actions/workflows/terragucci-drift.yml");
   });
 
@@ -128,17 +94,30 @@ describe("checkDriftSchedule", () => {
     write(repo, { ".forgejo/workflows/terragucci.yml": "on: push\n" });
     git(repo, "add", "-A");
     execGit(repo, "2026-01-01T00:00:00Z", "pipeline");
-    expect(pipelineAdded(repo, "forgejo")?.slice(0, 10)).toBe("2026-01-01");
     const log: string[] = [];
     const found = await checkDriftSchedule(repo, "0 6 * * *", target("forgejo"), forge([["/actions/runs", []]]).fetch, at("2026-10-07T00:00:00Z"), (l) => log.push(l));
     expect(found?.message).toMatch(/since its pipeline was added on 2026-01-01/);
     expect(log).toEqual([found!.message]);
   });
 
+  it("gitlab: a project with no drift schedule is told the job's selector", async () => {
+    const repo = tmp();
+    git(repo, "init", "-q", "-b", "main");
+    const rule = OTHER_SCHEDULES.map((n) => `$TERRAGUCCI_SCHEDULE != "${n}"`).join(" && ");
+    write(repo, { ".gitlab/terragucci.yml": `drift:\n  rules:\n    - if: '${rule}'\n` });
+    git(repo, "add", "-A");
+    execGit(repo, "2026-01-01T00:00:00Z", "pipeline");
+    const found = await checkDriftSchedule(repo, "0 6 * * *", target("gitlab"), forge([["pipeline_schedules", []]]).fetch, at("2026-10-07T00:00:00Z"), () => {});
+    expect(found?.message).toMatch(/No active pipeline schedule is picked by the Op's rule, one whose TERRAGUCCI_SCHEDULE is none of /);
+    expect(found?.message).toMatch(/under CI\/CD > Schedules/);
+  });
+
   it("checks nothing, with a line in the log, when the forge will not say", async () => {
     const log: string[] = [];
-    expect(await checkDriftSchedule(tmp(), "0 6 * * *", target("github"), forge([], 403).fetch, at("2026-10-07T00:00:00Z"), (l) => log.push(l))).toBeUndefined();
-    expect(log[0]).toMatch(/^drift schedule: the forge did not say when the drift job last ran, so it is not checked: GET .* answered 403/);
+    const repo = tmp();
+    write(repo, { ".github/workflows/terragucci.yml": "on: push\n" });
+    expect(await checkDriftSchedule(repo, "0 6 * * *", target("github"), forge([], 403).fetch, at("2026-10-07T00:00:00Z"), (l) => log.push(l))).toBeUndefined();
+    expect(log[0]).toMatch(/^schedule check: github did not say when Op tf-drift last ran, so it is not checked: GET .* answered 403/);
   });
 
   it("puts the verdict in the plan note, under the summary", () => {

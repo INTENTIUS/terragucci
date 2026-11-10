@@ -196,7 +196,7 @@ The proof plan runs the root's own binary against its new state, through a `terr
 | `moves`, `backends`, `revert` | what it does: the moves; each root and where its state was; the migration a revert puts back |
 | `digest` | what an approval binds |
 | `status` | `planned`, `proof-failed`, `waiting`, `refused`, `applied` or `failed` |
-| `roots[].root`, `backend`, `location` | each affected root and where its state is; for an estate, `estate` and `estate <name>` |
+| `roots[].root`, `location` | each affected root and where its state is; for an estate, `estate <name>`, and `backend` is `estate` |
 | `roots[].before` | `version_id`, when the backend keeps versions, and `digest`, `null` for a root with no state |
 | `roots[].after` | the new state's `digest`, and its `version_id` once written |
 | `roots[].source` | a backend move: where the state was read from, its `version_id` and `digest` |

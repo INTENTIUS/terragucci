@@ -381,9 +381,14 @@ describe("terragucci stage tf-apply names where each root's time went", () => {
     expect(report.run).toMatchObject({ stage: "tf-apply", wave: 1 });
     expect(report.waves).toEqual([expect.objectContaining({ number: 1, roots: ["a", "b"] })]);
 
-    // chant's step runs each root's commands itself, with no hook around one command, so a wave's report has no per-root
-    // plan or apply times and no spans (chant issue 4865); every root is in the report's timings all the same.
-    for (const root of ["a", "b"]) expect(report.roots.find((r: { path: string }) => r.path === root).timings).toMatchObject({ detail: "none", spans: 0 });
+    // chant's hook around each engine command (chant issue 4865) times each root's plan and apply and points the binary
+    // at the span receiver: a's spans give its lock waits and resources, and b, whose binary sent none, has its times only.
+    const timings = (root: string) => report.roots.find((r: { path: string }) => r.path === root).timings;
+    expect(timings("a")).toMatchObject({ spans: 4, detail: "resources", lock_waits: [{ operation: "OperationTypePlan", attempts: 4, ms: 7000 }, { operation: "OperationTypeApply", attempts: 1, ms: 20 }] });
+    expect(timings("a").plan_seconds).toBeGreaterThan(0);
+    expect(timings("a").apply_seconds).toBeGreaterThan(0);
+    expect(timings("b")).toMatchObject({ spans: 0 });
+    expect(timings("b").plan_seconds).toBeGreaterThan(0);
     expect(report.timings.roots.map((r: { root: string }) => r.root).sort()).toEqual(["a", "b"]);
     expect(readFileSync(join(repo, "terragucci-report", "roots", "a", "plan.json"), "utf-8")).toContain("terraform_data.x");
   });

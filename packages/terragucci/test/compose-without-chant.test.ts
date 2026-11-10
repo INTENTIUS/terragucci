@@ -1,11 +1,7 @@
 // chant's composed run (`/compose`, `/compose/run`, `/compose/root`, `/compose/estate`, `/compose/slice`), which
-// `waves.compose` runs on, and its lock code (`/state`), which migrate takes its locks with when the installed chant
-// has it (src/chant-next.ts). A lock case either makes the lock code missing, stands a module in for it, or runs only
-// when the installed chant has it.
+// `waves.compose` runs on.
 import { describe, expect, it } from "vitest";
 import { compositionFor, specWavesWithRun } from "../src/compose";
-import { MIGRATE_SOURCE_LOCK, takeLocks } from "../src/migrate";
-import type { StateObject } from "../src/backend";
 import { tmp, write } from "./helpers";
 
 describe("waves.compose on chant's composed run", () => {
@@ -27,39 +23,4 @@ describe("waves.compose on chant's composed run", () => {
   });
 
 
-});
-
-// ── migrate's locks ─────────────────────────────────────────────────────────
-
-const local: StateObject = { backend: "local", path: "terraform.tfstate" };
-
-/** A workspace a state moves from, with its own lock. */
-const source = (taken: string[], held = false) => ({
-  object: local,
-  source: {
-    external: {
-      backend: "remote",
-      location: "app.terraform.io/acme/app",
-      read: async () => null,
-      lock: async (reason: string) => {
-        if (held) throw new Error("the workspace is locked by another run");
-        taken.push(reason);
-        return async () => {
-          taken.push("released");
-        };
-      },
-    },
-  },
-});
-
-type Files = Parameters<typeof takeLocks>[0];
-
-
-describe("migrate's locks on chant's lock code", () => {
-  it("takes the source's lock with chant's code", async () => {
-    const taken: string[] = [];
-    const held = await takeLocks(new Map([["app", source(taken)]]) as unknown as Files, "2026-10-26T00:00:00Z");
-    expect(taken).toEqual([`${MIGRATE_SOURCE_LOCK.operation}: ${MIGRATE_SOURCE_LOCK.info}`]);
-    for (const h of held) await h.release();
-  });
 });

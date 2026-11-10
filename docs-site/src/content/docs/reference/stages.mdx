@@ -118,8 +118,8 @@ drift: "0 6 * * *"
 
 | This run finds | The issue |
 |---|---|
-| drift, and none is open | opens, with each drifted root and what moved in it |
-| drift, and one is open | updates in place, so the issue always shows the latest run |
+| drift, and none is open | opens, with a table of each drifted resource and what moved in it |
+| drift, and one is open | updates in place when what drifted changed; the same drift leaves it as it is |
 | no drift in any root | closes, with a comment naming the commit |
 | no drift, but a root could not be planned | stays as it is, since that root is unknown |
 

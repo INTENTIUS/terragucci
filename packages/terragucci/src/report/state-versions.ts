@@ -2,7 +2,7 @@
  * The state versions each root's applies left: `<prefix>/<project>/states.json`,
  * `terragucci.state-versions/v1`. A `tf-apply` wave's report carries, for each
  * root it applied or that had nothing to apply, the backend's version id of
- * the root's state afterwards (`roots[].state`, read by ../backend.ts from
+ * the root's state afterwards (`roots[].state`, read by the terraform lexicon's readStateVersion from
  * the object's metadata). The upload adds each new version to the root's list
  * here, newest first, so the estate page can list the exact version a person
  * restores, and the run, commit and wave that wrote it. A root whose backend

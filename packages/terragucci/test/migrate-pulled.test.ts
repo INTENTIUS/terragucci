@@ -3,8 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
-import { backendRefusal, isPulled, MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
-import { stateObject } from "../src/backend";
+import { MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -123,7 +122,7 @@ describe("a backend move between backends that keep no versions", () => {
     expect(first.code).toBe(3);
     expect(lines[0]).toBe("migration move-app: moving the state of app from its pg backend pg:db:5432/app/old.states to the backend its code names");
     const planned = first.records[0];
-    expect(planned.roots[0]).toMatchObject({ root: "app", backend: "pg", location: "pg:db:5432/app/new.states", before: { digest: null }, source: { backend: "pg", location: "pg:db:5432/app/old.states" } });
+    expect(planned.roots[0]).toMatchObject({ root: "app", location: "pg:db:5432/app/new.states", before: { digest: null }, source: { backend: "pg", location: "pg:db:5432/app/old.states" } });
     expect(planned.roots[0].source?.version_id).toBeUndefined();
     expect(store.pushes).toEqual([]);
 
@@ -204,20 +203,7 @@ describe("a backend move to a kubernetes backend", () => {
   });
 });
 
-describe("which backends the general path takes", () => {
-  it("takes the backends that keep no versions, and still refuses one whose versions terragucci does not read", () => {
-    const dir = tmp();
-    const pgObject = stateObject(dir, {}, { type: "pg", config: { conn_str: "postgres://db/app" } });
-    expect(isPulled(pgObject)).toBe(true);
-    expect(backendRefusal("app", pgObject, true)).toBeUndefined();
-    // Elsewhere (an estate's adoption) the general path is not taken.
-    expect(backendRefusal("app", pgObject)).toContain("migrates state in s3, gcs, azurerm and local backends");
-    expect(isPulled(stateObject(dir, {}, { type: "kubernetes", config: { secret_suffix: "app" } }))).toBe(true);
-    const oss = stateObject(dir, {}, { type: "oss", config: { bucket: "b" } });
-    expect(isPulled(oss)).toBe(false);
-    expect(backendRefusal("app", oss, true)).toContain("through the binary in pg, kubernetes, consul and http backends");
-  });
-
+describe("a backend move from a backend that keeps no versions, in the file", () => {
   it("reads pg and kubernetes as sources, and refuses a credential in the file", () => {
     expect(parseMigration("migrations/m.yml", pgFrom).backends[0].from).toEqual({ backend: "pg", config: { conn_str: "postgres://db:5432/app?sslmode=disable", schema_name: "old" } });
     expect(parseMigration("migrations/m.yml", "backends:\n  - root: app\n    from:\n      backend: kubernetes\n      config:\n        namespace: tf\n        secret_suffix: app\n").backends[0].from.backend).toBe("kubernetes");
