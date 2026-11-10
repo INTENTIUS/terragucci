@@ -9,38 +9,28 @@
  * `TG_MERGE_TOKEN` (GitLab's `GITLAB_TOKEN`, or the variable `token_env`
  * names). A variable whose name starts with `TF_` is passed as set, so a
  * backend password or a `TF_VAR_` given to the binary on purpose still
- * reaches it.
+ * reaches it. The rule is the terraform lexicon's `engineEnv` (chant#4910),
+ * given terragucci's two token variables.
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
+import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
+import { engineEnv, tokenlessBinaryExec, type BinaryExec } from "@intentius/chant-lexicon-terraform/state";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 
-/** The forge token variables the binary never sees, by name. */
-export const FORGE_TOKEN_ENV = [
-  "TG_TOKEN",
-  "TG_MERGE_TOKEN",
-  "GITHUB_TOKEN",
-  "GH_TOKEN",
-  "GITLAB_TOKEN",
-  "CI_JOB_TOKEN",
-  "FORGEJO_TOKEN",
-  "GITEA_TOKEN",
-  "ACTIONS_RUNTIME_TOKEN",
-] as const;
+/** terragucci's own token variables, which the binary never sees beside chant's forge token variables. */
+export const TG_TOKEN_ENV = ["TG_TOKEN", "TG_MERGE_TOKEN"] as const;
 
-/** `env` less every forge token, by name and by value. */
-export function binaryEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const secrets = new Set([env.TG_TOKEN, env.TG_MERGE_TOKEN].filter((v): v is string => typeof v === "string" && v.length > 0));
-  const out: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(env)) {
-    if ((FORGE_TOKEN_ENV as readonly string[]).includes(k)) continue;
-    if (v !== undefined && secrets.has(v) && !k.startsWith("TF_")) continue;
-    out[k] = v;
-  }
-  return out;
-}
+/** The forge token variables the binary never sees, by name. */
+export const FORGE_TOKEN_ENV: readonly string[] = [...TG_TOKEN_ENV, ...FORGE_TOKEN_VARS];
+
+/** `env` less every forge token, by name and by value (chant's engineEnv). */
+export const binaryEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => engineEnv(env, TG_TOKEN_ENV);
+
+/** The terraform lexicon's run of the binary, with the forge tokens left out of its environment (chant's tokenlessBinaryExec). */
+export const runBinary: BinaryExec = tokenlessBinaryExec(TG_TOKEN_ENV);
 
 /**
  * The binary chant's step runs in place of `binary` (terragucci#1303): a

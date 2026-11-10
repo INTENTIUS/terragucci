@@ -25,7 +25,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { computePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
-import { liveRoots } from "./detect";
+import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import type { ReportCone } from "./report/schema";
 
 /** The flags choudoufu refuses beside `-cone`, or plans in full with: a plan that carries one gets no `-cone`. */

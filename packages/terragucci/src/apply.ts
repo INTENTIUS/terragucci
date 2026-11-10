@@ -167,7 +167,8 @@ import { approvedChanges, coverRemainder, finishOf, stoppedApply, type ApprovedC
 import { applyScope, rowHolder, type Liveness } from "./apply-rows";
 import { resolveGateRunLocator } from "@intentius/chant/gate-resume-run";
 import type { ReportApprovalRule, ReportStep } from "./report/schema";
-import { readLiveSetup, resolvedEstate } from "./live-setup";
+import { readLiveSetup } from "./live-setup";
+import { resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
 import { recordVersions, versionsLine } from "./cdf-history";
 import { rootVersions } from "./report/versions";
 import { planAppliedChanges, readChanges } from "./report/history";

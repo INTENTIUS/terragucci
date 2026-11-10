@@ -34,7 +34,7 @@ import type { StoreFetch } from "@intentius/chant/object-store";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
-import { liveRoots } from "./detect";
+import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape } from "./shape";
 import { chantTargetOf, DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
 import { forgeOf } from "./respond/change";

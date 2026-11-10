@@ -34,19 +34,22 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
+import { terragruntUnitPlace, UnitPlaceError } from "@intentius/chant-lexicon-terraform/terragrunt/place";
+import { doneMigrations, migrationHistory as chantMigrationHistory, revertMigration } from "@intentius/chant-lexicon-terraform/migration-history";
+import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { hostname, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { runStateMigration, writeStateMigration, type MigrationRootPlan, type MigrationSource, type StateMigrationEngine, type StateMigrationResult } from "@intentius/chant/state-migration";
 import { parseYAML } from "@intentius/chant/yaml";
-import { lastLines, runBinary as chantRunBinary, type BinaryExec } from "@intentius/chant-lexicon-terraform/state";
+import { lastLines, type BinaryExec } from "@intentius/chant-lexicon-terraform/state";
 import { StateOpError } from "@intentius/chant-lexicon-terraform/state-ops";
 import { backendMoveProblems, MigrationError, planTerraformMigration, PULLED_BACKENDS, type BackendMove, type Move, type Restore, type TerraformMigrationPlan } from "@intentius/chant-lexicon-terraform/state-migration";
 import { LEDGER_READ_REF, movedMembers, readLedger, type GateLedger } from "./apply";
 import { approvalRule } from "./approval";
-import { binaryEnv, terragruntExec } from "./binary-env";
+import { runBinary, terragruntExec } from "./binary-env";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "@intentius/chant/object-store";
@@ -54,7 +57,6 @@ import type { LockOperation } from "@intentius/chant-lexicon-terraform/state";
 import { MARKER, PIPELINE_PATHS } from "./render";
 import { requestRules, syncLocalLedger } from "./gated-request";
 import { rootRoleEnv } from "./cloud-identity";
-import { liveRoots } from "./detect";
 import { planEstate, type EstateRun } from "./migrate-estate";
 import type { Retag, Stamp } from "@intentius/chant-lexicon-terraform/estate-migration";
 import type { MigrationCounts, ProgressSinks } from "./migrate-progress";
@@ -371,7 +373,7 @@ export function movedSinceApproval(ledger: Pick<GateLedger, "pending">, gate: st
 // ── running the binary ───────────────────────────────────────────────────
 
 /** The terraform lexicon's run of the binary, with the forge tokens left out of its environment (./binary-env.ts). */
-export const runBinary: BinaryExec = (binary, args, dir, env, io) => chantRunBinary(binary, args, dir, binaryEnv(env), io);
+export { runBinary };
 // ── planning ─────────────────────────────────────────────────────────────
 
 export interface MigrateOptions {
@@ -435,33 +437,18 @@ export interface Place {
 }
 
 /**
- * Where a Terragrunt unit's binary runs, as Terragrunt prepares it: `terragrunt
- * run -- init` in the unit, with `TG_TF_PATH` a wrapper that records the
- * directory and the environment Terragrunt runs the binary in (its working
- * directory, in Terragrunt's cache when the unit names a source, with
- * backend.tf and provider.tf generated, and its inputs as `TF_VAR_`
- * variables) and then runs the binary. Every later call of the migration runs
- * the binary there, with that environment, as for a plain root.
+ * Where a Terragrunt unit's binary runs, as Terragrunt prepares it: the
+ * terraform lexicon's `terragruntUnitPlace` (chant#4910), with terragucci's
+ * `terragrunt` (`TERRAGUCCI_TERRAGRUNT`, else the one on the path) and its
+ * tokenless runner. A unit Terragrunt cannot prepare is refused in the
+ * lexicon's words.
  */
 export async function unitPlace(repo: string, unit: string, binary: string, env: NodeJS.ProcessEnv, work: string, tg: MigrateOptions["terragrunt"] = {}): Promise<Place> {
-  const capture = mkdtempSync(join(work, "unit-"));
-  const file = join(capture, "place.json");
-  const wrapper = join(capture, basename(binary) || "tofu");
-  const q = (x: string): string => `'${x.replace(/'/g, `'\\''`)}'`;
-  const record = `require("fs").writeFileSync(process.argv[1], JSON.stringify({ dir: process.cwd(), env: process.env }))`;
-  writeFileSync(wrapper, `#!/bin/sh\n${q(process.execPath)} -e ${q(record)} ${q(file)}\nexec ${q(binary)} "$@"\n`);
-  chmodSync(wrapper, 0o755);
-  const terragrunt = tg.path ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt";
-  const run = await (tg.exec ?? terragruntExec)(terragrunt, ["run", "--non-interactive", "--no-color", "--working-dir", unit, "--", "init", "-input=false", "-no-color"], {
-    cwd: repo,
-    env: { ...(env as Record<string, string>), TG_TF_PATH: wrapper, TG_NON_INTERACTIVE: "true" },
-  });
-  if (run.code !== 0) throw new ConfigError(`terragrunt could not prepare ${unit} (init failed): ${lastLines(run.stderr || run.stdout)}`);
-  if (!existsSync(file)) throw new ConfigError(`terragrunt prepared ${unit} without running ${binary}, so where it runs is not known`);
-  const got = JSON.parse(readFileSync(file, "utf-8")) as { dir: string; env: Record<string, string> };
-  // The binary's own variables from Terragrunt: the unit's inputs, and any credentials an iam_role gave it.
-  const added = Object.fromEntries(Object.entries(got.env).filter(([k, v]) => env[k] !== v && k !== "TG_TF_PATH" && k !== "PWD" && k !== "OLDPWD" && k !== "SHLVL" && k !== "_"));
-  return { dir: got.dir, env: { ...env, ...added } };
+  try {
+    return await terragruntUnitPlace({ projectDir: repo, unit, binary, env, work, terragrunt: tg.path ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt", exec: tg.exec ?? terragruntExec });
+  } catch (e) {
+    throw e instanceof UnitPlaceError ? new ConfigError(e.message) : e;
+  }
 }
 
 /** Each root's place: a unit's as Terragrunt prepares it, a plain root's where it is. */
@@ -640,52 +627,24 @@ export function describeChange(m: Migration, live = false): string {
 
 // ── the reverse ──────────────────────────────────────────────────────────
 
-/** The file name a revert of `name` takes. */
-export const revertName = (name: string): string => `${name}-revert`;
-
 /**
- * The revert of a migration that applied, from its line in
- * `_gates/tf-migrate/done.jsonl`: each root back to the version the
- * migration recorded before it wrote, and refused when a state moved past
- * the version it recorded after. A backend move is put back with a backend
- * move the other way, and a root whose bucket kept no version cannot be put
- * back: both throw.
+ * The revert of a migration that applied, from its history line: the
+ * terraform lexicon's `revertMigration` (chant#4910) with terragucci's file
+ * header. A migration it cannot put back is refused in the lexicon's words.
  */
-export function revertMigration(name: string, done: string): { name: string; text: string } {
-  let line: Record<string, unknown> | undefined;
-  for (const l of done.split("\n").map((x) => x.trim()).filter(Boolean)) {
-    try {
-      const r = JSON.parse(l) as Record<string, unknown>;
-      if (r.kind === "migration" && r.gate === name && r.result === "applied") line = r;
-    } catch {
-      continue;
-    }
+export function revertFile(name: string, history: string): { name: string; text: string } {
+  try {
+    const { name: file, text } = revertMigration(name, history, {
+      where: `in ${MIGRATE_DONE} or on its gated request in ${MIGRATE_APPLIED}`,
+      header: [
+        `Puts back the states migration ${name} wrote, to the versions it recorded before it wrote them.`,
+        `Written by terragucci migrate revert ${name}. Revert the code of ${name} in the same change, so each root plans with no change.`,
+      ],
+    });
+    return { name: file, text };
+  } catch (e) {
+    throw planningError(e);
   }
-  if (!line) throw new ConfigError(`chant/lifecycle records no applied migration ${name}, in ${MIGRATE_DONE} or on its gated request in ${MIGRATE_APPLIED}`);
-  if (line.change === "backends") throw new ConfigError(`${name} moved states to new backends; put it back with a backend move the other way, which reads each state where it is now`);
-  if (line.change === "revert") throw new ConfigError(`${name} is a revert; apply the migration it put back again with a new migration file`);
-  if (line.change === "retag") throw new ConfigError(`${name} retagged resources between estates; put it back with a moves migration the other way`);
-  if (line.change === "adopt") throw new ConfigError(`${name} adopted a state into an estate and left the state where it was; to go back, put the backend block back in place of the live block`);
-  const roots = Array.isArray(line.roots) ? (line.roots as Record<string, unknown>[]) : [];
-  const problems: string[] = [];
-  const restores = roots.map((r) => {
-    const root = String(r.root);
-    if (typeof r.location !== "string" || !/^(s3|gs|az):\/\//.test(r.location)) problems.push(`${root}: its backend keeps no versions, so there is no earlier state to put back`);
-    if (r.before === null && r.before_digest !== null) problems.push(`${root}: its bucket kept no version before ${name} wrote, so there is no earlier state to put back`);
-    if (typeof r.after !== "string") problems.push(`${root}: ${name} recorded no version after its write, so a later change could not be told apart`);
-    return { root, location: String(r.location), version_id: typeof r.before === "string" ? r.before : null, from_version_id: typeof r.after === "string" ? r.after : null };
-  });
-  if (problems.length > 0) throw new ConfigError(`${name} cannot be put back:\n  ${problems.join("\n  ")}`);
-  const q = (v: string | null): string => (v === null ? "null" : JSON.stringify(v));
-  const text = [
-    `# Puts back the states migration ${name} wrote, to the versions it recorded before it wrote them.`,
-    `# Written by terragucci migrate revert ${name}. Revert the code of ${name} in the same change, so each root plans with no change.`,
-    `revert: ${name}`,
-    "restores:",
-    ...restores.flatMap((r) => [`  - root: ${r.root}`, `    location: ${r.location}`, `    version_id: ${q(r.version_id)}`, `    from_version_id: ${q(r.from_version_id)}`]),
-    "",
-  ].join("\n");
-  return { name: revertName(name), text };
 }
 
 /**
@@ -696,7 +655,7 @@ export function revertMigration(name: string, done: string): { name: string; tex
  */
 export function writeRevert(repo: string, name: string): string {
   readLedger(repo, MIGRATE_LEDGER);
-  const { name: file, text } = revertMigration(name, migrationHistory(repo));
+  const { name: file, text } = revertFile(name, migrationHistory(repo));
   const path = join(repo, MIGRATIONS_DIR, `${file}.yml`);
   if (existsSync(path)) throw new ConfigError(`${MIGRATIONS_DIR}/${file}.yml is there already`);
   mkdirSync(join(repo, MIGRATIONS_DIR), { recursive: true });
@@ -707,21 +666,6 @@ export function writeRevert(repo: string, name: string): string {
 // ── the gate ─────────────────────────────────────────────────────────────
 
 const at = (iso: string): number => new Date(iso).getTime();
-
-/** The migrations chant/lifecycle says ran their writes, by name: the newest line of each. */
-export function doneMigrations(text: string): Map<string, { status: string; file_digest?: string; timestamp: string }> {
-  const out = new Map<string, { status: string; file_digest?: string; timestamp: string }>();
-  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
-    try {
-      const r = JSON.parse(line) as Record<string, unknown>;
-      if (r.kind !== "migration" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
-      out.set(r.gate, { status: String(r.result), ...(typeof r.file_digest === "string" ? { file_digest: r.file_digest } : {}), timestamp: r.timestamp });
-    } catch {
-      continue;
-    }
-  }
-  return out;
-}
 
 /**
  * The flat facts a migration's `finished` line keeps on chant's gated request
@@ -754,68 +698,18 @@ export function migrationDetail(record: MigrationRecord, m: Pick<Migration, "dig
 }
 
 /**
- * The `finished` lines of `_gates/tf-migrate/applied.jsonl` (chant's gated
- * requests) as done.jsonl lines, oldest first. A line without terragucci's
- * `result` is skipped: the migration threw before it ended, as a run that
- * wrote no done.jsonl line before. So is a run refused under the lock, which
- * wrote nothing.
- */
-export function finishedMigrationLines(appliedText: string): string[] {
-  const out: string[] = [];
-  for (const l of appliedText.split("\n").map((x) => x.trim()).filter(Boolean)) {
-    let r: Record<string, unknown>;
-    try {
-      r = JSON.parse(l) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    if (r.version !== 1 || r.kind !== "finished" || typeof r.gate !== "string" || typeof r.timestamp !== "string") continue;
-    const d = r.detail && typeof r.detail === "object" ? (r.detail as Record<string, unknown>) : {};
-    if (typeof d.result !== "string" || d.result === "refused") continue;
-    const str = (k: string): string | null => (typeof d[k] === "string" ? (d[k] as string) : null);
-    const roots = (str("roots") ?? "").split(",").filter(Boolean).map((root) => ({
-      root,
-      location: str(`${root}.location`),
-      before: str(`${root}.before`),
-      after: str(`${root}.after`),
-      before_digest: str(`${root}.before_digest`),
-      after_digest: str(`${root}.after_digest`),
-      ...(str(`${root}.source`) ? { source: str(`${root}.source`), source_version: str(`${root}.source_version`) } : {}),
-    }));
-    out.push(JSON.stringify({
-      version: 1,
-      kind: "migration",
-      op: MIGRATE_OP,
-      gate: r.gate,
-      timestamp: r.timestamp,
-      ...(typeof r.planDigest === "string" ? { planDigest: r.planDigest } : {}),
-      ...(str("file_digest") ? { file_digest: str("file_digest") } : {}),
-      result: d.result,
-      ...(str("approved_by") ? { approvedBy: str("approved_by") } : {}),
-      change: str("migration_change") ?? str("change"),
-      ...(str("revert") ? { revert: str("revert") } : {}),
-      roots,
-      ...(str("error") ? { error: str("error") } : {}),
-      source: "finished",
-    }));
-  }
-  return out;
-}
-
-/**
- * A repo's migration history as origin's chant/lifecycle holds it, in
- * done.jsonl's line form: the done.jsonl lines written before chant ran the
- * gate, and after them each `finished` line of chant's gated requests. The
- * newest line of a migration wins (doneMigrations, revertMigration). Fetch
- * first (readLedger); this reads the remote ref as last fetched.
+ * A repo's migration history as origin's chant/lifecycle holds it: the
+ * terraform lexicon's `migrationHistory` (chant#4910) over the done.jsonl
+ * lines written before chant ran the gate and the `finished` lines of
+ * chant's gated requests. Fetch first (readLedger); this reads the remote
+ * ref as last fetched.
  */
 export function migrationHistory(repo: string): string {
   const show = (path: string): string => {
     const r = git(repo, ["show", `${LEDGER_READ_REF}:${path}`]);
     return r.status === 0 ? r.stdout : "";
   };
-  const done = show(MIGRATE_DONE).split("\n").map((l) => l.trim()).filter(Boolean);
-  return [...done, ...finishedMigrationLines(show(MIGRATE_APPLIED))].join("\n") + "\n";
+  return chantMigrationHistory(show, { op: MIGRATE_OP, earlier: MIGRATE_DONE });
 }
 
 /** A root a pending estate migration plans for: the migration's name, its file's digest, and whether it adopts the root's state or retags resources into it. */

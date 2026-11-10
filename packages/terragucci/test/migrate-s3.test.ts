@@ -10,7 +10,7 @@ import {
   OVERRIDE_FILE,
   parseMigration,
   planMigration,
-  revertMigration,
+  revertFile,
   runMigrations,
   writeRevert,
   type BinaryExec,
@@ -223,16 +223,16 @@ describe("a revert", () => {
   const done = (roots: unknown[], extra: Record<string, unknown> = {}) => JSON.stringify({ version: 1, kind: "migration", gate: "split-b", timestamp: T(1), result: "applied", change: "moves", roots, ...extra });
 
   it("is written from the migration's record: each root back to its version before, checked against its version after", () => {
-    const r = revertMigration("split-b", done([{ root: "one", location: "s3://state/one.tfstate", before: "v1", after: "v5", before_digest: "sha256:a" }, { root: "two", location: "s3://state/two.tfstate", before: null, after: "v6", before_digest: null }]));
+    const r = revertFile("split-b", done([{ root: "one", location: "s3://state/one.tfstate", before: "v1", after: "v5", before_digest: "sha256:a" }, { root: "two", location: "s3://state/two.tfstate", before: null, after: "v6", before_digest: null }]));
     expect(r.name).toBe("split-b-revert");
     expect(parseMigration("migrations/split-b-revert.yml", r.text)).toMatchObject({ kind: "revert", revert: "split-b", restores: [{ root: "one", version_id: "v1", from_version_id: "v5" }, { root: "two", version_id: null, from_version_id: "v6" }] });
   });
 
   it("refuses a migration that never applied, a backend move, and a root whose bucket kept no version", () => {
-    expect(() => revertMigration("split-b", "")).toThrow(/no applied migration split-b/);
-    expect(() => revertMigration("split-b", done([], { change: "backends" }))).toThrow(/backend move the other way/);
-    expect(() => revertMigration("split-b", done([{ root: "one", location: "s3://state/one.tfstate", before: null, after: "v5", before_digest: "sha256:a" }]))).toThrow(/kept no version before/);
-    expect(() => revertMigration("split-b", done([{ root: "one", location: "app/terraform.tfstate", before: null, after: null, before_digest: "sha256:a" }]))).toThrow(/keeps no versions/);
+    expect(() => revertFile("split-b", "")).toThrow(/no applied migration split-b/);
+    expect(() => revertFile("split-b", done([], { change: "backends" }))).toThrow(/backend move the other way/);
+    expect(() => revertFile("split-b", done([{ root: "one", location: "s3://state/one.tfstate", before: null, after: "v5", before_digest: "sha256:a" }]))).toThrow(/kept no version before/);
+    expect(() => revertFile("split-b", done([{ root: "one", location: "app/terraform.tfstate", before: null, after: null, before_digest: "sha256:a" }]))).toThrow(/keeps no versions/);
   });
 
   it("puts each state back to its version before, through a migration of its own, after a split applied", async () => {

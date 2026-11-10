@@ -7,7 +7,11 @@ import { AGENT_COMMAND, agentCommentInput } from "../src/agent-comment";
 import { type ChantAgentJob, type ChantScheduledOpSpec } from "../src/chant-next";
 import { validateConfig } from "../src/config";
 import { CHANT_CONTROL_DIR_ENV, CONTROL_DIR_ENV, controlClaimsAt } from "../src/estate-ownership";
-import { doneMigrations, finishedMigrationLines, migrationDetail, revertMigration } from "../src/migrate";
+import { doneMigrations, finishedMigrationLines as chantFinishedLines } from "@intentius/chant-lexicon-terraform/migration-history";
+import { MIGRATE_OP, migrationDetail, revertFile } from "../src/migrate";
+
+/** chant's finished lines of terragucci's migration op, in done.jsonl's line form. */
+const finishedMigrationLines = (applied: string): string[] => chantFinishedLines(applied, MIGRATE_OP).map((l) => JSON.stringify(l));
 import { MIGRATE_APPLIED_FILE, ledgerEntries } from "../src/report/audit";
 import { CHANT_AGENT_PATHS, CHANT_AGENT_SPEC_FILE, chantAgentCommand, chantAgentFiles, chantAgentOptions } from "../src/render-chant-agent";
 import { commentsScript, MARKER, renderPipeline } from "../src/render";
@@ -108,7 +112,7 @@ describe("a migration's history on chant's gated request", () => {
     const lines = finishedMigrationLines(finished(detail));
     expect(lines).toHaveLength(1);
     expect(doneMigrations(lines.join("\n")).get("0001-move")).toMatchObject({ status: "applied", file_digest: "sha256:file" });
-    const revert = revertMigration("0001-move", lines.join("\n"));
+    const revert = revertFile("0001-move", lines.join("\n"));
     expect(revert.text).toContain("location: s3://b/net.tfstate");
     expect(revert.text).toContain('version_id: "v1"');
     expect(revert.text).toContain('from_version_id: "v2"');

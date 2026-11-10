@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
-import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, planMigration, revertMigration, runMigrations, type BinaryExec } from "../src/migrate";
+import { MIGRATE_DONE, MIGRATE_LEDGER, parseMigration, pendingEstateMigrations, planMigration, revertFile, runMigrations, type BinaryExec } from "../src/migrate";
 import { ESTATE_PARALLELISM, isEstateBinary as isChoudoufu, parseRatification, stampFailures } from "@intentius/chant-lexicon-terraform/estate-migration";
 import { runStage } from "../src/report/stage";
 import { renderNote } from "../src/report/views";
@@ -271,7 +271,7 @@ describe("a move between two estates", () => {
     const proof = JSON.parse(git(origin, "show", `chant/lifecycle:_gates/tf-migrate/requests/${rec.digest.replace(/:/g, "_")}.json`));
     expect(proof).toMatchObject({ name: "carve-jobs", roots: [{ root: "mono", location: "estate mono" }, { root: "team", location: "estate team" }] });
     expect(JSON.parse(readFileSync(join(work, "terragucci-report", "migrations", "carve-jobs.json"), "utf-8"))).toMatchObject({ change: "retag", retags });
-    expect(() => revertMigration("carve-jobs", text)).toThrow(/moves migration the other way/);
+    expect(() => revertFile("carve-jobs", text)).toThrow(/moves migration the other way/);
   });
 
   it("is refused after the approval when the resource the markers are on changed, and retags nothing", async () => {

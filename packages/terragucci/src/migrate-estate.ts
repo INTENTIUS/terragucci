@@ -19,8 +19,7 @@ import type { StateMigrationEngine } from "@intentius/chant/state-migration";
 import { isEstateBinary, planEstateMigration, takesProgressJson, type EstateMigrationPlan } from "@intentius/chant-lexicon-terraform/estate-migration";
 import { lastLines } from "@intentius/chant-lexicon-terraform/state";
 import { ConfigError } from "./config";
-import { estateOf } from "./detect";
-import { readLiveSetup } from "./live-setup";
+import { estateOf, readLiveSetup } from "@intentius/chant-lexicon-terraform/live-roots";
 import { MIGRATE_LOCK, MIGRATION_SCHEMA, migrationDigest, placesOf, planningError, runBinary, type BinaryExec, type MigrateOptions, type Migration, type MigrationRecord, type MigrationRoot, type Place, type PlannedMigration } from "./migrate";
 import { MigrationProgress } from "./migrate-progress";
 import { rosterOf, type RosterFacts } from "./report/roster";
@@ -35,7 +34,7 @@ export interface EstateRun {
 
 /** A root's estate: the name choudoufu resolves (choudoufu#2293) when its live-check prints one, else the live block's own. */
 async function estateName(repo: string, root: string, place: Place, binary: string, exec: BinaryExec): Promise<string> {
-  const setup = await readLiveSetup(place.dir, { binary, exec: (file, args, cwd) => exec(file, args, cwd, place.env).then((r) => ({ status: r.code, stdout: r.stdout, stderr: r.out })) });
+  const setup = await readLiveSetup(place.dir, { binary, exec, env: place.env });
   const e = setup?.estate ?? estateOf(join(repo, root)).estate;
   if (!e) throw new ConfigError(`${root} has a live block that ${setup ? "resolves no estate (several tofu-estate values, or a name outside the marker grammar)" : "names no estate"}`);
   return e;

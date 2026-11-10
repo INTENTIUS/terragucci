@@ -8,7 +8,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
 import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
-import { findRoots, globMatch, liveRoots } from "../detect";
+import { findRoots, globMatch } from "../detect";
+import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape, fullDriftPlans, type Shape } from "../shape";
 import { terraformLivePlanDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
 import { defaultBranch, type Fetch } from "../forge";

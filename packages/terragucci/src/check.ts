@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { findConfig, loadConfig, resolveRepo } from "./config";
 import { CHOUDOUFU_SECRETS_TIP, TIPS_URL } from "./tips";
 import { choudoufuSecretsMessage, REFUSE_BLOCK } from "./tips/secrets";
-import { onLocalStore, parseLiveSetup, rememberLiveSetup, setupLine } from "./live-setup";
+import { onLocalStore, parseLiveSetup, rememberLiveSetup, setupLine } from "@intentius/chant-lexicon-terraform/live-roots";
 import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, shownUrl, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
 
 /** Where the check report is written, relative to the checkout. */
