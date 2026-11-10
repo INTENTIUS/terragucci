@@ -47,7 +47,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiOf, BRANCH, SHA } from "./comment";
 import { TOKEN_USERS } from "./comment-apply";
-import { unzipEntry } from "./install";
+import { unzipEntry } from "@intentius/chant/ci-image";
 import { ConfigError, type ProjectSettings } from "./config";
 import { detectForge } from "@intentius/chant/pr-forge";
 import { poster, type Fetch } from "./forge";
@@ -396,7 +396,8 @@ function newestFirst(artifacts: readonly RunArtifact[], name: string): RunArtifa
 
 function entryOf(zip: Buffer, name: string): string | undefined {
   try {
-    return unzipEntry(zip, name).toString("utf-8");
+    const entry = unzipEntry(zip, name);
+    return entry && Buffer.from(entry).toString("utf-8");
   } catch {
     return undefined;
   }

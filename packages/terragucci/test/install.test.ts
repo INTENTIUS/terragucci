@@ -1,55 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertLinux, expectedSum, installDir, release, unzipEntry } from "../src/install";
-import { tmp } from "./helpers";
+import { ciToolSha256, type CiTool } from "@intentius/chant/ci-image";
+import { TOOL_SHA256, TOOL_VERSIONS } from "../src/images";
+import { assertLinux, install, installDir } from "../src/install";
 
 describe("install", () => {
-  it.each([
-    ["tofu", "1.12.0", "arm64", "https://github.com/opentofu/opentofu/releases/download/v1.12.0/tofu_1.12.0_linux_arm64.tar.gz", "tar.gz"],
-    ["terraform", "1.14.0", "amd64", "https://releases.hashicorp.com/terraform/1.14.0/terraform_1.14.0_linux_amd64.zip", "zip"],
-    ["terragrunt", "1.1.6", "amd64", "https://github.com/gruntwork-io/terragrunt/releases/download/v1.1.6/terragrunt_linux_amd64", "binary"],
-    ["choudoufu", "0.25.0", "arm64", "https://github.com/INTENTIUS/choudoufu/releases/download/v0.25.0/choudoufu_v0.25.0_linux_arm64.tar.gz", "tar.gz"],
-    ["cosign", "2.6.5", "amd64", "https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-amd64", "binary"],
-  ] as const)("%s %s on %s comes from %s", (tool, version, arch, url, kind) => {
-    expect(release(tool, version, arch)).toMatchObject({ url, kind });
-  });
-
-  it("checks cosign against the release's cosign_checksums.txt", () => {
-    const r = release("cosign", "2.6.5", "arm64");
-    expect(r.sums).toBe("https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign_checksums.txt");
-    const sums = `${"4".repeat(64)}  cosign-linux-arm64\n${"5".repeat(64)}  cosign-linux-arm64.sig\n`;
-    expect(expectedSum(sums, r.file)).toBe("4".repeat(64));
-  });
-
-  it("refuses something that is not a version", () => {
-    expect(() => release("tofu", "latest")).toThrow(/not a release version/);
-    expect(() => release("tofu", "1.2.3; rm -rf /")).toThrow(/not a release version/);
-  });
-
-  it("reads the expected digest from SHA256SUMS, with or without the binary marker", () => {
-    const sums = `${"1".repeat(64)}  tofu_1.12.0_linux_amd64.tar.gz\n${"2".repeat(64)} *tofu_1.12.0_linux_arm64.tar.gz\n`;
-    expect(expectedSum(sums, "tofu_1.12.0_linux_arm64.tar.gz")).toBe("2".repeat(64));
-    expect(() => expectedSum(sums, "other")).toThrow(/do not list other/);
-  });
-
-  it("reads a digest SHA256SUMS lists as ./<file>, as choudoufu's does", () => {
-    const sums = `${"3".repeat(64)}  ./choudoufu_v0.25.0_linux_amd64.tar.gz\n`;
-    expect(expectedSum(sums, "choudoufu_v0.25.0_linux_amd64.tar.gz")).toBe("3".repeat(64));
-  });
-
-  it.each([
-    ["deflated", "ZIP_DEFLATED"],
-    ["stored", "ZIP_STORED"],
-  ])("unpacks a %s zip entry", (_, mode) => {
-    const dir = tmp();
-    const zip = join(dir, "t.zip");
-    execFileSync("python3", ["-c", `import zipfile\nz=zipfile.ZipFile(${JSON.stringify(zip)},"w",zipfile.${mode})\nz.writestr("LICENSE.txt","licence")\nz.writestr("terraform",b"#!binary"*200)\nz.close()`]);
-    expect(unzipEntry(readFileSync(zip), "terraform").toString()).toBe("#!binary".repeat(200));
-    expect(() => unzipEntry(readFileSync(zip), "tofu")).toThrow(/no tofu/);
-  });
-
   it("installs under the runner's cache when the stack sets one", () => {
     expect(installDir("tofu", "1.12.0", { TOFU_INSTALL_DIR: "/cache/bin" })).toBe("/cache/bin/tofu-1.12.0");
     expect(installDir("tofu", "1.12.0", { RUNNER_TEMP: "/rt" })).toBe("/rt/terragucci-bin/tofu-1.12.0");
@@ -58,5 +12,16 @@ describe("install", () => {
   it("refuses off Linux, where the releases it fetches would not run", () => {
     expect(() => assertLinux("darwin")).toThrow(/Linux builds.*darwin/);
     expect(() => assertLinux("linux")).not.toThrow();
+  });
+
+  it("refuses something that is not a version", async () => {
+    await expect(install("tofu", "latest")).rejects.toThrow(/not a release version/);
+    await expect(install("tofu", "1.2.3; rm -rf /")).rejects.toThrow(/not a release version/);
+  });
+
+  // An image needs a recorded sha256 for both architectures (chant issue 4784): chant's, or terragucci's own.
+  it.each(Object.entries(TOOL_VERSIONS))("%s %s has a recorded sha256 for amd64 and arm64", (tool, version) => {
+    const sums = ciToolSha256(tool as CiTool, version, TOOL_SHA256[tool as keyof typeof TOOL_VERSIONS]);
+    expect(Object.keys(sums).sort()).toEqual(["amd64", "arm64"]);
   });
 });

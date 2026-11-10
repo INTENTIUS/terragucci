@@ -1087,7 +1087,7 @@ The first line of each [environment's](/terragucci/reference/config/#environment
 terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign|atmos|terramate <version>
 ```
 
-Prints the directory it unpacked the release to, after checking it against its SHA256SUMS. The releases are Linux builds. Under `modules.attest` the publish job installs cosign this way before it publishes; in an Atmos repo every job installs Atmos this way.
+Prints the directory it unpacked the release to, after checking it against its SHA256SUMS. For the release an image carries it also checks the sha256 terragucci or chant records for it, so a changed SHA256SUMS fails the install. The releases are Linux builds. Under `modules.attest` the publish job installs cosign this way before it publishes; in an Atmos repo every job installs Atmos this way.
 
 ## --json
 

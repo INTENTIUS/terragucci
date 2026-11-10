@@ -38,7 +38,6 @@ import { workspaceEnv, workspaceInit, WORKSPACE_FILE } from "../src/workspace";
 import { applyWave } from "../src/apply";
 import { ROOTS_NOT_ATMOS } from "../src/config";
 import { init } from "../src/init";
-import { release } from "../src/install";
 import { git, tmp, write } from "./helpers";
 
 type Obj = Record<string, unknown>;
@@ -239,17 +238,6 @@ describe("init in an Atmos repo", () => {
     await expect(init(write(tmp(), { ...COMPONENTS, "terragucci.yml": "forge: forgejo\nroots: [\"dev/*\"]\n" }), { atmos, dryRun: true })).rejects.toThrow(ROOTS_NOT_ATMOS);
     await expect(init(write(tmp(), { ...COMPONENTS, "terragucci.yml": "forge: forgejo\nsynth: make\n" }), { atmos, dryRun: true })).rejects.toThrow(/remove synth/);
     await expect(init(write(tmp(), { ...COMPONENTS, "root.hcl": "", "terragucci.yml": "forge: forgejo\n" }), { atmos, dryRun: true })).rejects.toThrow(/an Atmos repo or a Terragrunt repo, not both/);
-  });
-});
-
-describe("install atmos", () => {
-  it("fetches the release's Linux binary and checks it against its SHA256SUMS", () => {
-    expect(release("atmos", "1.230.1", "arm64")).toEqual({
-      url: "https://github.com/cloudposse/atmos/releases/download/v1.230.1/atmos_1.230.1_linux_arm64",
-      sums: "https://github.com/cloudposse/atmos/releases/download/v1.230.1/atmos_1.230.1_SHA256SUMS",
-      file: "atmos_1.230.1_linux_arm64",
-      kind: "binary",
-    });
   });
 });
 

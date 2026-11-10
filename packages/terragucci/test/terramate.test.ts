@@ -23,7 +23,6 @@ import { resolveRepo } from "../src/config";
 import { ROOTS_NOT_TERRAMATE, TERRAMATE_DRIFT_PR, TERRAMATE_GENERATE as GENERATE_REFUSED } from "../src/refusals";
 import { detectShape } from "../src/shape";
 import { init } from "../src/init";
-import { release } from "../src/install";
 import { affectedRoots } from "../src/report/stage";
 import { git, tmp, write } from "./helpers";
 
@@ -192,16 +191,5 @@ describe("init in a Terramate repo", () => {
     expect(shape.refuses("generate")).toBe(GENERATE_REFUSED);
     expect(shape.refuses("ephemeral")).toBeUndefined();
     expect(detectShape(write(tmp(), { "main.tf": "" }), resolveRepo({})).kind).toBe("roots");
-  });
-});
-
-describe("install terramate", () => {
-  it("fetches the release's Linux tar.gz, named x86_64 for amd64, checked against checksums.txt", () => {
-    expect(release("terramate", "0.17.3", "amd64")).toEqual({
-      url: "https://github.com/terramate-io/terramate/releases/download/v0.17.3/terramate_0.17.3_linux_x86_64.tar.gz",
-      sums: "https://github.com/terramate-io/terramate/releases/download/v0.17.3/checksums.txt",
-      file: "terramate_0.17.3_linux_x86_64.tar.gz",
-      kind: "tar.gz",
-    });
   });
 });

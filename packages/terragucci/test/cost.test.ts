@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { changeSetDigest } from "@intentius/chant/change-set";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
-import { INFRACOST_VERSION, release } from "../src/install";
+import { INFRACOST_VERSION } from "../src/install";
 import { buildReport } from "../src/report/build";
 import { COST_MEMBER, costCommand, costMember, costReason, costRule, estimateCosts, INFRACOST_COMMAND, parseInfracost, policyCost, signed, waveCost, type CostRunner } from "../src/report/cost";
 import { policyInput, type PolicyExec } from "../src/report/policy";
@@ -80,16 +80,6 @@ describe("cost: an estimate per root", () => {
     expect(validateConfig({ cost: { key_secret: "COST_KEY", command: "node cost.mjs" } }, "t").cost).toEqual({ key_secret: "COST_KEY", command: "node cost.mjs" });
     expect(() => validateConfig({ cost: { key_secret: "sk-123:abc" } }, "t")).toThrow(/must name the secret/);
     expect(() => validateConfig({ cost: { price: 1 } }, "t")).toThrow(/cost.price is not a setting/);
-  });
-
-  it("installs Infracost by its release checksum", () => {
-    expect(release("infracost", INFRACOST_VERSION, "amd64")).toEqual({
-      url: `https://github.com/infracost/infracost/releases/download/v${INFRACOST_VERSION}/infracost-linux-amd64.tar.gz`,
-      sums: `https://github.com/infracost/infracost/releases/download/v${INFRACOST_VERSION}/infracost-linux-amd64.tar.gz.sha256`,
-      file: "infracost-linux-amd64.tar.gz",
-      kind: "tar.gz",
-      member: "infracost-linux-amd64",
-    });
   });
 
   it.each(["github", "forgejo", "gitlab"] as const)("%s: the plan and apply jobs get the key and Infracost, and the confirm job leaves the estimate out", (forge) => {
