@@ -261,7 +261,9 @@ export function describeMigration(text: string | undefined): string[] {
     if (r.change === "adopt") return [...(r.roots ?? []).map((x) => `  adopts ${x.source?.location ?? "the state"}${x.source?.version_id ? ` at version ${x.source.version_id}` : ""} into ${x.location ?? x.root}, ${(r.stamps ?? []).filter((s) => s.root === x.root).length} resource instances`), "  every resource verified against the live system"];
     const lines = (r.moves ?? []).map((m) => `  moves ${m.addresses.join(", ")} from ${m.from} to ${m.to}`);
     for (const x of r.roots ?? []) lines.push(`  ${x.root}: ${x.location ?? "state"}${x.before?.version_id ? ` at version ${x.before.version_id}` : ""}${x.before?.digest ? "" : ", no state yet"}`);
-    lines.push("  every root planned with no change against its new state");
+    // chant's gated migration keeps each root's plan alone (chant issue 4806): an estate root's location is its estate.
+    const estates = !r.change && (r.roots ?? []).length > 0 && (r.roots ?? []).every((x) => x.location?.startsWith("estate "));
+    lines.push(estates ? "  every root's proof showed no change the migration does not account for" : "  every root planned with no change against its new state");
     return lines;
   } catch {
     return ["  (the migration's plan record could not be read)"];

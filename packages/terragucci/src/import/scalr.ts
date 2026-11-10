@@ -17,7 +17,7 @@
  */
 import { ConfigError } from "../config";
 import type { StoreFetch } from "@intentius/chant/object-store";
-import { tfeClient, type ApiResource } from "../state-source";
+import { tfeClient, type ApiResource } from "@intentius/chant-lexicon-terraform/state";
 import type { Notes } from "./notes";
 import { conceptCell } from "./platform-guide";
 import { platformVar } from "./tfe";

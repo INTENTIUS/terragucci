@@ -9,7 +9,7 @@ import { MIRROR_CODE, planRecipe, type MirrorCode } from "../src/image-recipe";
 import { publish } from "../src/publish";
 import { MIRROR_RECORD, publishProviderMirror, type ProviderMirrorRun } from "../src/publish/provider-mirror";
 import { dirStore } from "../src/publish/registry";
-import { tokenFor } from "../src/state-source";
+import { tokenFor } from "@intentius/chant-lexicon-terraform/state";
 import { git, tmp, write } from "./helpers";
 
 const AWS = "registry.opentofu.org/hashicorp/aws";

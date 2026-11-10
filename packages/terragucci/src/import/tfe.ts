@@ -1,7 +1,7 @@
 /**
  * An organization's workspaces over the TFE API, as HCP Terraform, Terraform
  * Enterprise and OTF serve it, through the client a backend move uses
- * (../state-source.ts): discovery, then
+ * (the terraform lexicon's `state/source.ts`): discovery, then
  *
  *   GET organizations/<org>/workspaces              paged
  *   GET workspaces/<id>/vars
@@ -14,7 +14,7 @@
  * a server sends anyway is dropped here.
  */
 import type { StoreFetch } from "@intentius/chant/object-store";
-import { tfeClient, type ApiResource } from "../state-source";
+import { tfeClient, type ApiResource } from "@intentius/chant-lexicon-terraform/state";
 import type { PlatformRead, PlatformVar, PlatformWorkspace } from "./workspaces";
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);

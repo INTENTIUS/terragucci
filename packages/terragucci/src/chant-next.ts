@@ -9,8 +9,8 @@
  * registry protocol and its mirror code (`registry`, chant#4565, #4564;
  * ./publish/registry.ts, ./image-recipe.ts, ./publish/provider-mirror.ts),
  * the lexicon's module targets on it (chant#4603-#4605; ./publish/hosted.ts),
- * chant core's Terraform token reader (`terraform/credentials`, chant#4563;
- * ./state-source.ts), the product words and pipeline (`ci-product-words`,
+ * chant core's Terraform token reader (`terraform/credentials`, chant#4563,
+ * now read through the terraform lexicon's `state`), the product words and pipeline (`ci-product-words`,
  * `ci-product`, chant#4550; ./ci-words.ts, ./comment.ts, ./render.ts,
  * ./report/marker.ts), the pull request environment ledger
  * (`components/pr-env-ledger`, chant#4551; ./ephemeral.ts), and the forge
@@ -266,49 +266,6 @@ export interface ChantComposeRun {
   EstateRun: new (o: ChantEstateRunOptions) => ChantRunner;
   writeEstateRoot(input: { projectRoot: string; composition: ChantComposition }): ChantComposedRoot;
   moduleValues(values: unknown, m: string, outputs: Record<string, unknown>): Record<string, unknown> | undefined;
-}
-
-// ── state ──────────────────────────────────────────────────────────────────
-
-export interface LockOperation {
-  operation: string;
-  info: string;
-}
-
-export interface ChantLockHolder {
-  id: string;
-  who?: string;
-  operation?: string;
-  info?: string;
-  created?: string;
-}
-
-export interface ChantSourceLock {
-  root: string;
-  location: string;
-  lock(reason: string): Promise<() => Promise<void>>;
-}
-
-/** The part of a state store chant's lock code calls. */
-export interface ChantLockStore {
-  location: string;
-  lockLocation: string;
-  heldLock(): Promise<{ id: string; info: string } | undefined>;
-  lock(info: string): Promise<boolean>;
-  unlock(): Promise<void>;
-}
-
-export interface ChantState {
-  takeLocksWithSources<S extends ChantLockStore>(input: {
-    sources: readonly ChantSourceLock[];
-    stores: readonly { root: string; store: S }[];
-    now: string;
-    op: LockOperation;
-    sourceOp?: LockOperation;
-    who?: string;
-  }): Promise<{ sources: { root: string; location: string; release: () => Promise<void> }[]; locks: { root: string; store: S; release: () => Promise<void> }[] }>;
-  SourceLockedError: abstract new (...args: never[]) => Error & { root: string; location: string; reason: string };
-  StateLockedError: abstract new (...args: never[]) => Error & { root: string; lockLocation: string; holder?: ChantLockHolder };
 }
 
 // ── plan-shape ─────────────────────────────────────────────────────────────
