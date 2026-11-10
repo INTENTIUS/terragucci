@@ -9,9 +9,9 @@
  * services in docker-compose.yml do through ${TG_PROJECT}. The images come
  * from the harness's pins (pins.ts), so floci moves when chant's pin moves.
  *
- * It needs a chant with `@intentius/chant/e2e-harness`. On a chant without
- * it, harness.ts never builds this project and stack/forge-fallback.yml,
- * the services as terragucci ran them before the harness, stands in.
+ * TG_HARNESS=fallback (stack/instance.sh) skips this project and runs
+ * stack/forge-fallback.yml, the services as terragucci ran them before the
+ * harness.
  */
 import { Network, Service, Volume, composeKey } from "@intentius/chant-lexicon-docker";
 import { harnessStack } from "@intentius/chant/e2e-harness";

@@ -1105,7 +1105,6 @@ harness_rows() {
     --claims "$SMOKE_LOG_DIR/claims.table") || rc=$?
   case "$rc" in
     0) ;;
-    3) echo "smoke: no harness rows (see the line above); smoke.json is written as before" >&2 ;;
     4) echo "smoke: no harness rows: a public cloud answered in a run's log (see above); smoke.json is written as before" >&2 ;;
     *) echo "smoke: the harness rows were not written (exit $rc); smoke.json is written as before" >&2 ;;
   esac

@@ -1,17 +1,14 @@
 /**
  * The validation stack on chant's e2e harness (chant#4587, terragucci#1295).
  *
- *   harness.ts floor               exit 0 when the installed chant has the harness, 3 when not
+ *   harness.ts floor               print the chant, the harness floor and floci
  *   harness.ts compose --out FILE  build floci, Forgejo and forgejo-runner (./compose/) for TG_PROJECT
  *   harness.ts lint [id...]        lint the scenarios (chant's lintScenario, and ./scenarios.ts)
  *   harness.ts record --logs DIR --binary B --forge F --engine-version V [--claims FILE] [--out FILE]
  *                                  smoke.sh --record's verdicts as harness rows
  *   harness.ts run <id> [--record] drive one scenario, plain then BREAK, on the running stack
  *
- * Every chant import is lazy. On a chant without `@intentius/chant/e2e-harness`
- * each command but lint exits 3 and says which chant it needs, and the
- * stack keeps terragucci's own harness: stack/forge-fallback.yml, smoke.sh's
- * runner, and smoke.json as the only record. lint still runs ./scenarios.ts.
+ * The harness is imported directly: the pin carries `@intentius/chant/e2e-harness`.
  *
  * A row is written only after the no-real-cloud scan said CLEAN (chant's
  * SafeRun), on a ledger of its own in the instance's state directory
@@ -21,6 +18,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import * as h from "@intentius/chant/e2e-harness";
+import type { GatedRequestRead } from "@intentius/chant/lifecycle/gated-request";
+import type { OpRunRecord } from "@intentius/chant/op";
 import { TOOL_VERSIONS } from "../../packages/terragucci/src/images";
 import { bareVersion, parseClaimsTable, smokeRows, smokeScenario, type ClaimRunLike } from "./rows";
 import { localFindings, overlayFiles, readIndex, scenarioIds, scenarioPath } from "./scenarios";
@@ -30,57 +30,11 @@ const ROOT = resolve(HERE, "..", "..");
 const STATE = process.env.TG_STATE || join(ROOT, "stack", ".state");
 const CLAIMS_JSON = join(ROOT, "stack", "evidence", "e2e-claims.json");
 
-/** What the stack needs of chant: the harness subpath, first in 0.124.56. */
-export const HARNESS_NEEDS = "a chant with @intentius/chant/e2e-harness (chant#4587; 0.124.56 or later)";
-/** The exit code for a chant without the harness: the caller falls back. */
-export const EXIT_NO_HARNESS = 3;
 /** The exit code when the no-real-cloud scan found a public cloud answering: nothing is recorded. */
 export const EXIT_REAL_CLOUD = 4;
 
-// The part of the harness this file calls. Typed here, since the pinned chant has no types for it.
-/* eslint-disable @typescript-eslint/no-explicit-any */
-interface Harness {
-  E2E_HARNESS_FLOOR: string;
-  FLOCI_DIGEST: string;
-  harnessStack: (...a: any[]) => any;
-  lintScenario: (data: unknown) => Array<{ at: string; message: string }>;
-  loadScenario: (path: string) => any;
-  runClaim: (s: any, ports: any, opts: any) => Promise<ClaimRunLike>;
-  claimRow: (i: any) => any;
-  recordClaimRow: (i: any) => Promise<unknown>;
-  claimRowsOf: (records: readonly any[]) => any[];
-  renderClaims: (product: string, rows: readonly any[]) => unknown;
-  realCloudHits: (text: string, where?: string) => string[];
-  SafeRun: new (o: any) => { env: Record<string, string>; logFile: string; log(line: string): void; run(c: string[], extra?: Record<string, string>): Promise<number>; scan(extra?: string[]): { verdict: "CLEAN" } | { verdict: "REAL-CLOUD"; hits: string[] } };
-  ForgejoForge: new (o: any) => any;
-  FlociBucket: new (endpoint: string, bucket: string) => any;
-  dockerJobs: (network: string) => any;
-  realClock: any;
-  CLAIM_OP: string;
-}
-
-/** The harness, or undefined on a chant without it. */
-export async function loadHarness(): Promise<Harness | undefined> {
-  try {
-    const m = (await import("@intentius/chant/e2e-harness")) as Record<string, unknown>;
-    const fns = ["harnessStack", "lintScenario", "runClaim", "claimRow", "recordClaimRow", "renderClaims", "SafeRun", "ForgejoForge"];
-    return typeof m.E2E_HARNESS_FLOOR === "string" && fns.every((f) => typeof m[f] === "function") ? (m as unknown as Harness) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function needHarness(what: string): Promise<Harness> {
-  const h = await loadHarness();
-  if (!h) {
-    console.error(`harness: ${what} needs ${HARNESS_NEEDS}; the installed chant has none, so the stack keeps its own harness`);
-    process.exit(EXIT_NO_HARNESS);
-  }
-  return h;
-}
-
-async function runLedger(): Promise<{ appendRunRecord: (input: unknown, o: { cwd: string }) => Promise<unknown>; readRunLedger: (env: string, op: string, o: { cwd: string }) => Promise<{ records: unknown[] }> }> {
-  return (await import("@intentius/chant/lifecycle/run-ledger")) as never;
+async function runLedger(): Promise<typeof import("@intentius/chant/lifecycle/run-ledger")> {
+  return import("@intentius/chant/lifecycle/run-ledger");
 }
 
 function flag(args: string[], name: string): string | undefined {
@@ -100,12 +54,12 @@ function chantVersion(): string {
 }
 
 /** The claims ledger (a git repo of its own, as chant's run ledger is read) and the render beside it. */
-async function writeRow(h: Harness, row: unknown, run: ClaimRunLike, verdict: { verdict: "CLEAN" } | { verdict: "REAL-CLOUD"; hits: string[] }, out: string): Promise<void> {
+async function writeRow(row: h.ClaimRow, run: h.ClaimRun, verdict: { verdict: "CLEAN" } | { verdict: "REAL-CLOUD"; hits: string[] }, out: string): Promise<void> {
   const ledger = join(STATE, "claims-ledger");
   mkdirSync(ledger, { recursive: true });
   if (!existsSync(join(ledger, ".git"))) sh("git", ["init", "-q", "-b", "main", ledger]);
   const { appendRunRecord, readRunLedger } = await runLedger();
-  await h.recordClaimRow({ row, run, verdict, append: async (input: unknown) => void (await appendRunRecord(input, { cwd: ledger })) });
+  await h.recordClaimRow({ row, run, verdict, append: async (input) => void (await appendRunRecord(input, { cwd: ledger })) });
   const { records } = await readRunLedger("local", h.CLAIM_OP, { cwd: ledger });
   writeFileSync(out, `${JSON.stringify(h.renderClaims("terragucci", h.claimRowsOf(records)), null, 2)}\n`);
 }
@@ -119,7 +73,6 @@ async function writeRow(h: Harness, row: unknown, run: ClaimRunLike, verdict: { 
  * the version its CI image is built with (TOOL_VERSIONS).
  */
 async function record(args: string[]): Promise<number> {
-  const h = await needHarness("writing the harness rows of a smoke record");
   const logs = flag(args, "logs");
   if (!logs || !existsSync(logs)) {
     console.error("harness record: --logs names no directory");
@@ -161,7 +114,7 @@ async function record(args: string[]): Promise<number> {
       at: new Date(r.run.break.ended),
       chant: chantVersion(),
     });
-    await writeRow(h, row, r.run, verdict, out);
+    await writeRow(row, r.run, verdict, out);
   }
   const engines = [...new Set(rows.map((r) => `${r.engine.binary} ${r.engine.version}`))].join(", ");
   console.error(`harness record: ${rows.length} ${scenario} row(s)${engines ? ` (${engines})` : ""} on ${join(STATE, "claims-ledger")}, rendered to ${out}`);
@@ -170,7 +123,6 @@ async function record(args: string[]): Promise<number> {
 
 /** Build ./compose/ for TG_PROJECT into --out. */
 async function compose(args: string[]): Promise<number> {
-  await needHarness("building floci, Forgejo and forgejo-runner from the harness");
   const out = flag(args, "out");
   if (!out) {
     console.error("harness compose: --out names the file to write");
@@ -191,7 +143,6 @@ async function compose(args: string[]): Promise<number> {
 async function lint(args: string[]): Promise<number> {
   const index = readIndex();
   const ids = args.length > 0 ? args : scenarioIds();
-  const h = await loadHarness();
   let bad = 0;
   for (const id of ids) {
     const file = scenarioPath(id);
@@ -200,7 +151,7 @@ async function lint(args: string[]): Promise<number> {
       bad++;
       continue;
     }
-    const findings = [...localFindings(file, index), ...(h ? h.lintScenario(JSON.parse(readFileSync(file, "utf8"))) : [])];
+    const findings = [...localFindings(file, index), ...h.lintScenario(JSON.parse(readFileSync(file, "utf8")))];
     for (const f of findings) console.error(`${id}${f.at}: ${f.message}`);
     if (findings.length > 0) bad++;
   }
@@ -210,7 +161,7 @@ async function lint(args: string[]): Promise<number> {
       bad++;
     }
   }
-  console.error(`harness lint: ${ids.length - bad} of ${ids.length} scenario(s) hold${h ? "" : ` (chant's lintScenario skipped: needs ${HARNESS_NEEDS})`}`);
+  console.error(`harness lint: ${ids.length - bad} of ${ids.length} scenario(s) hold`);
   return bad === 0 ? 0 : 1;
 }
 
@@ -230,7 +181,7 @@ function forgejoEnv(): Record<string, string> {
  * The run records of `op` on the scenario repo's chant/lifecycle, read from
  * a fresh clone of that branch (none yet is no records).
  */
-async function ledgerRuns(env: Record<string, string>, repo: string, ledgerEnv: string, op: string): Promise<unknown[]> {
+async function ledgerRuns(env: Record<string, string>, repo: string, ledgerEnv: string, op: string): Promise<OpRunRecord[]> {
   const dir = join(STATE, "scenarios", "ledger-clones", `${repo.replace("/", "-")}-${Date.now()}`);
   const url = env.TERRAGUCCI_FORGEJO_URL!.replace(/^http:\/\//, `http://${env.TERRAGUCCI_FORGEJO_USER}:${env.TERRAGUCCI_FORGEJO_TOKEN}@`);
   const cloned = sh("git", ["clone", "-q", "--single-branch", "--branch", "chant/lifecycle", `${url}/${repo}.git`, dir]);
@@ -243,12 +194,12 @@ async function ledgerRuns(env: Record<string, string>, repo: string, ledgerEnv: 
  * The gated requests of `op` on the scenario repo's chant/lifecycle
  * (chant#4650's `gated` outcome), read the same way from a fresh clone.
  */
-async function ledgerGated(env: Record<string, string>, repo: string, op: string): Promise<unknown[]> {
+async function ledgerGated(env: Record<string, string>, repo: string, op: string): Promise<GatedRequestRead[]> {
   const dir = join(STATE, "scenarios", "ledger-clones", `${repo.replace("/", "-")}-gated-${Date.now()}`);
   const url = env.TERRAGUCCI_FORGEJO_URL!.replace(/^http:\/\//, `http://${env.TERRAGUCCI_FORGEJO_USER}:${env.TERRAGUCCI_FORGEJO_TOKEN}@`);
   const cloned = sh("git", ["clone", "-q", "--single-branch", "--branch", "chant/lifecycle", `${url}/${repo}.git`, dir]);
   if (cloned.status !== 0) return [];
-  const { readGatedRequests } = (await import("@intentius/chant/lifecycle/gated-request")) as { readGatedRequests: (op: string, o: { cwd: string }) => Promise<unknown[]> };
+  const { readGatedRequests } = await import("@intentius/chant/lifecycle/gated-request");
   return readGatedRequests(op, { cwd: dir });
 }
 
@@ -259,7 +210,6 @@ async function ledgerGated(env: Record<string, string>, repo: string, op: string
  * said CLEAN. Exit 0 when the row holds, 1 when not, 4 on a real-cloud line.
  */
 async function run(args: string[]): Promise<number> {
-  const h = await needHarness("driving a scenario");
   const id = args[0];
   if (!id) {
     console.error("harness run: name a scenario");
@@ -345,7 +295,7 @@ async function run(args: string[]): Promise<number> {
       at: new Date(),
       chant: chantVersion(),
     });
-    await writeRow(h, row, result, verdict, CLAIMS_JSON);
+    await writeRow(row, result, verdict, CLAIMS_JSON);
   }
   return result.verdicts.plain === "pass" && result.verdicts.break === "caught" ? 0 : 1;
 }
@@ -354,11 +304,6 @@ async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case "floor": {
-      const h = await loadHarness();
-      if (!h) {
-        console.error(`harness: the installed chant ${chantVersion()} has no e2e harness; the stack needs ${HARNESS_NEEDS}`);
-        return EXIT_NO_HARNESS;
-      }
       console.log(`chant ${chantVersion()}, e2e harness floor ${h.E2E_HARNESS_FLOOR}, floci ${h.FLOCI_DIGEST}`);
       return 0;
     }

@@ -8,8 +8,8 @@
 #
 # floci, Forgejo and forgejo-runner are not in this file. They come from
 # chant's e2e harness (terragucci#1295), built by stack/harness/harness.ts
-# under the same keys, names and ports, or from stack/forge-fallback.yml on a
-# chant without the harness. stack/instance.sh's tg_compose runs that file and
+# under the same keys, names and ports, or from stack/forge-fallback.yml under
+# TG_HARNESS=fallback. stack/instance.sh's tg_compose runs that file and
 # this one as one project; a profile below that names floci or Forgejo gets
 # them from there.
 #
