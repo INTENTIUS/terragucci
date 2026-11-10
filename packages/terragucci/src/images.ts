@@ -32,6 +32,26 @@ export const TOOL_VERSIONS = {
   choudoufu: "0.31.0",
 } as const;
 
+/**
+ * The sha256 of each image release chant records none for, by architecture
+ * (chant issue 4784). An image and `terragucci install` check the archive
+ * against its release's checksums file and against this sum, so a tampered
+ * checksums file fails too. Copied from the releases' own files:
+ * terraform_1.14.9_SHA256SUMS on the terraform releases site and the
+ * SHA256SUMS of terragrunt's v1.2.0 release. Move them with TOOL_VERSIONS.
+ * tofu 1.13.1 and choudoufu 0.31.0 are chant's (CI_TOOL_SHA256).
+ */
+export const TOOL_SHA256: Partial<Record<keyof typeof TOOL_VERSIONS, { amd64: string; arm64: string }>> = {
+  terraform: {
+    amd64: "2e5cffc20a0b48a67a76268723bd5a10b8666f69b2aa4f04906e206726bedd63",
+    arm64: "863002085b886453795d9ff4b8989b8468784478150b70ba8a1df3e3ad66da99",
+  },
+  terragrunt: {
+    amd64: "45b6df8a8494c8cfe34b4abf919e894709557163e4d3b5704d11083002ab787a",
+    arm64: "b069ce4310572bc46ee6f057057acc4bc6a9077ef8687e157a64b0551290a371",
+  },
+};
+
 export interface ImageRef {
   repository: string;
   tag: string;

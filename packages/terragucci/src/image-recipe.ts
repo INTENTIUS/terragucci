@@ -24,6 +24,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { posix } from "node:path";
+import { derivedImageDockerfile } from "@intentius/chant/ci-image";
 import { imageFor, imageReference, terragruntImage } from "./images";
 import { MIRROR_DIR, type Binary } from "./config";
 import { readLock } from "./rollout/lock";
@@ -215,25 +216,31 @@ export function planRecipe(repo: string, options: RecipeOptions = {}): Recipe {
       "",
     ].join("\n"),
   });
+  // chant's derivedImageDockerfile (chant issue 4784): FROM the product's image, the mirror's steps, nothing pushed.
   files.push({
     path: "Dockerfile",
-    content: [
-      RECIPE_MARKER,
-      "# Build it in your own CI with build.sh, push it to your registry, and name it in terragucci.yml:",
-      "#   image:",
-      "#     name: <the reference you pushed>",
-      `#     mirror: ${mirror === MIRROR_DIR ? "true" : mirror}`,
-      `FROM ${from}`,
-      "ARG TARGETOS=linux",
-      "ARG TARGETARCH=amd64",
-      "COPY mirror/ /tmp/terragucci-mirror/",
-      groups.length
-        ? `RUN set -eu; for d in /tmp/terragucci-mirror/*/; do ${mirrorBinary} -chdir="$d" providers mirror -platform="\${TARGETOS}_\${TARGETARCH}" ${mirror}; done; rm -rf /tmp/terragucci-mirror`
-        : `RUN mkdir -p ${mirror}; rm -rf /tmp/terragucci-mirror`,
-      `COPY terragucci.tfrc ${posix.dirname(mirror)}/terragucci.tfrc`,
-      `ENV TF_CLI_CONFIG_FILE=${posix.dirname(mirror)}/terragucci.tfrc`,
-      "",
-    ].join("\n"),
+    content: derivedImageDockerfile({
+      from,
+      header: [
+        RECIPE_MARKER.replace(/^# /, ""),
+        "Build it in your own CI with build.sh, push it to your registry, and name it in terragucci.yml:",
+        "  image:",
+        "    name: <the reference you pushed>",
+        `    mirror: ${mirror === MIRROR_DIR ? "true" : mirror}`,
+      ],
+      steps: [
+        { arg: "TARGETOS=linux" },
+        { arg: "TARGETARCH=amd64" },
+        { copy: "mirror/ /tmp/terragucci-mirror/" },
+        {
+          run: groups.length
+            ? `set -eu; for d in /tmp/terragucci-mirror/*/; do ${mirrorBinary} -chdir="$d" providers mirror -platform="\${TARGETOS}_\${TARGETARCH}" ${mirror}; done; rm -rf /tmp/terragucci-mirror`
+            : `mkdir -p ${mirror}; rm -rf /tmp/terragucci-mirror`,
+        },
+        { copy: `terragucci.tfrc ${posix.dirname(mirror)}/terragucci.tfrc` },
+        { env: `TF_CLI_CONFIG_FILE=${posix.dirname(mirror)}/terragucci.tfrc` },
+      ],
+    }),
   });
   if (groups.length === 0) files.push({ path: "mirror/.keep", content: "" });
   files.push({
