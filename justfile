@@ -49,9 +49,9 @@ lint-docs strictness="2" limit="8":
 tutorial-check *args:
     node scripts/tutorial-check.mjs {{args}}
 
-[doc("Build the bundle and hold it to its shape: no dependencies, under budget, Node imports only.")]
+[doc("Build the bundle and hold it to its shape with chant dev bundle-check: one dependency, under budget, Node imports only (chantBundleCheck in packages/terragucci/package.json).")]
 bundle-check: build-cli
-    node scripts/bundle-check.mjs
+    npx chant dev bundle-check packages/terragucci
 
 [doc("Vet and test the Terraform and OpenTofu provider, and check its files are gofmt'd.")]
 provider-test:
@@ -419,9 +419,17 @@ images platform="":
 images-check platform="":
     npx tsx scripts/images.ts check {{ if platform == "" { "" } else { "--platform " + platform } }}
 
-[doc("Build terragucci on a local chant: pack chant from <chant-dir> (default: a worktree at chant origin/main), install it with --no-save, rebuild the bundle and images. --reset goes back to the pin. CHANT_LOCAL_IMAGES=0 skips the images.")]
+[doc("Build terragucci on a local chant with chant dev local: pack chant from <chant-dir>, install it with --no-save, rebuild the bundle and images. --reset goes back to the pin. CHANT_LOCAL_IMAGES=0 skips the images.")]
 chant-local *args:
-    scripts/chant-local.sh {{args}}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    build="just build-cli"
+    [ "${CHANT_LOCAL_IMAGES:-1}" = 0 ] || build="$build && just images"
+    # The steward image installs the fountain lexicon too (stack/bootstrap.sh fountain).
+    case "{{args}}" in
+      --reset*) npx chant dev local {{args}} --build "$build" ;;
+      *) npx chant dev local {{args}} --with @intentius/chant-lexicon-fountain --build "$build" ;;
+    esac
 
 [doc("Build the opt-in decision service image, terragucci-decide (Laya on CPU), into the local Docker daemon. Not one of the CI images.")]
 decide-image platform="":
