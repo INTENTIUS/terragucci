@@ -43,7 +43,12 @@ const NOT_VARIABLES = new Set([
   "GITLAB_ROLES",
   // chant's recorded sha256 of each CI engine release (chant#4784).
   "CI_TOOL_SHA256",
+  // the list of terragucci's forge token variables the engine runs without (binary-env.ts).
+  "TG_TOKEN_ENV",
 ]);
+// Variables chant's cloud login sets for a job with `oidc` (chant issues 4930 and 4912): on the page, and
+// named only in chant since terragucci's login is chant's.
+const CHANT_LOGIN_VARIABLES = /^AZURE_(CLIENT_ID|TENANT_ID|FEDERATED_TOKEN_FILE|SUBSCRIPTION_ID)$/;
 // Variables chant's forge check reads for `terragucci forge check` (chant#4608): on the page, and named
 // only in chant since terragucci calls chant's check directly.
 const CHANT_FORGE_CHECK_VARIABLES = new Set(["AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_ENDPOINT_URL_IAM", "AZURE_GRAPH_TOKEN"]);
@@ -76,7 +81,7 @@ for (const [name, file] of [...used].sort()) {
   if (!listed.has(name) && !UNDOCUMENTED_VARIABLES.has(name)) problems.push(`${name} is read in ${file} and is not on environment.md`);
 }
 for (const name of listed) {
-  if (!used.has(name) && !CHANT_FORGE_CHECK_VARIABLES.has(name) && !CHANT_STATE_VARIABLES.test(name) && !/^(TF_CLI_ARGS|OTEL_EXPORTER_OTLP_(TRACES|METRICS)_HEADERS)$/.test(name) && !/^(OTEL_|AWS_ROLE|ARM_)/.test(name)) {
+  if (!used.has(name) && !CHANT_FORGE_CHECK_VARIABLES.has(name) && !CHANT_STATE_VARIABLES.test(name) && !CHANT_LOGIN_VARIABLES.test(name) && !/^(TF_CLI_ARGS|OTEL_EXPORTER_OTLP_(TRACES|METRICS)_HEADERS)$/.test(name) && !/^(OTEL_|AWS_ROLE|ARM_)/.test(name)) {
     problems.push(`${name} is on environment.md and nothing in packages/terragucci/src names it`);
   }
 }
