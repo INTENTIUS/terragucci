@@ -12,7 +12,7 @@
  * GitLab-managed state) and releases it with the binary's fixed
  * `force-unlock` of its ID, or on GitLab a release of that ID on the unlock
  * address. Core's `releaseStateLock` asks the forge which of the
- * repository's runs are alive (`forgeLiveRuns`): while one that began before
+ * repository's runs are alive (`forgeTargetLiveRuns`): while one that began before
  * the lock is, nothing is asked or released. Otherwise the release waits at
  * gate `<root>` of op `tf-unlock` for an approval of that lock by someone
  * other than the requester, checks the runs again just before the spend, and
@@ -28,7 +28,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { describeLock, describeRun, forgeLiveRuns, type LiveRun, type LockInfo } from "@intentius/chant/state-unlock";
+import { describeLock, describeRun, forgeTargetLiveRuns, type LiveRun, type LockInfo } from "@intentius/chant/state-unlock";
 import { terraformStateUnlock } from "@intentius/chant-lexicon-terraform/state-ops";
 import type { StoreFetch } from "@intentius/chant/object-store";
 import { approvalRule } from "./approval";
@@ -125,7 +125,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
     const target = forgeOf(repo, settings, env);
     const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge];
     if (!target.token) throw new ConfigError(`${tokenEnv} is not set; unlock-state reads the forge's runs with it, to know no run holding the lock is alive`);
-    return forgeLiveRuns({ kind: target.forge, apiBase: chantTargetOf(target).apiBase, repo: target.path, token: target.token, fetch: fetchFn as never });
+    return forgeTargetLiveRuns(chantTargetOf(target), fetchFn as never);
   };
   const fetchFn = options.fetch ?? (globalThis.fetch as unknown as Fetch);
   const now = options.now ?? new Date().toISOString();
