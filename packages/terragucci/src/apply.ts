@@ -1169,7 +1169,7 @@ function stepBinary(work: string, resolved: string, job: NodeJS.ProcessEnv): { b
   return { binary: "choudoufu", path: (was) => [dirname(script), was ?? ""].filter(Boolean).join(delimiter) };
 }
 
-function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache, work: string, c?: Composition, env: NodeJS.ProcessEnv = process.env): CapabilityRegistry {
+function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache, work: string, observer: StageObserver, c?: Composition, env: NodeJS.ProcessEnv = process.env): CapabilityRegistry {
   const registry = new CapabilityRegistry();
   const job = { ...process.env, ...env };
   const cap = terraformApplyCapabilityWith({
@@ -1178,6 +1178,8 @@ function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache
       const readEnv = binaryEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), join(repo, root)));
       return { binary: run.binary, readEnv: definedEnv(run.path ? { ...readEnv, PATH: run.path(readEnv.PATH) } : readEnv) };
     },
+    // Each root's plan and apply timings and spans, from chant's hook around the engine's commands (chant issue 4865).
+    onCommand: observer.commandHook(),
   });
   const terraform = c?.terraform;
   // The composed run takes the project's binary by name, and the job's environment less its forge tokens.
@@ -1207,8 +1209,9 @@ interface StepRoot {
 
 /** A root's plan as terragucci's report reads it, from the plan file chant's step wrote and its `show -json` (terragucci#1303). */
 function stepPlannedRoot(repo: string, options: ApplyWaveOptions, w: WaveRun, run: { target: string; planDigest: string; plan: string; planJson?: string }, own?: StepRoot): PlannedRoot {
-  const timing = w.observer.root(run.target);
-  w.observer.endRoot(timing);
+  // Timed by the hook around the engine's commands (waveCapabilities); a root it saw no command of is timed as nothing.
+  const timing = w.observer.timed(run.target);
+  if (timing.end === undefined) w.observer.endRoot(timing);
   let file: { artifact?: { planFile?: string }; changeSet?: { entries?: { action: string }[] } } = {};
   try {
     file = JSON.parse(readFileSync(join(repo, run.plan), "utf-8")) as typeof file;
@@ -1913,6 +1916,8 @@ async function runStepWave(
   if (terragrunt) s.units = stepUnits(s, terragrunt);
   // chant stores the change set on the local ledger before its gate fetches the remote one: bring a stale copy up to date first.
   await fetchLifecycleStatus({ cwd: repo });
+  // The binary's spans, for each root's per-resource timings: the hook around the engine's commands points the binary at the receiver.
+  if (!s.units) await s.jobOf(options.wave).w.observer.collectSpans((l) => console.log(`wave ${options.wave}: ${l}`));
   let result: RunOpWaveResult;
   // The terraform lexicon checks choudoufu's release by name on the job's own PATH: the job's choudoufu, through its tokenless script.
   const job = stepBinary(ctx.work, options.binary, { ...process.env, ...env });
@@ -1928,7 +1933,7 @@ async function runStepWave(
     ...((options.shares !== undefined || at.grouped) && options.share === undefined && options.group === undefined ? { decide: true } : {}),
     ...(options.group !== undefined ? { group: options.group } : {}),
     ...(options.share !== undefined ? { share: options.share } : {}),
-    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache, ctx.work, c, env)) as never,
+    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, binaries, cache, ctx.work, s.jobOf(options.wave).w.observer, c, env)) as never,
     // The migration and gate hooks call back into this process: the job waits for them without blocking it.
     hookExec: at.chant.spawnExecAsync,
     afterPlan: stepAfterPlan(s),

@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Attrs, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
 import { METRIC } from "../dashboards/names";
 import { pinVersion } from "../rollout/pins";
+import type { TerraformCommandHook } from "@intentius/chant-lexicon-terraform/components/capability-plugin";
 import type { Report } from "./schema";
 import { drifted } from "./drift";
 import { waveGauges, waveResult, type WaveFacts } from "./wave-telemetry";
@@ -302,6 +303,41 @@ export class StageObserver {
     t.commands.push({ command: args[0], seconds: seconds(start, nowNanos()) });
     if (span) this.trace!.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
     return r;
+  }
+
+  /** The root's timing: the one this stage already has for it, else a new one. */
+  timed(path: string): RootTiming {
+    return this.roots.find((x) => x.path === path) ?? this.root(path);
+  }
+
+  /**
+   * chant's hook around each engine command of a `terraform-apply` step
+   * (`onCommand`, chant issue 4865), doing for a wave's roots what
+   * `commandAsync` does for the stage's own runs: each command is a span
+   * under its root's, with the span receiver's variables, and its time goes
+   * on the root's commands. The root's time starts at its first command,
+   * stops after its plan's `show`, starts again with the apply and stops
+   * after its `output`. An upstream's reads for a root are not timed.
+   */
+  commandHook(): TerraformCommandHook {
+    return (c) => {
+      if (c.upstream) return;
+      const t = this.timed(c.root);
+      if (t.end !== undefined && c.method !== "plan") this.reopen(t);
+      const span = this.trace && t.span ? this.trace.start(`${c.binary} ${c.name}`, t.span, { "process.executable.name": c.binary, "process.command_args": c.args.join(" ") }, { kind: 3 }) : undefined;
+      let runEnv: NodeJS.ProcessEnv = span ? binaryEnv(c.env, this.trace!, span, t.path) : c.env;
+      if (this.receiver) runEnv = this.receiver.env(runEnv, t.path, c.name);
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(runEnv)) if (v !== undefined && c.env[k] !== v) env[k] = v;
+      return {
+        env,
+        after: (r) => {
+          t.commands.push({ command: c.name, seconds: r.seconds });
+          if (span) this.trace!.end(span, { "process.exit.code": r.code ?? -1 }, r.code === 0 || (c.name === "plan" && r.code === 2) ? undefined : `exit ${r.code}`);
+          if ((c.method === "plan" && c.name === "show") || (c.method !== "plan" && c.name === "output")) this.endRoot(t);
+        },
+      };
+    };
   }
 
   /**
