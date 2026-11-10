@@ -4,7 +4,7 @@
 //   node scripts/build-cli.mjs
 // The package depends on @intentius/chant at an exact pin (bundle-check holds
 // it to the root's). The bundle imports chant core from it wherever that chant
-// serves compiled JS (scripts/chant-external.mjs, chant#4591) and carries the
+// serves compiled JS (chant's chantExternalPlugin, chant#4591) and carries the
 // lexicon code it uses. The TypeScript folder that a .ts config needs, and the
 // HCL parser a module rollout needs, stay external and optional.
 import { execFileSync } from "node:child_process";
