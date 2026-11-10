@@ -5,8 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { chantExternal } from "./chant-external.mjs";
-import { chantNext } from "./chant-next-plugin.mjs";
+import { chantExternalPlugin } from "@intentius/chant/bundle-check";
 
 // The dashboards template (src/dashboards/rendered.json, terragucci#163) and
 // chant's workspace schemas (declaration.schema.json alone is 67 KB as a JS
@@ -43,7 +42,8 @@ export const bundleOptions = (pkgDir, plugins = []) => ({
   minifyIdentifiers: true,
   keepNames: false,
   logLevel: "warning",
-  // chant core the installed chant serves as compiled JS stays external
-  // (scripts/chant-external.mjs); chant-next stands in for a subpath it lacks.
-  plugins: [...plugins, chantExternal(pkgDir), chantNext, gzippedJson],
+  // chant core, the package's one chant dependency, stays external where the
+  // installed chant serves it as compiled JS (chant's chantExternalPlugin,
+  // chant issue 4922); the lexicons, devDependencies, are bundled.
+  plugins: [...plugins, chantExternalPlugin(pkgDir), gzippedJson],
 });
