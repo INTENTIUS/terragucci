@@ -1,30 +1,20 @@
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-/** The bucket check a case stands in for chant's, when it sets one. */
-const stand = vi.hoisted((): { checkBucket?: (...a: unknown[]) => Promise<unknown> } => ({}));
-vi.mock("@intentius/chant/bucket-check", async (real: () => Promise<Record<string, unknown>>) => {
-  const m = await real();
-  return { ...m, checkBucket: (...a: unknown[]) => (stand.checkBucket ?? (m.checkBucket as (...x: unknown[]) => Promise<unknown>))(...a) };
-});
-import { describeInit, init } from "../src/init";
-import type { BinaryExec } from "../src/migrate";
-import { codeRules } from "../src/tips/index";
-import type { PolicyExec } from "../src/report/policy";
+import { afterEach, describe, expect, it } from "vitest";
+import type { BucketReport, BucketTarget } from "@intentius/chant/bucket-check";
 import {
   bucketLines,
-  bucketTarget,
   checkStoreBucket,
   forgetLiveSetups,
   knownLiveSetup,
   parseLiveSetup,
-  readLiveSetup,
   rememberLiveSetup,
   resolvedEstate,
-  resolvedRecordStore,
   setupLine,
-  type LiveSetup,
-} from "../src/live-setup";
+} from "@intentius/chant-lexicon-terraform/live-roots";
+import { describeInit, init } from "../src/init";
+import { codeRules } from "../src/tips/index";
+import type { PolicyExec } from "../src/report/policy";
+import { backendAttrs, readLiveSetup, resolvedRecordStore } from "../src/live-setup";
 import { tmp, write } from "./helpers";
 
 /** choudoufu#2293's `live-check -json` for a root whose s3 backend block the live block ignores. */
@@ -45,38 +35,6 @@ const LIVE_ROOT = {
 };
 
 afterEach(() => forgetLiveSetups());
-
-describe("parseLiveSetup", () => {
-  it("reads the resolved estate and record store", () => {
-    expect(parseLiveSetup(JSON.stringify(DERIVED))).toEqual({
-      estate: "prod-network",
-      estateSource: "backend_key",
-      store: { kind: "s3", bucket: "acme-tfstate", prefix: "tofu-records/prod-network/", source: "backend", declaredAt: "backend.tf:2" },
-    });
-  });
-
-  it("keeps the note on an implied local store", () => {
-    const doc = { ...DERIVED, estate_source: "root_path", estate: "net", record_store: { kind: "local", bucket: ".tofu-records", prefix: "tofu-records/net/", source: "implied", note: 'backend "consul" has no record store counterpart' } };
-    expect(parseLiveSetup(JSON.stringify(doc))?.store?.note).toBe('backend "consul" has no record store counterpart');
-  });
-
-  it("gives nothing for an older choudoufu, or output that is not JSON", () => {
-    expect(parseLiveSetup(JSON.stringify(OLDER))).toBeUndefined();
-    expect(parseLiveSetup("Error: no such command")).toBeUndefined();
-  });
-});
-
-describe("setupLine", () => {
-  it("names the store, where it came from, and the estate", () => {
-    const setup = parseLiveSetup(JSON.stringify(DERIVED))!;
-    expect(setupLine("net", setup)).toBe('net: records in s3 bucket "acme-tfstate" under tofu-records/prod-network/ (derived from its backend block at backend.tf:2); estate "prod-network" (from the backend key)');
-  });
-
-  it("names the local directory", () => {
-    const setup: LiveSetup = { estate: "net", estateSource: "root_path", store: { kind: "local", bucket: ".tofu-records", prefix: "tofu-records/net/", source: "implied" } };
-    expect(setupLine("net", setup)).toBe("net: records in the local directory .tofu-records under tofu-records/net/ (the local store, since no backend block gives one); estate \"net\" (from the root's path)");
-  });
-});
 
 describe("the readers fall back to the live block", () => {
   it("read choudoufu's answer once it is remembered", () => {
@@ -126,54 +84,32 @@ describe("readLiveSetup", () => {
 });
 
 describe("the bucket check", () => {
-  it("builds chant's target from the store, the backend block and the job", () => {
+  it("gives chant's check the region from the root's backend block, and prints each failing setting with its fix", async () => {
+    const seen: unknown[] = [];
+    const check = async (target: BucketTarget, options: { namespaces: string[] }): Promise<BucketReport> => {
+      seen.push(target, options);
+      return {
+        store: "s3",
+        bucket: "acme-tfstate",
+        namespaces: ["tofu-records/prod-network/"],
+        correct: false,
+        settings: [
+          { setting: "versioning", verdict: "fail", found: "versioning is Suspended", unwaivable: false, fix: "aws s3api put-bucket-versioning --bucket acme-tfstate --versioning-configuration Status=Enabled" },
+          { setting: "lifecycle", verdict: "ok", found: "a rule expires noncurrent versions after 30 days", unwaivable: false },
+          { setting: "public_access_block", verdict: "unreadable", found: "GetPublicAccessBlock was denied", unwaivable: false },
+        ],
+      } as unknown as BucketReport;
+    };
     const repo = tmp();
     write(repo, LIVE_ROOT);
-    const dir = join(repo, "net");
     const store = parseLiveSetup(JSON.stringify(DERIVED))!.store!;
-    expect(bucketTarget(dir, store, {})).toEqual({ target: { store: "s3", bucket: "acme-tfstate", region: "eu-west-1" } });
-    expect(bucketTarget(dir, store, { AWS_ENDPOINT_URL: "http://127.0.0.1:4566", AWS_ACCESS_KEY_ID: "a", AWS_SECRET_ACCESS_KEY: "b" })).toEqual({
-      target: { store: "s3", bucket: "acme-tfstate", region: "eu-west-1", endpoint: "http://127.0.0.1:4566", credentials: { accessKeyId: "a", secretAccessKey: "b" } },
-    });
-    expect(bucketTarget(dir, { ...store, kind: "kubernetes", bucket: "ns" }, {})).toEqual({ skip: "a kubernetes store has no bucket to check" });
-    expect("skip" in bucketTarget(dir, { ...store, kind: "azurerm", bucket: "acct/recs" }, {})).toBe(true);
+    const outcome = await checkStoreBucket(store, backendAttrs(join(repo, "net")), {}, check);
+    expect(seen).toEqual([{ store: "s3", bucket: "acme-tfstate", region: "eu-west-1" }, { namespaces: ["tofu-records/prod-network/"] }]);
+    expect(bucketLines("net", outcome)).toEqual([
+      "net: bucket acme-tfstate: versioning fails: versioning is Suspended; fix: aws s3api put-bucket-versioning --bucket acme-tfstate --versioning-configuration Status=Enabled",
+      "net: bucket acme-tfstate: public_access_block could not be read: GetPublicAccessBlock was denied",
+    ]);
   });
-
-
-
-  it("passes the estate's prefix to chant's check and prints each failing setting with its fix", async () => {
-    const seen: unknown[] = [];
-    stand.checkBucket = async (target: unknown, options: unknown) => {
-        seen.push(target, options);
-        return {
-          store: "s3",
-          bucket: "acme-tfstate",
-          namespaces: ["tofu-records/prod-network/"],
-          correct: false,
-          settings: [
-            { setting: "versioning", verdict: "fail", found: "versioning is Suspended", unwaivable: false, fix: "aws s3api put-bucket-versioning --bucket acme-tfstate --versioning-configuration Status=Enabled" },
-            { setting: "lifecycle", verdict: "ok", found: "a rule expires noncurrent versions after 30 days", unwaivable: false },
-            { setting: "public_access_block", verdict: "unreadable", found: "GetPublicAccessBlock was denied", unwaivable: false },
-          ],
-        };
-    };
-    const restore = () => void delete stand.checkBucket;
-    try {
-      const repo = tmp();
-      write(repo, LIVE_ROOT);
-      const store = parseLiveSetup(JSON.stringify(DERIVED))!.store!;
-      const outcome = await checkStoreBucket(join(repo, "net"), store, {});
-      expect(seen[1]).toEqual({ namespaces: ["tofu-records/prod-network/"] });
-      expect(bucketLines("net", outcome)).toEqual([
-        "net: bucket acme-tfstate: versioning fails: versioning is Suspended; fix: aws s3api put-bucket-versioning --bucket acme-tfstate --versioning-configuration Status=Enabled",
-        "net: bucket acme-tfstate: public_access_block could not be read: GetPublicAccessBlock was denied",
-      ]);
-    } finally {
-      restore();
-    }
-  });
-
-
 });
 
 describe("init under choudoufu", () => {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
-import { MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
+import { MIGRATE_DONE, MIGRATE_LEDGER, OVERRIDE_FILE, parseMigration, revertFile, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import { appliedFile, chantGated, migrationRecord } from "./gated-helpers";
 import { tmp, write } from "./helpers";
 
@@ -138,7 +138,7 @@ describe("a backend move between backends that keep no versions", () => {
     expect(line.roots).toEqual([expect.objectContaining({ root: "app", location: "pg:db:5432/app/new.states", before: null, after: null, before_digest: null, source: "pg:db:5432/app/old.states", source_version: null })]);
     expect(git(origin, "show", `chant/lifecycle:${appliedFile("tf-migrate")}`)).not.toContain("secret-");
     // A pg backend keeps no versions, so the move cannot be put back by version: a backend move the other way does it.
-    expect(() => revertMigration("move-app", text)).toThrow("backend move the other way");
+    expect(() => revertFile("move-app", text)).toThrow("backend move the other way");
   });
 
   it("refuses a source written again after the approval: the digest binds its contents, with no version id to bind", async () => {

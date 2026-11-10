@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { matchesUnitGlob } from "@intentius/chant-lexicon-terraform/terragrunt/units";
+import { estateOf, estateOutputReads } from "@intentius/chant-lexicon-terraform/live-roots";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { ConfigError, findConfig, forgeFromHost, type Binary, type ForgeName } from "./config";
 import { atmosStateReads } from "./atmos";
@@ -631,15 +632,7 @@ export const estateRecords = (estate: string): string => `tofu-records/${estate}
 function withEstate(repo: string, root: string, s: { own?: StateRef; reads: RemoteRead[] }): { own?: StateRef; reads: RemoteRead[] } {
   const dir = join(repo, root);
   const { estate } = estateOf(dir);
-  const reads = [...s.reads];
-  for (const f of tfFiles(dir)) {
-    if (isJson(f)) continue;
-    const text = stripComments(readFileSync(f, "utf-8"));
-    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"([^"]+)"\s*\{/g)) {
-      const e = attr(blockBody(text, m.index!), "estate");
-      if (e) reads.push({ name: m[1]!, key: estateRecords(e), repeated: false });
-    }
-  }
+  const reads = [...s.reads, ...estateOutputReads(dir).map((e) => ({ name: e.name, key: estateRecords(e.estate), repeated: false }))];
   const implicit = addressed("local", () => undefined, root).ref;
   const own = estate && (!s.own || (implicit && sameState(s.own, implicit))) ? { key: estateRecords(estate) } : s.own;
   return { own, reads };
@@ -728,32 +721,6 @@ export function backendBlock(dir: string): { type: string; attrs: Record<string,
 /** Two addresses name one state: the same key, and the same bucket where both name one. */
 export const sameState = (a: StateAddress, b: StateAddress): boolean => a.key === b.key && (!a.bucket || !b.bucket || a.bucket === b.bucket);
 
-/**
- * A choudoufu root's estate, from the `live` block in its `terraform` block
- * or the `estate` of its `estate.chdf.hcl`, and the estates whose recorded
- * outputs it reads through `data "terraform_estate_outputs"`.
- */
-export function estateOf(dir: string): { estate?: string; reads: string[] } {
-  let estate: string | undefined;
-  const reads: string[] = [];
-  const sidecar = join(dir, "estate.chdf.hcl");
-  if (existsSync(sidecar)) estate = attr(stripComments(readFileSync(sidecar, "utf-8")), "estate");
-  for (const f of tfFiles(dir)) {
-    if (isJson(f)) continue;
-    const text = stripComments(readFileSync(f, "utf-8"));
-    for (const t of text.matchAll(/^\s*terraform\s*\{/gm)) {
-      const body = blockBody(text, t.index!);
-      const live = body.match(/\blive\s*\{/);
-      if (live && !estate) estate = attr(blockBody(body, live.index!), "estate");
-    }
-    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"[^"]+"\s*\{/g)) {
-      const e = attr(blockBody(text, m.index!), "estate");
-      if (e) reads.push(e);
-    }
-  }
-  return { estate, reads };
-}
-
 /** The text of a root's choudoufu `live` block, comments stripped: its `estate.chdf.hcl` sidecar, else the block in its `terraform` block. */
 export function liveBody(dir: string): string | undefined {
   const sidecar = join(dir, "estate.chdf.hcl");
@@ -768,20 +735,6 @@ export function liveBody(dir: string): string | undefined {
     }
   }
   return undefined;
-}
-
-/** Each `data "terraform_estate_outputs"` block of a root: its label and the estate whose outputs it reads. */
-export function estateOutputReads(dir: string): { name: string; estate: string }[] {
-  const out: { name: string; estate: string }[] = [];
-  for (const f of tfFiles(dir)) {
-    if (isJson(f)) continue;
-    const text = stripComments(readFileSync(f, "utf-8"));
-    for (const m of text.matchAll(/\bdata\s+"terraform_estate_outputs"\s+"([^"]+)"\s*\{/g)) {
-      const e = attr(blockBody(text, m.index!), "estate");
-      if (e) out.push({ name: m[1], estate: e });
-    }
-  }
-  return out;
 }
 
 /**
@@ -828,19 +781,6 @@ export function localsText(dir: string): Map<string, string> {
     }
   }
   return out;
-}
-
-/** The roots that keep their resources under choudoufu's live resource markers: a `live` block in a `terraform` block, or an `estate.chdf.hcl`. */
-export function liveRoots(repo: string, roots: string[]): string[] {
-  return roots.filter((r) => {
-    const dir = join(repo, r);
-    if (existsSync(join(dir, "estate.chdf.hcl"))) return true;
-    return tfFiles(dir).some((f) => {
-      if (isJson(f)) return false;
-      const text = stripComments(readFileSync(f, "utf-8"));
-      return [...text.matchAll(/^\s*terraform\s*\{/gm)].some((t) => /\blive\s*\{/.test(blockBody(text, t.index!)));
-    });
-  });
 }
 
 /**

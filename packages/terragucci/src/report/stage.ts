@@ -35,8 +35,9 @@ import { quorumRuleProgress, quorumRulesFor, trustRolesAt, type GateQuorumRule }
 import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
 import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
-import { readLiveSetup, resolvedEstate } from "../live-setup";
-import { applyLayers, detectBinary, estateOutputReads, explicitOrder, findRoots, globMatch, liveRoots, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
+import { readLiveSetup } from "../live-setup";
+import { estateOutputReads, liveRoots, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
+import { applyLayers, detectBinary, explicitOrder, findRoots, globMatch, remoteStateReads, rootDependencies, rootOrder, unaddressedStates, type WavesAfter } from "../detect";
 import { checkOwnership, controlClaimsAt, projectKeyFromEnv } from "../estate-ownership";
 import { estateLinks, estateRefusals, sensitiveWhy, unknownWhy } from "../estate-planned";
 import { linkRoot, type Link, type Linked } from "../linked";

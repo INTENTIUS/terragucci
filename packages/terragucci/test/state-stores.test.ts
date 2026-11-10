@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
-import { MIGRATE_LEDGER, OVERRIDE_FILE, revertMigration, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
+import { MIGRATE_LEDGER, OVERRIDE_FILE, revertFile, runMigrations, type BinaryExec, type StateFile, type StateResource } from "../src/migrate";
 import type { StoreFetch } from "@intentius/chant/object-store";
 import { UNLOCK_LEDGER, unlockState, type UnlockOptions } from "../src/unlock";
 import { chantGated, exportRecords, exportRequest, migrationRecord, unlockRecords } from "./gated-helpers";
@@ -360,7 +360,7 @@ describe("a migration between a gcs root and an azurerm root", () => {
     expect(two.snapshots.map((s) => s.id)).toContain(rows.two!.before);
     expect(two.snapshots.find((s) => s.id === rows.two!.after)!.body).toBe(two.body);
     // And it can be put back, both states by the versions it recorded.
-    expect(revertMigration("split-b", text).text).toContain("location: az://acme/tfstate/two.tfstate");
+    expect(revertFile("split-b", text).text).toContain("location: az://acme/tfstate/two.tfstate");
   });
 
   it("refuses when the gcs state's lock is held, and writes nothing", async () => {

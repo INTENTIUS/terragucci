@@ -3,8 +3,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { writeLedger, applyWave, migrationMovedLine, parseLedger } from "../src/apply";
+import { doneMigrations } from "@intentius/chant-lexicon-terraform/migration-history";
 import {
-  doneMigrations,
   MIGRATE_DONE,
   MIGRATE_LEDGER,
   beforeMembers,

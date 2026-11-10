@@ -22,8 +22,8 @@
  * into a root that reads it.
  */
 import { join } from "node:path";
-import { estateOutputReads, localsText } from "../detect";
-import { resolvedEstate } from "../live-setup";
+import { localsText } from "../detect";
+import { estateOutputReads, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
 import type { ReportBlastResource, ReportBlastReach } from "./schema";
 
 /** A root's plan as `show -json` prints it, as much as this reads. */

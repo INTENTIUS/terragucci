@@ -40,9 +40,10 @@ import {
   type ProjectSettings,
   type ResolvedSettings,
 } from "./config";
-import { detectBinary, detectForge, detectVersion, estateOf, liveRoots, type RootReason } from "./detect";
+import { detectBinary, detectForge, detectVersion, type RootReason } from "./detect";
+import { bucketLines, estateOf, liveRoots, setupLine } from "@intentius/chant-lexicon-terraform/live-roots";
 import { recordStoreOf } from "./cdf-records";
-import { bucketLines, checkStoreBucket, readLiveSetup, setupLine } from "./live-setup";
+import { checkStoreBucket, readLiveSetup } from "./live-setup";
 import type { PolicyExec } from "./report/policy";
 import { BINARY, detectShape, refuseProblems } from "./shape";
 import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef } from "./images";

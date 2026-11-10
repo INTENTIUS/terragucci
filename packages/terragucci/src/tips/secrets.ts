@@ -29,7 +29,8 @@
  */
 import { join } from "node:path";
 import { blockBody, liveBody } from "../detect";
-import { knownLiveSetup, resolvedEstate, resolvedRecordStore } from "../live-setup";
+import { knownLiveSetup, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
+import { resolvedRecordStore } from "../live-setup";
 import { isObject } from "../report/redact";
 
 /** One secret in a root's state: the resource, the attribute, and what could keep it out. */
