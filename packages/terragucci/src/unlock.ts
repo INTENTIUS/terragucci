@@ -36,7 +36,7 @@ import { binaryEnv } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape } from "./shape";
-import { chantTargetOf, DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
+import { DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
 import { forgeOf } from "./respond/change";
 import { asyncExec, opMessage, requestRules } from "./gated-request";
 
@@ -123,9 +123,9 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   // Fails closed: a forge that cannot be asked cannot say the holder is gone. Read only once a lock is held.
   const liveRuns = async () => {
     const target = forgeOf(repo, settings, env);
-    const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge];
+    const tokenEnv = settings.token_env ?? DEFAULT_TOKEN_ENV[target.kind];
     if (!target.token) throw new ConfigError(`${tokenEnv} is not set; unlock-state reads the forge's runs with it, to know no run holding the lock is alive`);
-    return forgeTargetLiveRuns(chantTargetOf(target), fetchFn as never);
+    return forgeTargetLiveRuns(target, fetchFn as never);
   };
   const fetchFn = options.fetch ?? (globalThis.fetch as unknown as Fetch);
   const now = options.now ?? new Date().toISOString();

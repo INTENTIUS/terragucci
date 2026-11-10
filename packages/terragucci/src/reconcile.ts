@@ -17,7 +17,7 @@ import { join, relative } from "node:path";
 import { reconcileProjects } from "@intentius/chant/ci-control";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, type ResolvedSettings, type TerragucciConfig } from "./config";
-import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch, type ForgeTarget } from "./forge";
+import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch } from "./forge";
 import { findRoots } from "./detect";
 import { init, type FileChange } from "./init";
 import { planGenerate, projectGenerate } from "./generate";

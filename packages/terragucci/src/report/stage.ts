@@ -50,8 +50,9 @@ import { detectShape, fullDriftPlans, plansOnPlannedEstates, type Shape } from "
 import { generateStacks, unitStack } from "../tg-stacks";
 import { dirOf, groupUnits, planWaveGroups, UnitBinaries, type PlanWave, type UnitGroup, type UnitTools } from "../unit-pins";
 import { backendStrings, DIRS_FILE, missingOutput, NO_FETCH_FROM_STATE, PHASE_ENV, previewReads, readRecord, readServed, SERVED_FILE, servedOutputs, servingWrapper, unitTexts, type PreviewBlock, type RunUpstream, type ServedUnit } from "../tg-preview";
-import { ForgeApiError } from "@intentius/chant/pr-forge";
-import { prForgeOf, type Fetch } from "../forge";
+import { jobForgeTarget } from "@intentius/chant/forge-flags";
+import { ForgeApiError, forgeClient } from "@intentius/chant/pr-forge";
+import type { Fetch } from "../forge";
 import { buildReport, planFiles, withEnvironment, type RootInput, type WaveInput } from "./build";
 import { loadHclParser } from "../rollout/parser";
 import { pinChecker } from "../publish/require";
@@ -67,7 +68,7 @@ import { terraformDriftPlan, terraformLivePlanDrift } from "@intentius/chant-lex
 import { fileAdded, opPipelineFile } from "@intentius/chant/op/schedule-overdue";
 import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, driftWatch } from "./overdue";
 import { DRIFT_ISSUE_FILE } from "../drift-agent";
-import { DRIFT_MARKER, drifted, driftCount, driftNames, renderDriftIssue, targetFromEnv, trackDrift, type DriftIssueResult } from "./drift";
+import { DRIFT_MARKER, drifted, driftCount, driftNames, renderDriftIssue, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
 import { scrubPlanText } from "./plan-text";
 import { checkPlans, configAtBase, governingPolicy, type PolicyCost, type PolicyOptions, type PolicyRunContext, type TrustedOptions } from "./policy";
@@ -2284,14 +2285,14 @@ async function finish(
   if (!drift && typeof settings.drift === "string") {
     const token = options.token ?? env.TG_TOKEN;
     const forge = options.forge ?? settings.forge;
-    const reader = targetFromEnv(forge, env, token, true);
+    const reader = jobForgeTarget({ forge, token, tokenEnv: "TG_TOKEN" }, env, { tokenOptional: true });
     const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
     if (late) {
       notices.push(late.message);
       report.overdue = [late];
     }
-    if (!token && reader && reader.forge !== "gitlab") {
-      const workflow = opPipelineFile(repo, reader.forge, driftWatch(settings.drift, reader.forge));
+    if (!token && reader && reader.kind !== "gitlab") {
+      const workflow = opPipelineFile(repo, reader.kind, driftWatch(settings.drift, reader.kind));
       const added = workflow ? fileAdded(repo, workflow) : undefined;
       leftSchedule = { cron: settings.drift, ...(workflow ? { workflow } : {}), ...(added ? { added } : {}) };
     }
@@ -2315,14 +2316,14 @@ async function finish(
     if (attributions) writeFileSync(join(dir, ATTRIBUTIONS_FILE), JSON.stringify(Object.fromEntries(attributions), null, 2) + "\n");
     else rmSync(join(dir, ATTRIBUTIONS_FILE), { force: true });
     const token = options.token ?? env.TG_TOKEN;
-    const target = targetFromEnv(options.forge, env, token);
+    const target = jobForgeTarget({ forge: options.forge, token, tokenEnv: "TG_TOKEN" }, env);
     if (!target) {
       log("no forge token or no forge in the environment, so the drift issue is left alone");
       // Its age can still be read: a public repo answers an issue search without a token.
-      const reader = token ? undefined : targetFromEnv(options.forge, env, undefined, true);
+      const reader = token ? undefined : jobForgeTarget({ forge: options.forge, tokenEnv: "TG_TOKEN" }, env, { tokenOptional: true });
       if (reader && drifted(report).roots > 0) {
         try {
-          const open = await prForgeOf(reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch)).findIssue(DRIFT_MARKER, { match: "anywhere" });
+          const open = await forgeClient(reader,options.forgeFetch ?? (globalThis.fetch as unknown as Fetch)).findIssue(DRIFT_MARKER, { match: "anywhere" });
           if (open?.created) observer.drift = { since: open.created };
         } catch (e) {
           if (!(e instanceof ForgeApiError) && !(e instanceof TypeError)) throw e;
@@ -2330,7 +2331,7 @@ async function finish(
       }
     } else {
       try {
-        issue = await trackDrift(prForgeOf(target, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch)), report, issueOptions);
+        issue = await trackDrift(forgeClient(target,options.forgeFetch ?? (globalThis.fetch as unknown as Fetch)), report, issueOptions);
         if (issue.action !== "none") log(`drift issue ${issue.action}: ${issue.issue.url}`);
       } catch (e) {
         if (!(e instanceof ForgeApiError) && !(e instanceof TypeError)) throw e;

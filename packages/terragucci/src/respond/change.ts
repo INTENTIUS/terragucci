@@ -10,7 +10,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ConfigError, type ResolvedSettings } from "../config";
 import { detectForge } from "../detect";
-import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch, type ForgeTarget } from "../forge";
+import type { ForgeTarget } from "@intentius/chant/pr-forge";
+import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, targetAt, type Fetch } from "../forge";
 import { IDENTITY } from "../reconcile";
 import { targetOfRemote } from "../rollout";
 
@@ -61,7 +62,7 @@ export function forgeOf(repo: string, settings: ResolvedSettings, env: NodeJS.Pr
   const forge = settings.forge ?? detectForge(repo)?.value;
   const at = targetOfRemote(settings.url ?? remote);
   if (!forge || !at) throw new ConfigError("cannot tell which forge this repository's origin is on; set forge (and url) in terragucci.yml");
-  return { forge, origin: at.origin, path: at.path, token: env[settings.token_env ?? DEFAULT_TOKEN_ENV[forge]] ?? "" };
+  return targetAt(forge, at.origin, at.path, env[settings.token_env ?? DEFAULT_TOKEN_ENV[forge]] ?? "");
 }
 
 /** A detached worktree at `ref`, removed by the returned function. */
@@ -87,7 +88,7 @@ export async function propose(repo: string, settings: ResolvedSettings, proposal
   }
   const env = options.env ?? process.env;
   const target = forgeOf(repo, settings, env);
-  if (!target.token) throw new ConfigError(`${settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge]} is not set; it holds the forge token`);
+  if (!target.token) throw new ConfigError(`${settings.token_env ?? DEFAULT_TOKEN_ENV[target.kind]} is not set; it holds the forge token`);
   const fetch = options.fetch ?? (globalThis.fetch as unknown as Fetch);
   let main: string | undefined;
   const out: Proposed[] = [];

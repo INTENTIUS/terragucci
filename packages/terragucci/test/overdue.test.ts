@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { opPipelineFile } from "@intentius/chant/op/schedule-overdue";
 import { checkDriftSchedule, driftRuns, driftWatch } from "../src/report/overdue";
-import type { Fetch, ForgeTarget } from "../src/forge";
+import { targetAt, type Fetch } from "../src/forge";
+import type { ForgeName } from "../src/config";
 import { OTHER_SCHEDULES } from "../src/render";
 import { renderNote } from "../src/report/views";
 import { buildReport } from "../src/report/build";
@@ -25,7 +26,7 @@ function forge(answers: [string, unknown][], status = 200): { fetch: Fetch; aske
   return { fetch, asked };
 }
 
-const target = (f: ForgeTarget["forge"]): ForgeTarget => ({ forge: f, origin: f === "github" ? "https://github.com" : "https://git.example.com", path: "acme/infra", token: "t" });
+const target = (f: ForgeName) => targetAt(f, f === "github" ? "https://github.com" : "https://git.example.com", "acme/infra", "t");
 
 describe("driftRuns", () => {
   it("github: the newest scheduled or manual run of the terragucci workflow, and whether it is off", async () => {

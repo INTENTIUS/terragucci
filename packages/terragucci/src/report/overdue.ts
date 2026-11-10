@@ -16,9 +16,9 @@
  * `TERRAGUCCI_SCHEDULE` names none of terragucci's other schedules.
  */
 import { checkOverdueOps, type OverdueOp, type ScheduledWatch } from "@intentius/chant/op/schedule-overdue";
-import type { ScheduledRuns } from "@intentius/chant/pr-forge";
+import { forgeClient, type ForgeTarget, type ScheduledRuns } from "@intentius/chant/pr-forge";
 import type { ForgeName } from "../config";
-import { prForgeOf, type Fetch, type ForgeTarget } from "../forge";
+import type { Fetch } from "../forge";
 import { OTHER_SCHEDULES, PIPELINE_PATHS, SCHEDULE_VAR } from "../render";
 import { CHANT_DRIFT_PATHS } from "../render-chant-drift";
 
@@ -29,8 +29,8 @@ export const DRIFT_OP = "tf-drift";
 export const DRIFT_SCHEDULE_FILE = "drift-schedule.json";
 
 /** Ask the forge when the drift job last ran, from `workflow` on GitHub and Forgejo (the pipeline's by default). Throws when the forge will not say. */
-export async function driftRuns(fetch: Fetch, t: ForgeTarget, workflow: string = PIPELINE_PATHS[t.forge]): Promise<ScheduledRuns> {
-  return prForgeOf(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()!, schedule: DRIFT_SCHEDULE });
+export async function driftRuns(fetch: Fetch, t: ForgeTarget, workflow: string = PIPELINE_PATHS[t.kind]): Promise<ScheduledRuns> {
+  return forgeClient(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()!, schedule: DRIFT_SCHEDULE });
 }
 
 /** GitLab: the drift job's schedule selector, every schedule whose TERRAGUCCI_SCHEDULE names none of terragucci's others. */
@@ -52,6 +52,6 @@ export function driftWatch(cron: string, forge: ForgeName): ScheduledWatch {
  * runs, an older forge) is a line in the log and no verdict.
  */
 export async function checkDriftSchedule(repo: string, cron: string, target: ForgeTarget, fetch: Fetch, now: Date, log: (line: string) => void): Promise<OverdueOp | undefined> {
-  const [found] = await checkOverdueOps({ watches: [driftWatch(cron, target.forge)], forge: prForgeOf(target, fetch), repoRoot: repo, now, log });
+  const [found] = await checkOverdueOps({ watches: [driftWatch(cron, target.kind)], forge: forgeClient(target, fetch), repoRoot: repo, now, log });
   return found;
 }

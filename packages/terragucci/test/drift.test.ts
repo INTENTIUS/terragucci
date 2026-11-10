@@ -6,9 +6,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { prForgeOf, type Fetch } from "../src/forge";
+import { jobForgeTarget } from "@intentius/chant/forge-flags";
+import { forgeClient } from "@intentius/chant/pr-forge";
+import type { Fetch } from "../src/forge";
 import { terraformDriftPlan as driftPlan, terraformLivePlanDrift as liveDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
-import { renderDriftIssue, targetFromEnv, trackDrift } from "../src/report/drift";
+import { renderDriftIssue, trackDrift } from "../src/report/drift";
 import { buildReport } from "../src/report/build";
 import { renderHtml } from "../src/report/html";
 import { renderNote } from "../src/report/views";
@@ -226,8 +228,8 @@ describe("terragucci stage tf-drift", () => {
       run: { ...RUN, stage: "tf-drift" },
       roots: [{ path: "a", plan: driftPlan(clean) }, { path: "b", error: "init failed" }],
     });
-    const target = targetFromEnv("forgejo", { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "http://f" }, "t")!;
-    expect(await trackDrift(prForgeOf(target, forgeFetch), report)).toMatchObject({ action: "left-open", issue: { number: 1 } });
+    const target = jobForgeTarget({ forge: "forgejo", token: "t" }, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "http://f" })!;
+    expect(await trackDrift(forgeClient(target, forgeFetch), report)).toMatchObject({ action: "left-open", issue: { number: 1 } });
     expect(calls).toEqual(["GET /api/v1/repos/me/infra/issues"]);
     expect(renderDriftIssue(report)).toContain("could not be planned");
   });
@@ -242,8 +244,8 @@ describe("the drift issue through chant", () => {
       return { ok: true, status: 200, json: async () => v, text: async () => JSON.stringify(v) };
     };
     for (const forge of ["github", "forgejo"] as const) {
-      const reader = targetFromEnv(forge, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "https://github.com" }, undefined, true)!;
-      expect(await prForgeOf(reader, forgeFetch).findIssue("<!-- terragucci:drift -->", { match: "anywhere" })).toMatchObject({ number: 1, created: "2026-09-30T00:00:00Z" });
+      const reader = jobForgeTarget({ forge, tokenEnv: "TG_TOKEN" }, { GITHUB_REPOSITORY: "me/infra", GITHUB_SERVER_URL: "https://github.com" }, { tokenOptional: true })!;
+      expect(await forgeClient(reader, forgeFetch).findIssue("<!-- terragucci:drift -->", { match: "anywhere" })).toMatchObject({ number: 1, created: "2026-09-30T00:00:00Z" });
     }
     expect(asked.every((a) => !Object.keys(a.headers).some((h) => h.toLowerCase() === "authorization"))).toBe(true);
   });

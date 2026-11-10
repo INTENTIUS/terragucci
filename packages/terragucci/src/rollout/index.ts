@@ -34,7 +34,8 @@ import { ATMOS_ROLLOUTS } from "../refusals";
 import { detectShape } from "../shape";
 import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, SYNTH_ROLLOUTS, type ForgeName, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } from "../detect";
-import { DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "../forge";
+import type { ForgeTarget } from "@intentius/chant/pr-forge";
+import { DEFAULT_TOKEN_ENV, targetAt, type Fetch } from "../forge";
 import type { Fetch as RegistryFetch } from "../publish/oci";
 import { parseRegistrySource } from "../publish/registry";
 import { compareSemver, parseSemver } from "../publish/semver";
@@ -208,7 +209,7 @@ function singleTarget(repo: string, settings: ResolvedSettings, options: Pick<Ro
   const forgeName = settings.forge ?? detectForge(repo)?.value;
   const at = settings.url ? targetOfRemote(settings.url) : targetOfRemote(remote);
   const token = forgeName ? (env[settings.token_env ?? DEFAULT_TOKEN_ENV[forgeName]] ?? "") : "";
-  const target: ForgeTarget | undefined = forgeName && at ? { forge: forgeName, origin: at.origin, path: at.path, token } : undefined;
+  const target: ForgeTarget | undefined = forgeName && at ? targetAt(forgeName, at.origin, at.path, token) : undefined;
   const key = at ? `${at.host}/${at.path}` : ".";
   let forge: RolloutForge;
   if (options.forge) forge = options.forge({ key, target });
@@ -229,7 +230,7 @@ function controlTarget(config: TerragucciConfig, key: string, options: Pick<Roll
   const token = env[tokenEnv] ?? "";
   if (options.mode === "apply" && !options.forge && !token) throw new ConfigError(`${tokenEnv} is not set; it holds the token for ${pk.host}`);
   const { cloneUrl, origin } = where(key, settings.url);
-  const target: ForgeTarget = { forge: forgeName, origin, path: pk.path, token };
+  const target = targetAt(forgeName, origin, pk.path, token);
   const forge = options.forge ? options.forge({ key, target }) : fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target);
   return { key, forge, forgeName, token, settings, cloneUrl };
 }

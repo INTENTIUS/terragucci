@@ -39,7 +39,7 @@ import { overdueVerdict } from "@intentius/chant/op/schedule-overdue";
 import { DRIFT_SCHEDULE_FILE, driftRuns, driftWatch } from "./report/overdue";
 
 export { DRIFT_SCHEDULE_FILE };
-import { targetFromEnv } from "./report/drift";
+import { jobForgeTarget } from "@intentius/chant/forge-flags";
 import { pullInvolvement, sameLogin } from "./involved";
 import { approvalStatus } from "./review";
 
@@ -96,7 +96,7 @@ async function driftNotice(o: PlanNoteOptions, env: NodeJS.ProcessEnv, doFetch: 
   }
   if (typeof left.cron !== "string") return undefined;
   const added = typeof left.added === "string" && !Number.isNaN(Date.parse(left.added)) ? left.added : undefined;
-  const target = targetFromEnv(o.forge, env, env.TG_TOKEN);
+  const target = jobForgeTarget({ forge: o.forge, tokenEnv: "TG_TOKEN" }, env);
   if (!target) return undefined;
   try {
     // The plan job names the drift job's workflow file (chant's drift Op's, chant issue 4622); a file written before names none.

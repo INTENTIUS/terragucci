@@ -27,10 +27,10 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { firstLine, forbiddenPaths, signersAt } from "./agent-comment";
 import { ConfigError, type ForgeName } from "./config";
-import { ForgeApiError } from "@intentius/chant/pr-forge";
-import { defaultBranch, ForgeError, openPullRequest, prForgeOf, type Fetch, type ForgeTarget } from "./forge";
+import { jobForgeTarget } from "@intentius/chant/forge-flags";
+import { ForgeApiError, forgeClient } from "@intentius/chant/pr-forge";
+import { defaultBranch, ForgeError, openPullRequest, type Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
-import { targetFromEnv } from "./report/drift";
 import type { Report } from "./report/schema";
 
 /** The drift job writes this beside its report when it keeps the drift issue: what it did to the issue, and the issue. */
@@ -162,12 +162,12 @@ export async function pushDriftChange(o: DriftPushOptions): Promise<DriftPushRes
   const sha = env.TG_SHA ?? "";
   if (!Number.isInteger(issue) || issue < 1 || !SHA.test(sha)) return { opened: false, fail: true, reason: "TG_ISSUE and TG_SHA must name the drift issue and the commit the drift job planned" };
   const token = env.TG_TOKEN ?? "";
-  const target: ForgeTarget | undefined = targetFromEnv(o.forge, env, token);
-  if (!target || target.forge === "gitlab") return { opened: false, fail: true, reason: "drift-agent push needs GITHUB_REPOSITORY, GITHUB_SERVER_URL and TG_TOKEN in the environment" };
+  const target = jobForgeTarget({ forge: o.forge, tokenEnv: "TG_TOKEN" }, env);
+  if (!target || target.kind === "gitlab") return { opened: false, fail: true, reason: "drift-agent push needs GITHUB_REPOSITORY, GITHUB_SERVER_URL and TG_TOKEN in the environment" };
   const say = async (text: string): Promise<void> => {
     try {
       // The drift issue's comments are an issue's, which GitHub and Forgejo serve at the same address as a pull request's.
-      await prForgeOf(target, doFetch).addComment(issue, `terragucci: ${text}`);
+      await forgeClient(target, doFetch).addComment(issue, `terragucci: ${text}`);
     } catch (e) {
       console.error(`terragucci: could not comment on drift issue #${issue}: ${(e as Error).message}`);
     }
@@ -212,7 +212,7 @@ export async function pushDriftChange(o: DriftPushOptions): Promise<DriftPushRes
   try {
     // The trailers name the person who started the drift run, when a person did, and the user the push token acts as: no approval of the pull request counts from either (./involved.ts).
     const starter = driftStarter(env);
-    const pushedBy = (await tokenUser({ which: "the agent's token", forge: target.forge, api: apiBase(target.forge, env), token, fetch: doFetch })).login;
+    const pushedBy = (await tokenUser({ which: "the agent's token", forge: target.kind, api: apiBase(target.kind, env), token, fetch: doFetch })).login;
     const trailers = [...(starter ? [`Requested-by: ${starter}`] : []), ...(pushedBy ? [`Pushed-by: ${pushedBy}`] : [])];
     git(["-c", "user.name=terragucci agent", "-c", "user.email=terragucci-agent@localhost", "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"], `${title}\n\nWritten by the drift agent from the drift found at ${sha.slice(0, 12)}.\n${trailers.length ? `\n${trailers.join("\n")}\n` : ""}`);
     commit = git(["rev-parse", "HEAD"]).trim();

@@ -46,7 +46,9 @@
 import { execFileSync } from "node:child_process";
 import { BRANCH, parseComment } from "./comment";
 import { ConfigError, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "./config";
-import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, prForgeOf, readsOf, type Fetch, type ForgeTarget } from "./forge";
+import { forgeClient, type ForgeTarget } from "@intentius/chant/pr-forge";
+import { forgeReadsFor } from "@intentius/chant/pr-forge-reads";
+import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch } from "./forge";
 import { PLAN_MARK } from "./plan-note-gitlab";
 import { forgeOf } from "./respond/change";
 import { clients, parseIndex } from "./estate";
@@ -446,8 +448,8 @@ const pullNumber = { type: "integer", description: "The pull request's number (t
 
 /** A pull request's state and head, from the forge, by chant's reads. */
 export async function pullHead(f: Forge, n: number): Promise<{ state: "open" | "closed" | "merged"; sha: string; branch: string; url?: string }> {
-  const p = await readsOf(f.target, f.fetch).pullRequest(n);
-  if (!p) throw new ToolError(`${f.target.forge === "gitlab" ? "merge request" : "pull request"} ${n} was not found on ${f.target.origin}`);
+  const p = await forgeReadsFor(f.target, f.fetch).pullRequest(n);
+  if (!p) throw new ToolError(`${f.target.kind === "gitlab" ? "merge request" : "pull request"} ${n} was not found on ${f.target.origin ?? f.target.host}`);
   return { state: p.state, sha: p.headSha ?? "", branch: p.head, ...(p.url ? { url: p.url } : {}) };
 }
 
@@ -542,7 +544,7 @@ export const PROPOSE_TOOLS: Tool[] = [
       needToken(f);
       const pr = await pullHead(f, n);
       if (pr.state !== "open") throw new ToolError(`pull request ${n} is ${pr.state}, so there is nothing to plan`);
-      const c = await prForgeOf(f.target, f.fetch).addComment(n, command);
+      const c = await forgeClient(f.target, f.fetch).addComment(n, command);
       return { pull_request: n, head: pr.sha, comment: command, ...(c.url ? { url: c.url } : {}), next: `plan_result with pull_request ${n} waits for the plan of ${pr.sha.slice(0, 12)}` };
     },
   },
@@ -566,7 +568,7 @@ export const PROPOSE_TOOLS: Tool[] = [
       const deadline = ctx.now() + ((a.wait as number | undefined) ?? 120) * 1000;
       for (;;) {
         const pr = await pullHead(f, n);
-        const note = await prForgeOf(f.target, f.fetch).findComment(n, PLAN_MARK);
+        const note = await forgeClient(f.target, f.fetch).findComment(n, PLAN_MARK);
         let bucket: string | undefined;
         let found: { path: string; report: Report } | undefined;
         try {
@@ -652,7 +654,7 @@ export const PROPOSE_TOOLS: Tool[] = [
 export async function forgeActor(f: Forge, env: NodeJS.ProcessEnv): Promise<string> {
   let why = "";
   try {
-    const login = (await readsOf(f.target, f.fetch).tokenUser())?.login;
+    const login = (await forgeReadsFor(f.target, f.fetch).tokenUser())?.login;
     if (login) return login;
     why = "GET /user named no user";
   } catch (e) {
@@ -711,7 +713,7 @@ export function context(o: McpOptions): Context {
       if (control) throw new ToolError("propose, request_plan, plan_result and request_from_template work in a project's own repo, not in a control repo");
       const settings = resolveRepo(o.config);
       const target = forgeOf(o.cwd, settings, env);
-      return { target, fetch: o.forgeFetch ?? (globalThis.fetch as unknown as Fetch), settings, tokenEnv: settings.token_env ?? DEFAULT_TOKEN_ENV[target.forge] };
+      return { target, fetch: o.forgeFetch ?? (globalThis.fetch as unknown as Fetch), settings, tokenEnv: settings.token_env ?? DEFAULT_TOKEN_ENV[target.kind] };
     },
     sleep: o.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     now: o.now ?? Date.now,
