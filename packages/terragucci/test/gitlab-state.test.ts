@@ -3,7 +3,6 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { writeLedger } from "../src/apply";
-import { stateObject, stateVersion } from "../src/backend";
 import { EXPORT_LEDGER, exportState } from "../src/export";
 import type { Fetch } from "../src/forge";
 import type { GitLabFetch } from "@intentius/chant-lexicon-terraform/state/gitlab";
@@ -65,20 +64,7 @@ const ENV = { TF_HTTP_PASSWORD: "job-token" };
 /** A root initialised with an http backend, as `init` leaves `.terraform/terraform.tfstate`. */
 const initialised = (config: Record<string, unknown>): string => write(tmp(), { ".terraform/terraform.tfstate": JSON.stringify({ version: 3, backend: { type: "http", config, hash: 1 } }) });
 
-describe("GitLab-managed state", () => {
-  it("is where a root's state is, and its version is the serial GitLab holds", async () => {
-    const g = gitlab();
-    const dir = initialised(CONFIG);
-    expect(stateObject(dir, ENV)).toMatchObject({ backend: "http", location: ADDRESS });
-    expect(await stateVersion(dir, ENV, g.fetch)).toEqual({ backend: "http", location: ADDRESS, version_id: "2", versioning: "on" });
-    // The address from TF_HTTP_ADDRESS, which init does not record.
-    expect(await stateVersion(initialised({}), { ...ENV, TF_HTTP_ADDRESS: ADDRESS, TF_HTTP_USERNAME: "gitlab-ci-token" }, g.fetch)).toMatchObject({ version_id: "2", versioning: "on" });
-    expect(await stateVersion(initialised({ ...CONFIG, address: `${API}/none` }), ENV, g.fetch)).toMatchObject({ versioning: "unknown", note: "GitLab holds no state at this address" });
-    expect(await stateVersion(dir, { TF_HTTP_PASSWORD: "wrong" }, g.fetch)).toMatchObject({ versioning: "unknown", note: expect.stringContaining("401") });
-    // An http backend that is not GitLab's keeps no versions, from the block or the variable.
-    expect(await stateVersion(initialised({}), { TF_HTTP_ADDRESS: "https://state.example.com/net" })).toMatchObject({ versioning: "off" });
-  });
-
+describe("GitLab-managed state's address", () => {
   it("lines up a read with the state it names by address", () => {
     const at = (attrs: Record<string, string>) => stateAddress("http", (n) => attrs[n], "");
     expect(at({ address: ADDRESS })).toEqual(at({ address: `${ADDRESS}/`, username: "x" }));

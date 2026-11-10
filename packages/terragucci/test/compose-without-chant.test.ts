@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { compositionFor, specWavesWithRun } from "../src/compose";
 import { MIGRATE_SOURCE_LOCK, takeLocks } from "../src/migrate";
-import type { StateObject } from "../src/backend";
+import type { StateObject } from "@intentius/chant-lexicon-terraform/state";
 import { tmp, write } from "./helpers";
 
 describe("waves.compose on chant's composed run", () => {

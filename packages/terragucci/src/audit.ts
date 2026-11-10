@@ -32,7 +32,8 @@ import { gateLedgerLinesFromLog } from "@intentius/chant/lifecycle/gate-audit";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { listStateVersions } from "./backend";
+import { listStateVersions } from "@intentius/chant-lexicon-terraform/state";
+import { STORE_WORDS } from "./report/object-store";
 import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, resolveRepo, type ForgeName, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { clients, DEFAULT_LINK_SECONDS, named, parseIndex, sameBucket } from "./estate";
 import { DEFAULT_TOKEN_ENV } from "./forge";
@@ -343,7 +344,7 @@ export async function audit(cwd: string, config: TerragucciConfig, options: Audi
       const recorded = await readStates(p, client);
       const migrations = [...approvals, ...before.entries].filter((e) => e.project === p.project && e.kind === "migration");
       if (recorded || migrations.length > 0) {
-        const u = await unrecordedWrites({ project: p.project, ...(recorded ? { states: recorded } : {}), migrations, list: (location) => listStateVersions(location, env, options.fetch), writers: p.writers, known, now });
+        const u = await unrecordedWrites({ project: p.project, ...(recorded ? { states: recorded } : {}), migrations, list: (location) => listStateVersions(location, env, { ...(options.fetch ? { fetch: options.fetch } : {}), words: STORE_WORDS }), writers: p.writers, known, now });
         derived.push(...u.entries);
         state.states = u.check;
       }

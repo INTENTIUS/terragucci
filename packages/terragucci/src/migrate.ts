@@ -16,7 +16,7 @@
  *
  * Planning a migration (planMigration) reads each affected root's state with
  * `state pull` and its backend version id from the object's metadata
- * (./backend.ts), keeps only their digests and version ids, builds each
+ * (the terraform lexicon's state reads), keeps only their digests and version ids, builds each
  * root's new state in the job's temporary directory, and plans every
  * affected root against its new state, through a local-backend override
  * file and a data dir of its own. Every root must plan with no resource
@@ -72,7 +72,8 @@ import { SourceLockedError, StateLockedError, takeLocksWithSources } from "@inte
 import { fetchedLedgerFile, LEDGER_READ_REF, movedMembers, readLedger, type GateLedger } from "./apply";
 import { approvalRule } from "./approval";
 import { binaryEnv, terragruntExec } from "./binary-env";
-import { isStored, READS_VERSIONS, stateLocation, stateObject, stateStore, type StateObject, type StateStore } from "./backend";
+import { initialisedBackend, isRefused, isStored, keepsHistory, readableStateObject, recordedAddress, stateLocation, stateStore as chantStateStore, type InitialisedBackend, type StateObject as ChantStateObject, type StateStore, type StoredState } from "@intentius/chant-lexicon-terraform/state";
+import { STORE_WORDS } from "./report/object-store";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "@intentius/chant/object-store";
@@ -739,13 +740,33 @@ function jsonCloud(doc: unknown): boolean {
  * own lock: one whose backend keeps no versions (pg, kubernetes, consul, an
  * http backend other than GitLab's).
  */
-export const isPulled = (o: StateObject): boolean => "unsupported" in o && (o as { versions?: { versioning: string } }).versions?.versioning === "off" && PULLED_BACKENDS.includes(o.backend);
+export const isPulled = (o: StateObject): boolean => isRefused(o) && o.refused === "backend" && o.keepsNone === true && PULLED_BACKENDS.includes(o.backend);
+
+/**
+ * Where a migration finds a root's state: the terraform lexicon's read of the
+ * backend init recorded (`backend` stands in for it). A backend it reads no
+ * state of carries the address its configuration names and whether it keeps
+ * no history, which a pulled backend's migration needs.
+ */
+export type StateObject = ChantStateObject & { location?: string; keepsNone?: boolean };
+
+/** A root's state for a migration, read as {@link StateObject} says. */
+export function stateObject(dir: string, env: NodeJS.ProcessEnv = process.env, backend: InitialisedBackend | undefined = initialisedBackend(dir, env)): StateObject {
+  const o = readableStateObject(dir, env, backend, STORE_WORDS);
+  if (!isRefused(o) || !backend) return o;
+  const location = recordedAddress(backend);
+  return { ...o, ...(location ? { location } : {}), ...(o.refused === "backend" && keepsHistory(backend, env) === false ? { keepsNone: true } : {}) };
+}
+
+/** The store a bucket's or container's state is in. Such a store reads nothing relative to a root, so it is opened with none. */
+const stateStore = (o: StoredState, fetchFn?: S3Fetch): StateStore => chantStateStore(o, "", fetchFn);
 
 /** Which backends a migration writes to, or why not; with `pulled`, a backend the binary reads and writes for it is one. */
 export function backendRefusal(root: string, o: StateObject, pulled = false): string | undefined {
   if (pulled && isPulled(o)) return undefined;
-  if ("unsupported" in o) return `${root}: ${o.unsupported.replace(READS_VERSIONS, pulled ? "migrates state in s3, gcs, azurerm and local backends, and through the binary in pg, kubernetes, consul and http backends" : "migrates state in s3, gcs, azurerm and local backends")}`;
-  if ("gitlab" in o) return `${root}: its state is GitLab-managed (${o.location}), and terragucci migrates state in s3, gcs, azurerm and local backends`;
+  const migrates = pulled ? "migrates state in s3, gcs, azurerm and local backends, and through the binary in pg, kubernetes, consul and http backends" : "migrates state in s3, gcs, azurerm and local backends";
+  if (isRefused(o)) return `${root}: ${o.refused === "backend" ? `its backend is ${o.backend}, and terragucci ${migrates}` : o.reason}`;
+  if (o.backend === "http") return `${root}: its state is GitLab-managed (${stateLocation(o)}), and terragucci migrates state in s3, gcs, azurerm and local backends`;
   if (o.backend === "s3" && !(o as { lockfile: boolean }).lockfile) return `${root}: its s3 backend takes no lock file (use_lockfile = true), so a migration could not hold its lock`;
   return undefined;
 }
@@ -824,7 +845,7 @@ export async function pullState(exec: BinaryExec, binary: string, root: string, 
 /** The version id the backend holds for a state object now, when it keeps versions; with `pin`, an azurerm backend that keeps snapshots gets one. */
 export async function versionOf(o: StateObject, fetchFn?: S3Fetch, pin = false): Promise<string | undefined> {
   if (!isStored(o)) return undefined;
-  return (await (await stateStore(o, fetchFn)).version(pin)).versionId;
+  return (await stateStore(o, fetchFn).version(pin)).versionId;
 }
 
 /** Initialise a root against the backend its code names. `-reconfigure`: a data dir another backend left is not migrated from. */
@@ -991,7 +1012,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
       if (locationOf(o) !== r.location) throw new ConfigError(`migration ${m.name}: ${r.root}'s state is at ${locationOf(o)}, and the revert restores ${r.location}`);
       const now = before.get(r.root) ?? null;
       // Still at the version the migration left: an azurerm state named by a snapshot is compared with it.
-      const still = r.from_version_id === null ? versions.get(r.root) === undefined : isStored(o) ? await (await stateStore(o, options.fetch)).isAt(r.from_version_id) : false;
+      const still = r.from_version_id === null ? versions.get(r.root) === undefined : isStored(o) ? await stateStore(o, options.fetch).isAt(r.from_version_id) : false;
       if (!still) {
         throw new ConfigError(`migration ${m.name}: ${r.root}'s state is at version ${versions.get(r.root) ?? "none"}, and ${m.revert} left ${r.from_version_id}; it moved since, so putting the older version back would undo that change too`);
       }
@@ -1002,7 +1023,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
         state = emptyState(lineage, serial, now?.terraform_version);
       } else {
         if (!isStored(o)) throw new ConfigError(`migration ${m.name}: ${r.root}'s backend keeps no versions to put back`);
-        const text = await (await stateStore(o, options.fetch)).readVersion(r.version_id);
+        const text = await stateStore(o, options.fetch).readVersion(r.version_id);
         if (text === undefined) throw new ConfigError(`migration ${m.name}: ${r.location} has no version ${r.version_id}; a lifecycle rule may have expired it`);
         const old = JSON.parse(text) as StateFile;
         state = { ...old, resources: Array.isArray(old.resources) ? old.resources : [], lineage, serial };
@@ -1053,7 +1074,7 @@ export async function planMigration(repo: string, m: Migration, options: Migrate
 }
 
 /** Where a state is, as the record names it: a pulled backend's address (./state-address.ts), when its configuration gives one. */
-export const locationOf = (o: StateObject): string | undefined => stateLocation(o) ?? (isPulled(o) ? (o as { location?: string }).location : undefined);
+export const locationOf = (o: StateObject): string | undefined => stateLocation(o) ?? (isPulled(o) ? o.location : undefined);
 
 /**
  * Plan a root against a state file: an override file switches its backend
@@ -1111,7 +1132,7 @@ export async function takeLocks(files: ReadonlyMap<string, { object: StateObject
   for (const { root, object } of objects) {
     if (!isStored(object)) continue;
     try {
-      stores.push({ root, object, store: await stateStore(object, fetchFn) });
+      stores.push({ root, object, store: stateStore(object, fetchFn) });
     } catch (e) {
       throw new ConfigError(`${root}: the lock ${stateLocation(object)} could not be taken: ${(e as Error).message}`);
     }
