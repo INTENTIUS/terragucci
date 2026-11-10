@@ -70,10 +70,8 @@ import { UNLOCK_LEDGER, UNLOCK_OP } from "./unlock";
 import { ACTION_LEDGER, ACTION_OP, approveActionArgs } from "./action";
 import { ephemeralOp } from "./ephemeral";
 import { PR_ENV_GATE } from "@intentius/chant/components/pr-environment";
-import { chantCommand, installedChant } from "./chant-bin";
+import { chantCommand } from "@intentius/chant/chant-install";
 import type { GateRunLocator } from "@intentius/chant/gate-resume-run";
-
-export { chantCommand, installedChant };
 
 export interface WaitingWave {
   wave: number;
@@ -310,7 +308,7 @@ function runChant(repo: string, args: string[], command: string, o: { chant?: st
   const env = o.env ?? process.env;
   // terragucci reads who may override from policy.override at base, so chant does not look for .chant/overriders (chant#3824).
   const overriders = args[1] === OVERRIDE_OP ? { CHANT_OVERRIDERS_FROM: "policy.override in terragucci.yml" } : {};
-  const r = spawnSync(chantCommand(repo, o), args, { cwd: repo, stdio: "inherit", env: { ...env, ...overriders, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+  const r = spawnSync(chantCommand({ ...(o.chant ? { chant: o.chant } : {}), from: [repo] }), args, { cwd: repo, stdio: "inherit", env: { ...env, ...overriders, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
   if (r.error) throw new ConfigError(`could not record the approval (${r.error.message}): the @intentius/chant package that @intentius/terragucci installs with itself is missing; install terragucci again with npm i -D @intentius/terragucci`);
   return r.status ?? 1;
 }

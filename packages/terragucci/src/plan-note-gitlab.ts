@@ -31,6 +31,7 @@
  * would otherwise read as the mr-apply job's to pr-merge.
  */
 import { terragucciStatus } from "./ci-words";
+import { fitNote, noteLimit } from "@intentius/chant/plan-summary";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import type { ForgeReads, ForgeUser, PullRequestDetail, PullRequestNote, RunJob, WorkflowRun } from "@intentius/chant/pr-forge-reads";
 
@@ -45,8 +46,6 @@ const PLAN_CONTEXT = (): string => terragucciStatus("plan");
 export const PLAN_MARK = "<!-- terragucci:plan";
 /** The last line of a note the comments job posted: the plan job it came from. */
 export const planJobMarker = (job: number): string => `<!-- terragucci:plan-job=${job} -->`;
-/** GitLab keeps notes up to a million characters; a longer note is cut. */
-const MAX_NOTE = 900_000;
 /** GitLab keeps a status description to 255 characters. */
 const MAX_DESCRIPTION = 255;
 const SHA = /^[0-9a-f]{40}$/;
@@ -105,8 +104,11 @@ export function planNoteBody(file: string, job: number): string {
   const lines = file.replace(/\r\n/g, "\n").split("\n");
   const roots = ROOTS_LINE.exec(lines[0] ?? "")?.[1];
   const rest = (roots !== undefined ? lines.slice(1) : lines).join("\n").replace(FORGED, "<!-- ").trimEnd();
-  const body = rest.length > MAX_NOTE ? `${rest.slice(0, MAX_NOTE)}\n\nThe note was cut at ${MAX_NOTE} characters; the job's report has all of it.` : rest;
-  return `${PLAN_MARK} roots=${roots ?? ""} -->\n${body}\n\n${planJobMarker(job)}`;
+  const markerLine = `${PLAN_MARK} roots=${roots ?? ""} -->\n`;
+  const jobLine = `\n\n${planJobMarker(job)}`;
+  // chant's cut (chant issue 4800): GitLab's note limit, less the first and last lines.
+  const body = fitNote(rest, { limit: noteLimit("gitlab") - markerLine.length - jobLine.length, tail: "\n\nThe note was cut at {cut} characters; the job's report has all of it." });
+  return `${markerLine}${body}${jobLine}`;
 }
 
 /** The status from the plan job's file: a state from a fixed set and a one-line description. */
