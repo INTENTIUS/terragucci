@@ -1,0 +1,85 @@
+name: terragucci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: '${{ github.ref != ''refs/heads/main'' }}'
+
+jobs:
+  static-checks:
+    name: static
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.25.5'
+          cache-dependency-path: terraform-provider-terragucci/go.sum
+      - name: Install
+        run: npm ci
+      - name: Check
+        run: just check-unit
+      - name: Lint docs
+        run: just lint-docs
+  test:
+    name: test (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - 1
+          - 2
+          - 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install just
+        run: |
+          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
+          tar -xzf /tmp/just.tar.gz -C /tmp just
+          sudo mv /tmp/just /usr/local/bin/just
+          just --version
+      - name: Install OpenTofu
+        run: |
+          { [ -x "/opt/chant/tofu-1.13.1/tofu" ] || (set -e; a="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && case "$a" in (amd64) w=amd64 ;; (arm64) w=arm64 ;; (*) echo "tofu 1.13.1: chant fetches it for amd64 and arm64, not $a" >&2; exit 1 ;; esac && f="tofu_1.13.1_linux_$w.tar.gz" && t="$(mktemp -d)" && curl -fsSLo "$t/$f" "https://github.com/opentofu/opentofu/releases/download/v1.13.1/$f" && case "$a" in (amd64) want=378ada19d4bc70c43732004e8159be771b23b9a5afdf059e5f8a2b3fa2c70a69 ;; (arm64) want=9c1ef375aa1852db0b2888aa921b640c71f8140d4682aa4fec99378a64fa7dc3 ;; (*) want= ;; esac && curl -fsSLo "$t/sums" "https://github.com/opentofu/opentofu/releases/download/v1.13.1/tofu_1.13.1_SHA256SUMS" && line="$(sed -n "s#^\([0-9a-f]\{64\}\)  *[*.]*/*$f\$#\1#p" "$t/sums")" && { [ -n "$line" ] || { echo "tofu 1.13.1: $f is not in tofu_1.13.1_SHA256SUMS" >&2; exit 1; }; } && { [ -z "$want" ] || [ "$line" = "$want" ] || { echo "tofu 1.13.1: tofu_1.13.1_SHA256SUMS lists $line for $f; chant records $want" >&2; exit 1; }; } && want="$line" && echo "$want  $t/$f" | sha256sum -c - >/dev/null && sudo mkdir -p "/opt/chant/tofu-1.13.1" && tar -xzf "$t/$f" -C "$t" "tofu" && sudo install -m 0755 "$t/tofu" "/opt/chant/tofu-1.13.1/tofu"); } && sudo ln -sf "/opt/chant/tofu-1.13.1/tofu" /usr/local/bin/tofu
+          tofu version
+      - name: Install Terragrunt
+        run: |
+          [ -x "/opt/chant/terragrunt-1.2.0/terragrunt" ] || (set -e; a="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && case "$a" in (amd64) w=amd64 ;; (arm64) w=arm64 ;; (*) echo "terragrunt 1.2.0: chant fetches it for amd64 and arm64, not $a" >&2; exit 1 ;; esac && f="terragrunt_linux_$w" && t="$(mktemp -d)" && curl -fsSLo "$t/$f" "https://github.com/gruntwork-io/terragrunt/releases/download/v1.2.0/$f" && case "$a" in (amd64) want=45b6df8a8494c8cfe34b4abf919e894709557163e4d3b5704d11083002ab787a ;; (arm64) want=b069ce4310572bc46ee6f057057acc4bc6a9077ef8687e157a64b0551290a371 ;; (*) want= ;; esac && curl -fsSLo "$t/sums" "https://github.com/gruntwork-io/terragrunt/releases/download/v1.2.0/SHA256SUMS" && line="$(sed -n "s#^\([0-9a-f]\{64\}\)  *[*.]*/*$f\$#\1#p" "$t/sums")" && { [ -n "$line" ] || { echo "terragrunt 1.2.0: $f is not in SHA256SUMS" >&2; exit 1; }; } && { [ -z "$want" ] || [ "$line" = "$want" ] || { echo "terragrunt 1.2.0: SHA256SUMS lists $line for $f; chant records $want" >&2; exit 1; }; } && want="$line" && echo "$want  $t/$f" | sha256sum -c - >/dev/null && sudo mkdir -p "/opt/chant/terragrunt-1.2.0" && sudo install -m 0755 "$t/$f" "/opt/chant/terragrunt-1.2.0/terragrunt")
+          /opt/chant/terragrunt-1.2.0/terragrunt --version
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: just test-shard ${{ matrix.shard }} 3
+        env:
+          TERRAGUCCI_TEST_TERRAGRUNT: /opt/chant/terragrunt-1.2.0/terragrunt
