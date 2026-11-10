@@ -55,7 +55,7 @@ import { delimiter, join } from "node:path";
 import { resumeGateRun, type GateRunLocator } from "@intentius/chant/gate-resume-run";
 import { planGateResumes, type GateResumeCandidate } from "@intentius/chant/op/gate-resume-plan";
 import type { PendingGateRecord, PointQuestionState } from "@intentius/chant/point-decision";
-import { chantCommand } from "./chant-bin";
+import { chantCommand } from "@intentius/chant/chant-install";
 import { MIGRATE_OP } from "./migrate";
 import { APPLY_OP, runOf, type GateLedger, type PendingRecord } from "./apply";
 import { forgeLiveness, type Liveness } from "./apply-rows";
@@ -241,7 +241,7 @@ export async function resumeWithChant(repo: string, env: NodeJS.ProcessEnv, o: {
 /** Run the chant bin terragucci installs, without blocking: its output piped back, or inherited by the job's log. */
 function runChant(repo: string, args: string[], env: NodeJS.ProcessEnv, chant: string | undefined, stdio: "pipe" | "inherit"): Promise<{ status: number | null; stdout: string; stderr: string; error?: Error }> {
   return new Promise((done) => {
-    const child = spawn(chantCommand(repo, chant ? { chant } : {}), args, { cwd: repo, stdio: ["ignore", stdio, stdio], env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
+    const child = spawn(chantCommand({ ...(chant ? { chant } : {}), from: [repo] }), args, { cwd: repo, stdio: ["ignore", stdio, stdio], env: { ...env, PATH: [join(repo, "node_modules", ".bin"), env.PATH ?? ""].join(delimiter) } });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (d) => (stdout += d));

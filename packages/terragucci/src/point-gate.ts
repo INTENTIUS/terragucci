@@ -24,7 +24,7 @@
 import { spawnSync } from "node:child_process";
 import { chantPointQuestions, type PointQuestionState } from "@intentius/chant/point-decision";
 import type { GateLedger, PendingRecord } from "./apply";
-import { chantCommand } from "./chant-bin";
+import { chantCommand } from "@intentius/chant/chant-install";
 
 /** The line a person runs to answer the question a wave waits on. */
 export const answerLine = (id: string): string => `chant workspace points answer ${id} --answer true --by <name>`;
@@ -47,5 +47,5 @@ export async function pointQuestions(repo: string, ledger: GateLedger, o: { comm
   if (![...newest.values()].some((p) => p.answer)) return undefined;
   // chant reads the questions from the local chant/lifecycle: bring it to origin's tip, as chant's own reads do. A local branch ahead of origin is left as it is.
   spawnSync("git", ["fetch", "-q", "origin", "chant/lifecycle:chant/lifecycle"], { cwd: repo, encoding: "utf-8" });
-  return chantPointQuestions({ command: o.command ?? [chantCommand(repo)], cwd: repo });
+  return chantPointQuestions({ command: o.command ?? [chantCommand({ from: [repo] })], cwd: repo });
 }

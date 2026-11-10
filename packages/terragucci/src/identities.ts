@@ -71,7 +71,7 @@ import {
 } from "@intentius/chant/forge-check";
 import type { ForgeTarget as ChantForgeTarget } from "@intentius/chant/pr-forge";
 import { productWords } from "./ci-words";
-import { apiBase, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
+import { chantTargetOf, DEFAULT_TOKEN_ENV, type Fetch, type ForgeTarget } from "./forge";
 import { detectShape } from "./shape";
 import { detectTerragrunt, walkUnits } from "./terragrunt";
 
@@ -674,7 +674,7 @@ export async function forgeCheck(path: string, file: string, flags: ForgeCheckFl
   const forge = first.forge;
   const tokenSource = settings.token_env ?? DEFAULT_TOKEN_ENV[forge];
   const own: ForgeTarget = { forge, origin: originOf(settings, first.repository.host), path: first.repository.path, token: deps.env[tokenSource] ?? "" };
-  const target: ChantForgeTarget = { kind: forge, apiBase: apiBase(own), repo: own.path, host: first.repository.host, token: own.token, tokenSource, ...(forge === "gitlab" ? { tokenHeader: "PRIVATE-TOKEN" as const } : {}) };
+  const target: ChantForgeTarget = { kind: forge, apiBase: chantTargetOf(own).apiBase, repo: own.path, host: first.repository.host, token: own.token, tokenSource, ...(forge === "gitlab" ? { tokenHeader: "PRIVATE-TOKEN" as const } : {}) };
   // The subjects hold the live default branch and Forgejo's ids, so the repository is read before the contract is built.
   const repo = await readRepository(readOnly(deps.fetch, "terragucci forge check"), target);
   const live = repo.ok ? repo.value : {};
