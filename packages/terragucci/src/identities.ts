@@ -62,6 +62,7 @@ import { CLOUDS, type Cloud, type CloudIdentityDeclaration } from "@intentius/ch
 import {
   describeForgeCheck as chantDescribeForgeCheck,
   forgeCheck as chantForgeCheck,
+  pipelineContract,
   readOnly,
   readRepository,
   type CheckRow,
@@ -640,13 +641,17 @@ export function forgeCheckContract(c: Identities, s: ProjectSettings): ForgeChec
     } as ForgeCheckJob;
   });
   const r = c.repository;
-  return {
+  // chant's contract with terragucci's jobs as its own (chant#4966): every job is terragucci's, so there are no pipelines,
+  // and no required status yet (the plan status and the ref gate's come with chant's plan jobs, terragucci issues 1411 and 1413).
+  return pipelineContract({
     forge: c.forge,
     repository: { host: r.host, path: r.path, defaultBranch: r.default_branch, ...(r.owner_id ? { ownerId: r.owner_id } : {}), ...(r.repo_id ? { repoId: r.repo_id } : {}) },
+    pipelines: [],
     jobs,
     protectedBranches: c.forge === "github" ? [] : unique([r.default_branch, ...Object.keys(s.apply?.branches ?? {})]),
+    requiredStatuses: [],
     ...(c.forge === "gitlab" ? { gitlabVariables: applyVariables(s) } : {}),
-  };
+  });
 }
 
 /** The forge's address: the config's url, or https://<host>. */
