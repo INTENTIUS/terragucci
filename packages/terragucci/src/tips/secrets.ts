@@ -29,8 +29,7 @@
  */
 import { join } from "node:path";
 import { blockBody, liveBody } from "../detect";
-import { knownLiveSetup, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
-import { resolvedRecordStore } from "../live-setup";
+import { knownLiveSetup, liveRecordStore, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
 import { isObject } from "../report/redact";
 
 /** One secret in a root's state: the resource, the attribute, and what could keep it out. */
@@ -218,7 +217,7 @@ export function liveEstate(dir: string): { estate: string; record_store: string;
   if (!s || !estate) return undefined;
   // choudoufu's resolved store (choudoufu#2293) when this job read it, else the live block's record_store.
   const derived = knownLiveSetup(dir)?.store;
-  const store = resolvedRecordStore(dir, estate);
+  const store = liveRecordStore(dir, estate);
   const where = derived?.kind === "gcs" ? `gs://${derived.bucket}/${derived.prefix}` : !store ? "local" : store.kind === "s3" ? `s3://${store.bucket}/${store.prefix}` : store.kind === "local" ? "local" : store.name;
   return { estate, record_store: where, secrets: s.setting };
 }
