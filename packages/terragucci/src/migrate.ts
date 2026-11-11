@@ -44,6 +44,7 @@ import { dirname, join } from "node:path";
 import { computePlanDigest, samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { runStateMigration, writeStateMigration, type MigrationRootPlan, type MigrationSource, type StateMigrationEngine, type StateMigrationResult } from "@intentius/chant/state-migration";
 import { parseYAML } from "@intentius/chant/yaml";
+import { actorOf } from "@intentius/chant/actor";
 import { lastLines, type BinaryExec } from "@intentius/chant-lexicon-terraform/state";
 import { StateOpError } from "@intentius/chant-lexicon-terraform/state-ops";
 import { backendMoveProblems, MigrationError, planTerraformMigration, PULLED_BACKENDS, type BackendMove, type Move, type Restore, type TerraformMigrationPlan } from "@intentius/chant-lexicon-terraform/state-migration";
@@ -934,7 +935,7 @@ async function runGated(
 ): Promise<{ code: number; record: MigrationRecord; command?: string }> {
   const { log, env, label } = o;
   const record = plan.record;
-  const by = env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || git(repo, ["config", "user.name"]).stdout.trim() || env.USER || "unknown";
+  const by = actorOf({ env, repo });
   const sealed = o.rule.mode === "sealed";
   // The plan is the request's attachment, which chant writes to the local branch before it fetches.
   syncLocalLedger(repo);

@@ -38,6 +38,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { actorOf } from "@intentius/chant/actor";
 import { readLedger, type PendingRecord } from "./apply";
 import { approvalRule, checkoutApproval } from "./approval";
 import { binaryEnv } from "./binary-env";
@@ -140,14 +141,9 @@ const runBinary = (binary: string, args: string[], dir: string, env: NodeJS.Proc
 
 const tail = (s: string): string => s.trim().split("\n").slice(-10).join("\n");
 
-function gitOut(repo: string, args: string[]): string {
-  const p = spawnSync("git", args, { cwd: repo, encoding: "utf-8" });
-  return p.status === 0 ? p.stdout.trim() : "";
-}
-
 /** Who asks: the CI actor, else the git user, else the login. */
 export function requesterOf(repo: string, env: NodeJS.ProcessEnv, actor?: string): string {
-  return actor || env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
+  return actor || actorOf({ env, repo });
 }
 
 /** The root's directory, checked to be a directory of this repository. */
@@ -339,7 +335,7 @@ export async function approveActionArgs(repo: string, o: ApproveActionOptions): 
   }
   const request = (asked as PendingRecord & { request?: { by?: unknown } }).request;
   const requester = typeof request?.by === "string" ? request.by : undefined;
-  const approver = o.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "";
+  const approver = o.actor || actorOf({ env, repo, forge: false, fallback: "" });
   if (requester && approver && samePerson(requester, approver)) {
     log(`not approved: ${approver} asked for ${asked.gate.slice(root.length + 1)} on ${root}, and the rule of a gated request is that the requester's own approval never counts; someone else approves it`);
     return { code: 1 };

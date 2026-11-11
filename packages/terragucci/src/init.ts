@@ -6,8 +6,9 @@
  * an existing config. Run twice, the second run changes nothing.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { planFile, planRemoval, staleGeneratedFiles, writePlannedFiles, type PlannedFile } from "@intentius/chant/planned-files";
 import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { CHANT_CONFIG, chantConfigText, chantConfigWrittenByTerragucci } from "./chant-config";
@@ -144,13 +145,6 @@ export interface TerramateFound {
   skipped: string[];
 }
 
-export interface FileChange {
-  path: string;
-  /** `removed`: a file an earlier init wrote, which the config no longer asks for. */
-  status: "created" | "updated" | "unchanged" | "removed";
-  content: string;
-}
-
 export interface InitResult {
   roots: string[];
   /** Why each root was found. */
@@ -170,7 +164,7 @@ export interface InitResult {
   forge: { value: ForgeName; reason: string };
   /** Under choudoufu: each live root's record store and estate, and its bucket check. */
   records: LiveRecords[];
-  files: FileChange[];
+  files: PlannedFile[];
   /** Settings the pipeline does not act on yet, with why. */
   notes: string[];
   configNote: string;
@@ -183,11 +177,6 @@ export interface RootVersion {
   tool?: string;
   version: string;
   source: string;
-}
-
-function plan(path: string, content: string): FileChange {
-  if (!existsSync(path)) return { path, status: "created", content };
-  return { path, status: readFileSync(path, "utf-8") === content ? "unchanged" : "updated", content };
 }
 
 /** `own_jobs`: the map itself, or the map the repo's YAML file at that path holds. */
@@ -453,18 +442,18 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const resumeRel = forgeChoice.value === "gitlab" ? undefined : RESUME_PATHS[forgeChoice.value];
   const agentRel = CHANT_AGENT_PATHS[forgeChoice.value];
   const driftRel = CHANT_DRIFT_PATHS[forgeChoice.value];
-  const files: FileChange[] = [plan(pipelinePath, pipeline.content)];
+  const files: PlannedFile[] = [planFile(pipelinePath, pipeline.content)];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
     // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.
     if ((f.path === rolloutRel || f.path === requestRel || f.path === reviewRel || f.path === ephemeralRel || f.path === resumeRel || f.path === agentRel || f.path === driftRel) && existsSync(path) && !options.force && !readFileSync(path, "utf-8").startsWith(MARKER)) throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside or pass --force`);
-    files.push(plan(path, f.content));
+    files.push(planFile(path, f.content));
   }
   // chant.config.ts: every root as a terraform.roots entry, so chant's step names it (terragucci#1303). A file terragucci did not write stays.
   if (plainRoots) {
     const configFile = join(repo, CHANT_CONFIG);
     const mine = !existsSync(configFile) || chantConfigWrittenByTerragucci(readFileSync(configFile, "utf-8"));
-    if (mine) files.push(plan(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined)));
+    if (mine) files.push(planFile(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined)));
     else notes.push(`${CHANT_CONFIG} is the repo's own, so terragucci left it; a wave applies through chant's terraform-apply step once it names every root under terraform.roots`);
   }
   // terragucci.components.json at the repo's root: the roots as chant components by wave, under the jobs that apply them, for behold.
@@ -474,15 +463,19 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     throw new ConfigError(`${COMPONENTS_PATH} exists and terragucci did not write it; move it aside or pass --force`);
   }
   // A rollout, review, ephemeral or resume workflow an earlier init wrote goes when the config stops asking for it.
-  for (const rel of [rolloutRel, requestRel, reviewRel, ephemeralRel, resumeRel, agentRel, driftRel]) {
-    if (!rel || (pipeline.extra ?? []).some((f) => f.path === rel) || options.settings) continue;
-    const path = join(repo, rel);
-    if (existsSync(path) && readFileSync(path, "utf-8").startsWith(MARKER)) files.push({ path, status: "removed", content: "" });
+  if (!options.settings) {
+    const stale = staleGeneratedFiles({
+      root: repo,
+      files: [rolloutRel, requestRel, reviewRel, ephemeralRel, resumeRel, agentRel, driftRel].filter((r): r is string => r !== undefined),
+      header: (text) => text.startsWith(MARKER),
+      rendered: (pipeline.extra ?? []).map((f) => f.path),
+    });
+    for (const rel of stale) files.push(planRemoval(join(repo, rel))!);
   }
   // On GitLab the repo's own .gitlab-ci.yml includes the pipeline; its jobs stay.
   if (forgeChoice.value === "gitlab") {
     const root = join(repo, GL_ROOT_FILE);
-    files.push(plan(root, gitlabCi(existsSync(root) ? readFileSync(root, "utf-8") : undefined, pipeline.content)));
+    files.push(planFile(root, gitlabCi(existsSync(root) ? readFileSync(root, "utf-8") : undefined, pipeline.content)));
   }
 
   // Dashboards and alert rules, next to the pipeline, when terragucci.yml asks for them.
@@ -493,7 +486,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       if (existsSync(path) && !options.force && !writtenByTerragucci(f.path, readFileSync(path, "utf-8"))) {
         throw new ConfigError(`${f.path} exists and terragucci did not write it; move it aside, set dashboards.dir, or pass --force`);
       }
-      files.push(plan(path, f.content));
+      files.push(planFile(path, f.content));
     }
   }
 
@@ -506,7 +499,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ? withPreCommitHook(chantHooks, basename(declFile), declSoFar ?? `${JSON.stringify({ name: workspaceName(repo, options.name), schema: 1, minReader: CI_CHECK_HOOK_FLOOR, members: [] }, null, 2)}\n`, binary.value)
     : !preCommitOn && declSoFar !== undefined && !declFile.endsWith(".jsonc") ? withoutPreCommitHook(declSoFar) : undefined;
   if (hooked !== undefined) {
-    const change = plan(declFile, hooked);
+    const change = planFile(declFile, hooked);
     const at = files.findIndex((f) => f.path === declFile);
     if (at >= 0) files[at] = change;
     else files.push(change);
@@ -520,7 +513,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (existsSync(signersPath)) {
       if (options.signer) notes.push(`${SIGNERS_PATH} exists and init does not edit it; add ${options.signer} to it by hand`);
     } else if (options.signer) {
-      files.push(plan(signersPath, signerLine(repo, options.signer)));
+      files.push(planFile(signersPath, signerLine(repo, options.signer)));
       notes.push(`${SIGNERS_PATH} lists ${options.signer}; merge it in a reviewed pull request before the first wave waits`);
     } else {
       notes.push(`approval: sealed counts only approvals sealed by a key ${SIGNERS_PATH} lists, and there is none yet; terragucci init --signer <your principal> writes it from git config user.signingkey`);
@@ -553,12 +546,12 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     // --gate is written even when it names the default, so the config says what the pipeline does.
     const gate = options.gate && options.gate !== configGate ? options.gate : undefined;
     if (gate && configPath) {
-      files.push(plan(configPath, withGate(repo, configPath, gate)));
+      files.push(planFile(configPath, withGate(repo, configPath, gate)));
       configNote = `${relative(repo, configPath)} records gate: ${gate}`;
     } else if (Object.keys(save).length || gate) {
       const path = join(repo, "terragucci.yml");
       const detected = Object.keys(save);
-      files.push(plan(path, `${emitYAML({ ...save, ...(gate ? { gate } : {}) }, 0).trim()}\n`));
+      files.push(planFile(path, `${emitYAML({ ...save, ...(gate ? { gate } : {}) }, 0).trim()}\n`));
       configNote = detected.length
         ? `terragucci.yml records ${detected.join(" and ")}, which detection cannot find${gate ? `, and gate: ${gate}` : ""}`
         : `terragucci.yml records gate: ${gate}`;
@@ -607,19 +600,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(atmos ? { dirOf: (r: string) => shape.sourceOf(r) } : {}),
     pipeline: { path: pipeline.path, forge: forgeChoice.value, applyJobs: pipeline.applyJobs },
   });
-  files.push(plan(componentsPath, componentsJson(components)));
+  files.push(planFile(componentsPath, componentsJson(components)));
 
-  if (!options.dryRun) {
-    for (const f of files) {
-      if (f.status === "unchanged") continue;
-      if (f.status === "removed") {
-        unlinkSync(f.path);
-        continue;
-      }
-      mkdirSync(dirname(f.path), { recursive: true });
-      writeFileSync(f.path, f.content);
-    }
-  }
+  if (!options.dryRun) writePlannedFiles(files);
   return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, records, files, notes, configNote };
 }
 
@@ -698,7 +681,7 @@ function carriedValue(settings: ResolvedSettings, k: (typeof PROJECT_FILE_KEYS)[
  * the one terragucci wrote. A config of the project's own must already carry
  * the same values; otherwise the project fails with what to change.
  */
-async function projectConfigFile(repo: string, settings: ResolvedSettings): Promise<FileChange | undefined> {
+async function projectConfigFile(repo: string, settings: ResolvedSettings): Promise<PlannedFile | undefined> {
   const found = findConfig(repo);
   const path = join(repo, "terragucci.yml");
   const ours = found === path && readFileSync(path, "utf-8").startsWith(PROJECT_CONFIG_HEADER);
@@ -714,7 +697,7 @@ async function projectConfigFile(repo: string, settings: ResolvedSettings): Prom
   }
   if (keys.length === 0 && !ours) return undefined;
   const body = keys.length ? emitYAML(Object.fromEntries(keys.map((k) => [k, settings[k]])), 0).trim() : "{}";
-  return plan(path, `${PROJECT_CONFIG_HEADER}\n${body}\n`);
+  return planFile(path, `${PROJECT_CONFIG_HEADER}\n${body}\n`);
 }
 
 /** The chant release that reads `identity`. */
@@ -730,7 +713,7 @@ const IDENTITY_READER = "0.102.0";
  * approval of a listed gate; with no key and no gates (`leave`) it writes no
  * declaration at all. Undefined: nothing to write.
  */
-function declaration(repo: string, waves: number, want: "seal" | "unseal" | "leave", name?: string): FileChange | undefined {
+function declaration(repo: string, waves: number, want: "seal" | "unseal" | "leave", name?: string): PlannedFile | undefined {
   const path = join(repo, "chant.workspace.json");
   let decl: Record<string, unknown>;
   const before = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
@@ -743,11 +726,11 @@ function declaration(repo: string, waves: number, want: "seal" | "unseal" | "lea
     }
     const identity = decl.identity as { gates?: Record<string, unknown> } | undefined;
     const waveGates = Object.keys(identity?.gates ?? {}).filter((g) => /^wave-\d+$/.test(g));
-    if (waveGates.length === 0) return plan(path, before);
+    if (waveGates.length === 0) return planFile(path, before);
     for (const g of waveGates) delete identity!.gates![g];
     if (Object.keys(identity!.gates!).length === 0) delete identity!.gates;
     if (Object.keys(identity!).length === 0) delete decl.identity;
-    return plan(path, `${JSON.stringify(decl, null, 2)}\n`);
+    return planFile(path, `${JSON.stringify(decl, null, 2)}\n`);
   }
   if (before !== undefined) {
     try {
@@ -772,7 +755,7 @@ function declaration(repo: string, waves: number, want: "seal" | "unseal" | "lea
     changed = true;
   }
   // A declaration that already lists every gate is left as it is written.
-  return plan(path, changed ? `${JSON.stringify(decl, null, 2)}\n` : before!);
+  return planFile(path, changed ? `${JSON.stringify(decl, null, 2)}\n` : before!);
 }
 
 /**
@@ -816,7 +799,7 @@ export function workspaceName(repo: string, name?: string): string {
 
 /** What `init` prints. */
 export function describeInit(repo: string, r: InitResult, dryRun = false): string {
-  const verb = (s: FileChange["status"]): string =>
+  const verb = (s: PlannedFile["status"]): string =>
     s === "unchanged" ? "unchanged" : dryRun ? (s === "created" ? "would write" : s === "removed" ? "would remove" : "would update") : s === "created" ? "wrote" : s === "removed" ? "removed" : "updated";
   const plural = (n: number, w: string): string => `${n} ${w}${n === 1 ? "" : "s"}`;
   const tg = r.terragrunt;

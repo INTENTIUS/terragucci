@@ -11,6 +11,7 @@ import { findConfig, loadConfig, resolveRepo } from "./config";
 import { CHOUDOUFU_SECRETS_TIP, TIPS_URL } from "./tips";
 import { choudoufuSecretsMessage, REFUSE_BLOCK } from "./tips/secrets";
 import { onLocalStore, parseLiveSetup, rememberLiveSetup, setupLine } from "@intentius/chant-lexicon-terraform/live-roots";
+import { ciBaseRef } from "@intentius/chant/ci-base";
 import { defaultPolicyExec, engineBinary, governingPolicy, policyPathExists, shownUrl, trustedPolicy, type PolicyExec, type PolicyOptions } from "./report/policy";
 
 /** Where the check report is written, relative to the checkout. */
@@ -275,21 +276,6 @@ export function hasPolicyTests(dir: string): boolean {
   return false;
 }
 
-/**
- * The base the policy is read from. A pull request's target branch when the
- * forge names one, else the default branch for a push to any other branch, so
- * a change that edits the policy cannot edit its tests away. On the default
- * branch there is no base and the checkout's policy is the trusted one.
- */
-export function policyBase(env: NodeJS.ProcessEnv): string | undefined {
-  if (env.TG_BASE) return env.TG_BASE;
-  const target = env.GITHUB_BASE_REF || env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME;
-  if (target) return `origin/${target}`;
-  const branch = env.GITHUB_REF_NAME || env.CI_COMMIT_BRANCH;
-  const main = env.TG_BRANCH;
-  return branch && main && branch !== main ? `origin/${main}` : undefined;
-}
-
 export interface PolicyCheckOptions extends CheckOptions {
   config?: string;
   base?: string;
@@ -307,7 +293,9 @@ export async function checkPolicyTests(repo: string, options: PolicyCheckOptions
   const env = options.env ?? process.env;
   const path = options.config ?? findConfig(repo);
   const settings = resolveRepo(path ? await loadConfig(resolve(repo, path)) : {});
-  const base = options.base ?? policyBase(env);
+  // The base the policy is read from (chant's ciBaseRef): a pull request's target branch, else the default branch for a push
+  // to any other branch, so a change that edits the policy cannot edit its tests away. On the default branch there is none.
+  const base = ciBaseRef(env, { base: options.base ?? env.TG_BASE, defaultBranch: env.TG_BRANCH });
   // The base's policy key decides whether the tests run, so a change that deletes the key still runs the base's tests.
   const governing = await governingPolicy(repo, settings.policy, base, path ? { config: resolve(repo, path) } : {});
   const policy = governing.policy;

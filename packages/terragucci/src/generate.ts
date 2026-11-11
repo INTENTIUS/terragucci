@@ -41,15 +41,9 @@ import { versionGlobs } from "./pins";
 import { detectShape } from "./shape";
 import { hclBlocks, walkUnits } from "./terragrunt";
 import { explicitStackUnits, generatingStack } from "./tg-stacks";
+import type { PlannedFile } from "@intentius/chant/planned-files";
 
 export { checkGenerate, combineGenerate, type GenerateLevel, type GenerateSettings } from "./generate-config";
-
-/** A file generate writes, as init's FileChange. */
-interface FileChange {
-  path: string;
-  status: "created" | "updated" | "unchanged" | "removed";
-  content: string;
-}
 
 /** tf-check's result, as check.ts's CheckResult. */
 interface CheckResult {
@@ -247,7 +241,7 @@ export interface GeneratePlan {
   /** A Terragrunt repo: one terragucci.hcl for every unit. */
   terragrunt?: boolean;
   /** Each generated file: created, updated, unchanged, or removed (generated, and no longer asked for). */
-  files: FileChange[];
+  files: PlannedFile[];
   /** Files at a generated file's path that terragucci did not write, with what to do. */
   foreign: string[];
   /** What generate could not check, one line each. */
@@ -281,7 +275,7 @@ export function planGenerate(repo: string, settings: ResolvedSettings): Generate
   if (shape.kind === "terragrunt") return planTerragrunt(repo, settings, shape.terragrunt?.stacks ?? []);
   const gen = settings.generate ?? {};
   const roots = settings.generate ? generateRoots(repo, settings) : [];
-  const files: FileChange[] = [];
+  const files: PlannedFile[] = [];
   const foreign: string[] = [];
   const wanted = new Set<string>();
   for (const root of roots) {
@@ -500,7 +494,7 @@ export function azureBootstrapRefusal(unit: string, version: string | undefined)
 function planTerragrunt(repo: string, settings: ResolvedSettings, stacks: readonly string[]): GeneratePlan {
   const path = join(repo, TERRAGRUNT_FILE);
   const before = existsSync(path) ? readFileSync(path, "utf-8") : undefined;
-  const files: FileChange[] = [];
+  const files: PlannedFile[] = [];
   const foreign: string[] = [];
   const gen = settings.generate;
   // A stack's units from its stack file, generated or not; the walk finds them only once they are.
@@ -602,7 +596,7 @@ export function checkGenerated(repo: string, settings: ResolvedSettings): CheckR
 
 /** What `terragucci generate` prints. */
 export function describeGenerate(repo: string, plan: GeneratePlan, dryRun: boolean): string {
-  const verb = (s: FileChange["status"]): string =>
+  const verb = (s: PlannedFile["status"]): string =>
     s === "unchanged" ? "unchanged" : dryRun ? (s === "created" ? "would write" : s === "removed" ? "would remove" : "would update") : s === "created" ? "wrote" : s === "removed" ? "removed" : "updated";
   const lines = plan.files.map((f) => `${verb(f.status)} ${rel(repo, f.path)}`);
   const changed = plan.files.filter((f) => f.status !== "unchanged").length;

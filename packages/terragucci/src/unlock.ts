@@ -31,6 +31,7 @@ import { resolve } from "node:path";
 import { describeLock, describeRun, forgeTargetLiveRuns, type LiveRun, type LockInfo } from "@intentius/chant/state-unlock";
 import { terraformStateUnlock } from "@intentius/chant-lexicon-terraform/state-ops";
 import type { StoreFetch } from "@intentius/chant/object-store";
+import { actorOf } from "@intentius/chant/actor";
 import { approvalRule } from "./approval";
 import { binaryEnv } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
@@ -131,7 +132,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const now = options.now ?? new Date().toISOString();
   const rule = await approvalRule(repo, { at: "HEAD", ...(configPath ? { config: configPath } : {}) });
   const sealed = rule.mode === "sealed";
-  const actor = options.actor || gitOut(repo, ["config", "user.name"]) || env.USER || env.USERNAME || "unknown";
+  const actor = options.actor || actorOf({ env, repo, forge: false });
   const commit = gitOut(repo, ["rev-parse", "HEAD"]);
   let result: Awaited<ReturnType<typeof terraformStateUnlock>>;
   try {

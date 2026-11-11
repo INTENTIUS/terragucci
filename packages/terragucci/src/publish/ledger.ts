@@ -22,6 +22,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { ReleaseRecord, RunOrigin } from "@intentius/chant/lifecycle/release-ledger";
 import { parseReleaseLedger, releaseLedgerLines } from "@intentius/chant/lifecycle/release-ledger";
+import { actorOf } from "@intentius/chant/actor";
 import { ConfigError } from "../config";
 
 export const LIFECYCLE = "chant/lifecycle";
@@ -62,13 +63,9 @@ export function runOf(env: NodeJS.ProcessEnv): { runId: string; runOrigin: RunOr
   return { runId: `local-${Date.now()}`, runOrigin: { forge: "local" } };
 }
 
-/** Who ran the release: the forge's actor, else the git user, else terragucci. */
-export function actorOf(env: NodeJS.ProcessEnv): string {
-  return env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || env.USER || "terragucci";
-}
-
 export function releaseRecord(component: string, digest: string, gitSha: string, env: NodeJS.ProcessEnv, timestamp = new Date().toISOString()): ReleaseRecord {
-  return { version: 1, component, env: LEDGER_ENV, digest, gitSha, ...runOf(env), timestamp, actor: actorOf(env) };
+  // Who ran the release: the forge's actor, else the login, else terragucci.
+  return { version: 1, component, env: LEDGER_ENV, digest, gitSha, ...runOf(env), timestamp, actor: actorOf({ env, fallback: "terragucci" }) };
 }
 
 /** A release record with the version it names (chant#4595's optional `releaseVersion`, terragucci#1289 ruling A). */
