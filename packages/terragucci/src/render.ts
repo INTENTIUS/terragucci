@@ -214,6 +214,7 @@ import {
 } from "./render-terragrunt";
 import { CHECKOUT, downloadArtifact, tagComments, uploadArtifact } from "./action-pins";
 import { resolveCommitSpec } from "@intentius/chant/ci-commit";
+import { ciToolInstallLine } from "@intentius/chant/ci-image";
 import { githubCommitJobs } from "@intentius/chant-lexicon-github/components/commit-jobs";
 import { gitlabCommitJobs } from "@intentius/chant-lexicon-gitlab/components/commit-jobs";
 import { FMT_FINDING, fmtCommitSpec } from "./fmt";
@@ -653,40 +654,16 @@ export function installScript(binary: Binary | Tool, version: string, forge: For
   return forge === "gitlab" || sameShell ? `${dir}\nexport PATH="$dir:$PATH"` : `${dir}\necho "$dir" >> "$GITHUB_PATH"`;
 }
 
-/** The AWS CLI v2 release the drift job installs when attribution needs it, with each build's sha256 (the zips also verify against the AWS CLI team's PGP signature). */
-export const AWS_CLI = {
-  version: "2.37.9",
-  sha256: {
-    x86_64: "6b3a6a3d7bb3997928f0bdf7b866914224abf242c2e54e1dcebbe84bee64f356",
-    aarch64: "e7d2cca3622af4765871fe9ce7eeed03acd09dca10a99ebc46e92f79d78765c0",
-  },
-} as const;
+/** The AWS CLI v2 release the drift job installs when attribution needs it; chant records each build's sha256. */
+export const AWS_CLI = { version: "2.37.9" } as const;
 
 /**
- * The step that installs AWS CLI v2 for drift attribution, skipped when the job
- * already has `aws`. The CI images carry node but not curl or unzip, so node
- * downloads the zip and `unzip` comes from apt. The zip must match the pinned
- * sha256 for the runner's architecture before it is unpacked.
+ * The line that installs AWS CLI v2 for drift attribution, skipped when the job
+ * already has `aws`: chant's install line (chant#4952), which downloads and
+ * unpacks with node, since the CI images carry node but not curl or unzip, and
+ * checks the zip against the sha256 chant records before it runs the installer.
  */
-export function awsCliScript(forge: ForgeName, sameShell = false): string {
-  const url = `https://awscli.amazonaws.com/awscli-exe-linux-$arch-${AWS_CLI.version}.zip`;
-  return [
-    "if ! command -v aws >/dev/null 2>&1; then",
-    '  case "$(uname -m)" in',
-    `    aarch64|arm64) arch=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`,
-    `    *) arch=x86_64; sum=${AWS_CLI.sha256.x86_64} ;;`,
-    "  esac",
-    '  dir="$(mktemp -d)"',
-    "  command -v unzip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends unzip; }",
-    `  node -e 'fetch(process.argv[1]).then((r) => { if (!r.ok) throw new Error("the AWS CLI download answered " + r.status); return r.arrayBuffer(); }).then((b) => require("fs").writeFileSync(process.argv[2], Buffer.from(b))).catch((e) => { console.error(e.message); process.exit(1); })' "${url}" "$dir/awscliv2.zip"`,
-    '  echo "$sum  $dir/awscliv2.zip" | sha256sum -c -',
-    '  unzip -q "$dir/awscliv2.zip" -d "$dir"',
-    '  "$dir/aws/install" --install-dir "$dir/aws-cli" --bin-dir "$dir/bin"',
-    // In a script that goes on to use it (GitLab's job, the drift Op's script), the PATH of this shell; else the next steps'.
-    forge === "gitlab" || sameShell ? '  export PATH="$dir/bin:$PATH"' : '  echo "$dir/bin" >> "$GITHUB_PATH"',
-    "fi",
-  ].join("\n");
-}
+export const awsCliScript = (): string => ciToolInstallLine("aws-cli", AWS_CLI.version, { download: "node", onPath: true });
 
 /**
  * `synth`: the roots are written by a command (CDK Terrain's `npx cdktn
@@ -2632,7 +2609,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const agentApply = responseTo({ respond: input.respond }, "apply-failed") === "agent";
   const agentDrift = !tg && responseTo({ respond: input.respond }, "drift") === "agent";
   // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
-  const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript(forge) : undefined;
+  const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript() : undefined;
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   // agent.comment is chant's agent job (chant#4616), in a workflow of its own.
@@ -2992,7 +2969,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image,
         schedule: drift,
         // The pinned binaries and the AWS CLI are installed in the script that runs them, so they go on this shell's PATH.
-        script: [...installs.map((i) => installScript(i.tool, i.version, forge, true)), ...(awsStep ? [awsCliScript(forge, true)] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift ? "chant" : false)].join("\n"),
+        script: [...installs.map((i) => installScript(i.tool, i.version, forge, true)), ...(awsStep ? [awsStep] : []), driftScript(binary, layers, forge, oidc, report, driftPr, driftNotify, input.agentDrift ? "chant" : false)].join("\n"),
         workflowEnv: jobEnv,
         jobEnv: definedEnv({ ...passed, TG_TOKEN: "${{ github.token }}", TG_SHA: "${{ github.sha }}", ...headersEnv, ...driftDecideEnv, ...reportKeyEnv(forge, input.reports), ...driftNotifyEnv }),
         pullRequest: Boolean(driftPr),
