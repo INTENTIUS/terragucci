@@ -38,10 +38,10 @@
       { "name": "scale", "run": "npx chant build scale -o {out}/.github/workflows/scale.yml --format yaml", "files": [".github/workflows/scale.yml"] },
       { "name": "green", "run": "npx chant ci workflow --token-secret CI_GREEN_TOKEN --output {out}/.github/workflows/chant-ci-green.yml", "files": [".github/workflows/chant-ci-green.yml"] },
       { "name": "release", "run": "npx chant release workflow --forge github --output {out}/.github/workflows/publish.yml", "files": [".github/workflows/publish.yml"] },
-      { "name": "images", "run": "npx chant build images -o {out}/images/compose.yml --format yaml", "files": ["images/Dockerfile.*"] },
+      { "name": "images", "run": "npx chant build images -o {out}/images/", "files": ["images/Dockerfile.*"] },
       { "name": "observability", "run": "npx chant build observability --lexicon-output otel={out}/stack/observability/collector.yaml --lexicon-output prometheus={out}/stack/observability/prometheus.yml --format yaml", "files": ["stack/observability/collector.yaml", "stack/observability/prometheus.yml"] },
       { "name": "front-door", "run": "npx chant build front-door -o {out}/docs-site/public/reports-front-door.json --format json", "files": ["docs-site/public/reports-front-door.json"] },
-      { "name": "dashboards", "run": "npx tsx scripts/render-dashboards.ts --check" }
+      { "name": "dashboards", "module": "scripts/render-dashboards.ts", "export": "dashboardFiles" }
     ]
   }
 }
