@@ -1,8 +1,9 @@
 // The registry edge preset (terragucci#1287): the _headers file publish writes for a Pages site, and the
 // files `terragucci registry edge` writes for a Cloudflare Worker or Lambda@Edge, through chant's lexicon; the real
 // binaries against the real function are in registry-cli-e2e.test.ts.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { planFile, writePlannedFiles } from "@intentius/chant/planned-files";
 import { describe, expect, it } from "vitest";
 import type { RegistrySettings } from "../src/config";
 import { publish } from "../src/publish";
@@ -104,6 +105,19 @@ describe("terragucci registry edge", () => {
     const dir = bundles();
     expect(() => planEdge({ ...S3, bucket: "gs://acme-mods", edge: "cloudflare", auth: "token", tokens: "ssm", tokens_name: "/t" }, { bundleDir: dir })).toThrow("Lambda@Edge");
     expect(() => planEdge({ ...S3, auth: "token", tokens: "ssm" }, { bundleDir: dir })).toThrow("tokens_name");
+  });
+
+  it("plans its files through chant's planned files, a bundle's bytes as they are", () => {
+    const dir = write(tmp("terragucci-edge-dist-"), { [WORKER_BUNDLE]: "w", [LAMBDA_BUNDLE]: "l" });
+    const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x41]);
+    writeFileSync(join(dir, LAMBDA_BUNDLE), bytes);
+    const plan = planEdge(S3, { bundleDir: dir });
+    const out = tmp("terragucci-edge-out-");
+    const planned = () => plan.files.map((f) => planFile(join(out, "nested", f.path), f.content));
+    expect(planned().map((f) => f.status)).toEqual(["created", "created"]);
+    writePlannedFiles(planned());
+    expect(readFileSync(join(out, "nested", "index.mjs")).equals(bytes)).toBe(true);
+    expect(planned().map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("writes nothing for pages and none, and says when the build carries no function", () => {
