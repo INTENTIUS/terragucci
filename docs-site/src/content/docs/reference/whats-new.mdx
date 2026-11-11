@@ -14,6 +14,12 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 
 The chant pin moves to `0.124.90`, in the package and in each CI image.
 
+The person who asks for or approves a run is found in chant's order. A blank `GITHUB_ACTOR` falls through to the next place, and `USERNAME` is read after `USER` where terragucci read only `USER`.
+
+When drift attribution needs the AWS CLI, the drift job installs it with chant's install line. Node fetches and unpacks the zip after chant checks it against the sum it records, so the job no longer installs `unzip` from apt, and the binary is linked into `/usr/local/bin`. The drift job changes the next time `terragucci ci` writes the pipelines.
+
+The image and dashboard renders and the engine runners moved onto chant with no change you can see.
+
 ## In 0.4.57
 
 terragucci and its CI images run on chant `0.124.88`.
