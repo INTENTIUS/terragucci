@@ -105,7 +105,7 @@ ci:
 [doc("Render the stack's collector and Prometheus configs from observability/, and the dashboards, rules and Grafana datasources, into stack/observability/.")]
 render-observability:
     npx chant build observability --lexicon-output otel=stack/observability/collector.yaml --lexicon-output prometheus=stack/observability/prometheus.yml --format yaml
-    npx tsx scripts/render-dashboards.ts
+    npx chant dev render scripts/render-dashboards.ts dashboardFiles
     @echo "  ✓ stack/observability/ rendered"
 
 [doc("Render the reports front door's CloudFormation template from front-door/ into the site's downloads.")]
@@ -115,13 +115,8 @@ render-front-door:
 
 [doc("Render the CI images' Dockerfiles from images/images.ts into images/.")]
 render-images:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir="$(mktemp -d -t terragucci-images-XXXX)"
-    npx chant build images -o "$dir/compose.yml" --format yaml >/dev/null
-    cp "$dir"/Dockerfile.* images/
-    rm -rf "$dir"
-    echo "  ✓ images/Dockerfile.* rendered"
+    npx chant build images -o images/ >/dev/null
+    @echo "  ✓ images/Dockerfile.* rendered"
 
 # GitHub reads the YAML, so the rendered file is committed. chant renders each
 # file chantGenerated in package.json declares into a temp tree and fails naming

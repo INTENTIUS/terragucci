@@ -7,14 +7,12 @@
 //   stack/observability/grafana-datasources.yaml   the stack's Prometheus and Tempo, under the
 //                                          uids the dashboards read by default
 //
-// Either way it first proves the template: for several settings, the filled
+// dashboardFiles first proves the template: for several settings, the filled
 // template is byte for byte what the declarations render, and yamlScalar
 // writes a value as js-yaml does.
 //
-//   npx tsx scripts/render-dashboards.ts           write them
-//   npx tsx scripts/render-dashboards.ts --check   fail when a committed file differs
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+//   npx chant dev render scripts/render-dashboards.ts dashboardFiles   write them
+//   npx chant dev generated-check                                      fail when a committed file differs
 import { Datasource } from "@intentius/chant-lexicon-grafana";
 import { buildGrafana } from "@intentius/chant-lexicon-grafana/build";
 import { emitYaml } from "@intentius/chant-lexicon-prometheus/build";
@@ -48,53 +46,41 @@ const PROOF: [string, DashboardSettings, DashboardLinks][] = [
   ["every setting", { dir: "ops/dash/", prometheus: "prom-main", tempo: "tempo-eu", folder: "Platform team", path: "/etc/grafana/dash", drift_age: "1d12h", wave_wait: "90m", schedule: "3d" }, { reports: "https://reports.example.com/a/b" }],
   ["odd values", { prometheus: 'a:b "q" #c', tempo: "true", folder: "123", path: "-x: {y}", drift_age: "30m1h" }, { reports: 'https://r.example.com/a\\c"d{x}' }],
 ];
-let proof = 0;
-for (const [name, given, links] of PROOF) {
-  const settings = dashboardSettings(given)!;
-  const want = renderDashboards(settings, links);
-  const got = fillTemplate(template, settings, links);
-  for (let i = 0; i < Math.max(want.length, got.length); i++) {
-    if (want[i]?.path !== got[i]?.path || want[i]?.content !== got[i]?.content) {
-      console.log(`  with ${name}, the template fills ${got[i]?.path ?? "nothing"} unlike the declarations render ${want[i]?.path ?? "nothing"}`);
-      proof = 1;
-      break;
-    }
-  }
-}
 const SCALARS = ["prometheus", "Platform team", "/var/lib/grafana/dashboards/terragucci", "", "123", "0x1F", "0o17", "0b101", "1.5", "1e3", ".inf", ".NaN", "-.5", "+12", "007", "true", "False", "NULL", "~", "<<", "yes", "Off", "y", "1:20", "2024-01-31", "2024-1-3 10:00:00", "2024-01-31x", "2024 team", "a: b", "a:b", "a #b", "a#b", "#a", "-a", "- a", "a-", "a:", "a ", " a", "{a}", "a{b}", "a,b", "[a]", "?a", "@a", "`a", "%a", "!a", "&a", "*a", "|a", ">a", "=a", "'a'", '"a"', 'a"b', "a\\b", "a\tb", "café", "a b", "a b", "\u0007", "😀"];
-for (const s of SCALARS) {
-  const want = emitYaml({ k: s });
-  const got = `k: ${yamlScalar(s)}\n`;
-  if (want !== got) {
-    console.log(`  yamlScalar(${JSON.stringify(s)}) writes ${JSON.stringify(got)}; js-yaml writes ${JSON.stringify(want)}`);
-    proof = 1;
-  }
-}
-if (proof) {
-  console.log("  The dashboards template does not reproduce the declarations; see packages/terragucci/src/dashboards/template.ts.");
-  process.exit(1);
-}
 
-const root = join(import.meta.dirname, "..");
-const files: Record<string, string> = {};
-files[TEMPLATE] = `${JSON.stringify(template, null, 2)}\n`;
-for (const f of fillTemplate(template, { ...dashboardSettings(true)!, dir: "stack/observability/terragucci" }, { reports: `${STACK_REPORTS.url}/${STACK_REPORTS.prefix}` })) files[f.path] = f.content;
-files["stack/observability/grafana-datasources.yaml"] = buildGrafana(datasources).files["provisioning/datasources/chant.yaml"];
-
-const check = process.argv.includes("--check");
-let rc = 0;
-for (const [path, content] of Object.entries(files)) {
-  const abs = join(root, path);
-  if (check) {
-    if (!existsSync(abs) || readFileSync(abs, "utf-8") !== content) {
-      console.log(`  ${path} is not what scripts/render-dashboards.ts renders from the declarations. Run 'just ci' and commit the result.`);
-      rc = 1;
+/** The template's proof: each way the filled template differs from what the declarations render, and each scalar yamlScalar writes unlike js-yaml. */
+function proofProblems(): string[] {
+  const problems: string[] = [];
+  for (const [name, given, links] of PROOF) {
+    const settings = dashboardSettings(given)!;
+    const want = renderDashboards(settings, links);
+    const got = fillTemplate(template, settings, links);
+    for (let i = 0; i < Math.max(want.length, got.length); i++) {
+      if (want[i]?.path !== got[i]?.path || want[i]?.content !== got[i]?.content) {
+        problems.push(`with ${name}, the template fills ${got[i]?.path ?? "nothing"} unlike the declarations render ${want[i]?.path ?? "nothing"}`);
+        break;
+      }
     }
-  } else {
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
   }
+  for (const s of SCALARS) {
+    const want = emitYaml({ k: s });
+    const got = `k: ${yamlScalar(s)}\n`;
+    if (want !== got) problems.push(`yamlScalar(${JSON.stringify(s)}) writes ${JSON.stringify(got)}; js-yaml writes ${JSON.stringify(want)}`);
+  }
+  return problems;
 }
-if (check && rc === 0) console.log(`  ✓ the dashboards template fills as the declarations render ${PROOF.length} settings; it and ${Object.keys(files).length - 1} dashboard, rule and datasource files under stack/observability match their declarations`);
-if (!check) console.log(`  ✓ ${TEMPLATE} and ${Object.keys(files).length - 1} dashboard, rule and datasource files under stack/observability rendered`);
-process.exit(rc);
+
+/**
+ * The files, by path from the repo's root, once the proof holds: chant's
+ * generated-file check compares them (`module`/`export` in package.json's
+ * chantGenerated), and `chant dev render` writes them.
+ */
+export function dashboardFiles(): Record<string, string> {
+  const problems = proofProblems();
+  if (problems.length > 0) throw new Error(`The dashboards template does not reproduce the declarations; see packages/terragucci/src/dashboards/template.ts.\n  ${problems.join("\n  ")}`);
+  const files: Record<string, string> = {};
+  files[TEMPLATE] = `${JSON.stringify(template, null, 2)}\n`;
+  for (const f of fillTemplate(template, { ...dashboardSettings(true)!, dir: "stack/observability/terragucci" }, { reports: `${STACK_REPORTS.url}/${STACK_REPORTS.prefix}` })) files[f.path] = f.content;
+  files["stack/observability/grafana-datasources.yaml"] = buildGrafana(datasources).files["provisioning/datasources/chant.yaml"];
+  return files;
+}
