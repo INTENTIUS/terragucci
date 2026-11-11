@@ -41,8 +41,7 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { detectBinary, detectForge, detectVersion, type RootReason } from "./detect";
-import { bucketLines, estateOf, liveRoots, setupLine } from "@intentius/chant-lexicon-terraform/live-roots";
-import { recordStoreOf } from "./cdf-records";
+import { bucketLines, estateOf, liveRoots, setupLine, writtenRecordStore } from "@intentius/chant-lexicon-terraform/live-roots";
 import { checkStoreBucket, readLiveSetup } from "./live-setup";
 import type { PolicyExec } from "./report/policy";
 import { BINARY, detectShape, refuseProblems } from "./shape";
@@ -638,7 +637,7 @@ async function liveRecords(repo: string, roots: string[], options: InitOptions):
     const setup = await readLiveSetup(dir, { ...(options.liveExec ? { exec: options.liveExec } : {}) });
     if (!setup) {
       const estate = estateOf(dir).estate;
-      const store = estate ? recordStoreOf(dir, estate) : undefined;
+      const store = estate ? writtenRecordStore(dir, estate) : undefined;
       const where = !store ? "no record store read" : store.kind === "s3" ? `records in s3 bucket "${store.bucket}" under ${store.prefix}` : store.kind === "local" ? `records in the local directory ${relative(dir, store.dir) || "."} under ${store.prefix}` : `records in a ${store.name} store`;
       out.push({ root, from: "live block", line: `${root}: ${where} (from its live block: choudoufu live-check printed no resolved store, from an older release or a root it could not read); ${estate ? `estate "${estate}"` : "no estate named"}`, bucket: [] });
       continue;

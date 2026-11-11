@@ -16,51 +16,18 @@
  */
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { liveBody } from "./detect";
 import { encodeStrict, xmlText, type StoreFetch, assumeRoleWithWebIdentity, s3FromEnv, sign, type S3Credentials } from "@intentius/chant/object-store";
+import type { RecordStore } from "@intentius/chant-lexicon-terraform/live-roots";
 import { STORE_WORDS } from "./report/object-store";
 
-/** Where an estate's records are: an S3 bucket, a directory, or a store this module does not read. */
-export type RecordStore =
-  | { kind: "s3"; bucket: string; prefix: string; region?: string }
-  | { kind: "local"; dir: string; prefix: string }
-  | { kind: "unread"; name: string };
+/** Where an estate's records are (the terraform lexicon's `writtenRecordStore` and `liveRecordStore` read it from a root). */
+export type { RecordStore };
 
 /** Each recorded instance's address and its record's version (an ETag, or a file's time and size). */
 export type Records = Map<string, string>;
 
 /** A key namespace with exactly one trailing slash, as choudoufu's NamespacePrefix makes it. */
 const namespace = (prefix: string): string => `${prefix.replace(/\/+$/, "")}/`;
-
-function block(text: string, open: number): string {
-  let depth = 0;
-  for (let i = text.indexOf("{", open); i < text.length; i++) {
-    if (text[i] === "{") depth++;
-    else if (text[i] === "}" && --depth === 0) return text.slice(open, i + 1);
-  }
-  return text.slice(open);
-}
-
-const attr = (body: string, name: string): string | undefined => body.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1];
-
-/** The record store of the estate a root's `live` block owns, or undefined when the root has no live block. */
-export function recordStoreOf(dir: string, estate: string): RecordStore | undefined {
-  const live = liveBody(dir);
-  if (live === undefined) return undefined;
-  const m = /\brecord_store\s+"([^"]+)"\s*\{/.exec(live);
-  const body = m ? block(live, m.index) : "";
-  const keyPrefix = attr(body, "key_prefix");
-  const prefix = namespace(keyPrefix ?? `tofu-records/${estate}`);
-  const kind = m?.[1] ?? "local";
-  if (kind === "s3") {
-    const bucket = attr(body, "bucket");
-    if (!bucket) return { kind: "unread", name: "s3" };
-    const region = attr(body, "region");
-    return { kind: "s3", bucket, prefix, ...(region ? { region } : {}) };
-  }
-  if (kind === "local") return { kind: "local", dir: join(dir, attr(body, "path") ?? ".tofu-records"), prefix };
-  return { kind: "unread", name: kind };
-}
 
 /** The address a record key names, or undefined for a key choudoufu did not write under `prefix`. */
 export function recordAddress(prefix: string, key: string): string | undefined {

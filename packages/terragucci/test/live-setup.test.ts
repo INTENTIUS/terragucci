@@ -8,13 +8,15 @@ import {
   knownLiveSetup,
   parseLiveSetup,
   rememberLiveSetup,
+  liveRecordStore as resolvedRecordStore,
   resolvedEstate,
+  rootBackendAttrs as backendAttrs,
   setupLine,
 } from "@intentius/chant-lexicon-terraform/live-roots";
 import { describeInit, init } from "../src/init";
 import { codeRules } from "../src/tips/index";
 import type { PolicyExec } from "../src/report/policy";
-import { backendAttrs, readLiveSetup, resolvedRecordStore } from "../src/live-setup";
+import { readLiveSetup } from "../src/live-setup";
 import { tmp, write } from "./helpers";
 
 /** choudoufu#2293's `live-check -json` for a root whose s3 backend block the live block ignores. */
