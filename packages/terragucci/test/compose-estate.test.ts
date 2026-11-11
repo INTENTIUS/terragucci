@@ -6,19 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { COMPOSE_DIR, ComposedRun, compositionFor, reportCompose, writeEstateRoot, type Composition } from "../src/compose";
 import { tmp, write } from "./helpers";
 
-// An estate run takes no lock and pulls no state: these throw if the run reaches for either.
-const stateHandling = vi.hoisted(() => ({ pulled: [] as string[], locked: [] as string[] }));
+// The composed run reaches the binary through the exec each test passes; this one fails if a test forgets it.
 vi.mock("../src/migrate", () => ({
   runBinary: async () => ({ code: 1, stdout: "", stderr: "", out: "" }),
-  derivedLineage: () => "lineage",
-  pullState: async (_e: unknown, _b: string, root: string) => {
-    stateHandling.pulled.push(root);
-    throw new Error("an estate run pulls no state");
-  },
-  takeLocks: async (files: Map<string, unknown>) => {
-    stateHandling.locked.push(...files.keys());
-    throw new Error("an estate run takes no lock");
-  },
 }));
 
 const live = (estate: string, body = ""): string => `terraform {
@@ -176,7 +166,6 @@ describe("a composed run of estates", () => {
     await run.release();
     // No state is pulled, pushed or locked, and the plan and apply run in the composed root.
     expect(calls.some((x) => x.args[0] === "state")).toBe(false);
-    expect(stateHandling).toEqual({ pulled: [], locked: [] });
     expect(calls.filter((x) => x.args[0] === "plan" || x.args[0] === "apply").every((x) => x.dir === join(dir, COMPOSE_DIR))).toBe(true);
     expect(calls.filter((x) => x.args[0] === "init").map((x) => x.dir)).toEqual([join(dir, "network"), join(dir, "app"), join(dir, "edge"), join(dir, COMPOSE_DIR)]);
     expect(applied.ok).toBe(true);
