@@ -29,9 +29,7 @@ jobs:
           cache: npm
       - name: Install just
         run: |
-          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
-          tar -xzf /tmp/just.tar.gz -C /tmp just
-          sudo mv /tmp/just /usr/local/bin/just
+          { [ -x "/opt/chant/just-1.36.0/just" ] || (set -e; a="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && case "$a" in (amd64) w=x86_64 ;; (arm64) w=aarch64 ;; (*) echo "just 1.36.0: chant fetches it for amd64 and arm64, not $a" >&2; exit 1 ;; esac && f="just-1.36.0-$w-unknown-linux-musl.tar.gz" && t="$(mktemp -d)" && curl -fsSLo "$t/$f" "https://github.com/casey/just/releases/download/1.36.0/$f" && case "$a" in (amd64) want=bc7c9f377944f8de9cd0418b11d2955adebfa25a488c0b5e3dd2d2c0e9d732da ;; (arm64) want=bb3886b15e2cbcb9c0eb19956297d36de4eaef45b89d3f5fa5d1fc4ed3b5b51d ;; (*) want= ;; esac && curl -fsSLo "$t/sums" "https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$w-unknown-linux-musl.tar.gz.sha256sum" && line="$(sed -n "s#^\([0-9a-f]\{64\}\)  *[*.]*/*$f\$#\1#p" "$t/sums")" && { [ -n "$line" ] || { echo "just 1.36.0: $f is not in just-1.36.0-$w-unknown-linux-musl.tar.gz.sha256sum" >&2; exit 1; }; } && { [ -z "$want" ] || [ "$line" = "$want" ] || { echo "just 1.36.0: just-1.36.0-$w-unknown-linux-musl.tar.gz.sha256sum lists $line for $f; chant records $want" >&2; exit 1; }; } && want="$line" && echo "$want  $t/$f" | sha256sum -c - >/dev/null && sudo mkdir -p "/opt/chant/just-1.36.0" && tar -xzf "$t/$f" -C "$t" "just" && sudo install -m 0755 "$t/just" "/opt/chant/just-1.36.0/just"); } && sudo ln -sf "/opt/chant/just-1.36.0/just" /usr/local/bin/just
           just --version
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
@@ -65,9 +63,7 @@ jobs:
           cache: npm
       - name: Install just
         run: |
-          curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$(uname -m)-unknown-linux-musl.tar.gz
-          tar -xzf /tmp/just.tar.gz -C /tmp just
-          sudo mv /tmp/just /usr/local/bin/just
+          { [ -x "/opt/chant/just-1.36.0/just" ] || (set -e; a="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && case "$a" in (amd64) w=x86_64 ;; (arm64) w=aarch64 ;; (*) echo "just 1.36.0: chant fetches it for amd64 and arm64, not $a" >&2; exit 1 ;; esac && f="just-1.36.0-$w-unknown-linux-musl.tar.gz" && t="$(mktemp -d)" && curl -fsSLo "$t/$f" "https://github.com/casey/just/releases/download/1.36.0/$f" && case "$a" in (amd64) want=bc7c9f377944f8de9cd0418b11d2955adebfa25a488c0b5e3dd2d2c0e9d732da ;; (arm64) want=bb3886b15e2cbcb9c0eb19956297d36de4eaef45b89d3f5fa5d1fc4ed3b5b51d ;; (*) want= ;; esac && curl -fsSLo "$t/sums" "https://github.com/casey/just/releases/download/1.36.0/just-1.36.0-$w-unknown-linux-musl.tar.gz.sha256sum" && line="$(sed -n "s#^\([0-9a-f]\{64\}\)  *[*.]*/*$f\$#\1#p" "$t/sums")" && { [ -n "$line" ] || { echo "just 1.36.0: $f is not in just-1.36.0-$w-unknown-linux-musl.tar.gz.sha256sum" >&2; exit 1; }; } && { [ -z "$want" ] || [ "$line" = "$want" ] || { echo "just 1.36.0: just-1.36.0-$w-unknown-linux-musl.tar.gz.sha256sum lists $line for $f; chant records $want" >&2; exit 1; }; } && want="$line" && echo "$want  $t/$f" | sha256sum -c - >/dev/null && sudo mkdir -p "/opt/chant/just-1.36.0" && tar -xzf "$t/$f" -C "$t" "just" && sudo install -m 0755 "$t/just" "/opt/chant/just-1.36.0/just"); } && sudo ln -sf "/opt/chant/just-1.36.0/just" /usr/local/bin/just
           just --version
       - name: Install OpenTofu
         run: |

@@ -6,7 +6,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { ciToolSha256 } from "@intentius/chant/ci-image";
 import { AWS_CLI } from "../packages/terragucci/src/render";
+
+// The sums chant records for the AWS CLI release terragucci's drift job installs.
+const AWS_CLI_SHA256 = ciToolSha256("aws-cli", AWS_CLI.version);
 
 const root = join(__dirname, "..");
 const demo = readFileSync(join(root, "stack", "demo.sh"), "utf8");
@@ -119,8 +123,8 @@ describe("stack/demo.sh under pipefail", () => {
   it("installs the AWS CLI release terragucci's drift job pins, checked against the same sha256", () => {
     const dockerfile = readFileSync(join(root, "stack", "demo-chant-fanout.Dockerfile"), "utf8");
     expect(dockerfile).toContain(`ARG AWS_CLI_VERSION=${AWS_CLI.version}\n`);
-    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
-    expect(dockerfile).toContain(`*) a=x86_64; sum=${AWS_CLI.sha256.x86_64} ;;`);
+    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI_SHA256.arm64} ;;`);
+    expect(dockerfile).toContain(`*) a=x86_64; sum=${AWS_CLI_SHA256.amd64} ;;`);
     expect(dockerfile).toContain('sha256sum -c -');
   });
 
@@ -1215,7 +1219,7 @@ describe("the chant compose demo (terragucci#1269)", () => {
     const dockerfile = readFileSync(join(root, "stack", "demo-chant-compose.Dockerfile"), "utf8");
     expect(dockerfile).toContain("ARG CHANT_REF");
     expect(dockerfile).toContain(`ARG AWS_CLI_VERSION=${AWS_CLI.version}\n`);
-    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI.sha256.aarch64} ;;`);
+    expect(dockerfile).toContain(`arm64) a=aarch64; sum=${AWS_CLI_SHA256.arm64} ;;`);
     expect(dockerfile).toContain("ENV AWS_ENDPOINT_URL=http://floci:4566 AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_REGION=us-east-1");
     expect(demo).toContain(`-f "$HERE/demo-chant-compose.Dockerfile" "$(tool_tree chant-compose)"`);
     expect(demo).toContain('CHANT_VERSION="${DEMO_CHANT_VERSION:-0.124.90}"');

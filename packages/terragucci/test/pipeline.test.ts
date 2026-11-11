@@ -6,6 +6,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
+import { ciToolInstallLine } from "@intentius/chant/ci-image";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
@@ -2507,13 +2508,10 @@ describe("decide token on the plan jobs", () => {
       renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *", respond });
     // The drift Op's script installs the AWS CLI, onto its own shell's PATH, before tf-drift reads with it.
     const script = driftOp(render({ drift: "attribute" }), forge)!.script;
-    expect(script.indexOf("if ! command -v aws")).toBeGreaterThanOrEqual(0);
-    expect(script.indexOf("if ! command -v aws")).toBeLessThan(script.indexOf("terragucci stage tf-drift"));
-    expect(script).toContain(`awscli-exe-linux-$arch-${AWS_CLI.version}.zip`);
-    expect(script).toContain(AWS_CLI.sha256.x86_64);
-    expect(script).toContain(AWS_CLI.sha256.aarch64);
-    expect(script).toContain("sha256sum -c");
-    expect(script).toContain('export PATH="$dir/bin:$PATH"');
+    // chant's install line, downloading with node (chant#4952).
+    expect(script).toContain(ciToolInstallLine("aws-cli", AWS_CLI.version, { download: "node", onPath: true }));
+    expect(script.indexOf("command -v aws")).toBeLessThan(script.indexOf("terragucci stage tf-drift"));
+    expect(script).not.toContain("curl");
     expect(script).not.toContain("GITHUB_PATH");
     expect(driftOp(render({ drift: "pull-request" }), forge)!.script).not.toContain("command -v aws");
     expect(driftOp(render({}), forge)!.script).not.toContain("command -v aws");
@@ -2526,7 +2524,7 @@ describe("decide token on the plan jobs", () => {
     const script = driftOp(render({ drift: "attribute" }), "gitlab")!.script;
     expect(script.indexOf("command -v aws")).toBeGreaterThanOrEqual(0);
     expect(script.indexOf("command -v aws")).toBeLessThan(script.indexOf("terragucci stage tf-drift"));
-    expect(script).toContain('export PATH="$dir/bin:$PATH"');
+    expect(script).toContain(ciToolInstallLine("aws-cli", AWS_CLI.version, { download: "node", onPath: true }));
     expect(driftOp(render({ drift: "pull-request" }), "gitlab")!.script).not.toContain("command -v aws");
   });
 

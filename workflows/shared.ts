@@ -36,13 +36,8 @@ export const JUST_VERSION = "1.36.0";
 export const installJust = (): InstanceType<typeof Step> =>
   new Step({
     name: "Install just",
-    run: [
-      // x86_64 or aarch64, so the step works on GitHub's arm64 runners too.
-      `curl -fsSL -o /tmp/just.tar.gz https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz`,
-      `tar -xzf /tmp/just.tar.gz -C /tmp just`,
-      `sudo mv /tmp/just /usr/local/bin/just`,
-      `just --version`,
-    ].join("\n"),
+    // chant's install line, checked against the release's sums (chant#4952), on amd64 and arm64 runners.
+    run: [ciToolInstallLine("just", JUST_VERSION, { sudo: true }), `just --version`].join("\n"),
   });
 
 export const ACT_VERSION = "0.2.89";
@@ -51,13 +46,7 @@ export const ACT_VERSION = "0.2.89";
 export const installAct = (): InstanceType<typeof Step> =>
   new Step({
     name: "Install act",
-    run: [
-      `arch=$(uname -m); [ "$arch" = aarch64 ] && arch=arm64`,
-      `curl -fsSL -o /tmp/act.tar.gz https://github.com/nektos/act/releases/download/v${ACT_VERSION}/act_Linux_$arch.tar.gz`,
-      `tar -xzf /tmp/act.tar.gz -C /tmp act`,
-      `sudo mv /tmp/act /usr/local/bin/act`,
-      `act --version`,
-    ].join("\n"),
+    run: [ciToolInstallLine("act", ACT_VERSION, { sudo: true }), `act --version`].join("\n"),
   });
 
 /**
