@@ -25,11 +25,11 @@
  * The `done.jsonl` lines older releases wrote stay readable by `terragucci
  * audit`; nothing writes them now.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { terraformStateExport } from "@intentius/chant-lexicon-terraform/state-ops";
+import { actorOf } from "@intentius/chant/actor";
 import type { StoreFetch } from "@intentius/chant/object-store";
 import { approvalRule } from "./approval";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
@@ -74,11 +74,6 @@ export interface ExportResult {
   file?: string;
 }
 
-function git(repo: string, args: string[], env: NodeJS.ProcessEnv): string {
-  const r = spawnSync("git", args, { cwd: repo, encoding: "utf-8", env });
-  return r.status === 0 ? r.stdout.trim() : "";
-}
-
 /**
  * Ask for, or with an approval write, one version of a root's state. Throws
  * ConfigError for a root, backend or version it cannot export.
@@ -98,7 +93,7 @@ export async function exportState(repo: string, options: ExportOptions): Promise
   const why = refusal(repo, root);
   if (why) throw new ConfigError(`state export: ${why}`);
   const unit = existsSync(join(repo, root, "terragrunt.hcl"));
-  const by = options.actor || git(repo, ["config", "user.name"], env) || git(repo, ["config", "user.email"], env);
+  const by = options.actor || actorOf({ env, repo, forge: false, gitKeys: ["user.name", "user.email"], login: false, fallback: "" });
   if (!by) throw new ConfigError("state export names who asks: set git's user.name, or pass --actor <name>");
   const binary = options.binary ?? settings?.binary ?? shape.binary([root]).value;
 
