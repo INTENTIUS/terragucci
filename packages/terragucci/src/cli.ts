@@ -97,11 +97,13 @@
  * its approval, so it applied nothing.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { runChantInProcess } from "@intentius/chant/ci-product";
+import { actorOf } from "@intentius/chant/actor";
+import { planFile, writePlannedFiles } from "@intentius/chant/planned-files";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { environmentRootProblems, withEnvironmentRoles } from "./environments";
 import { secretRootProblems } from "./root-secrets";
@@ -153,7 +155,8 @@ import { RenderError } from "./render";
 import { applyWave, branchRootProblems, parseBranches, parseGroups, readLedger } from "./apply";
 import { resumeStep, resumeWithChant } from "./resume";
 import { pointQuestions } from "./point-gate";
-import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck, policyBase } from "./check";
+import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck } from "./check";
+import { ciBaseRef } from "@intentius/chant/ci-base";
 import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
 import { sourceChecker } from "./sources";
 import { describeEdge, planEdge } from "./publish/edge";
@@ -427,19 +430,6 @@ export function profilesFor(config: TerragucciConfig, repo?: string): string[] {
   return [...out];
 }
 
-/** Who `git config` says the person at this checkout is, for a request's requestedBy. */
-function gitUser(dir: string): string | undefined {
-  for (const key of ["user.email", "user.name"]) {
-    try {
-      const v = execFileSync("git", ["-C", dir, "config", key], { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-      if (v) return v;
-    } catch {
-      // not set
-    }
-  }
-  return undefined;
-}
-
 /** The commit a ref names in the checkout, or undefined. */
 function gitRevParse(dir: string, ref: string): string | undefined {
   try {
@@ -550,13 +540,7 @@ export async function main(argv: string[]): Promise<number> {
         const plan = planGenerate(cwd, settings);
         if (plan.foreign.length) throw new ConfigError(plan.foreign.join("; "));
         const dryRun = flags["dry-run"] === true;
-        if (!dryRun) {
-          for (const f of plan.files) {
-            if (f.status === "unchanged") continue;
-            if (f.status === "removed") unlinkSync(f.path);
-            else writeFileSync(f.path, f.content);
-          }
-        }
+        if (!dryRun) writePlannedFiles(plan.files);
         console.log(describeGenerate(cwd, plan, dryRun));
         return 0;
       }
@@ -660,7 +644,7 @@ export async function main(argv: string[]): Promise<number> {
         if (!dir) throw new ConfigError("usage: terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]");
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
-        const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
+        const pins = await pinChecker(cwd, settings.modules, ciBaseRef(process.env, { base: str(flags, "base") ?? process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }), path ? { config: resolve(path) } : {});
         const result = await checkRoot(str(flags, "binary") ?? "tofu", dir, cwd, { ...(pins ? { pins } : {}), tips: settings.tips });
         emitCheck(cwd, result);
         return result.ok ? 0 : 1;
@@ -673,7 +657,7 @@ export async function main(argv: string[]): Promise<number> {
         if (units === Boolean(dir)) throw new ConfigError("usage: terragucci check-sources <dir>|--units [--config <file>] [--base <ref>]");
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
-        const check = await sourceChecker(cwd, settings.sources, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {}, { afterInit: false });
+        const check = await sourceChecker(cwd, settings.sources, ciBaseRef(process.env, { base: str(flags, "base") ?? process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }), path ? { config: resolve(path) } : {}, { afterInit: false });
         if (!check) return 0;
         const dirs = units ? walkUnits(cwd, settings.terragrunt?.exclude).map((u) => u.path) : [dir!];
         const results = [];
@@ -710,7 +694,7 @@ export async function main(argv: string[]): Promise<number> {
         // tf-check's pin step in a Terragrunt repo: each unit's terraform source, as check-root checks a root's module calls.
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
-        const pins = await pinChecker(cwd, settings.modules, str(flags, "base") ?? policyBase(process.env), path ? { config: resolve(path) } : {});
+        const pins = await pinChecker(cwd, settings.modules, ciBaseRef(process.env, { base: str(flags, "base") ?? process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }), path ? { config: resolve(path) } : {});
         if (!pins) return 0;
         const result = await checkUnitPins(walkUnits(cwd, settings.terragrunt?.exclude).map((u) => u.path), pins);
         emitCheck(cwd, result);
@@ -747,12 +731,7 @@ export async function main(argv: string[]): Promise<number> {
           throw new ConfigError((e as Error).message);
         }
         const dir = resolve(cwd, out);
-        for (const f of recipe.files) {
-          const file = resolve(dir, f.path);
-          mkdirSync(dirname(file), { recursive: true });
-          writeFileSync(file, f.content);
-          if (f.mode) chmodSync(file, f.mode);
-        }
+        writePlannedFiles(recipe.files.map((f) => planFile(resolve(dir, f.path), f.content, f.mode ? { mode: f.mode } : {})));
         console.log(describeRecipe(recipe, relative(cwd, dir) || "."));
         return 0;
       }
@@ -766,6 +745,7 @@ export async function main(argv: string[]): Promise<number> {
         const plan = planEdge(reg, { ...(str(flags, "origin") ? { origin: str(flags, "origin") } : {}) });
         const out = str(flags, "out") ?? "registry-edge";
         const dir = resolve(cwd, out);
+        // A bundle file is bytes, which chant's planned files (text alone) do not carry.
         for (const f of plan.files) {
           const file = resolve(dir, f.path);
           mkdirSync(dirname(file), { recursive: true });
@@ -960,7 +940,7 @@ export async function main(argv: string[]): Promise<number> {
         }
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = resolveRepo(path ? await loadConfig(resolve(path)) : {});
-        const requestedBy = str(flags, "requested-by") || process.env.GITHUB_TRIGGERING_ACTOR || process.env.GITHUB_ACTOR || gitUser(cwd) || process.env.USER || "unknown";
+        const requestedBy = str(flags, "requested-by") || actorOf({ triggering: true, repo: cwd, gitKeys: ["user.email", "user.name"] });
         const version = str(flags, "version");
         const registry = str(flags, "registry");
         const r = await requestApp({ cwd, settings, template, name, ...(app ? { app } : {}), ...(claimedBy ? { claimedBy } : {}), ...(version ? { version } : {}), ...(inputs ? { inputs } : {}), rawInputs, via, requestedBy, dryRun: flags["dry-run"] === true, ...(registry ? { registry } : {}) });
@@ -1419,7 +1399,7 @@ export async function main(argv: string[]): Promise<number> {
         // tf-check's last step (chant issue 4914): chant's check stage, `ci.hooks.check` read at base, in terragucci's words.
         if (args[0] !== "check") throw new ConfigError("usage: terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]");
         const rest = argv.slice(argv.indexOf("ci") + 1);
-        const base = rest.some((a) => a === "--base" || a.startsWith("--base=")) ? [] : ["--base", policyBase(process.env) ?? "HEAD"];
+        const base = rest.some((a) => a === "--base" || a.startsWith("--base=")) ? [] : ["--base", ciBaseRef(process.env, { base: process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }) ?? "HEAD"];
         return runChantInProcess(["ci", ...rest, ...base], TERRAGUCCI_WORDS);
       }
       case "agent": {
@@ -1521,13 +1501,10 @@ export async function main(argv: string[]): Promise<number> {
         // The forge lexicon's control pipeline in terragucci's words when the installed chant has it (chant#4568).
         const pipeline = chantControlPipelineFile(forge);
         const file = join(cwd, pipeline.path);
-        const existing = existsSync(file) ? readFileSync(file, "utf-8") : undefined;
-        if (existing !== undefined && !existing.startsWith(MARKER) && flags.force !== true) throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; pass --force to replace it`);
-        const status = existing === undefined ? "created" : existing === pipeline.content ? "unchanged" : "updated";
-        if (flags["dry-run"] !== true && status !== "unchanged") {
-          mkdirSync(dirname(file), { recursive: true });
-          writeFileSync(file, pipeline.content);
-        }
+        if (existsSync(file) && !readFileSync(file, "utf-8").startsWith(MARKER) && flags.force !== true) throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; pass --force to replace it`);
+        const planned = planFile(file, pipeline.content);
+        const status = planned.status;
+        if (flags["dry-run"] !== true) writePlannedFiles([planned]);
         if (json) return emit(envelope("control", 0, { path: pipeline.path, status, notes: pipeline.notes }));
         console.log([`${pipeline.path}: ${status}${flags["dry-run"] === true ? " (dry run, nothing written)" : ""}`, ...pipeline.notes.map((n) => `  ${n}`)].join("\n"));
         return 0;

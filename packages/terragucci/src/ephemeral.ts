@@ -106,6 +106,7 @@ import { applyLayers, backendBlock, findRoots, globMatch } from "./detect";
 import { detectShape, type Shape } from "./shape";
 import { jobForgeTarget } from "@intentius/chant/forge-flags";
 import { forgeClient } from "@intentius/chant/pr-forge";
+import { actorOf } from "@intentius/chant/actor";
 import type { Fetch } from "./forge";
 import { isGitLabAddress, shownUrl, suffixedGitLabAddress } from "@intentius/chant-lexicon-terraform/state/gitlab";
 import { unitPlace } from "./migrate";
@@ -357,7 +358,7 @@ async function ready(repo: string, options: EphemeralOptions): Promise<Ready> {
   const terragrunt: UnitCopy | undefined = shape.engine === "terragrunt" ? { terragrunt: options.terragrunt ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt" } : undefined;
   const forge: ForgeName = settings.forge ?? (env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
   const binary = options.binary ?? copyBinary(repo, settings, shape);
-  const actor = options.actor || env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN || "terragucci";
+  const actor = options.actor || actorOf({ env, login: false, fallback: "terragucci" });
   return { settings, roots: e.roots, ...(terragrunt ? { terragrunt } : {}), ...(shape.prepare ? { synth: shape.prepare } : {}), ttl: ttlMs(e.ttl ?? EPHEMERAL_TTL) ? (e.ttl ?? EPHEMERAL_TTL) : EPHEMERAL_TTL, forge, binary, ...(configPath ? { configPath } : {}), env, log, exec: options.exec ?? runBinary, actor };
 }
 

@@ -29,6 +29,7 @@ import { firstLine, forbiddenPaths, signersAt } from "./agent-comment";
 import { ConfigError, type ForgeName } from "./config";
 import { jobForgeTarget } from "@intentius/chant/forge-flags";
 import { ForgeApiError, forgeClient } from "@intentius/chant/pr-forge";
+import { actorOf } from "@intentius/chant/actor";
 import { defaultBranch, ForgeError, openPullRequest, type Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
 import type { Report } from "./report/schema";
@@ -142,7 +143,7 @@ const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  */
 export function driftStarter(env: NodeJS.ProcessEnv): string | undefined {
   if (env.GITHUB_EVENT_NAME !== "workflow_dispatch") return undefined;
-  const who = (env.GITHUB_TRIGGERING_ACTOR || env.GITHUB_ACTOR || "").trim();
+  const who = actorOf({ env, triggering: true, login: false, fallback: "" });
   return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(who) ? who : undefined;
 }
 

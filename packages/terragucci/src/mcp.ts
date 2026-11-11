@@ -48,6 +48,7 @@ import { BRANCH, parseComment } from "./comment";
 import { ConfigError, resolveProject, resolveRepo, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { forgeClient, type ForgeTarget } from "@intentius/chant/pr-forge";
 import { forgeReadsFor } from "@intentius/chant/pr-forge-reads";
+import { actorOf } from "@intentius/chant/actor";
 import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch } from "./forge";
 import { PLAN_MARK } from "./plan-note-gitlab";
 import { forgeOf } from "./respond/change";
@@ -660,7 +661,7 @@ export async function forgeActor(f: Forge, env: NodeJS.ProcessEnv): Promise<stri
   } catch (e) {
     why = (e as Error).message;
   }
-  const actor = env.GITHUB_TRIGGERING_ACTOR || env.GITHUB_ACTOR || env.GITLAB_USER_LOGIN;
+  const actor = actorOf({ env, triggering: true, login: false, fallback: "" });
   if (actor) return actor;
   throw new ToolError(`the forge did not say whose token ${f.tokenEnv} is (${why}), so there is no requester it vouches for; a request needs one`);
 }

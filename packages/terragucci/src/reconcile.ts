@@ -11,7 +11,7 @@
  * pipeline, with its tips on a dry run.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { reconcileProjects } from "@intentius/chant/ci-control";
@@ -19,7 +19,8 @@ import { TERRAGUCCI_WORDS } from "./ci-words";
 import { ConfigError, forgeFromHost, parseProjectKey, resolveProject, type ResolvedSettings, type TerragucciConfig } from "./config";
 import { DEFAULT_TOKEN_ENV, defaultBranch, openPullRequest, type Fetch } from "./forge";
 import { findRoots } from "./detect";
-import { init, type FileChange } from "./init";
+import { writePlannedFiles, type PlannedFile } from "@intentius/chant/planned-files";
+import { init } from "./init";
 import { planGenerate, projectGenerate } from "./generate";
 import { loadHclParser } from "./rollout/parser";
 import type { ReportTip } from "./report/schema";
@@ -38,7 +39,7 @@ export interface ReconcileOptions {
 export interface ProjectOutcome {
   key: string;
   status: "unchanged" | "would-change" | "pull-request" | "failed";
-  changes: FileChange[];
+  changes: PlannedFile[];
   pullRequest?: string;
   error?: string;
   /** Advice on the project's setup. Present on a dry run with tips on. */
@@ -83,13 +84,10 @@ async function tipsOf(dir: string, settings: ResolvedSettings): Promise<ReportTi
 }
 
 /** The project's generated files, written into its clone; a file at a generated path that terragucci did not write fails the project. */
-function writeGenerated(dir: string, settings: ResolvedSettings): FileChange[] {
+function writeGenerated(dir: string, settings: ResolvedSettings): PlannedFile[] {
   const plan = planGenerate(dir, settings);
   if (plan.foreign.length) throw new ConfigError(plan.foreign.join("; "));
-  for (const f of plan.files) {
-    if (f.status === "removed") unlinkSync(f.path);
-    else if (f.status !== "unchanged") writeFileSync(f.path, f.content);
-  }
+  writePlannedFiles(plan.files);
   return plan.files;
 }
 
@@ -128,7 +126,7 @@ async function reconcileWithChant(config: TerragucciConfig, options: ReconcileOp
   }
   const tips = new Map<string, ReportTip[]>();
   // What the generator wrote for each project, contents included.
-  const written = new Map<string, FileChange[]>();
+  const written = new Map<string, PlannedFile[]>();
   const generate = async (dir: string, target: { key: string; name: string; dryRun: boolean }) => {
     const settings = resolved.get(target.key)!;
     // generate: each root's backend, provider and version files, written into the clone first, so init finds the roots they make.

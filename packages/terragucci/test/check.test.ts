@@ -1,6 +1,6 @@
 // tf-check's steps beyond the format check, with a fake exec so no binary is needed.
 import { describe, expect, it } from "vitest";
-import { checkPolicyTests, checkRoot, diagnosticWhere, hasPolicyTests, parseLiveCheck, parseValidate, policyBase } from "../src/check";
+import { checkPolicyTests, checkRoot, diagnosticWhere, hasPolicyTests, parseLiveCheck, parseValidate } from "../src/check";
 import type { PolicyExec } from "../src/report/policy";
 import { git, tmp, write } from "./helpers";
 
@@ -185,12 +185,5 @@ describe("policy tests", () => {
     expect(r.ok).toBe(false);
     expect(calls.at(-1)?.[1]).toBe("test");
     expect(r.log[0]).toMatch(/read from main, not from this checkout/);
-  });
-
-  it("reads the base from the pull request's target, or the default branch for a push to another branch", () => {
-    expect(policyBase({ GITHUB_BASE_REF: "main" })).toBe("origin/main");
-    expect(policyBase({ GITHUB_REF_NAME: "feature", TG_BRANCH: "main" })).toBe("origin/main");
-    expect(policyBase({ GITHUB_REF_NAME: "main", TG_BRANCH: "main" })).toBeUndefined();
-    expect(policyBase({ TG_BASE: "origin/dev" })).toBe("origin/dev");
   });
 });

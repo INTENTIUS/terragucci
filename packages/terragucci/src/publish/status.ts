@@ -21,7 +21,8 @@ import { releaseCatalog as core } from "../chant-catalog";
 import { type ChantReleaseState, type ChantReleaseStatusRecord } from "../chant-next";
 import { publishCatalog } from "./catalog";
 import { findModules } from "./index";
-import { actorOf, LEDGER_ENV, LIFECYCLE, readModuleLedger } from "./ledger";
+import { actorOf } from "@intentius/chant/actor";
+import { LEDGER_ENV, LIFECYCLE, readModuleLedger } from "./ledger";
 import { registryStore, type RegistryStore } from "./registry";
 import { parseSemver, formatSemver } from "./semver";
 
@@ -90,7 +91,7 @@ export async function setReleaseStatus(repo: string, settings: Pick<ResolvedSett
     status,
     ...(change.reason?.trim() ? { reason: change.reason.trim() } : {}),
     ...(replacement ? { replacement } : {}),
-    actor: actorOf(env),
+    actor: actorOf({ env, fallback: "terragucci" }),
     timestamp: (opts.now?.() ?? new Date()).toISOString(),
   };
   const pushed = await pushStatus(repo, () => core.appendReleaseStatus(input, { cwd: repo }));
