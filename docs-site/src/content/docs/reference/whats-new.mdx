@@ -14,6 +14,22 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 
 Both the npm package and the four CI images now carry chant `0.124.95`.
 
+The plan jobs are chant's product plan jobs now. Their names, their check and their report artifacts stay as they were. An open pull request gets one new plan note after the upgrade.
+
+On GitLab the plan job holds no token. A plan notes schedule posts the notes instead. It runs every five minutes with `CHANT_PLAN_NOTES=1` and `TERRAGUCCI_SCHEDULE=plan-notes`, and `terragucci init` names it. `gitlab.token: protected` no longer needs `comments`. The commands `terragucci oidc-trade` and `terragucci post note` are gone.
+
+A migration whose state moved after an earlier approval now waits for approval under the new digest. It used to refuse and name the roots.
+
+`terragucci state export` names its requester through chant's `actorOf`. The order it reads them in is the same.
+
+`terragucci registry edge` writes its Worker or Lambda@Edge files through chant's planned files. A rerun leaves an unchanged file alone.
+
+terragucci runs its engine binaries through chant's engine runner. chant traces the commands, so terragucci's own command tracing is gone.
+
+A Terragrunt unit's binary spans now sit under a `<binary> plan` span under `root <unit>`. They are timed from Terragrunt's run report. A unit missing from that report gets a `<binary> plan` span with exit -1 and says it did not run.
+
+Every run of the binary now gets `TF_IN_AUTOMATION=1`. In a Terragrunt repo `terragucci plan` uses chant's Terragrunt runner.
+
 The new `evidence` key signs the plan and wave checks, and `terragucci init` writes `.chant/trust.json` with the ref gate's rule.
 
 `terragucci run wave` runs one job of chant's Op waves pipeline with terragucci's hooks in the job's process.
