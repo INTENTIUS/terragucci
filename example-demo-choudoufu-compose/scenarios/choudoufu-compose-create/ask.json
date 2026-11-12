@@ -80,7 +80,7 @@
     {
       "prompt": "Did anything stay locked?",
       "action": null,
-      "reply": "Never. choudoufu holds no lock to leave behind, so there is nothing to force-unlock. Each record is written only if it is unchanged since it was read: resource-level locking at the cloud level.",
+      "reply": "Never. choudoufu holds no lock to leave behind, so there is nothing to force-unlock. Each record is written only if it is unchanged since it was read, so a run that loses a race re-plans or names the collision. The three estates need no coordination, and inside one, terragucci's waves hold each resource they change.",
       "light": null,
       "paths": false,
       "ghost": false,
