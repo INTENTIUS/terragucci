@@ -277,7 +277,6 @@ async function answer(ask: Ask, c: NoteCommand): Promise<NoteRun> {
     }
     // `/terragucci lock` and `/terragucci unlock` are chant's too, by the reach line (chant issue 5061).
     if (parsed.kind === "lock" || parsed.kind === "unlock") return beforeMergeRun(ask, c);
-    if (parsed.kind !== "apply") return reply(`\`/terragucci ${parsed.kind}\` does not run here`);
     if (fork) return reply("a merge request from a fork is never applied: its code would run with this project's apply credentials");
     if (mr.base !== base) return reply(`!${iid} targets ${String(mr.base)}, not the default branch ${base}, so it is not applied`);
     // A pipeline on a protected default branch needs a token that may merge there; the comments job's own may not.
