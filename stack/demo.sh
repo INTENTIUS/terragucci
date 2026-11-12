@@ -448,8 +448,10 @@ TGC_STATE_BUCKET=demo-terragrunt-choudoufu-state
 # The choudoufu release DEMO_IMAGE carries, for a tree whose roots run on
 # choudoufu. Its sha256 for each arch is recorded in stack/demo-yodel/choudoufu.sha256, which
 # the build checks the download against.
-CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.31.0}"
-# 0.31.0 carries composed estates (choudoufu#2059), in-run reads that keep each output's
+CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.34.0}"
+# 0.34.0 adds OpenTofu's new runtime behind TOFU_X_EXPERIMENTAL_RUNTIME (off by default, so
+# the demo runs as before) and secrets in SSM (choudoufu#2256, choudoufu#2393). 0.31.0
+# brought composed estates (choudoufu#2059), in-run reads that keep each output's
 # planned value (choudoufu#2211), joint runs for Terragrunt run --all and Atmos --all
 # (choudoufu#2222), plan files that carry the joint plan so the merge applies the plan
 # reviewed on the pull request (choudoufu#2226), and a joint run that takes a unit's
