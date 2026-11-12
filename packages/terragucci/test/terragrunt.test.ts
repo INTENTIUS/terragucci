@@ -82,6 +82,8 @@ interface FakeOptions {
   times?: Record<string, [string, string]>;
   /** Run `TG_TF_PATH plan ... -out=<out-dir>/<unit>/tfplan.tfplan` in each unit's directory, as Terragrunt does. */
   runBinary?: boolean;
+  /** Units the run report leaves out, as for a unit Terragrunt never ran. */
+  absent?: string[];
 }
 
 /** Run a file and wait for it without blocking, so the stage's span receiver can answer it. */
@@ -133,7 +135,7 @@ function fakeTerragrunt(opts: FakeOptions = {}): TerragruntExec {
     });
     const report = argOf(args, "--report-file")!;
     mkdirSync(dirname(report), { recursive: true });
-    writeFileSync(report, JSON.stringify(rows));
+    writeFileSync(report, JSON.stringify(rows.filter((r) => !opts.absent?.includes(r.Name))));
     return { code: opts.fail?.length ? 1 : 0, stdout: "", stderr: opts.fail?.length ? "ERROR boom" : "" };
   };
 }
@@ -555,6 +557,34 @@ const { existsSync, readFileSync } = require("node:fs");
     expect(unit("live/dev/vpc").note).toBeUndefined();
     expect(unit("live/dev/app").resources.map((x) => x.address)).toEqual(["terraform_data.app"]);
     expect(r.report.timings!.resources.map((x) => [x.root, x.address])).toEqual([["live/dev/vpc", "terraform_data.vpc"], ["live/dev/app", "terraform_data.app"]]);
+  });
+
+  it("traces each unit's plan as a <binary> plan span under root <unit>, both timed from the run report", { timeout: 60_000 }, async () => {
+    const repo = liveRepo();
+    let sent: { resourceSpans: { scopeSpans: { spans: { spanId: string; parentSpanId?: string; name: string; startTimeUnixNano: string; endTimeUnixNano: string; status?: { code: number; message?: string }; attributes: { key: string; value: Record<string, unknown> }[] }[] }[] }[] } | undefined;
+    await runStage("tf-plan", repo, {
+      out: join(repo, "out"), binary: "tofu", terragrunt: true,
+      layers: [["live/dev/vpc", "live/dev/app"]],
+      terragruntExec: fakeTerragrunt({ times: { "live/dev/vpc": ["2026-10-05T10:00:00Z", "2026-10-05T10:00:03Z"] }, absent: ["live/dev/app"] }),
+      env: { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318", OTEL_METRICS_EXPORTER: "none" },
+      otlpFetch: async (url, init) => {
+        if (url.endsWith("/v1/traces")) sent = JSON.parse(init.body);
+        return { ok: true, status: 200, text: async () => "" };
+      },
+    }, () => {});
+    const spans = sent!.resourceSpans[0]!.scopeSpans[0]!.spans;
+    const byId = new Map(spans.map((s) => [s.spanId, s]));
+    const plan = (unit: string) => spans.find((s) => s.name === "tofu plan" && byId.get(s.parentSpanId!)?.name === `root ${unit}`)!;
+    const vpc = plan("live/dev/vpc");
+    const at = (iso: string) => String(BigInt(Date.parse(iso)) * 1_000_000n);
+    expect([vpc.startTimeUnixNano, vpc.endTimeUnixNano]).toEqual([at("2026-10-05T10:00:00Z"), at("2026-10-05T10:00:03Z")]);
+    const root = byId.get(vpc.parentSpanId!)!;
+    expect([root.startTimeUnixNano, root.endTimeUnixNano]).toEqual([at("2026-10-05T10:00:00Z"), at("2026-10-05T10:00:03Z")]);
+    expect(Object.values(vpc.attributes.find((a) => a.key === "process.exit.code")!.value)[0]).toBe("0");
+    // A unit missing from the run report: its plan span failed, with exit code -1 and why.
+    const app = plan("live/dev/app");
+    expect(Object.values(app.attributes.find((a) => a.key === "process.exit.code")!.value)[0]).toBe("-1");
+    expect(app.status).toMatchObject({ code: 2, message: "not in Terragrunt's run report, so it did not run" });
   });
 
   it("lists each unit's time from Terragrunt's run report, the slowest first, and says when its plan sent no spans", async () => {

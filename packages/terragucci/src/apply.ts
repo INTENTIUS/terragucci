@@ -150,7 +150,7 @@ import { type PlanCone } from "./cone";
 import type { WaveFacts } from "./report/wave-telemetry";
 import { discoverUnits, refineWaves, unitEdges, walkUnits } from "./terragrunt";
 import { UnitBinaries, type UnitTools } from "./unit-pins";
-import { binaryEnv, terragruntExec, tokenlessBinary } from "./binary-env";
+import { binaryEnv, runBinarySync, terragruntExec, tokenlessBinary } from "./binary-env";
 import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits } from "./generate";
 import { readStateVersion } from "@intentius/chant-lexicon-terraform/state";
 import { rootWorkspace, workspaceEnv } from "./workspace";
@@ -750,9 +750,9 @@ function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
  * from it for the report. Undefined when the state cannot be shown; the report then leaves those values unknown.
  */
 function showAppliedState(repo: string, p: PlannedRoot): unknown {
-  const show = spawnSync(p.binary, [`-chdir=${join(repo, p.root)}`, "show", "-json", "-no-color"], { encoding: "utf-8", env: binaryEnv(p.env), maxBuffer: 512 * 1024 * 1024 });
+  const show = runBinarySync(p.binary, ["show", "-json", "-no-color"], join(repo, p.root), p.env);
   try {
-    return show.status === 0 ? JSON.parse(show.stdout) : undefined;
+    return show.code === 0 ? JSON.parse(show.stdout) : undefined;
   } catch {
     return undefined;
   }

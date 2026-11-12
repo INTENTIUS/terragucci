@@ -50,11 +50,11 @@ function fakeTerragrunt(): { exec: TerragruntExec; runs: Ran[] } {
     if (args[0] !== "run") return { code: 1, stdout: "", stderr: `unexpected ${args.join(" ")}` };
     const units = args.flatMap((a, i) => (args[i - 1] === "--filter" ? [/^\{\.\/(.+)\}$/.exec(a)![1]] : []));
     const command = args[args.indexOf("--") + 1];
-    // The stage's span wrapper stands in TG_TF_PATH and runs the binary it names: record that binary.
+    // chant's unit wrapper (planTerragruntWave's onCommand) stands in TG_TF_PATH and runs the binary it names: record that binary.
     // The stage's preview wrapper runs the next one in TERRAGUCCI_TG_NEXT: follow it.
     let tf = options.env.TG_TF_PATH ?? "";
     if (tf.includes(".serve/") && options.env.TERRAGUCCI_TG_NEXT) tf = options.env.TERRAGUCCI_TG_NEXT;
-    const wrapped = tf.includes(".bin/") && existsSync(tf) ? /exec '([^']+)'/.exec(readFileSync(tf, "utf-8"))?.[1] : undefined;
+    const wrapped = tf.includes("/unit-bin/") && existsSync(tf) ? /exec '([^']+)'/.exec(readFileSync(tf, "utf-8"))?.[1] : undefined;
     runs.push({ terragrunt: file, tfPath: wrapped ?? tf, command, units });
     const out = flag(args, "--out-dir");
     for (const u of units) {

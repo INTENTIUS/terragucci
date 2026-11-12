@@ -33,7 +33,7 @@ import { terraformStateUnlock } from "@intentius/chant-lexicon-terraform/state-o
 import type { StoreFetch } from "@intentius/chant/object-store";
 import { actorOf } from "@intentius/chant/actor";
 import { approvalRule } from "./approval";
-import { binaryEnv } from "./binary-env";
+import { runBinarySync } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
 import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape } from "./shape";
@@ -79,9 +79,10 @@ export interface UnlockResult {
   live?: boolean;
 }
 
+/** The engine runner's blocking run of the binary (`runBinarySync`), in the shape `exec` takes. */
 const runBinary = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv): { status: number; out: string } => {
-  const p = spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 1 << 26 });
-  return { status: p.status ?? 1, out: `${p.stdout ?? ""}${p.stderr ?? ""}${p.error ? p.error.message : ""}` };
+  const r = runBinarySync(binary, args, dir, env);
+  return { status: r.code, out: r.out };
 };
 
 const tail = (s: string): string => s.trim().split("\n").slice(-10).join("\n");
