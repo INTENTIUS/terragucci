@@ -413,15 +413,15 @@ terragucci respond rollout [--mode dry-run|apply]
 terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
 terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
 terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes]
+terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none]
 ```
 
-Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job runs it before any credential; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`. Each `--agent` mode runs in its own job.
+Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job is chant's and decides with chant's re-plan step, not this command; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`. Each `--agent` mode runs in its own job.
 
 | `--agent` | Run by job | Does |
 |---|---|---|
-| `off` (the default) | `replan` | replies with how to turn the agent comment on |
-| `on` | `replan` | leaves agent comments to the agent jobs |
+| `off` (the default) | none | replies with how to turn the agent comment on |
+| `on` | none | leaves agent comments to the agent jobs |
 | `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
 | `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
 
@@ -431,7 +431,6 @@ On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments`
 |---|---|
 | Which notes | those of the merge requests updated in the last day |
 | Each `/terragucci` note | answered once: the reply carries a `<!-- terragucci:note=<id> -->` marker, and a note with one is never answered again |
-| `--plan-notes` | first posts the plan note and status each merge request pipeline's plan job left in its report; the comments job passes it under `gitlab: { token: protected }` |
 | Exit 1 | GitLab answered with an error |
 
 | Note | Checked | Does |
@@ -521,21 +520,36 @@ terragucci post stale <roots> <branch>
 
 It posts with `TG_TOKEN`, on the forge `--forge` or `TG_FORGE` names (default `github`). The generated pipeline's jobs run it. With no token it posts nothing. A post the forge refuses is printed, and the command still exits 0.
 
+## plan-handoff
+
+```text
+terragucci plan-handoff --report <dir> [--env <env>] [--exit <code>]
+```
+
+The plan job's last line. It writes chant's plan note hand-off, `pr-plan-note.json`, from the report `stage tf-plan` wrote in `--report` (default `terragucci-report`): the note, the counts as the `terragucci/plan` description, and the roots it covers as the note's `<!-- terragucci:plan roots=... -->` line. `--exit` is the plan's exit code: 0 hands off a success, any other a failure. It exits 1 when the report was not written, and writes nothing outside a pull request (`TG_PR`). chant's `plan-note` job posts the hand-off.
+
 ## plan-note
 
 ```text
-terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status]
+terragucci plan-note --forge github|forgejo --report <dir> --notices <file> [--agent-login <login>]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--forge` | `github` (the default) or `forgejo` |
 | `--report` | the plan job's report directory, read as data; default `terragucci-report` |
-| `--plan-result` | the plan job's result (`success` or `failure`), which `terragucci/plan` follows |
-| `--root` | the root a `/terragucci plan <root>` re-plan named |
-| `--approval-status` | also post `terragucci/approval`, under `approval: pr-review` |
+| `--notices` | the file chant's note job adds under the note's counts, one line each |
+| `--agent-login` | the agent's account, whose review never counts |
 
-The generated `plan-note` and `replan-note` jobs run it, and it always exits 0.
+chant's `plan-note` and `replan-note` jobs run it before they post: when a wave will wait for an approval, it writes the line naming whose review would not count. It always exits 0.
+
+## components
+
+```text
+terragucci components pr-post ...
+```
+
+chant's `components` commands in terragucci's words. chant's `plan-note` job runs `pr-post`, which posts the plan note and `terragucci/plan` from the plan job's hand-off.
 
 ## approval-status
 

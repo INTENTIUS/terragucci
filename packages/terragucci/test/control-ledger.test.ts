@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChantCiControl, ChantControlEntry, ChantControlLedgerPort } from "../src/chant-next";
 import { importControlConfigAt, LEDGER_PATH, putEntryAt, readEntriesAt, retireEntryAt, validateSettings } from "../src/control-records";
-import { controlCloneScript, dispatchScript, resolveControl } from "../src/control-repo";
+import { dispatchScript, resolveControl } from "../src/control-repo";
 import { git, tmp } from "./helpers";
 
 /** The fake chant's control module calls go to, when a case sets one. */
@@ -117,8 +117,8 @@ describe("control entries on the ledger", () => {
   });
 });
 
-describe("the member's dispatch and the read checkout", () => {
-  it("are chant's, with terragucci's secrets and mark", async () => {
+describe("the member's dispatch", () => {
+  it("is chant's, with terragucci's secrets and mark", async () => {
     const { chant, calls } = fakeControl();
     stand.in = chant;
     const c = resolveControl({ ...control, token_env: "MY_DISPATCH", read_token_env: "MY_READ" }, "app");
@@ -128,6 +128,5 @@ describe("the member's dispatch and the read checkout", () => {
     expect(calls).toEqual(["target token=MY_DISPATCH read=MY_READ"]);
     expect(dispatchScript(c, "gitlab")).toContain("chant-dispatch sent= mark=");
     stand.in = undefined;
-    expect(controlCloneScript(c)).toContain("CHANT_CONTROL_DIR");
   });
 });

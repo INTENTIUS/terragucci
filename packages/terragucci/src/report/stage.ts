@@ -65,8 +65,7 @@ import type { DecideOptions } from "../decide";
 import { ATTRIBUTIONS_FILE, attribute, awsAuditLog, type Attributed, type AuditLog } from "../respond/attribute";
 import { driftOf, type Drifted } from "../respond/drift";
 import { terraformDriftPlan, terraformLivePlanDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
-import { fileAdded, opPipelineFile } from "@intentius/chant/op/schedule-overdue";
-import { checkDriftSchedule, DRIFT_SCHEDULE_FILE, driftWatch } from "./overdue";
+import { checkDriftSchedule } from "./overdue";
 import { DRIFT_ISSUE_FILE } from "../drift-agent";
 import { DRIFT_MARKER, drifted, driftCount, driftNames, renderDriftIssue, trackDrift, type DriftIssueResult } from "./drift";
 import { redactPlan } from "./redact";
@@ -2197,28 +2196,18 @@ async function finish(
     if (loosening) notices.push(loosening);
   }
   if (stage === "tf-plan" && agentLoginWarning(settings.agent) && report.waves.some((w) => w.waits === true)) notices.push(`The agent's account isn't excluded from approving this change: set agent.login to the login agent.token_env's token acts as.`);
-  // Without a token the stage asks as a reader, which only a public repo answers; the note job asks again with its token.
-  let leftSchedule: { cron: string; workflow?: string; added?: string } | undefined;
+  // Without a token the stage asks as a reader, which only a public repo answers, for the report. The note's line is
+  // chant's note job's: it holds the token and checks the drift job's watch (the product plan's `watches`, ../product-plan.ts).
   if (!drift && typeof settings.drift === "string") {
     const token = options.token ?? env.TG_TOKEN;
     const forge = options.forge ?? settings.forge;
     const reader = jobForgeTarget({ forge, token, tokenEnv: "TG_TOKEN" }, env, { tokenOptional: true });
     const late = reader ? await checkDriftSchedule(repo, settings.drift, reader, options.forgeFetch ?? (globalThis.fetch as unknown as Fetch), options.now ?? new Date(), log) : undefined;
-    if (late) {
-      notices.push(late.message);
-      report.overdue = [late];
-    }
-    if (!token && reader && reader.kind !== "gitlab") {
-      const workflow = opPipelineFile(repo, reader.kind, driftWatch(settings.drift, reader.kind));
-      const added = workflow ? fileAdded(repo, workflow) : undefined;
-      leftSchedule = { cron: settings.drift, ...(workflow ? { workflow } : {}), ...(added ? { added } : {}) };
-    }
+    if (late) report.overdue = [late];
   }
   // A waiting wave's command in the note asks for --sign when the repo seals its approvals.
   const sealed = (approvalModeOf(settings.approval) ?? (declaredGates(existsSync(join(repo, "chant.workspace.json")) ? readFileSync(join(repo, "chant.workspace.json"), "utf-8") : undefined) > 0 ? "sealed" : "ledger")) === "sealed";
   writeReportDir(dir, report, plans, { ...noteLinks, limit, ...(notices.length ? { notices } : {}), ...(sealed ? { sealed } : {}) });
-  if (leftSchedule) writeFileSync(join(dir, DRIFT_SCHEDULE_FILE), JSON.stringify(leftSchedule) + "\n");
-  else rmSync(join(dir, DRIFT_SCHEDULE_FILE), { force: true });
   if (costOutputs) writeCostFiles(dir, costOutputs);
   let uploaded: Uploaded | undefined;
   if (reports?.bucket) {

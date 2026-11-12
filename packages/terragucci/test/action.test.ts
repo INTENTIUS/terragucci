@@ -320,8 +320,9 @@ describe("the action workflow", () => {
     expect(file?.path).toBe(forge === "github" ? ".github/workflows/terragucci-action.yml" : ".forgejo/workflows/terragucci-action.yml");
     expect(file!.content).toMatch(/workflow_dispatch:\n\s+inputs:\n\s+root:[\s\S]*address:/);
     golden(`action-${forge}.yml`, file!.content);
-    // The re-plan job leaves action comments to it.
-    expect(r.content).toContain("!startsWith(github.event.comment.body, '/terragucci action ')");
+    // The re-plan job (chant's product plan) leaves action comments to it.
+    expect(r.content).toContain("!startsWith(github.event.comment.body, '/terragucci action')");
+    expect(r.content).toContain('CHANT_REPLAN_OTHERS: \'["/terragucci apply","/terragucci action"]\'');
   });
 
   it.each(["github", "forgejo"] as const)("%s: the resume workflow runs approved actions in a job of its own", (forge) => {

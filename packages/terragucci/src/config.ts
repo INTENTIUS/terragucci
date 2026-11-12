@@ -1765,13 +1765,6 @@ export const PR_APPLY_NEEDS_ON_GITLAB = {
 };
 
 /**
- * Why `gitlab.token: protected` needs `comments:`: no merge request pipeline
- * then holds a token that may post the plan note, so the comments schedule's
- * job posts it.
- */
-export const PROTECTED_TOKEN_NEEDS_COMMENTS = "protected needs comments: <cron>: a merge request's pipeline then holds no token that may post the plan note, so the comments schedule's job posts it";
-
-/**
  * Why `agent.comment` and `review` need `comments:` on GitLab: a merge
  * request note starts no pipeline, and a merge request's own pipeline runs
  * its own pipeline file, so the comments schedule's job starts the agent's and
@@ -1787,7 +1780,6 @@ export function gitlabPrApplyProblems(s: Record<string, unknown>, where: string)
   const agentOn = isObject(s.agent) && s.agent.comment !== undefined && s.agent.comment !== false;
   const reviewOn = isObject(s.review) && s.review.agent === true;
   const token = [
-    ...(isObject(s.gitlab) && s.gitlab.token === "protected" && !s.comments ? [`${where}.gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`] : []),
     ...(agentOn && !s.comments ? [`${where}.agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`] : []),
     ...(reviewOn && !s.comments ? [`${where}.review: ${NEEDS_COMMENTS_ON_GITLAB.review}`] : []),
   ];

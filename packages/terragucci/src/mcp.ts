@@ -569,7 +569,8 @@ export const PROPOSE_TOOLS: Tool[] = [
       const deadline = ctx.now() + ((a.wait as number | undefined) ?? 120) * 1000;
       for (;;) {
         const pr = await pullHead(f, n);
-        const note = await forgeClient(f.target, f.fetch).findComment(n, PLAN_MARK);
+        // terragucci's line is the note's second, under chant's marker (./product-plan.ts).
+        const note = await forgeClient(f.target, f.fetch).findComment(n, PLAN_MARK, { match: "anywhere" });
         let bucket: string | undefined;
         let found: { path: string; report: Report } | undefined;
         try {

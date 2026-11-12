@@ -62,7 +62,7 @@ describe("the drift job as a chant drift Op", () => {
     expect(spec.gitlab).toEqual({
       idTokens: { CHANT_ID_TOKEN_AWS: { aud: "drift-aud" } },
       cache: [{ key: "terragucci-terragrunt", paths: [".terragrunt-cache/"] }],
-      scheduleRule: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"',
+      scheduleRule: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral" && $TERRAGUCCI_SCHEDULE != "plan-notes" && $CHANT_PLAN_NOTES == null',
     });
     expect(specOf(out).options).toMatchObject({ opsStage: "drift", runCommand: ["bash", CHANT_DRIFT_SCRIPT_FILE] });
     expect(specOf(out).options.variables).toBeUndefined();

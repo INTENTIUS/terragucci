@@ -107,7 +107,13 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
 
   it("each job's step logs in for its stage's audience, and restarts without the token-request variables", () => {
     const doc = rendered(forge, MAP, { ephemeral: { roots: ["app"] } as never });
-    const want: Record<string, string> = { plan: AUD.plan, replan: AUD.plan, "apply-wave-1": AUD.apply, "apply-wave-2": AUD.apply, "apply-comment": AUD.apply, ephemeral: AUD.apply, drift: AUD.drift };
+    // The plan and re-plan jobs are chant's product plan, which trades the plan audience's token before the checkout (terragucci issue 1411).
+    for (const job of ["plan", "replan"]) {
+      const trade = (doc.jobs[job].steps as (Step & { env?: Record<string, string> })[]).find((s) => s.name === "Trade the job's OIDC token for the plan identities")!;
+      expect(JSON.parse(trade.env!.CHANT_CLOUD_TRADE!).aws.audience, job).toBe(AUD.plan);
+      expect(runs(doc, job), job).toEqual([]);
+    }
+    const want: Record<string, string> = { "apply-wave-1": AUD.apply, "apply-wave-2": AUD.apply, "apply-comment": AUD.apply, ephemeral: AUD.apply, drift: AUD.drift };
     // The drift job is chant's Op (terragucci#1305): its login is in the script the Op's step runs.
     const driftScript = renderPipeline(input(forge, MAP, { ephemeral: { roots: ["app"] } as never })).extra!.find((e) => e.path === ".chant/ops/terragucci-drift.sh")!.content;
     for (const [job, aud] of Object.entries(want)) {

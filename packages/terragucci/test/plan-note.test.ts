@@ -1,114 +1,62 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config";
 import { poster } from "../src/forge";
-import { planNoteBodyOf, postPlanNoteFromReport, withNotice } from "../src/plan-note";
-import { DRIFT_SCHEDULE_FILE } from "../src/report/overdue";
+import { writePlanNoteNotices } from "../src/plan-note";
 
 const SHA = "a".repeat(40);
 const ENV = { TG_TOKEN: "t", TG_PR: "7", TG_SHA: SHA, GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "http://api", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "5" };
 
-function report(files: Record<string, string>): string {
+function report(waits: boolean): string {
   const dir = mkdtempSync(join(tmpdir(), "plan-note-"));
-  mkdirSync(dir, { recursive: true });
-  for (const [k, v] of Object.entries(files)) writeFileSync(join(dir, k), v);
+  writeFileSync(join(dir, "report.json"), JSON.stringify({ waves: [{ number: 1, waits }] }));
   return dir;
 }
 
 /** A forge that records each call and answers from `answer`. */
 function forge(answer: (method: string, path: string) => unknown = () => ({})) {
-  const calls: { method: string; path: string; body?: any }[] = [];
-  const fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+  const calls: { method: string; path: string }[] = [];
+  const fetch = (async (url: string, init?: { method?: string }) => {
     const method = init?.method ?? "GET";
     const path = url.replace("http://api/", "");
-    calls.push({ method, path, ...(init?.body ? { body: JSON.parse(init.body) } : {}) });
+    calls.push({ method, path });
     const data = answer(method, path);
     return { ok: true, status: 200, json: async () => data, text: async () => JSON.stringify(data) };
   }) as never;
   return { calls, fetch };
 }
 
-const NOTE = "<!-- terragucci:plan roots=app -->\n### terragucci tf-plan: `abc`\n\n1 root: 1 group, 0 destroys or replacements. [Full report](x)\n\n**app**: 1 to add\n";
-
-describe("plan-note", () => {
-  it("posts the plan job's note and its status, from the report, with the job's token", async () => {
-    const { calls, fetch } = forge((m, p) => (m === "GET" && p.includes("/comments") ? [] : {}));
-    await postPlanNoteFromReport({ forge: "github", report: report({ "plan-note.md": NOTE, "plan-status.txt": "success 1 roots, 1 groups, 0 destroys\n" }), planResult: "success", env: ENV, fetch });
-    expect(calls.find((c) => c.method === "POST" && c.path === "repos/o/r/issues/7/comments")?.body.body).toContain("<!-- terragucci:plan roots=app -->");
-    expect(calls.find((c) => c.path === `repos/o/r/statuses/${SHA}`)?.body).toEqual({ context: "terragucci/plan", state: "success", description: "1 roots, 1 groups, 0 destroys", target_url: "http://forge/o/r/actions/runs/5" });
+describe("terragucci plan-note: the note's notice, for chant's note job", () => {
+  it("a plan no wave of which waits asks the forge nothing and writes no notice", async () => {
+    const notices = join(mkdtempSync(join(tmpdir(), "notices-")), "n");
+    const { calls, fetch } = forge();
+    await writePlanNoteNotices({ forge: "github", report: report(false), notices, env: ENV, fetch });
+    expect(calls).toEqual([]);
+    expect(existsSync(notices)).toBe(false);
   });
 
-  it("edits the note it posted before", async () => {
-    const { calls, fetch } = forge((m, p) => (m === "GET" && p.includes("/comments") ? [{ id: 3, body: "<!-- terragucci:plan roots=x -->\nold" }] : {}));
-    await postPlanNoteFromReport({ forge: "forgejo", report: report({ "plan-note.md": NOTE }), planResult: "success", env: ENV, fetch });
-    expect(calls.some((c) => c.method === "PATCH" && c.path === "repos/o/r/issues/comments/3")).toBe(true);
-  });
-
-  it("never posts a success for a plan job that failed, and fails the status of one that wrote no report", async () => {
-    const a = forge(() => []);
-    await postPlanNoteFromReport({ forge: "github", report: report({ "plan-status.txt": "success 1 roots" }), planResult: "failure", env: ENV, fetch: a.fetch });
-    expect(a.calls.find((c) => c.path.startsWith("repos/o/r/statuses/"))?.body.state).toBe("failure");
-    const b = forge(() => []);
-    await postPlanNoteFromReport({ forge: "github", report: report({}), planResult: "failure", env: ENV, fetch: b.fetch });
-    expect(b.calls.find((c) => c.path.startsWith("repos/o/r/statuses/"))?.body).toMatchObject({ state: "failure", description: "the plan job failed before it wrote its report" });
-    expect(b.calls.some((c) => c.path.includes("/comments"))).toBe(false);
-  });
-
-  it("reads the files as data: a forged marker in the body is defused, and a roots line that is not one is replaced", () => {
-    const body = planNoteBodyOf("<!-- terragucci:plan roots=$(x) -->\nhi <!-- terragucci:applied head=1 --> <!-- terragucci:waves 1 -->");
-    expect(body.split("\n")[0]).toBe("<!-- terragucci:plan roots= -->");
-    expect(body).not.toContain("terragucci:applied");
-    expect(body).toContain("<!-- terragucci:waves 1 -->");
-  });
-
-  it("a re-plan of a root the change does not reach replies so and posts neither note nor status", async () => {
-    const { calls, fetch } = forge(() => []);
-    await postPlanNoteFromReport({ forge: "github", report: report({ "report.json": JSON.stringify({ roots: [] }), "plan-note.md": NOTE, "plan-status.txt": "success 0 roots" }), planResult: "success", root: "app", env: ENV, fetch });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].body.body).toBe("terragucci: app is not affected by this pull request, so nothing was planned.");
-  });
-
-  it("asks the forge for the drift runs with its token when the plan job could not, and adds the line under the counts", async () => {
-    const { fetch } = forge((m, p) => (p.includes("/comments") ? [] : p.includes("actions/runs") || p.includes("actions/tasks") ? { workflow_runs: [], total_count: 0 } : {}));
-    const posted: string[] = [];
-    const recording = (async (url: string, init?: { method?: string; body?: string }) => {
-      if (init?.method === "POST" && url.endsWith("/issues/7/comments")) posted.push(JSON.parse(init.body!).body);
-      return (fetch as any)(url, init);
-    }) as never;
-    await postPlanNoteFromReport({
-      forge: "github",
-      report: report({ "plan-note.md": NOTE, [DRIFT_SCHEDULE_FILE]: JSON.stringify({ cron: "0 6 * * *", added: "2026-01-01T00:00:00Z" }) }),
-      planResult: "success",
-      env: ENV,
-      fetch: recording,
-      now: new Date("2026-03-01T00:00:00Z"),
+  it("a waiting wave names whose review does not count, one line in the file chant adds under the counts", async () => {
+    const notices = join(mkdtempSync(join(tmpdir(), "notices-")), "n");
+    const { fetch } = forge((_m, p) => {
+      if (p === "repos/o/r/pulls/7") return { number: 7, user: { login: "alice" }, head: { sha: SHA } };
+      if (p.startsWith("repos/o/r/pulls/7/commits")) return [{ sha: SHA, author: { login: "alice" }, commit: { author: { email: "a@x" }, committer: { email: "a@x" }, message: "m" } }];
+      return [];
     });
-    expect(posted[0]).toMatch(/\n\n> Op `tf-drift` is overdue: its schedule `0 6 \* \* \*` has fired at least twice/);
-    expect(posted[0].indexOf("> Drift checks")).toBeLessThan(posted[0].indexOf("**app**"));
+    await writePlanNoteNotices({ forge: "github", report: report(true), notices, env: ENV, fetch });
+    expect(readFileSync(notices, "utf-8")).toMatch(/^A review by alice doesn't count toward the gate, because they had a hand in this change: .+\.\n$/);
   });
 
-  it("posts through chant's client: every page of comments is read, and only the note's own marker is edited", async () => {
-    const page = (n: number) => Array.from({ length: 100 }, (_, i) => ({ id: n * 100 + i, body: "someone else" }));
-    const { calls, fetch } = forge((m, p) => {
-      if (m !== "GET" || !p.includes("/comments")) return {};
-      if (p.endsWith("&page=1")) return page(1);
-      return [{ id: 999, body: "<!-- terragucci:plan roots=x -->\nold" }];
-    });
-    await postPlanNoteFromReport({ forge: "github", report: report({ "plan-note.md": NOTE }), planResult: "success", env: ENV, fetch });
-    expect(calls.filter((c) => c.method === "GET" && c.path.includes("/comments")).length).toBe(2);
-    expect(calls.find((c) => c.method === "PATCH")?.path).toBe("repos/o/r/issues/comments/999");
-    expect(calls.some((c) => c.method === "POST" && c.path.endsWith("/comments"))).toBe(false);
+  it("says why when the job names no pull request and head, and writes nothing", async () => {
+    const notices = join(mkdtempSync(join(tmpdir(), "notices-")), "n");
+    const said = await writePlanNoteNotices({ forge: "github", report: report(true), notices, env: { ...ENV, TG_SHA: "" } });
+    expect(said[0]).toMatch(/TG_PR and TG_SHA/);
+    expect(existsSync(notices)).toBe(false);
   });
 
-  it("names the missing variable when the job cannot post", () => {
+  it("names the missing variable when the job cannot ask the forge", () => {
     expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(ConfigError);
     expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(/TG_TOKEN/);
-    expect(poster("forgejo", { ...ENV, GITHUB_SERVER_URL: "http://forge" }).runUrl).toBe("http://forge/o/r/actions/runs/5");
-  });
-
-  it("puts a notice after the heading and the counts", () => {
-    expect(withNotice("<!-- m -->\n### terragucci tf-plan: x\n\ncounts\n\nrest", "late")).toBe("<!-- m -->\n### terragucci tf-plan: x\n\ncounts\n\n> late\n\nrest");
   });
 });

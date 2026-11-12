@@ -218,8 +218,10 @@ describe("respond description", () => {
     const env = { CI_MERGE_REQUEST_TITLE: RETAG.title, CI_MERGE_REQUEST_DESCRIPTION: RETAG.description, AWS_ACCESS_KEY_ID: "AK", AWS_SECRET_ACCESS_KEY: "SK" };
     const r = await respond("description", repo, { config: cfg, mode: "apply", env, decideFetch: answers(0.93), s3Fetch });
     const key = runKey(JSON.parse(read(dir, "report.json")), "reports");
-    expect(r.text).toContain(`copied intent.json, report.json, note.md, report.html to the bucket under ${key}`);
-    for (const f of ["note.md", "report.html", "report.json", "intent.json"]) expect(objects.get(`${key}/${f}`), f).toBe(read(dir, f));
+    expect(r.text).toContain(`copied intent.json, report.json, note.md, note.json, report.html to the bucket under ${key}`);
+    for (const f of ["note.md", "note.json", "report.html", "report.json", "intent.json"]) expect(objects.get(`${key}/${f}`), f).toBe(read(dir, f));
+    // The note's data carries the flag too, which chant's note job renders (terragucci issue 1411).
+    expect(JSON.parse(read(dir, "note.json")).sections[0].text.startsWith("> Check the description")).toBe(true);
     expect(objects.get(`${key}/note.md`)!.startsWith("> Check the description")).toBe(true);
   });
 

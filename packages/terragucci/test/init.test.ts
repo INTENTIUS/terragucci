@@ -142,16 +142,20 @@ describe("init", () => {
     expect((await init(gh, { binary: "tofu", dryRun: true })).notes.join("\n")).not.toMatch(/TERRAGUCCI_SCHEDULE set to resume/);
   });
 
-  it("gitlab.token: protected says how to protect the variable, writes the plan job with no token, and needs comments", async () => {
-    const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "comments: \"*/5 * * * *\"\ngitlab:\n  token: protected\n" });
+  it("gitlab.token: protected says how to protect the variable, and needs no comments schedule", async () => {
+    const dir = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "gitlab:\n  token: protected\n" });
     const r = await init(dir, { binary: "tofu", dryRun: true });
     const doc = parseYAML(r.files.find((f) => f.path.endsWith(".gitlab/terragucci.yml"))!.content.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
     expect(doc.plan.variables.TG_TOKEN).toBeUndefined();
     expect(r.notes.join("\n")).toMatch(/gitlab\.token is protected: under Settings > CI\/CD > Variables, edit GITLAB_TOKEN and tick Protect variable and Mask variable/);
-    const bare = write(withRemote("git@gitlab.com:acme/infra.git"), { "terragucci.yml": "gitlab:\n  token: protected\n" });
-    await expect(init(bare, { binary: "tofu", dryRun: true })).rejects.toThrow(/gitlab\.token: protected needs comments/);
-    // The default names no protection: the plan job holds the token.
+    // The default names no protection.
     expect((await init(withRemote("git@gitlab.com:acme/infra.git"), { binary: "tofu", dryRun: true })).notes.join("\n")).not.toMatch(/gitlab\.token/);
+  });
+
+  it("on GitLab, names the plan notes schedule chant's plan-note job runs in (terragucci issue 1411)", async () => {
+    const r = await init(withRemote("git@gitlab.com:acme/infra.git"), { binary: "tofu", dryRun: true });
+    expect(r.notes).toContain("plan notes: add a pipeline schedule on the default branch with the cron */5 * * * * and the variables CHANT_PLAN_NOTES set to 1 and TERRAGUCCI_SCHEDULE set to plan-notes under CI/CD > Schedules, and give GITLAB_TOKEN the api scope: its plan-note job posts each open merge request's plan note and terragucci/plan once the merge request's plan job ends");
+    expect((await init(withRemote("git@github.com:acme/infra.git"), { binary: "tofu", dryRun: true })).notes.join("\n")).not.toContain("plan notes");
   });
 
   it("on GitLab, apply.when pull-request needs comments and a merge token, and then writes the mr-apply job", async () => {

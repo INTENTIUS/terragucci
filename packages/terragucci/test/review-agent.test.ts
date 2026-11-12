@@ -224,7 +224,8 @@ describe("terragucci review prompt", () => {
   it("quotes the pull request, its diff, plan note and policy, with the instructions from the default branch alone", () => {
     const { dir, head, event } = repoWithChange();
     const report = write(tmp("terragucci-review-report-"), {
-      "plan-note.md": "<!-- terragucci:plan roots=app -->\n### terragucci plan\n\napp: 1 to destroy (terraform_data.b)\n<!-- terragucci:waves {\"head\":\"x\",\"waves\":[]} -->\n",
+      // The stage's note.md, which the plan job keeps beside chant's hand-off (terragucci issue 1411).
+      "note.md": "### terragucci plan\n\napp: 1 to destroy (terraform_data.b)\n<!-- terragucci:waves {\"head\":\"x\",\"waves\":[]} -->\n",
       "report.json": JSON.stringify({ roots: [{ root: "app", status: "planned", policy: { result: "passed", denials: [], warnings: ["app destroys terraform_data.b"] } }] }),
     });
     const out = tmp("terragucci-review-dir-");
@@ -519,9 +520,9 @@ describe("the review's pull request and plan report", () => {
   it("github: reads the plan note and report, and nothing else, out of the started run's artifact", async () => {
     const { f } = calls({ "repos/o/r/actions/runs/55/artifacts?name=terragucci-report": { artifacts: [{ id: 9, name: "terragucci-report" }] } });
     const dir = join(tmp(), "report");
-    const said = await fetchPlanReport(f, async (p) => (p === "repos/o/r/actions/artifacts/9/zip" ? zip({ "plan-note.md": "note", "report.json": "{}", "other.txt": "x" }) : undefined), subject, 55, dir);
-    expect(said).toBe("the plan report of run 55: plan-note.md, report.json");
-    expect(readFileSync(join(dir, "plan-note.md"), "utf-8")).toBe("note");
+    const said = await fetchPlanReport(f, async (p) => (p === "repos/o/r/actions/artifacts/9/zip" ? zip({ "note.md": "note", "report.json": "{}", "other.txt": "x" }) : undefined), subject, 55, dir);
+    expect(said).toBe("the plan report of run 55: note.md, report.json");
+    expect(readFileSync(join(dir, "note.md"), "utf-8")).toBe("note");
     expect(() => readFileSync(join(dir, "other.txt"))).toThrow();
   });
 

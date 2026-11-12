@@ -14,10 +14,9 @@
  * pipeline is the forge lexicon's `generateControlPipeline`
  * (`chantControlPipelineFile`); and the plan job reads the control repo's
  * `chant/lifecycle`, where its entries live (./control-records.ts), with
- * chant's `controlNoteCheckout`. On GitLab chant's trigger names the
+ * the product plan's `controlRead` (./product-plan.ts). On GitLab chant's trigger names the
  * variables CHANT_CONTROL_MEMBER, CHANT_CONTROL_OP and CHANT_CONTROL_SHA.
  */
-import { Step } from "@intentius/chant-lexicon-github/generated/index";
 import * as chant from "@intentius/chant/ci-control";
 import { generateControlPipeline as githubControlPipeline } from "@intentius/chant-lexicon-github/components/control-pipeline";
 import { generateControlPipeline as gitlabControlPipeline } from "@intentius/chant-lexicon-gitlab/components/control-pipeline";
@@ -53,26 +52,6 @@ export function resolveControl(control: ControlSettings, fallbackMember: string)
   const member = control.member ?? fallbackMember;
   if (!CONTROL_NAME.test(member)) throw new ConfigError(`control.member: "${member}" is not a name the control repo's workspace can hold; set control.member`);
   return { repo: control.repo, host: pk.host, path: pk.path, forge, op: control.op, member, tokenEnv: control.token_env ?? CONTROL_TOKEN_ENV, readTokenEnv: control.read_token_env ?? CONTROL_READ_TOKEN_ENV, ref: control.ref ?? CONTROL_REF_DEFAULT };
-}
-
-/**
- * chant's read of the control repo (chant#4619): `controlNoteCheckout`
- * fetches the control repo's `chant/lifecycle` alone into a directory
- * outside the checkout and sets CHANT_CONTROL_DIR to it.
- */
-export function chantNoteCheckout(c: ResolvedControl, memberForge: ForgeName): { stepName: string; env: Record<string, string>; script: string } {
-  return chant.controlNoteCheckout(memberForge, chantControlTarget(c), TERRAGUCCI_WORDS);
-}
-
-/** GitHub and Forgejo: the plan job's read of the control repo, chant's step, for estate ownership (./estate-ownership.ts). */
-export function controlReadSteps(c: ResolvedControl, memberForge: Exclude<ForgeName, "gitlab">, cond?: string): InstanceType<typeof Step>[] {
-  const note = chantNoteCheckout(c, memberForge);
-  return [new Step({ ...(cond ? { if: cond } : {}), name: note.stepName, shell: "bash", env: note.env, run: note.script } as never)];
-}
-
-/** GitLab: the plan job's read of the control repo, chant's lines. */
-export function controlCloneScript(c: ResolvedControl): string {
-  return chantNoteCheckout(c, "gitlab").script;
 }
 
 /**

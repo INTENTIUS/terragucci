@@ -43,7 +43,8 @@ import type { PrForge } from "@intentius/chant/pr-forge";
 import type { ForgeReads, ForgeUser, PullRequestDetail, PullRequestNote, RunJob } from "@intentius/chant/pr-forge-reads";
 import { ConfigError } from "./config";
 import { jobReads, poster, type Fetch } from "./forge";
-import { byUser, PLAN_NOTE_FILE, planJobOf } from "./plan-note-gitlab";
+import { byUser, planJobOf } from "./plan-note-gitlab";
+import { PLAN_NOTE_FILE } from "./review-agent";
 import { noReview, parseReviewMarker, REVIEW_FILE, REVIEW_MARK, REVIEWED_FILE, reviewMarker, reviewNoteBody, verdictOf, writeReviewPrompt, type PolicyReview, type WrittenPrompt } from "./review-agent";
 
 /** The variables of the agent's pipeline: the merge request, the note that asked, and the head it was asked on. */
@@ -284,8 +285,8 @@ export async function writeGitLabReviewPrompt(o: GitLabReviewPromptOptions): Pro
   else {
     mkdirSync(o.report, { recursive: true });
     const kept: string[] = [];
-    // The plan job keeps its note as note.md, and with gitlab.token: protected as plan-note.md with its markers.
-    for (const [name, from] of [[PLAN_NOTE_FILE, [PLAN_NOTE_FILE, "note.md"]], ["report.json", ["report.json"]]] as const) {
+    // The plan job keeps its note as note.md.
+    for (const [name, from] of [[PLAN_NOTE_FILE, [PLAN_NOTE_FILE]], ["report.json", ["report.json"]]] as const) {
       for (const f of from) {
         const text = await artifactOf(reads, plan.id, `terragucci-report/${f}`);
         if (text === undefined) continue;

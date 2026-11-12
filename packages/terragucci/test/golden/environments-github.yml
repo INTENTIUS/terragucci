@@ -76,7 +76,7 @@ jobs:
         run: |
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u TG_TOKEN -u TG_MERGE_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN TG_TOKEN TG_MERGE_TOKEN
           chant_report="$PWD/terragucci-check"
-          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to plan-note.md, plan-status.txt, drift-schedule.json, report.json; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on plan-note.md, plan-status.txt, drift-schedule.json, report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["report.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to report.md; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on report.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
           trap chant_handover EXIT
           set +e
           (
@@ -140,10 +140,10 @@ jobs:
           path: terragucci-check/
           if-no-files-found: ignore
   plan:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     container:
       image: img:1
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
       statuses: write
@@ -155,103 +155,81 @@ jobs:
       report_0: '${{ steps.plan.outputs.report_0 }}'
     steps:
       - name: Say on the head that the plan started
-        shell: bash
         env:
-          TG_TOKEN: '${{ github.token }}'
-        run: |
-          export TG_FORGE=github
-          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'const [cmd, ...a] = process.argv.slice(1);
-          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          try {
-            if (!tok) {
-              console.log("terragucci: no forge token, so no " + cmd);
-            } else if (cmd === "alive") {
-              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-              const run = await r.json();
-              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-            }
-          } catch (err) {
-            console.log("terragucci: " + cmd + " failed: " + err.message);
-          }' -- "$@" ;; esac; }
-          tg status terragucci/plan pending "planning"
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ github.event.pull_request.head.sha }}'
+          CHANT_PENDING_CONTEXT: terragucci/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
+      - name: Trade the job's OIDC token for the plan identities
+        env:
+          CHANT_CLOUD_TRADE: '{"aws":{"role":"arn:aws:iam::333333333333:role/plan","targets":[{"targets":["envs/prod/**"],"role":"arn:aws:iam::222222222222:role/prod-plan"},{"targets":["envs/dev/**"],"role":"arn:aws:iam::111111111111:role/dev-plan"},{"targets":[],"role":"arn:aws:iam::333333333333:role/plan"}],"region":"us-east-1","audience":"sts.amazonaws.com"}}'
+        run: '(cd / && node -e ''const fs=require("fs");const [out,format]=process.argv.slice(1);const Q=String.fromCharCode(39);const fail=(m)=>{console.error("chant: the OIDC trade failed: "+m);process.exit(1)};let spec;try{spec=JSON.parse(process.env.CHANT_CLOUD_TRADE||"")}catch{fail("CHANT_CLOUD_TRADE is not JSON")}const clean=(v)=>typeof v==="string"&&/^[\x21-\x7e]+$/.test(v);const trim=(u)=>String(u).replace(/\/+$/,"");const post=async(url,headers,body)=>{const r=await fetch(url,{method:"POST",headers,body});const t=await r.text();if(!r.ok)throw new Error(url+" answered "+r.status+": "+t.slice(0,200).replace(/\s+/g," "));return t};const json=(t,what)=>{try{return JSON.parse(t)}catch{throw new Error(what+" answered with no JSON")}};const idToken=async(cloud,aud)=>{const named=process.env["CHANT_ID_TOKEN_"+cloud.toUpperCase()];if(named)return named;const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,k=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!k)throw new Error("the job can request no OIDC token for "+cloud+": it needs id-token: write, and a pull request from a fork gets none");const r=await fetch(u+(u.includes("?")?"&":"?")+"audience="+encodeURIComponent(aud),{headers:{authorization:"bearer "+k,accept:"application/json"}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=json(await r.text(),"the OIDC token request").value;if(!clean(v))throw new Error("the OIDC token request gave no token");return v};const KEY={"aws":"role","gcp":"serviceAccount","azure":"clientId","pulumi":"token"};const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);if(!l.length)throw new Error(c+" names no identity");return l};const vars={},secrets=[],said=[],by={};const run=async()=>{if(spec.aws){const a=spec.aws;const tok=await idToken("aws",a.audience);by.aws={};const ep=trim(a.endpoint||process.env.AWS_ENDPOINT_URL_STS||("https://sts."+a.region+".amazonaws.com"+(a.region.startsWith("cn-")?".cn":"")));for(const role of ids("aws")){const t=await post(ep+"/",{"content-type":"application/x-www-form-urlencoded",accept:"application/xml"},new URLSearchParams({Action:"AssumeRoleWithWebIdentity",Version:"2011-06-15",RoleArn:role,RoleSessionName:"chant-"+(process.env.GITHUB_RUN_ID||process.env.CI_JOB_ID||"job"),WebIdentityToken:tok}).toString());const g=(k)=>{const m=new RegExp("<"+k+">([^<]+)</"+k+">").exec(t);return m?m[1].trim():undefined};const id=g("AccessKeyId"),key=g("SecretAccessKey"),st=g("SessionToken");if(!clean(id)||!clean(key)||!clean(st))throw new Error("STS gave no credentials for "+role);by.aws[role]={AWS_ACCESS_KEY_ID:id,AWS_SECRET_ACCESS_KEY:key,AWS_SESSION_TOKEN:st,AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region};secrets.push(key,st);said.push(role)}if(a.role)Object.assign(vars,by.aws[a.role])}if(spec.gcp){const c=spec.gcp;const tok=await idToken("gcp",c.audience);by.gcp={};const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");const fed=json(await post(/\/token$/.test(sts)?sts:sts+"/v1/token",{"content-type":"application/json"},JSON.stringify({grantType:"urn:ietf:params:oauth:grant-type:token-exchange",audience:"//iam.googleapis.com/"+c.provider,scope:"https://www.googleapis.com/auth/cloud-platform",requestedTokenType:"urn:ietf:params:oauth:token-type:access_token",subjectToken:tok,subjectTokenType:"urn:ietf:params:oauth:token-type:jwt"})),"Google STS").access_token;if(!clean(fed))throw new Error("Google STS gave no token");for(const sa of ids("gcp")){const at=json(await post(iam+"/v1/projects/-/serviceAccounts/"+encodeURIComponent(sa)+":generateAccessToken",{"content-type":"application/json",authorization:"Bearer "+fed},JSON.stringify({scope:["https://www.googleapis.com/auth/cloud-platform"]})),"IAM credentials").accessToken;if(!clean(at))throw new Error("IAM credentials gave no token for "+sa);by.gcp[sa]={GOOGLE_OAUTH_ACCESS_TOKEN:at,CLOUDSDK_AUTH_ACCESS_TOKEN:at};secrets.push(at);said.push(sa)}if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}if(spec.azure){const z=spec.azure;const tok=await idToken("azure",z.audience);by.azure={};const host=trim(z.authority||"https://login.microsoftonline.com");for(const cid of ids("azure")){const at=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:"https://management.azure.com/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;if(!clean(at))throw new Error("Entra gave no token for "+cid);let db;if(z.database){db=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:"https://ossrdbms-aad.database.windows.net/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;if(!clean(db))throw new Error("Entra gave no database token for "+cid);secrets.push(db)}by.azure[cid]={AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{}),...(db?{AZURE_DATABASE_ACCESS_TOKEN:db}:{})};secrets.push(at);said.push(cid)}if(z.clientId)Object.assign(vars,by.azure[z.clientId])}if(spec.pulumi){const p=spec.pulumi;const tok=await idToken("pulumi",p.audience);by.pulumi={};const api=trim(p.apiUrl||"https://api.pulumi.com");for(const id of ids("pulumi")){const m=/^(team|user):([^\s:]+)$/.exec(id),org=id==="organization"||id==="organization:admin";if(!m&&!org)throw new Error("Pulumi Cloud has no token for "+id);const f={audience:"urn:pulumi:org:"+p.organization,grant_type:"urn:ietf:params:oauth:grant-type:token-exchange",subject_token_type:"urn:ietf:params:oauth:token-type:id_token",requested_token_type:"urn:pulumi:token-type:access_token:"+(m?(m[1]==="team"?"team":"personal"):"organization"),subject_token:tok};if(m)f.scope=id;else if(id==="organization:admin")f.scope="admin";const at=json(await post(api+"/api/oauth/token",{"content-type":"application/x-www-form-urlencoded",accept:"application/json"},new URLSearchParams(f).toString()),"Pulumi Cloud").access_token;if(!clean(at))throw new Error("Pulumi Cloud gave no token for "+id);by.pulumi[id]={PULUMI_ACCESS_TOKEN:at,...(p.apiUrl?{PULUMI_BACKEND_URL:api}:{})};secrets.push(at);said.push("Pulumi Cloud "+id)}if(p.token)Object.assign(vars,by.pulumi[p.token])}const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}const tf=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp")+"/chant-cloud-targets-"+require("crypto").randomBytes(8).toString("hex")+".json";fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.CHANT_CLOUD_TARGETS=tf}if(clouds.length)vars.CHANT_CLOUD_TRADED=clouds.join(",");for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");if(format==="github-env"){for(const s of secrets)console.log("::add-mask::"+s);fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\n").join(""))}else{const sh=Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\"+Q+Q)+Q+"\n").join("");if(out==="-")process.stdout.write(sh);else fs.writeFileSync(out,sh,{mode:0o600})}for(const s of said)console.error("chant: traded the job\u0027s OIDC token for "+s)};run().catch((e)=>fail(e&&e.message?e.message:String(e)));'' "$GITHUB_ENV" github-env)'
       - name: Check out the change
-        shell: bash
         env:
-          TG_TOKEN: '${{ github.token }}'
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
         run: |
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
           git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          if [ -n "${TG_TOKEN:-}" ]; then
-            chant_auth="$(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
             export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
             unset chant_auth
           fi
-          ref="${TG_REF:-$GITHUB_REF}"
-          want="${TG_REF:-$GITHUB_SHA}"
+          ref="$GITHUB_REF"
+          want="$GITHUB_SHA"
           case "$ref" in
             refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
             refs/tags/*) target="$ref" ;;
             refs/*) target="refs/remotes/${ref#refs/}" ;;
-            *) target="refs/remotes/origin/terragucci-head" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
           git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
           esac
-      - id: plan
-        name: Plan the roots the change reaches and write the plan report
-        shell: bash
+      - name: Plan the change
+        id: plan
+        env:
+          BASE_SHA: '${{ github.event.pull_request.base.sha }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
         run: |
-          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u TG_TOKEN -u TG_MERGE_TOKEN CHANT_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN TG_TOKEN TG_MERGE_TOKEN
-          set +e -uo pipefail
-          if [ -z "${CHANT_CLOUD_LOGGED_IN:-}" ]; then
-          export CHANT_CLOUD_LOGIN='{"aws":{"role":"arn:aws:iam::333333333333:role/plan","targets":[{"targets":["envs/prod/**"],"role":"arn:aws:iam::222222222222:role/prod-plan"},{"targets":["envs/dev/**"],"role":"arn:aws:iam::111111111111:role/dev-plan"}],"audience":"sts.amazonaws.com","sessionName":"terragucci-plan"}}'
-          CHANT_CLOUD_LOGIN_VARS="$(cd / && node -e 'const fs=require("fs"),crypto=require("crypto");const [out,format,forge]=process.argv.slice(1);const Q=String.fromCharCode(39);const fail=(m)=>{console.error("chant: the cloud login failed: "+m);process.exit(1)};let spec;try{spec=JSON.parse(process.env.CHANT_CLOUD_LOGIN||"")}catch{fail("CHANT_CLOUD_LOGIN is not JSON")}const clean=(v)=>typeof v==="string"&&/^[\x21-\x7e]+$/.test(v);const trim=(u)=>String(u).replace(/\/+$/,"");const tmp=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp");const rand=()=>crypto.randomBytes(8).toString("hex");const NO={github:"it needs permissions: id-token: write, and a pull request from a fork gets none",forgejo:"Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job with enable-openid-connect: true; on an older Forgejo give the cloud a tokenFile the runner provides"};const mine=[];const tokenFile=async(cloud,s)=>{if(s.tokenFile){const f=s.tokenFile.replace(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/,(m,v)=>process.env[v]||"");let t;try{t=fs.readFileSync(f,"utf8").trim()}catch{throw new Error(cloud+"\u0027s tokenFile "+f+" cannot be read")}if(!t)throw new Error(cloud+"\u0027s tokenFile "+f+" is empty");return f}const name="CHANT_ID_TOKEN_"+cloud.toUpperCase();let v=process.env[name];if(!v){if(forge==="gitlab")throw new Error("the job has no "+name+": it needs id_tokens: "+name+": aud: "+s.audience);const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,k=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!k)throw new Error("the job can request no OIDC token for "+cloud+": "+(NO[forge]||NO.github));const r=await fetch(u+(u.includes("?")?"&":"?")+"audience="+encodeURIComponent(s.audience),{headers:{authorization:"bearer "+k,accept:"application/json"}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);try{v=JSON.parse(await r.text()).value}catch{throw new Error("the OIDC token request answered with no JSON")}}if(!clean(v))throw new Error("the job\u0027s OIDC token for "+cloud+" is not a token");const f=tmp+"/chant-oidc-"+cloud+"-"+rand();fs.writeFileSync(f,v,{mode:0o600,flag:"wx"});mine.push(f);return f};const KEY={"aws":"role","gcp":"serviceAccount","azure":"clientId","pulumi":"token"};const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);return l};const vars={},said=[],by={};const run=async()=>{if(spec.aws){const a=spec.aws;const f=await tokenFile("aws",a);by.aws={};const base={AWS_WEB_IDENTITY_TOKEN_FILE:f,AWS_ROLE_SESSION_NAME:a.sessionName||"chant",...(a.region?{AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region}:{}),...(a.endpoint?{AWS_ENDPOINT_URL_STS:trim(a.endpoint)}:{})};for(const role of ids("aws")){by.aws[role]={AWS_ROLE_ARN:role,...base};said.push(role)}if(a.role)Object.assign(vars,by.aws[a.role]);else{Object.assign(vars,base);console.error("chant: wrote the aws OIDC token file, with no role of the job\u0027s own")}}if(spec.gcp){const c=spec.gcp;const f=await tokenFile("gcp",c);by.gcp={};const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");const tu=/\/token$/.test(sts)?sts:sts+"/v1/token";for(const sa of ids("gcp")){const cf=tmp+"/chant-gcp-"+rand()+".json";fs.writeFileSync(cf,JSON.stringify({type:"external_account",audience:"//iam.googleapis.com/"+c.provider,subject_token_type:"urn:ietf:params:oauth:token-type:jwt",token_url:tu,service_account_impersonation_url:iam+"/v1/projects/-/serviceAccounts/"+sa+":generateAccessToken",credential_source:{file:f}})+"\n",{mode:0o600,flag:"wx"});by.gcp[sa]={GOOGLE_APPLICATION_CREDENTIALS:cf,CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:cf};said.push(sa)}if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}if(spec.azure){const z=spec.azure;const f=await tokenFile("azure",z);by.azure={};for(const cid of ids("azure")){by.azure[cid]={AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,AZURE_FEDERATED_TOKEN_FILE:f,ARM_USE_OIDC:"true",ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,ARM_OIDC_TOKEN_FILE_PATH:f,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{}),...(z.authority?{AZURE_AUTHORITY_HOST:trim(z.authority)}:{})};said.push(cid)}if(z.clientId)Object.assign(vars,by.azure[z.clientId]);if(z.cli){const r=require("child_process").spawnSync("az",["login","--service-principal","--username",z.clientId,"--tenant",z.tenantId,"--federated-token",fs.readFileSync(f,"utf8").trim(),"--allow-no-subscriptions","--output","none"],{stdio:["ignore","ignore","inherit"]});if(r.error)throw new Error("az login could not run: "+r.error.message);if(r.status!==0)throw new Error("az login exited "+r.status);if(z.subscriptionId){const s=require("child_process").spawnSync("az",["account","set","--subscription",z.subscriptionId],{stdio:["ignore","ignore","inherit"]});if(s.status!==0)throw new Error("az account set exited "+s.status)}}}const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}const tf=tmp+"/chant-cloud-targets-"+rand()+".json";fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.CHANT_CLOUD_TARGETS=tf}if(mine.length)vars.CHANT_CLOUD_TOKEN_FILES=mine.join(":");for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");if(format==="github-env")fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\n").join(""));else process.stdout.write(Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\"+Q+Q)+Q+"\n").join(""));for(const s of said)console.error("chant: logged in from the OIDC token file as "+s)};run().catch((e)=>fail(e&&e.message?e.message:String(e)));' "-" sh github)" || exit 1
-          eval "$CHANT_CLOUD_LOGIN_VARS"
-          unset CHANT_CLOUD_LOGIN_VARS CHANT_CLOUD_LOGIN
-          fi
-          if [ -z "${CHANT_CLOUD_LOGGED_IN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN CHANT_CLOUD_LOGGED_IN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          trap '(set -f; IFS=:; for f in ${CHANT_CLOUD_TOKEN_FILES:-}; do [ ! -f "$f" ] || : > "$f"; done)' EXIT
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u CHANT_ID_TOKEN_AWS -u CHANT_ID_TOKEN_GCP -u CHANT_ID_TOKEN_AZURE -u CHANT_ID_TOKEN_PULUMI -u CHANT_CLOUD_TRADE CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL CHANT_ID_TOKEN_AWS CHANT_ID_TOKEN_GCP CHANT_ID_TOKEN_AZURE CHANT_ID_TOKEN_PULUMI CHANT_CLOUD_TRADE
           chant_report="$PWD/terragucci-report"
-          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to plan-note.md, plan-status.txt, drift-schedule.json, report.json; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on plan-note.md, plan-status.txt, drift-schedule.json, report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
           trap chant_handover EXIT
-          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          bash <<'PLAN' || exit $?
+          set +e -uo pipefail
+          unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
+          [ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"
+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"}
           rc=$?
-          if [ ! -f terragucci-report/report.json ]; then
-            mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
-            exit 1
-          fi
-          counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
-          if [ -n "${TG_PR:-}" ]; then
-            # The first line says which roots the note covers, so an apply can mark it stale.
-            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >terragucci-report/plan-note.md
-          fi
-          if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
-          echo "success $counts" >terragucci-report/plan-status.txt
+          terragucci plan-handoff --report terragucci-report --env default --exit "$rc"
+          PLAN
   plan-note:
+    needs:
+      - plan
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && (needs.plan.result == 'success' || needs.plan.result == 'failure')
     runs-on: ubuntu-latest
     container:
       image: img:1
-    needs: plan
-    if: always() && (needs.plan.result == 'success' || needs.plan.result == 'failure') && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     permissions:
-      statuses: write
+      actions: read
+      contents: read
       pull-requests: write
-    env:
-      TG_TOKEN: '${{ github.token }}'
-      TG_PLAN_RESULT: '${{ needs.plan.result }}'
-      TG_SHA: '${{ github.event.pull_request.head.sha }}'
-      TG_PR: '${{ github.event.pull_request.number }}'
+      statuses: write
     steps:
+      - name: Check out the target branch's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: '${{ github.event.pull_request.base.sha }}'
       - name: Take the plan report from the plan job
-        shell: bash
         run: |
           set -u
           node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the plan job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the plan job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the plan job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the plan job")' terragucci-report <<'END_OF_REPORT'
@@ -262,206 +240,144 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report
-          path: terragucci-report/
+          path: terragucci-report
           if-no-files-found: ignore
+          include-hidden-files: true
+      - name: The product's lines before the note
+        if: always()
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+        run: |
+          export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
+          TG_TOKEN="$GITHUB_TOKEN" TG_PR="$PR_NUMBER" TG_SHA="$HEAD_SHA" terragucci plan-note --forge github --report terragucci-report --notices "$CHANT_PLAN_NOTE_NOTICES" || true
       - name: Post the plan note and terragucci/plan
         if: always()
-        shell: bash
+        env:
+          PR_NUMBER: '${{ github.event.pull_request.number }}'
+          HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
+          PLAN_RESULT: '${{ needs.plan.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_PLAN_NOTE_WORDS: '{"footer":"<sub><img src=\"https://intentius.io/terragucci/brand/taco-small.png\" width=\"26\" height=\"16\" alt=\"\"> Posted by [terragucci](https://intentius.io/terragucci/)</sub>","artifact":"terragucci-report","noReport":"Planned in [this run]({run}), which keeps no report artifact; with `reports` set, the note links the report in the bucket.","marker":"terragucci:waves","anchors":{"member":"root-{id}","group":"group-{id}"},"overrideKey":"policy.override","approvalRulesKey":"approval_rules","applyStage":"tf-apply","productMarker":"terragucci:plan"}'
         run: |
-          set -u
-          terragucci plan-note --forge github --report terragucci-report --plan-result "${TG_PLAN_RESULT:-}"
+          export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
+          npx --no-install terragucci components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge github --result "$PLAN_RESULT" --context terragucci/plan
   replan:
+    if: (github.event_name == 'issue_comment' && github.event.issue.pull_request && (startsWith(github.event.comment.body, '/terragucci plan') || (startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply'))) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
     runs-on: ubuntu-latest
     container:
       image: img:1
-    if: (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci') && !startsWith(github.event.comment.body, '/terragucci apply')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')
     permissions:
       contents: read
       statuses: write
-      pull-requests: write
       id-token: write
-    concurrency:
-      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}
-      cancel-in-progress: false
+      pull-requests: write
+    env:
+      TG_SHA: '${{ github.event.pull_request.head.sha }}'
+      TG_PR: '${{ github.event.pull_request.number }}'
     outputs:
       go: '${{ steps.decide.outputs.go }}'
       pr: '${{ steps.decide.outputs.pr }}'
-      sha: '${{ steps.decide.outputs.sha }}'
-      root: '${{ steps.decide.outputs.root }}'
+      head: '${{ steps.head.outputs.head }}'
+      argument: '${{ steps.decide.outputs.argument }}'
       report_0: '${{ steps.plan.outputs.report_0 }}'
     steps:
-      - name: Check out the workflow's commit
-        shell: bash
+      - name: Read the comment and decide whether it plans again
+        id: decide
         env:
-          TG_TOKEN: '${{ github.token }}'
-        run: |
-          set -eu
-          git config --global --add safe.directory "$PWD" 2>/dev/null || true
-          [ -d .git ] || git init -q .
-          git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          if [ -n "${TG_TOKEN:-}" ]; then
-            chant_auth="$(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
-            export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
-            unset chant_auth
-          fi
-          ref="${TG_REF:-$GITHUB_REF}"
-          want="${TG_REF:-$GITHUB_SHA}"
-          case "$ref" in
-            refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
-            refs/tags/*) target="$ref" ;;
-            refs/*) target="refs/remotes/${ref#refs/}" ;;
-            *) target="refs/remotes/origin/terragucci-head" ;;
-          esac
-          if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --no-tags --prune --no-recurse-submodules --depth=1 origin "+$want:$target"
-          case "$ref" in
-            refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
-            *) git checkout -q --force --detach "$target" ;;
-          esac
-      - id: decide
-        name: Read the comment and decide whether it re-plans
-        shell: bash
+          CHANT_REPLAN_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_COMMANDS: '["/terragucci plan"]'
+          CHANT_REPLAN_FORKS: skip
+          CHANT_REPLAN_DISPATCH_ARGUMENT: root
+          CHANT_REPLAN_PRODUCT: /terragucci
+          CHANT_REPLAN_OTHERS: '["/terragucci apply"]'
+        run: '(cd / && node -e ''const fs=require("fs");const say=(m)=>console.log("chant: "+m);const out=(k,v)=>fs.appendFileSync(process.env.GITHUB_OUTPUT,k+"="+v+"\n");let e;try{e=JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH,"utf8"))}catch{say("the event file does not read, so nothing is planned again");process.exit(0)}const dispatch=process.env.GITHUB_EVENT_NAME==="workflow_dispatch",inputs=e.inputs&&typeof e.inputs==="object"?e.inputs:{};const body=String((e.comment&&e.comment.body)||"").trim();const cmds=JSON.parse(process.env.CHANT_REPLAN_COMMANDS||"[]");for(const g of JSON.parse(process.env.CHANT_REPLAN_GATED||"[]")){const v=process.env[g.when]||"";if(v&&v!=="0"&&v!=="false")cmds.push(g.comment)}let arg,flag;let refusal;const product=process.env.CHANT_REPLAN_PRODUCT||"",others=JSON.parse(process.env.CHANT_REPLAN_OTHERS||"[]");const says=(c)=>body===c||body.startsWith(c+" ")||body.startsWith(c+"\t");if(dispatch){const pv=String(inputs.pr==null?"":inputs.pr).trim();if(!pv){say("the dispatch names no pull request");process.exit(0)}if(!/^[1-9][0-9]{0,9}$/.test(pv)){console.error("chant: the dispatch\u0027s pr input is a pull request number, like 42");process.exit(1)}const k=process.env.CHANT_REPLAN_DISPATCH_ARGUMENT||"argument",a=String(inputs[k]==null?"":inputs[k]).trim();if(a&&!/^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(a)){console.error("chant: the dispatch\u0027s "+k+" input is one word of letters, digits and _./@+=,:-, not starting with -");process.exit(1)}arg=a}else for(const c of cmds){if(body===c){arg="";break}if(body.startsWith(c+" ")){const r=body.slice(c.length).trim();if(r.startsWith("-")){flag=r.split(/\s/)[0];break}if(/^[A-Za-z0-9_.\/@+=,:][A-Za-z0-9_.\/@+=,:-]*$/.test(r)){arg=r;break}}}if(flag!==undefined){refusal="the re-plan takes no flags, and "+flag+" is one: write the command alone, or with one word that does not start with -";arg=""}if(arg===undefined){if(product&&says(product)&&!others.some(says)){refusal="the commands are "+cmds.concat(others).map((c)=>"`"+c+"`").join(", ")}else{say("the comment asks for no plan");process.exit(0)}}const target=process.env.CHANT_REPLAN_TARGET||"",targets=JSON.parse(process.env.CHANT_REPLAN_TARGETS||"[]");if(targets.length&&arg&&!targets.includes(arg)){refusal=arg+" is none of "+targets.join(", ")+", so nothing is planned again";arg=""}if(targets.length&&arg&&arg!==target){say("the comment plans "+arg+" again, not "+target);process.exit(0)}const n=dispatch?Number(String(inputs.pr).trim()):e.issue&&e.issue.number;if(!dispatch&&(!Number.isInteger(n)||!(e.issue.pull_request||e.is_pull))){say("the comment is not on a pull request");process.exit(0)}const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY;const get=async(p)=>{const r=await fetch(api+"/repos/"+repo+p,{headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json"}});if(!r.ok)throw new Error(p+" answered "+r.status);return r.json()};const post=async(t)=>{say(t);if(dispatch)return;const r=await fetch(api+"/repos/"+repo+"/issues/"+n+"/comments",{method:"POST",headers:{authorization:"token "+process.env.CHANT_REPLAN_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({body:product.slice(1)+": "+t})});if(!r.ok)console.error("chant: the reply was not posted: the forge answered "+r.status)};(async()=>{if(process.env.CHANT_REPLAN_PERMISSION&&!dispatch){const who=e.comment&&e.comment.user&&e.comment.user.login;const p=who?await get("/collaborators/"+encodeURIComponent(who)+"/permission"):{};if(!["owner","admin","maintain","write"].includes(p.permission)){say((who||"the commenter")+" cannot write to "+repo+", so nothing is planned again");return}}if(refusal){await post(refusal);return}const pr=await get("/pulls/"+n);if(pr.state!=="open"){say("pull request "+n+" is not open, so it is not planned again");return}const same=Boolean(pr.head&&pr.head.repo&&pr.head.repo.full_name===repo);if(!same&&process.env.CHANT_REPLAN_FORKS==="skip"){await post("pull request "+n+" is from a fork, and its code never runs with this repository\u0027s credentials, so it is not planned again");return}const sha=/^[0-9a-f]{40}$/;if(!sha.test(String(pr.head&&pr.head.sha))||!sha.test(String(pr.base&&pr.base.sha)))throw new Error("the pull request names no head or base commit");out("go","1");out("pr",String(n));out("head",pr.head.sha);out("base",pr.base.sha);out("argument",arg);say("planning pull request "+n+" again at "+pr.head.sha.slice(0,12)+(arg?" for "+arg:""))})().catch((err)=>{console.error("chant: the re-plan could not decide: "+(err&&err.message?err.message:String(err)));process.exit(1)});'')'
+      - if: steps.decide.outputs.go == '1'
+        name: Say on the head that the plan started
         env:
-          TG_TOKEN: '${{ github.token }}'
-        run: |
-          set +e -uo pipefail
-          export TG_FORGE=github
-          tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'const [cmd, ...a] = process.argv.slice(1);
-          const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-          try {
-            if (!tok) {
-              console.log("terragucci: no forge token, so no " + cmd);
-            } else if (cmd === "alive") {
-              const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-              const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-              const r = await fetch(api + "/" + repo + "/actions/runs/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-              if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-              const run = await r.json();
-              console.log(["success", "failure", "cancelled", "skipped", "completed"].includes(run.status) ? "dead" : "alive");
-            }
-          } catch (err) {
-            console.log("terragucci: " + cmd + " failed: " + err.message);
-          }' -- "$@" ;; esac; }
-          terragucci comment --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --out terragucci-comment.json || exit 1
-          read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
-          $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
-          EOF
-          [ -n "$TG_PR" ] || exit 0
-          [ "$TG_ROOT" = "-" ] && TG_ROOT=""
-          export TG_SHA
-          { echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"
-          [ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"
+          CHANT_PENDING_TOKEN: '${{ github.token }}'
+          CHANT_PENDING_SHA: '${{ steps.decide.outputs.head }}'
+          CHANT_PENDING_CONTEXT: terragucci/plan
+          CHANT_PENDING_DESCRIPTION: planning
+        run: '(cd / && node -e ''const api=String(process.env.GITHUB_API_URL||"").replace(/\/+$/,""),repo=process.env.GITHUB_REPOSITORY,sha=process.env.CHANT_PENDING_SHA||"";if(!/^[0-9a-f]{40}$/.test(sha)){console.log("chant: no commit to say the plan started on");process.exit(0)}const run=process.env.GITHUB_SERVER_URL&&process.env.GITHUB_RUN_ID?process.env.GITHUB_SERVER_URL+"/"+repo+"/actions/runs/"+process.env.GITHUB_RUN_ID:undefined;fetch(api+"/repos/"+repo+"/statuses/"+sha,{method:"POST",headers:{authorization:"token "+process.env.CHANT_PENDING_TOKEN,accept:"application/json","content-type":"application/json"},body:JSON.stringify({state:"pending",context:process.env.CHANT_PENDING_CONTEXT,description:process.env.CHANT_PENDING_DESCRIPTION,...(run?{target_url:run}:{})})}).then((r)=>console.log(r.ok?"chant: "+process.env.CHANT_PENDING_CONTEXT+" is pending":"chant: the forge answered "+r.status+" to the pending status"),(err)=>console.log("chant: the pending status was not posted: "+err.message));'')'
       - if: steps.decide.outputs.go == '1'
         name: Trade the job's OIDC token for the plan identities
-        shell: bash
-        run: |
-          if [ -z "${CHANT_CLOUD_LOGGED_IN:-}" ]; then
-          export CHANT_CLOUD_LOGIN='{"aws":{"role":"arn:aws:iam::333333333333:role/plan","targets":[{"targets":["envs/prod/**"],"role":"arn:aws:iam::222222222222:role/prod-plan"},{"targets":["envs/dev/**"],"role":"arn:aws:iam::111111111111:role/dev-plan"}],"audience":"sts.amazonaws.com","sessionName":"terragucci-plan"}}'
-          CHANT_CLOUD_LOGIN_VARS="$(cd / && node -e 'const fs=require("fs"),crypto=require("crypto");const [out,format,forge]=process.argv.slice(1);const Q=String.fromCharCode(39);const fail=(m)=>{console.error("chant: the cloud login failed: "+m);process.exit(1)};let spec;try{spec=JSON.parse(process.env.CHANT_CLOUD_LOGIN||"")}catch{fail("CHANT_CLOUD_LOGIN is not JSON")}const clean=(v)=>typeof v==="string"&&/^[\x21-\x7e]+$/.test(v);const trim=(u)=>String(u).replace(/\/+$/,"");const tmp=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp");const rand=()=>crypto.randomBytes(8).toString("hex");const NO={github:"it needs permissions: id-token: write, and a pull request from a fork gets none",forgejo:"Forgejo serves one from version 15, with Forgejo Runner 12.5 or later, to a job with enable-openid-connect: true; on an older Forgejo give the cloud a tokenFile the runner provides"};const mine=[];const tokenFile=async(cloud,s)=>{if(s.tokenFile){const f=s.tokenFile.replace(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/,(m,v)=>process.env[v]||"");let t;try{t=fs.readFileSync(f,"utf8").trim()}catch{throw new Error(cloud+"\u0027s tokenFile "+f+" cannot be read")}if(!t)throw new Error(cloud+"\u0027s tokenFile "+f+" is empty");return f}const name="CHANT_ID_TOKEN_"+cloud.toUpperCase();let v=process.env[name];if(!v){if(forge==="gitlab")throw new Error("the job has no "+name+": it needs id_tokens: "+name+": aud: "+s.audience);const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,k=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!k)throw new Error("the job can request no OIDC token for "+cloud+": "+(NO[forge]||NO.github));const r=await fetch(u+(u.includes("?")?"&":"?")+"audience="+encodeURIComponent(s.audience),{headers:{authorization:"bearer "+k,accept:"application/json"}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);try{v=JSON.parse(await r.text()).value}catch{throw new Error("the OIDC token request answered with no JSON")}}if(!clean(v))throw new Error("the job\u0027s OIDC token for "+cloud+" is not a token");const f=tmp+"/chant-oidc-"+cloud+"-"+rand();fs.writeFileSync(f,v,{mode:0o600,flag:"wx"});mine.push(f);return f};const KEY={"aws":"role","gcp":"serviceAccount","azure":"clientId","pulumi":"token"};const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);return l};const vars={},said=[],by={};const run=async()=>{if(spec.aws){const a=spec.aws;const f=await tokenFile("aws",a);by.aws={};const base={AWS_WEB_IDENTITY_TOKEN_FILE:f,AWS_ROLE_SESSION_NAME:a.sessionName||"chant",...(a.region?{AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region}:{}),...(a.endpoint?{AWS_ENDPOINT_URL_STS:trim(a.endpoint)}:{})};for(const role of ids("aws")){by.aws[role]={AWS_ROLE_ARN:role,...base};said.push(role)}if(a.role)Object.assign(vars,by.aws[a.role]);else{Object.assign(vars,base);console.error("chant: wrote the aws OIDC token file, with no role of the job\u0027s own")}}if(spec.gcp){const c=spec.gcp;const f=await tokenFile("gcp",c);by.gcp={};const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");const tu=/\/token$/.test(sts)?sts:sts+"/v1/token";for(const sa of ids("gcp")){const cf=tmp+"/chant-gcp-"+rand()+".json";fs.writeFileSync(cf,JSON.stringify({type:"external_account",audience:"//iam.googleapis.com/"+c.provider,subject_token_type:"urn:ietf:params:oauth:token-type:jwt",token_url:tu,service_account_impersonation_url:iam+"/v1/projects/-/serviceAccounts/"+sa+":generateAccessToken",credential_source:{file:f}})+"\n",{mode:0o600,flag:"wx"});by.gcp[sa]={GOOGLE_APPLICATION_CREDENTIALS:cf,CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:cf};said.push(sa)}if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}if(spec.azure){const z=spec.azure;const f=await tokenFile("azure",z);by.azure={};for(const cid of ids("azure")){by.azure[cid]={AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,AZURE_FEDERATED_TOKEN_FILE:f,ARM_USE_OIDC:"true",ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,ARM_OIDC_TOKEN_FILE_PATH:f,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{}),...(z.authority?{AZURE_AUTHORITY_HOST:trim(z.authority)}:{})};said.push(cid)}if(z.clientId)Object.assign(vars,by.azure[z.clientId]);if(z.cli){const r=require("child_process").spawnSync("az",["login","--service-principal","--username",z.clientId,"--tenant",z.tenantId,"--federated-token",fs.readFileSync(f,"utf8").trim(),"--allow-no-subscriptions","--output","none"],{stdio:["ignore","ignore","inherit"]});if(r.error)throw new Error("az login could not run: "+r.error.message);if(r.status!==0)throw new Error("az login exited "+r.status);if(z.subscriptionId){const s=require("child_process").spawnSync("az",["account","set","--subscription",z.subscriptionId],{stdio:["ignore","ignore","inherit"]});if(s.status!==0)throw new Error("az account set exited "+s.status)}}}const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}const tf=tmp+"/chant-cloud-targets-"+rand()+".json";fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.CHANT_CLOUD_TARGETS=tf}if(mine.length)vars.CHANT_CLOUD_TOKEN_FILES=mine.join(":");for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");if(format==="github-env")fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\n").join(""));else process.stdout.write(Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\"+Q+Q)+Q+"\n").join(""));for(const s of said)console.error("chant: logged in from the OIDC token file as "+s)};run().catch((e)=>fail(e&&e.message?e.message:String(e)));' "-" sh github)" || exit 1
-          eval "$CHANT_CLOUD_LOGIN_VARS"
-          unset CHANT_CLOUD_LOGIN_VARS CHANT_CLOUD_LOGIN
-          fi
-          if [ -z "${CHANT_CLOUD_LOGGED_IN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN CHANT_CLOUD_LOGGED_IN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          trap '(set -f; IFS=:; for f in ${CHANT_CLOUD_TOKEN_FILES:-}; do [ ! -f "$f" ] || : > "$f"; done)' EXIT
-          export TERRAGUCCI_ROOT_ROLES='[["envs/prod/**","arn:aws:iam::222222222222:role/prod-plan"],["envs/dev/**","arn:aws:iam::111111111111:role/dev-plan"]]'
-          terragucci oidc-trade --out "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" || { echo 'terragucci: the re-plan could not trade the job'\''s OIDC token for the plan identities' >&2; mkdir -p terragucci-report && echo 'failure the re-plan could not trade the job'\''s OIDC token for the plan identities' >terragucci-report/plan-status.txt; exit 1; }
+        env:
+          CHANT_CLOUD_TRADE: '{"aws":{"role":"arn:aws:iam::333333333333:role/plan","targets":[{"targets":["envs/prod/**"],"role":"arn:aws:iam::222222222222:role/prod-plan"},{"targets":["envs/dev/**"],"role":"arn:aws:iam::111111111111:role/dev-plan"},{"targets":[],"role":"arn:aws:iam::333333333333:role/plan"}],"region":"us-east-1","audience":"sts.amazonaws.com"}}'
+        run: '(cd / && node -e ''const fs=require("fs");const [out,format]=process.argv.slice(1);const Q=String.fromCharCode(39);const fail=(m)=>{console.error("chant: the OIDC trade failed: "+m);process.exit(1)};let spec;try{spec=JSON.parse(process.env.CHANT_CLOUD_TRADE||"")}catch{fail("CHANT_CLOUD_TRADE is not JSON")}const clean=(v)=>typeof v==="string"&&/^[\x21-\x7e]+$/.test(v);const trim=(u)=>String(u).replace(/\/+$/,"");const post=async(url,headers,body)=>{const r=await fetch(url,{method:"POST",headers,body});const t=await r.text();if(!r.ok)throw new Error(url+" answered "+r.status+": "+t.slice(0,200).replace(/\s+/g," "));return t};const json=(t,what)=>{try{return JSON.parse(t)}catch{throw new Error(what+" answered with no JSON")}};const idToken=async(cloud,aud)=>{const named=process.env["CHANT_ID_TOKEN_"+cloud.toUpperCase()];if(named)return named;const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,k=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!k)throw new Error("the job can request no OIDC token for "+cloud+": it needs id-token: write, and a pull request from a fork gets none");const r=await fetch(u+(u.includes("?")?"&":"?")+"audience="+encodeURIComponent(aud),{headers:{authorization:"bearer "+k,accept:"application/json"}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=json(await r.text(),"the OIDC token request").value;if(!clean(v))throw new Error("the OIDC token request gave no token");return v};const KEY={"aws":"role","gcp":"serviceAccount","azure":"clientId","pulumi":"token"};const ids=(c)=>{const s=spec[c],l=[];if(s[KEY[c]])l.push(s[KEY[c]]);for(const t of s.targets||[])if(!l.includes(t[KEY[c]]))l.push(t[KEY[c]]);if(!l.length)throw new Error(c+" names no identity");return l};const vars={},secrets=[],said=[],by={};const run=async()=>{if(spec.aws){const a=spec.aws;const tok=await idToken("aws",a.audience);by.aws={};const ep=trim(a.endpoint||process.env.AWS_ENDPOINT_URL_STS||("https://sts."+a.region+".amazonaws.com"+(a.region.startsWith("cn-")?".cn":"")));for(const role of ids("aws")){const t=await post(ep+"/",{"content-type":"application/x-www-form-urlencoded",accept:"application/xml"},new URLSearchParams({Action:"AssumeRoleWithWebIdentity",Version:"2011-06-15",RoleArn:role,RoleSessionName:"chant-"+(process.env.GITHUB_RUN_ID||process.env.CI_JOB_ID||"job"),WebIdentityToken:tok}).toString());const g=(k)=>{const m=new RegExp("<"+k+">([^<]+)</"+k+">").exec(t);return m?m[1].trim():undefined};const id=g("AccessKeyId"),key=g("SecretAccessKey"),st=g("SessionToken");if(!clean(id)||!clean(key)||!clean(st))throw new Error("STS gave no credentials for "+role);by.aws[role]={AWS_ACCESS_KEY_ID:id,AWS_SECRET_ACCESS_KEY:key,AWS_SESSION_TOKEN:st,AWS_REGION:a.region,AWS_DEFAULT_REGION:a.region};secrets.push(key,st);said.push(role)}if(a.role)Object.assign(vars,by.aws[a.role])}if(spec.gcp){const c=spec.gcp;const tok=await idToken("gcp",c.audience);by.gcp={};const sts=trim(c.stsEndpoint||"https://sts.googleapis.com"),iam=trim(c.iamEndpoint||"https://iamcredentials.googleapis.com");const fed=json(await post(/\/token$/.test(sts)?sts:sts+"/v1/token",{"content-type":"application/json"},JSON.stringify({grantType:"urn:ietf:params:oauth:grant-type:token-exchange",audience:"//iam.googleapis.com/"+c.provider,scope:"https://www.googleapis.com/auth/cloud-platform",requestedTokenType:"urn:ietf:params:oauth:token-type:access_token",subjectToken:tok,subjectTokenType:"urn:ietf:params:oauth:token-type:jwt"})),"Google STS").access_token;if(!clean(fed))throw new Error("Google STS gave no token");for(const sa of ids("gcp")){const at=json(await post(iam+"/v1/projects/-/serviceAccounts/"+encodeURIComponent(sa)+":generateAccessToken",{"content-type":"application/json",authorization:"Bearer "+fed},JSON.stringify({scope:["https://www.googleapis.com/auth/cloud-platform"]})),"IAM credentials").accessToken;if(!clean(at))throw new Error("IAM credentials gave no token for "+sa);by.gcp[sa]={GOOGLE_OAUTH_ACCESS_TOKEN:at,CLOUDSDK_AUTH_ACCESS_TOKEN:at};secrets.push(at);said.push(sa)}if(c.serviceAccount)Object.assign(vars,by.gcp[c.serviceAccount])}if(spec.azure){const z=spec.azure;const tok=await idToken("azure",z.audience);by.azure={};const host=trim(z.authority||"https://login.microsoftonline.com");for(const cid of ids("azure")){const at=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:"https://management.azure.com/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;if(!clean(at))throw new Error("Entra gave no token for "+cid);let db;if(z.database){db=json(await post(host+"/"+encodeURIComponent(z.tenantId)+"/oauth2/v2.0/token",{"content-type":"application/x-www-form-urlencoded"},new URLSearchParams({client_id:cid,scope:"https://ossrdbms-aad.database.windows.net/.default",grant_type:"client_credentials",client_assertion_type:"urn:ietf:params:oauth:client-assertion-type:jwt-bearer",client_assertion:tok}).toString()),"Entra").access_token;if(!clean(db))throw new Error("Entra gave no database token for "+cid);secrets.push(db)}by.azure[cid]={AZURE_ACCESS_TOKEN:at,AZURE_CLIENT_ID:cid,AZURE_TENANT_ID:z.tenantId,ARM_CLIENT_ID:cid,ARM_TENANT_ID:z.tenantId,...(z.subscriptionId?{AZURE_SUBSCRIPTION_ID:z.subscriptionId,ARM_SUBSCRIPTION_ID:z.subscriptionId}:{}),...(db?{AZURE_DATABASE_ACCESS_TOKEN:db}:{})};secrets.push(at);said.push(cid)}if(z.clientId)Object.assign(vars,by.azure[z.clientId])}if(spec.pulumi){const p=spec.pulumi;const tok=await idToken("pulumi",p.audience);by.pulumi={};const api=trim(p.apiUrl||"https://api.pulumi.com");for(const id of ids("pulumi")){const m=/^(team|user):([^\s:]+)$/.exec(id),org=id==="organization"||id==="organization:admin";if(!m&&!org)throw new Error("Pulumi Cloud has no token for "+id);const f={audience:"urn:pulumi:org:"+p.organization,grant_type:"urn:ietf:params:oauth:grant-type:token-exchange",subject_token_type:"urn:ietf:params:oauth:token-type:id_token",requested_token_type:"urn:pulumi:token-type:access_token:"+(m?(m[1]==="team"?"team":"personal"):"organization"),subject_token:tok};if(m)f.scope=id;else if(id==="organization:admin")f.scope="admin";const at=json(await post(api+"/api/oauth/token",{"content-type":"application/x-www-form-urlencoded",accept:"application/json"},new URLSearchParams(f).toString()),"Pulumi Cloud").access_token;if(!clean(at))throw new Error("Pulumi Cloud gave no token for "+id);by.pulumi[id]={PULUMI_ACCESS_TOKEN:at,...(p.apiUrl?{PULUMI_BACKEND_URL:api}:{})};secrets.push(at);said.push("Pulumi Cloud "+id)}if(p.token)Object.assign(vars,by.pulumi[p.token])}const clouds=Object.keys(by);if(clouds.some((c)=>(spec[c].targets||[]).length>0)){const doc={version:1,clouds:{}};for(const c of clouds){const s=spec[c];doc.clouds[c]={...(s[KEY[c]]?{default:s[KEY[c]]}:{}),targets:(s.targets||[]).map((t)=>({targets:t.targets,identity:t[KEY[c]]})),vars:by[c]}}const tf=trim(process.env.RUNNER_TEMP||process.env.TMPDIR||"/tmp")+"/chant-cloud-targets-"+require("crypto").randomBytes(8).toString("hex")+".json";fs.writeFileSync(tf,JSON.stringify(doc),{mode:0o600,flag:"wx"});vars.CHANT_CLOUD_TARGETS=tf}if(clouds.length)vars.CHANT_CLOUD_TRADED=clouds.join(",");for(const [k,v] of Object.entries(vars))if(!clean(v))throw new Error(k+" is not a value the job can hold");if(format==="github-env"){for(const s of secrets)console.log("::add-mask::"+s);fs.appendFileSync(out,Object.entries(vars).map(([k,v])=>k+"="+v+"\n").join(""))}else{const sh=Object.entries(vars).map(([k,v])=>"export "+k+"="+Q+v.split(Q).join(Q+"\\"+Q+Q)+Q+"\n").join("");if(out==="-")process.stdout.write(sh);else fs.writeFileSync(out,sh,{mode:0o600})}for(const s of said)console.error("chant: traded the job\u0027s OIDC token for "+s)};run().catch((e)=>fail(e&&e.message?e.message:String(e)));'' "$GITHUB_ENV" github-env)'
       - if: steps.decide.outputs.go == '1'
         name: Check out the pull request's head
-        shell: bash
+        id: head
         env:
-          TG_TOKEN: '${{ github.token }}'
-          TG_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
+          CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
+          CHANT_REPLAN_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
         run: |
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
           git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          if [ -n "${TG_TOKEN:-}" ]; then
-            chant_auth="$(printf 'x-access-token:%s' "$TG_TOKEN" | base64 | tr -d '\n')"
+          if [ -n "${CHANT_CHECKOUT_TOKEN:-}" ]; then
+            chant_auth="$(printf 'x-access-token:%s' "$CHANT_CHECKOUT_TOKEN" | base64 | tr -d '\n')"
             export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
             unset chant_auth
           fi
-          ref="${TG_REF:-$GITHUB_REF}"
-          want="${TG_REF:-$GITHUB_SHA}"
+          ref="${CHANT_REPLAN_REF:-$GITHUB_REF}"
+          want="${CHANT_REPLAN_REF:-$GITHUB_SHA}"
           case "$ref" in
             refs/heads/*) target="refs/remotes/origin/${ref#refs/heads/}" ;;
             refs/tags/*) target="$ref" ;;
             refs/*) target="refs/remotes/${ref#refs/}" ;;
-            *) target="refs/remotes/origin/terragucci-head" ;;
+            *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
           git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
             *) git checkout -q --force --detach "$target" ;;
           esac
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - if: steps.decide.outputs.go == '1'
+        name: Plan the pull request again
         id: plan
-        name: Re-plan the pull request on request and write the plan report
-        shell: bash
         env:
-          TG_PR: '${{ steps.decide.outputs.pr }}'
-          TG_SHA: '${{ steps.decide.outputs.sha }}'
-          TG_ROOT: '${{ steps.decide.outputs.root }}'
-          TG_BASE: origin/${{ steps.decide.outputs.base }}
+          BASE_SHA: '${{ steps.decide.outputs.base }}'
+          PR_NUMBER: '${{ steps.decide.outputs.pr }}'
+          CHANT_PLAN_ARGUMENT: '${{ steps.decide.outputs.argument }}'
         run: |
-          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u TG_TOKEN -u TG_MERGE_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u ACTIONS_ID_TOKEN_REQUEST_TOKEN CHANT_NO_FORGE_TOKEN=1 bash --noprofile --norc -e -o pipefail "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN TG_TOKEN TG_MERGE_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
-          set +e -uo pipefail
-          tg_was=" $(cd /proc && echo [0-9]*) "
-          tg_sweep() {
-            [ -f /.dockerenv ] || [ -f /run/.containerenv ] || return 0
-            local i p k v s left
-            for i in 1 2 3 4 5 6 7 8 9 10; do
-              left=""
-              for p in /proc/[0-9]*; do
-                p="${p#/proc/}"
-                [ "$p" = "$$" ] && continue
-                case "$tg_was" in *" $p "*) continue ;; esac
-                s=""
-                while read -r k v; do [ "$k" = "State:" ] && { s="$v"; break; }; done 2>/dev/null <"/proc/$p/status"
-                case "$s" in Z*|"") continue ;; esac
-                kill -KILL "$p" 2>/dev/null && left=1
-              done
-              [ -n "$left" ] || break
-            done
-          }
-          trap tg_sweep EXIT
+          if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u CHANT_ID_TOKEN_AWS -u CHANT_ID_TOKEN_GCP -u CHANT_ID_TOKEN_AZURE -u CHANT_ID_TOKEN_PULUMI -u CHANT_CLOUD_TRADE CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL CHANT_ID_TOKEN_AWS CHANT_ID_TOKEN_GCP CHANT_ID_TOKEN_AZURE CHANT_ID_TOKEN_PULUMI CHANT_CLOUD_TRADE
           chant_report="$PWD/terragucci-report"
-          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to plan-note.md, plan-status.txt, drift-schedule.json, report.json; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on plan-note.md, plan-status.txt, drift-schedule.json, report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
-          trap 'tg_sweep; chant_handover' EXIT
-          if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
-          if [ -f "${RUNNER_TEMP:-/tmp}/terragucci-traded.env" ]; then . "${RUNNER_TEMP:-/tmp}/terragucci-traded.env"; : >"${RUNNER_TEMP:-/tmp}/terragucci-traded.env"; fi
+          chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
+          trap chant_handover EXIT
+          bash <<'PLAN' || exit $?
+          set +e -uo pipefail
+          unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
+          [ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"
           terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"}
           rc=$?
-          if [ ! -f terragucci-report/report.json ]; then
-            mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
-            exit 1
-          fi
-          counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
-          if [ -n "${TG_PR:-}" ]; then
-            # The first line says which roots the note covers, so an apply can mark it stale.
-            { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >terragucci-report/plan-note.md
-          fi
-          if [ "$rc" -ne 0 ]; then echo "failure $counts" >terragucci-report/plan-status.txt; exit 1; fi
-          echo "success $counts" >terragucci-report/plan-status.txt
+          terragucci plan-handoff --report terragucci-report --env default --exit "$rc"
+          PLAN
+    concurrency:
+      group: terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}
+      cancel-in-progress: false
   replan-note:
+    needs:
+      - replan
+    if: always() && (github.event_name == 'issue_comment' || github.event_name == 'workflow_dispatch') && needs.replan.outputs.go == '1' && (needs.replan.result == 'success' || needs.replan.result == 'failure')
     runs-on: ubuntu-latest
     container:
       image: img:1
-    needs: replan
-    if: always() && (needs.replan.result == 'success' || needs.replan.result == 'failure') && needs.replan.outputs.go == '1'
     permissions:
-      statuses: write
+      actions: read
+      contents: read
       pull-requests: write
-    env:
-      TG_TOKEN: '${{ github.token }}'
-      TG_PLAN_RESULT: '${{ needs.replan.result }}'
-      TG_PR: '${{ needs.replan.outputs.pr }}'
-      TG_SHA: '${{ needs.replan.outputs.sha }}'
-      TG_ROOT: '${{ needs.replan.outputs.root }}'
+      statuses: write
     steps:
-      - name: Take the plan report from the plan job
-        shell: bash
+      - name: Check out the target branch's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Take the plan report from the re-plan job
         run: |
           set -u
           node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the replan job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the replan job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the replan job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the replan job")' terragucci-report <<'END_OF_REPORT'
@@ -472,14 +388,30 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: terragucci-report-replan
-          path: terragucci-report/
+          path: terragucci-report
           if-no-files-found: ignore
+          include-hidden-files: true
+      - name: The product's lines before the note
+        if: always()
+        env:
+          GITHUB_TOKEN: '${{ github.token }}'
+          PR_NUMBER: '${{ needs.replan.outputs.pr }}'
+          HEAD_SHA: '${{ needs.replan.outputs.head }}'
+        run: |
+          export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
+          TG_TOKEN="$GITHUB_TOKEN" TG_PR="$PR_NUMBER" TG_SHA="$HEAD_SHA" terragucci plan-note --forge github --report terragucci-report --notices "$CHANT_PLAN_NOTE_NOTICES" || true
       - name: Post the plan note and terragucci/plan
         if: always()
-        shell: bash
+        env:
+          PR_NUMBER: '${{ needs.replan.outputs.pr }}'
+          HEAD_SHA: '${{ needs.replan.outputs.head }}'
+          PLAN_RESULT: '${{ needs.replan.result }}'
+          GITHUB_TOKEN: '${{ github.token }}'
+          CHANT_PLAN_NOTE_WORDS: '{"footer":"<sub><img src=\"https://intentius.io/terragucci/brand/taco-small.png\" width=\"26\" height=\"16\" alt=\"\"> Posted by [terragucci](https://intentius.io/terragucci/)</sub>","artifact":"terragucci-report","noReport":"Planned in [this run]({run}), which keeps no report artifact; with `reports` set, the note links the report in the bucket.","marker":"terragucci:waves","anchors":{"member":"root-{id}","group":"group-{id}"},"overrideKey":"policy.override","approvalRulesKey":"approval_rules","applyStage":"tf-apply","productMarker":"terragucci:plan"}'
+          CHANT_PLAN_ARGUMENT: '${{ needs.replan.outputs.argument }}'
         run: |
-          set -u
-          terragucci plan-note --forge github --report terragucci-report --plan-result "${TG_PLAN_RESULT:-}" ${TG_ROOT:+--root "$TG_ROOT"}
+          export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
+          npx --no-install terragucci components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge github --result "$PLAN_RESULT" --context terragucci/plan --not-affected "$CHANT_PLAN_ARGUMENT"
   fmt:
     needs: check
     if: always() && needs.check.outputs.finding == 'true'

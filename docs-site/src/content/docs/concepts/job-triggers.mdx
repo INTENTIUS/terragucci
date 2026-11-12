@@ -16,6 +16,7 @@ Every job runs in your forge's CI. It starts in one of two ways: on an event the
 |---|---|---|---|---|
 | check | each push; a pull request's only from a fork | on | at once | |
 | plan and the plan note | a pull request from the same repo; on GitLab, a merge request pipeline | on | at once | |
+| the plan note, GitLab | the plan notes schedule, a pipeline schedule with `CHANT_PLAN_NOTES=1` and `TERRAGUCCI_SCHEDULE=plan-notes`: each run posts the note and `terragucci/plan` of every open merge request whose plan job ended | on, once the schedule is added | one interval | |
 | apply, wave by wave | a push to the default branch, or to a branch [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches) names | on | at once | `apply.when` |
 | `/terragucci plan` and `/terragucci apply` comments, GitHub and Forgejo | the comment, as an `issue_comment` event | on | at once | `atlantis_comments` adds the `atlantis` forms |
 | `/terragucci` notes, GitLab | the comments schedule: each run reads the merge requests updated in the last 24 hours and answers each note it has not answered, keeping its place by a marker on its own reply, so it holds no state | off | one interval | `comments: <cron>` |

@@ -41,16 +41,22 @@ describe("terragucci post", () => {
     ]);
   });
 
-  it("edits the plan note found by its first line, and replies with a new comment", async () => {
-    const f = forge((m, u) => (m === "GET" && u.includes("/comments") ? [{ id: 4, body: "<!-- terragucci:plan roots=a -->\nold" }] : {}));
-    const file = join(mkdtempSync(join(tmpdir(), "post-")), "note.md");
-    writeFileSync(file, "<!-- terragucci:plan roots=a -->\nnew");
-    await forgePost("note", [file], { forge: "forgejo", env: GH, fetch: f.fetch });
+  it("replies with a new comment, and posts no plan note: chant's note job does (terragucci issue 1411)", async () => {
+    const f = forge(() => ({}));
     await forgePost("reply", ["applied wave 1"], { forge: "forgejo", env: GH, fetch: f.fetch });
-    expect(f.calls.filter((c) => c.method !== "GET")).toEqual([
-      { method: "PATCH", url: "http://api/repos/o/r/issues/comments/4", body: { body: "<!-- terragucci:plan roots=a -->\nnew" } },
-      { method: "POST", url: "http://api/repos/o/r/issues/7/comments", body: { body: "terragucci: applied wave 1" } },
-    ]);
+    expect(f.calls.filter((c) => c.method !== "GET")).toEqual([{ method: "POST", url: "http://api/repos/o/r/issues/7/comments", body: { body: "terragucci: applied wave 1" } }]);
+    await expect(forgePost("note", ["note.md"], { forge: "forgejo", env: GH, fetch: f.fetch })).rejects.toThrow(/post is status, reply, stale/);
+  });
+
+  it("marks stale chant's note, whose terragucci line is its second", async () => {
+    const f = forge((m, u) => {
+      if (u.includes("/pulls?")) return [{ number: 1, head: { ref: "b1", sha: "abc", repo: { full_name: "o/r" } }, base: { ref: "main" } }];
+      return m === "GET" && u.includes("issues/1/comments") ? [{ id: 11, body: "<!-- chant-pr:default -->\n<!-- terragucci:plan roots=app -->\n### terragucci tf-plan" }] : {};
+    });
+    await forgePost("stale", ["app", "main"], { forge: "github", env: GH, fetch: f.fetch });
+    const edit = f.calls.find((c) => c.method === "PATCH")!;
+    expect(edit.url).toBe("http://api/repos/o/r/issues/comments/11");
+    expect((edit.body as { body: string }).body.split("\n").slice(0, 3)).toEqual(["<!-- chant-pr:default -->", "<!-- terragucci:plan roots=app -->", "> This plan is stale: main moved under app. Push to this pull request to plan again. <!-- terragucci:stale -->"]);
   });
 
   it("marks stale only the plan notes that cover a moved root, once", async () => {

@@ -27,7 +27,7 @@ check:
     TF_INPUT: '0'
     TG_BRANCH: '$CI_DEFAULT_BRANCH'
   rules:
-    - if: '$CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   script:
     - |
       unset TG_TOKEN TG_MERGE_TOKEN CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
@@ -101,7 +101,7 @@ fmt:
     CHANT_COMMIT_ENV: local
     GIT_DEPTH: '0'
   rules:
-    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
       when: always
   needs:
     - job: check
@@ -141,7 +141,7 @@ fmt-push:
     CHANT_COMMIT_ENV: local
     GIT_DEPTH: '0'
   rules:
-    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
       when: always
   needs:
     - job: fmt
@@ -165,61 +165,51 @@ plan:
   stage: plan
   image:
     name: img:1
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_MERGE_REQUEST_PROJECT_ID'
   variables:
     TF_IN_AUTOMATION: '1'
     TF_INPUT: '0'
-    TG_TOKEN: '$GITLAB_TOKEN'
     TG_SHA: '$CI_COMMIT_SHA'
     TG_BRANCH: '$CI_DEFAULT_BRANCH'
     TG_PR: '$CI_MERGE_REQUEST_IID'
     GIT_DEPTH: '0'
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH'
+    BASE_SHA: '$CI_MERGE_REQUEST_DIFF_BASE_SHA'
+    PR_NUMBER: '$CI_MERGE_REQUEST_IID'
   script:
+    - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
+    - unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN
     - |
       bash <<'PLAN' || exit $?
       set +e -uo pipefail
-      export TG_FORGE=gitlab
-      tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'const [cmd, ...a] = process.argv.slice(1);
-      const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-      try {
-        if (!tok) {
-          console.log("terragucci: no forge token, so no " + cmd);
-        } else if (cmd === "alive") {
-          const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-          const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-          const r = await fetch(api + "/" + repo + "/pipelines/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-          if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-          const run = await r.json();
-          console.log(["success", "failed", "canceled", "skipped"].includes(run.status) ? "dead" : "alive");
-        }
-      } catch (err) {
-        console.log("terragucci: " + cmd + " failed: " + err.message);
-      }' -- "$@" ;; esac; }
-      tg status terragucci/plan pending "planning"
-      terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'network;app,cache' --report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html"
+      unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+      export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
+      [ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"
+      terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'network;app,cache' --report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html" ${TG_ROOT:+--root "$TG_ROOT"}
       rc=$?
-      if [ ! -f terragucci-report/report.json ]; then
-        tg status terragucci/plan failure "the plan report was not written"
-        exit 1
-      fi
-      counts="$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;const f=n(["refused"]);console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")' terragucci-report/report.json)"
-      if [ -n "${TG_PR:-}" ]; then
-        note="$(mktemp)"
-        # The first line says which roots the note covers, so an apply can mark it stale.
-        { echo "<!-- terragucci:plan roots=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))' terragucci-report/report.json) -->"; cat terragucci-report/note.md; } >"$note"
-        tg note "$note"
-      fi
-      if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi
-      tg status terragucci/plan success "$counts"
+      terragucci plan-handoff --report terragucci-report --env default --exit "$rc"
       PLAN
   artifacts:
     name: terragucci-report
     when: always
     paths:
-      - terragucci-report/
+      - terragucci-report
     reports:
       terraform: terragucci-report/gitlab-terraform.json
+  tags:
+    - docker
+
+plan-note:
+  stage: plan
+  image:
+    name: img:1
+  rules:
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  variables:
+    CHANT_PLAN_NOTE_WORDS: '{"footer":"<sub><img src=\"https://intentius.io/terragucci/brand/taco-small.png\" width=\"26\" height=\"16\" alt=\"\"> Posted by [terragucci](https://intentius.io/terragucci/)</sub>","artifact":"terragucci-report","noReport":"Planned in [this run]({run}), which keeps no report artifact; with `reports` set, the note links the report in the bucket.","marker":"terragucci:waves","anchors":{"member":"root-{id}","group":"group-{id}"},"overrideKey":"policy.override","approvalRulesKey":"approval_rules","applyStage":"tf-apply","productMarker":"terragucci:plan"}'
+    CHANT_PLAN_WATCHES: '[{"op":"tf-drift","cron":"0 6 * * *","files":[".gitlab/terragucci-drift.yml",".gitlab/terragucci.yml"],"schedule":{"variable":"TERRAGUCCI_SCHEDULE","not":["comments","resume","rollouts","ephemeral","plan-notes"]}}]'
+  script:
+    - npx --no-install terragucci components pr-post --open --env default --output terragucci-report --forge gitlab --context terragucci/plan
   tags:
     - docker
 
@@ -235,7 +225,7 @@ apply-wave-1:
     TG_BRANCH: '$CI_DEFAULT_BRANCH'
     TG_BEFORE: '$CI_COMMIT_BEFORE_SHA'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   script:
     - |
       bash <<'APPLY' || exit $?
@@ -306,7 +296,7 @@ apply-wave-2:
     TG_BRANCH: '$CI_DEFAULT_BRANCH'
     TG_BEFORE: '$CI_COMMIT_BEFORE_SHA'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   script:
     - |
       bash <<'APPLY' || exit $?
@@ -366,7 +356,7 @@ tips:
     TG_BRANCH: '$CI_DEFAULT_BRANCH'
     GIT_DEPTH: '0'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   resource_group: terragucci-tips
   script:
     - |
@@ -393,7 +383,7 @@ publish:
     TG_BRANCH: '$CI_DEFAULT_BRANCH'
     GIT_DEPTH: '0'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   resource_group: terragucci-publish
   script:
     - |

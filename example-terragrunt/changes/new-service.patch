@@ -1,35 +1,26 @@
 diff --git a/.forgejo/workflows/terragucci.yml b/.forgejo/workflows/terragucci.yml
-index 99e63e6..d175343 100644
+index f862d8d..71dc2b4 100644
 --- a/.forgejo/workflows/terragucci.yml
 +++ b/.forgejo/workflows/terragucci.yml
-@@ -206,7 +206,7 @@ jobs:
-           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["plan-note.md","plan-status.txt","drift-schedule.json","report.json"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to plan-note.md, plan-status.txt, drift-schedule.json, report.json; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on plan-note.md, plan-status.txt, drift-schedule.json, report.json")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
-           trap chant_handover EXIT
-           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
--          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
-+          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --terragrunt
-           rc=$?
-           if [ ! -f terragucci-report/report.json ]; then
-             mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
-@@ -324,7 +324,7 @@ jobs:
-           } catch (err) {
-             console.log("terragucci: " + cmd + " failed: " + err.message);
-           }' -- "$@" ;; esac; }
--          terragucci comment --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
-+          terragucci comment --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --forge forgejo --out terragucci-comment.json || exit 1
-           read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF
-           $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")' terragucci-comment.json)
-           EOF
-@@ -406,7 +406,7 @@ jobs:
-           trap 'tg_sweep; chant_handover' EXIT
-           if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi
+@@ -196,7 +196,7 @@ jobs:
+           export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
+           [ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"
            export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
 -          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
 +          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
            rc=$?
-           if [ ! -f terragucci-report/report.json ]; then
-             mkdir -p terragucci-report && echo "failure the plan report was not written" >terragucci-report/plan-status.txt
-@@ -626,7 +626,7 @@ jobs:
+           terragucci plan-handoff --report terragucci-report --env default --exit "$rc"
+           PLAN
+@@ -342,7 +342,7 @@ jobs:
+           export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
+           [ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"
+           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
+-          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/platform;live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
++          terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'live/dev/ledger,live/dev/platform;live/dev/billing,live/dev/email,live/dev/orders,live/dev/payments,live/dev/search;live/prod/platform,live/staging/platform;live/prod/email,live/prod/orders,live/prod/payments,live/staging/email,live/staging/orders,live/staging/payments,live/staging/search;live/prod/search' --report-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" ${TG_ROOT:+--root "$TG_ROOT"} --terragrunt
+           rc=$?
+           terragucci plan-handoff --report terragucci-report --env default --exit "$rc"
+           PLAN
+@@ -567,7 +567,7 @@ jobs:
            } catch (err) {
              console.log("terragucci: " + cmd + " failed: " + err.message);
            }' -- "$@" ;; esac; }
@@ -38,7 +29,7 @@ index 99e63e6..d175343 100644
            read -r TG_PR TG_SHA TG_WAVE <<EOF
            $(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")' terragucci-comment.json)
            EOF
-@@ -644,7 +644,7 @@ jobs:
+@@ -585,7 +585,7 @@ jobs:
            for wave in $(seq 1 "$last"); do
              : >"$outcome"
              rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi
@@ -47,7 +38,7 @@ index 99e63e6..d175343 100644
              rc=${PIPESTATUS[0]}
              [ -s "$outcome" ] && wave="$(sed -n 's/^wave \([0-9]*\) .*/\1/p' "$outcome")"
              case "$rc" in
-@@ -732,7 +732,7 @@ jobs:
+@@ -673,7 +673,7 @@ jobs:
              changed=
            fi
            moved=""
@@ -56,7 +47,7 @@ index 99e63e6..d175343 100644
              if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
            done
            # The base branch moved under these roots: plan notes that cover them are stale.
-@@ -746,7 +746,7 @@ jobs:
+@@ -687,7 +687,7 @@ jobs:
            tg status terragucci/apply pending "applying"
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -65,7 +56,7 @@ index 99e63e6..d175343 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -812,7 +812,7 @@ jobs:
+@@ -753,7 +753,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -74,7 +65,7 @@ index 99e63e6..d175343 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -878,7 +878,7 @@ jobs:
+@@ -819,7 +819,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -83,7 +74,7 @@ index 99e63e6..d175343 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -944,7 +944,7 @@ jobs:
+@@ -885,7 +885,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"
@@ -92,7 +83,7 @@ index 99e63e6..d175343 100644
            rc=${PIPESTATUS[0]}
            case "$rc" in
              0) ;;
-@@ -1010,7 +1010,7 @@ jobs:
+@@ -951,7 +951,7 @@ jobs:
            fi
            outcome="$(mktemp)"
            log="$(mktemp)"

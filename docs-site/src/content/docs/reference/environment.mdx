@@ -360,7 +360,8 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 
 | Variable | Flag | Meaning |
 |---|---|---|
-| `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone; a schedule without it runs drift |
+| `TERRAGUCCI_SCHEDULE` | | GitLab, on a pipeline schedule: `comments` makes the schedule's pipelines run the `comments` job alone, `plan-notes` the `plan-note` job alone; a schedule without it runs drift |
+| `CHANT_PLAN_NOTES` | | GitLab, on the plan notes schedule: `1` makes its pipelines run chant's `plan-note` job, which posts each open merge request's plan note and `terragucci/plan`, and no other job |
 | `TERRAGUCCI_CONTROL_DIR` | | a checkout of the [control repo](/terragucci/concepts/control-repo/) with its `chant/lifecycle`, that a plan reads its estate ownership entries from, in place of cloning one |
 | `CHANT_CONTROL_DIR` | | the control repo's `chant/lifecycle`, fetched by chant's read step in the plan job ([chant#4619](https://github.com/INTENTIUS/chant/issues/4619)); a plan reads its estate ownership entries there when `TERRAGUCCI_CONTROL_DIR` names no checkout |
 | `TERRAGUCCI_CONTROL_READ_TOKEN` | | a token that can read the control repo, so a plan clones it to resolve which project owns an estate another project reads |
@@ -411,8 +412,8 @@ Internal; a value set in `env:` is overwritten.
 | `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
 | `TG_TEMPLATE`, `TG_VERSION`, `TG_NAME`, `TG_INPUTS`, `TG_APP`, `TG_CLAIMED_BY`, `TG_REQUESTED_BY` | the `request` job, with `templates`: the dispatch's inputs and the actor who dispatched it, which it passes to `terragucci request` |
 | `TG_MODULE`, `TG_VERSION` | the `rollout` job on GitHub and Forgejo: the dispatch's `module` and `version` inputs; with `TG_MODULE` set it runs `terragucci rollout` for that module, else `terragucci respond rollout` |
-| `TG_PLAN_RESULT` | the `plan-note` and `replan-note` jobs: the plan job's result |
-| `TG_REF` | Forgejo, the `replan` job's checkout of the pull request's head: the ref it fetches, `refs/pull/<n>/head` |
+| `TG_REF` | a checkout step of terragucci's own jobs: a ref to fetch in place of the run's commit |
+| `PLAN_RESULT`, `PR_NUMBER`, `HEAD_SHA`, `BASE_SHA`, `CHANT_PLAN_ARGUMENT` | chant's `plan`, `replan`, `plan-note` and `replan-note` jobs: the plan job's result, the pull request, its head and base, and a re-plan's root, which the plan verb reads as `TG_PR`, `TG_SHA`, `TG_BASE` and `TG_ROOT` |
 | `TERRAGUCCI_EPHEMERAL_SUFFIX` | Terragrunt repos, the `ephemeral` job, while it prepares a unit: `-pr-<n>`, which a unit's `remote_state` key reads; empty in every other job |
 | `TG_ACTION` | the `ephemeral` job on GitHub and Forgejo: the pull request event's action; `closed` destroys the pull request's [ephemeral environment](/terragucci/guides/ephemeral-environments/) |
 | `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
@@ -426,9 +427,8 @@ Internal; a value set in `env:` is overwritten.
 | `TERRAGUCCI_SOURCES_NEXT` | Terragrunt repos with [`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources), a plan stage or `tf-apply` wave: the binary the `TG_TF_PATH` wrapper runs once a unit's fetched modules and locked providers pass the check |
 | `CHANT_ID_TOKEN_AWS`, `CHANT_ID_TOKEN_GCP`, `CHANT_ID_TOKEN_AZURE` | GitLab jobs with `oidc`: each cloud's `id_tokens` entry, which chant's login reads and unsets |
 | `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`, `AWS_ROLE_SESSION_NAME`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_SUBSCRIPTION_ID`, `ARM_USE_OIDC`, `ARM_OIDC_TOKEN_FILE_PATH`, `ARM_TENANT_ID`, `ARM_SUBSCRIPTION_ID`, `ARM_CLIENT_ID` | jobs with `oidc`, from chant's login |
-| `TERRAGUCCI_GCP_TOKEN_FILE` | a re-plan's trade step, with `gcp.roles`: the job's GCP OIDC token file, read when the credentials file in `GOOGLE_APPLICATION_CREDENTIALS` names none |
-| `TERRAGUCCI_ROOT_ROLES`, `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` | a re-plan's trade step, with `oidc.roles` or `gcp.roles`: the stage's identities by root glob, as JSON `[[glob, identity], ...]`, which the trade trades for |
-| `CHANT_CLOUD_TARGETS` | jobs with roles by root glob: chant's file of each identity's variables and the roots that take it, which the login writes. In a re-plan's plan step, the file the trade step left in its place, with the plan identities' keys and tokens. Each root, the reports' bucket and Terragrunt's auth provider read it ([Re-plan](/terragucci/reference/threat-model/#re-plan)) |
+| `TERRAGUCCI_ROOT_ROLES`, `TERRAGUCCI_ROOT_GCP_SERVICE_ACCOUNTS` | with `oidc.roles` or `gcp.roles`: the stage's identities by root glob, as JSON `[[glob, identity], ...]` |
+| `CHANT_CLOUD_TARGETS` | jobs with roles by root glob: chant's file of each identity's variables and the roots that take it, which the login writes. In the `plan` and `replan` jobs, the file chant's trade left in its place, with the plan identities' keys and tokens. Each root, the reports' bucket and Terragrunt's auth provider read it ([Re-plan](/terragucci/reference/threat-model/#re-plan)) |
 | `TG_AGENT_PROMPT`, `TG_AGENT_MAX_TURNS` | the agent comment's job: the prompt file and the turn limit |
 | `TG_REVIEW_PROMPT` | the review command's step: the prompt file, which is also its stdin |
 | `TG_DEFAULT_BRANCH` | the review job: the default branch, read from the event, that the instructions come from |
