@@ -18,7 +18,7 @@ After each `tf-apply` wave, the version id of each root's state, next to the run
 | Where | What it holds |
 |---|---|
 | the wave's log | one line per root: where its state is and its version id |
-| the wave's `report.json` | `roots[].state`, for each root that applied or had nothing to apply |
+| the wave's `report.json` | `roots[].state`, for each root that applied or had nothing to apply; a [choudoufu](/terragucci/concepts/glossary/#choudoufu) live root keeps no state file, and `roots[].live` names its record store instead |
 | the project's `states.json` in the reports bucket | each root's newest 20 versions, each with its commit, wave and report |
 | the estate page | a State versions section, per project and root, newest first |
 | the [audit trail](/terragucci/reference/audit-trail/) | `detail.state_versions` on the wave's `apply` entry |
