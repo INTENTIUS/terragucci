@@ -118,7 +118,8 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | the `comments` job starts that pipeline with the merge token | the one token that may run a pipeline on the protected default branch; protected and scoped to the `terragucci-merge` environment, which only `comments` and `pr-merge` name |
 | the pipeline's variables name the merge request, the note and the head | they are pointers: `mr-apply` reads the note, its author's role, the merge request and its head from GitLab before any credential, and refuses a head that differs |
 | by default a merge request's code runs with `GITLAB_TOKEN` | its author can edit any job in the merge request's pipeline, and the token acts as the project's bot: it posts notes and statuses and pushes branches, `chant/lifecycle` included, so under `approval: ledger` it can write an approval line |
-| `gitlab: { token: protected }` | `GITLAB_TOKEN` is a protected variable, which no merge request or branch pipeline gets; the plan job writes its note and status into its report and stops if it sees the token, and the comments job posts them |
+| the plan job holds no token | chant's plan job drops the forge tokens before the merge request's code runs and writes its note and status into its report; chant's `plan-note` job posts them from the plan notes schedule's pipeline of the default branch |
+| `gitlab: { token: protected }` | `GITLAB_TOKEN` is a protected variable, which no merge request or branch pipeline gets, so a job the merge request adds to its own pipeline cannot read it either |
 | a pipeline on any protected branch gets protected variables | with `gitlab.token: protected`, whoever may push to a protected branch, `chant/lifecycle` among them, can read the token there |
 | the bot's approval never counts | under `approval: pr-review` and in `apply.requires`, an approval by the user the token acts as is the pipeline's, so it releases nothing |
 | the OIDC subject carries the pipeline's branch | a merge request's plan job has its source branch, so the plan role trusts every branch |
@@ -443,13 +444,16 @@ A Forgejo `pull_request_target` run's token can write, and the runner gives it t
 
 A re-plan runs the change's code from the default branch's workflow, so its OIDC token carries the default branch's subject, which the apply role trusts. The change's code never holds that token.
 
+The `plan` and `replan` jobs are chant's product plan's.
+
 | Step of `replan` | Holds |
 |---|---|
-| Trade, before the head's checkout | the token; `terragucci oidc-trade` runs chant's OIDC trade once, for every plan identity (`plan_role`, `oidc.roles`, Terragrunt's `credentials`, `reports.role`, the GCP plan service accounts), and deletes the token |
-| Plan, which runs the change's code | the plan identities' keys and tokens; no OIDC token, no `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, here or in its parent processes |
-| Plan's end | in the job's container, every process the step started is killed, so none reads a later step's environment |
+| Trade, before the head's checkout | the token; chant's OIDC trade runs once, for every plan identity (`plan_role`, `oidc.roles`, Terragrunt's `credentials`, `reports.role`, the GCP plan service accounts) |
+| Plan, which runs the change's code, and is the job's last step | the plan identities' keys and tokens; no OIDC token, no `ACTIONS_ID_TOKEN_REQUEST_URL` or `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, here or in its parent processes |
 
-With `oidc.azure` a re-plan has no trade step: the azurerm provider and backend take only the token itself. Its plan step fetches the token and runs the change's code beside it, as the plan job does, and its log warns that the token carries the default branch's subject. To plan an Azure change without that token, push to the pull request instead of commenting `/terragucci plan`.
+The `plan` job trades the same way, before its checkout.
+
+With `oidc.azure` neither job trades: the azurerm provider and backend take only the token itself. chant's login fetches it in a step before the plan, and the plan step keeps the token-request variables in its own process (chant issue 5021); the plan's shell unsets them before the change's code runs. A re-plan's token carries the default branch's subject. To plan an Azure change without that token, push to the pull request instead of commenting `/terragucci plan`.
 
 ## Token scrub limits
 

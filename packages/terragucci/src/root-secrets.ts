@@ -24,9 +24,16 @@ import { readFileSync } from "node:fs";
 import { globMatch } from "./detect";
 import type { SecretSource, SecretStore } from "./config";
 import { assumeRoleWithWebIdentity, sign, type S3Credentials, GcsClient, AZURE_AUTHORITY, type StoreFetch } from "@intentius/chant/object-store";
-import { stsEndpoint } from "./oidc-trade";
 import { rootIdentities } from "./cloud-identity";
 import { holdSecretValue } from "./secret-values";
+
+/** STS's address for a role: AWS_ENDPOINT_URL_STS or AWS_ENDPOINT_URL when set, else the region's (a China region's in its own domain). */
+export function stsEndpoint(env: NodeJS.ProcessEnv): string {
+  const set = env.AWS_ENDPOINT_URL_STS || env.AWS_ENDPOINT_URL;
+  if (set) return set.replace(/\/+$/, "");
+  const region = env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1";
+  return `https://sts.${region}.amazonaws.com${region.startsWith("cn-") ? ".cn" : ""}`;
+}
 
 /** Secret Manager's address. */
 export const GCP_SECRET_MANAGER = "https://secretmanager.googleapis.com";

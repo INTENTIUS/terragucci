@@ -50,11 +50,8 @@
  * Those pipelines start with the job's own CI_JOB_TOKEN, so they run as the
  * user the comments schedule runs as.
  *
- * With `gitlab.token: protected` (`--plan-notes`), before the notes are
- * answered the poll posts each open merge request's plan note and
- * `terragucci/plan` status from the report its head's plan job kept
- * (plan-note-gitlab.ts): a merge request's own pipeline then holds no token
- * that may post them. The plan notes and the reviews are a loop of
+ * The plan notes and `terragucci/plan` are chant's plan-note job's, in the
+ * plan notes pipeline (../product-plan.ts). The reviews are a loop of
  * terragucci's own over the merge requests updated in the window.
  *
  * The job runs nothing it reads: it calls GitLab's API with the project's
@@ -70,7 +67,6 @@ import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { jobReads, poster, type Fetch } from "./forge";
 import { CHANT_AGENT_ASK_VAR, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, defaultPipelines, startReview, type ReviewStart } from "./gitlab-agent";
-import { postPlanNote, type PlanNoteOutcome } from "./plan-note-gitlab";
 
 export type { NoteOutcome } from "@intentius/chant/ci-note-commands";
 
@@ -93,10 +89,6 @@ export interface GitLabPollOptions {
   requires?: readonly ApplyRequire[];
   /** How the checks wait between reads of a merge request GitLab has not finished checking. Default: a timer. */
   wait?: (ms: number) => Promise<void>;
-  /** `gitlab.token: protected`: post each open merge request's plan note and status from its plan job's report. */
-  planNotes?: boolean;
-  /** The directory the plan job keeps its report in. Default terragucci-report. */
-  reportDir?: string;
   /**
    * `agent.comment`: a `/terragucci agent <ask>` note starts the agent's
    * pipeline. `"chant"`: the agent's jobs are chant's (chant#4616), and the
@@ -111,8 +103,6 @@ export interface GitLabPollOptions {
 
 export interface GitLabPoll {
   outcomes: NoteOutcome[];
-  /** The plan notes and statuses posted, or that failed to post. */
-  plans?: PlanNoteOutcome[];
   /** The reviews started, or that failed to start. */
   reviews?: ReviewStart[];
   /** Set when the poll could not list the merge requests or their notes. */
@@ -136,12 +126,11 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
   const reads = jobReads("gitlab", env, doFetch);
   const forge = poster("gitlab", env, doFetch);
 
-  // The plan notes and the reviews are per merge request, and the plan goes first, so a `/terragucci apply` answered below finds terragucci/plan on the head.
-  const plans: PlanNoteOutcome[] = [];
+  // The reviews are per merge request.
   const reviews: ReviewStart[] = [];
-  if (o.planNotes || o.review) {
-    const failed = await perMergeRequest(o, { reads, env, fetch: doFetch, base, now, plans, reviews, forge });
-    if (failed) return { outcomes: [], plans, reviews, fail: failed };
+  if (o.review) {
+    const failed = await perMergeRequest(o, { reads, env, fetch: doFetch, base, now, reviews, forge });
+    if (failed) return { outcomes: [], reviews, fail: failed };
   }
 
   // The job's own reply, which carries the note's marker, is what answers a note once: the comments job has no remote it may
@@ -159,13 +148,13 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
     env: parseEnv,
     runs: (c) => answer({ env, fetch: doFetch, reads, forge, layers: o.layers, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: o.agent } : {}) }, c),
   });
-  return { outcomes: poll.outcomes, plans, reviews, ...(poll.fail ? { fail: poll.fail } : {}) };
+  return { outcomes: poll.outcomes, reviews, ...(poll.fail ? { fail: poll.fail } : {}) };
 }
 
-/** The plan notes and the reviews of the merge requests updated in the window. Returns why it stopped, when it could not read them. */
+/** The reviews of the merge requests updated in the window. Returns why it stopped, when it could not read them. */
 async function perMergeRequest(
   o: GitLabPollOptions,
-  c: { reads: ForgeReads; env: NodeJS.ProcessEnv; fetch: Fetch; base: string; now: Date; plans: PlanNoteOutcome[]; reviews: ReviewStart[]; forge: ReturnType<typeof poster> },
+  c: { reads: ForgeReads; env: NodeJS.ProcessEnv; fetch: Fetch; base: string; now: Date; reviews: ReviewStart[]; forge: ReturnType<typeof poster> },
 ): Promise<string | undefined> {
   const since = new Date(c.now.getTime() - NOTE_COMMANDS_WINDOW_MINUTES * 60_000).toISOString();
   let me;
@@ -183,10 +172,6 @@ async function perMergeRequest(
       notes = await c.reads.pullRequestNotes(mr.number);
     } catch (e) {
       return `could not read the notes of !${mr.number} (${(e as Error).message.split("\n")[0]})`;
-    }
-    if (o.planNotes) {
-      const plan = await postPlanNote({ reads: c.reads, me, forge: c.forge, reportDir: o.reportDir ?? "terragucci-report" }, mr, notes);
-      if (plan) c.plans.push(plan);
     }
     if (o.review) {
       const started = await startReview({ reads: c.reads, me, base: c.base, env: c.env, fetch: c.fetch, forge: c.forge }, mr, notes);

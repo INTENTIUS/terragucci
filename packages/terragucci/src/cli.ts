@@ -66,7 +66,7 @@
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
- *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls, and with --plan-notes post the plan notes first; run by the comments schedule's job)
+ *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo|gitlab]   (read a `/terragucci agent <ask>` comment)
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge gitlab]   (push the agent's change to the pull request's head branch)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]   (locks: plan: lock the roots a pull request's head reaches, or release them; run by the generated pipeline)
@@ -74,8 +74,10 @@
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
  *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
- *   terragucci post status|note|reply|stale <args> [--forge github|gitlab|forgejo]   (say something on a pull request or commit through chant's forge client; the generated pipeline's tg function runs it)
- *   terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status] [--agent-login <login>]   (post the plan job's note and terragucci/plan from its report; run by the generated pipeline's plan-note job)
+ *   terragucci post status|reply|stale <args> [--forge github|gitlab|forgejo]   (say something on a pull request or commit through chant's forge client; the generated pipeline's tg function runs it)
+ *   terragucci plan-handoff --report <dir> [--env <env>] [--exit <code>]   (write the plan note hand-off chant's note job posts, from the plan report; the plan verb's last line)
+ *   terragucci plan-note --forge github|forgejo --report <dir> --notices <file> [--agent-login <login>]   (write the plan note's notice of whose review does not count; run by chant's plan-note job before it posts)
+ *   terragucci components pr-post ...   (chant's note job, in terragucci's words)
  *   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]   (fetch the plan report of the pull request's run and write the review's prompt from the pull request, its plan and the default branch's instructions; run by the review workflow's review job)
  *   terragucci review post --dir <dir> [--forge gitlab]   (post the review as a note on the pull request; run by the review-note job)
  *   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]   (post a wave's outcome to the chat webhooks notify: names; run by the generated pipeline)
@@ -120,7 +122,8 @@ import { jobReads, poster } from "./forge";
 import { pollGitLabComments } from "./comment-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, reviewForge as reviewForgeOf } from "./review";
-import { postPlanNoteFromReport } from "./plan-note";
+import { writePlanNoteNotices } from "./plan-note";
+import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
 import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
@@ -168,7 +171,6 @@ import { describeStatus, setReleaseStatus, STATUS_WORDS, type StatusWord } from 
 import { PROJECT_CONSUMERS, projectConsumersDocument } from "./publish/consumers";
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
-import { tradeCommand } from "./oidc-trade";
 import { detectShape } from "./shape";
 import { formatTree } from "./fmt";
 import { configIdentities, describeForgeCheck, describeIdentities, forgeCheck, forgeCheckExit } from "./identities";
@@ -221,20 +223,20 @@ const USAGE = `usage:
   terragucci install tofu|terraform|terragrunt|choudoufu|infracost|cosign <version>   (Linux builds, for a CI job)
   terragucci binary <root> [--binary <b>] [--config <file>]   (internal: the binary a root runs, run by the generated pipeline)
   terragucci auth-provider   (internal: Terragrunt's auth-provider-cmd, run by the generated pipeline)
-  terragucci oidc-trade --out <file> [--reports-role <arn>]   (internal: a re-plan trades its OIDC token for the plan identities, run by the generated pipeline)
   terragucci profiles --config <file>
   terragucci config check [--config <file>]
   terragucci config identities [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots]   (per environment and stage: roots, runner, forge environment, cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs)
   terragucci forge check [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots] [--require-clouds]   (compare that contract with the live forge environments, runners, protections and cloud trusts, read-only; exit 1 on a mismatch)
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
-  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--plan-notes] [--agent on] [--review]
+  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--agent on] [--review]
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
   terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]
-  terragucci post status|note|reply|stale <args> [--forge github|gitlab|forgejo]
-  terragucci plan-note --forge github|forgejo --report <dir> --plan-result <result> [--root <root>] [--approval-status] [--agent-login <login>]
+  terragucci post status|reply|stale <args> [--forge github|gitlab|forgejo]
+  terragucci plan-handoff --report <dir> [--env <env>] [--exit <code>]
+  terragucci plan-note --forge github|forgejo --report <dir> --notices <file> [--agent-login <login>]
   terragucci review prompt --report <dir> [--instructions <path>] [--forge gitlab]
   terragucci review post --dir <dir> [--forge gitlab]
   terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
@@ -332,7 +334,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "plan-notes", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -768,13 +770,6 @@ export async function main(argv: string[]): Promise<number> {
         for (const line of await terramateWrite(cwd)) console.log(line);
         return 0;
       }
-      case "oidc-trade": {
-        // A re-plan's trade step, before the pull request's code is checked out: the job's OIDC token, traded for the plan identities' credentials and deleted (./oidc-trade.ts).
-        const out = str(flags, "out");
-        if (!out) throw new ConfigError("usage: terragucci oidc-trade --out <file> [--reports-role <arn>]");
-        for (const line of await tradeCommand(out, process.env, { reportsRole: str(flags, "reports-role") })) console.error(`terragucci: ${line}`);
-        return 0;
-      }
       case "auth-provider": {
         // Terragrunt runs this in each unit's directory and reads the credentials it prints.
         console.log(JSON.stringify(authProviderOutput(cwd, process.env)));
@@ -1023,13 +1018,12 @@ export async function main(argv: string[]): Promise<number> {
           if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment's --when is merge or pull-request");
           const requires = requiresOf(str(flags, "requires"), "comment");
           if (agent !== "off" && agent !== "on" && agent !== "chant") throw new ConfigError("comment --forge gitlab --poll's --agent is off, on or chant");
-          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(flags["plan-notes"] === true ? { planNotes: true } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
-          for (const p of poll.plans ?? []) console.log(`terragucci comment: !${p.mr} plan: ${p.reason}`);
+          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
           for (const r of poll.reviews ?? []) console.log(`terragucci comment: !${r.mr} review: ${r.reason}`);
           for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
           if (poll.outcomes.length === 0 && !poll.fail) console.log("terragucci comment: no new /terragucci notes");
           if (poll.fail) console.error(`terragucci comment: failed: ${poll.fail}`);
-          return poll.fail || poll.outcomes.some((n) => n.fail) || (poll.plans ?? []).some((p) => p.fail) || (poll.reviews ?? []).some((r) => r.fail) ? 1 : 0;
+          return poll.fail || poll.outcomes.some((n) => n.fail) || (poll.reviews ?? []).some((r) => r.fail) ? 1 : 0;
         }
         if (agent === "push") {
           const change = str(flags, "change");
@@ -1373,10 +1367,23 @@ export async function main(argv: string[]): Promise<number> {
         const forge = str(flags, "forge") ?? "github";
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("plan-note's --forge is github or forgejo");
         const report = str(flags, "report") ?? "terragucci-report";
-        const root = str(flags, "root");
-        const said = await postPlanNoteFromReport({ forge, report: resolve(cwd, report), planResult: str(flags, "plan-result") ?? "", ...(root ? { root } : {}), ...(flags["approval-status"] === true ? { approval: true } : {}), ...(str(flags, "agent-login") ? { agentLogin: str(flags, "agent-login") } : {}) });
+        const notices = str(flags, "notices");
+        if (!notices) throw new ConfigError("plan-note needs --notices <file>, the file chant's note job adds under the note's counts");
+        const said = await writePlanNoteNotices({ forge, report: resolve(cwd, report), notices, ...(str(flags, "agent-login") ? { agentLogin: str(flags, "agent-login") } : {}) });
         for (const line of said) console.log(line);
         return 0;
+      }
+      case "plan-handoff": {
+        // The plan verb's last line (./render.ts planVerbScript): the plan note hand-off chant's note job posts.
+        const report = str(flags, "report") ?? "terragucci-report";
+        const exit = Number(str(flags, "exit") ?? "0");
+        const r = writePlanHandoff({ report: resolve(cwd, report), env: str(flags, "env") ?? "default", exit: Number.isInteger(exit) ? exit : 1 });
+        console.error(r.said);
+        return r.code;
+      }
+      case "components": {
+        // chant's note job runs `pr-post` through terragucci's bin (the product plan's words), answered in terragucci's words.
+        return runChantInProcess(["components", ...argv.slice(argv.indexOf("components") + 1)], TERRAGUCCI_WORDS);
       }
       case "fmt": {
         // chant's commit job (chant#4749) runs this after a check finds formatting, and commits what it changed.

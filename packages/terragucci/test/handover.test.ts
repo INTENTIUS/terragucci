@@ -87,39 +87,38 @@ describe.each(FORGES)("%s: the jobs that run the change's code end with the step
 
   it("the checkouts are the git script, with the token for that step alone and none in the git config", () => {
     const doc = render(forge, { oidc: OIDC });
-    for (const name of ["check", "plan", "replan"]) {
+    // The plan and re-plan jobs are chant's product plan's (terragucci issue 1411), whose checkout script takes the token as its own variable.
+    for (const [name, token] of [["check", "TG_TOKEN"], ["plan", "CHANT_CHECKOUT_TOKEN"], ["replan", "CHANT_CHECKOUT_TOKEN"]] as const) {
       const checkouts = (doc.jobs[name].steps as Step[]).filter((s) => s.name?.startsWith("Check out"));
-      expect(checkouts.length, name).toBe(name === "replan" ? 2 : 1);
+      expect(checkouts.length, name).toBe(1);
       for (const s of checkouts) {
         expect(s.uses, name).toBeUndefined();
-        expect(s.env?.TG_TOKEN, name).toBe("${{ github.token }}");
+        expect(s.env?.[token], name).toBe("${{ github.token }}");
         expect(s.run, name).toContain("GIT_CONFIG_KEY_0=http.extraheader");
       }
     }
-  });
-
-  it("the re-plan's step sweeps what the code left running before it hands the report on", () => {
-    const run = (render(forge).jobs.replan.steps as Step[]).find(runsCode)!.run!;
-    expect(run).toContain(`trap 'tg_sweep; ${HANDOVER}' EXIT`);
-    expect(run.indexOf(`trap 'tg_sweep; ${HANDOVER}' EXIT`)).toBeGreaterThan(run.indexOf("trap tg_sweep EXIT"));
   });
 
   it("the note jobs and check-report take the report as data, keep it as the artifact it was, and post as before", () => {
     const doc = render(forge);
     for (const [job, needs, artifact] of [["plan-note", "plan", "terragucci-report"], ["replan-note", "replan", "terragucci-report-replan"], ["check-report", "check", "terragucci-check"]] as const) {
       const steps = doc.jobs[job].steps as Step[];
-      expect(doc.jobs[job].needs, job).toBe(needs);
+      expect([doc.jobs[job].needs].flat(), job).toEqual([needs]);
       expect(doc.jobs[job].if, job).toContain(`needs.${needs}.result == 'success' || needs.${needs}.result == 'failure'`);
-      for (const k of handoverKeys(forge)) expect(steps[0].run, job).toContain(`\${{ toJSON(needs.${needs}.outputs.${k}) }}`);
+      const take = steps.find((s) => s.name?.startsWith("Take the"))!;
+      for (const k of handoverKeys(forge)) expect(take.run, job).toContain(`\${{ toJSON(needs.${needs}.outputs.${k}) }}`);
       // Each output is one line of a quoted heredoc; no JSON string is the line that ends it.
-      expect(steps[0].run, job).toContain("<<'END_OF_REPORT'");
+      expect(take.run, job).toContain("<<'END_OF_REPORT'");
       const keep = steps.find((s) => s.name?.startsWith("Keep the"))!;
       expect(keep.uses, job).toBe(forgeRef(forge, uploadArtifact(forge)));
       expect(keep.with, job).toMatchObject({ name: artifact, "if-no-files-found": "ignore" });
       expect(keep.if, job).toBe("always()");
-      expect(JSON.stringify(steps), job).not.toMatch(/checkout|download-artifact/);
+      expect(JSON.stringify(steps), job).not.toMatch(/download-artifact/);
+      // chant's note jobs check out the target branch's commit, where none of the change's code is; check-report checks out nothing.
+      if (job === "check-report") expect(JSON.stringify(steps)).not.toMatch(/checkout/);
+      else expect(steps[0].name, job).toBe("Check out the target branch's commit");
     }
-    expect(doc.jobs["plan-note"].steps.at(-1).run).toContain(`terragucci plan-note --forge ${forge} --report terragucci-report`);
+    expect(doc.jobs["plan-note"].steps.at(-1).run).toContain(`terragucci components pr-post --pr "$PR_NUMBER"`);
     expect(doc.jobs["plan-note"].steps.at(-1).if).toBe("always()");
   });
 });
@@ -141,6 +140,13 @@ describe("the token-request variables", () => {
         expect(JSON.stringify(doc.jobs.check), name).not.toContain("enable-openid-connect");
         continue;
       }
+      // oidc.azure is logged in to, not traded, and chant's plan step then keeps the variables (chant issue 5021): the plan verb's
+      // own shell drops them before any of the change's code runs.
+      if (_ === "azure") {
+        expect(restart, name).toBe(-1);
+        expect(lines.findIndex((l) => l === "unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN"), name).toBeLessThan(lines.findIndex((l) => l.includes("terragucci stage")));
+        continue;
+      }
       expect(restart, name).toBeGreaterThanOrEqual(0);
       const before = lines.slice(0, restart).join("\n");
       expect(before, name).not.toMatch(/terragucci stage|synth|terragrunt |tofu /);
@@ -148,13 +154,12 @@ describe("the token-request variables", () => {
     }
   });
 
-  it("github drops them too in its plan step with plain oidc, once chant's login has its token", () => {
-    const run = (render("github", { oidc: OIDC }).jobs.plan.steps as Step[]).find(runsCode)!.run!;
-    const lines = run.split("\n");
-    const restart = lines.findIndex((l) => l.includes("exec env") && l.includes("CHANT_CLOUD_LOGGED_IN=1"));
-    expect(restart).toBeGreaterThan(0);
-    expect(lines.slice(0, restart).join("\n")).toContain("CHANT_CLOUD_LOGIN=");
-    expect(lines.slice(0, restart).join("\n")).not.toMatch(/terragucci stage|synth/);
+  it("github drops them too in its plan step with plain oidc: chant traded the token before the checkout", () => {
+    const steps = render("github", { oidc: OIDC }).jobs.plan.steps as Step[];
+    const run = steps.find(runsCode)!.run!;
+    for (const v of ["ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]) expect(run.split("\n")[0]).toMatch(new RegExp(`exec env .*-u ${v}`));
+    expect(steps.findIndex((s) => s.name === "Trade the job's OIDC token for the plan identities")).toBeLessThan(steps.findIndex((s) => s.name === "Check out the change"));
+    expect(run).not.toMatch(/CHANT_CLOUD_LOGIN=/);
   });
 });
 
@@ -216,9 +221,9 @@ describe("the report's hand-over", () => {
     expect(existsSync(join(to, "terragucci-report"))).toBe(false);
   });
 
-  it.each(["github", "forgejo"] as const)("%s: a report too large to hand on whole is cut to the files the note job reads", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: a check report too large to hand on whole is cut to the file check-report keeps", (forge) => {
     const { chunk, parts } = HANDOVER_LIMITS[forge];
-    const dir = write(tmp(), { "plan-note.md": "the note\n", "plan-status.txt": "success 1 roots\n", "report.json": "{}" });
+    const dir = write(tmp(), { "report.md": "the report\n", "report.json": "{}" });
     // Random bytes do not compress: more than every part holds.
     writeFileSync(join(dir, "report.html"), randomBytes(Math.ceil((chunk * parts) / 1.3)).toString("base64"));
     const { outputs, stderr } = pack(dir, forge);
@@ -226,10 +231,10 @@ describe("the report's hand-over", () => {
     expect(Object.keys(outputs).length).toBeLessThanOrEqual(parts);
     for (const v of Object.values(outputs)) expect(v.length).toBeLessThanOrEqual(chunk);
     const to = tmp();
-    expect(takeOver("plan", "terragucci-report", outputs, to, forge).status).toBe(0);
-    expect(readFileSync(join(to, "terragucci-report", "plan-note.md"), "utf-8")).toBe("the note\n");
-    expect(readFileSync(join(to, "terragucci-report", "plan-status.txt"), "utf-8")).toBe("success 1 roots\n");
-    expect(existsSync(join(to, "terragucci-report", "report.html"))).toBe(false);
+    expect(takeOver("check", "terragucci-check", outputs, to, forge).status).toBe(0);
+    expect(readFileSync(join(to, "terragucci-check", "report.md"), "utf-8")).toBe("the report\n");
+    expect(existsSync(join(to, "terragucci-check", "report.json"))).toBe(false);
+    expect(existsSync(join(to, "terragucci-check", "report.html"))).toBe(false);
   });
 
   it("github: what a job hands on stays under the 1 MB GitHub keeps a job's outputs to, sized as UTF-16", () => {

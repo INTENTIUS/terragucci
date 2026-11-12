@@ -41,9 +41,9 @@ describe("images", () => {
   ] as const)("a %s pipeline runs every job in the pinned image", (forge, shape) => {
     const image = `ghcr.io/intentius/terragucci-tofu:${imageTag("tofu")}@${DIGEST}`;
     const out = renderPipeline({ forge, binary: "tofu", version: TOOL_VERSIONS.tofu, image, layers: [["a"]], env: {} }).content;
-    // check, fmt and its push job (chant's commit job, chant#4749), plan, one apply wave, tips; GitHub and Forgejo also render the plan-note job, the comment re-plan job and its note job, the comment apply job,
-    // and the check-report job, which keeps the report the check job hands on.
-    expect(out.split(shape + image).length - 1).toBe(forge === "gitlab" ? 6 : 11);
+    // check, fmt and its push job (chant's commit job, chant#4749), plan and plan-note (chant's product plan, terragucci issue 1411), one apply wave, tips;
+    // GitHub and Forgejo also render the comment re-plan job and its note job, the comment apply job, and the check-report job, which keeps the report the check job hands on.
+    expect(out.split(shape + image).length - 1).toBe(forge === "gitlab" ? 7 : 11);
     expect(out).toContain("pinned by digest");
     expect(out).not.toContain("terragucci install");
     // No tool is downloaded: no curl, no unzip (as words; the report hand-over's zlib.gunzipSync is neither).
@@ -78,7 +78,9 @@ describe("images", () => {
     const r = await init(dir, { binary: "tofu" });
     const text = readFileSync(r.files[0].path, "utf-8");
     expect(r.version).toEqual({ value: "1.12.0", reason: "required_version" });
-    expect(text.split('dir="$(terragucci install tofu 1.12.0)"').length - 1).toBe(text.split(/^\s+(?:after_)?script:/m).length - 1);
+    // Every job that runs the binary; chant's plan-note job runs pr-post alone, in the plan notes pipeline.
+    expect(text.split('dir="$(terragucci install tofu 1.12.0)"').length - 1).toBe(text.split(/^\s+(?:after_)?script:/m).length - 2);
+    expect(text).toMatch(/^plan-note:\n(?:.*\n)*?  script:\n    - npx --no-install terragucci components pr-post --open/m);
     expect(text).toContain('export PATH="$dir:$PATH"');
   });
 });

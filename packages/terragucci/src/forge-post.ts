@@ -1,5 +1,5 @@
 /**
- * `terragucci post status|note|reply|stale`: what the generated pipeline's
+ * `terragucci post status|reply|stale`: what the generated pipeline's
  * jobs say on the forge, posted through chant's forge client
  * (`@intentius/chant/pr-forge`) with the job's TG_TOKEN. The pipeline's `tg`
  * shell function (render.ts forgeApi) calls it. The words are the
@@ -9,7 +9,6 @@
  *   status on TG_SHA, linked to the run. On GitLab a status on the job's own
  *   commit names the job's pipeline: without it GitLab files the status
  *   under the newest pipeline of that commit, which may be another one.
- * - `note <file>`: the plan note on TG_PR, found again by its first line.
  * - `reply <text>`: a new comment on TG_PR, `terragucci: <text>`.
  * - `stale <roots> <branch>`: every open pull request into `<branch>` whose
  *   plan note covers one of `<roots>` (comma-separated) gets a line saying
@@ -18,13 +17,12 @@
  * A post that fails is said and never fails the job, and a job with no
  * token posts nothing.
  */
-import { readFileSync } from "node:fs";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import { ConfigError, type ForgeName } from "./config";
 import { commitStatuses, poster, type Fetch } from "./forge";
 import { PLAN_MARK } from "./plan-note-gitlab";
 
-export const POST_COMMANDS = ["status", "note", "reply", "stale"] as const;
+export const POST_COMMANDS = ["status", "reply", "stale"] as const;
 export type PostCommand = (typeof POST_COMMANDS)[number];
 
 /**
@@ -62,7 +60,6 @@ export async function forgePost(cmd: string, args: string[], o: PostOptions): Pr
   try {
     const forge = poster(o.forge, env, o.fetch);
     if (cmd === "status") await status(forge, args, o, env);
-    else if (cmd === "note") await forge.upsertComment(prOf(env), PLAN_MARK, readFileSync(need(args[0], "note <file>"), "utf-8"));
     else if (cmd === "reply") await forge.addComment(prOf(env), `terragucci: ${need(args[0], "reply <text>")}`);
     else await stale(forge, need(args[0], "stale <roots> <branch>").split(","), args[1] ?? "");
     return undefined;
@@ -98,21 +95,26 @@ async function status(forge: PrForge, args: string[], o: PostOptions, env: NodeJ
   });
 }
 
-/** The plan note with the stale line under its first line, or undefined when it covers none of `moved` or already says so. */
+/**
+ * The plan note with the stale line under its marker lines, or undefined when it covers none of `moved` or already
+ * says so. chant's note starts with chant's marker and then terragucci's `roots=` line (../product-plan.ts).
+ */
 export function staleNote(body: string, moved: readonly string[], branch: string): string | undefined {
   if (body.includes(STALE_MARKER)) return undefined;
   const hit = (/roots=(\S*) -->/.exec(body)?.[1] ?? "").split(",").filter((r) => moved.includes(r));
   if (!hit.length) return undefined;
   const lines = body.split("\n");
-  lines.splice(1, 0, `> This plan is stale: ${branch} moved under ${hit.join(", ")}. Push to this pull request to plan again. ${STALE_MARKER}`);
+  const at = lines.findIndex((l) => l.startsWith(PLAN_MARK));
+  lines.splice(at + 1, 0, `> This plan is stale: ${branch} moved under ${hit.join(", ")}. Push to this pull request to plan again. ${STALE_MARKER}`);
   return lines.join("\n");
 }
 
 async function stale(forge: PrForge, moved: string[], branch: string): Promise<void> {
   if (!forge.openPullRequests) throw new Error(`chant's ${forge.kind} client lists no open pull requests`);
   for (const { number: n } of await forge.openPullRequests(branch)) {
-    const note = await forge.findComment(n, PLAN_MARK);
+    // terragucci's line is the note's second, under chant's marker.
+    const note = await forge.findComment(n, PLAN_MARK, { match: "anywhere" });
     const body = note ? staleNote(note.body, moved, branch) : undefined;
-    if (body) await forge.upsertComment(n, PLAN_MARK, body);
+    if (body) await forge.upsertComment(n, PLAN_MARK, body, { match: "anywhere" });
   }
 }

@@ -79,7 +79,7 @@ describe("agent.comment on chant's agent job", () => {
     expect(gl.content).toContain("$CHANT_AGENT_PR == null");
     expect(gl.content).toContain("--agent chant");
     expect(gl.extra?.map((f) => f.path)).toContain(CHANT_AGENT_PATHS.gitlab);
-    expect(commentsScript([["a"]], undefined, false, { agent: "chant" })).toContain("--agent chant");
+    expect(commentsScript([["a"]], undefined, { agent: "chant" })).toContain("--agent chant");
   });
 });
 

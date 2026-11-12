@@ -1,6 +1,6 @@
 /**
  * Where a report is kept. Locally (the CI artifact), a run's directory holds
- * `report.json`, `report.html`, `note.md`, `summary.txt`,
+ * `report.json`, `report.html`, `note.md` and its data `note.json`, `summary.txt`,
  * `gitlab-terraform.json` and `roots/<root>/plan.{txt,json}`. With
  * `reports.bucket` (S3, GCS or Azure Blob: bucket.ts), the same files are copied to
  * `<prefix>/<project>/<yyyy>/<mm>/<commit>/<stage>[-wave-N]/`, and the
@@ -36,15 +36,21 @@ import { PRESIGN_MAX_SECONDS, StoreConflict, StoreError, type ObjectStore } from
 import { failedRoots, type Report } from "./schema";
 import { scrubText } from "../secret-values";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
-import { renderGitLabTerraform, renderNote, renderText, type NoteOptions } from "./views";
+import { renderGitLabTerraform, planNoteOf, renderNote, renderText, type NoteOptions } from "./views";
+
+/** The plan note's data beside note.md: chant's `PrPlanNote`, as chant's note job renders it. */
+export const NOTE_DATA_FILE = "note.json";
 
 /** Write a run's report directory. `plans` maps each root to its full plan text and redacted JSON. */
 export function writeReportDir(dir: string, report: Report, plans: Map<string, { text?: string; json?: string }>, note: NoteOptions = {}): string[] {
+  // The note shows each root's rendered plan: the same text as its plan.txt.
+  const noteOptions: NoteOptions = { plans: new Map([...plans].flatMap(([root, p]) => (p.text !== undefined ? [[root, p.text] as const] : []))), ...note };
   const files: Record<string, string> = {
     "report.json": JSON.stringify(report, null, 2) + "\n",
     "report.html": renderHtml(report),
-    // The note shows each root's rendered plan: the same text as its plan.txt.
-    "note.md": renderNote(report, { plans: new Map([...plans].flatMap(([root, p]) => (p.text !== undefined ? [[root, p.text] as const] : []))), ...note }),
+    "note.md": renderNote(report, noteOptions),
+    // The note's data, which `terragucci plan-handoff` hands to chant's note job to render with the same words (../plan-handoff.ts).
+    [NOTE_DATA_FILE]: JSON.stringify(planNoteOf(report, noteOptions)) + "\n",
     "summary.txt": renderText(report),
     "gitlab-terraform.json": JSON.stringify(renderGitLabTerraform(report)) + "\n",
   };

@@ -12,7 +12,8 @@ import { validateConfig } from "../src/config";
 import { AGENT_COMMAND, AGENT_DIR, agentCommentInput } from "../src/agent-comment";
 import { CHANT_AGENT_PATHS } from "../src/render-chant-agent";
 import { cloudLoginSpec, LOGIN_RESTART_MARKER, LOGIN_SPEC_ENV } from "@intentius/chant/ci-login";
-import { applyScript, AWS_CLI, forgejoSkipLevels, cloudLoginLines, needsDepths, runnerEvaluatedIf, loginSpec, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, gitlabProtectedPlanScript, gitlabTokenCheck, mergeScript, movedRoots, planFilesScript, planScript, replanDecideScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { applyScript, AWS_CLI, forgejoSkipLevels, cloudLoginLines, needsDepths, runnerEvaluatedIf, loginSpec, commentApplyScript, confirmScript, driftScript, forgeApi, gitlabApplyScript, gitlabMergeScript, mergeScript, movedRoots, planVerbScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
+import { NOTE_WORDS } from "../src/report/views";
 import type { ForgeName } from "../src/config";
 import { driftOp, git, tmp } from "./helpers";
 
@@ -303,49 +304,49 @@ describe("the comment trigger", () => {
   it.each(["github", "forgejo"] as const)("%s: the comment never reaches a shell as an expression", (forge) => {
     const text = render(forge);
     const run = JSON.stringify(body(text).jobs.replan.steps);
+    // chant's re-plan decision reads the comment from the event file (terragucci issue 1411).
     expect(run).not.toContain("github.event.comment");
-    expect(run).toContain("terragucci comment --layers");
+    expect(run).toContain("GITHUB_EVENT_PATH");
     expect(run).not.toContain("eval ");
-    // The only mentions of the comment body are the jobs' startsWith filters, never a script.
+    // The only mentions of the comment body are the jobs' if filters, never a script.
     const doc = body(text);
     expect(JSON.stringify(doc.jobs["apply-comment"].steps)).not.toContain("github.event.comment");
-    expect(text.match(/github\.event\.comment/g)).toHaveLength(3);
-    for (const line of text.split("\n").filter((l) => l.includes("github.event.comment"))) expect(line.trim()).toMatch(/^if: /);
+    for (const line of text.split("\n").filter((l) => l.includes("${{ github.event.comment"))) expect(line.trim()).toMatch(/^if: /);
+    expect(text).not.toContain("${{ github.event.comment");
   });
 
   it("the re-plan decides from the comment with the token, before the head is checked out, and plans the head with no token", () => {
-    const decide = replanDecideScript(layers, "github");
-    expect(decide).toContain("terragucci comment --layers");
-    expect(decide).toContain('[ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"');
-    expect(decide).toContain('>>"$GITHUB_OUTPUT"');
     const job = body(render("github")).jobs.replan;
     const names = job.steps.map((s: any) => s.id ?? s.uses ?? s.name);
-    expect(names.indexOf("decide")).toBeLessThan(names.indexOf("Check out the pull request's head"));
-    expect(job.steps.find((s: any) => s.id === "decide").env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    expect(names.indexOf("decide")).toBeLessThan(names.indexOf("head"));
+    expect(job.steps.find((s: any) => s.id === "decide").env.CHANT_REPLAN_TOKEN).toBe("${{ github.token }}");
+    // A re-plan of the whole change says it is planning, on the head the decision read.
+    expect(job.steps.find((s: any) => s.name === "Say on the head that the plan started").env).toMatchObject({ CHANT_PENDING_SHA: "${{ steps.decide.outputs.head }}", CHANT_PENDING_CONTEXT: "terragucci/plan" });
     const plan = job.steps.find((s: any) => typeof s.run === "string" && s.run.includes("terragucci stage tf-plan"));
-    expect(plan.env.TG_TOKEN).toBeUndefined();
+    expect(plan.env.CHANT_PLAN_ARGUMENT).toBe("${{ steps.decide.outputs.argument }}");
+    expect(plan.run).toContain('TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"');
     expect(plan.run).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
-    expect(plan.run.split("\n")[0]).toBe(dropForgeTokens("bash", true));
-    expect(JSON.stringify(job.env ?? {})).not.toContain("TG_TOKEN");
-    // The checkouts are a script with the token in their own steps alone, and the plan step is the job's last.
+    expect(plan.run.split("\n")[0]).toContain("-u GITHUB_TOKEN");
+    expect(JSON.stringify(job.env ?? {})).not.toMatch(/TG_TOKEN|github\.token/);
+    // The checkout is a script with the token in its own step alone, and the plan step is the job's last.
     const checkouts = job.steps.filter((s: any) => s.name?.startsWith("Check out"));
-    expect(checkouts).toHaveLength(2);
-    for (const s of checkouts) expect(s.env.TG_TOKEN).toBe("${{ github.token }}");
+    expect(checkouts).toHaveLength(1);
+    expect(checkouts[0].env.CHANT_CHECKOUT_TOKEN).toBe("${{ github.token }}");
     expect(job.steps.at(-1)).toBe(plan);
     expect(JSON.stringify(job.steps)).not.toContain("actions/checkout");
   });
 
   it("a re-plan of a root the change does not reach is answered by the replan-note job, which leaves the note and status", () => {
     const doc = body(render("github"));
-    expect(doc.jobs["replan-note"].needs).toBe("replan");
-    expect(doc.jobs["replan-note"].steps.at(-1).run).toContain('${TG_ROOT:+--root "$TG_ROOT"}');
-    expect(doc.jobs["plan-note"].steps.at(-1).run).not.toContain("--root");
+    expect(doc.jobs["replan-note"].needs).toEqual(["replan"]);
+    expect(doc.jobs["replan-note"].steps.at(-1).run).toContain('--not-affected "$CHANT_PLAN_ARGUMENT"');
+    expect(doc.jobs["plan-note"].steps.at(-1).run).not.toContain("--not-affected");
   });
 
-  it("forgejo: the re-plan reads the commenter's permission from the event, and checks out the pull request's head by number", () => {
-    expect(replanDecideScript(layers, "forgejo")).toMatch(/terragucci comment --layers [^\n]* --forge forgejo --out /);
-    expect(replanDecideScript(layers, "github")).not.toContain("--forge");
+  it("forgejo: the re-plan asks the forge whether the commenter can write, and checks out the pull request's head by number", () => {
     const job = body(render("forgejo")).jobs.replan;
+    expect(job.steps.find((s: any) => s.id === "decide").env.CHANT_REPLAN_PERMISSION).toBe("1");
+    expect(body(render("github")).jobs.replan.steps.find((s: any) => s.id === "decide").env.CHANT_REPLAN_PERMISSION).toBeUndefined();
     expect(JSON.stringify(job.steps)).toContain("refs/pull/${{ steps.decide.outputs.pr }}/head");
   });
 
@@ -356,7 +357,8 @@ describe("the comment trigger", () => {
     expect(doc.jobs.replan.if).toContain("(github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')");
     expect(doc.jobs.replan.concurrency.group).toBe("terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}");
     // The inputs, like the comment, reach the decision only through the event file, never a script.
-    expect(JSON.stringify(doc.jobs.replan.steps)).not.toContain("inputs.");
+    expect(JSON.stringify(doc.jobs.replan.steps)).not.toContain("github.event.inputs");
+    expect(doc.jobs.replan.steps.find((s: any) => s.id === "decide").env.CHANT_REPLAN_DISPATCH_ARGUMENT).toBe("root");
     for (const [name, j] of Object.entries(doc.jobs) as [string, any][]) {
       if (name === "replan" || name === "replan-note") continue;
       expect(String(j.if ?? ""), name).not.toMatch(/workflow_dispatch' && github\.event\.inputs\.pr != ''|event_name == 'workflow_dispatch'$/);
@@ -640,7 +642,7 @@ describe("locks: plan", () => {
     expect(job["enable-openid-connect"]).toBeUndefined();
     expect(job.steps[1].run.trim()).toBe(`set -euo pipefail\nterragucci pr-lock --layers 'network;app,cache'${forge === "forgejo" ? " --forge forgejo" : ""}`);
     // The re-plan job leaves lock and unlock to it; apply-comment still takes only apply.
-    expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci lock') && !startsWith(github.event.comment.body, '/terragucci unlock')");
     // Pushes, plans and applies do not run on the new trigger: every other job names its own event or needs check.
     for (const [name, j] of Object.entries(doc.jobs) as [string, any][]) {
       if (name === "pr-lock") continue;
@@ -654,7 +656,7 @@ describe("locks: plan", () => {
     expect(doc.jobs["pr-lock"].if).toBe("github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci plan'))");
     expect(doc.jobs["pr-lock"].steps[1].run).toContain("terragucci pr-lock --layers 'live/a' --when pull-request --terragrunt");
     expect(doc.jobs["apply-comment"].if).toContain("'/terragucci unlock'");
-    expect(doc.jobs.replan.if).not.toContain("!(startsWith(github.event.comment.body, '/terragucci lock')");
+    expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci lock')");
   });
 
   it("GitLab refuses it, and without it no pipeline has pull_request_target or pr-lock", () => {
@@ -674,7 +676,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
     const doc = renderPr(forge);
     const job = doc.jobs["apply-comment"];
     expect(job.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
-    expect(doc.jobs.replan.if).toContain("!(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci apply') && !startsWith(github.event.comment.body, '/terragucci lock') && !startsWith(github.event.comment.body, '/terragucci unlock')");
     // Forgejo ignores permissions:, so only GitHub's jobs carry them.
     if (forge === "github") expect(job.permissions.contents).toBe("write");
     if (forge === "github") expect(job.permissions.checks).toBe("read");
@@ -738,10 +740,10 @@ describe("apply before merge (apply.when: pull-request)", () => {
     it("the push after the merge confirms; the apply pipeline runs mr-apply alone, from the default branch, beside any other apply", () => {
       const doc = gl();
       expect(doc["apply-wave-1"]).toBeUndefined();
-      expect(doc.confirm.rules[0].if).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_MR == null');
+      expect(doc.confirm.rules[0].if).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null && $TERRAGUCCI_MR == null');
       expect(doc.confirm.script.join("\n")).toContain(OIDC.plan_role);
       expect(doc.confirm.script.join("\n")).not.toContain(OIDC.apply_role);
-      expect(doc.check.rules[0].if).toBe('$CI_PIPELINE_SOURCE != "schedule" && $TERRAGUCCI_MR == null');
+      expect(doc.check.rules[0].if).toBe('$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null && $TERRAGUCCI_MR == null');
       const job = doc["mr-apply"];
       expect(job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "api" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $TERRAGUCCI_MR' }]);
       expect(job.resource_group).toBeUndefined();
@@ -982,8 +984,8 @@ describe("the agent comment", () => {
     const doc = body(out.content);
     expect(doc.jobs.agent).toBeUndefined();
     expect(doc.jobs["agent-push"]).toBeUndefined();
-    expect(doc.jobs.replan.if).toContain("&& !startsWith(github.event.comment.body, '/terragucci agent ')");
-    expect(JSON.stringify(doc.jobs.replan.steps)).toContain(" --agent on --out terragucci-comment.json");
+    expect(doc.jobs.replan.if).toContain("&& !startsWith(github.event.comment.body, '/terragucci agent')");
+    expect(doc.jobs.replan.steps.find((s: any) => s.id === "decide").env.CHANT_REPLAN_OTHERS).toBe('["/terragucci apply","/terragucci agent"]');
     expect(out.extra?.map((f) => f.path)).toContain(CHANT_AGENT_PATHS[forge]);
   });
 
@@ -1066,8 +1068,9 @@ describe("statuses", () => {
   it.each(FORGES)("%s: one status per stage, never one per root", (forge) => {
     const text = render(forge);
     const contexts = [...text.matchAll(/tg status (terragucci\/[a-z]+) /g)].map((m) => m[1]);
-    expect([...new Set(contexts)].sort()).toEqual(["terragucci/apply", "terragucci/plan"]);
-    expect(planScript("tofu", layers, forge)).not.toMatch(/tg status [^\n]*\$dir/);
+    expect([...new Set(contexts)].sort()).toEqual(["terragucci/apply"]);
+    // terragucci/plan is chant's note job's, under the context branch protection names (terragucci issue 1411).
+    expect([...new Set([...text.matchAll(/--context (\S+)/g)].map((m) => m[1]))]).toEqual(["terragucci/plan"]);
     expect(applyScript("tofu", layers, forge)).not.toMatch(/tg status [^\n]*\$dir/);
   });
 
@@ -1104,15 +1107,18 @@ describe("credentials", () => {
     expect(never.jobs["apply-wave-1"].permissions.contents).toBe("write");
   });
 
-  it("github: with a drift schedule the note jobs read the drift job's runs, and without one they do not", () => {
+  it("github: with a drift schedule the note jobs check the drift job's watch, and without one they do not", () => {
     const out = renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, drift: "0 6 * * *" });
     const drift = body(out.content);
+    // chant's note job reads the runs (actions: read) and checks the watch the pipeline gives it, never the plan job's report.
     expect(drift.jobs["plan-note"].permissions.actions).toBe("read");
     expect(drift.jobs["replan-note"].permissions.actions).toBe("read");
     expect(drift.jobs.plan.permissions.actions).toBeUndefined();
+    const post = (doc: Record<string, any>): Record<string, string> => doc.jobs["plan-note"].steps.at(-1).env;
+    expect(JSON.parse(post(drift).CHANT_PLAN_WATCHES)).toEqual([{ op: "tf-drift", cron: "0 6 * * *", files: [".github/workflows/terragucci-drift.yml", ".github/workflows/terragucci.yml"] }]);
     // The drift job is chant's Op in a workflow of its own (terragucci#1305), which reads no runs.
     expect(driftOp(out, "github")!.text).not.toContain("actions: read");
-    expect(body(render("github")).jobs["plan-note"].permissions.actions).toBeUndefined();
+    expect(post(body(render("github"))).CHANT_PLAN_WATCHES).toBeUndefined();
   });
 
   it("forgejo: the jobs that assume a role set enable-openid-connect, and the token comes from the runner's OIDC endpoint", () => {
@@ -1146,7 +1152,7 @@ describe("credentials", () => {
     expect(doc.plan.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
     expect(doc["apply-wave-1"].id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: "sts.amazonaws.com" } });
     expect(doc.check.id_tokens).toBeUndefined();
-    expect(doc.plan.rules[0].if).toContain("$CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH");
+    expect(doc.plan.rules[0].if).toContain("$CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_MERGE_REQUEST_PROJECT_ID");
   });
 
   it.each(FORGES)("%s: with no oidc setting there is no id-token and no role", (forge) => {
@@ -1331,31 +1337,42 @@ async function planRepo(): Promise<{ repo: string; env: Record<string, string> }
 }
 
 describe("the plan stage", () => {
-  it("runs the plan report, posts its note as the one plan note, and one status from its counts", async () => {
+  // The plan verb writes chant's hand-off, and chant's note job posts it through terragucci's bin (terragucci issue 1411).
+  const HEAD = "a".repeat(40);
+  const postNote = (repo: string, api: string, extra: Record<string, string> = {}) =>
+    run(`cd ${JSON.stringify(repo)}\nterragucci components pr-post --pr 7 --head ${HEAD} --env default --output terragucci-report --forge github --result success --context terragucci/plan`, {
+      GITHUB_TOKEN: "t", GITHUB_API_URL: api, GITHUB_REPOSITORY: "acme/infra", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "9",
+      CHANT_PLAN_NOTE_WORDS: JSON.stringify({ ...NOTE_WORDS, productMarker: "terragucci:plan" }), ...extra,
+    });
+
+  it("plans, hands the note off, and chant's note job posts it as the one plan note, with one status from its counts", async () => {
     const { repo, env } = await planRepo();
     const api = await stubApi(() => []);
     try {
-      const r = await run(`cd ${JSON.stringify(repo)}\n${planScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
-        ...env, TG_TOKEN: "t", TG_SHA: "abc123", TG_PR: "7", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "acme/infra",
-        GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "9",
+      const r = await run(`cd ${JSON.stringify(repo)}\n${planVerbScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
+        ...env, TG_SHA: HEAD, TG_PR: "7", GITHUB_SERVER_URL: "http://forge", GITHUB_REPOSITORY: "acme/infra", GITHUB_RUN_ID: "9", GITHUB_BASE_REF: "",
       });
       expect(r.status, r.out).toBe(0);
+      // The plan job holds no token: it asked the forge nothing.
+      expect(api.hits).toEqual([]);
+      const handoff = JSON.parse(readFileSync(join(repo, "terragucci-report/pr-plan-note.json"), "utf-8"));
+      expect(handoff).toMatchObject({ kind: "plan-note-handoff", pr: 7, head: HEAD, env: "default", state: "success", description: "3 roots, 2 groups, 2 destroys", marker: "roots=app,cache,network" });
+      const posted = await postNote(repo, api.url, env);
+      expect(posted.status, posted.out).toBe(0);
       const statuses = api.hits.filter((h) => h.url.includes("/statuses/"));
-      expect(statuses.map((h) => [h.url, h.body.context, h.body.state])).toEqual([
-        ["/repos/acme/infra/statuses/abc123", "terragucci/plan", "pending"],
-        ["/repos/acme/infra/statuses/abc123", "terragucci/plan", "success"],
-      ]);
-      expect(statuses[1].body.description).toBe("3 roots, 2 groups, 2 destroys");
+      expect(statuses.map((h) => [h.url, h.body.context, h.body.state, h.body.description])).toEqual([[`/repos/acme/infra/statuses/${HEAD}`, "terragucci/plan", "success", "3 roots, 2 groups, 2 destroys"]]);
       const note = api.hits.find((h) => h.method === "POST" && h.url === "/repos/acme/infra/issues/7/comments")!;
       const lines = note.body.body.split("\n");
-      expect(lines[0]).toBe("<!-- terragucci:plan roots=app,cache,network -->");
-      expect(note.body.body).toBe(`${lines[0]}\n${readFileSync(join(repo, "terragucci-report/note.md"), "utf-8")}`);
+      expect(lines[0]).toBe("<!-- chant-pr:default -->");
+      expect(lines[1]).toBe("<!-- terragucci:plan roots=app,cache,network -->");
+      // The note is terragucci's, rendered by chant from the same data and words as note.md.
+      expect(note.body.body).toContain(readFileSync(join(repo, "terragucci-report/note.md"), "utf-8").split("\n").find((l) => l.startsWith("### terragucci"))!);
       // With no reports.url, the report is only in the run's artifact: links go to the run page, with no anchors.
       expect(note.body.body).toContain("[`cache: aws_db_instance.main`](http://forge/acme/infra/actions/runs/9) (destroy)");
       expect(note.body.body).toContain("is `report.html` in the `terragucci-report` artifact of [this run](http://forge/acme/infra/actions/runs/9)");
       expect(note.body.body).not.toContain("runs/9#");
       const report = JSON.parse(readFileSync(join(repo, "terragucci-report/report.json"), "utf-8"));
-      expect(report.run).toMatchObject({ commit: "abc123", project: "forge/acme/infra", binary: "tofu" });
+      expect(report.run).toMatchObject({ commit: HEAD, project: "forge/acme/infra", binary: "tofu" });
       expect(report.roots.map((x: { path: string }) => x.path)).toEqual(["network", "app", "cache"].sort());
       expect(readFileSync(join(repo, "terragucci-report/roots/cache/plan.txt"), "utf-8")).toBe("plan text of cache\n");
     } finally {
@@ -1363,10 +1380,15 @@ describe("the plan stage", () => {
     }
   });
 
-  it("gitlab: by default the plan job holds the project token and posts its note and status itself", () => {
+  it("gitlab: the plan job holds no forge token, and chant's plan-note job posts from the plan notes pipeline", () => {
     const doc = body(render("gitlab"));
-    expect(doc.plan.variables.TG_TOKEN).toBe("$GITLAB_TOKEN");
-    expect(doc.plan.script.join("\n")).toContain('tg note "$note"');
+    expect(doc.plan.variables.TG_TOKEN).toBeUndefined();
+    expect(Object.values(doc.plan.variables)).not.toContain("$GITLAB_TOKEN");
+    expect(doc.plan.script.join("\n")).not.toMatch(/tg (note|status)/);
+    expect(doc.plan.script.join("\n")).toContain("unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN");
+    expect(doc["plan-note"].rules).toEqual([{ if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api|trigger)$/ && $CHANT_PLAN_NOTES == "1" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]);
+    expect(doc["plan-note"].script.at(-1)).toBe("npx --no-install terragucci components pr-post --open --env default --output terragucci-report --forge gitlab --context terragucci/plan");
+    expect(body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, tokenEnv: "FORGE_TOKEN" }).content)["plan-note"].variables.CHANT_GITLAB_TOKEN).toBe("$FORGE_TOKEN");
     // The check holds no token of its own and drops the ones GitLab hands it; chant's commit job pushes the formatting (chant#4749).
     expect(doc.check.variables.TG_TOKEN).toBeUndefined();
     expect(doc.check.script.join("\n").split("\n")[0]).toBe(`unset ${["TG_TOKEN", "TG_MERGE_TOKEN", ...FORGE_TOKEN_VARS].join(" ")}`);
@@ -1376,87 +1398,60 @@ describe("the plan stage", () => {
     expect(doc.comments).toBeUndefined();
   });
 
-  it("gitlab.token: protected: the plan job holds no forge token, calls no API, and writes the note and the status into the report for the comments job", async () => {
-    const { repo, env } = await planRepo();
-    const api = await stubApi(() => []);
-    try {
-      const r = await run(`cd ${JSON.stringify(repo)}\n${gitlabProtectedPlanScript("tofu", [["network"], ["app", "cache"]])}`, {
-        ...env, TG_SHA: "abc123", TG_PR: "7", CI_API_V4_URL: api.url, CI_PROJECT_ID: "9", CI_JOB_URL: "http://gitlab/acme/infra/-/jobs/5",
-      });
-      expect(r.status, r.out).toBe(0);
-      expect(api.hits).toEqual([]);
-      const note = readFileSync(join(repo, "terragucci-report/plan-note.md"), "utf-8");
-      expect(note).toBe(`<!-- terragucci:plan roots=app,cache,network -->\n${readFileSync(join(repo, "terragucci-report/note.md"), "utf-8")}`);
-      expect(readFileSync(join(repo, "terragucci-report/plan-status.txt"), "utf-8")).toBe("success 3 roots, 2 groups, 2 destroys\n");
-      // A token that reaches the job means the variable is not protected: the job stops before it plans.
-      const seen = await run(`cd ${JSON.stringify(repo)}\n${gitlabProtectedPlanScript("tofu", [["network"]])}`, { ...env, GITLAB_TOKEN: "leaked" });
-      expect(seen.status).toBe(1);
-      expect(seen.out).toContain("GITLAB_TOKEN reaches this merge request's pipeline");
-    } finally {
-      api.close();
-    }
-    const strict = (extra: Record<string, unknown> = {}) => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gitlabToken: "protected", comments: "*/5 * * * *", ...extra }).content;
+  it("gitlab.token: protected: no branch pipeline holds the token, and it no longer needs comments to post the plan notes", () => {
+    const strict = (extra: Record<string, unknown> = {}) => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gitlabToken: "protected", ...extra }).content;
     const doc = body(strict());
     expect(doc.plan.variables.TG_TOKEN).toBeUndefined();
-    expect(Object.values(doc.plan.variables)).not.toContain("$GITLAB_TOKEN");
-    expect(doc.plan.script.join("\n")).not.toMatch(/tg (note|status)/);
-    expect(doc.plan.script.join("\n")).toContain(gitlabTokenCheck());
     // A branch's pipeline is the branch's own too: the check job gets no token and commits no formatting.
     expect(doc.check.variables.TG_TOKEN).toBeUndefined();
-    expect(doc.check.after_script).toBeUndefined();
-    expect(doc.comments.script.join("\n")).toContain("--plan-notes");
-    expect(body(strict({ tokenEnv: "FORGE_TOKEN" })).plan.script.join("\n")).toContain('if [ -n "${FORGE_TOKEN:-}" ]; then');
-    // The comments job posts the note, so the setting needs it.
-    expect(() => renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, gitlabToken: "protected" })).toThrow(/gitlab.token: protected needs comments:/);
+    expect(doc.fmt).toBeUndefined();
+    expect(doc["plan-note"]).toBeDefined();
+    expect(body(strict({ comments: "*/5 * * * *" })).comments.script.join("\n")).not.toContain("--plan-notes");
   });
 
-  it("a root that fails to plan fails the stage and its status, and the note still goes up, in the step's own shell", async () => {
+  it("a root that fails to plan fails the plan and hands off a failure, in the step's own shell", async () => {
     const { repo, env } = await planRepo();
-    const api = await stubApi(() => []);
-    try {
-      const r = await runStep(`cd ${JSON.stringify(repo)}\n${planScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
-        ...env, FAIL: "app", TG_TOKEN: "t", TG_SHA: "s", TG_PR: "7", GITHUB_API_URL: api.url, GITHUB_REPOSITORY: "o/r", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "1",
-      });
-      expect(r.status).toBe(1);
-      expect(api.hits.at(-1)!.body).toMatchObject({ context: "terragucci/plan", state: "failure", description: "1 failed: 3 roots, 2 groups, 2 destroys" });
-      expect(api.hits.some((h) => h.url === "/repos/o/r/issues/7/comments" && h.body.body.includes("refused to plan"))).toBe(true);
-    } finally {
-      api.close();
-    }
+    const r = await runStep(`cd ${JSON.stringify(repo)}\n${planVerbScript("tofu", [["network"], ["app", "cache"]], "github")}`, {
+      ...env, FAIL: "app", TG_SHA: HEAD, TG_PR: "7", GITHUB_SERVER_URL: "http://forge", GITHUB_REPOSITORY: "o/r", GITHUB_RUN_ID: "1",
+    });
+    expect(r.status).toBe(1);
+    const handoff = JSON.parse(readFileSync(join(repo, "terragucci-report/pr-plan-note.json"), "utf-8"));
+    expect(handoff).toMatchObject({ state: "failure", description: "1 failed: 3 roots, 2 groups, 2 destroys" });
+    expect(JSON.stringify(handoff.note.named)).toContain("refused");
   });
 
-  it("the plan, re-plan and Terragrunt plan scripts turn off the step's -e, since each reads the stage's exit code", () => {
-    expect(planScript("tofu", layers, "github").split("\n")[0]).toBe(READS_EXIT);
-    expect(planFilesScript("tofu", layers, "forgejo", OIDC, {}, { replan: true }).split("\n")[0]).toBe(READS_EXIT);
-    expect(planScript("tofu", layers, "github", undefined, { terragrunt: { prelude: "true" } }).split("\n")[0]).toBe(READS_EXIT);
-    // GitLab runs the script in its own bash from a heredoc; the first line is the same there.
+  it("the plan verb runs in its own bash and turns off -e, since it reads the stage's exit code", () => {
+    for (const forge of FORGES) expect(planVerbScript("tofu", layers, forge).split("\n").slice(0, 2)).toEqual(["bash <<'PLAN' || exit $?", READS_EXIT]);
+    expect(planVerbScript("tofu", layers, "github", { terragrunt: { prelude: "true" } }).split("\n")[1]).toBe(READS_EXIT);
     expect(body(render("gitlab")).plan.script.join("\n")).toContain(`bash <<'PLAN' || exit $?\n${READS_EXIT}\n`);
   });
 
   it("names the stage's roots, binary and bucket, so it plans what the pipeline names", () => {
-    const s = planScript("tofu", layers, "github", undefined, { reports: { bucket: "s3://r", endpoint: "http://minio:9000", prefix: "p" }, canary: ["network"] });
+    const s = planVerbScript("tofu", layers, "github", { reports: { bucket: "s3://r", endpoint: "http://minio:9000", prefix: "p" }, canary: ["network"] });
     expect(s).toContain("terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'network;app,cache'");
     expect(s).toContain("--canary 'network' --bucket 's3://r' --bucket-endpoint 'http://minio:9000' --bucket-prefix 'p'");
     expect(s).not.toContain("--bucket-url");
+    expect(s).toContain('terragucci plan-handoff --report terragucci-report --env default --exit "$rc"');
   });
 
   it("passes the bucket's address when reports.url is set, so the note links the bucket's copy (#131)", () => {
     const reports = { bucket: "s3://r", prefix: "p", url: "https://reports.example" };
-    expect(planScript("tofu", layers, "forgejo", undefined, { reports })).toContain("--bucket-prefix 'p' --bucket-url 'https://reports.example'");
+    expect(planVerbScript("tofu", layers, "forgejo", { reports })).toContain("--bucket-prefix 'p' --bucket-url 'https://reports.example'");
     expect(driftScript("tofu", layers, "github", undefined, { reports })).toContain("--bucket-url 'https://reports.example'");
   });
 
   it.each(FORGES)("%s: the run keeps the plan report as its artifact", (forge) => {
     const doc = body(render(forge));
     if (forge === "gitlab") {
-      expect(doc.plan.artifacts).toEqual({ name: "terragucci-report", when: "always", paths: ["terragucci-report/"], reports: { terraform: "terragucci-report/gitlab-terraform.json" } });
+      // chant's plan job, with terragucci's report and the merge request widget's terraform report (chant issue 5004).
+      expect(doc.plan.artifacts).toEqual({ name: "terragucci-report", when: "always", paths: ["terragucci-report"], reports: { terraform: "terragucci-report/gitlab-terraform.json" } });
       expect(doc.plan.script.join("\n")).toContain('--report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html"');
     } else {
       // The plan job hands the report on, and the plan-note job keeps it.
       const keep = doc.jobs["plan-note"].steps.find((s: { name?: string }) => s.name === "Keep the plan report");
       expect(keep.if).toBe("always()");
       expect(keep.uses).toBe(forgeRef(forge, uploadArtifact(forge)));
-      expect(keep.with).toMatchObject({ name: "terragucci-report", path: "terragucci-report/" });
+      expect(keep.with).toMatchObject({ name: "terragucci-report", path: "terragucci-report" });
       expect(JSON.stringify(doc.jobs.plan.steps)).not.toContain("upload-artifact");
     }
   });
@@ -1825,7 +1820,7 @@ describe("apply.branches", () => {
 
   it("on GitLab the apply jobs run on release too, and read the branch from CI_COMMIT_BRANCH", () => {
     const doc = body(pipeline("gitlab"));
-    expect(doc["apply-wave-1"].rules).toEqual([{ if: '($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH == "release")' }]);
+    expect(doc["apply-wave-1"].rules).toEqual([{ if: '($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH == "release") && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null' }]);
     expect(JSON.stringify(doc["apply-wave-2"].script)).toContain(`--branches 'release=prod/*' --branch \\"$CI_COMMIT_BRANCH\\"`);
   });
 
@@ -2213,13 +2208,13 @@ describe("the rollout job", () => {
     expect(doc.rollout.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "rollouts"' }]);
     expect(doc.rollout.script.join("\n")).toContain("terragucci respond rollout --mode apply");
     expect(doc.rollout.variables.GIT_DEPTH).toBe("0");
-    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
-    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
+    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral" && $TERRAGUCCI_SCHEDULE != "plan-notes" && $CHANT_PLAN_NOTES == null' }]);
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null' }]);
   });
 
   it("gitlab: with apply.resume too, drift leaves both the resume and the rollouts schedules alone", () => {
     const out = renderPipeline({ forge: "gitlab", ...input, rollouts: "*/15 * * * *", drift: "0 6 * * *", resume: 10 });
-    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
+    expect(driftOp(out, "gitlab")!.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral" && $TERRAGUCCI_SCHEDULE != "plan-notes" && $CHANT_PLAN_NOTES == null' }]);
   });
 
   it("github: with apply.resume too, the rollout workflow sits beside the resume workflow", () => {
@@ -2321,8 +2316,8 @@ describe("the drift stage", () => {
     expect(doc.stages).toContain("drift");
     const op = driftOp(out, "gitlab")!;
     expect(op.job.stage).toBe("drift");
-    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
-    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
+    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral" && $TERRAGUCCI_SCHEDULE != "plan-notes" && $CHANT_PLAN_NOTES == null' }]);
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null' }]);
     expect(doc["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
     expect(op.script).toContain("terragucci stage tf-drift");
   });
@@ -2357,12 +2352,12 @@ describe("the comments job (GitLab)", () => {
   it("keeps check, apply and publish out of every scheduled pipeline, with or without drift", () => {
     const doc = withComments({ publish: true });
     expect(doc.drift).toBeUndefined();
-    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule"' }]);
-    for (const job of ["apply-wave-1", "apply-wave-2", "tips", "publish"]) expect(doc[job].rules[0].if, job).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"');
+    expect(doc.check.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null' }]);
+    for (const job of ["apply-wave-1", "apply-wave-2", "tips", "publish"]) expect(doc[job].rules[0].if, job).toBe('$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null');
     expect(doc.plan.rules[0].if).toContain("merge_request_event");
     const both = withComments({ drift: "0 6 * * *" });
     const op = driftOp(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, comments: "*/5 * * * *", drift: "0 6 * * *" }), "gitlab")!;
-    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral"' }]);
+    expect(op.job.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE != "comments" && $TERRAGUCCI_SCHEDULE != "resume" && $TERRAGUCCI_SCHEDULE != "rollouts" && $TERRAGUCCI_SCHEDULE != "ephemeral" && $TERRAGUCCI_SCHEDULE != "plan-notes" && $CHANT_PLAN_NOTES == null' }]);
     expect(both.comments.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE == "comments"');
   });
 
@@ -2593,10 +2588,11 @@ describe("GCP and Azure credentials", () => {
       if (forge === "forgejo") expect(doc.jobs[j]["enable-openid-connect"]).toBe(true);
     }
     const plan = doc.jobs.plan.steps.map((s: any) => s.run).filter(Boolean).join("\n");
-    // One login, with both clouds; it starts the step again without the request variables, which on Forgejo carry the run's token.
+    // One login, with both clouds: oidc.azure takes only the token itself, so the plan jobs log in with chant's login, which
+    // the product plan runs in steps of its own before the plan step (terragucci issue 1411).
     const specs = [...plan.matchAll(new RegExp(`export ${LOGIN_SPEC_ENV}='([^']*)'`, "g"))].map((m) => JSON.parse(m[1]!));
     expect(specs).toEqual([cloudLoginSpec(loginSpec(CLOUDS, "plan", "terragucci-plan"))]);
-    expect(plan).toContain(`${LOGIN_RESTART_MARKER}=1`);
+    expect(doc.jobs.plan.steps.find((s: any) => s.name === "Trade the job's OIDC token for the plan identities")).toBeUndefined();
     // A fork's pull request still gets no plan job, and apply runs only on the default branch.
     expect(doc.jobs.plan.if).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     expect(doc.jobs["apply-wave-1"].if).toContain("github.ref == format('refs/heads/{0}', github.event.repository.default_branch)");
@@ -2715,10 +2711,13 @@ describe("approval: pr-review", () => {
   it.each(["github", "forgejo"] as const)("%s: the plan job posts terragucci/approval after the note, and a review of the head re-posts it", (forge) => {
     const doc = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, prReview: true }).content);
     expect(Object.keys(doc.on)).toContain("pull_request_review");
-    // The plan job holds no token; its note job posts the note, then terragucci/approval from the same report.
-    expect(doc.jobs["plan-note"].steps.at(-1).run).toContain(`terragucci plan-note --forge ${forge} --report terragucci-report`);
-    expect(doc.jobs["plan-note"].steps.at(-1).run).toContain("--approval-status");
-    expect(doc.jobs["replan-note"].steps.at(-1).run).toContain("--approval-status");
+    // The plan job holds no token; chant's note job posts the note, then terragucci/approval from the same report.
+    for (const job of ["plan-note", "replan-note"]) {
+      const after = doc.jobs[job].steps.at(-1);
+      expect(after.name).toBe("The product's lines after the note");
+      expect(after.run).toBe(`[ ! -f terragucci-report/report.json ] || TG_TOKEN="$GITHUB_TOKEN" TG_PR="$PR_NUMBER" TG_SHA="$HEAD_SHA" terragucci approval-status --forge ${forge} --report terragucci-report || true`);
+    }
+    expect(doc.jobs["plan-note"].steps.at(-1).env.HEAD_SHA).toBe("${{ github.event.pull_request.head.sha }}");
     expect(doc.jobs.approval.if).toContain("github.event_name == 'pull_request_review'");
     // Forgejo reads no job permissions, so its dialect writes none.
     if (forge === "github") expect(doc.jobs.approval.permissions).toEqual({ contents: "read", statuses: "write", "pull-requests": "read" });
@@ -2740,31 +2739,34 @@ describe("no forge token where the change's code runs", () => {
   const OIDC = { plan_role: "arn:aws:iam::1:role/plan", apply_role: "arn:aws:iam::1:role/apply" };
   it.each(["github", "forgejo"] as const)("%s: the plan job posts the pending status before the checkout, and plans with no token and no credentials in the checkout", (forge) => {
     const plan = body(render(forge, OIDC)).jobs.plan;
-    expect(plan.env.TG_TOKEN).toBeUndefined();
+    expect(JSON.stringify(plan.env)).not.toMatch(/TG_TOKEN|github\.token/);
     const steps = plan.steps as { name?: string; uses?: string; run?: string; env?: Record<string, string>; with?: Record<string, unknown> }[];
     const checkout = steps.findIndex((s) => s.name === "Check out the change");
-    // Only the step before the checkout holds the token, and the checkout script, for its fetches.
-    expect(steps.findIndex((s) => s.env?.TG_TOKEN)).toBe(0);
-    expect(steps.filter((s) => s.env?.TG_TOKEN)).toHaveLength(2);
-    expect(checkout).toBe(1);
-    expect(steps[checkout].env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    // chant's plan job: the pending step and the checkout script hold the token, for the status and the fetches, and no other step.
+    const holders = steps.flatMap((s, i) => (JSON.stringify(s.env ?? {}).includes("github.token") ? [i] : []));
+    expect(holders).toEqual([0, checkout]);
+    expect(steps[0]).toMatchObject({ name: "Say on the head that the plan started", env: { CHANT_PENDING_CONTEXT: "terragucci/plan", CHANT_PENDING_DESCRIPTION: "planning", CHANT_PENDING_SHA: "${{ github.event.pull_request.head.sha }}" } });
+    expect(steps[checkout].env).toEqual({ CHANT_CHECKOUT_TOKEN: "${{ github.token }}" });
     expect(JSON.stringify(steps)).not.toContain("actions/checkout");
     const run = steps.find((s) => s.run?.includes("terragucci stage tf-plan"))!.run!;
-    expect(run.split("\n")[0]).toBe(dropForgeTokens());
+    expect(run.split("\n")[0]).toContain("-u GITHUB_TOKEN");
     expect(run).not.toContain("tg note");
     expect(run).not.toContain("tg status");
-    expect(run).toContain(">terragucci-report/plan-status.txt");
+    expect(run).toContain("terragucci plan-handoff --report terragucci-report");
+    expect(steps.at(-1)!.run).toBe(run);
     if (forge === "github") expect(plan.permissions).toEqual({ contents: "read", statuses: "write", "id-token": "write" });
   });
 
-  it.each(["github", "forgejo"] as const)("%s: the plan-note job runs after the plan, checks nothing out and posts from the report", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: the plan-note job runs after the plan, at the target branch's commit, and posts from the report", (forge) => {
     const note = body(render(forge)).jobs["plan-note"];
-    expect(note.needs).toBe("plan");
+    expect(note.needs).toEqual(["plan"]);
     expect(note.if).toContain("needs.plan.result == 'success' || needs.plan.result == 'failure'");
-    expect(note.env).toMatchObject({ TG_TOKEN: "${{ github.token }}", TG_PLAN_RESULT: "${{ needs.plan.result }}" });
-    expect(JSON.stringify(note.steps)).not.toContain("actions/checkout");
-    expect(note.steps.at(-1).if).toBe("always()");
-    expect(note.steps.at(-1).run).toContain(`terragucci plan-note --forge ${forge} --report terragucci-report`);
+    // The target branch's commit, where none of the change's code is.
+    expect(note.steps[0]).toMatchObject({ name: "Check out the target branch's commit", with: { ref: "${{ github.event.pull_request.base.sha }}" } });
+    const post = note.steps.find((s: { name?: string }) => s.name === "Post the plan note and terragucci/plan");
+    expect(post.if).toBe("always()");
+    expect(post.env).toMatchObject({ PLAN_RESULT: "${{ needs.plan.result }}", HEAD_SHA: "${{ github.event.pull_request.head.sha }}", GITHUB_TOKEN: "${{ github.token }}" });
+    expect(post.run).toContain(`npx --no-install terragucci components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge ${forge} --result "$PLAN_RESULT" --context terragucci/plan`);
   });
 
   it.each(["github", "forgejo"] as const)("%s: chant's commit job formats and commits after a check that found formatting, and the check holds no token", (forge) => {
@@ -2860,7 +2862,10 @@ describe("atlantis_comments", () => {
   it.each(["github", "forgejo"] as const)("%s: atlantis plan starts the replan job and atlantis apply the apply-comment job, and every job reads the aliases", (forge) => {
     const wf = body(withAliases(forge));
     expect(wf.env.TG_ATLANTIS_COMMENTS).toBe("1");
-    expect(wf.jobs.replan.if).toBe("(github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci') || startsWith(github.event.comment.body, 'atlantis plan')) && !(startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))) || (github.event_name == 'workflow_dispatch' && github.event.inputs.pr != '')");
+    // chant's re-plan takes the alias when TG_ATLANTIS_COMMENTS is set, and leaves `atlantis apply` to the apply-comment job.
+    expect(wf.jobs.replan.if).toContain("startsWith(github.event.comment.body, 'atlantis plan')");
+    expect(wf.jobs.replan.if).not.toContain("'atlantis apply'");
+    expect(wf.jobs.replan.steps.find((s: any) => s.id === "decide").env.CHANT_REPLAN_GATED).toBe('[{"comment":"atlantis plan","when":"TG_ATLANTIS_COMMENTS"}]');
     expect(wf.jobs["apply-comment"].if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, 'atlantis apply'))");
   });
 

@@ -1,6 +1,6 @@
 /**
- * On GitHub and Forgejo, the jobs that run the change's code (`check`,
- * `plan`, `replan`) end with the step that runs it. A later step in the same
+ * On GitHub and Forgejo, the jobs that run the change's code (`check`, and
+ * chant's `plan` and `replan`) end with the step that runs it. A later step in the same
  * container holds a token. Forgejo's runner gives the run's token to every
  * step (as ACTIONS_RUNTIME_TOKEN, and to an action as its `token` input).
  * GitHub's runner gives every JavaScript action ACTIONS_RUNTIME_TOKEN and its
@@ -27,8 +27,8 @@
  * chant's generated plan job keeps the same order (@intentius/chant/ci-handover),
  * and this file takes from it what terragucci's jobs share with it: the output
  * limits and names, the job outputs, and the note job's take-over. What stays
- * here is terragucci's own: the files a cut report keeps, the re-plan's sweep
- * before the handover, and a checkout of a ref the step names (`TG_REF`).
+ * here is terragucci's own: the file a cut check report keeps, and a checkout
+ * of a ref the step names (`TG_REF`).
  *
  * chant's handover takes those as parameters (chant#4554): packJs,
  * handoverTrap and checkoutScript are chant's with terragucci's words passed
@@ -45,13 +45,11 @@ import {
   UNPACK_JS,
   type HandoverForge,
 } from "@intentius/chant/ci-handover";
-import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
-
 export { HANDOVER_LIMITS, handoverKeys, handoverOutputs, UNPACK_JS, type HandoverForge };
 
-/** The files a note job reads, which a report too large to hand on whole is cut to. */
+/** The file the check-report job keeps, which a check report too large to hand on whole is cut to. The plan jobs are chant's (./product-plan.ts). */
 function noteFiles(): string[] {
-  return [PLAN_NOTE_FILE, PLAN_STATUS_FILE, "drift-schedule.json", "report.json"];
+  return ["report.md"];
 }
 
 /**
@@ -67,11 +65,10 @@ export function packJs(forge: HandoverForge): string {
 /**
  * The lines of a step that runs the change's code, after its restarts: when
  * the step ends, however it ends, its report directory goes into the step's
- * outputs. With `sweep` (a re-plan's LEFTOVER_SWEEP) the processes the step
- * started are killed first.
+ * outputs.
  */
-export function handoverTrap(dir: string, forge: HandoverForge, sweep = false): string[] {
-  return chantHandoverTrap(dir, forge, { noteFiles: noteFiles(), label: "terragucci", ...(sweep ? { before: "tg_sweep" } : {}) });
+export function handoverTrap(dir: string, forge: HandoverForge): string[] {
+  return chantHandoverTrap(dir, forge, { noteFiles: noteFiles(), label: "terragucci" });
 }
 
 /**

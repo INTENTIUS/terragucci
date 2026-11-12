@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { decide, isConfident, summarize, type DecideFetch, type DecideSettings, type DecisionRecord } from "../decide";
 import { PR_INTENT } from "../decide/questions";
 import { REPORT_MINOR, type Report, type ReportIntent, type ReportNamed } from "../report/schema";
+import { NOTE_DATA_FILE } from "../report/store";
+import type { PrPlanNote } from "@intentius/chant/pr-plan-note";
 
 /** What the model reads: the pull request's text and the report's summary. No plan values. */
 export type IntentState = {
@@ -92,6 +94,16 @@ export function flagNote(note: string, line: string): string {
   return `${line}\n\n${kept.join("\n")}`;
 }
 
+/** The note's data with the flag as its first section, replacing an earlier flag. */
+export function flagNoteData(note: PrPlanNote, line: string): PrPlanNote {
+  const text = `${line.replace(` ${FLAG_MARK}`, "")}\n`;
+  const kept = (note.sections ?? []).filter((s) => !s.text.startsWith(FLAG_START));
+  return { ...note, sections: [{ at: "start", text }, ...kept] };
+}
+
+/** How a flag's line starts, so a second check replaces the first. */
+const FLAG_START = "> Check the description of this pull request.";
+
 function flagHtml(html: string, line: string): string {
   const text = line.replace(/^> /, "").replace(` ${FLAG_MARK}`, "").replaceAll("`", "");
   const esc = text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -156,6 +168,12 @@ export async function checkDescription(i: IntentInput): Promise<IntentResult> {
     if (existsSync(note)) {
       writeFileSync(note, flagNote(readFileSync(note, "utf-8"), flag));
       files.push("note.md");
+    }
+    // The note's data, which chant's note job renders (../plan-handoff.ts): the flag is its first section, with no hidden marker, which chant would defuse.
+    const data = join(i.dir, NOTE_DATA_FILE);
+    if (existsSync(data)) {
+      writeFileSync(data, JSON.stringify(flagNoteData(JSON.parse(readFileSync(data, "utf-8")) as PrPlanNote, flag)) + "\n");
+      files.push(NOTE_DATA_FILE);
     }
     const html = join(i.dir, "report.html");
     if (existsSync(html)) {

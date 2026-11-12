@@ -51,8 +51,9 @@ import { unzipEntry } from "@intentius/chant/ci-image";
 import { ConfigError, type ProjectSettings } from "./config";
 import { detectForge } from "@intentius/chant/pr-forge";
 import { poster, type Fetch } from "./forge";
-import { PLAN_NOTE_FILE } from "./plan-note-gitlab";
-import { planNoteBodyOf } from "./plan-note";
+
+/** The plan note in the plan job's report, as `terragucci stage tf-plan` writes it (./report/store.ts). */
+export const PLAN_NOTE_FILE = "note.md";
 import type { ReviewForge, ReviewedPull } from "./review";
 import type { RunArtifact, WorkflowRun } from "@intentius/chant/pr-forge-reads";
 import { productReviewMarker, productReviewNoteBody, productReviewPrompt, type ReviewWords } from "@intentius/chant/op/activities/review-product";
@@ -265,7 +266,7 @@ export function writeReviewPrompt(o: WritePromptOptions): WrittenPrompt {
   const read = (name: string): string | undefined => (existsSync(join(o.report, name)) ? readFileSync(join(o.report, name), "utf-8") : undefined);
   const noteFile = read(PLAN_NOTE_FILE);
   // The note without its markers: the model reads the note as a person does.
-  const planNote = noteFile === undefined ? undefined : planNoteBodyOf(noteFile).replace(/<!--[\s\S]*?-->\n?/g, "");
+  const planNote = noteFile === undefined ? undefined : noteFile.replace(/\r\n/g, "\n").replace(/<!--[\s\S]*?-->\n?/g, "").trimEnd();
   const prompt = reviewPrompt({
     pr,
     title,

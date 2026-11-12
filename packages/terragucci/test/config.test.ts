@@ -171,7 +171,6 @@ describe("validation", () => {
     [{ forge: "gitlab", comments: "*/5 * * * *", apply: { when: "pull-request" } }, /config\.apply\.when: pull-request on GitLab needs apply\.merge_token_env/],
     [{ locks: "always" }, /config\.locks is "always"; use one of apply, plan/],
     [{ forge: "gitlab", locks: "plan" }, /config\.locks: plan is not supported on GitLab, where no merge request event runs a job from the default branch/],
-    [{ forge: "gitlab", gitlab: { token: "protected" } }, /config\.gitlab\.token: protected needs comments: <cron>/],
     [{ gitlab: { token: "hidden" } }, /config\.gitlab\.token is "hidden"; use one of unprotected, protected/],
     [{ gitlab: "protected" }, /config\.gitlab must be a map \(settings: token\)/],
     [{ gitlab: { tokn: "protected" } }, /config\.gitlab\.tokn is not a setting/],

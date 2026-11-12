@@ -55,6 +55,7 @@ import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { resolveControl } from "./control-repo";
 import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, REQUEST_PATHS, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { PLAN_NOTES_CRON, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR } from "./product-plan";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
@@ -557,6 +558,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     }
   }
 
+  if (forgeChoice.value === "gitlab") {
+    // chant's plan-note job posts every open merge request's plan note and terragucci/plan from the default branch (./product-plan.ts).
+    notes.push(`plan notes: add a pipeline schedule on the default branch with the cron ${PLAN_NOTES_CRON} and the variables ${PLAN_NOTES_VAR} set to 1 and TERRAGUCCI_SCHEDULE set to ${PLAN_NOTES_SCHEDULE} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope: its plan-note job posts each open merge request's plan note and terragucci/plan once the merge request's plan job ends`);
+  }
   if (settings.drift && forgeChoice.value === "gitlab") {
     notes.push(`drift is set: add a pipeline schedule with the cron ${settings.drift} under CI/CD > Schedules, and give ${settings.token_env ?? "GITLAB_TOKEN"} the api scope so the drift issue can be kept`);
   }
@@ -580,7 +585,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (settings.gitlab?.token === "protected" && forgeChoice.value === "gitlab") {
     // A pipeline is built from its branch's own files, so any variable that is not protected reaches a merge request's code.
     const token = settings.token_env ?? "GITLAB_TOKEN";
-    notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, the plan job stops if it does, the comments job posts the plan notes, and no fmt job commits formatting`);
+    notes.push(`gitlab.token is protected: under Settings > CI/CD > Variables, edit ${token} and tick Protect variable and Mask variable, and keep the default branch protected; merge request and branch pipelines then never see the token, and no fmt job commits formatting`);
   }
   if (settings.waves?.canary?.length && terramate) {
     notes.push("waves.canary is set; the canary stacks' layers apply first, then the layers of the rest, each wave behind its gate");

@@ -5,7 +5,7 @@ import { LOGIN_RESTART_MARKER } from "@intentius/chant/ci-login";
 import { parseYAML } from "@intentius/chant/yaml";
 import { ConfigError, SYNTH_DRIFT_PR_SHORT, synthProblems, validateConfig } from "../src/config";
 import { findRootsWithReasons } from "../src/detect";
-import { applyScript, commentApplyScript, driftScript, planFilesScript, planScript, renderPipeline, synthScript } from "../src/render";
+import { applyScript, commentApplyScript, driftScript, planVerbScript, renderPipeline, synthScript } from "../src/render";
 import { runStage } from "../src/report/stage";
 import { compareSynthesized, localModules, synthAffected, treeDigest } from "../src/synth";
 import { driftOp, git, tmp, write } from "./helpers";
@@ -41,23 +41,21 @@ describe("synth: roots a command writes", () => {
       expect(script).toContain(`( set -e; ${SYNTH} )`);
       expect(script.indexOf(`( set -e; ${SYNTH} )`)).toBeLessThan(script.indexOf(what));
     };
-    const plan = planScript("tofu", layers, "github", oidc, { synth: SYNTH });
-    expect(plan.indexOf(`${LOGIN_RESTART_MARKER}=1`)).toBeGreaterThan(-1);
-    expect(plan.indexOf(`${LOGIN_RESTART_MARKER}=1`)).toBeLessThan(plan.indexOf(`( set -e; ${SYNTH} )`));
-    // On GitLab, whose job holds its id_tokens and no request variables, the login comes after it.
-    before(planScript("tofu", layers, "gitlab", oidc, { synth: SYNTH }), "CHANT_CLOUD_LOGIN=");
+    // The plan verb (chant's product plan, terragucci issue 1411): the plan identities are traded in a step before the checkout, so
+    // the synth command and the stage run with no token-request variable; a failed synth fails the plan, and chant's note job says so.
+    const plan = planVerbScript("tofu", layers, "github", { synth: SYNTH });
     before(plan, "terragucci stage tf-plan");
-    before(planFilesScript("tofu", layers, "github", undefined, { synth: SYNTH }, { replan: true }), "terragucci stage tf-plan");
-    const replan = planFilesScript("tofu", layers, "github", undefined, { synth: SYNTH }, { replan: true });
-    expect(replan.indexOf('git rev-parse HEAD')).toBeLessThan(replan.indexOf(SYNTH));
-    expect(replan).toContain('echo "failure the synth command failed" >terragucci-report/plan-status.txt');
+    expect(plan).not.toContain(LOGIN_RESTART_MARKER);
+    expect(plan).toContain(`( set -e; ${SYNTH} ) || { echo "terragucci: the synth command failed" >&2; exit 1; }`);
+    const planJob = (parseYAML(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, oidc, synth: SYNTH }).content.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>).jobs.plan;
+    const names = planJob.steps.map((s: { name?: string }) => s.name);
+    expect(names.indexOf("Trade the job's OIDC token for the plan identities")).toBeLessThan(names.indexOf("Check out the change"));
     before(applyScript("tofu", layers, "github", oidc, { wave: 1, synth: SYNTH }), "terragucci stage tf-apply");
     before(driftScript("tofu", layers, "github", oidc, { synth: SYNTH }), "terragucci stage tf-drift");
     const comment = commentApplyScript("tofu", layers, "github", oidc, { synth: SYNTH });
     expect(comment.indexOf('git checkout --quiet --detach "$TG_SHA"')).toBeLessThan(comment.indexOf(SYNTH));
-    expect(planScript("tofu", layers, "github", undefined, { synth: SYNTH })).toContain('tg status terragucci/plan failure "the synth command failed"');
     expect(step).not.toContain("tg status");
-    expect(planScript("tofu", layers)).not.toContain("synth");
+    expect(planVerbScript("tofu", layers, "gitlab")).not.toContain("synth");
   });
 
   it.each(["github", "forgejo", "gitlab"] as const)("%s: the check, plan and apply jobs run it", (forge) => {

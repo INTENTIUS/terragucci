@@ -178,17 +178,17 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, PROTECTED_TOKEN_NEEDS_COMMENTS, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
+import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { controlCloneScript, controlReadSteps, dispatchScript, type ResolvedControl } from "./control-repo";
-import { ROOT_GCP_ENV, ROOT_ROLES_ENV, rootRoles } from "./cloud-identity";
+import { dispatchScript, type ResolvedControl } from "./control-repo";
+import { rootRoles } from "./cloud-identity";
 import { cloudLogin, LOGIN_RESTART_MARKER, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import { MR_VAR } from "./comment-apply-gitlab";
-import { PLAN_NOTE_FILE, PLAN_STATUS_FILE } from "./plan-note-gitlab";
+import { githubPlanJobs, gitlabPlanJobs, PLAN_ENV, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR, planTrade, type PlanJobsInput } from "./product-plan";
+import { driftWatch } from "./report/overdue";
 import type { AgentCommentInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
-import { AGENT_COMMENT_IF } from "./render-agent";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
 import { commentLine, productPipelineJobs, type CiProductCommand } from "@intentius/chant/ci-product";
@@ -837,7 +837,7 @@ const FORGE_API_JS_GITLAB = FORGE_API_JS.replace(
 
 /**
  * Shell that defines `tg`. What a job says on the forge (`tg status`, `tg
- * note`, `tg reply`, `tg stale`) goes through `terragucci post`, which the
+ * reply`, `tg stale`) goes through `terragucci post`, which the
  * job's image carries (forge-post.ts); `tg alive` is the Node above.
  */
 export function forgeApi(forge: ForgeName): string {
@@ -866,10 +866,6 @@ export const AZURE_AUDIENCE = "api://AzureADTokenExchange";
 const hasAws = (oidc: OidcSettings | undefined): boolean => Boolean((oidc?.plan_role && oidc.apply_role) || hasRootRoles(oidc));
 
 const hasRootRoles = (oidc: OidcSettings | undefined): boolean => Boolean(oidc?.roles && Object.keys(oidc.roles).length > 0);
-
-/** A stage's GCP service accounts by root glob, exported for a re-plan's trade (./oidc-trade.ts). */
-const cloudRoles = (name: string, roles: Record<string, { plan: string; apply: string }> | undefined, stage: "plan" | "apply"): string[] =>
-  roles && Object.keys(roles).length > 0 ? [`export ${name}=${sh(JSON.stringify(rootRoles(roles, stage)))}`] : [];
 
 /**
  * `oidc` as the pipeline's steps log in with it. `terragruntToken`: a
@@ -1850,29 +1846,31 @@ function reportUrl(forge: ForgeName): string {
     : '"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"';
 }
 
-/** The status line from the report: roots, groups, destroys and replacements, and refusals. */
-const COUNTS_JS =
-  'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));' +
-  'const n=(a)=>r.named.filter((x)=>a.includes(x.action)).length;' +
-  'const f=n(["refused"]);' +
-  'console.log((f?f+" failed: ":"")+r.roots.length+" roots, "+r.groups.length+" groups, "+n(["delete","replace"])+" destroys")';
-
-/** The roots (or units) a plan report planned, comma-separated, for the note's first line. */
-const PLANNED_JS = 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).roots.map((x)=>x.path).join(","))';
-
 /**
- * GitLab's plan job by default: `terragucci stage tf-plan` plans the roots the
- * change reaches, in apply order, and writes the plan report. The job posts
- * the report's note as the one plan note, and its counts as the one
- * terragucci/plan status, with the project token the job holds. GitHub and
- * Forgejo plan with planFilesScript and post from the plan-note job.
+ * The plan verb, the product plan's `command` (./product-plan.ts): one
+ * shell, run with bash, that plans the roots the change reaches and writes
+ * the plan note hand-off for chant's note job.
+ *
+ * `terragucci stage tf-plan` plans in apply order and writes the plan report
+ * (./report/store.ts), the note's data among it; `terragucci plan-handoff`
+ * writes `pr-plan-note.json` from it: the note, the counts as the
+ * terragucci/plan status's description, and the roots it covers as the
+ * note's `terragucci:plan roots=` line. The step exits as the plan did.
+ *
+ * A re-plan reads its root from CHANT_PLAN_ARGUMENT and, with no pull
+ * request event to name the target branch, its range from BASE_SHA. The
+ * head is TG_SHA when the job sets it (a pull request's plan on GitHub and
+ * Forgejo, whose checkout is the merge commit), else the commit checked out.
+ * The plan identities come from chant's trade or login before this runs,
+ * and the job's forge tokens are dropped before it, by chant.
  */
-export function planScript(binary: Binary, layers: string[][], forge: ForgeName = "gitlab", oidc?: PipelineInput["oidc"], report: PlanReportInput = {}): string {
+export function planVerbScript(binary: Binary, layers: string[][], forge: ForgeName, report: PlanReportInput = {}, options: { traded?: boolean } = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
     "--layers", sh(layers.map((l) => l.join(",")).join(";")),
     "--report-url", reportUrl(forge),
+    '${TG_ROOT:+--root "$TG_ROOT"}',
     ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
     ...(report.terragrunt ? ["--terragrunt"] : []),
     ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
@@ -1880,107 +1878,27 @@ export function planScript(binary: Binary, layers: string[][], forge: ForgeName 
     ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
     ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
   ];
-  const login = cloudLoginLines(forge, oidc, "plan", "terragucci-plan");
   return [
-    ...loginFirst(forge, login),
-    READS_EXIT,
-    forgeApi(forge),
-    ...(report.synth ? [synthScript(report.synth, "terragucci/plan")] : []),
-    ...loginInline(forge, login),
-    ...(report.terragrunt ? [report.terragrunt.prelude] : []),
-    'tg status terragucci/plan pending "planning"',
-    `terragucci stage tf-plan ${args.join(" ")}`,
-    "rc=$?",
-    `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
-    '  tg status terragucci/plan failure "the plan report was not written"',
-    "  exit 1",
-    "fi",
-    `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
-    'if [ -n "${TG_PR:-}" ]; then',
-    ...(report.description ? [`  terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
-    '  note="$(mktemp)"',
-    "  # The first line says which roots the note covers, so an apply can mark it stale.",
-    `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >"$note"`,
-    '  tg note "$note"',
-    "fi",
-    'if [ "$rc" -ne 0 ]; then tg status terragucci/plan failure "$counts"; exit 1; fi',
-    'tg status terragucci/plan success "$counts"',
-  ].join("\n");
-}
-
-/**
- * A plan job that holds no forge token: the same stage, with the note and the
- * status written into the report directory (PLAN_NOTE_FILE,
- * PLAN_STATUS_FILE), which the job keeps as its artifact. Another job that
- * runs none of the change's code posts them: on GitHub and Forgejo the
- * `plan-note` job (plan-note.ts), on GitLab with `gitlab.token: protected`
- * the comments job (plan-note-gitlab.ts). A re-plan names its root
- * (`TG_ROOT`) and reads its range from `TG_BASE`; its checkout must be the
- * head the comment's decision read. On GitHub and Forgejo the step is the
- * job's last, and when it ends its report directory goes on as the job's
- * outputs (./handover.ts).
- */
-export function planFilesScript(binary: Binary, layers: string[][], forge: ForgeName, oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, options: { tokenCheck?: string; replan?: boolean; traded?: boolean; sweep?: boolean } = {}): string {
-  const args = [
-    "--out", REPORT_DIR,
-    "--binary", binary,
-    "--layers", sh(layers.map((l) => l.join(",")).join(";")),
-    "--report-url", reportUrl(forge),
-    ...(options.replan ? ['${TG_ROOT:+--root "$TG_ROOT"}'] : []),
-    ...(report.canary?.length ? ["--canary", sh(report.canary.join(","))] : []),
-    ...(report.terragrunt ? ["--terragrunt"] : []),
-    ...(report.reports ? ["--bucket", sh(report.reports.bucket)] : []),
-    ...(report.reports?.endpoint ? ["--bucket-endpoint", sh(report.reports.endpoint)] : []),
-    ...(report.reports?.prefix ? ["--bucket-prefix", sh(report.reports.prefix)] : []),
-    ...(report.reports?.url ? ["--bucket-url", sh(report.reports.url)] : []),
-  ];
-  const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
-  // A re-plan's plan step that reads traded credentials asks for no token.
-  const login = options.traded ? [] : cloudLoginLines(forge, oidc, "plan", "terragucci-plan");
-  return [
+    "bash <<'PLAN' || exit $?",
     // Off first: every later line reads an exit code itself.
     READS_EXIT,
-    ...loginFirst(forge, login),
-    ...(options.tokenCheck ? [options.tokenCheck] : []),
-    // A re-plan that holds no token: what the change's code leaves running dies with the step.
-    ...(options.replan && options.sweep !== false ? [LEFTOVER_SWEEP] : []),
-    // On GitHub and Forgejo the step is the job's last: its report goes on as the job's outputs (./handover.ts).
-    ...(forge !== "gitlab" ? handoverTrap(REPORT_DIR, forge, options.replan && options.sweep !== false) : []),
-    ...(options.replan ? ['if [ "$(git rev-parse HEAD)" != "${TG_SHA:-}" ]; then echo "terragucci: the pull request moved while the comment was read; its push plans it" >&2; exit 0; fi'] : []),
-    // The plan identities' credentials the trade step left; this step holds no OIDC token and cannot ask for one.
-    ...(options.traded ? [`if [ -f ${TRADED_FILE} ]; then . ${TRADED_FILE}; : >${TRADED_FILE}; fi`] : []),
+    // After a login (oidc.azure) chant's step keeps the token-request variables (chant issue 5021); the change's code starts without them.
+    `unset ${OIDC_REQUEST_VARS.join(" ")}`,
+    'export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"',
+    '[ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"',
     ...(report.synth
       ? [
           "# synth in terragucci.yml: write the roots before reading them.",
-          `( set -e; ${report.synth} ) || { mkdir -p ${REPORT_DIR} && echo "failure the synth command failed" >${status}; echo "terragucci: the synth command failed" >&2; exit 1; }`,
+          `( set -e; ${report.synth} ) || { echo "terragucci: the synth command failed" >&2; exit 1; }`,
         ]
       : []),
-    ...loginInline(forge, login),
     ...(report.terragrunt ? [options.traded ? report.terragrunt.tradedPrelude ?? report.terragrunt.prelude : report.terragrunt.prelude] : []),
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
-    `if [ ! -f ${REPORT_DIR}/report.json ]; then`,
-    `  mkdir -p ${REPORT_DIR} && echo "failure the plan report was not written" >${status}`,
-    "  exit 1",
-    "fi",
-    `counts="$(node -e '${COUNTS_JS}' ${REPORT_DIR}/report.json)"`,
-    'if [ -n "${TG_PR:-}" ]; then',
-    ...(report.description ? [`  terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
-    "  # The first line says which roots the note covers, so an apply can mark it stale.",
-    `  { echo "<!-- terragucci:plan roots=$(node -e '${PLANNED_JS}' ${REPORT_DIR}/report.json) -->"; cat ${REPORT_DIR}/note.md; } >${REPORT_DIR}/${PLAN_NOTE_FILE}`,
-    "fi",
-    `if [ "$rc" -ne 0 ]; then echo "failure $counts" >${status}; exit 1; fi`,
-    `echo "success $counts" >${status}`,
+    ...(report.description ? [`[ ! -f ${REPORT_DIR}/report.json ] || terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
+    `terragucci plan-handoff --report ${REPORT_DIR} --env ${PLAN_ENV} --exit "$rc"`,
+    "PLAN",
   ].join("\n");
-}
-
-/**
- * GitLab's plan job with `gitlab.token: protected`: planFilesScript, which
- * stops first when the token reaches it anyway, since then the variable is
- * not protected and the merge request's code holds it.
- */
-export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], report: PlanReportInput = {}, tokenEnv = "GITLAB_TOKEN"): string {
-  return planFilesScript(binary, layers, "gitlab", oidc, report, { tokenCheck: gitlabTokenCheck(tokenEnv) });
 }
 
 /**
@@ -1990,9 +1908,6 @@ export function gitlabProtectedPlanScript(binary: Binary, layers: string[][], oi
  * trust, and the step runs the pull request's code.
  */
 export const OIDC_REQUEST_VARS = ["ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"] as const;
-
-/** Where a re-plan's trade step leaves the plan identities' credentials for its plan step (./oidc-trade.ts). */
-export const TRADED_FILE = '"${RUNNER_TEMP:-/tmp}/terragucci-traded.env"';
 
 /**
  * The first line of a GitHub or Forgejo step that runs the change's code:
@@ -2015,124 +1930,22 @@ export function dropForgeTokens(shell: "bash" | "sh" = "bash", oidcRequest = fal
 }
 
 /**
- * A re-plan's trade step, before the head's checkout: the job's OIDC tokens
- * for the plan identities, traded by `terragucci oidc-trade` (one run of
- * chant's trade) for those identities' own credentials, which it leaves in
- * TRADED_FILE and the file CHANT_CLOUD_TARGETS names, and deleted. The plan step starts without the
- * token-request variables and reads that file instead (planFilesScript with
- * `traded`), so the pull request's code never holds a token with the default
- * branch's subject. A failed trade writes the plan status, which the
- * replan-note job posts. A re-plan with oidc.azure has no trade step
- * (REPLAN_AZURE_WARNING).
+ * The note job's lines (the product plan's `noteSteps`) on GitHub and
+ * Forgejo, in the job that holds the token and runs none of the change's
+ * code. Before `pr-post`: the notice naming whose review does not count
+ * toward a wave's approval (`terragucci plan-note`), written to the file
+ * chant adds under the note's counts. After it, under `approval: pr-review`:
+ * `terragucci/approval` on the head, from the same report. They read the
+ * job's token as GITHUB_TOKEN, and the pull request and its head as
+ * PR_NUMBER and HEAD_SHA.
  */
-export function replanTradeScript(forge: Exclude<ForgeName, "gitlab">, oidc: PipelineInput["oidc"], credentials?: Record<string, RolePair>, reportsRole?: string): string {
-  const status = `${REPORT_DIR}/${PLAN_STATUS_FILE}`;
-  const refuse = (why: string): string => `echo ${sh(`terragucci: ${why}`)} >&2; mkdir -p ${REPORT_DIR} && echo ${sh(`failure ${why}`)} >${status}; exit 1`;
-  return [
-    ...cloudLoginLines(forge, withTerragruntToken(oidc, credentials), "plan", "terragucci-plan"),
-    // The trade reads the stage's identities by root glob from these.
-    ...rootIdentityExports(oidc, "plan"),
-    ...terragruntCredentials("plan", credentials),
-    `terragucci oidc-trade --out ${TRADED_FILE}${reportsRole ? ` --reports-role ${sh(reportsRole)}` : ""} || { ${refuse("the re-plan could not trade the job's OIDC token for the plan identities")}; }`,
-  ].join("\n");
-}
-
-/**
- * The first lines of a re-plan's plan step with oidc.azure. The azurerm
- * provider and backend take only the OIDC token itself, not keys or an access
- * token a trade could leave, so that re-plan plans as it always has: the step
- * fetches the job's token, which carries the default branch's subject that
- * the Azure apply client trusts, and runs the pull request's code beside it.
- * The log says so, and how to plan the change without it.
- */
-export const REPLAN_AZURE_WARNING = `echo ${sh(
-  "::warning::terragucci: this re-plan runs with oidc.azure, so the pull request code runs in a job that holds an OIDC token with the default branch subject, which the Azure apply client trusts. Anyone who can comment /terragucci plan can run code with that token. To plan an Azure change without it, push to the pull request instead of commenting /terragucci plan: the plan job of a push holds only the pull request subject.",
-)} >&2`;
-
-/** The exports of a stage's identities by root glob, without a token: what a re-plan's plan step reads beside the traded credentials. */
-function rootIdentityExports(oidc: OidcSettings | undefined, stage: "plan" | "apply"): string[] {
-  if (!oidc) return [];
-  return [
-    ...(hasRootRoles(oidc) ? [`export ${ROOT_ROLES_ENV}=${sh(JSON.stringify(rootRoles(oidc.roles!, stage)))}`] : []),
-    ...(oidc.gcp ? cloudRoles(ROOT_GCP_ENV, oidc.gcp.roles, stage) : []),
-  ];
-}
-
-/**
- * Kills, when a re-plan's plan step ends, every process the step started
- * that is still running: the later steps of the job hold the token-request
- * variables, which a process the change's code left behind could read from
- * their environment. Only in a container (/.dockerenv, /run/.containerenv),
- * where the processes are the job's own; the processes running when the step
- * began, and the step's shell, stay.
- */
-export const LEFTOVER_SWEEP = [
-  'tg_was=" $(cd /proc && echo [0-9]*) "',
-  "tg_sweep() {",
-  "  [ -f /.dockerenv ] || [ -f /run/.containerenv ] || return 0",
-  "  local i p k v s left",
-  "  for i in 1 2 3 4 5 6 7 8 9 10; do",
-  '    left=""',
-  "    for p in /proc/[0-9]*; do",
-  '      p="${p#/proc/}"',
-  '      [ "$p" = "$$" ] && continue',
-  '      case "$tg_was" in *" $p "*) continue ;; esac',
-  '      s=""',
-  '      while read -r k v; do [ "$k" = "State:" ] && { s="$v"; break; }; done 2>/dev/null <"/proc/$p/status"',
-  '      case "$s" in Z*|"") continue ;; esac',
-  '      kill -KILL "$p" 2>/dev/null && left=1',
-  "    done",
-  '    [ -n "$left" ] || break',
-  "  done",
-  "}",
-  "trap tg_sweep EXIT",
-].join("\n");
-
-/**
- * The re-plan's first step, before any of the change's code is checked out:
- * `terragucci comment` reads the comment and writes a decision file; the
- * shell reads four values from it (a number, a sha, a branch and a root, each
- * already checked against a pattern with no shell syntax), never the comment,
- * and hands them on as the step's outputs. On Forgejo the command reads the
- * commenter's permission from the event, since the job's token may not ask
- * the API for it. A re-plan of the whole change says it is planning.
- */
-export function replanDecideScript(layers: string[][], forge: Exclude<ForgeName, "gitlab">, agentComment?: boolean): string {
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    `terragucci comment --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${forge === "forgejo" ? " --forge forgejo" : ""}${agentComment ? " --agent on" : ""} --out terragucci-comment.json || exit 1`,
-    `read -r TG_PR TG_SHA TG_BASE TG_ROOT <<EOF`,
-    `$(node -e '${DECISION_JS}' terragucci-comment.json)`,
-    "EOF",
-    '[ -n "$TG_PR" ] || exit 0',
-    '[ "$TG_ROOT" = "-" ] && TG_ROOT=""',
-    'export TG_SHA',
-    '{ echo "go=1"; echo "pr=$TG_PR"; echo "sha=$TG_SHA"; echo "base=$TG_BASE"; echo "root=$TG_ROOT"; } >>"$GITHUB_OUTPUT"',
-    '[ -n "$TG_ROOT" ] || tg status terragucci/plan pending "planning"',
-  ].join("\n");
-}
-
-/**
- * The `plan-note` and `replan-note` jobs' script: post the plan job's note
- * and `terragucci/plan` from its report (`terragucci plan-note`), and under
- * `approval: pr-review` `terragucci/approval` from the same report.
- */
-export function planNoteScript(forge: Exclude<ForgeName, "gitlab">, options: { replan?: boolean; prReview?: boolean; agentLogin?: string } = {}): string {
-  return [
-    "set -u",
-    `terragucci plan-note --forge ${forge} --report ${REPORT_DIR} --plan-result "\${TG_PLAN_RESULT:-}"${options.replan ? ' ${TG_ROOT:+--root "$TG_ROOT"}' : ""}${options.prReview ? " --approval-status" : ""}${options.agentLogin ? ` --agent-login ${options.agentLogin}` : ""}`,
-  ].join("\n");
-}
-
-/**
- * The protected plan job's first check: with `gitlab.token: protected` the
- * forge token is a protected variable, which a merge request's pipeline never
- * sees. When the job sees it, the merge request's code can too, so the job
- * plans nothing and says why.
- */
-export function gitlabTokenCheck(tokenEnv = "GITLAB_TOKEN"): string {
-  return `if [ -n "\${${tokenEnv}:-}" ]; then echo "terragucci: ${tokenEnv} reaches this merge request's pipeline, so its code can use the token; gitlab.token is protected, so mark the variable Protected" >&2; exit 1; fi`;
+export function planNoteLines(forge: Exclude<ForgeName, "gitlab">, options: { prReview?: boolean; agentLogin?: string } = {}): { before: string[]; after: string[] } {
+  const env = 'TG_TOKEN="$GITHUB_TOKEN" TG_PR="$PR_NUMBER" TG_SHA="$HEAD_SHA"';
+  const agent = options.agentLogin ? ` --agent-login ${options.agentLogin}` : "";
+  return {
+    before: [`${env} terragucci plan-note --forge ${forge} --report ${REPORT_DIR} --notices "$CHANT_PLAN_NOTE_NOTICES"${agent} || true`],
+    after: options.prReview ? [`[ ! -f ${REPORT_DIR}/report.json ] || ${env} terragucci approval-status --forge ${forge} --report ${REPORT_DIR}${agent} || true`] : [],
+  };
 }
 
 /** The plan workflow's workflow_dispatch inputs: a pull request to re-plan, and optionally one root of it. */
@@ -2145,9 +1958,6 @@ export const REPLAN_DISPATCH = "(github.event_name == 'workflow_dispatch' && git
 /** Forgejo's concurrency group for such a dispatch: the pull request's comment group, not the default branch's, whose runs apply. */
 const DISPATCH_GROUP = `${REPLAN_DISPATCH} && format('comment-{0}', github.event.inputs.pr)`;
 
-/** Reads the decision file `terragucci comment` wrote. */
-const DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.base,d.root||"-"].join(" "):"")';
-
 /** The pipeline variable that tells the comments schedule's pipelines from drift's on GitLab. */
 export const SCHEDULE_VAR = "TERRAGUCCI_SCHEDULE";
 
@@ -2157,7 +1967,7 @@ export const SCHEDULE_VAR = "TERRAGUCCI_SCHEDULE";
  * and the plan job's overdue check asks chant for the same schedules
  * (./report/overdue.ts).
  */
-export const OTHER_SCHEDULES = ["comments", "resume", "rollouts", "ephemeral"] as const;
+export const OTHER_SCHEDULES = ["comments", "resume", "rollouts", "ephemeral", PLAN_NOTES_SCHEDULE] as const;
 
 /** The GitLab environment whose jobs see apply.merge_token_env's variable when it is scoped to it: comments and pr-merge, which run no merge request code. */
 export const MERGE_ENVIRONMENT = "terragucci-merge";
@@ -2165,14 +1975,13 @@ export const MERGE_ENVIRONMENT = "terragucci-merge";
 /**
  * The comments job's script (GitLab). `terragucci comment --poll` reads the
  * merge request notes since the last polls, answers each `/terragucci` note
- * once, and starts or retries pipelines through the API; with `--plan-notes`
- * (`gitlab.token: protected`) it first posts the plan notes from the plan
- * jobs' reports. It runs nothing itself: no plan, no apply and no cloud
- * credentials.
+ * once, and starts or retries pipelines through the API. It runs nothing
+ * itself: no plan, no apply and no cloud credentials. The plan notes are
+ * chant's plan-note job's, in the plan notes pipeline.
  */
-export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, planNotes = false, start: { agent?: boolean | "chant"; review?: boolean } = {}): string {
+export function commentsScript(layers: string[][], prApply?: { requires?: ApplyRequire[] }, start: { agent?: boolean | "chant"; review?: boolean } = {}): string {
   const requires = prApply?.requires && !APPLY_REQUIRES.every((r) => prApply.requires!.includes(r)) ? ` --requires ${prApply.requires.length ? prApply.requires.join(",") : "none"}` : "";
-  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${planNotes ? " --plan-notes" : ""}${start.agent === "chant" ? " --agent chant" : start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
+  return `terragucci comment --forge gitlab --poll --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${prApply ? ` --when pull-request${requires}` : ""}${start.agent === "chant" ? " --agent chant" : start.agent ? " --agent on" : ""}${start.review ? " --review" : ""}`;
 }
 
 /**
@@ -2611,6 +2420,37 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
   const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript() : undefined;
 
+  // The plan jobs on chant's product plan (./product-plan.ts). The plan identities are traded before the change is
+  // checked out (a re-plan's token carries the default branch's subject, which the apply identities trust); with
+  // oidc.azure, whose provider and backend take only the token, the jobs log in instead.
+  const planTradeSpec = needsToken ? planTrade(input.oidc, credentials, input.reports?.role, env, stageAudience(oidc, "plan")) : undefined;
+  const planLogin = needsToken && !planTradeSpec ? loginSpec(oidc, "plan", "terragucci-plan") : undefined;
+  const planInput: PlanJobsInput = {
+    forge,
+    image,
+    command: planVerbScript(binary, layers, forge, report, { traded: planTradeSpec !== undefined }),
+    // GitLab hands every job the project's variables, so its plan job needs only the pipeline's own.
+    env: forge === "gitlab"
+      ? definedEnv({ ...jobEnv, ...headersEnv, TG_SHA: "$CI_COMMIT_SHA", TG_BRANCH: "$CI_DEFAULT_BRANCH", TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv })
+      : definedEnv({ ...passed, TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}", ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) }),
+    ...(planTradeSpec ? { trade: planTradeSpec } : {}),
+    ...(planLogin ? { login: planLogin } : {}),
+    setup: [
+      // GitLab: a project variable named by token_env reaches every job, so the plan job drops it before any of the change's code runs.
+      ...(forge === "gitlab" ? [{ run: `unset ${[...new Set(["TG_TOKEN", "TG_MERGE_TOKEN", tokenEnv ?? "GITLAB_TOKEN"])].join(" ")}` }] : []),
+      ...(installStep ? [{ name: installName, run: installStep }] : []),
+      ...(costInstall ? [{ name: `Install Infracost ${INFRACOST_VERSION}`, run: costInstall }] : []),
+      // The plan job restores the Terragrunt cache and saves none: a save is a step after the change's code.
+      ...(tg && forge !== "gitlab" ? [{ name: "Restore the Terragrunt sources and providers cache", ...(forgeCacheRestore() as { uses: string; with: Record<string, unknown> }) }] : []),
+    ],
+    ...(tg && forge === "gitlab" ? { cache: (forgeCache("gitlab") as { cache: unknown }).cache } : {}),
+    ...(input.control ? { control: input.control } : {}),
+    // The note job asks when the drift job last ran and says so when it stopped.
+    ...(drift ? { watches: [driftWatch(drift, forge)] } : {}),
+    others: [],
+    ...(input.atlantisComments ? { atlantis: true } : {}),
+  };
+
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   // agent.comment is chant's agent job (chant#4616), in a workflow of its own.
   const chantAgent = input.agentComment && !(forge === "gitlab" && !input.comments) ? chantAgentFiles(forge, image, input.agentComment, MARKER) : undefined;
@@ -2619,9 +2459,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
     if (input.review && !input.comments) throw new RenderError(`review: ${NEEDS_COMMENTS_ON_GITLAB.review}`);
-    // With gitlab.token: protected no merge request pipeline holds the token, and the comments job posts the plan notes.
+    // With gitlab.token: protected no branch pipeline holds the token, so nothing commits formatting.
     const protectedToken = input.gitlabToken === "protected";
-    if (protectedToken && !input.comments) throw new RenderError(`gitlab.token: ${PROTECTED_TOKEN_NEEDS_COMMENTS}`);
     const jobImage = new Image({ name: image });
     const script = (main: string): string[] => (installStep ? [installStep, main] : [main]);
     // The runner evals the job's script in a pipeline under errexit, where a command that fails ends the job with 1
@@ -2640,11 +2479,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const idTokens = (stage: AudienceStage, o: LoginOidc | undefined = oidc): Record<string, unknown> => needsToken
       ? { id_tokens: loginIdTokens(o, stage === "drift" ? "plan" : stage, stage) }
       : {};
-    // A scheduled pipeline is drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
-    const scheduled = Boolean(drift || input.comments || input.resume || rollouts || ephemeral);
+    // A scheduled pipeline is the plan notes', drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
+    // The plan notes schedule (PLAN_NOTES_VAR) runs on every project, so every GitLab pipeline has a scheduled one.
+    const scheduled = true;
     // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
-    // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them.
-    const startedBy = [...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [CHANT_AGENT_PR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
+    // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them,
+    // and the plan notes pipeline, started by its schedule or by hand, where chant's plan-note job alone runs.
+    const startedBy = [PLAN_NOTES_VAR, ...(prApply ? [MR_VAR] : []), ...(input.agentComment ? [CHANT_AGENT_PR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
     const notMrApply = startedBy.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
@@ -2675,21 +2516,17 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         ? { name: CHECK_DIR, when: "always", paths: [`${CHECK_DIR}/`, ".chant/commit/finding.env"], reports: { dotenv: ".chant/commit/finding.env" } }
         : { name: CHECK_DIR, when: "always", paths: [`${CHECK_DIR}/`] },
     } as never);
-    // Plan runs a merge request's code, so it gets the read-only role, and never runs for a merge request from a fork.
-    // By default it posts its note and status with the project token, which the merge request's code can read too;
-    // with gitlab.token: protected it gets no token, and the comments job posts them from its report.
-    const { TG_TOKEN: _planToken, ...planEnv } = gitlabEnv;
-    const plan = new GitLabJob({
-      stage: "plan",
-      image: jobImage,
-      variables: { ...(protectedToken ? planEnv : gitlabEnv), TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv },
-      rules: [new Rule({ if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH' })],
-      ...idTokens("plan"),
-      ...(tg ? forgeCache("gitlab") : {}),
-      script: [...(costInstall ? [costInstall] : []), ...(input.control ? [controlCloneScript(input.control)] : []), ...script(bash("PLAN", protectedToken ? gitlabProtectedPlanScript(binary, layers, oidc, report, tokenEnv) : planScript(binary, layers, forge, oidc, report)))],
-      // The report stays with the job; its counts feed the merge request's widget.
-      artifacts: { name: REPORT_DIR, when: "always", paths: [`${REPORT_DIR}/`], reports: { terraform: `${REPORT_DIR}/gitlab-terraform.json` } },
-    } as never);
+    // Plan runs a merge request's code, so it gets the plan identities, never runs for a merge request from a fork, and
+    // drops every forge token first: chant's product plan (./product-plan.ts). Its report stays with the job, beside the
+    // terraform report the merge request's widget reads. chant's plan-note job posts the note and terragucci/plan from it
+    // in the plan notes pipeline of the default branch, which the plan notes schedule starts.
+    const chantPlan = gitlabPlanJobs(planInput);
+    // Every job names its image as the pipeline's other jobs do.
+    const plan = new GitLabJob({ ...chantPlan.plan, image: jobImage } as never);
+    // The note job runs in the plan stage: the plan notes pipeline runs no other job, so the project's stages need no new one.
+    // It posts with the project token token_env names, which chant reads as CHANT_GITLAB_TOKEN before GITLAB_TOKEN.
+    const noteVars = (chantPlan.note.variables as Record<string, string> | undefined) ?? {};
+    const planNote = new GitLabJob({ ...chantPlan.note, stage: "plan", image: jobImage, variables: { ...noteVars, ...(tokenEnv && tokenEnv !== "GITLAB_TOKEN" ? { CHANT_GITLAB_TOKEN: `$${tokenEnv}` } : {}) } } as never);
     const jobs = new Map<string, never>([["check", check as never]]);
     if (glFmt) {
       // After a check that found formatting on a branch with a merge request, chant's commit job (chant#4749) runs
@@ -2715,6 +2552,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("fmt-push", new GitLabJob(pushJob as never) as never);
     }
     jobs.set("plan", plan as never);
+    jobs.set("plan-note", planNote as never);
     for (const job of pushApplyJobs) {
       // The job after the last wave's shares runs no stage and holds no credential: it posts the one success.
       if (job.done) {
@@ -2840,7 +2678,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // terragucci#1305 and chant issues 4622 and 4753: the drift job is a chant drift Op in a file of its own, which
     // .gitlab-ci.yml includes. It keeps the drift stage's id_tokens, a Terragrunt repo's cache and the rule that picks
     // drift's schedule, so no project adds a variable to its drift schedule.
-    const driftRule = `$CI_PIPELINE_SOURCE == "schedule"${OTHER_SCHEDULES.map((v) => ` && $${SCHEDULE_VAR} != "${v}"`).join("")}`;
+    // The plan notes schedule is none of drift's, whatever its TERRAGUCCI_SCHEDULE says.
+    const driftRule = `$CI_PIPELINE_SOURCE == "schedule"${OTHER_SCHEDULES.map((v) => ` && $${SCHEDULE_VAR} != "${v}"`).join("")} && $${PLAN_NOTES_VAR} == null`;
     const glDrift = drift
       ? chantDriftFiles({
           forge,
@@ -2886,7 +2725,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
-        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, protectedToken, { agent: chantAgent ? "chant" : false, review: Boolean(input.review) }))],
+        script: [bash("COMMENTS", commentsScript(layers, prApply ? { ...(input.applyRequires ? { requires: input.applyRequires } : {}) } : undefined, { agent: chantAgent ? "chant" : false, review: Boolean(input.review) }))],
       } as never) as never);
     }
     if (input.review) {
@@ -3076,57 +2915,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       new Step({ name: "Keep the check report", if: "always()", uses: upload, with: { name: CHECK_DIR, path: `${CHECK_DIR}/`, "if-no-files-found": "ignore" } }),
     ],
   } as never);
-  // With a drift schedule the plan note says when the schedule has stopped, from the drift job's runs.
-  const driftRead = drift && forge === "github" ? { actions: "read" } : {};
-  // Plan runs a pull request's code, so it gets the read-only role, and never
-  // runs for a fork, whose pull requests carry no token and no OIDC. It holds
-  // no forge token while that code runs: it posts the pending status before
-  // the checkout, writes the note and the status into its report, and the
-  // plan-note job posts them. The plan step is the job's last: the plan-note job keeps the report it hands on,
-  // and the job restores the Terragrunt cache and saves none, since a save is a step after it.
-  const plan = new Job({
-    "runs-on": "ubuntu-latest",
-    container: { image },
-    if: `github.event_name == 'pull_request' && ${sameRepo}`,
-    permissions: { contents: "read", statuses: "write", ...(needsToken ? { "id-token": "write" } : {}) },
-    ...openid(needsToken),
-    env: {
-      ...passed,
-      TG_SHA: "${{ github.event.pull_request.head.sha }}",
-      TG_PR: "${{ github.event.pull_request.number }}",
-      ...headersEnv,
-      ...decideEnv,
-      ...costEnv,
-      ...reportKeyEnv(forge, input.reports),
-    },
-    outputs: handoverOutputs("plan", forge),
-    steps: [
-      new Step({ name: "Say on the head that the plan started", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: [forgeApi(forge), 'tg status terragucci/plan pending "planning"'].join("\n") }),
-      bareCheckout(true),
-      ...(input.control ? controlReadSteps(input.control, forge) : []),
-      ...toolSteps(true, true, undefined, true),
-      new Step({ id: "plan", name: `Plan the ${what}s the change reaches and write the plan report`, shell: "bash", run: `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report)}` }),
-    ],
-  } as never);
-  // The note job of a plan: a fresh container that checks nothing out and runs none of the change's code. It takes the
-  // report from the plan job's outputs, keeps it as the run's artifact (Forgejo's artifact store speaks the v3 protocol),
-  // reads the note and the status from it as data, and posts them with the job's token.
-  const noteJob = (needs: string, cond: string, artifact: string, env: Record<string, string>, replan: boolean): InstanceType<typeof Job> =>
-    new Job({
-      "runs-on": "ubuntu-latest",
-      container: { image },
-      needs,
-      if: `always() && (needs.${needs}.result == 'success' || needs.${needs}.result == 'failure') && ${cond}`,
-      permissions: { statuses: "write", "pull-requests": "write", ...driftRead },
-      env: { TG_TOKEN: "${{ github.token }}", TG_PLAN_RESULT: `\${{ needs.${needs}.result }}`, ...env },
-      steps: [
-        new Step({ name: "Take the plan report from the plan job", shell: "bash", run: takeOverScript(needs, REPORT_DIR, forge) }),
-        new Step({ name: "Keep the plan report", if: "always()", uses: upload, with: { name: artifact, path: `${REPORT_DIR}/`, "if-no-files-found": "ignore" } }),
-        // The post runs whatever the steps before it did: a plan job that failed before its report still fails terragucci/plan.
-        new Step({ name: "Post the plan note and terragucci/plan", if: "always()", shell: "bash", run: planNoteScript(forge, { replan, prReview, ...(agentLogin ? { agentLogin } : {}) }) }),
-      ],
-    } as never);
-  const planNote = noteJob("plan", `github.event_name == 'pull_request' && ${sameRepo}`, REPORT_DIR, { TG_SHA: "${{ github.event.pull_request.head.sha }}", TG_PR: "${{ github.event.pull_request.number }}" }, false);
   // A comment's first words, as the jobs' conditions test them; with atlantis_comments, `atlantis plan` and `atlantis apply` start the same jobs.
   const says = (p: string): string => `startsWith(github.event.comment.body, '${p}')`;
   const atlantis = input.atlantisComments === true;
@@ -3140,58 +2928,28 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     : atlantis ? `(${applySays})` : applySays;
   // With locks: plan and apply.when: merge, `/terragucci lock` and `/terragucci unlock` are the pr-lock job's.
   const LOCK_COMMENT = `(${says(comment.lock)} || ${says(comment.unlock)})`;
-  const lockElsewhere = locksPlan && !prApply ? ` && !${LOCK_COMMENT}` : "";
-  // A comment re-plans a pull request of this repository for someone who can write to it. The comment is
-  // never an expression in the script: the command reads it from the event file (comment.ts). The decision
-  // step holds the job's token and runs before the change is checked out; the plan step holds none, and the
-  // replan-note job posts the note.
-  const go = "steps.decide.outputs.go == '1'";
-  const azureReplan = Boolean(oidc?.azure);
-  const trades = needsToken && !azureReplan;
-  const replanEnv = { ...passed, ...headersEnv, ...decideEnv, ...costEnv, ...reportKeyEnv(forge, input.reports) };
-  const replan = new Job({
-    "runs-on": "ubuntu-latest",
-    container: { image },
-    if: `(github.event_name == 'issue_comment' && ${atlantis ? `(${says(comment.prefix)} || ${says(comment.alias.plan)})` : says(comment.prefix)} && !${APPLY_COMMENT}${lockElsewhere}${input.agentComment ? ` && !${AGENT_COMMENT_IF}` : ""}${actionFlow ? ` && !${says(ACTION_COMMENT)}` : ""}) || ${REPLAN_DISPATCH}`,
-    permissions: { contents: "read", statuses: "write", "pull-requests": "write", ...(needsToken ? { "id-token": "write" } : {}) },
-    ...openid(needsToken),
-    concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false },
-    ...(Object.keys(replanEnv).length ? { env: replanEnv } : {}),
-    outputs: { go: "${{ steps.decide.outputs.go }}", pr: "${{ steps.decide.outputs.pr }}", sha: "${{ steps.decide.outputs.sha }}", root: "${{ steps.decide.outputs.root }}", ...handoverOutputs("plan", forge) },
-    steps: [
-      bareCheckout(false, undefined, undefined, "Check out the workflow's commit"),
-      new Step({ id: "decide", name: "Read the comment and decide whether it re-plans", shell: "bash", env: { TG_TOKEN: "${{ github.token }}" }, run: replanDecideScript(layers, forge, input.agentComment !== undefined) }),
-      // The job's OIDC token carries the default branch's subject, which the apply identities trust. It is traded here,
-      // before the head is checked out, with chant's trade (./oidc-trade.ts), for the plan identities' credentials, and
-      // deleted; the plan step starts without the variables that ask for one. With oidc.azure, whose provider and
-      // backend take only the token, the plan step holds the token as before and its log says so (REPLAN_AZURE_WARNING).
-      ...(trades ? [new Step({ if: go, name: "Trade the job's OIDC token for the plan identities", shell: "bash", run: replanTradeScript(forge, oidc, credentials, input.reports?.role) })] : []),
-      // The head comes from the pull request, by number; the base branch comes with the history, for the range.
-      bareCheckout(true, "refs/pull/${{ steps.decide.outputs.pr }}/head", go, "Check out the pull request's head"),
-      ...(input.control ? controlReadSteps(input.control, forge, go) : []),
-      ...toolSteps(true, true, go, true),
-      new Step({
-        if: go,
-        id: "plan",
-        name: "Re-plan the pull request on request and write the plan report",
-        shell: "bash",
-        env: { TG_PR: "${{ steps.decide.outputs.pr }}", TG_SHA: "${{ steps.decide.outputs.sha }}", TG_ROOT: "${{ steps.decide.outputs.root }}", TG_BASE: "origin/${{ steps.decide.outputs.base }}" },
-        run: azureReplan
-          ? `${dropForgeTokens()}\n${REPLAN_AZURE_WARNING}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, sweep: false })}`
-          : `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: trades })}`,
-      }),
-      // The re-plan's step is the job's last, and the replan-note job keeps the report.
-    ],
-  } as never);
-  const replanNote = noteJob("replan", "needs.replan.outputs.go == '1'", `${REPORT_DIR}-replan`, { TG_PR: "${{ needs.replan.outputs.pr }}", TG_SHA: "${{ needs.replan.outputs.sha }}", TG_ROOT: "${{ needs.replan.outputs.root }}" }, true);
+  // The plan, plan-note, replan and replan-note jobs are chant's product plan (./product-plan.ts), under terragucci's names.
+  // The plan job runs a pull request's code: it gets the plan identities, never runs for a fork, and holds no forge token
+  // while that code runs. A comment (or a dispatch) re-plans a pull request of this repository for someone who can write
+  // to it; chant's re-plan job leaves the comments terragucci's other jobs answer alone, and replies to any other.
+  const others = [
+    comment.apply,
+    ...(locksPlan || prApply ? [comment.lock, comment.unlock] : []),
+    ...(input.agentComment ? [`${comment.prefix} agent`] : []),
+    ...(actionFlow ? [ACTION_COMMENT.trimEnd()] : []),
+  ];
+  const planJobs = githubPlanJobs({ ...planInput, others, noteSteps: planNoteLines(forge, { prReview, ...(agentLogin ? { agentLogin } : {}) }) }).map(([name, job]): [string, never] => {
+    // Forgejo serves a job an OIDC token only with enable-openid-connect, which its dialect does not add from id-token: write.
+    const oidcJob = forge === "forgejo" && (job.permissions as Record<string, string> | undefined)?.["id-token"] === "write" ? { "enable-openid-connect": true } : {};
+    // One re-plan at a time per pull request; a later comment waits for the one before.
+    const queued = name === "replan" ? { concurrency: { group: "terragucci-replan-${{ github.repository }}-${{ github.event.issue.number || github.event.inputs.pr }}", "cancel-in-progress": false } } : {};
+    return [name, new Job({ ...job, ...oidcJob, ...queued } as never) as never];
+  });
   const entities = new Map<string, never>([
     ["workflow", workflow as never],
     ["check", check as never],
     ["check-report", checkReport as never],
-    ["plan", plan as never],
-    ["plan-note", planNote as never],
-    ["replan", replan as never],
-    ["replan-note", replanNote as never],
+    ...planJobs,
   ]);
   // After a check that found formatting, chant's commit job (chant#4749) runs `terragucci fmt` and commits what changed to
   // the pull request's branch: the commit job holds no token that pushes, and the push job pushes with the job's own

@@ -25,16 +25,13 @@ import { CHANT_DRIFT_PATHS } from "../render-chant-drift";
 /** The name the drift job goes by in chant's verdict and the report. */
 export const DRIFT_OP = "tf-drift";
 
-/** What a plan job with no forge token leaves for the note job: the cron and the pipeline file's first commit. */
-export const DRIFT_SCHEDULE_FILE = "drift-schedule.json";
-
 /** Ask the forge when the drift job last ran, from `workflow` on GitHub and Forgejo (the pipeline's by default). Throws when the forge will not say. */
 export async function driftRuns(fetch: Fetch, t: ForgeTarget, workflow: string = PIPELINE_PATHS[t.kind]): Promise<ScheduledRuns> {
-  return forgeClient(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()!, schedule: DRIFT_SCHEDULE });
+  return forgeClient(t, fetch).scheduledRuns!({ op: DRIFT_OP, workflow: workflow.split("/").pop()!, schedule: driftSchedule() });
 }
 
-/** GitLab: the drift job's schedule selector, every schedule whose TERRAGUCCI_SCHEDULE names none of terragucci's others. */
-const DRIFT_SCHEDULE = { variable: SCHEDULE_VAR, not: OTHER_SCHEDULES };
+/** GitLab: the drift job's schedule selector, every schedule whose TERRAGUCCI_SCHEDULE names none of terragucci's others. A function, since ../render.ts reads this file while it loads. */
+const driftSchedule = (): { variable: string; not: readonly string[] } => ({ variable: SCHEDULE_VAR, not: OTHER_SCHEDULES });
 
 /**
  * The drift job's watch for chant's check: the files it runs in, chant's
@@ -42,7 +39,7 @@ const DRIFT_SCHEDULE = { variable: SCHEDULE_VAR, not: OTHER_SCHEDULES };
  * Forgejo repo with oidc keeps it; on GitLab, the schedule selector.
  */
 export function driftWatch(cron: string, forge: ForgeName): ScheduledWatch {
-  return { op: DRIFT_OP, cron, files: [CHANT_DRIFT_PATHS[forge], PIPELINE_PATHS[forge]], ...(forge === "gitlab" ? { schedule: DRIFT_SCHEDULE } : {}) };
+  return { op: DRIFT_OP, cron, files: [CHANT_DRIFT_PATHS[forge], PIPELINE_PATHS[forge]], ...(forge === "gitlab" ? { schedule: driftSchedule() } : {}) };
 }
 
 /**
