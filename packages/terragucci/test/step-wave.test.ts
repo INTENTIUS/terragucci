@@ -148,7 +148,7 @@ describe("a wave on chant's step (terragucci#1303)", () => {
     expect(spec.waves[0]!.runs[0]!.input).toBeUndefined();
     // approval pr-review is chant's mode on the step, and who counts is chant's (chant#4859).
     expect(spec.waves.map((w) => w.approval)).toEqual(["pr-review", "pr-review"]);
-    expect(spec.approvals).toEqual({ spend: true, reviewLedger: "tf-apply", involved: { agents: ["bot"], exclude: true } });
+    expect(spec.approvals).toEqual({ spend: true, remainder: true, spendStanding: true, reviewLedger: "tf-apply", involved: { agents: ["bot"], exclude: true } });
   });
 
   it("runs ci.hooks around init, plan and apply, as terragucci's own plan did, and a failed hook stops the wave before anything applies", async () => {

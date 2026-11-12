@@ -104,3 +104,34 @@ describe("terragucci post sent", () => {
     expect(await statusSent("terragucci/control", { forge: "github", env: GH, fetch: broken })).toBe(false);
   });
 });
+
+describe("terragucci post in chant's control step (sentCheck, markSent)", () => {
+  // The step has the job's token as GITHUB_TOKEN and the commit as CHANT_CONTROL_SHA, and no TG_TOKEN or TG_SHA.
+  const CONTROL = "b".repeat(40);
+  const STEP = { GITHUB_TOKEN: "job", CHANT_CONTROL_SHA: CONTROL, GITHUB_SHA: "c".repeat(40), GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: "http://api", GITHUB_SERVER_URL: "http://forge", GITHUB_RUN_ID: "5" };
+
+  it("posts the status on CHANT_CONTROL_SHA with GITHUB_TOKEN", async () => {
+    const seen: (string | undefined)[] = [];
+    const f = forge();
+    const fetch: Fetch = (url, init) => (seen.push(init?.headers?.authorization ?? init?.headers?.Authorization), f.fetch(url, init));
+    expect(await forgePost("status", ["terragucci/control", "success", "told o/c"], { forge: "github", env: STEP, fetch })).toBeUndefined();
+    expect(f.calls.map((c) => c.url)).toEqual([`http://api/repos/o/r/statuses/${CONTROL}`]);
+    expect(seen[0]).toContain("job");
+  });
+
+  it("asks whether CHANT_CONTROL_SHA was told already with GITHUB_TOKEN, on Forgejo too", async () => {
+    const f = forge(() => [{ context: "terragucci/control", state: "success" }]);
+    expect(await statusSent("terragucci/control", { forge: "forgejo", env: STEP, fetch: f.fetch })).toBe(true);
+    expect(f.calls[0]!.url).toContain(`/commits/${CONTROL}/statuses`);
+  });
+
+  it("takes TG_TOKEN and TG_SHA first where a job still passes them, and posts nothing with no token at all", async () => {
+    const f = forge();
+    await forgePost("status", ["terragucci/apply", "success", "x"], { forge: "github", env: { ...STEP, TG_TOKEN: "t", TG_SHA: SHA }, fetch: f.fetch });
+    expect(f.calls[0]!.url).toBe(`http://api/repos/o/r/statuses/${SHA}`);
+    const none = forge();
+    expect(await forgePost("status", ["terragucci/control", "success", "x"], { forge: "github", env: { ...STEP, GITHUB_TOKEN: "" }, fetch: none.fetch })).toBe("terragucci: no forge token, so no status");
+    expect(await statusSent("terragucci/control", { forge: "github", env: { ...STEP, GITHUB_TOKEN: "" }, fetch: none.fetch })).toBe(false);
+    expect(none.calls).toEqual([]);
+  });
+});

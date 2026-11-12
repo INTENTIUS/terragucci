@@ -27,7 +27,7 @@ import { join } from "node:path";
 import { send, telemetryFromEnv, Trace, tracesBody, type OtlpFetch } from "./telemetry";
 import type { Actor } from "./actor";
 import { AGENT_RUNS_FILE } from "./report/audit";
-import type { Fetch } from "./forge";
+import { jobToken, type Fetch } from "./forge";
 import { apiBase, tokenUser } from "./involved";
 import { agentRunRecordInput } from "@intentius/chant/ci-agent";
 import { pushLifecycleReport } from "@intentius/chant/lifecycle/git";
@@ -284,7 +284,7 @@ export async function recordPushOutcome(o: { feature: AgentFeature; cwd: string;
  */
 export async function recordOutcome(o: { feature: AgentFeature; cwd: string; change: string; forge: "github" | "forgejo" | "gitlab"; env: NodeJS.ProcessEnv; result: AgentRunRecord["result"]; requestedBy?: string; reason: string; commit?: string; pullRequest?: string }, deps: RecordDeps & { fetchForge?: Fetch } = {}): Promise<AgentRunRecord> {
   const named = o.env.TG_AGENT_ACTOR?.trim();
-  const login = named || (await tokenUser({ which: "the agent's token", forge: o.forge, api: apiBase(o.forge, o.env), token: o.env.TG_TOKEN, ...(deps.fetchForge ? { fetch: deps.fetchForge } : {}) })).login;
+  const login = named || (await tokenUser({ which: "the agent's token", forge: o.forge, api: apiBase(o.forge, o.env), token: jobToken(o.forge, o.env), ...(deps.fetchForge ? { fetch: deps.fetchForge } : {}) })).login;
   return recordAgentRun(
     o.cwd,
     {

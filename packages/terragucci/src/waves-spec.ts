@@ -18,6 +18,15 @@
  * `input`). Wave 1 always carries the state migration hooks; they look for
  * migrations in the checkout and do nothing when there are none, since a
  * migration comes with the change and the spec is read at base.
+ *
+ * The job's own render at the applied commit (chant's `renderSpec:
+ * { runsAtHead: true }`, chant issue 5046) also gets `CHANT_WAVES_SPEC_BASE`,
+ * the base commit. With it the runs are what the change base..AT reaches,
+ * as `stage tf-apply` works them out: with `waves.compose` on, the roots it
+ * reaches run as one composed run in the earliest wave they are in
+ * (`together`), and a root a pending estate migration plans is left out of
+ * its wave until the migration applies. The rules still come from chant's
+ * render at base, which gets no such variable.
  */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -26,7 +35,9 @@ import type { GateQuorumRule } from "@intentius/chant/gate-decision";
 import { atmosStateReads as terraformAtmosReads } from "@intentius/chant-lexicon-terraform/state-reads";
 import { approvalRule } from "./approval";
 import { atmosEdges } from "./atmos";
-import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpecText } from "./chant-waves";
+import { WAVES_APPROVALS, WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpecText } from "./chant-waves";
+import { isComposeTarget, stepWavesWithRun, type Composition } from "./compose";
+import type { WaveMember } from "@intentius/chant/gated-waves";
 import { ConfigError, LEDGER_PROVES_NOBODY, normalizeGate, resolveRepo, type Gate } from "./config";
 import { anyRootGate, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import type { Fetch } from "./forge";
@@ -34,16 +45,22 @@ import { AGENT_NOT_EXCLUDED, tokenUsers } from "./involved";
 import { resumeCron } from "./render";
 import { configAtBase } from "./report/policy";
 import { forgeOfEnv, rootsParallelism } from "./report/stage";
-import { branchLayers } from "./apply";
+import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
 import { rootWorkspace } from "./workspace";
 
 /** The variables chant hands the command (chant's `OP_WAVES_SPEC_AT_ENV` and `OP_WAVES_SPEC_FILE_ENV`). */
 export const SPEC_AT_ENV = "CHANT_WAVES_SPEC_AT";
 export const SPEC_FILE_ENV = "CHANT_WAVES_SPEC_FILE";
+/** chant's `OP_WAVES_SPEC_BASE_ENV` (chant issue 5046): set only in the job's own render at the applied commit, to the base commit. */
+export const SPEC_BASE_ENV = "CHANT_WAVES_SPEC_BASE";
+/** chant's `OP_WAVES_SPEC_RUNS_ENV`: `head` on a job whose spec's runs come from the applied commit. */
+export const SPEC_RUNS_ENV = "CHANT_WAVES_SPEC_RUNS";
 
 export interface WavesSpecAtOptions {
   /** The commit to read the spec at. */
   at: string;
+  /** The base commit of the change `at` applies (`CHANT_WAVES_SPEC_BASE`): the runs are then what the change reaches. */
+  base?: string;
   /** The spec file's path in the repo. Default: `.chant/op-waves/tf-apply.spec.json`. */
   specFile?: string;
   /** The config file, as `--config` names it. */
@@ -68,6 +85,22 @@ function jobBranch(env: NodeJS.ProcessEnv): string | undefined {
  * cannot be read, so the job fails rather than run without its rules.
  */
 export async function wavesSpecAt(repo: string, o: WavesSpecAtOptions): Promise<OpWavesSpec | undefined> {
+  return (await wavesSpecReach(repo, o))?.spec;
+}
+
+/** The spec at `o.at` and, with `o.base`, what the change reaches, which a `terragucci run wave` job hands its wave (runWaveJob). */
+export interface WavesSpecReach {
+  spec: OpWavesSpec;
+  /** `waves.compose`: the composed run the change comes to, when it composes. */
+  composition?: Composition;
+  /** By wave number: the roots a pending estate migration plans, as the digest members that stand for them. */
+  migrationMembers: Map<number, WaveMember[]>;
+  /** The waves with nothing of their own to apply: every root is in an earlier wave's composed run, or planned by a migration. */
+  nothing: Map<number, string>;
+}
+
+/** {@link wavesSpecAt}, with what the change reaches. */
+export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promise<WavesSpecReach | undefined> {
   const env = o.env ?? process.env;
   const log = o.log ?? ((l: string) => console.error(l));
   const file = (o.specFile ?? WAVES_SPEC).replace(/^\.\//, "");
@@ -103,6 +136,32 @@ export async function wavesSpecAt(repo: string, o: WavesSpecAtOptions): Promise<
     layers = cut.layers;
   }
 
+  // CHANT_WAVES_SPEC_BASE (chant issue 5046): the job's own render at the applied commit, whose runs are what the change base..at reaches.
+  let composition: Composition | undefined;
+  let together: number | undefined;
+  const migrationMembers = new Map<number, WaveMember[]>();
+  const nothing = new Map<number, string>();
+  if (o.base && !shape.waves.some((w) => w.discover)) {
+    if (settings.waves?.compose === true) {
+      // One apply job per identity: a composed run takes roots of one group only.
+      const groups: Record<string, string[]> = {};
+      for (const g of shape.waves.flatMap((w) => w.jobs ?? [])) groups[g.name] = [...(groups[g.name] ?? []), ...(g.runs ?? [])];
+      composition = await changeComposition(repo, { layers, base: o.base, ...(o.config ? { config: o.config } : {}), env, ...(Object.keys(groups).length ? { groups } : {}) });
+      const c = stepComposition(composition);
+      if (c) {
+        layers.forEach((roots, i) => {
+          if (i + 1 !== c.wave && roots.length > 0 && roots.every((r) => c.roots.includes(r))) nothing.set(i + 1, `its roots apply in the composed run in wave ${c.wave}`);
+        });
+        layers = stepWavesWithRun(layers, c);
+        together = c.wave;
+      }
+    }
+    const out = migrationRunsOut(repo, layers, new Set(), log);
+    layers = out.listed;
+    for (const [k, members] of out.members) migrationMembers.set(k, members);
+    for (const k of out.emptied) if (!nothing.has(k)) nothing.set(k, "every root in it is planned by its estate migration");
+  }
+
   // The agent's account never approves. With agent.token_env and no agent.login, its login is the one its token acts as.
   let agent = rule.agentLogin;
   if (!agent && rule.agentTokenEnv) {
@@ -111,9 +170,10 @@ export async function wavesSpecAt(repo: string, o: WavesSpecAtOptions): Promise<
     if (!agent) log(`terragucci waves-spec: ${AGENT_NOT_EXCLUDED}`);
   }
   const quorum: GateQuorumRule[] | undefined = rule.approvalRules?.length && !rule.point ? rule.approvalRules : undefined;
-  const approvals = rule.point ? { spend: true } : { spend: true, reviewLedger: WAVES_OP, involved: { ...(agent ? { agents: [agent] } : {}), exclude: true as const }, ...(quorum ? { quorum } : {}) };
+  // chant's spend rules (chant issue 5047), with who counts at the gate.
+  const approvals = rule.point ? { ...WAVES_APPROVALS } : { ...WAVES_APPROVALS, reviewLedger: WAVES_OP, involved: { ...(agent ? { agents: [agent] } : {}), exclude: true as const }, ...(quorum ? { quorum } : {}) };
 
-  const all = layers.flat();
+  const all = layers.flat().filter((r) => !isComposeTarget(r));
   const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(join(repo, r)); return w ? [[r, w]] : []; }));
   const reads = Object.fromEntries(all.flatMap((r) => {
     const list = terraformAtmosReads(atmosEdges(join(repo, r)), (u) => u, (u) => { const w = rootWorkspace(join(repo, u)); return { dir: u, ...(w ? { workspace: w } : {}) }; });
@@ -137,13 +197,15 @@ export async function wavesSpecAt(repo: string, o: WavesSpecAtOptions): Promise<
       runs,
       gate,
       approval: rule.mode === "sealed" ? "sealed" : rule.mode === "pr-review" ? "pr-review" : "ledger",
+      // The composed run's roots plan and apply together (chant#4848).
+      ...(together === i + 1 ? { together: true } : {}),
       ...(i === 0 ? { hooks: { before: { plan: [hook("migrations", "migrate-check"), hook("migration gate", "migrate", "approve")] } } } : {}),
     } as OpWave;
   });
   const parallel = terragrunt ? undefined : rootsParallelism(repo, all, settings, env);
   const notify = settings.notify;
   const { point: _point, parallelism: _parallelism, branches: _branches, resume: _resume, notify: _notify, ...top } = shape as OpWavesSpec & { parallelism?: number };
-  return {
+  const spec = {
     ...top,
     name: WAVES_OP,
     op: WAVES_OP,
@@ -171,14 +233,28 @@ export async function wavesSpecAt(repo: string, o: WavesSpecAtOptions): Promise<
     hooks: { after: { gate: [hook("report", "gate")] } },
     waves,
   } as OpWavesSpec;
+  return { spec, ...(composition ? { composition } : {}), migrationMembers, nothing };
 }
 
-/** `terragucci waves-spec`: print the spec at `CHANT_WAVES_SPEC_AT` (or `--at`, default HEAD), or nothing. */
-export async function printWavesSpec(repo: string, o: { at?: string; specFile?: string; config?: string; env?: NodeJS.ProcessEnv; fetch?: Fetch; out?: (text: string) => void }): Promise<number> {
+/**
+ * `terragucci waves-spec`: print the spec at `CHANT_WAVES_SPEC_AT` (or
+ * `--at`, default HEAD), or nothing. With `CHANT_WAVES_SPEC_BASE` the runs
+ * are what the change from that commit reaches. stdout
+ * carries the spec alone: every line the render logs goes to stderr.
+ */
+export async function printWavesSpec(repo: string, o: { at?: string; base?: string; specFile?: string; config?: string; env?: NodeJS.ProcessEnv; fetch?: Fetch; out?: (text: string) => void }): Promise<number> {
   const env = o.env ?? process.env;
   const at = o.at ?? env[SPEC_AT_ENV] ?? "HEAD";
+  const base = o.base ?? (env[SPEC_BASE_ENV] || undefined);
   const specFile = o.specFile ?? env[SPEC_FILE_ENV] ?? WAVES_SPEC;
-  const spec = await wavesSpecAt(repo, { at, specFile, ...(o.config ? { config: o.config } : {}), env, ...(o.fetch ? { fetch: o.fetch } : {}) });
+  const said = console.log;
+  console.log = (...args: unknown[]) => console.error(...args);
+  let spec: OpWavesSpec | undefined;
+  try {
+    spec = await wavesSpecAt(repo, { at, specFile, ...(base ? { base } : {}), ...(o.config ? { config: o.config } : {}), env, ...(o.fetch ? { fetch: o.fetch } : {}) });
+  } finally {
+    console.log = said;
+  }
   if (spec) (o.out ?? ((t: string) => process.stdout.write(t)))(wavesSpecText(spec));
   else console.error(`terragucci waves-spec: ${specFile} is not committed at ${at}, so there is no spec there`);
   return 0;

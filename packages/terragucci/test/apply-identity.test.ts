@@ -168,7 +168,7 @@ describe("a wave behind its gate", () => {
       const { work, origin, bin, log } = setup({ "terragucci.yml": "approval: pr-review\n" });
       const head = "a".repeat(40);
       const merge = "b".repeat(40);
-      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t", TG_SHA: merge };
+      const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t", GITHUB_SHA: merge };
       const forge = (reviews: unknown[], digest: string | null): Fetch => async (url) => {
         const path = url.replace("https://api.test/", "").split("?")[0];
         const body: Record<string, unknown> = {

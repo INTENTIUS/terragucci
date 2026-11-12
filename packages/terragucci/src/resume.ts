@@ -34,9 +34,10 @@
  * it up.
  *
  * A wave whose apply under an approval was killed before it finished plans
- * again and applies the rest under that approval (./remainder.ts). Only a
- * wave of roots that apply per resource (choudoufu) records what it needs for
- * that; a failed apply is left to a re-run.
+ * again and, at the same commit, applies the rest under that approval
+ * (chant's `approvals.remainder`, chant issue 5047). Only a wave of roots
+ * that apply per resource (choudoufu) has its changes on chant's applied
+ * line; a failed apply is left to a re-run.
  *
  * A state migration (./migrate.ts) waits inside wave 1, on a gate of its own
  * in `_gates/tf-migrate.jsonl`. An approved migration resumes as wave 1 does:

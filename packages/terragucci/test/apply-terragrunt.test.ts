@@ -123,7 +123,7 @@ describe("a Terragrunt wave behind its gate", () => {
       const body = url.endsWith(`/commits/${sha}/pull`) || url.endsWith("/pulls/9") ? { number: 9, head: { sha: head } } : url.includes("/issues/9/comments") ? [{ id: 1, body: note }] : null;
       return { ok: body !== null, status: body === null ? 404 : 200, json: async () => body, text: async () => JSON.stringify(body) };
     }) as never;
-    const env = { GITHUB_REPOSITORY: "acme/live", GITHUB_SERVER_URL: "https://forgejo.example", TG_TOKEN: "t", TG_SHA: sha, FORGEJO_ACTIONS: "true" };
+    const env = { GITHUB_REPOSITORY: "acme/live", GITHUB_SERVER_URL: "https://forgejo.example", TG_TOKEN: "t", GITHUB_SHA: sha, FORGEJO_ACTIONS: "true" };
     expect(await applyWave(work, { ...opts(tg), env, fetch, wave: 2, now: T(2) })).toBe(3);
     const said = out.mock.calls.flat().join("\n");
     const diff = "wave 2 of 2:   live/b: terraform_data.x (create): input differs from the preview";

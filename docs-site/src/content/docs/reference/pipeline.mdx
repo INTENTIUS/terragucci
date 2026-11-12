@@ -48,7 +48,7 @@ GitHub and Forgejo schedule it as the cron `*/<apply.resume>`: `60` runs hourly,
 
 ## Stopped applies
 
-A gated wave whose approved apply was killed or failed plans again when it next runs. Under [choudoufu](/terragucci/concepts/glossary/#choudoufu), every resource whose apply returned already has its record, so the plan holds only the rest. The wave applies it under the same approval when each change is one the approval covered, unchanged, and every other approved change is done in the records. Otherwise it waits for an approval of the plans it makes. choudoufu's apply still re-reads each resource before it writes.
+A gated wave whose approved apply was killed or failed plans again when it next runs. Under [choudoufu](/terragucci/concepts/glossary/#choudoufu), every resource whose apply returned already has its record, so the plan holds only the rest. chant records each change on the line that spends the approval, and how the apply ended. The wave applies the rest under the same approval when it runs again at the commit the stopped apply ran at and each change it plans is one the approval covered, unchanged. At another commit, or when a change moved, it waits for an approval of the plans it makes. choudoufu's apply still re-reads each resource before it writes.
 
 The resume job applies the rest of a killed apply once the run that applied is gone: on GitLab `chant run resume` retries the job that applied. A failed apply resumes when its job runs again. With stock OpenTofu or Terraform, a plan that differs from the approved one needs its own approval.
 

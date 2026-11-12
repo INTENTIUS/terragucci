@@ -1,12 +1,15 @@
 /**
  * `terragucci post status|reply|stale`: what the generated pipeline's
  * jobs say on the forge, posted through chant's forge client
- * (`@intentius/chant/pr-forge`) with the job's TG_TOKEN. The pipeline's `tg`
- * shell function (render.ts forgeApi) calls it. The words are the
- * pipeline's; the forge calls are chant's.
+ * (`@intentius/chant/pr-forge`) with the job's token: `TG_TOKEN` where the
+ * job passes it, else the forge's own (`GITHUB_TOKEN`; on GitLab
+ * `GITLAB_TOKEN`, then `CHANT_FORGE_TOKEN`). The pipeline's `tg` shell
+ * function (render.ts forgeApi) and chant's control step (`sentCheck`,
+ * `markSent`) call it. The words are the pipeline's; the forge calls are
+ * chant's.
  *
  * - `status <context> pending|success|failure <description>`: a commit
- *   status on TG_SHA, linked to the run. On GitLab a status on the job's own
+ *   status on the job's commit (postCommit), linked to the run. On GitLab a status on the job's own
  *   commit names the job's pipeline: without it GitLab files the status
  *   under the newest pipeline of that commit, which may be another one.
  * - `reply <text>`: a new comment on TG_PR, `terragucci: <text>`.
@@ -19,27 +22,36 @@
  */
 import type { PrForge } from "@intentius/chant/pr-forge";
 import { ConfigError, type ForgeName } from "./config";
-import { commitStatuses, poster, type Fetch } from "./forge";
+import { commitStatuses, jobToken, poster, type Fetch } from "./forge";
 import { PLAN_MARK } from "./plan-note-gitlab";
 
 export const POST_COMMANDS = ["status", "reply", "stale"] as const;
 export type PostCommand = (typeof POST_COMMANDS)[number];
 
 /**
- * `terragucci post sent <context>`: whether TG_SHA already carries a successful status of that context, as `1` or `0`.
+ * `terragucci post sent <context>`: whether the job's commit (postCommit) already carries a successful status of that context, as `1` or `0`.
  * The control dispatch uses it to send once per commit whichever path completed the apply. A read that fails answers
  * `0`: a dispatch twice is better than none.
  */
 export async function statusSent(context: string, o: PostOptions): Promise<boolean> {
   const env = o.env ?? process.env;
-  const sha = (env.TG_SHA ?? "").trim();
-  if (!env.TG_TOKEN || !/^[0-9a-f]{7,64}$/.test(sha) || o.forge === "gitlab") return false;
+  const sha = postCommit(env);
+  if (!jobToken(o.forge, env) || !/^[0-9a-f]{7,64}$/.test(sha) || o.forge === "gitlab") return false;
   try {
     // chant's forge client reads each context's newest status (chant#4554).
     return (await commitStatuses(poster(o.forge, env, o.fetch), sha)).some((s) => s.context === context && s.state === "success");
   } catch {
     return false;
   }
+}
+
+/**
+ * The commit a post is about: `TG_SHA` where a job terragucci renders passes
+ * it, else chant's control step's `CHANT_CONTROL_SHA` (where `sentCheck` and
+ * `markSent` run), else the run's own commit.
+ */
+export function postCommit(env: NodeJS.ProcessEnv): string {
+  return (env.TG_SHA || env.CHANT_CONTROL_SHA || env.GITHUB_SHA || env.CI_COMMIT_SHA || "").trim();
 }
 
 /** The line a stale plan note carries, and how it is told apart. */
@@ -56,7 +68,7 @@ export interface PostOptions {
 export async function forgePost(cmd: string, args: string[], o: PostOptions): Promise<string | undefined> {
   const env = o.env ?? process.env;
   if (!(POST_COMMANDS as readonly string[]).includes(cmd)) throw new ConfigError(`post is ${POST_COMMANDS.join(", ")}`);
-  if (!env.TG_TOKEN) return `terragucci: no forge token, so no ${cmd}`;
+  if (!jobToken(o.forge, env)) return `terragucci: no forge token, so no ${cmd}`;
   try {
     const forge = poster(o.forge, env, o.fetch);
     if (cmd === "status") await status(forge, args, o, env);
@@ -82,8 +94,8 @@ function prOf(env: NodeJS.ProcessEnv): number {
 async function status(forge: PrForge, args: string[], o: PostOptions, env: NodeJS.ProcessEnv): Promise<void> {
   const [context, state, description = ""] = args;
   if (!context || !state || !STATES.has(state)) throw new ConfigError("post status <context> pending|success|failure <description>");
-  const sha = (env.TG_SHA ?? "").trim();
-  if (!sha) throw new ConfigError("TG_SHA names no commit");
+  const sha = postCommit(env);
+  if (!sha) throw new ConfigError("no commit to post on: TG_SHA, CHANT_CONTROL_SHA, GITHUB_SHA and CI_COMMIT_SHA are all empty");
   const pipeline = o.forge === "gitlab" && sha === env.CI_COMMIT_SHA && /^[0-9]+$/.test(env.CI_PIPELINE_ID ?? "") ? Number(env.CI_PIPELINE_ID) : undefined;
   await forge.setStatus(sha, {
     context,

@@ -5,12 +5,13 @@
  * The wave's job renders an op-waves spec from what it was given and what
  * terragucci.yml says at base (the waves, the gate, the approval mode), and
  * a commit that is the base commit plus that spec, which chant reads the
- * policy and the hooks from (`--base`). The spec's `planWave`, `applyWave`
- * and hooks call back into the job's own process over a local socket, so
- * the planning, the holds, the progress and the report stay terragucci's and
- * keep their state between the calls. chant decides the gate, records the
- * pending fact, spends the approval and the policy overrides, and settles a
- * state migration's own gate.
+ * policy and the hooks from (`--base`). The spec's hooks name a command, and
+ * chant calls the job's own process in its place by the hook's name
+ * (`inProcessHooks`, chant issue 4994), so the migrations, the progress and
+ * the report stay terragucci's and keep their state between the calls. chant
+ * decides the gate, records the pending fact, spends the approval and the
+ * policy overrides, records the rest of a stopped apply (chant issue 5047),
+ * and settles a state migration's own gate.
  *
  * chant's exit code passes through as it is (chant's one table, chant#4553):
  * 0 done, 1 failed, 2 drift, 3 waiting, 4 moved, 5 held, 6 superseded,
@@ -19,7 +20,6 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OpWave, OpWaveDecision, OpWaveHook, OpWavesSpec } from "@intentius/chant/op";
@@ -34,6 +34,15 @@ export const WAVES_SPEC = `.chant/op-waves/${WAVES_OP}.spec.json`;
 export const waveRecordPath = (k: number): string => `.chant/op-waves/${WAVES_OP}/wave-${k}.json`;
 /** The wave's name in the spec. */
 export const waveName = (k: number): string => `wave-${k}`;
+
+/**
+ * The spend rules every spec terragucci hands chant carries (chant issue
+ * 5047): an approval is spent as its wave applies, the applied line names the
+ * changes so the rest of a stopped apply applies under the same approval at
+ * the same commit, and a wave its gate lets through spends an approval of its
+ * digest that stands.
+ */
+export const WAVES_APPROVALS = { spend: true, remainder: true, spendStanding: true } as const;
 
 /** The calls chant makes back into the wave's process. */
 export type WaveCall = "plan" | "apply" | "migrate-check" | "migrate" | "hold" | "gate";
@@ -156,7 +165,8 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
   const approval = input.approval === "pr-review" ? "pr-review" : undefined;
   return {
     ...rest,
-    approvals: { spend: true, ...(input.approvals ?? {}) },
+    // chant records each change an approved apply makes and takes up the rest of a stopped one, and spends an approval a let-through wave leaves standing (chant issue 5047).
+    approvals: { ...WAVES_APPROVALS, ...(input.approvals ?? {}) },
     // At spec level only: a together wave refuses a wave-level parallelism over 1.
     ...(!input.terragrunt && input.parallelism !== undefined && input.parallelism > 1 ? { parallelism: input.parallelism } : {}),
     step: input.terragrunt
@@ -238,88 +248,24 @@ export function waveExit(chant: number, own?: number): number {
 }
 
 /**
- * The client chant runs for each call, from the job's directory: it hands
- * the call, its working directory and chant's variables to the wave's
- * process, at the socket WAVE_SOCKET names, and exits with the code that
- * process gives. The hooks chant reads at base, and a share job runs from
- * its wave's decision, name it at this fixed path, so every job runs the same
- * command whatever its own socket.
+ * The command the spec's hooks name. chant never runs it: every job that
+ * runs a hook (`stage tf-apply`, `terragucci run wave`) hands chant the hook
+ * by its name in its own process (`inProcessHooks`, chant issue 4994), and
+ * chant calls that in place of the command. The path stays as it is because
+ * the specs committed with a repo carry this argv, and the rules at base are
+ * read from them.
  */
 export const WAVE_CLIENT = `.chant/op-waves/${WAVES_OP}/terragucci-call.cjs`;
-/** The file that names the socket of this job's wave process. */
-export const WAVE_SOCKET = `.chant/op-waves/${WAVES_OP}/terragucci-socket`;
 
-/** The argv chant runs for one call back into the wave's process. */
+/** The argv a spec hook names for one call into the wave's process. */
 export const waveCallArgv = (what: WaveCall, ...args: string[]): string[] => ["node", WAVE_CLIENT, what, ...args];
 
-export const CLIENT_JS = `"use strict";
-const fs = require("node:fs");
-const net = require("node:net");
-const args = process.argv.slice(2);
-let sock;
-try {
-  sock = fs.readFileSync(${JSON.stringify(WAVE_SOCKET)}, "utf-8").trim();
-} catch (e) {
-  console.error("terragucci: no wave process to call (" + e.message + ")");
-  process.exit(1);
-}
-const env = {};
-for (const [k, v] of Object.entries(process.env)) if (k.startsWith("CHANT_")) env[k] = v;
-const c = net.connect(sock, () => c.write(JSON.stringify({ args, env, cwd: process.cwd() }) + "\\n"));
-let buf = "";
-let code;
-c.on("data", (d) => {
-  buf += d;
-  const i = buf.indexOf("\\n");
-  if (i >= 0 && code === undefined) { code = JSON.parse(buf.slice(0, i)).code; c.end(); }
-});
-c.on("error", (e) => { console.error("terragucci: the wave's process cannot be reached: " + e.message); process.exit(1); });
-c.on("close", () => process.exit(code === undefined ? 1 : code));
-`;
-
+/** One call of a spec hook, as the wave's process serves it. */
 export interface WaveRequest {
   args: string[];
   /** chant's variables for the call: CHANT_GATE_STATUS, CHANT_HOLD, CHANT_APPLY_OUTCOME and the rest. */
   env: Record<string, string>;
   cwd: string;
-}
-
-/** Serve the calls on a socket in `dir`, with the client and the socket's name in the checkout `repo`; `close` stops. */
-export async function serveWave(repo: string, dir: string, handle: (r: WaveRequest) => Promise<number>): Promise<{ close: () => Promise<void> }> {
-  const sock = join(dir, "s");
-  mkdirSync(dirname(join(repo, WAVE_CLIENT)), { recursive: true });
-  writeFileSync(join(repo, WAVE_CLIENT), CLIENT_JS);
-  writeFileSync(join(repo, WAVE_SOCKET), sock + "\n");
-  const server: Server = createServer((conn) => {
-    let buf = "";
-    let started = false;
-    conn.on("data", (d) => {
-      buf += d;
-      const i = buf.indexOf("\n");
-      if (i < 0 || started) return;
-      started = true;
-      let req: WaveRequest;
-      try {
-        req = JSON.parse(buf.slice(0, i)) as WaveRequest;
-      } catch {
-        conn.end(JSON.stringify({ code: 1 }) + "\n");
-        return;
-      }
-      handle(req).then(
-        (code) => conn.end(JSON.stringify({ code }) + "\n"),
-        (e) => {
-          console.log(`terragucci: ${(e as Error).message}`);
-          conn.end(JSON.stringify({ code: 1 }) + "\n");
-        },
-      );
-    });
-    conn.on("error", () => {});
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(sock, () => resolve());
-  });
-  return { close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }
 
 /** The spec's text, as writeSpec writes it and init commits it. */

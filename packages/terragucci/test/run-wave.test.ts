@@ -5,11 +5,13 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpWavesSpec, ProductWaveHook } from "@intentius/chant/op";
 import { CHANT_CONFIG, chantConfigText } from "../src/chant-config";
-import { WAVE_CLIENT, waveCallArgv, WAVES_SPEC, wavesSpecText, wavesStepSpec } from "../src/chant-waves";
+import { WAVE_CLIENT, WAVES_APPROVALS, waveCallArgv, WAVES_SPEC, wavesSpecText, wavesStepSpec } from "../src/chant-waves";
+import { applyWave, parseLedger } from "../src/apply";
+import { composeTarget } from "../src/compose";
 import { flagValue, runWave } from "../src/run-wave";
-import { printWavesSpec, wavesSpecAt } from "../src/waves-spec";
+import { printWavesSpec, wavesSpecAt, wavesSpecReach } from "../src/waves-spec";
 import { git, tmp, write } from "./helpers";
-import { setup, STEP_FAKE } from "./apply-helpers";
+import { setup, STEP_FAKE, T } from "./apply-helpers";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -97,7 +99,8 @@ describe("terragucci waves-spec", () => {
     expect(onMain.branches).toEqual(["release"]);
     expect(onMain.resume).toEqual({ schedule: "*/15 * * * *" });
     expect(onMain.notify).toEqual({ slack: "SLACK_URL", webhook: "HOOK_URL", key: "HOOK_KEY", relay: "RELAY_KEY", relayName: "terragucci" });
-    expect(onMain.approvals).toMatchObject({ spend: true, reviewLedger: "tf-apply", involved: { exclude: true } });
+    // chant's spend rules (chant issue 5047), with who counts at the gate.
+    expect(onMain.approvals).toMatchObject({ spend: true, remainder: true, spendStanding: true, reviewLedger: "tf-apply", involved: { exclude: true } });
     // The default branch applies what no glob routes elsewhere; release applies its own.
     expect(onMain.waves[0]!.runs.map((r) => r.target)).toEqual(["envs/dev/app"]);
     const onRelease = (await wavesSpecAt(dir, { at: "HEAD", env: { GITHUB_REF_NAME: "release" } }))!;
@@ -109,7 +112,7 @@ describe("terragucci waves-spec", () => {
     quiet();
     const spec = (await wavesSpecAt(dir, { at: "HEAD", env: {} }))!;
     expect(spec.point).toEqual({ name: "change-board", store: "ledger", timeout: "48h" });
-    expect(spec.approvals).toEqual({ spend: true });
+    expect(spec.approvals).toEqual(WAVES_APPROVALS);
     commit(dir, { "terragucci.yml": "approval: pr-review\napply:\n  point: change-board\n" });
     await expect(wavesSpecAt(dir, { at: "HEAD", env: {} })).rejects.toThrow(/could not be read .*apply\.point is set/s);
   });
@@ -132,6 +135,59 @@ describe("terragucci waves-spec", () => {
     await printWavesSpec(dir, { env: { CHANT_WAVES_SPEC_AT: first, CHANT_WAVES_SPEC_FILE: "ops/spec.json" }, out: (t) => void out.push(t) });
     const spec = JSON.parse(out.join("")) as OpWavesSpec;
     expect(spec.waves.map((w) => [w.gate, w.runs.map((r) => r.target)])).toEqual([["always", ["a"]]]);
+  });
+});
+
+describe("terragucci waves-spec at the applied commit, with CHANT_WAVES_SPEC_BASE (chant issue 5046)", () => {
+  const live = (estate: string, body = ""): string => `terraform {\n  live {\n    estate = "${estate}"\n    record_store "s3" {\n      bucket = "records"\n    }\n  }\n}\n${body}`;
+  const runs = (spec: OpWavesSpec) => spec.waves.map((w) => w.runs.map((r) => r.target));
+
+  it("runs the roots the change reaches as one composed run under waves.compose, and renders as before without the base", async () => {
+    // network in wave 1, app reads it in wave 2, edge reads app in wave 3: all choudoufu estates.
+    const dir = repo({
+      [WAVES_SPEC]: shape([["network"], ["app"], ["edge"]]),
+      "terragucci.yml": "binary: choudoufu\nwaves:\n  compose: true\n",
+      "network/main.tf": live("net", `output "subnet_id" {\n  value = "s-1"\n}\n`),
+      "app/main.tf": live("app", `data "terraform_estate_outputs" "net" {\n  estate = "net"\n  names  = ["subnet_id"]\n}\noutput "x" {\n  value = data.terraform_estate_outputs.net.values.subnet_id\n}\n`),
+      "edge/main.tf": live("edge", `data "terraform_estate_outputs" "app" {\n  estate = "app"\n  names  = ["x"]\n}\n`),
+    });
+    const base = git(dir, "rev-parse", "HEAD").trim();
+    commit(dir, { "app/main.tf": live("app", `data "terraform_estate_outputs" "net" {\n  estate = "net"\n  names  = ["subnet_id"]\n}\noutput "x" {\n  value = "changed"\n}\n`), "edge/main.tf": live("edge", "# changed\n") });
+    quiet();
+    const plain = (await wavesSpecAt(dir, { at: "HEAD", env: {} }))!;
+    expect(runs(plain)).toEqual([["network"], ["app"], ["edge"]]);
+    expect(plain.waves.some((w) => (w as { together?: boolean }).together)).toBe(false);
+    const reach = (await wavesSpecReach(dir, { at: "HEAD", base, env: {} }))!;
+    expect(reach.composition?.wave).toBe(1);
+    // The composed wave lists the run's roots in the run's order, and plans them together; the waves it emptied keep the run's target.
+    expect([...reach.composition!.order].sort()).toEqual(["app", "edge", "network"]);
+    expect(runs(reach.spec)).toEqual([reach.composition!.order, [composeTarget(1)], [composeTarget(1)]]);
+    expect(reach.spec.waves.map((w) => (w as { together?: boolean }).together === true)).toEqual([true, false, false]);
+    expect([...reach.nothing.keys()]).toEqual([2, 3]);
+    // printWavesSpec reads the base from chant's variable, and its stdout is the spec alone.
+    const out: string[] = [];
+    await printWavesSpec(dir, { env: { CHANT_WAVES_SPEC_AT: "HEAD", CHANT_WAVES_SPEC_BASE: base }, out: (t) => void out.push(t) });
+    expect(runs(JSON.parse(out.join("")) as OpWavesSpec)).toEqual(runs(reach.spec));
+  });
+
+  it("leaves out of its wave a root a pending estate migration plans, with the member that stands for it", async () => {
+    const dir = repo({
+      [WAVES_SPEC]: shape([["app", "web"], ["db"]]),
+      "terragucci.yml": "binary: choudoufu\n",
+      "app/main.tf": live("app", 'resource "aws_sqs_queue" "a" {}\n'),
+      "web/main.tf": live("web", 'resource "aws_sqs_queue" "w" {}\n'),
+      "db/main.tf": live("db", 'resource "aws_sqs_queue" "d" {}\n'),
+    });
+    const base = git(dir, "rev-parse", "HEAD").trim();
+    commit(dir, { "migrations/adopt.yml": "backends:\n  - root: app\n    from:\n      backend: local\n      config:\n        path: old.tfstate\n  - root: db\n    from:\n      backend: local\n      config:\n        path: old.tfstate\n" });
+    quiet();
+    expect(runs((await wavesSpecAt(dir, { at: "HEAD", env: {} }))!)).toEqual([["app", "web"], ["db"]]);
+    const reach = (await wavesSpecReach(dir, { at: "HEAD", base, env: {} }))!;
+    expect(runs(reach.spec)).toEqual([["web"], ["db"]]);
+    expect(reach.migrationMembers.get(1)?.map((m) => m.member)).toEqual(["app"]);
+    expect(reach.migrationMembers.get(1)?.[0]!.planDigest).toMatch(/^sha256:|^[0-9a-f]{64}$/);
+    // Wave 2 has no root of its own left: it keeps its root, since a spec refuses a wave with no runs, and its job applies nothing.
+    expect(reach.nothing.get(2)).toBe("every root in it is planned by its estate migration");
   });
 });
 
@@ -169,6 +225,38 @@ describe("terragucci run wave: the line", () => {
     expect(Object.keys(got!.hook!.hooks ?? {}).sort()).toEqual(["migration gate", "migrations", "report"]);
     expect(got!.hook!.capabilities).toBeDefined();
     expect(got!.hook!.afterPlan).toBeDefined();
+  });
+
+  it("with CHANT_WAVES_SPEC_RUNS=head renders the job's spec at HEAD with the base, and a wave a migration empties applies nothing", async () => {
+    const live = (estate: string): string => `terraform {\n  live {\n    estate = "${estate}"\n  }\n}\n`;
+    const dir = repo({ [WAVES_SPEC]: shape([["web"], ["db"]]), "terragucci.yml": "binary: choudoufu\n", "web/main.tf": live("web"), "db/main.tf": live("db") });
+    commit(dir, { "migrations/adopt.yml": "backends:\n  - root: db\n    from:\n      backend: local\n      config:\n        path: old.tfstate\n" });
+    const lines = quiet();
+    const seen: number[] = [];
+    const chant = async () => (seen.push(1), 0);
+    const env = { CHANT_WAVES_SPEC_RUNS: "head" };
+    // Wave 2's one root is the migration's: its job applies nothing, and chant never runs a wave for it.
+    expect(await runWave(dir, ["--spec", WAVES_SPEC, "--wave", "2", "--base", "HEAD^1", "--render-spec"], { env, chant })).toBe(0);
+    expect(seen).toEqual([]);
+    expect(lines).toContain("wave 2: every root in it is planned by its estate migration, so it has nothing to apply");
+    // Wave 1 is the change's own: chant runs it with terragucci's hook. Rendered at base, without the variable, wave 2 runs as before.
+    expect(await runWave(dir, ["--spec", WAVES_SPEC, "--wave", "1", "--base", "HEAD^1", "--render-spec"], { env, chant })).toBe(0);
+    expect(seen).toEqual([1]);
+    expect(await runWave(dir, ["--spec", WAVES_SPEC, "--wave", "2", "--base", "HEAD^1", "--render-spec"], { env: {}, chant })).toBe(0);
+    expect(seen).toEqual([1, 1]);
+  });
+});
+
+describe("stage tf-apply's hooks, served in its own process", () => {
+  it("runs the gate's report in process through chant's inProcessHooks, with no socket or client file", async () => {
+    const { work, origin, log } = setup();
+    const lines = quiet();
+    expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: join(dirname(log), "tofu"), gate: "always", env: {}, now: T(1) })).toBe(3);
+    // The report hook ran in this process: it printed how to approve, and the pending fact stands.
+    expect(lines.some((l) => l.includes("terragucci approve"))).toBe(true);
+    expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending).toHaveLength(1);
+    expect(existsSync(join(work, WAVE_CLIENT))).toBe(false);
+    expect(existsSync(join(work, ".chant/op-waves/tf-apply/terragucci-socket"))).toBe(false);
   });
 });
 
