@@ -48,7 +48,7 @@ A job killed mid-apply leaves its state lock held. `terragucci unlock-state` rel
 |---|---|---|
 | a run applying other resources of the estate | applies beside it | the same |
 | a run applying a resource it changes | waits for that run, then plans again and applies, with no call to the cloud while it waits | refused at once; the reply names the run, and you comment `/terragucci apply` again once it is done |
-| a run that was killed while applying it | takes over what that run held, with nothing to release; the apply re-reads the live system and refuses a plan the killed run made stale, and what the killed run finished applying has its record, so a gated wave applies the rest under the same approval ([Stopped applies](/terragucci/reference/pipeline/#stopped-applies), `cdf-resume`) | the same |
+| a run that was killed while applying it | takes over what that run held, with nothing to release; the apply re-reads the live system and refuses a plan the killed run made stale, and what the killed run finished applying has its record, so a gated wave run again at the same commit applies the rest under the same approval ([Stopped applies](/terragucci/reference/pipeline/#stopped-applies), `cdf-resume`) | the same |
 
 Once the gate lets a wave through, and before its apply re-reads the live system, the wave holds each resource its plans create, update, delete, replace or forget. Data reads and resources with no change hold nothing. A resource is keyed by its estate and address, by the address it moved from, and for an update or a delete by the live object's ID, so two estates that manage one object meet on it.
 

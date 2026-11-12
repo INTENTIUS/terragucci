@@ -57,6 +57,7 @@ describe("terragucci plan-note: the note's notice, for chant's note job", () => 
 
   it("names the missing variable when the job cannot ask the forge", () => {
     expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(ConfigError);
-    expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(/TG_TOKEN/);
+    // With no TG_TOKEN the job's token is the forge's own variable, which the error names.
+    expect(() => poster("github", { GITHUB_REPOSITORY: "o/r" })).toThrow(/GITHUB_TOKEN/);
   });
 });

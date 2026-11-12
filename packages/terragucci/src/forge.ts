@@ -4,10 +4,11 @@
  * injectable so the clients are tested against recorded requests.
  *
  * Pull requests, notes, statuses, replies and the drift issue go through
- * chant's forge clients (`@intentius/chant/pr-forge`): poster, with the job's TG_TOKEN, or
+ * chant's forge clients (`@intentius/chant/pr-forge`): poster, with the job's token (jobTokenEnv), or
  * chant's `forgeClient` for a target built with `forgeTargetFromFlags` or `jobForgeTarget`
  * (chant issue 4888). What they say stays with terragucci.
  */
+import { spawnSync } from "node:child_process";
 import { forgeTargetFromFlags } from "@intentius/chant/forge-flags";
 import { ForgeEnvironmentError, forgeClient, forgeTargetFromEnv, type ForgeTarget, type PrForge, type ReadCommitStatus } from "@intentius/chant/pr-forge";
 import { forgeReadsFor, type ForgeReads } from "@intentius/chant/pr-forge-reads";
@@ -75,11 +76,38 @@ export async function openPullRequest(
 }
 
 /**
- * chant's client for the forge a job runs on, holding the job's TG_TOKEN (or
- * the variable `tokenEnv` names): the repository, the API and the run's URL
- * from the CI environment. A missing variable is a ConfigError naming it.
+ * The variable a job's forge token is read from. A job terragucci renders
+ * itself may still pass `TG_TOKEN`, so that comes first when it is set.
+ * Otherwise the forge's own: `GITHUB_TOKEN` on GitHub and Forgejo (chant's
+ * `commandToken` hands a wave job's command step the job token under that
+ * name), `GITLAB_TOKEN` and then `CHANT_FORGE_TOKEN` on GitLab.
  */
-export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, tokenEnv = "TG_TOKEN"): PrForge {
+export function jobTokenEnv(kind: ForgeName, env: NodeJS.ProcessEnv): string {
+  if (env.TG_TOKEN) return "TG_TOKEN";
+  const own = kind === "gitlab" ? ["GITLAB_TOKEN", "CHANT_FORGE_TOKEN"] : ["GITHUB_TOKEN"];
+  return own.find((name) => env[name]) ?? own[0]!;
+}
+
+/** The job's forge token (jobTokenEnv), or undefined when the job holds none. */
+export const jobToken = (kind: ForgeName, env: NodeJS.ProcessEnv): string | undefined => env[jobTokenEnv(kind, env)] || undefined;
+
+/**
+ * The commit a CI job runs: chant's `CHANT_WAVES_COMMIT` on a follow-on run,
+ * the forge's own (`GITHUB_SHA`, `CI_COMMIT_SHA`), else the checkout's HEAD.
+ */
+export function jobCommit(env: NodeJS.ProcessEnv, repo: string): string {
+  const named = (env.CHANT_WAVES_COMMIT || env.GITHUB_SHA || env.CI_COMMIT_SHA || "").trim();
+  if (named) return named;
+  return spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf-8" }).stdout?.trim() ?? "";
+}
+
+/**
+ * chant's client for the forge a job runs on, holding the job's token (the
+ * variable `tokenEnv` names, by default jobTokenEnv's): the repository, the
+ * API and the run's URL from the CI environment. A missing variable is a
+ * ConfigError naming it.
+ */
+export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, tokenEnv = jobTokenEnv(kind, env)): PrForge {
   try {
     return forgeClient(forgeTargetFromEnv(env, { kind, tokenEnv }), fetch);
   } catch (e) {
@@ -88,8 +116,8 @@ export function poster(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, t
   }
 }
 
-/** chant's reads for the forge a job runs on, with the job's TG_TOKEN (or the variable `tokenEnv` names), as poster builds its client. */
-export function jobReads(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, tokenEnv = "TG_TOKEN"): ForgeReads {
+/** chant's reads for the forge a job runs on, with the job's token (the variable `tokenEnv` names, by default jobTokenEnv's), as poster builds its client. */
+export function jobReads(kind: ForgeName, env: NodeJS.ProcessEnv, fetch?: Fetch, tokenEnv = jobTokenEnv(kind, env)): ForgeReads {
   try {
     return forgeReadsFor(forgeTargetFromEnv(env, { kind, tokenEnv }), fetch);
   } catch (e) {

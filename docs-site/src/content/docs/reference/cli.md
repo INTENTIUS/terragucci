@@ -515,12 +515,12 @@ terragucci post stale <roots> <branch>
 
 | Command | What it does |
 |---|---|
-| `status` | sets a commit status on `TG_SHA`, linked to the run; on GitLab a pending status shows as running |
+| `status` | sets a commit status on the job's commit, linked to the run; on GitLab a pending status shows as running |
 | `note` | posts the file as the plan note on `TG_PR`, or edits the plan note already there |
 | `reply` | adds a comment `terragucci: <text>` on `TG_PR` |
 | `stale` | adds a line to the plan note of every open pull request into `<branch>` that covers one of `<roots>` (comma-separated), saying the plan is stale |
 
-It posts with `TG_TOKEN`, on the forge `--forge` or `TG_FORGE` names (default `github`). The generated pipeline's jobs run it. With no token it posts nothing. A post the forge refuses is printed, and the command still exits 0.
+It posts on the forge `--forge` or `TG_FORGE` names (default `github`), with `TG_TOKEN` when the job sets it, else `GITHUB_TOKEN` (on GitLab `GITLAB_TOKEN`, then `CHANT_FORGE_TOKEN`). The job's commit is `TG_SHA`, else `CHANT_CONTROL_SHA`, `GITHUB_SHA` or `CI_COMMIT_SHA`. The generated pipeline's jobs run it, and so does chant's control step, which has only `GITHUB_TOKEN` and `CHANT_CONTROL_SHA`. `terragucci post sent <context>` prints `1` when the job's commit already carries a successful status of that context, else `0`. With no token it posts nothing. A post the forge refuses is printed, and the command still exits 0.
 
 ## plan-handoff
 
@@ -573,7 +573,7 @@ A wave job's line, one with `--spec` and `--wave`, also hands chant what [`stage
 | `apply` | the root hooks around each apply | the plans chant applied, what applied, and the gate from chant's decision file (`.chant/op-waves/tf-apply/wave-<k>.json`) |
 | `record` | nothing: chant writes the run records | none |
 
-With `--render-spec`, chant reads the spec that [`waves-spec`](#waves-spec) prints at `--base`. The lines that run no wave job (`--merge`, `--apply-status`, `--waves-outcome`, `--record-plans` and `--approval-status`) take terragucci's words alone. The exit code is chant's, except that a wave terragucci's own hooks stopped exits with their code, as in `stage tf-apply`. `--json` prints chant's result.
+With `--render-spec`, chant reads the spec that [`waves-spec`](#waves-spec) prints at `--base`. With `CHANT_WAVES_SPEC_RUNS=head` as well, the job's runs come from the spec `waves-spec` prints at `HEAD` with the base beside it, and the rules still from the one at `--base`: the wave then runs a composed run under `waves.compose`, and a wave whose every root an estate migration plans applies nothing. The spec's hooks run in the job's own process, by name; no hook calls back over a socket. Neither `run wave` nor `stage tf-apply` reads `TG_TOKEN` or `TG_SHA` in a wave job: the token is `GITHUB_TOKEN` (on GitLab `GITLAB_TOKEN`, then `CHANT_FORGE_TOKEN`) and the commit `GITHUB_SHA` or `CI_COMMIT_SHA`, else the checkout's `HEAD`. The lines that run no wave job (`--merge`, `--apply-status`, `--waves-outcome`, `--record-plans` and `--approval-status`) take terragucci's words alone. The exit code is chant's, except that a wave terragucci's own hooks stopped exits with their code, as in `stage tf-apply`. `--json` prints chant's result.
 
 ## waves-spec
 
@@ -593,7 +593,11 @@ Prints the `tf-apply` Op waves spec at a commit, which chant's wave jobs read th
 - the approval mode, `approval_rules` and the agent's account;
 - `apply.point`, `apply.branches` (the job's branch applies only its roots), `apply.resume` and `notify`.
 
-Each root's workspace and Atmos reads come from the checkout. Wave 1 always carries the state migration hooks, which find no migration and do nothing when the change has none. A commit with no spec file prints nothing and exits 0. A commit the checkout lacks, or a config there that cannot be read, exits 1.
+Each root's workspace and Atmos reads come from the checkout. Wave 1 always carries the state migration hooks, which find no migration and do nothing when the change has none. The spec carries chant's spend rules (`approvals.spend`, `remainder` and `spendStanding`), so the rest of a stopped apply applies under its approval at the same commit.
+
+chant sets `CHANT_WAVES_SPEC_BASE` to the base commit only when it renders a job's own spec at the applied commit. With it, the runs are what the change reaches: under `waves.compose`, the roots it reaches run as one composed run in the earliest wave they are in, and a root a pending estate migration plans is left out of its wave until the migration applies. Without it the spec is as above.
+
+A commit with no spec file prints nothing and exits 0. A commit the checkout lacks, or a config there that cannot be read, exits 1.
 
 ## approval-status
 

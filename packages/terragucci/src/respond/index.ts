@@ -12,7 +12,7 @@ import { findRoots, globMatch } from "../detect";
 import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape, fullDriftPlans, type Shape } from "../shape";
 import { terraformLivePlanDrift } from "@intentius/chant-lexicon-terraform/drift-rows";
-import { defaultBranch, type Fetch } from "../forge";
+import { defaultBranch, jobToken, type Fetch } from "../forge";
 import { findModules } from "../publish";
 import { configAtBase } from "../report/policy";
 import type { Report } from "../report/schema";
@@ -125,14 +125,14 @@ function pullRequestText(env: NodeJS.ProcessEnv): { title: string; description: 
 /**
  * The pull request's title and description from the forge's API, for a job the
  * event file does not describe (a comment's event carries the title and body
- * itself, read above, so this is the fallback). The job's TG_PR, TG_FORGE and TG_TOKEN name the request and
- * carry the token; a failed call says nothing, so the check is skipped.
+ * itself, read above, so this is the fallback). The job's TG_PR and TG_FORGE name the request, and its
+ * token (../forge.ts jobTokenEnv) reads it; a failed call says nothing, so the check is skipped.
  */
 async function pullRequestFromForge(env: NodeJS.ProcessEnv, fetchFn: Fetch): Promise<{ title: string; description: string } | undefined> {
   const number = env.TG_PR;
-  const token = env.TG_TOKEN;
-  if (!number || !/^\d+$/.test(number) || !token) return undefined;
   const gitlab = env.TG_FORGE === "gitlab";
+  const token = jobToken(gitlab ? "gitlab" : "github", env);
+  if (!number || !/^\d+$/.test(number) || !token) return undefined;
   const api = gitlab ? env.CI_API_V4_URL : env.GITHUB_API_URL || (env.GITHUB_SERVER_URL ? `${env.GITHUB_SERVER_URL}/api/v1` : undefined);
   const project = gitlab ? (env.CI_PROJECT_ID ? `projects/${env.CI_PROJECT_ID}` : undefined) : env.GITHUB_REPOSITORY ? `repos/${env.GITHUB_REPOSITORY}` : undefined;
   if (!api || !project) return undefined;

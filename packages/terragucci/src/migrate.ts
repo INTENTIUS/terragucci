@@ -33,6 +33,7 @@
  * lines older releases wrote are still read as its history.
  */
 import { spawnSync } from "node:child_process";
+import { jobCommit } from "./forge";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
@@ -1053,7 +1054,7 @@ async function runOne(repo: string, m: Migration, options: RunMigrationsOptions 
   const sealed = rule.mode === "sealed";
   const command = migrateApproveCommand(m.name, record.digest, sealed);
   const runId = env.GITHUB_RUN_ID ?? env.CI_PIPELINE_ID;
-  const commit = env.TG_SHA || git(repo, ["rev-parse", "HEAD"]).stdout.trim();
+  const commit = jobCommit(env, repo);
   if (!options.hold) {
     // chant's gated migration: the request, the spend before the write, and the finished line.
     return runGated(repo, m, plan, { ...options, now, rule, label, commit, runId, sinks });

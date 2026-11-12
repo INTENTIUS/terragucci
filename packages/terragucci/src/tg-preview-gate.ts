@@ -11,7 +11,7 @@ import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set"
 import { ConfigError } from "./config";
 import { buildReport } from "./report/build";
 import { runFacts } from "./report/stage";
-import type { Fetch } from "./forge";
+import { jobCommit, type Fetch } from "./forge";
 import type { NoteWaves } from "./report/marker";
 import type { ReportChange, ReportWavePreview } from "./report/schema";
 import { gitlabReviews, jobForge, noteWavesOf, pullOf } from "./review";
@@ -83,7 +83,7 @@ export async function comparePreview(
 ): Promise<ReportWavePreview | undefined> {
   const env = o.env;
   const forge = env.GITLAB_CI === "true" ? "gitlab" : env.GITEA_ACTIONS === "true" || env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github";
-  const sha = env.TG_SHA || spawnSync("git", ["-C", o.repo, "rev-parse", "HEAD"], { encoding: "utf-8" }).stdout.trim();
+  const sha = jobCommit(env, o.repo);
   const now = new Date().toISOString();
   const report = buildReport({
     run: { ...runFacts(o.repo, env), stage: "tf-apply", wave: o.wave, binary: o.binary, runtime: "forge", started: now, finished: now },

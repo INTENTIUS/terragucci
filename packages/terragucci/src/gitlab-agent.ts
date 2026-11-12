@@ -42,7 +42,7 @@ import type { GitlabPipelines, StartedRun } from "@intentius/chant/ci-note-comma
 import type { PrForge } from "@intentius/chant/pr-forge";
 import type { ForgeReads, ForgeUser, PullRequestDetail, PullRequestNote, RunJob } from "@intentius/chant/pr-forge-reads";
 import { ConfigError } from "./config";
-import { jobReads, poster, type Fetch } from "./forge";
+import { jobReads, jobToken, poster, type Fetch } from "./forge";
 import { byUser, planJobOf } from "./plan-note-gitlab";
 import { PLAN_NOTE_FILE } from "./review-agent";
 import { noReview, parseReviewMarker, REVIEW_FILE, REVIEW_MARK, REVIEWED_FILE, reviewMarker, reviewNoteBody, verdictOf, writeReviewPrompt, type PolicyReview, type WrittenPrompt } from "./review-agent";
@@ -411,7 +411,7 @@ export interface GitLabReviewCalls {
 }
 
 export function gitlabReviewCalls(env: NodeJS.ProcessEnv, doFetch: Fetch = fetch): GitLabReviewCalls {
-  if (!env.CI_API_V4_URL || !env.CI_PROJECT_ID || !env.TG_TOKEN) throw new ConfigError("the review on GitLab needs CI_API_V4_URL, CI_PROJECT_ID and TG_TOKEN in the environment");
+  if (!env.CI_API_V4_URL || !env.CI_PROJECT_ID || !jobToken("gitlab", env)) throw new ConfigError("the review on GitLab needs CI_API_V4_URL, CI_PROJECT_ID and a token (TG_TOKEN, GITLAB_TOKEN or CHANT_FORGE_TOKEN) in the environment");
   const forge = poster("gitlab", env, doFetch);
   const reads = jobReads("gitlab", env, doFetch);
   return {

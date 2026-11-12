@@ -27,7 +27,7 @@ import { spawnSync } from "node:child_process";
 import { findConfig, loadConfig } from "./config";
 import { ForgeApiError } from "@intentius/chant/pr-forge";
 import { forgejoReads, githubReads, gitlabReads, type ForgeReads, type PullRequestCommit } from "@intentius/chant/pr-forge-reads";
-import type { Fetch } from "./forge";
+import { jobToken, type Fetch } from "./forge";
 import type { ReviewedPull } from "./review";
 
 /** One commit of a change, as git or the forge gives it. */
@@ -251,13 +251,13 @@ export function apiBase(forge: "github" | "forgejo" | "gitlab", env: NodeJS.Proc
 }
 
 /**
- * The users the pipeline's token (`TG_TOKEN`) and the agent's token act as.
+ * The users the pipeline's token (the job's, ./forge.ts jobTokenEnv) and the agent's token act as.
  * The agent's token is read from the variable `agent.token_env` names, when
  * this job holds it.
  */
 export async function tokenUsers(o: { forge: "github" | "forgejo" | "gitlab"; env: NodeJS.ProcessEnv; fetch?: Fetch; agentTokenEnv?: string }): Promise<TokenUser[]> {
   const api = apiBase(o.forge, o.env);
-  const out = [await tokenUser({ which: "the pipeline's token", forge: o.forge, api, token: o.env.TG_TOKEN, ...(o.fetch ? { fetch: o.fetch } : {}) })];
+  const out = [await tokenUser({ which: "the pipeline's token", forge: o.forge, api, token: jobToken(o.forge, o.env), ...(o.fetch ? { fetch: o.fetch } : {}) })];
   if (o.agentTokenEnv) {
     const which = `the agent's token (${o.agentTokenEnv})`;
     const token = o.env[o.agentTokenEnv];

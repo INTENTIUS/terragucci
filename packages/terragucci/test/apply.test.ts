@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyWave, applyWaves, branchesArg, branchLayers, branchRootProblems, parseBranches, approvedPath, decideGate, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, spendStanding, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
+import { applyWave, applyWaves, branchesArg, branchLayers, branchRootProblems, parseBranches, approvedPath, decideGate, lockTimeoutArgs, movedMembers, shareCount, parseApplied, parseLedger, type AppliedRecord, type GateLedger, type PendingRecord } from "../src/apply";
 import type { PolicyExec } from "../src/report/policy";
 import { refusedDiff } from "../src/respond/refused";
 import { decideOverride, OVERRIDE_OP, overrideDigest, type OverrideRule } from "../src/override";
@@ -513,26 +513,26 @@ describe("a wave behind its gate", () => {
     expect(parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending.map((p) => p.planDigest === digest)).toEqual([true, false]);
   });
 
-  it("an approved wave's spend is written once: chant's line stands, and spendStanding writes one only where none is", async () => {
-    const { work, origin, bin } = setup();
+  it("an approval left standing is spent by chant as a wave its gate lets through applies those plans, once (approvals.spendStanding)", async () => {
+    const { work, origin, bin, log } = setup();
     vi.spyOn(console, "log").mockImplementation(() => {});
     const opts = { wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} };
     expect(await applyWave(work, { ...opts, now: T(1) })).toBe(3);
     const digest = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!.planDigest!;
     approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "alice", timestamp: T(2), planDigest: digest });
-    // Nothing applied yet: spendStanding spends the standing approval, once.
-    const fresh = setup();
-    git(fresh.work, "remote", "set-url", "origin", origin);
-    expect(await spendStanding(fresh.work, "wave-1", digest, T(3), {})).toMatchObject({ kind: "applied", gate: "wave-1", planDigest: digest, approvedAt: T(2), approvedBy: "alice", timestamp: T(3) });
-    expect(await spendStanding(fresh.work, "wave-1", digest, T(3), {})).toBeUndefined();
-    expect(await spendStanding(fresh.work, "wave-1", "jcs1-sha256:other", T(3), {})).toBeUndefined();
+    // Under gate never the wave needs no approval, and chant spends alice's, which stood for these plans.
+    expect(await applyWave(work, { ...opts, gate: "never", now: T(3) })).toBe(0);
+    expect(readFileSync(log, "utf-8")).toContain("applied a");
+    expect(appliedLines(origin)).toEqual([expect.objectContaining({ kind: "applied", gate: "wave-1", planDigest: digest, approvedAt: T(2), approvedBy: "alice" })]);
+    // Nothing stands any more: the next let-through writes no line.
+    expect(await applyWave(work, { ...opts, gate: "never", now: T(4) })).toBe(0);
     expect(appliedLines(origin)).toHaveLength(1);
-    // A second approval of the same plans, applied through the gate: chant spends it, and the wave writes no second line for it.
-    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "bob", timestamp: T(4), planDigest: digest });
-    expect(await applyWave(work, { ...opts, now: T(5) })).toBe(0);
+    // A second approval of the same plans, applied through the gate: chant spends it, and writes one line for it.
+    approve(origin, { version: 1, kind: "resolution", op: "tf-apply", gate: "wave-1", resolvedBy: "bob", timestamp: T(5), planDigest: digest });
+    expect(await applyWave(work, { ...opts, now: T(6) })).toBe(0);
     const lines = appliedLines(origin);
     expect(lines).toHaveLength(2);
-    expect(lines[1]).toMatchObject({ gate: "wave-1", planDigest: digest, approvedAt: T(4), approvedBy: "bob" });
+    expect(lines[1]).toMatchObject({ gate: "wave-1", planDigest: digest, approvedAt: T(5), approvedBy: "bob" });
   });
 });
 

@@ -10,6 +10,7 @@ import { T, FAKE, setup, approve } from "./apply-helpers";
 describe("a wave behind its gate", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  // chant's approvals.remainder (chant issue 5047): the rest applies under the same approval only at the same commit.
   describe("an approved choudoufu apply that stopped before it finished", () => {
     const opts = (bin: string) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "always" as const, env: {} });
     const ledgerOf = (origin: string) => parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl"));
@@ -42,42 +43,56 @@ describe("a wave behind its gate", () => {
       return { work, origin, bin, log, digest };
     }
 
-    it("records each change it approved, and that the apply failed", async () => {
+    it("has chant name each change it approved on the applied line, and record that the apply failed", async () => {
       vi.spyOn(console, "log").mockImplementation(() => {});
       const { origin, digest } = await stopped();
-      const text = appliedText(origin);
-      const [spent, applied] = parseApplied(text);
-      expect(spent).toMatchObject({ kind: "applied", planDigest: digest, approvedAt: T(2) });
-      expect(spent).not.toHaveProperty("changes");
-      expect(applied).toMatchObject({ kind: "changes", planDigest: digest, approvedAt: T(2), changes: [{ root: "a", address: "terraform_data.first", actions: "create" }, { root: "a", address: "terraform_data.second", actions: "create" }] });
-      expect(appliedLines(origin)).toContainEqual(expect.objectContaining({ kind: "finished", op: "tf-apply", gate: "wave-1", planDigest: digest, applied: T(3), result: "failed" }));
+      const [spent, ...more] = parseApplied(appliedText(origin));
+      expect(more).toEqual([]);
+      // chant's line (approvals.remainder): the changes by target and address, each with its resource's digest, and the commit.
+      expect(spent).toMatchObject({ kind: "applied", planDigest: digest, approvedAt: T(2), approvedBy: "alice", commit: git(origin, "rev-parse", "main").trim() });
+      expect((spent!.changes ?? []).map((c) => [c.target, c.address])).toEqual([["a", "terraform_data.first"], ["a", "terraform_data.second"]]);
+      expect(appliedLines(origin)).toContainEqual(expect.objectContaining({ kind: "finished", op: "tf-apply", gate: "wave-1", planDigest: digest, applied: spent!.timestamp, result: "failed" }));
+      // terragucci writes no line of its own.
+      expect(appliedLines(origin).filter((l) => l.kind === "changes")).toEqual([]);
     });
 
-    it("applies the rest under the same approval once first is in the records, and records that it resumed", async () => {
+    it("applies the rest under the same approval at the same commit, with no new applied line", async () => {
       const lines: string[] = [];
-      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
-      const { work, origin, bin, digest } = await stopped();
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(String(l)));
+      const { work, origin, bin, log, digest } = await stopped();
+      const [line] = parseApplied(appliedText(origin));
       planA(work, [create("second", "2")], ["terraform_data.first"]);
       lines.length = 0;
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(0);
-      expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished; 1 of its 2 changes are done in the records, and these plans make the other 1, so that approval covers them`);
+      expect(readFileSync(log, "utf-8")).toContain("applied a");
+      expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished; 1 of its 2 changes are done, and these plans make the other 1, so that approval covers them`);
+      // No pending fact and no approval of the rest's own digest: the stopped line's approval covers it.
       expect(ledgerOf(origin).pending).toHaveLength(1);
-      // The wave records that alice's approval covers the rest, and chant applies under that line.
-      const [, covered] = ledgerOf(origin).resolutions;
-      expect(covered).toMatchObject({ resolvedBy: "alice", note: `the rest of the apply of ${digest}, which alice approved at ${T(2)}` });
-      const resumed = parseApplied(appliedText(origin)).at(-1)!;
-      expect(resumed).toMatchObject({ kind: "changes", approvedAt: covered!.timestamp, approvedBy: "alice", resumes: digest, changes: [{ address: "terraform_data.second" }] });
-      expect(resumed.planDigest).not.toBe(digest);
-      expect(appliedLines(origin)).toContainEqual(expect.objectContaining({ kind: "finished", applied: T(4), result: "applied" }));
+      expect(ledgerOf(origin).resolutions).toHaveLength(1);
+      expect(parseApplied(appliedText(origin))).toHaveLength(1);
+      expect(appliedLines(origin)).toContainEqual(expect.objectContaining({ kind: "finished", planDigest: digest, applied: line!.timestamp, result: "applied" }));
+    });
+
+    it("waits for an approval of the rest at another commit", async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(String(l)));
+      const { work, origin, bin, log } = await stopped();
+      planA(work, [create("second", "2")], ["terraform_data.first"]);
+      git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "a push after the stop");
+      writeFileSync(log, "");
+      expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
+      expect(readFileSync(log, "utf-8")).toBe("");
+      expect(ledgerOf(origin).pending).toHaveLength(2);
+      expect(parseApplied(appliedText(origin))).toHaveLength(1);
     });
 
     it("waits for an approval of its own when a remaining change moved since the approval", async () => {
       const lines: string[] = [];
-      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(l));
+      vi.spyOn(console, "log").mockImplementation((l: string) => void lines.push(String(l)));
       const { work, origin, bin, digest } = await stopped();
       planA(work, [create("second", "3")], ["terraform_data.first"]);
       expect(await applyWave(work, { ...opts(bin), now: T(4) })).toBe(3);
-      expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished, but a terraform_data.second is a change the approved plans did not make, so these plans need an approval of their own`);
+      expect(lines.join("\n")).toContain(`the apply of ${digest}, approved by alice, stopped before it finished, but `);
       expect(ledgerOf(origin).pending).toHaveLength(2);
     });
 

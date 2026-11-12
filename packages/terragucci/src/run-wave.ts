@@ -6,16 +6,21 @@
  * terragucci's words (`runChantInProcess`). A wave job's line (`--spec` and
  * `--wave`, with `--phase` in a split wave) also hands chant terragucci's
  * wave hook (runWaveJob in ./apply.ts), so the wave plans and applies each
- * root as `stage tf-apply` did. The lines that run no wave job (`--merge`,
+ * root as `stage tf-apply` did. Under `--render-spec` with
+ * `CHANT_WAVES_SPEC_RUNS=head` (chant issue 5046) the job's spec is the one
+ * `terragucci waves-spec` renders at HEAD with the base, as chant renders
+ * it, and the wave takes what the change reaches with it: the composed run,
+ * and the roots a pending estate migration plans. The lines that run no wave job (`--merge`,
  * `--apply-status`, `--waves-outcome`, `--record-plans`, `--approval-status`)
  * and a split wave's record job take the words alone.
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { OpWavesSpec, ProductWaveHook } from "@intentius/chant/op";
 import { runWaveJob, type RunWaveJob } from "./apply";
 import { TERRAGUCCI_WORDS } from "./ci-words";
-import { wavesSpecAt } from "./waves-spec";
+import { SPEC_RUNS_ENV, wavesSpecAt, wavesSpecReach } from "./waves-spec";
 
 /** The flags of chant's `run wave` lines that run no wave job. */
 const NO_WAVE_JOB = ["--merge", "--apply-status", "--waves-outcome", "--record-plans", "--approval-status"];
@@ -32,7 +37,7 @@ export function flagValue(argv: readonly string[], name: string): string | undef
 
 const whole = (v: string | undefined): number | undefined => (v !== undefined && /^[1-9][0-9]*$/.test(v) ? Number(v) : undefined);
 
-export interface RunWaveOptions extends Omit<RunWaveJob, "wave" | "spec" | "phase" | "share" | "group" | "base"> {
+export interface RunWaveOptions extends Omit<RunWaveJob, "wave" | "spec" | "phase" | "share" | "group" | "base" | "composition" | "migrationMembers" | "nothing"> {
   /** chant's `run wave` in this process. Default: `runChantInProcess(["run", "wave", ...argv], TERRAGUCCI_WORDS, { wave })`. */
   chant?: (argv: string[], hook: ProductWaveHook | undefined) => Promise<number>;
 }
@@ -51,10 +56,26 @@ export async function runWave(repo: string, argv: string[], o: RunWaveOptions = 
   if (phase === "record" || (phase !== undefined && !["plan", "gate", "apply"].includes(phase))) return plain();
   const base = flagValue(argv, "--base");
   const env = o.env ?? process.env;
-  // The spec this job runs. With --render-spec, chant renders it through `terragucci waves-spec` at base, as this does.
+  // The spec this job runs. With --render-spec, chant renders it through `terragucci waves-spec` at base, as this does;
+  // with CHANT_WAVES_SPEC_RUNS=head at the applied commit with the base beside it (chant issue 5046), and the
+  // job's wave takes what the change reaches: its composed run, and the roots a pending estate migration plans.
   let spec: OpWavesSpec | undefined;
+  let reach: Pick<RunWaveJob, "composition" | "migrationMembers" | "nothing"> = {};
   if (argv.includes("--render-spec")) {
-    spec = await wavesSpecAt(repo, { at: base ?? "HEAD^1", specFile, ...(o.config ? { config: o.config } : {}), env, ...(o.fetch ? { fetch: o.fetch } : {}) });
+    const runsAtHead = env[SPEC_RUNS_ENV] === "head" && phase !== "gate" && phase !== "record";
+    const at = { specFile, ...(o.config ? { config: o.config } : {}), env, ...(o.fetch ? { fetch: o.fetch } : {}) };
+    if (runsAtHead) {
+      const baseSha = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${base ?? "HEAD^1"}^{commit}`], { cwd: repo, encoding: "utf-8" }).stdout.trim();
+      const rendered = await wavesSpecReach(repo, { ...at, at: "HEAD", ...(baseSha ? { base: baseSha } : {}) });
+      spec = rendered?.spec;
+      if (rendered) {
+        const members = rendered.migrationMembers.get(wave);
+        const nothing = rendered.nothing.get(wave);
+        reach = { ...(rendered.composition ? { composition: rendered.composition } : {}), ...(members?.length ? { migrationMembers: members } : {}), ...(nothing ? { nothing } : {}) };
+      }
+    } else {
+      spec = await wavesSpecAt(repo, { ...at, at: base ?? "HEAD^1" });
+    }
   } else {
     try {
       spec = JSON.parse(readFileSync(isAbsolute(specFile) ? specFile : join(repo, specFile), "utf-8")) as OpWavesSpec;
@@ -69,6 +90,7 @@ export async function runWave(repo: string, argv: string[], o: RunWaveOptions = 
   const { chant: _chant, ...rest } = o;
   return runWaveJob(repo, {
     ...rest,
+    ...reach,
     wave,
     spec,
     env,
