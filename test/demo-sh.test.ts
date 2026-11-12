@@ -313,7 +313,7 @@ describe("stack/demo.sh under pipefail", () => {
   });
 
   it("puts choudoufu's release in the demo image, with a commit build as the way forward", () => {
-    expect(demo).toContain('CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.31.0}"');
+    expect(demo).toContain('CHOUDOUFU_VERSION="${DEMO_CHOUDOUFU_VERSION:-0.34.0}"');
     expect(demo).toContain('CHOUDOUFU_REF="${DEMO_CHOUDOUFU_REF-}"');
     expect(demo).toContain("--build-arg CHOUDOUFU_FROM=source --build-arg CHOUDOUFU_REF=");
     const sums = readFileSync(join(root, "stack", "demo-yodel", "choudoufu.sha256"), "utf8");
