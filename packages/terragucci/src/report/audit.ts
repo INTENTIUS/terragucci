@@ -655,9 +655,20 @@ function ephemeralEntries(project: string, lines: readonly GateLedgerLine[], com
   return out;
 }
 
-/** The state version each root of an apply report recorded, by root: the version id, never the contents. Undefined when none recorded one. */
-function stateVersions(report: Report): { root: string; location?: string; version_id?: string; versioning: string }[] | undefined {
-  const rows = report.roots.filter((r) => r.state).map((r) => ({ root: r.path, ...(r.state!.location ? { location: r.state!.location } : {}), ...(r.state!.version_id ? { version_id: r.state!.version_id } : {}), versioning: r.state!.versioning }));
+/**
+ * The state version each root of an apply report recorded, by root: the
+ * version id, never the contents. A choudoufu live root keeps no state: its
+ * row names its record store (`roots[].live`) and nothing else. Undefined
+ * when no root recorded either.
+ */
+type StateVersionRow = { root: string; location?: string; version_id?: string; versioning: string } | { root: string; record_store: string };
+
+function stateVersions(report: Report): StateVersionRow[] | undefined {
+  const rows = report.roots.flatMap((r): StateVersionRow[] => {
+    if (r.live) return [{ root: r.path, record_store: r.live.record_store }];
+    if (!r.state) return [];
+    return [{ root: r.path, ...(r.state.location ? { location: r.state.location } : {}), ...(r.state.version_id ? { version_id: r.state.version_id } : {}), versioning: r.state.versioning }];
+  });
   return rows.length > 0 ? rows : undefined;
 }
 

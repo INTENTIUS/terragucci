@@ -10,7 +10,7 @@ import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 50;
+export const REPORT_MINOR = 51;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -379,7 +379,12 @@ export interface ReportRoot {
    * leaves none.
    */
   secrets?: { in_state: number; movable: number };
-  /** A choudoufu root under a `live` block (minor 42): its estate, its record store, and its `strict { secrets }` setting (`store` when unset). */
+  /**
+   * A choudoufu root under a `live` block (minor 42): its estate, its record
+   * store, and its `strict { secrets }` setting (`store` when unset). On a
+   * `tf-apply` wave's report, an applied live root carries it in place of
+   * `state`, since it keeps no state file (minor 51).
+   */
   live?: ReportLive;
 }
 
@@ -472,7 +477,8 @@ export interface ReportStep {
 
 /**
  * The state a root's backend holds after an apply (minor 20): read from the
- * object's metadata, never from its body.
+ * object's metadata, never from its body. A choudoufu live root has none
+ * (minor 51): its records are in the record store its `live` names.
  */
 export interface ReportStateVersion {
   /** The backend the root initialised: `s3`, `local`, `gcs` and so on. */

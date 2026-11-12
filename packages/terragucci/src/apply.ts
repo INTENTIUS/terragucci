@@ -107,7 +107,7 @@ import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set"
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { terragruntApplyCapability } from "@intentius/chant-lexicon-terraform/terragrunt/capability";
 import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
-import { explicitOrder, globMatch, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
+import { explicitOrder, globMatch, liveBody, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
 import { blockedMembers, blockedWords, earlierWaveOutcomes, onlyWaiting, passesThrough, runSummary, writeWaveOutcomeFile, type WaveMemberOutcome, type WaveMemberStatus } from "@intentius/chant/wave-blocked";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
@@ -128,6 +128,7 @@ import { named } from "./estate";
 import type { ObjectStore } from "@intentius/chant/object-store";
 import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from "./report/policy";
 import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
+import { liveEstate } from "./tips/secrets";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, type Turn } from "./report/stage";
@@ -1460,9 +1461,13 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
       const p = w.planned?.find((x) => x.root === run.target);
       if (!p) return;
       const planned = { ...(p as PlannedRoot), env: own.env, binary: own.binary };
-      (w.states ??= new Map()).set(run.target, await readStateVersion(join(repo, run.target), own.env, { words: STORE_WORDS }));
-      logStateVersions([run.target], w.states);
+      const state = await appliedStateVersion(join(repo, run.target), own.env);
+      if (state) {
+        (w.states ??= new Map()).set(run.target, state);
+        logStateVersions([run.target], w.states);
+      }
       const versions = await listRecordVersions(repo, [planned], 1);
+      if (!state) console.log(`${run.target}: no state file; its records are in ${liveEstate(join(repo, run.target))?.record_store ?? "its estate's record store"}`);
       if (versions.has(run.target)) (w.recordVersions ??= new Map()).set(run.target, versions.get(run.target)!);
       const shown = showAppliedState(repo, planned);
       if (shown !== undefined) (w.appliedStates ??= new Map()).set(run.target, shown);
@@ -2418,7 +2423,9 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     const state = w.states?.get(p.root);
     const versions = w.recordVersions?.get(p.root);
     const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
-    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(join(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(w.appliedStates?.has(p.root) ? { appliedState: w.appliedStates.get(p.root) } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
+    // An applied choudoufu live root names its record store in place of a state (appliedStateVersion).
+    const live = w.applied?.has(p.root) ? liveEstate(join(repo, p.root)) : undefined;
+    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(join(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(live ? { live } : {}), ...(w.appliedStates?.has(p.root) ? { appliedState: w.appliedStates.get(p.root) } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
   }
   if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);
@@ -3567,6 +3574,18 @@ function unitLockTimeoutExec(inner: TerragruntExec, env: NodeJS.ProcessEnv): Ter
 }
 
 const waves = (n: number): string => `${n} wave${n === 1 ? "" : "s"}`;
+
+/**
+ * The state a root's backend holds once it applied (the terraform lexicon's
+ * readStateVersion), or undefined for a choudoufu live root: one with a
+ * `live` block or an `estate.chdf.hcl` file keeps no state file, and its
+ * records go to its estate's record store, which the report names in the
+ * root's `live`.
+ */
+export async function appliedStateVersion(dir: string, env: NodeJS.ProcessEnv): Promise<ReportStateVersion | undefined> {
+  if (liveBody(dir) !== undefined) return undefined;
+  return readStateVersion(dir, env, { words: STORE_WORDS });
+}
 
 /** One line per root or unit: where its state is, and its version or why there is none. */
 function logStateVersions(roots: readonly string[], versions: Map<string, ReportStateVersion>): void {

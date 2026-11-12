@@ -262,7 +262,7 @@
             "items": { "type": "string" }
           },
           "state": {
-            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20).",
+            "description": "On a tf-apply wave, a root that applied or had nothing to apply: the state version its backend holds afterwards, read from the object's metadata, never its contents (minor 20). Never on a choudoufu live root, which keeps no state file: its live names its record store (minor 51).",
             "type": "object",
             "required": ["backend", "versioning"],
             "properties": {
@@ -357,7 +357,7 @@
           },
           "live": {
             "type": "object",
-            "description": "A choudoufu root under a live block (minor 42): its estate, its record store (s3://<bucket>/<prefix>, local, or the store's type) and its strict { secrets } setting, store when unset.",
+            "description": "A choudoufu root under a live block (minor 42): its estate, its record store (s3://<bucket>/<prefix>, local, or the store's type) and its strict { secrets } setting, store when unset. On a tf-apply wave's report, an applied live root carries it and no state, since it keeps no state file (minor 51).",
             "required": ["estate", "record_store", "secrets"],
             "properties": {
               "estate": { "type": "string" },
