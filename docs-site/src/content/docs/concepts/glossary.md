@@ -116,6 +116,6 @@ The OpenTofu fork from the team behind terragucci ([Choose your binary](/terragu
 | `--mode apply` on `rollout`, `respond` and `reconcile` | push the commit or open the pull request that the dry run described | `terraform apply`, which none of the three runs |
 | layer | a step of the dependency order | a wave, an apply batch built from layers |
 | `/terragucci apply` | rerun `tf-apply` on a merged pull request, or an open one with `apply.when: pull-request`; gated waves still need an approval of their digest | Atlantis `apply`, which applies its stored plan; here each wave plans again |
-| `/terragucci lock` | with `apply.when: pull-request` or `locks: plan`, lock the roots a pull request reaches without applying it | the lock Atlantis takes on every plan; under the default `locks: apply` a plan locks nothing, and with `locks: plan` the first plan locks |
-| `/terragucci unlock` | with `apply.when: pull-request` or `locks: plan`, release the root locks a pull request took when it planned, applied or locked | Atlantis `unlock`, which also discards plans; none are kept here |
+| `/terragucci lock` | with `locks: plan` under `apply.when: merge`, lock the roots a pull request reaches without applying it; with `apply.when: pull-request`, `/terragucci apply` takes the locks instead | the lock Atlantis takes on every plan; under the default `locks: apply` a plan locks nothing, and with `locks: plan` the first plan locks |
+| `/terragucci unlock` | with `locks: plan` under `apply.when: merge`, release the root locks a pull request took when it planned or locked | Atlantis `unlock`, which also discards plans; none are kept here |
 | run | a forge pipeline run, with its jobs | an HCP Terraform run, which is one plan and apply in one workspace |

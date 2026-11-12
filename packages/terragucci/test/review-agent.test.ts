@@ -181,10 +181,11 @@ describe("the review workflow", () => {
   });
 
   it("github: the apply jobs read the review's artifact with actions: read, and only with review.agent on", () => {
-    for (const job of ["apply-wave-1", "apply-comment"]) {
-      expect(doc("github").jobs[job].permissions.actions, job).toBe("read");
-      expect(doc("github", false).jobs[job].permissions.actions, job).toBeUndefined();
-    }
+    expect(doc("github").jobs["apply-wave-1"].permissions.actions).toBe("read");
+    expect(doc("github", false).jobs["apply-wave-1"].permissions.actions).toBeUndefined();
+    // chant's comment job applies nothing; it re-runs the wave jobs, with actions: write whether or not review.agent is on.
+    expect(doc("github").jobs["apply-comment"].permissions.actions).toBe("write");
+    expect(doc("github", false).jobs["apply-comment"].permissions.actions).toBe("write");
   });
 });
 

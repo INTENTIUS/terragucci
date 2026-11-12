@@ -364,20 +364,24 @@ describe("init in a Terragrunt repo", () => {
     const plan = doc.jobs.plan.steps.at(-1).run as string;
     const layers = "'live/dev/vpc;live/dev/app;live/prod/vpc;live/prod/app'";
     expect(plan).toContain(`--layers ${layers}`);
-    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply"))).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "apply-wave-3", "apply-wave-4"]);
-    const applyRun = (job: string): string => doc.jobs[job].steps.find((s: { run?: string }) => s.run?.includes("terragucci stage tf-apply")).run as string;
+    // chant's wave jobs, one per dependency layer, with their status jobs; the layers are the spec's Terragrunt step.
+    expect(Object.keys(doc.jobs).filter((j) => j.startsWith("apply")).sort()).toEqual(["apply-comment", "apply-done", "apply-wave-1", "apply-wave-1-status", "apply-wave-2", "apply-wave-2-status", "apply-wave-3", "apply-wave-3-status", "apply-wave-4"]);
+    const applyRun = (job: string): string => doc.jobs[job].steps.find((s: { run?: string }) => s.run?.includes("terragucci run wave")).run as string;
     const apply = applyRun("apply-wave-1");
-    expect(apply).toContain(`terragucci stage tf-apply --wave 1 --layers ${layers} --binary tofu --gate on-destructive --stand-down --terragrunt 2>&1`);
-    expect(apply).not.toContain("--rest");
-    // The last job also runs any wave past the ones init found.
-    expect(applyRun("apply-wave-4")).toContain(`terragucci stage tf-apply --wave 4 --layers ${layers} --binary tofu --gate on-destructive --stand-down --terragrunt --rest`);
+    expect(apply).toContain("terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --render-spec");
+    expect(applyRun("apply-wave-4")).toContain("terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 4 --render-spec");
     expect(apply).not.toContain("-auto-approve");
     expect(apply).not.toContain("TG_IAM_ASSUME_ROLE=");
+    const spec = JSON.parse(r.files.find((f) => f.path.endsWith(".chant/op-waves/tf-apply.spec.json"))!.content);
+    expect(spec.step).toMatchObject({ kind: "terragrunt-apply", unit: "{target}", layers: [["live/dev/vpc"], ["live/dev/app"], ["live/prod/vpc"], ["live/prod/app"]], binary: "tofu" });
+    expect(spec.waves.map((w: { name: string; gate: string }) => [w.name, w.gate])).toEqual([1, 2, 3, 4].map((k) => [`wave-${k}`, "on-destructive"]));
     // approval: ledger is the default, so no gate is declared for a seal.
     expect(r.files.find((f) => f.path.endsWith("chant.workspace.json"))).toBeUndefined();
     // The plan job, which runs the change's code, restores the cache and saves none; the jobs that run merged code save it.
     expect(doc.jobs.plan.steps.find((s: { uses?: string }) => s.uses === CACHE_RESTORE)?.with.path).toBe(".terragrunt-cache");
-    for (const job of ["apply-wave-1", "apply-wave-4", "apply-comment"]) {
+    // The comment job applies nothing, so it caches nothing.
+    expect(JSON.stringify(doc.jobs["apply-comment"])).not.toContain(CACHE);
+    for (const job of ["apply-wave-1", "apply-wave-4"]) {
       expect(doc.jobs[job].steps.find((s: { uses?: string }) => s.uses === CACHE)?.with.path).toBe(".terragrunt-cache");
     }
     expect(text).toContain('TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources"');
@@ -488,7 +492,8 @@ describe("init in a Terragrunt repo", () => {
   it("running it twice changes nothing", async () => {
     const repo = liveRepo();
     await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" });
-    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged"]);
+    // The pipeline, the waves spec and the components declaration.
+    expect((await init(repo, { binary: "tofu", terragrunt: "/nonexistent/terragrunt" })).files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
   });
 });
 
@@ -907,7 +912,8 @@ describe("the Terragrunt example", () => {
     expect(r.roots).toHaveLength(15);
     expect(r.layers.map((w) => w.length)).toEqual([1, 4, 2, 7, 1]);
     // The example is committed as the pinned chant renders it, whose handover takes terragucci's words (chant#4554).
-    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    // terragucci issue 1411: the waves' spec is committed beside the pipeline, which chant's wave jobs render their rules from.
+    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
   });
 
   it("every scenario applies to the example as committed", () => {

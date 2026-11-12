@@ -1,19 +1,14 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import type { Fetch } from "../src/forge";
-import { renderPipeline, resumeCron, resumeScript } from "../src/render";
-import { originOf, resumable, resumeAfterApproval, resumeStep, resumeWithChant } from "../src/resume";
-import { writeLedger, type GateLedger } from "../src/apply";
-import { driftOp, git, tmp } from "./helpers";
+import { renderPipeline, resumeCron } from "../src/render";
+import { originOf, resumeAfterApproval } from "../src/resume";
+import { driftOp } from "./helpers";
 
-const T = (m: number): string => new Date(Date.UTC(2026, 9, 8, 12, m)).toISOString();
-const pending = (gate: string, digest: string, m: number, extra: Record<string, unknown> = {}) => ({ version: 1 as const, kind: "pending" as const, op: "tf-apply", gate, timestamp: T(m), expiresAt: T(m + 2880), planDigest: digest, ...extra });
-const resolution = (gate: string, digest: string, m: number, by = "alice") => ({ version: 1 as const, kind: "resolution" as const, op: "tf-apply", gate, resolvedBy: by, timestamp: T(m), planDigest: digest });
-const ledger = (l: Partial<GateLedger>): GateLedger => ({ pending: [], resolutions: [], ...l }) as GateLedger;
+// Which waves resume, and the GitLab resume, are chant's resume job (`terragucci run resume`); terragucci keeps the approver's resume.
 
 /** A forge that answers from `routes` (method and path, query dropped) and records every call. */
 function forge(routes: Record<string, unknown>, base = "https://api.test/"): { fetch: Fetch; calls: string[] } {
@@ -28,116 +23,7 @@ function forge(routes: Record<string, unknown>, base = "https://api.test/"): { f
   return { fetch, calls };
 }
 
-describe("resumable", () => {
-  it("names a wave whose newest pending digest an approval made after it names, until an apply used it", () => {
-    const base = { pending: [pending("wave-1", "jcs1-sha256:aa", 0, { runId: "41", commit: "c".repeat(40) })], resolutions: [resolution("wave-1", "jcs1-sha256:aa", 5)] };
-    expect(resumable(ledger(base), T(6))).toEqual([{ wave: 1, digest: "jcs1-sha256:aa", by: "alice", runId: "41", commit: "c".repeat(40) }]);
-    // Used: an apply under that approval ran.
-    expect(resumable(ledger({ ...base, applied: [{ version: 1, kind: "applied", op: "tf-apply", gate: "wave-1", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice", timestamp: T(7) }] as never }), T(8))).toEqual([]);
-    // An approval of another digest, or one older than the pending fact, resumes nothing.
-    expect(resumable(ledger({ pending: base.pending, resolutions: [resolution("wave-1", "jcs1-sha256:bb", 5)] }), T(6))).toEqual([]);
-    expect(resumable(ledger({ pending: [pending("wave-1", "jcs1-sha256:aa", 10)], resolutions: [resolution("wave-1", "jcs1-sha256:aa", 5)] }), T(11))).toEqual([]);
-    // Nothing pending: nothing waits.
-    expect(resumable(ledger({ resolutions: [resolution("wave-1", "jcs1-sha256:aa", 5)] }), T(6))).toEqual([]);
-  });
-});
-
-describe("resumable, a gate that asks a decision point", () => {
-  const Q = "prod-apply-0123456789ab";
-  const asking = (extra: Record<string, unknown> = {}) => pending("wave-1", "jcs1-sha256:aa", 0, { runId: "41", answer: { point: "prod-apply", id: Q, path: `answers/${Q}.md`, ...extra } });
-  const question = (state: "escalated" | "answered", answer: string | boolean | null, by: string[] = []) => new Map([[Q, { id: Q, state, answer, answeredBy: by, answeredOn: state === "answered" ? "2026-10-08" : null }]]);
-
-  it("names a wave whose question has an answer the gate passes on, before the wave records its resolution", () => {
-    const l = ledger({ pending: [asking()] });
-    expect(resumable(l, T(6), undefined, question("answered", true, ["alice@acme.com"]))).toEqual([{ wave: 1, digest: "jcs1-sha256:aa", by: "alice@acme.com", runId: "41" }]);
-  });
-
-  it("leaves a wave whose question is open, answered otherwise, or not read", () => {
-    const l = ledger({ pending: [asking()] });
-    expect(resumable(l, T(6), undefined, question("escalated", null))).toEqual([]);
-    expect(resumable(l, T(6), undefined, question("answered", false, ["alice@acme.com"]))).toEqual([]);
-    expect(resumable(l, T(6))).toEqual([]);
-    expect(resumable(l, T(6), undefined, new Map())).toEqual([]);
-  });
-
-  it("once the wave recorded the resolution and applied under it, resumes nothing", () => {
-    // The resolution the wave recorded cites the answer it went through on.
-    const l = ledger({ pending: [asking()], resolutions: [{ ...resolution("wave-1", "jcs1-sha256:aa", 5, "alice@acme.com"), answer: { id: Q, point: "prod-apply", path: `answers/${Q}.md`, answer: true, answeredBy: ["alice@acme.com"] } }], applied: [{ version: 1, kind: "applied", op: "tf-apply", gate: "wave-1", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice@acme.com", timestamp: T(7) }] as never });
-    expect(resumable(l, T(8), undefined, question("answered", true, ["alice@acme.com"]))).toEqual([]);
-  });
-});
-
-describe("resumable, an approved apply that stopped", () => {
-  // The changes line a choudoufu wave writes beside chant's applied line, with the run locator chant run resume reads (chant#3858).
-  const applied = (m: number, extra: Record<string, unknown> = {}) => ({ version: 1 as const, kind: "changes" as const, op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", approvedAt: T(5), approvedBy: "alice", timestamp: T(m), runId: "41", holder: "41", changes: [], resume: { forge: "github" as const, api: "https://api.test", repo: "acme/infra", run: "41" }, ...extra });
-  const finished = (m: number, result: "applied" | "failed") => ({ version: 1 as const, kind: "finished" as const, op: "tf-apply", gate: "wave-2", planDigest: "jcs1-sha256:aa", applied: T(m), result, timestamp: T(m + 1) });
-  const base = { pending: [pending("wave-2", "jcs1-sha256:aa", 0)], resolutions: [resolution("wave-2", "jcs1-sha256:aa", 5)] };
-
-  it("names a wave whose apply under an approval recorded its changes and never how it ended", () => {
-    expect(resumable(ledger({ ...base, applied: [applied(7)] }), T(8))).toEqual([{ wave: 2, digest: "jcs1-sha256:aa", by: "alice", runId: "41", stopped: { holder: "41", at: T(7) } }]);
-  });
-
-  it("leaves a wave whose apply ended, failed included, named no run to resume, or planned again since", () => {
-    expect(resumable(ledger({ ...base, applied: [applied(7)], finished: [finished(7, "applied")] }), T(9))).toEqual([]);
-    expect(resumable(ledger({ ...base, applied: [applied(7)], finished: [finished(7, "failed")] }), T(9))).toEqual([]);
-    expect(resumable(ledger({ ...base, applied: [applied(7, { resume: undefined })] }), T(9))).toEqual([]);
-    expect(resumable(ledger({ ...base, pending: [...base.pending, pending("wave-2", "jcs1-sha256:bb", 9)], applied: [applied(7)] }), T(10))).toEqual([]);
-  });
-
-  it("resumes it once the run that applied is gone, and not while it runs", async () => {
-    const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t" };
-    const l = ledger({ ...base, applied: [applied(7)] });
-    const none = forge({});
-    const seen: string[] = [];
-    const step = (state: "alive" | "dead") => resumeStep({ ledger: l, forge: "github", sha: "d".repeat(40), env, now: T(8), fetch: none.fetch, liveness: async (h) => (seen.push(h.run), state) });
-    expect(await step("alive")).toMatchObject({ kind: "none" });
-    expect(await step("dead")).toMatchObject({ kind: "apply", sha: "d".repeat(40), waves: [{ wave: 2, stopped: { holder: "41" } }] });
-    expect(seen).toEqual(["41", "41"]);
-  });
-});
-
-describe("resumable, a state migration", () => {
-  const mig = (l: Partial<GateLedger>): GateLedger => ledger(l);
-  it("resumes wave 1 for a migration whose newest digest an approval names, until wave 1 applied under it", () => {
-    const pend = pending("split-b", "jcs1-sha256:mm", 0, { op: "tf-migrate", runId: "88", commit: "c".repeat(40) });
-    const ok = resolution("split-b", "jcs1-sha256:mm", 5);
-    expect(resumable(ledger({}), T(6), mig({ pending: [pend], resolutions: [ok] }))).toEqual([{ wave: 1, migration: "split-b", digest: "jcs1-sha256:mm", by: "alice", runId: "88", commit: "c".repeat(40) }]);
-    expect(resumable(ledger({}), T(8), mig({ pending: [pend], resolutions: [ok], applied: [{ version: 1, kind: "applied", op: "tf-migrate", gate: "split-b", planDigest: "jcs1-sha256:mm", approvedAt: T(5), approvedBy: "alice", timestamp: T(7) }] }))).toEqual([]);
-    expect(resumable(ledger({}), T(6), mig({ pending: [pend] }))).toEqual([]);
-  });
-
-  it("on GitLab leaves an approved migration to chant run resume, which retries the job that waited", async () => {
-    const env = { CI_API_V4_URL: "https://api.test", CI_PROJECT_ID: "9", TG_TOKEN: "t", CI_DEFAULT_BRANCH: "main" };
-    const { fetch, calls } = forge({});
-    const migrations = mig({ pending: [pending("split-b", "jcs1-sha256:mm", 0, { op: "tf-migrate" })], resolutions: [resolution("split-b", "jcs1-sha256:mm", 5)] });
-    expect(await resumeStep({ ledger: ledger({}), migrations, forge: "gitlab", sha: "d".repeat(40), env, now: T(6), fetch })).toEqual({ kind: "none", why: "on GitLab chant run resume starts each job that waits, or whose apply stopped" });
-    expect(calls).toEqual([]);
-  });
-});
-
-describe("resumeStep", () => {
-  const approved = ledger({ pending: [pending("wave-2", "jcs1-sha256:aa", 0, { runId: "77" })], resolutions: [resolution("wave-2", "jcs1-sha256:aa", 5)] });
-  const SHA = "d".repeat(40);
-
-  it("on GitHub and Forgejo applies at the default branch's commit, naming the pull request that made it", async () => {
-    const env = { GITHUB_REPOSITORY: "acme/infra", GITHUB_API_URL: "https://api.test", TG_TOKEN: "t" };
-    const merged = { number: 12, head: { sha: "e".repeat(40) }, merge_commit_sha: SHA, merged_at: T(0) };
-    const { fetch } = forge({ [`GET repos/acme/infra/commits/${SHA}/pulls`]: [merged], "GET repos/acme/infra/pulls/12": merged });
-    expect(await resumeStep({ ledger: approved, forge: "github", sha: SHA, env, now: T(6), fetch })).toMatchObject({ kind: "apply", sha: SHA, pr: 12, waves: [{ wave: 2 }] });
-    // A direct push: no pull request, the apply still runs.
-    const none = forge({});
-    expect(await resumeStep({ ledger: approved, forge: "github", sha: SHA, env, now: T(6), fetch: none.fetch })).toMatchObject({ kind: "apply", sha: SHA });
-    expect(await resumeStep({ ledger: ledger({}), forge: "github", sha: SHA, env, now: T(6), fetch: none.fetch })).toEqual({ kind: "none", why: "no wave waits with an approval that stands, and no approved apply stopped before it finished" });
-  });
-
-  it("on GitLab leaves every wave, waiting or stopped, to chant run resume", async () => {
-    const f = forge({});
-    expect(await resumeStep({ ledger: approved, forge: "gitlab", sha: SHA, env: { TG_TOKEN: "t" }, now: T(6), fetch: f.fetch })).toEqual({ kind: "none", why: "on GitLab chant run resume starts each job that waits, or whose apply stopped" });
-    expect(f.calls).toEqual([]);
-  });
-});
-
-describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resume job through chant run resume", () => {
+describe("resumeAfterApproval through chant's resumeGateRun", () => {
   let server: Server | undefined;
   afterEach(() => new Promise<void>((done) => { if (!server) return done(); server.closeAllConnections(); server.close(() => done()); server = undefined; }));
 
@@ -156,27 +42,6 @@ describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resu
     await new Promise<void>((done) => server!.listen(0, "127.0.0.1", () => done()));
     return { base: `http://127.0.0.1:${(server!.address() as AddressInfo).port}`, calls };
   }
-
-  /** A checkout whose origin's chant/lifecycle holds `lines` in `_gates/<op>.jsonl`. */
-  async function repoWith(op: string, lines: unknown[]): Promise<string> {
-    const dir = tmp("tg-resume-");
-    const origin = join(dir, "origin.git");
-    git(dir, "init", "-q", "--bare", origin);
-    const work = join(dir, "work");
-    git(dir, "init", "-q", "-b", "main", work);
-    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one");
-    git(work, "remote", "add", "origin", origin);
-    git(work, "push", "-q", "origin", "main");
-    await writeLedger(work, `_gates/${op}.jsonl`, lines.map((l) => JSON.stringify(l)), {}, "ledger");
-    return work;
-  }
-
-  const now = Date.now();
-  const at = (m: number): string => new Date(now - 60_000 * (10 - m)).toISOString();
-  const waiting = (gate: string, resume: Record<string, unknown>, op = "tf-apply") => [
-    { version: 1, kind: "pending", op, gate, timestamp: at(0), expiresAt: new Date(now + 86_400_000).toISOString(), planDigest: "jcs1-sha256:aa", resume },
-    { version: 1, kind: "resolution", op, gate, resolvedBy: "alice", timestamp: at(5), planDigest: "jcs1-sha256:aa" },
-  ];
 
   it("re-runs the GitHub run that waited, with the approver's token", async () => {
     const f = await api({ "GET /repos/acme/infra/actions/runs/41": { status: "completed", conclusion: "failure", run_attempt: 1 }, "POST /repos/acme/infra/actions/runs/41/rerun-failed-jobs": {} });
@@ -204,24 +69,6 @@ describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resu
     expect(await resumeAfterApproval({ origin: originOf("git@github.com:acme/infra.git")!, wave: { wave: 2, resume: resume as never }, env: { ...process.env, GH_TOKEN: "me" } })).toMatch(/^not resumed from here: run 41 succeeded;/);
   });
 
-  it("the GitLab resume job runs chant run resume for the waves' and the migrations' gates, with the project token, and resumes a stopped apply", async () => {
-    const f = await api({
-      "GET /projects/9/jobs/7": { status: "failed", name: "apply-wave-2" },
-      "GET /projects/9/pipelines/300/jobs": [{ id: 7, name: "apply-wave-2" }, { id: 17, name: "apply-wave-3" }],
-      "POST /projects/9/jobs/7/retry": { id: 8 },
-      "GET /projects/9/jobs/17": { status: "canceled", name: "apply-wave-3" },
-      "POST /projects/9/jobs/17/retry": { id: 18 },
-    });
-    const repo = await repoWith("tf-apply", waiting("wave-2", { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "7", jobName: "apply-wave-2" }));
-    // Wave 3's apply under an approval recorded its changes, with where it ran, and never how it ended: its job was canceled.
-    const stopped = { version: 1, kind: "changes", op: "tf-apply", gate: "wave-3", planDigest: "jcs1-sha256:cc", approvedAt: at(2), approvedBy: "alice", timestamp: at(3), holder: "300", changes: [], resume: { forge: "gitlab", api: f.base, repo: "9", run: "300", job: "17", jobName: "apply-wave-3" } };
-    await writeLedger(repo, "_gates/tf-apply/applied.jsonl", [JSON.stringify(stopped)], {}, "stopped");
-    const lines: string[] = [];
-    expect(await resumeWithChant(repo, { ...process.env, TG_TOKEN: "project" }, { log: (l) => void lines.push(l) })).toBe(0);
-    expect(lines).toEqual(["terragucci resume: chant run resume --op tf-apply", "terragucci resume: chant run resume --op tf-migrate"]);
-    expect(f.calls).toContain("POST /projects/9/jobs/7/retry");
-    expect(f.calls).toContain("POST /projects/9/jobs/17/retry");
-  });
   it("reads the forge from the origin, or from the config for any other host", () => {
     expect(originOf("git@github.com:acme/infra.git")).toEqual({ forge: "github", host: "github.com", web: "https://github.com", path: "acme/infra" });
     expect(originOf("https://gitlab.com/group/sub/infra.git")).toEqual({ forge: "gitlab", host: "gitlab.com", web: "https://gitlab.com", path: "group/sub/infra" });
@@ -233,23 +80,23 @@ describe("resumeAfterApproval through chant's resumeGateRun, and the GitLab resu
 describe("apply.resume in the pipeline", () => {
   const doc = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
 
-  it.each(["github", "forgejo"] as const)("%s: a resume workflow of its own runs the waves on its schedule", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: a resume workflow of its own runs chant's resume on its schedule", (forge) => {
     const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"], ["b"]], env: {}, gate: "always", resume: 10 });
     expect(r.extra).toHaveLength(1);
     const extra = r.extra![0]!;
     expect(extra.path).toBe(forge === "github" ? ".github/workflows/terragucci-resume.yml" : ".forgejo/workflows/terragucci-resume.yml");
     const w = doc(extra.content);
     expect(w.on).toEqual({ schedule: [{ cron: "*/10 * * * *" }], workflow_dispatch: {} });
-    if (forge === "github") expect(w.jobs.resume.permissions.contents).toBe("write");
-    // It applies beside any other run; a wave of it waits for what another run is applying.
-    expect(JSON.stringify(w.jobs.resume.steps)).not.toContain("terragucci-apply-lock");
-    expect(w.jobs.resume.concurrency).toBeUndefined();
-    expect(JSON.stringify(w.jobs.resume.steps)).not.toContain("--on-held refuse");
-    expect(JSON.stringify(w.jobs.resume.steps)).toContain(`terragucci resume --forge ${forge} --out terragucci-resume.env`);
+    expect(Object.keys(w.jobs)).toEqual(["resume"]);
+    // chant's resume starts the waiting wave job again; nothing applies in the resume job itself.
+    const steps = JSON.stringify(w.jobs.resume.steps);
+    expect(steps).toContain("terragucci run resume --op tf-apply");
+    expect(steps).not.toContain("terragucci stage tf-apply");
+    expect(steps).not.toContain("terragucci-apply-lock");
     // The pipeline itself is unchanged, and without apply.resume there is no resume workflow.
     expect(r.content).toBe(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"], ["b"]], env: {}, gate: "always" }).content);
     expect(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "always" }).extra).toBeUndefined();
-    // Under gate never too: a state migration waits in wave 1 whatever the gate, and an approved one resumes.
+    // Under gate never too: a state migration waits in wave 1 whatever the gate.
     const never = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", resume: 10 });
     expect(never.extra?.map((e) => e.path)).toEqual([extra.path]);
   });
@@ -257,16 +104,16 @@ describe("apply.resume in the pipeline", () => {
   it("gitlab: a resume job for the pipeline schedule TERRAGUCCI_SCHEDULE=resume, which drift's job sits out", () => {
     const out = renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "always", resume: 15, drift: "0 6 * * *" });
     const d = doc(out.content);
-    expect(d.resume.rules).toEqual([{ if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "resume"' }]);
-    expect(JSON.stringify(d.resume.script)).toContain("terragucci resume --forge gitlab");
+    expect(d.resume.stage).toBe("resume");
+    expect(d.resume.rules).toEqual([{ if: '(($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "schedule")' }]);
+    // The state migrations' gate resumes too (tf-migrate), and the job fails when either resume failed.
+    expect(d.resume.script).toEqual(["rc=0; terragucci run resume --op tf-apply || rc=$?; terragucci run resume --op tf-migrate || rc=$?; exit $rc"]);
     expect(driftOp(out, "gitlab")!.job.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "resume"');
-    expect(d["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE != "schedule"');
+    // A wave job runs on a push to the default branch.
+    expect(d["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH');
   });
 
-  it("the script stops before any credential when nothing resumes, and replies only where a pull request made the commit", () => {
-    const s = resumeScript("tofu", [["a"]], "github");
-    expect(s.indexOf("[ -s terragucci-resume.env ] || exit 0")).toBeLessThan(s.indexOf("terragucci stage tf-apply"));
-    expect(s).toContain('tg() { if [ "$1" = reply ] && [ -z "$TG_PR" ]; then echo "terragucci: $2"; else tg_forge "$@"; fi; }');
+  it("the schedule's cron", () => {
     expect(resumeCron(5)).toBe("*/5 * * * *");
     expect(resumeCron(60)).toBe("0 * * * *");
   });

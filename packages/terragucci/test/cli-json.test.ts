@@ -71,7 +71,8 @@ describe("--json", () => {
     expect(code).toBe(0);
     const files = JSON.parse(out).results.files as { path: string; status: string; content: string }[];
     expect(files.find((f) => f.path === "terragucci.yml")).toEqual({ path: "terragucci.yml", status: "created", content: "gate: on-destructive\n" });
-    expect(files.find((f) => f.path === ".github/workflows/terragucci.yml")?.content).toContain("--gate on-destructive");
+    // chant's wave jobs read the gate from the waves spec init writes beside the workflow.
+    expect(JSON.parse(files.find((f) => f.path === ".chant/op-waves/tf-apply.spec.json")!.content).waves.map((w: { gate: string }) => w.gate)).toEqual(["on-destructive", "on-destructive"]);
     expect(existsSync(join(dir, "terragucci.yml"))).toBe(false);
     expect((await run(dir, "init", "--dry-run", "--binary", "tofu", "--gate", "sometimes")).code).toBe(USAGE);
     write(dir, { "terragucci.yml": "gate: always\n" });

@@ -94,9 +94,9 @@ describe("oidc.audience as a map: GitLab", () => {
     expect(JSON.stringify(doc)).not.toContain(LOGIN_RESTART_MARKER);
   });
 
-  it("confirm and mr-apply, apply jobs, declare the apply audience", () => {
+  it("confirm and the waves before merge, chant's plan and applying jobs, declare the apply audience", () => {
     const doc = rendered("gitlab", MAP, { applyWhen: "pull-request", applyMerge: "manual", comments: "*/5 * * * *", applyMergeTokenEnv: "MERGE_TOKEN" } as never);
-    for (const j of ["confirm", "mr-apply"]) expect(doc[j].id_tokens, j).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.apply } });
+    for (const j of ["confirm", "apply-wave-1-plan", "apply-wave-1", "apply-wave-2-plan", "apply-wave-2"]) expect(doc[j].id_tokens, j).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.apply } });
     expect(doc.plan.id_tokens).toEqual({ CHANT_ID_TOKEN_AWS: { aud: AUD.plan } });
   });
 });
@@ -113,7 +113,18 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
       expect(JSON.parse(trade.env!.CHANT_CLOUD_TRADE!).aws.audience, job).toBe(AUD.plan);
       expect(runs(doc, job), job).toEqual([]);
     }
-    const want: Record<string, string> = { "apply-wave-1": AUD.apply, "apply-wave-2": AUD.apply, "apply-comment": AUD.apply, ephemeral: AUD.apply, drift: AUD.drift };
+    // chant's wave jobs trade the apply audience's token for the apply role before the checkout, and the apply drops the
+    // token-request variables. The comment job applies nothing and takes no token.
+    for (const job of ["apply-wave-1", "apply-wave-2"]) {
+      const steps = doc.jobs[job].steps as (Step & { env?: Record<string, string> })[];
+      const trade = steps.find((s) => s.name === "Trade the job's OIDC token for its cloud identities")!;
+      expect(JSON.parse(trade.env!.CHANT_CLOUD_TRADE!).aws, job).toMatchObject({ audience: AUD.apply, role: APPLY });
+      expect(steps.map((s) => s.run ?? "").join("\n"), job).toContain("unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL");
+      expect(runs(doc, job), job).toEqual([]);
+    }
+    expect(doc.jobs["apply-comment"].permissions?.["id-token"]).toBeUndefined();
+    expect(doc.jobs["apply-comment"]["enable-openid-connect"]).toBeUndefined();
+    const want: Record<string, string> = { ephemeral: AUD.apply, drift: AUD.drift };
     // The drift job is chant's Op (terragucci#1305): its login is in the script the Op's step runs.
     const driftScript = renderPipeline(input(forge, MAP, { ephemeral: { roots: ["app"] } as never })).extra!.find((e) => e.path === ".chant/ops/terragucci-drift.sh")!.content;
     for (const [job, aud] of Object.entries(want)) {
@@ -128,9 +139,8 @@ describe.each(["github", "forgejo"] as const)("oidc.audience as a map: %s", (for
         expect(run.split("\n").slice(restart + 1).join("\n"), job).not.toContain(LOGIN_SPEC_ENV);
       }
     }
-    // The plan job assumes the plan role, the apply jobs the apply role, as before.
-    expect(runs(doc, "plan").join("\n")).not.toContain(APPLY);
-    expect(runs(doc, "apply-wave-1").join("\n")).toContain(APPLY);
+    // The plan job assumes the plan role, as before.
+    expect(JSON.stringify(doc.jobs.plan)).not.toContain(APPLY);
   });
 
   it("confirm, the resume and the sweep take the apply audience", () => {

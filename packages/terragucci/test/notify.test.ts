@@ -8,7 +8,8 @@ import { createRequire } from "node:module";
 import { verifyWebhook } from "@intentius/chant/notify-verify";
 import { readRelayToken, slackMessage as chantSlack, teamsMessage as chantTeams, type RelayButtons } from "@intentius/chant/notify";
 import { driftEvent, driftNotice, messageWords, notify, notifyDrift, readOutcome, replanUrl, runUrl, waveChat, waveNotice, webhookEvent, type DriftNotice, type WaveNotice } from "../src/notify";
-import { applyScript, renderPipeline } from "../src/render";
+import { renderPipeline } from "../src/render";
+import { wavesShape } from "../src/render-waves";
 import { driftOp, tmp, validate, write } from "./helpers";
 
 // chant's chant.notify/v1, which the package ships as @intentius/terragucci/notify.schema.json.
@@ -149,24 +150,26 @@ describe("notify: chat webhooks for a wave", () => {
     expect(() => validateConfig({ notify: { webhook: "TG_HOOK_URL", webhook_key: "s3cr3t-key!" } }, "t")).toThrow(/never the key itself/);
   });
 
-  it.each(["github", "forgejo", "gitlab"] as const)("%s: the apply jobs map the secrets and post on 3, 4 and any failure", (forge) => {
+  // chant's wave jobs post a waiting, refused or failed wave themselves (the spec's notify), from the secrets terragucci.yml names.
+  const waveSpec = (notify: Record<string, string>) =>
+    wavesShape({ forge: "github", image: "img:1", waves: [["a"]], shares: () => 1, setup: [], prelude: [], variables: {}, branches: [], notify });
+
+  it.each(["github", "forgejo", "gitlab"] as const)("%s: the apply jobs carry the secrets, and the spec names them", (forge) => {
     const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"], ["b"]], env: {}, notify: { slack: "CHAT_SLACK", teams: "CHAT_TEAMS" } }).content;
     const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
     const job = forge === "gitlab" ? doc["apply-wave-1"] : doc.jobs["apply-wave-1"];
-    const env = forge === "gitlab" ? job.variables : job.env;
-    expect(env.TERRAGUCCI_SLACK_WEBHOOK).toBe(forge === "gitlab" ? "$CHAT_SLACK" : "${{ secrets.CHAT_SLACK }}");
-    expect(env.TERRAGUCCI_TEAMS_WEBHOOK).toBe(forge === "gitlab" ? "$CHAT_TEAMS" : "${{ secrets.CHAT_TEAMS }}");
-    const plan = forge === "gitlab" ? doc.plan.variables : doc.jobs.plan.env;
-    expect(plan.TERRAGUCCI_SLACK_WEBHOOK).toBeUndefined();
-    const hooked = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, notify: { webhook: "HOOK_URL", webhook_key: "HOOK_KEY" } }).content;
-    const hookedDoc = parseYAML(hooked.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-    const hookedEnv = forge === "gitlab" ? hookedDoc["apply-wave-1"].variables : hookedDoc.jobs["apply-wave-1"].env;
-    expect(hookedEnv.TERRAGUCCI_WEBHOOK).toBe(forge === "gitlab" ? "$HOOK_URL" : "${{ secrets.HOOK_URL }}");
-    expect(hookedEnv.TERRAGUCCI_WEBHOOK_KEY).toBe(forge === "gitlab" ? "$HOOK_KEY" : "${{ secrets.HOOK_KEY }}");
-    const script = applyScript("tofu", [["a"]], forge, undefined, { wave: 1, notify: true });
-    for (const e of ["waiting", "refused", "failed"]) expect(script).toContain(`terragucci notify ${e} --wave 1 --outcome "$outcome" --outcome-json "$outcome_json" || true`);
-    expect(script).toContain('TG_OUTCOME="$outcome" TG_OUTCOME_JSON="$outcome_json" terragucci stage tf-apply');
-    expect(applyScript("tofu", [["a"]], forge, undefined, { wave: 1 })).not.toContain("terragucci notify");
+    if (forge === "gitlab") {
+      // GitLab hands every job the project's variables by name, so the wave job maps none.
+      expect(job.variables.CHAT_SLACK).toBeUndefined();
+    } else {
+      expect(job.env.CHAT_SLACK).toBe("${{ secrets.CHAT_SLACK }}");
+      expect(job.env.CHAT_TEAMS).toBe("${{ secrets.CHAT_TEAMS }}");
+      expect(doc.jobs.plan.env.CHAT_SLACK).toBeUndefined();
+    }
+    expect(JSON.stringify(job)).toContain("terragucci run wave");
+    expect(text).not.toContain("TERRAGUCCI_SLACK_WEBHOOK");
+    expect(waveSpec({ slack: "CHAT_SLACK", teams: "CHAT_TEAMS" }).notify).toEqual({ slack: "CHAT_SLACK", teams: "CHAT_TEAMS" });
+    expect(waveSpec({ webhook: "HOOK_URL", webhook_key: "HOOK_KEY" }).notify).toEqual({ webhook: "HOOK_URL", key: "HOOK_KEY" });
   });
 });
 
@@ -215,12 +218,13 @@ describe("notify: the relay's buttons", () => {
     expect(() => validateConfig({ notify: { slack: "S", relay: "<at>x</at>" } }, "t")).toThrow(/notify.relay must name your relay/);
   });
 
-  it.each(["github", "forgejo", "gitlab"] as const)("%s: the apply jobs get the relay's name as a plain value, and its key from the secret", (forge) => {
+  it.each(["github", "forgejo"] as const)("%s: the spec gives the relay's name as a plain value, and the apply jobs its key from the secret", (forge) => {
     const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, notify: { slack: "CHAT_SLACK", relay: "terragucci", relay_key: "RELAY_KEY" } }).content;
     const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-    const job = forge === "gitlab" ? doc["apply-wave-1"] : doc.jobs["apply-wave-1"];
-    expect((forge === "gitlab" ? job.variables : job.env).TERRAGUCCI_RELAY).toBe("terragucci");
-    expect((forge === "gitlab" ? job.variables : job.env).TERRAGUCCI_RELAY_KEY).toBe(forge === "gitlab" ? "$RELAY_KEY" : "${{ secrets.RELAY_KEY }}");
+    expect(doc.jobs["apply-wave-1"].env.RELAY_KEY).toBe("${{ secrets.RELAY_KEY }}");
+    expect(text).not.toContain("TERRAGUCCI_RELAY");
+    const spec = wavesShape({ forge, image: "img:1", waves: [["a"]], shares: () => 1, setup: [], prelude: [], variables: {}, branches: [], notify: { slack: "CHAT_SLACK", relay: "terragucci", relay_key: "RELAY_KEY" } });
+    expect(spec.notify).toEqual({ slack: "CHAT_SLACK", relay: "RELAY_KEY", relayName: "terragucci" });
   });
 });
 

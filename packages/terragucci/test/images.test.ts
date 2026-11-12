@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseYAML } from "@intentius/chant/yaml";
 import pkg from "../package.json" with { type: "json" };
 import { imageFor, imageReference, imageTag, TOOL_VERSIONS } from "../src/images";
 import { init } from "../src/init";
@@ -34,16 +35,17 @@ describe("images", () => {
     expect(text).not.toContain("terragucci install");
   });
 
-  it.each([
-    ["github", "container:\n      image: "],
-    ["forgejo", "container:\n      image: "],
-    ["gitlab", "image:\n    name: "],
-  ] as const)("a %s pipeline runs every job in the pinned image", (forge, shape) => {
+  it.each(["github", "forgejo", "gitlab"] as const)("a %s pipeline runs every job in the pinned image", (forge) => {
     const image = `ghcr.io/intentius/terragucci-tofu:${imageTag("tofu")}@${DIGEST}`;
     const out = renderPipeline({ forge, binary: "tofu", version: TOOL_VERSIONS.tofu, image, layers: [["a"]], env: {} }).content;
-    // check, fmt and its push job (chant's commit job, chant#4749), plan and plan-note (chant's product plan, terragucci issue 1411), one apply wave, tips;
-    // GitHub and Forgejo also render the comment re-plan job and its note job, the comment apply job, and the check-report job, which keeps the report the check job hands on.
-    expect(out.split(shape + image).length - 1).toBe(forge === "gitlab" ? 7 : 11);
+    // terragucci's jobs, chant's plan and commit jobs, and chant's wave, status and stale-notes jobs: each names the pinned image.
+    const doc = parseYAML(out.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
+    const jobs = forge === "gitlab" ? Object.entries(doc).filter(([k, j]) => k !== "stages" && k !== "include" && j && typeof j === "object" && "script" in j) : Object.entries(doc.jobs);
+    expect(jobs.length).toBeGreaterThan(8);
+    for (const [name, job] of jobs as [string, any][]) {
+      const named = forge === "gitlab" ? (typeof job.image === "string" ? job.image : job.image?.name) : typeof job.container === "string" ? job.container : job.container?.image;
+      expect(named, name).toBe(image);
+    }
     expect(out).toContain("pinned by digest");
     expect(out).not.toContain("terragucci install");
     // No tool is downloaded: no curl, no unzip (as words; the report hand-over's zlib.gunzipSync is neither).

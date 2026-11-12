@@ -356,16 +356,17 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   // terragucci#1303: a plain repo's apply on chant's terraform-apply step. Each root is a terraform.roots entry of chant.config.ts,
   // and the step's spec is written once beside the pipeline, where each wave job reads its rules at base.
   const plainRoots = !tgMode && !atmos && !terramate;
-  const stepSpec = plainRoots
-    ? wavesSpecText(wavesStepSpec({
-        waves: applyWaves(layers, settings.waves?.canary),
-        gate: normalizeGate(settings.gate) ?? "on-destructive",
-        approval: approval.value === "sealed" ? "sealed" : "ledger",
-        call: waveCallArgv,
-        migrations: existsSync(join(repo, MIGRATIONS_DIR)),
-        ...(settings.apply?.point ? { point: settings.apply.point } : {}),
-      }))
-    : undefined;
+  // terragucci issue 1411: every repo's apply is chant's wave jobs, which render their rules from this spec at base
+  // (`terragucci waves-spec`), so every shape commits it: a Terragrunt repo's waves find their units when they plan.
+  const stepSpec = wavesSpecText(wavesStepSpec({
+    waves: tgMode ? layers.length : applyWaves(layers, settings.waves?.canary),
+    gate: normalizeGate(settings.gate) ?? "on-destructive",
+    approval: approval.value === "sealed" ? "sealed" : "ledger",
+    call: waveCallArgv,
+    migrations: existsSync(join(repo, MIGRATIONS_DIR)),
+    ...(settings.apply?.point ? { point: settings.apply.point } : {}),
+    ...(tgMode && tgInput ? { terragrunt: { layers: layers.filter((l) => l.length > 0), exclude: tgInput.exclude, binary: binary.value, terragrunt: "terragrunt" } } : {}),
+  }));
   const pipeline = renderPipeline({
     ...checkHooksInput,
     ...(stepSpec ? { wavesSpec: stepSpec } : {}),

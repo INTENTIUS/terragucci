@@ -12,7 +12,35 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 
 ## In 0.4.59
 
-Both the npm package and the four CI images now carry chant `0.124.94`.
+Both the npm package and the four CI images now carry chant `0.124.95`.
+
+`terragucci run wave` runs one job of chant's Op waves pipeline with terragucci's hooks in the job's process.
+
+`terragucci waves-spec` prints the `tf-apply` waves spec at a commit. It reads the spec file and `terragucci.yml` committed there.
+
+The apply waves now run on chant's Op waves jobs. Each of them runs `terragucci run wave` and reads its rules at base through `terragucci waves-spec`. Every repo shape now commits `.chant/op-waves/tf-apply.spec.json`. Run `terragucci init` to write the pipelines again.
+
+Job names and the required checks stay as they were, and so do the report artifacts. After each wave comes a status job, and the last one is `apply-done`. Plan notes a push made stale are flagged by the new `stale-notes` job. The `terragucci/apply` descriptions now come from chant.
+
+GitLab's `mr-apply` job is gone, with its artifact `terragucci-report-mr-apply`. The artifacts `terragucci-report-apply-comment` and `terragucci-report-resume` are gone too. Before merge chant splits each wave into four jobs, so the change's code never runs beside a write token.
+
+Wave jobs take chant's defaults for every product. That means a 180-minute timeout and the full history. The checkout pin is chant's too.
+
+With `runner.apply` set, `pr-merge` and `control` move to the apply runner along with `stale-notes`. The comment job stays on the default runner, since it applies nothing now.
+
+The control dispatch keeps its concurrency group. GitLab's resume keeps its resource group.
+
+The rest of a stopped apply now applies only at the commit it stopped at. A push in between waits for a new approval, where terragucci used to take it up at any commit. chant ties an approval to the code it approved.
+
+Let a killed apply on Forgejo finish or resume before you upgrade. chant does not read the `kind: "changes"` lines terragucci wrote.
+
+`/terragucci apply` now runs as chant's comment job. On a merged pull request it starts the failed wave jobs again. Before merge it decides the head and starts the waves for it. That replaces the `control-comment` job.
+
+With `apply.when: pull-request`, chant answers `/terragucci lock` and `/terragucci unlock` too. `/terragucci apply` takes the same locks as it decides the head, through the new `terragucci reach`. A member of a control repo that applies before merge tells it once the merge is pushed.
+
+The commands `terragucci comment-apply`, `terragucci pr-merge` and `terragucci resume` are gone, since chant's jobs do that work.
+
+The wave jobs get the notify secrets under the names `terragucci.yml` gives them. `TERRAGUCCI_RELAY` and the `TERRAGUCCI_*_WEBHOOK` variables are gone from them. The hooks read the forge's own variables now, so `TG_TOKEN` and `TG_SHA` are gone as well, with `TG_BEFORE` and `TG_BRANCH`.
 
 ## In 0.4.58
 

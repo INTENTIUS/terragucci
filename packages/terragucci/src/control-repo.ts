@@ -9,8 +9,8 @@
  * a token for that one call and no other access to the control repo.
  *
  * chant core holds the control repo (chant#4568): the member's step is
- * chant's `controlDispatchScript` with terragucci's words, its token piped to
- * curl on stdin rather than put in curl's arguments; the control repo's
+ * chant's control job beside the waves (./render-waves.ts), its token piped
+ * to curl on stdin rather than put in curl's arguments; the control repo's
  * pipeline is the forge lexicon's `generateControlPipeline`
  * (`chantControlPipelineFile`); and the plan job reads the control repo's
  * `chant/lifecycle`, where its entries live (./control-records.ts), with
@@ -52,28 +52,6 @@ export function resolveControl(control: ControlSettings, fallbackMember: string)
   const member = control.member ?? fallbackMember;
   if (!CONTROL_NAME.test(member)) throw new ConfigError(`control.member: "${member}" is not a name the control repo's workspace can hold; set control.member`);
   return { repo: control.repo, host: pk.host, path: pk.path, forge, op: control.op, member, tokenEnv: control.token_env ?? CONTROL_TOKEN_ENV, readTokenEnv: control.read_token_env ?? CONTROL_READ_TOKEN_ENV, ref: control.ref ?? CONTROL_REF_DEFAULT };
-}
-
-/**
- * The member's step, through chant (chant#4568): one request to the control
- * repo's forge, with the member's name, the Op and the commit that applied.
- * The job's variables stay terragucci's (TG_CONTROL_TOKEN, TG_SHA); the
- * script hands them to chant's names first. The mark that stops a second
- * send is terragucci's.
- */
-export function dispatchScript(c: ResolvedControl, memberForge?: ForgeName): string {
-  const target = chantControlTarget(c);
-  const status = chant.controlStatusContext(TERRAGUCCI_WORDS);
-  const marks = memberForge && memberForge !== "gitlab";
-  return [
-    'export CHANT_CONTROL_TOKEN="${TG_CONTROL_TOKEN:-}"',
-    'export CHANT_CONTROL_SHA="${TG_SHA:-}"',
-    ...(marks ? [`export TG_FORGE=${memberForge}`] : []),
-    chant.controlDispatchScript(target, {
-      words: TERRAGUCCI_WORDS,
-      ...(marks ? { sentCheck: `terragucci post sent ${status}`, markSent: `terragucci post status ${status} success "told ${c.repo} that $member applied"` } : {}),
-    }),
-  ].join("\n");
 }
 
 /** terragucci's `control` settings as chant's control target (chant#4568): `token_env` is chant's `tokenSecret`, `read_token_env` its `readTokenSecret`. */

@@ -7,6 +7,11 @@ import { init } from "../src/init";
 import { MARKER } from "../src/render";
 import { git, tmp, twoRootRepo, write } from "./helpers";
 
+/** The waves spec init writes, which chant's wave jobs read (its gate and approval per wave). */
+const specOf = (dir: string): { waves: { runs: { target: string }[]; gate: string; approval: string }[] } =>
+  JSON.parse(readFileSync(join(dir, ".chant/op-waves/tf-apply.spec.json"), "utf-8"));
+const gatesOf = (dir: string): string[] => specOf(dir).waves.map((w) => w.gate);
+
 function withRemote(remote: string): string {
   const dir = twoRootRepo();
   git(dir, "init", "-q");
@@ -158,7 +163,7 @@ describe("init", () => {
     expect((await init(withRemote("git@github.com:acme/infra.git"), { binary: "tofu", dryRun: true })).notes.join("\n")).not.toContain("plan notes");
   });
 
-  it("on GitLab, apply.when pull-request needs comments and a merge token, and then writes the mr-apply job", async () => {
+  it("on GitLab, apply.when pull-request needs comments and a merge token, and then writes chant's split waves and pr-merge", async () => {
     const dir = withRemote("git@gitlab.com:acme/infra.git");
     write(dir, { "terragucci.yml": "apply:\n  when: pull-request\n" });
     await expect(init(dir, { binary: "tofu" })).rejects.toThrow(/pull-request on GitLab needs comments: <cron>.*needs apply\.merge_token_env/);
@@ -166,8 +171,9 @@ describe("init", () => {
     write(dir, { "terragucci.yml": "comments: \"*/5 * * * *\"\napply:\n  when: pull-request\n  merge: auto\n  merge_token_env: MERGE_TOKEN\n" });
     const r = await init(dir, { binary: "tofu", dryRun: true });
     const doc = parseYAML(r.files.find((f) => f.path.endsWith(".gitlab/terragucci.yml"))!.content.split("\n").filter((l) => !l.startsWith("#")).join("\n"));
-    expect(Object.keys(doc)).toEqual(expect.arrayContaining(["mr-apply", "pr-merge", "confirm", "comments"]));
-    expect(doc["apply-wave-1"]).toBeUndefined();
+    // Before merge each wave plans, gates, applies and records in jobs of its own; mr-apply is gone.
+    expect(Object.keys(doc)).toEqual(expect.arrayContaining(["apply-wave-1-plan", "apply-wave-1-gate", "apply-wave-1", "apply-wave-1-record", "pr-merge", "confirm", "comments"]));
+    expect(doc["mr-apply"]).toBeUndefined();
   });
 
   it.each([
@@ -192,10 +198,11 @@ describe("init", () => {
     expect(r.layers).toEqual([["network"], ["app"]]);
     const text = readFileSync(r.files[0].path, "utf-8");
     expect(text).toContain("for dir in 'app' 'network'; do");
-    // One job per wave: the network's wave first, and the app's needs it.
-    expect(text).toContain("terragucci stage tf-apply --wave 1 --layers 'network;app'");
-    expect(text).toContain("terragucci stage tf-apply --wave 2 --layers 'network;app'");
-    expect(text).toMatch(/apply-wave-2:\n(?:.*\n)*? {4}needs: apply-wave-1\n/);
+    // One chant wave job per wave: the network's wave first, and the app's needs it.
+    expect(specOf(dir).waves.map((w) => w.runs.map((x) => x.target))).toEqual([["network"], ["app"]]);
+    expect(text).toContain("terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --render-spec");
+    expect(text).toContain("terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --render-spec");
+    expect(text).toMatch(/apply-wave-2:\n(?:.*\n)*? {4}needs:\n {6}- apply-wave-1\n/);
   });
 
   it("a second run changes nothing", async () => {
@@ -254,7 +261,8 @@ describe("init", () => {
     const r = await init(dir, { binary: "tofu" });
     expect(r.notes.join("\n")).not.toMatch(/gated waves/);
     const text = readFileSync(r.files[0].path, "utf-8");
-    expect(text).toContain("terragucci stage tf-apply --wave 1 --layers 'network;app' --canary 'app' --binary tofu --gate always");
+    // The waves spec chant's wave jobs read: the canary wave first, every wave under gate: always.
+    expect(specOf(dir).waves.map((w) => [w.runs.map((x) => x.target), w.gate])).toEqual([[["app"], "always"], [["network"], "always"]]);
     expect(text).toContain("apply-wave-2:");
     expect(text).not.toContain("apply-wave-3:");
   });
@@ -324,13 +332,13 @@ describe("init", () => {
   ] as const)("--gate %s renders the pipeline with it and writes gate: into a new terragucci.yml", async (gate, want) => {
     const dir = withRemote("https://github.com/acme/infra.git");
     const r = await init(dir, { binary: "tofu", gate });
-    expect(readFileSync(r.files[0].path, "utf-8")).toContain(`--gate ${want}`);
+    expect(gatesOf(dir)).toEqual([want, want]);
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe(`gate: ${want}\n`);
     expect(r.configNote).toBe(`terragucci.yml records gate: ${want}`);
     // The next run reads the key, and changes nothing.
     const again = await init(dir, { binary: "tofu", gate });
     expect(again.files.every((f) => f.status === "unchanged")).toBe(true);
-    expect(readFileSync(again.files[0].path, "utf-8")).toContain(`--gate ${want}`);
+    expect(gatesOf(dir)).toEqual([want, want]);
   });
 
   it("--gate adds gate: to an existing terragucci.yml and keeps the rest of it", async () => {
@@ -340,7 +348,7 @@ describe("init", () => {
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("# ours\nbinary: tofu\n");
     const r = await init(dir, { gate: "never" });
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("# ours\nbinary: tofu\ngate: never\n");
-    expect(readFileSync(r.files[0].path, "utf-8")).toContain("--gate never");
+    expect(gatesOf(dir)).toEqual(["never", "never"]);
     expect(r.configNote).toBe("terragucci.yml records gate: never");
   });
 
@@ -348,9 +356,9 @@ describe("init", () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": "gate: always\nbinary: tofu\n" });
     await expect(init(dir, { gate: "never" })).rejects.toThrow("--gate never differs from terragucci.yml, which sets gate: always; pass --force to write gate: never into it, or drop --gate");
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("gate: always\nbinary: tofu\n");
-    const r = await init(dir, { gate: "never", force: true });
+    await init(dir, { gate: "never", force: true });
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("gate: never\nbinary: tofu\n");
-    expect(readFileSync(r.files[0].path, "utf-8")).toContain("--gate never");
+    expect(gatesOf(dir)).toEqual(["never", "never"]);
   });
 
   it("--gate on-destructive agrees with a config that spells it on-destroy, and leaves the file alone", async () => {
@@ -360,11 +368,10 @@ describe("init", () => {
     expect(readFileSync(join(dir, "terragucci.yml"), "utf-8")).toBe("gate: on-destroy\n");
   });
 
-  it("a control repo's project carries its approval in the pipeline, which has no config of its own to read at base", async () => {
+  it("a control repo's project carries its approval in the waves spec, since it has no config of its own to read at base", async () => {
     const dir = withRemote("https://github.com/acme/infra.git");
-    const r = await init(dir, { settings: { gate: "on-destructive", drift: false, runtime: "forge", tips: true, env: {}, binary: "tofu", approval: "sealed" } });
-    const text = readFileSync(r.files[0].path, "utf-8");
-    expect(text).toContain("--gate on-destructive --approval sealed");
+    await init(dir, { settings: { gate: "on-destructive", drift: false, runtime: "forge", tips: true, env: {}, binary: "tofu", approval: "sealed" } });
+    expect(specOf(dir).waves.map((w) => [w.gate, w.approval])).toEqual([["on-destructive", "sealed"], ["on-destructive", "sealed"]]);
     expect(JSON.parse(readFileSync(join(dir, "chant.workspace.json"), "utf-8")).identity.gates).toEqual({ "wave-1": {}, "wave-2": {} });
   });
 

@@ -37,7 +37,7 @@ import { join } from "node:path";
 import { landAgentChange, type PushResult } from "./agent-comment";
 import { tokenUser } from "./involved";
 import { BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
-import { developerOrAbove } from "./comment-apply-gitlab";
+import { GITLAB_ROLES } from "@intentius/chant/ci-note-commands";
 import type { GitlabPipelines, StartedRun } from "@intentius/chant/ci-note-commands";
 import type { PrForge } from "@intentius/chant/pr-forge";
 import type { ForgeReads, ForgeUser, PullRequestDetail, PullRequestNote, RunJob } from "@intentius/chant/pr-forge-reads";
@@ -46,6 +46,13 @@ import { jobReads, jobToken, poster, type Fetch } from "./forge";
 import { byUser, planJobOf } from "./plan-note-gitlab";
 import { PLAN_NOTE_FILE } from "./review-agent";
 import { noReview, parseReviewMarker, REVIEW_FILE, REVIEW_MARK, REVIEWED_FILE, reviewMarker, reviewNoteBody, verdictOf, writeReviewPrompt, type PolicyReview, type WrittenPrompt } from "./review-agent";
+
+/**
+ * True for a role (chant's reads of a member's access: minimal, guest,
+ * planner, reporter, developer, maintainer, owner) of Developer or above,
+ * the least that may ask for the agent.
+ */
+export const developerOrAbove = (role: string | undefined): boolean => role !== undefined && GITLAB_ROLES.indexOf(role as (typeof GITLAB_ROLES)[number]) >= GITLAB_ROLES.indexOf("developer");
 
 /** The variables of the agent's pipeline: the merge request, the note that asked, and the head it was asked on. */
 export const AGENT_MR_VAR = "TERRAGUCCI_AGENT_MR";

@@ -3,3 +3,9 @@
 *.tfstate
 *.tfstate.*
 terragucci-report/
+# The waves' spec terragucci init writes is committed; the rest of .chant/ is a run's.
+!.chant/
+.chant/*
+!.chant/op-waves/
+.chant/op-waves/*
+!.chant/op-waves/tf-apply.spec.json

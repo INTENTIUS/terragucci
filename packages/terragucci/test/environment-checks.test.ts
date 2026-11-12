@@ -34,51 +34,66 @@ const jobsOf = (text: string): Record<string, any> => {
   const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
   return doc.jobs ?? Object.fromEntries(Object.entries(doc).filter(([, v]) => v && typeof v === "object" && !Array.isArray(v) && "script" in v));
 };
-/** The apply step's script: GitHub and Forgejo's named step, GitLab's heredoc body. */
-const applyBody = (job: any): string => (job.steps ? job.steps.find((s: any) => /^Apply group/.test(s.name ?? "")).run : job.script.join("\n").replace(/^bash <<'APPLY' \|\| exit \$\?\n/, ""));
+/**
+ * chant's job guard (CHANT_JOB_GUARD): on GitHub and Forgejo the job's first step, before the trade and the checkout;
+ * on GitLab the job's variable, read by the first line of its script.
+ */
+const guard = (job: any): Record<string, unknown> => {
+  if (job.steps) {
+    expect(job.steps[0].name).toBe("Check the job runs where the spec set it to run");
+    return JSON.parse(job.steps[0].env.CHANT_JOB_GUARD);
+  }
+  expect(job.script[0]).toContain("CHANT_JOB_GUARD");
+  return JSON.parse(job.variables.CHANT_JOB_GUARD);
+};
 
-describe("check-job in an environment's apply jobs", () => {
-  it("github: the first line, before the token is fetched, with the forge environment, the default branch and self-hosted", () => {
+describe("chant's job guard in an environment's apply jobs", () => {
+  it("github: the first step, before the token is fetched, with the forge environment, the default branch and self-hosted", () => {
     const jobs = jobsOf(renderPipeline(input("github")).content);
-    const prod = applyBody(jobs["apply-wave-1-prod"]).split("\n");
-    expect(prod[0]).toBe(`if [ -z "\${CHANT_CLOUD_LOGGED_IN:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" --forge-environment 'prod' --self-hosted || exit $?; fi`);
-    // The login and the restart come after it.
-    expect(prod.findIndex((l) => l.includes("CHANT_CLOUD_LOGIN="))).toBeGreaterThan(0);
-    const dev = applyBody(jobs["apply-wave-1-dev"]).split("\n");
-    expect(dev[0]).toBe(`if [ -z "\${CHANT_CLOUD_LOGGED_IN:-}" ]; then terragucci check-job --forge github --environment 'dev' --branches "$TG_BRANCH" --forge-environment 'development' || exit $?; fi`);
-    // The roots in no environment, and the deciding job, check nothing.
-    expect(applyBody(jobs["apply-wave-1-default"])).not.toContain("check-job");
-    expect(JSON.stringify(jobs["apply-wave-1"])).not.toContain("check-job");
+    expect(guard(jobs["apply-wave-1-prod"])).toMatchObject({ forge: "github", product: "terragucci", forgeEnvironment: "prod", branches: [], defaultBranch: true, selfHosted: true });
+    expect(guard(jobs["apply-wave-1-dev"])).toMatchObject({ forgeEnvironment: "development", defaultBranch: true });
+    expect(guard(jobs["apply-wave-1-dev"]).selfHosted).toBeUndefined();
+    expect(jobs["apply-wave-1-prod"].environment).toEqual({ name: "prod" });
+    // The roots in no environment, and the deciding job, name no forge environment.
+    expect(guard(jobs["apply-wave-1-default"]).forgeEnvironment).toBeUndefined();
+    expect(guard(jobs["apply-wave-1"]).forgeEnvironment).toBeUndefined();
   });
 
-  it("gitlab: the first line of the script, with the environment, the default branch and the runner's tags", () => {
+  it("gitlab: the job's guard, with the environment, the default branch and the runner's tags", () => {
     const jobs = jobsOf(renderPipeline(input("gitlab")).content);
-    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'prod' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'prod' --runner-tags 'self-hosted,prod' || exit $?`);
-    expect(applyBody(jobs["apply-wave-2-dev"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH" --forge-environment 'development' || exit $?`);
-    expect(applyBody(jobs["apply-wave-1-default"])).not.toContain("check-job");
+    expect(guard(jobs["apply-wave-1-prod"])).toMatchObject({ forge: "gitlab", forgeEnvironment: "prod", defaultBranch: true, runnerTags: ["self-hosted", "prod"] });
+    expect(guard(jobs["apply-wave-2-dev"])).toMatchObject({ forgeEnvironment: "development", defaultBranch: true });
+    expect(guard(jobs["apply-wave-2-dev"]).runnerTags).toBeUndefined();
+    expect(guard(jobs["apply-wave-1-default"]).forgeEnvironment).toBeUndefined();
   });
 
   it("forgejo: no forge environment; the ref and self-hosted", () => {
     const settings = { ...ENVS, environments: { prod: ENVS.environments!.prod, dev: { roots: ["envs/dev/**"], oidc: DEV } } };
     const jobs = jobsOf(renderPipeline(input("forgejo", settings)).content);
-    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`if [ -z "\${CHANT_CLOUD_LOGGED_IN:-}" ]; then terragucci check-job --forge forgejo --environment 'prod' --branches "$TG_BRANCH" --self-hosted || exit $?; fi`);
+    const g = guard(jobs["apply-wave-1-prod"]);
+    expect(g).toMatchObject({ forge: "forgejo", defaultBranch: true, selfHosted: true });
+    expect(g.forgeEnvironment).toBeUndefined();
   });
 
   it("apply.branches: each branch is one the job may apply from; the top-level apply runner when the environment names none", () => {
     const jobs = jobsOf(renderPipeline(input("gitlab", { ...ENVS, runner: { apply: "apply-runners" } }, { applyBranches: { release: ["envs/dev/**"] } })).content);
-    expect(applyBody(jobs["apply-wave-1-dev"]).split("\n")[0]).toBe(`terragucci check-job --forge gitlab --environment 'dev' --branches "$CI_DEFAULT_BRANCH,release" --forge-environment 'development' --runner-tags 'apply-runners' || exit $?`);
+    expect(guard(jobs["apply-wave-1-dev"])).toMatchObject({ forgeEnvironment: "development", branches: ["release"], defaultBranch: true, runnerTags: ["apply-runners"] });
   });
 
   it("github without oidc: the job may request no token, so the forge environment is left to the forge", () => {
     const jobs = jobsOf(renderPipeline(input("github", { environments: { prod: { roots: ["envs/prod/**"] } } })).content);
-    expect(applyBody(jobs["apply-wave-1-prod"]).split("\n")[0]).toBe(`if [ -z "\${CHANT_CLOUD_LOGGED_IN:-}" ]; then terragucci check-job --forge github --environment 'prod' --branches "$TG_BRANCH" || exit $?; fi`);
+    expect(guard(jobs["apply-wave-1-prod"]).forgeEnvironment).toBeUndefined();
+    expect(jobs["apply-wave-1-prod"].environment).toEqual({ name: "prod" });
   });
 
-  it("no environments: no job checks, identity groups included", () => {
+  it("no environments: no guard names a forge environment, identity groups included", () => {
     const identity = { oidc: { ...TOP, roles: { "envs/prod/**": { plan: PROD.plan_role, apply: PROD.apply_role }, "envs/dev/**": { plan: DEV.plan_role, apply: DEV.apply_role } } } };
     for (const forge of ["github", "gitlab", "forgejo"] as const) {
-      expect(renderPipeline(input(forge, { oidc: TOP })).content).not.toContain("check-job");
-      expect(renderPipeline(input(forge, identity)).content).not.toContain("check-job");
+      for (const settings of [{ oidc: TOP }, identity]) {
+        const jobs = Object.entries(jobsOf(renderPipeline(input(forge, settings)).content)).filter(([n]) => /^apply-wave-\d+(-[a-z]+)?$/.test(n) && !/-status$/.test(n));
+        expect(jobs.length).toBeGreaterThan(0);
+        for (const [, job] of jobs) expect(guard(job).forgeEnvironment).toBeUndefined();
+      }
     }
   });
 });

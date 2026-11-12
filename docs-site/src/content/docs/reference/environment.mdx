@@ -30,7 +30,9 @@ The config names variables and never holds a value. Put secrets in your forge's 
 | the run's own token (`github.token` on GitHub and Forgejo) | the generated jobs that post or push | comments and statuses; apply also writes [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), and `fmt` pushes to the branch |
 | `GITLAB_TOKEN` | the generated jobs on GitLab | a project access token with the `api` scope, as a masked variable; with `comments:` set it also needs the Developer role; with `gitlab.token: protected` it is also a protected variable, and only default-branch jobs get it |
 | `GITHUB_TOKEN`, `GITLAB_TOKEN`, `FORGEJO_TOKEN` | `reconcile`, `rollout` and `respond --mode apply`, by the project's forge | push branches and open pull requests in the projects they touch |
-| `TG_TOKEN` | the comment, status, note and respond steps | set by the job; set it yourself outside a pipeline |
+| `TG_TOKEN` | the comment, status, note and respond steps; the wave jobs do not get it | set by the job; set it yourself outside a pipeline |
+| `GITHUB_TOKEN` in a wave job's command step | the wave jobs on GitHub and Forgejo | the job's token, as chant's command token: `pull-requests: write`, and `actions: read` with `review.agent`; the wave jobs have no `statuses: write`, since chant's status jobs post `terragucci/apply` |
+| `CHANT_FORGE_TOKEN` | the wave jobs on GitLab, when `token_env` names a variable other than `GITLAB_TOKEN` | that variable's token |
 | `GITEA_TOKEN` | nothing | dropped with the other runner tokens from every step that runs a pull request's code |
 
 `token_env` renames the variable. Those commands never merge, so the token needs no merge rights.
@@ -110,13 +112,21 @@ What reads a root's state where it is (the version an apply records, `state expo
 | `apply.merge_token_env` | none, required on Forgejo with `apply.merge: auto`, and on GitLab with `apply.when: pull-request` | a token that may push to the default branch |
 | `cost.key_secret` | `INFRACOST_API_KEY` | the cost estimator's API key; the plan jobs get it as `INFRACOST_API_KEY` |
 | `decide.token_env` | none, required for `jev` | the typed-decision service's bearer token |
-| `notify.slack` | none | a Slack incoming webhook address; the apply jobs get it as `TERRAGUCCI_SLACK_WEBHOOK` |
-| `notify.teams` | none | a Microsoft Teams incoming webhook address; the apply jobs get it as `TERRAGUCCI_TEAMS_WEBHOOK` |
-| `notify.webhook` | none | a webhook's address for the JSON event; the apply jobs get it as `TERRAGUCCI_WEBHOOK` |
-| `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the apply jobs get it as `TERRAGUCCI_WEBHOOK_KEY` |
-| `notify.relay_key` | none, required with `notify.relay` | the key the relay's buttons are signed with; the apply jobs get it as `TERRAGUCCI_RELAY_KEY`, and the relay holds the same key as `CHANT_RELAY_KEY` |
+| `notify.slack` | none | a Slack incoming webhook address; the wave jobs get the secret under its own name, and the drift job gets it as `TERRAGUCCI_SLACK_WEBHOOK` |
+| `notify.teams` | none | a Microsoft Teams incoming webhook address; the wave jobs get the secret under its own name, and the drift job gets it as `TERRAGUCCI_TEAMS_WEBHOOK` |
+| `notify.webhook` | none | a webhook's address for the JSON event; the wave jobs get the secret under its own name |
+| `notify.webhook_key` | none, required with `notify.webhook` | the key that signs the event; the wave jobs get the secret under its own name |
+| `notify.relay_key` | none, required with `notify.relay` | the key the relay's buttons are signed with; the wave jobs get the secret under its own name, and the relay holds the same key as `CHANT_RELAY_KEY` |
 
-The drift job also gets `notify.slack` and `notify.teams`. The apply jobs get `notify.relay`, a name rather than a secret, as `TERRAGUCCI_RELAY`.
+The waves spec's `notify` names these secrets as `terragucci.yml` gives them, and chant maps each one into the wave jobs under that name. `notify.relay` is a name rather than a secret; the wave jobs read it from the spec as `notify.relayName`.
+
+[`terragucci notify`](/terragucci/reference/cli/#notify) run by hand or in a job of your own reads these instead. Of the generated jobs, only the drift job sets any of them.
+
+| Variable | Holds |
+|---|---|
+| `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOOK` | the Slack and Teams webhook addresses |
+| `TERRAGUCCI_WEBHOOK`, `TERRAGUCCI_WEBHOOK_KEY` | the generic webhook's address and the key that signs its event |
+| `TERRAGUCCI_RELAY`, `TERRAGUCCI_RELAY_KEY` | the relay's name and the key its buttons are signed with |
 
 ## Secrets and variables you pass
 
@@ -128,7 +138,7 @@ pass:
 
 | Forge | The job's environment |
 |---|---|
-| GitHub, Forgejo | `TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}` and `TF_VAR_region: ${{ vars.TF_VAR_region }}` in plan, re-plan, every apply job, `apply-comment`, `confirm`, `resume`, drift, and the ephemeral job and its sweep |
+| GitHub, Forgejo | `TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}` and `TF_VAR_region: ${{ vars.TF_VAR_region }}` in plan, re-plan, every apply job, `confirm`, drift, and the ephemeral job and its sweep |
 | GitLab | unchanged: every job reads the project's CI/CD variables by name already |
 
 The pipeline holds the names alone. The check job, the note jobs, `fmt`, `tips`, `publish` and the agent jobs get none. The plan job runs a pull request's code, so a passed secret reaches that code, as the providers' credentials do; a fork's pull request gets no plan job. Forgejo keeps a secret's or variable's name in capitals and reads it in any case, so the job gets `TF_VAR_db_password` spelled as the root's variable is.
@@ -264,7 +274,7 @@ oidc:
 | Key | Jobs whose AWS token carries it |
 |---|---|
 | `plan` | `plan`, `replan` |
-| `apply` | the apply waves and their share and group jobs (an environment's `oidc.audience` replaces it for its group's jobs), `apply-comment`, `mr-apply`, `confirm`, `resume`, `ephemeral` and the ephemeral sweep. A wave split into a job per identity decides in a job that carries the plan audience |
+| `apply` | the apply waves and their share and group jobs (an environment's `oidc.audience` replaces it for its group's jobs), `confirm`, `ephemeral` and the ephemeral sweep. A wave split into a job per identity decides in a job that carries the plan audience |
 | `drift` | `drift` |
 
 A stage the map leaves out keeps `sts.amazonaws.com`. `config check` refuses any other key and an empty audience.
@@ -375,7 +385,6 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TF_DATA_DIR`, `TF_WORKSPACE` |  | where a root's initialised backend is recorded and which workspace it runs in; a `tf-apply` wave reads both to find the state whose version it records |
 | `TG_LOCK_STALE` |  | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), seconds after which a wave takes over the resources another run holds, whatever its forge says of that run; 7200 by default |
 | `TG_BACKEND_BOOTSTRAP` |  | Terragrunt repos, `tf-apply`: when the job sets it, the wave passes it to Terragrunt as it is, so `false` keeps the wave from creating or changing a bucket that `generate.disable_init: false` would bootstrap |
-| `TG_LOCK_POLL` |  | with choudoufu, seconds between a waiting wave's checks of the resources another run holds; 10 by default |
 | `TG_PROGRESS_SECONDS` |  | with choudoufu, seconds between an applying wave's reads of its estates' records for [its progress](/terragucci/concepts/waves-and-approvals/#the-run-view); 5 by default |
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
@@ -395,7 +404,7 @@ A local run needs none of these.
 | GitHub and Forgejo | `GITHUB_ACTIONS`, `GITHUB_REPOSITORY`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_RUN_ID`, `GITHUB_JOB`, `GITHUB_WORKFLOW_REF`, `GITHUB_SHA`, `GITHUB_REF_NAME`, `GITHUB_BASE_REF`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_PATH`; Forgejo adds `FORGEJO_ACTIONS`, `GITEA_ACTIONS` |
 | GitHub and Forgejo, for OIDC | `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, `ACTIONS_RUNTIME_TOKEN` |
 | An environment's apply job ([its check](#the-apply-jobs-own-check)) | GitHub and Forgejo: `GITHUB_REF`, `RUNNER_ENVIRONMENT`; GitLab: `CI_ENVIRONMENT_NAME`, `CI_COMMIT_REF_NAME`, `CI_COMMIT_REF_PROTECTED`, `CI_RUNNER_TAGS` |
-| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ROOT_NAMESPACE`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_NAME`, `CI_COMMIT_SHA`, `CI_COMMIT_BEFORE_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
+| GitLab | `GITLAB_CI`, `CI_PROJECT_PATH`, `CI_PROJECT_ROOT_NAMESPACE`, `CI_PROJECT_ID`, `CI_PROJECT_DIR`, `CI_PROJECT_URL`, `CI_SERVER_URL`, `CI_SERVER_HOST`, `CI_SERVER_FQDN`, `CI_SERVER_PROTOCOL`, `CI_API_V4_URL`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`, `CI_PIPELINE_SOURCE`, `CI_JOB_URL`, `CI_JOB_NAME`, `CI_COMMIT_SHA`, `CI_COMMIT_BRANCH`, `CI_DEFAULT_BRANCH`, `CI_MERGE_REQUEST_IID`, `CI_MERGE_REQUEST_TITLE`, `CI_MERGE_REQUEST_DESCRIPTION`, `CI_MERGE_REQUEST_SOURCE_BRANCH_SHA`, `CI_MERGE_REQUEST_SOURCE_PROJECT_PATH`, `CI_MERGE_REQUEST_TARGET_BRANCH_NAME` |
 
 ## Generated job variables
 
@@ -403,13 +412,13 @@ Internal; a value set in `env:` is overwritten.
 
 | Variable | Set for |
 |---|---|
-| `TG_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`, else `TG_TOKEN`; on GitLab also the `comments` job, which starts the `mr-apply` pipeline with it; no job running pull request code has it |
+| `CHANT_MERGE_TOKEN` | `pr-merge` only, from `apply.merge_token_env`; no job running pull request code has it |
+| `TG_MERGE_TOKEN` | GitLab, `apply.when: pull-request`: the `comments` job, from `apply.merge_token_env`, which starts the waves' pipeline on the default branch with it |
 | `TERRAGUCCI_CHECK_PART` | the check job, for each root it checks at once with others: the file that root's part of the check report goes to, which the job then appends to the report and the job summary in root order |
-| `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE`, `TERRAGUCCI_HEAD` | GitLab, `apply.when: pull-request`: the variables the `comments` job starts the `mr-apply` pipeline with, naming the merge request, its note and its head; `mr-apply` reads all three again from GitLab |
+| `CHANT_BEFORE_MERGE_PR`, `CHANT_BEFORE_MERGE_HEAD`, `CHANT_BEFORE_MERGE_DIGEST` | `apply.when: pull-request`: the wave jobs of a run that applies an open pull request's decided head, naming the pull request, the head and the digest of the decision on `chant/lifecycle`; on GitLab the `comments` job starts the pipeline with them, and on GitHub and Forgejo they come from the dispatch inputs `apply_pr`, `apply_head` and `apply_digest` |
 | `TERRAGUCCI_AGENT_MR`, `TERRAGUCCI_AGENT_NOTE`, `TERRAGUCCI_AGENT_HEAD` | GitLab, `agent.comment`: the variables the `comments` job starts the agent's pipeline with, naming the merge request, the `/terragucci agent` note and the head; `agent` and `agent-push` each read the merge request and the note again from GitLab |
 | `TERRAGUCCI_REVIEW_MR`, `TERRAGUCCI_REVIEW_HEAD` | GitLab, `review.agent`: the variables the `comments` job starts the review's pipeline with, naming the merge request and the head to review |
-| `TG_WAVES` | the `pr-merge` job: the waves the `apply-comment` job applied, for its reply |
-| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BEFORE`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_WAVE`, `TG_OPEN`, `TG_OUTCOME`, `TG_OUTCOME_JSON` (apply jobs with `notify`) | steps naming a pull request, wave or root |
+| `TG_FORGE`, `TG_TOKEN`, `TG_PR`, `TG_SHA`, `TG_HEAD`, `TG_BRANCH`, `TG_BASE`, `TG_ROOT`, `TG_OUTCOME`, `TG_OUTCOME_JSON` | steps naming a pull request or root; the wave jobs get none of `TG_TOKEN`, `TG_SHA` and `TG_BRANCH` |
 | `TG_TEMPLATE`, `TG_VERSION`, `TG_NAME`, `TG_INPUTS`, `TG_APP`, `TG_CLAIMED_BY`, `TG_REQUESTED_BY` | the `request` job, with `templates`: the dispatch's inputs and the actor who dispatched it, which it passes to `terragucci request` |
 | `TG_MODULE`, `TG_VERSION` | the `rollout` job on GitHub and Forgejo: the dispatch's `module` and `version` inputs; with `TG_MODULE` set it runs `terragucci rollout` for that module, else `terragucci respond rollout` |
 | `TG_REF` | a checkout step of terragucci's own jobs: a ref to fetch in place of the run's commit |

@@ -158,7 +158,7 @@ A waiting wave prints its set digest and approval command.
 
 ## State migrations
 
-A file in `migrations/` moves resources between roots' states. `stage tf-plan` proves the first migration not yet applied (a later one plans against the states it writes): every affected root must plan with no change against its new state, or the job fails. Wave 1 of `stage tf-apply` proves it again before planning its roots and waits on the gate `tf-migrate <name>`. An approval lets it write the new states under each state's lock and record each version before and after.
+A file in `migrations/` moves resources between roots' states. `stage tf-plan` proves the first migration not yet applied (a later one plans against the states it writes): every affected root must plan with no change against its new state, or the job fails. Wave 1 of `tf-apply` proves it again before planning its roots and waits on the gate `tf-migrate <name>`. An approval lets it write the new states under each state's lock and record each version before and after.
 
 | Exit code | Means |
 |---|---|

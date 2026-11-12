@@ -167,34 +167,37 @@ describe("apply groups: the pipeline", () => {
 
   it("github: a deciding job with the plan identities, then a job per group with its own roles, runner and environment", () => {
     const jobs = jobsOf(renderPipeline(input("github")).content);
-    expect(Object.keys(jobs).filter((n) => n.startsWith("apply-")).sort()).toEqual(["apply-comment", "apply-done", "apply-wave-1", "apply-wave-1-default", "apply-wave-1-dev", "apply-wave-1-prod", "apply-wave-2", "apply-wave-2-dev", "apply-wave-2-prod"]);
-    const decide = script(jobs["apply-wave-1"]);
-    expect(decide).toContain("--groups 'prod=envs/prod/**;dev=envs/dev/**'");
+    expect(Object.keys(jobs).filter((n) => n.startsWith("apply-")).sort()).toEqual(["apply-comment", "apply-done", "apply-wave-1", "apply-wave-1-default", "apply-wave-1-dev", "apply-wave-1-prod", "apply-wave-1-status", "apply-wave-2", "apply-wave-2-dev", "apply-wave-2-prod"]);
+    // chant's deciding job, then a job per group: the groups are the spec's, so each job names its group alone.
+    // The job as text: chant's trade step carries the roles in its env, and the run lines are its steps'.
+    const whole = (job: any): string => JSON.stringify(job).replace(/\\"/g, '"');
+    const decide = whole(jobs["apply-wave-1"]);
+    expect(decide).toContain("terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --render-spec --decide");
     expect(decide).not.toContain("--group ");
     // The deciding job plans every root: every group's plan role, and no apply role at all.
     for (const r of [PROD.plan_role, DEV.plan_role, TOP.plan_role]) expect(decide).toContain(r);
     for (const r of [PROD.apply_role, DEV.apply_role, TOP.apply_role]) expect(decide).not.toContain(r);
     expect(jobs["apply-wave-1"].environment).toBeUndefined();
     const prod = jobs["apply-wave-1-prod"];
-    expect(prod.environment).toBe("prod");
+    expect(prod.environment).toEqual({ name: "prod" });
     expect(prod["runs-on"]).toEqual(["self-hosted", "prod"]);
-    expect(prod.needs).toBe("apply-wave-1");
-    const p = script(prod);
-    expect(p).toContain("--group prod");
+    expect(prod.needs).toEqual(["apply-wave-1"]);
+    const p = whole(prod);
+    expect(p).toContain("terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --render-spec --group prod");
     expect(p).toContain(PROD.apply_role);
     for (const r of [DEV.apply_role, DEV.plan_role, TOP.apply_role, PROD.plan_role]) expect(p).not.toContain(r);
-    // An environment's audience: the job asks for its tokens first, for its audience, and drops the token-request variables.
+    // An environment's audience: the job trades its token for its audience, and the apply drops the token-request variables.
     expect(p).toContain('"audience":"sts.amazonaws.com/prod"');
-    expect(p).toContain("unset ACTIONS_ID_TOKEN_REQUEST_URL");
-    expect(jobs["apply-wave-1-dev"].environment).toBe("development");
+    expect(p).toContain("unset ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL");
+    expect(jobs["apply-wave-1-dev"].environment).toEqual({ name: "development" });
     expect(jobs["apply-wave-1-default"].environment).toBeUndefined();
-    expect(script(jobs["apply-wave-1-default"])).toContain(TOP.apply_role);
-    // The next wave needs every group's job of this one; the last success comes after the last wave's groups.
+    expect(whole(jobs["apply-wave-1-default"])).toContain(TOP.apply_role);
+    // The next wave needs every group's job of this one; the last status comes after the last wave's jobs.
     expect(jobs["apply-wave-2"].needs).toEqual(["apply-wave-1-prod", "apply-wave-1-dev", "apply-wave-1-default"]);
-    expect(jobs["apply-done"].needs).toEqual(["apply-wave-2-prod", "apply-wave-2-dev"]);
-    // A comment applies nothing: one job cannot hold each environment's identities apart.
+    expect(jobs["apply-done"].needs).toEqual(["apply-wave-2", "apply-wave-2-prod", "apply-wave-2-dev"]);
+    // The comment job holds no cloud credential: it re-runs the wave jobs, each with its own identities.
     expect(jobs["apply-comment"].permissions["id-token"]).toBeUndefined();
-    expect(script(jobs["apply-comment"])).toContain("a comment applies nothing in this repo");
+    for (const r of [PROD.apply_role, DEV.apply_role, TOP.apply_role]) expect(whole(jobs["apply-comment"])).not.toContain(r);
   });
 
   it("gitlab: each group's job declares its own audience and runs in its environment", () => {
@@ -224,12 +227,13 @@ describe("apply groups: the pipeline", () => {
   });
 
   it("waves.jobs spreads each group's roots across share jobs of its own", () => {
+    const wave1 = (j: Record<string, any>) => Object.keys(j).filter((n) => n.startsWith("apply-wave-1") && !n.endsWith("-status"));
     const jobs = jobsOf(renderPipeline(input("github", ENVS, { waveJobs: 2 })).content);
-    expect(Object.keys(jobs).filter((n) => n.startsWith("apply-wave-1"))).toEqual(["apply-wave-1", "apply-wave-1-prod", "apply-wave-1-dev", "apply-wave-1-default"]);
+    expect(wave1(jobs)).toEqual(["apply-wave-1", "apply-wave-1-prod", "apply-wave-1-dev", "apply-wave-1-default"]);
     const wide = { ...ENVS, environments: { prod: { roots: ["envs/prod/**", "shared/**"] } } };
     const w = jobsOf(renderPipeline(input("github", wide, { waveJobs: 2 })).content);
-    expect(Object.keys(w).filter((n) => n.startsWith("apply-wave-1"))).toEqual(["apply-wave-1", "apply-wave-1-prod-share-1", "apply-wave-1-prod-share-2", "apply-wave-1-default"]);
-    expect(script(w["apply-wave-1-prod-share-2"])).toContain("--shares 2 --share 2");
+    expect(wave1(w)).toEqual(["apply-wave-1", "apply-wave-1-prod-share-1", "apply-wave-1-prod-share-2", "apply-wave-1-default"]);
+    expect(script(w["apply-wave-1-prod-share-2"])).toContain("--wave 1 --render-spec --group prod --share 2");
   });
 
   it("refuses what applies every wave in one job", () => {

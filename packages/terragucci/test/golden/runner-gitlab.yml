@@ -11,11 +11,11 @@ stages:
   - check
   - plan
   - apply
+  - resume
   - tips
   - publish
   - drift
   - comments
-  - resume
   - deploy
 
 check:
@@ -214,139 +214,134 @@ plan-note:
 
 apply-wave-1:
   stage: apply
-  image:
-    name: img:1
+  image: img:1
+  tags:
+    - prod
+    - docker
+  timeout: '180 minutes'
   variables:
+    GIT_DEPTH: '0'
+    CHANT_LOCK_WAIT: '10500'
+    CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]'
+    CHANT_WAVES_SPEC_RUNS: head
     TF_IN_AUTOMATION: '1'
     TF_INPUT: '0'
-    TG_TOKEN: '$GITLAB_TOKEN'
-    TG_SHA: '$CI_COMMIT_SHA'
-    TG_BRANCH: '$CI_DEFAULT_BRANCH'
-    TG_BEFORE: '$CI_COMMIT_BEFORE_SHA'
+    CHANT_JOB_GUARD: '{"forge":"gitlab","job":"wave 1 (wave-1) of tf-apply","product":"terragucci","branches":[],"defaultBranch":true,"runnerTags":["prod","docker"]}'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
+    - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH)
   script:
-    - |
-      bash <<'APPLY' || exit $?
-      set +e -uo pipefail
-      export TG_FORGE=gitlab
-      tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'const [cmd, ...a] = process.argv.slice(1);
-      const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-      try {
-        if (!tok) {
-          console.log("terragucci: no forge token, so no " + cmd);
-        } else if (cmd === "alive") {
-          const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-          const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-          const r = await fetch(api + "/" + repo + "/pipelines/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-          if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-          const run = await r.json();
-          console.log(["success", "failed", "canceled", "skipped"].includes(run.status) ? "dead" : "alive");
-        }
-      } catch (err) {
-        console.log("terragucci: " + cmd + " failed: " + err.message);
-      }' -- "$@" ;; esac; }
-      if [ -n "${TG_BEFORE:-}" ] && [ "${TG_BEFORE#0000000}" = "$TG_BEFORE" ] && git fetch -q --depth=1 origin "$TG_BEFORE" 2>/dev/null; then
-        changed="$(git diff --name-only "$TG_BEFORE" HEAD)"
-      else
-        changed=
-      fi
-      moved=""
-      for dir in 'app' 'cache' 'network'; do
-        if [ -z "$changed" ] || printf '%s\n' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi
-      done
-      # The base branch moved under these roots: plan notes that cover them are stale.
-      tg stale "$moved" "${TG_BRANCH:-}"
-      tg status terragucci/apply pending "applying"
-      git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
-      outcome="$(mktemp)"
-      log="$(mktemp)"
-      TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 1 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
-      rc=${PIPESTATUS[0]}
-      case "$rc" in
-        0) ;;
-        3) tg status terragucci/apply failure "$(cat "$outcome")"; exit 3 ;;
-        4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 1 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
-        6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;
-        *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
-      esac
-      echo "wave 1 of 2 applied"
-      APPLY
+    - '(cd / && node -e ''"use strict";const E=process.env,A="chant-check-job";const shown=(v)=>v===undefined||v===null||v===""?"none":v;const fail=(m)=>{console.error("check-job: "+m);process.exit(9)};let x;try{x=JSON.parse(E.CHANT_JOB_GUARD||"")}catch(e){fail("CHANT_JOB_GUARD is not JSON")}if(!x||!["github","gitlab","forgejo"].includes(x.forge)||!Array.isArray(x.branches))fail("CHANT_JOB_GUARD is not a guard spec");const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\u0027s OIDC token has no claims");return c};const bmV=["CHANT_BEFORE_MERGE_PR","CHANT_BEFORE_MERGE_HEAD","CHANT_BEFORE_MERGE_DIGEST"].map((k)=>String(E[k]||"").trim());const bmRun={};if(bmV[0])bmRun.pr=bmV[0];if(bmV[1])bmRun.head=bmV[1];if(bmV[2])bmRun.digest=bmV[2];const bmOn=Boolean(bmV[0]||bmV[1]||bmV[2]);const SHA=/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;const bmRead=(file)=>{const cp=require("child_process"),fs=require("fs"),os=require("os"),pa=require("path");let url,user,tok;if(x.forge==="gitlab"){if(!E.CI_SERVER_URL||!E.CI_PROJECT_PATH)throw new Error("the job names no repository (no CI_SERVER_URL or CI_PROJECT_PATH)");url=E.CI_SERVER_URL.replace(/\/+$/,"")+"/"+E.CI_PROJECT_PATH+".git";user="gitlab-ci-token";tok=E.CI_JOB_TOKEN||""}else{if(!E.GITHUB_SERVER_URL||!E.GITHUB_REPOSITORY)throw new Error("the job names no repository (no GITHUB_SERVER_URL or GITHUB_REPOSITORY)");url=E.GITHUB_SERVER_URL.replace(/\/+$/,"")+"/"+E.GITHUB_REPOSITORY+".git";user="x-access-token";tok=E.GITHUB_TOKEN||""}const d=fs.mkdtempSync(pa.join(os.tmpdir(),"chant-guard-"));const g=(a)=>cp.spawnSync("git",a,{cwd:d,encoding:"utf-8",env:Object.assign({},E,{GIT_TERMINAL_PROMPT:"0"})});const i=g(["init","-q"]);if(i.status!==0)throw new Error("git init failed: "+String(i.stderr||"").trim());const f=g(["-c","http.extraHeader=Authorization: Basic "+Buffer.from(user+":"+tok).toString("base64"),"fetch","-q","--depth=1",url,"refs/heads/chant/lifecycle"]);if(f.status!==0)throw new Error("could not fetch chant/lifecycle: "+String(f.stderr||"").trim().split("\n").pop());const o=g(["show","FETCH_HEAD:"+file]);return o.status===0?o.stdout:null};const bmEntry=(t,h)=>{let v;try{v=JSON.parse(t===null?"null":t)}catch(e){return null}const hs=v&&typeof v==="object"&&v.version===1?v.heads:undefined;if(!hs||typeof hs!=="object"||!SHA.test(h))return null;const e=hs[h];if(!e||typeof e!=="object"||e.head!==h||!Number.isInteger(e.pr)||e.pr<1||typeof e.base!=="string"||!SHA.test(e.base)||typeof e.at!=="string"||typeof e.by!=="string"||typeof e.digest!=="string")return null;if(e.through!==undefined&&(!Number.isInteger(e.through)||e.through<1))return null;const r={pr:e.pr,head:h,base:e.base,at:e.at,by:e.by,digest:e.digest};if(e.through!==undefined)r.through=e.through;return r};const bmSeen=(s)=>{if(!bmOn)return s;s.beforeMerge=bmRun;if(!x.beforeMerge||!bmRun.head)return s;try{s.rec=bmEntry(bmRead("_waves/"+x.beforeMerge.op+".before-merge.json"),bmRun.head)}catch(e){s.bmErr=e&&e.message?e.message:String(e)}return s};const shownJ=(v)=>v===undefined||v===""?"none":JSON.stringify(v);const bmProblems=(op,r,rec)=>{const p=[];if(!r.pr||!/^[1-9][0-9]{0,9}$/.test(r.pr))p.push("before merge: the run\u0027s pull request "+shownJ(r.pr)+" is not a number");if(!r.head||!SHA.test(r.head))p.push("before merge: the run\u0027s head "+shownJ(r.head)+" is not a commit sha");if(!r.digest||!/^sha256:[0-9a-f]{64}$/.test(r.digest))p.push("before merge: the run\u0027s digest "+shownJ(r.digest)+" is not a sha256 digest");if(p.length)return p;const h=r.head.slice(0,12);if(!rec)return["before merge: no decision on chant/lifecycle names head "+h+" of "+op+", so this run applies nothing"];if(rec.pr!==Number(r.pr))p.push("before merge: the decision for head "+h+" is pull request "+rec.pr+"\u0027s, not "+r.pr+"\u0027s");if(rec.digest!==r.digest)p.push("before merge: the run carries digest "+r.digest+", and the decision for head "+h+" has "+rec.digest);const dg="sha256:"+require("crypto").createHash("sha256").update(JSON.stringify(["chant-before-merge/1",op,rec.pr,rec.head,rec.base,rec.through===undefined?0:rec.through,rec.at,rec.by])).digest("hex");if(dg!==rec.digest)p.push("before merge: the decision for head "+h+" was changed after it was made: its fields give another digest");return p};const foV=["CHANT_WAVES_WAVE","CHANT_WAVES_COMMIT"].map((k)=>String(E[k]||"").trim());const foRun={};if(foV[0])foRun.wave=foV[0];if(foV[1])foRun.commit=foV[1];const foProblems=(rest,r,bm)=>{const w=r.wave,c=r.commit;if(rest===undefined){if(w===undefined&&c===undefined)return{p:[]};return{p:["follow-on: the run names wave "+(w===undefined?"none":w)+" and commit "+(c===undefined?"none":c)+", and this job is none of the rest wave\u0027s, which alone runs in a follow-on"]}}if(w===undefined||w===String(rest)){if(c===undefined)return{p:[]};return{p:["follow-on: the run names the commit "+c+" and no wave after wave "+rest+", so it is no follow-on"]}}if(!/^[1-9][0-9]{0,5}$/.test(w)||Number(w)<=rest)return{p:["follow-on: the run\u0027s wave "+JSON.stringify(w)+" is no wave after wave "+rest]};if(bm){if(c!==undefined)return{p:["follow-on: a follow-on of a decided head checks out that head, and the run names the commit "+c+" too"]};return{p:[],c:"follow-on wave "+w}}if(c===undefined||!SHA.test(c))return{p:["follow-on: a push\u0027s follow-on names the commit it goes on with, and the run\u0027s "+(c===undefined?"none":JSON.stringify(c))+" is not a commit sha"]};return{p:[],c:"follow-on wave "+w+" at "+c.slice(0,12)}};const foEntry=(t,k)=>{let v;try{v=JSON.parse(t===null?"null":t)}catch(e){return null}const cs=v&&typeof v==="object"&&v.version===1?v.chains:undefined;if(!cs||typeof cs!=="object"||!SHA.test(k))return null;const e=cs[k];const W=(n,m)=>Number.isInteger(n)&&n>=m;if(!e||typeof e!=="object"||e.key!==k||!W(e.wave,2)||!W(e.from,1)||typeof e.run!=="string"||typeof e.at!=="string")return null;if((e.digest!==undefined&&typeof e.digest!=="string")||(e.pr!==undefined&&!W(e.pr,1))||(e.commit!==undefined&&(typeof e.commit!=="string"||!SHA.test(e.commit)))||!e.outcomes||typeof e.outcomes!=="object")return null;return e};const foSeen=(s)=>{const k=bmOn?bmRun.head:foRun.commit;if(!x.beforeMerge||!k||foProblems(x.rest,foRun,bmOn).c===undefined)return s;try{s.foRec=foEntry(bmRead("_waves/"+x.beforeMerge.op+".follow-on.json"),k)}catch(e){s.foErr=e&&e.message?e.message:String(e)}return s};const foRecProblems=(op,w,k,dg,rec)=>{const what=dg!==undefined?"head":"commit";const sh=k.slice(0,12);if(!rec)return["follow-on: no record job of "+op+" started a follow-on for "+what+" "+sh+", so this run applies nothing"];const p=[];if(String(rec.wave)!==w)p.push("follow-on: the newest record job of "+op+" for "+what+" "+sh+" started wave "+rec.wave+", and this run names wave "+w);if(dg!==undefined&&rec.digest!==dg)p.push("follow-on: wave "+rec.wave+" of "+what+" "+sh+" was started for the decision with digest "+(rec.digest===undefined?"none":rec.digest)+", and the run carries "+dg);return p};async function seenOf(){if(x.forge==="gitlab")return foSeen(bmSeen({forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)}));const s={ref:E.GITHUB_REF};let c;if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return foSeen(bmSeen(s))}seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}const b=x.branches.filter((v)=>v!=="");const DV=x.forge==="gitlab"?"CI_DEFAULT_BRANCH":"CHANT_DEFAULT_BRANCH";const D=x.defaultBranch?String(E[DV]||"").trim():"";if(D!==""&&!b.includes(D))b.unshift(D);if(b.length===0)P.push(x.defaultBranch?"ref: the job runs from the default branch, and the forge names none (no "+DV+")":"ref: the job names no branch to run from");else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}if(s.beforeMerge){const r=s.beforeMerge;if(!x.beforeMerge)P.push("before merge: the run names pull request "+(r.pr||"none")+"\u0027s head "+(r.head||"none")+", and this job applies only the pushes to its branches");else if(s.bmErr!==undefined)P.push("before merge: the decisions on chant/lifecycle could not be read: "+s.bmErr);else{const Q=bmProblems(x.beforeMerge.op,r,s.rec||undefined);if(Q.length)P.push(...Q);else C.push("before merge: pull request "+r.pr+"\u0027s decided head "+r.head.slice(0,12))}}{const F=foProblems(x.rest,foRun,bmOn);P.push(...F.p);if(F.c){const G=!x.beforeMerge?["follow-on: this job names no op whose follow-on records it reads, so it admits no follow-on"]:s.foErr!==undefined?["follow-on: the follow-on records on chant/lifecycle could not be read: "+s.foErr]:foRecProblems(x.beforeMerge.op,foRun.wave,(bmOn?bmRun.head:foRun.commit)||"",bmOn?(bmRun.digest||""):undefined,s.foRec);if(G.length)P.push(...G);else C.push(F.c)}}if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}const at=(x.product||"chant")+" check-job: "+x.job;if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(9)}console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))}).catch((e)=>fail(e&&e.message?e.message:String(e)));'')'
+    - terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --render-spec
+  allow_failure:
+    exit_codes:
+      - 1
   artifacts:
     name: terragucci-report-apply-wave-1
     when: always
     paths:
+      - .chant/op-waves/tf-apply/outcomes/
       - terragucci-report/
-  tags:
-    - prod
-    - docker
+    expire_in: '30 days'
 
 apply-wave-2:
   stage: apply
-  image:
-    name: img:1
-  needs:
-    - apply-wave-1
+  image: img:1
+  tags:
+    - prod
+    - docker
+  timeout: '180 minutes'
   variables:
+    GIT_DEPTH: '0'
+    CHANT_LOCK_WAIT: '10500'
+    CHANT_WAVES_SPEC_COMMAND: '["terragucci","waves-spec"]'
+    CHANT_WAVES_SPEC_RUNS: head
     TF_IN_AUTOMATION: '1'
     TF_INPUT: '0'
-    TG_TOKEN: '$GITLAB_TOKEN'
-    TG_SHA: '$CI_COMMIT_SHA'
-    TG_BRANCH: '$CI_DEFAULT_BRANCH'
-    TG_BEFORE: '$CI_COMMIT_BEFORE_SHA'
+    CHANT_JOB_GUARD: '{"forge":"gitlab","job":"wave 2 (wave-2) of tf-apply","product":"terragucci","branches":[],"defaultBranch":true,"runnerTags":["prod","docker"]}'
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
+    - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH)
+  needs:
+    - apply-wave-1
   script:
-    - |
-      bash <<'APPLY' || exit $?
-      set +e -uo pipefail
-      export TG_FORGE=gitlab
-      tg() { case "$1" in status|note|reply|stale) terragucci post "$@" ;; *) node --input-type=module -e 'const [cmd, ...a] = process.argv.slice(1);
-      const e = process.env, gl = e.TG_FORGE === "gitlab", tok = e.TG_TOKEN;
-      try {
-        if (!tok) {
-          console.log("terragucci: no forge token, so no " + cmd);
-        } else if (cmd === "alive") {
-          const api = gl ? e.CI_API_V4_URL : e.GITHUB_API_URL || e.GITHUB_SERVER_URL + "/api/v1";
-          const repo = gl ? "projects/" + e.CI_PROJECT_ID : "repos/" + e.GITHUB_REPOSITORY;
-          const r = await fetch(api + "/" + repo + "/pipelines/" + a[0], { headers: { "content-type": "application/json", ...(gl ? { "private-token": tok } : { authorization: "token " + tok }) } });
-          if (!r.ok) throw new Error("GET run " + a[0] + " answered " + r.status);
-          const run = await r.json();
-          console.log(["success", "failed", "canceled", "skipped"].includes(run.status) ? "dead" : "alive");
-        }
-      } catch (err) {
-        console.log("terragucci: " + cmd + " failed: " + err.message);
-      }' -- "$@" ;; esac; }
-      git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
-      outcome="$(mktemp)"
-      log="$(mktemp)"
-      TG_OUTCOME="$outcome" terragucci stage tf-apply --wave 2 --layers 'network;app,cache' --binary tofu --gate on-destructive --stand-down 2>&1 | tee "$log"
-      rc=${PIPESTATUS[0]}
-      case "$rc" in
-        0) ;;
-        3) tg status terragucci/apply failure "$(cat "$outcome")"; exit 3 ;;
-        4) tg status terragucci/apply failure "$(cat "$outcome")"; terragucci respond wave-refused --wave 2 --approved terragucci-report/approved --current terragucci-report/current || true; exit 4 ;;
-        6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;
-        *) tg status terragucci/apply failure "an apply failed"; terragucci respond apply-failed --log "$log" || true; exit 1 ;;
-      esac
-      tg status terragucci/apply success "3 roots in 2 groups applied"
-      echo "all roots applied"
-      APPLY
+    - '(cd / && node -e ''"use strict";const E=process.env,A="chant-check-job";const shown=(v)=>v===undefined||v===null||v===""?"none":v;const fail=(m)=>{console.error("check-job: "+m);process.exit(9)};let x;try{x=JSON.parse(E.CHANT_JOB_GUARD||"")}catch(e){fail("CHANT_JOB_GUARD is not JSON")}if(!x||!["github","gitlab","forgejo"].includes(x.forge)||!Array.isArray(x.branches))fail("CHANT_JOB_GUARD is not a guard spec");const tags=(r)=>{if(r===undefined)return undefined;const t=r.trim();if(t.startsWith("[")){try{const v=JSON.parse(t);if(Array.isArray(v))return v.map(String)}catch(e){}}return t===""?[]:t.split(",").map((s)=>s.trim()).filter((s)=>s!=="")};const claimsOf=(tok)=>{const p=tok.split(".")[1];if(!p)throw new Error("the forge\u0027s OIDC token is not a JWT");const c=JSON.parse(Buffer.from(p.replace(/-/g,"+").replace(/_/g,"/"),"base64").toString("utf-8"));if(!c||typeof c!=="object")throw new Error("the forge\u0027s OIDC token has no claims");return c};const bmV=["CHANT_BEFORE_MERGE_PR","CHANT_BEFORE_MERGE_HEAD","CHANT_BEFORE_MERGE_DIGEST"].map((k)=>String(E[k]||"").trim());const bmRun={};if(bmV[0])bmRun.pr=bmV[0];if(bmV[1])bmRun.head=bmV[1];if(bmV[2])bmRun.digest=bmV[2];const bmOn=Boolean(bmV[0]||bmV[1]||bmV[2]);const SHA=/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;const bmRead=(file)=>{const cp=require("child_process"),fs=require("fs"),os=require("os"),pa=require("path");let url,user,tok;if(x.forge==="gitlab"){if(!E.CI_SERVER_URL||!E.CI_PROJECT_PATH)throw new Error("the job names no repository (no CI_SERVER_URL or CI_PROJECT_PATH)");url=E.CI_SERVER_URL.replace(/\/+$/,"")+"/"+E.CI_PROJECT_PATH+".git";user="gitlab-ci-token";tok=E.CI_JOB_TOKEN||""}else{if(!E.GITHUB_SERVER_URL||!E.GITHUB_REPOSITORY)throw new Error("the job names no repository (no GITHUB_SERVER_URL or GITHUB_REPOSITORY)");url=E.GITHUB_SERVER_URL.replace(/\/+$/,"")+"/"+E.GITHUB_REPOSITORY+".git";user="x-access-token";tok=E.GITHUB_TOKEN||""}const d=fs.mkdtempSync(pa.join(os.tmpdir(),"chant-guard-"));const g=(a)=>cp.spawnSync("git",a,{cwd:d,encoding:"utf-8",env:Object.assign({},E,{GIT_TERMINAL_PROMPT:"0"})});const i=g(["init","-q"]);if(i.status!==0)throw new Error("git init failed: "+String(i.stderr||"").trim());const f=g(["-c","http.extraHeader=Authorization: Basic "+Buffer.from(user+":"+tok).toString("base64"),"fetch","-q","--depth=1",url,"refs/heads/chant/lifecycle"]);if(f.status!==0)throw new Error("could not fetch chant/lifecycle: "+String(f.stderr||"").trim().split("\n").pop());const o=g(["show","FETCH_HEAD:"+file]);return o.status===0?o.stdout:null};const bmEntry=(t,h)=>{let v;try{v=JSON.parse(t===null?"null":t)}catch(e){return null}const hs=v&&typeof v==="object"&&v.version===1?v.heads:undefined;if(!hs||typeof hs!=="object"||!SHA.test(h))return null;const e=hs[h];if(!e||typeof e!=="object"||e.head!==h||!Number.isInteger(e.pr)||e.pr<1||typeof e.base!=="string"||!SHA.test(e.base)||typeof e.at!=="string"||typeof e.by!=="string"||typeof e.digest!=="string")return null;if(e.through!==undefined&&(!Number.isInteger(e.through)||e.through<1))return null;const r={pr:e.pr,head:h,base:e.base,at:e.at,by:e.by,digest:e.digest};if(e.through!==undefined)r.through=e.through;return r};const bmSeen=(s)=>{if(!bmOn)return s;s.beforeMerge=bmRun;if(!x.beforeMerge||!bmRun.head)return s;try{s.rec=bmEntry(bmRead("_waves/"+x.beforeMerge.op+".before-merge.json"),bmRun.head)}catch(e){s.bmErr=e&&e.message?e.message:String(e)}return s};const shownJ=(v)=>v===undefined||v===""?"none":JSON.stringify(v);const bmProblems=(op,r,rec)=>{const p=[];if(!r.pr||!/^[1-9][0-9]{0,9}$/.test(r.pr))p.push("before merge: the run\u0027s pull request "+shownJ(r.pr)+" is not a number");if(!r.head||!SHA.test(r.head))p.push("before merge: the run\u0027s head "+shownJ(r.head)+" is not a commit sha");if(!r.digest||!/^sha256:[0-9a-f]{64}$/.test(r.digest))p.push("before merge: the run\u0027s digest "+shownJ(r.digest)+" is not a sha256 digest");if(p.length)return p;const h=r.head.slice(0,12);if(!rec)return["before merge: no decision on chant/lifecycle names head "+h+" of "+op+", so this run applies nothing"];if(rec.pr!==Number(r.pr))p.push("before merge: the decision for head "+h+" is pull request "+rec.pr+"\u0027s, not "+r.pr+"\u0027s");if(rec.digest!==r.digest)p.push("before merge: the run carries digest "+r.digest+", and the decision for head "+h+" has "+rec.digest);const dg="sha256:"+require("crypto").createHash("sha256").update(JSON.stringify(["chant-before-merge/1",op,rec.pr,rec.head,rec.base,rec.through===undefined?0:rec.through,rec.at,rec.by])).digest("hex");if(dg!==rec.digest)p.push("before merge: the decision for head "+h+" was changed after it was made: its fields give another digest");return p};const foV=["CHANT_WAVES_WAVE","CHANT_WAVES_COMMIT"].map((k)=>String(E[k]||"").trim());const foRun={};if(foV[0])foRun.wave=foV[0];if(foV[1])foRun.commit=foV[1];const foProblems=(rest,r,bm)=>{const w=r.wave,c=r.commit;if(rest===undefined){if(w===undefined&&c===undefined)return{p:[]};return{p:["follow-on: the run names wave "+(w===undefined?"none":w)+" and commit "+(c===undefined?"none":c)+", and this job is none of the rest wave\u0027s, which alone runs in a follow-on"]}}if(w===undefined||w===String(rest)){if(c===undefined)return{p:[]};return{p:["follow-on: the run names the commit "+c+" and no wave after wave "+rest+", so it is no follow-on"]}}if(!/^[1-9][0-9]{0,5}$/.test(w)||Number(w)<=rest)return{p:["follow-on: the run\u0027s wave "+JSON.stringify(w)+" is no wave after wave "+rest]};if(bm){if(c!==undefined)return{p:["follow-on: a follow-on of a decided head checks out that head, and the run names the commit "+c+" too"]};return{p:[],c:"follow-on wave "+w}}if(c===undefined||!SHA.test(c))return{p:["follow-on: a push\u0027s follow-on names the commit it goes on with, and the run\u0027s "+(c===undefined?"none":JSON.stringify(c))+" is not a commit sha"]};return{p:[],c:"follow-on wave "+w+" at "+c.slice(0,12)}};const foEntry=(t,k)=>{let v;try{v=JSON.parse(t===null?"null":t)}catch(e){return null}const cs=v&&typeof v==="object"&&v.version===1?v.chains:undefined;if(!cs||typeof cs!=="object"||!SHA.test(k))return null;const e=cs[k];const W=(n,m)=>Number.isInteger(n)&&n>=m;if(!e||typeof e!=="object"||e.key!==k||!W(e.wave,2)||!W(e.from,1)||typeof e.run!=="string"||typeof e.at!=="string")return null;if((e.digest!==undefined&&typeof e.digest!=="string")||(e.pr!==undefined&&!W(e.pr,1))||(e.commit!==undefined&&(typeof e.commit!=="string"||!SHA.test(e.commit)))||!e.outcomes||typeof e.outcomes!=="object")return null;return e};const foSeen=(s)=>{const k=bmOn?bmRun.head:foRun.commit;if(!x.beforeMerge||!k||foProblems(x.rest,foRun,bmOn).c===undefined)return s;try{s.foRec=foEntry(bmRead("_waves/"+x.beforeMerge.op+".follow-on.json"),k)}catch(e){s.foErr=e&&e.message?e.message:String(e)}return s};const foRecProblems=(op,w,k,dg,rec)=>{const what=dg!==undefined?"head":"commit";const sh=k.slice(0,12);if(!rec)return["follow-on: no record job of "+op+" started a follow-on for "+what+" "+sh+", so this run applies nothing"];const p=[];if(String(rec.wave)!==w)p.push("follow-on: the newest record job of "+op+" for "+what+" "+sh+" started wave "+rec.wave+", and this run names wave "+w);if(dg!==undefined&&rec.digest!==dg)p.push("follow-on: wave "+rec.wave+" of "+what+" "+sh+" was started for the decision with digest "+(rec.digest===undefined?"none":rec.digest)+", and the run carries "+dg);return p};async function seenOf(){if(x.forge==="gitlab")return foSeen(bmSeen({forgeEnvironment:E.CI_ENVIRONMENT_NAME||null,ref:E.CI_COMMIT_REF_NAME,refProtected:E.CI_COMMIT_REF_PROTECTED,runnerTags:tags(E.CI_RUNNER_TAGS)}));const s={ref:E.GITHUB_REF};let c;if(x.forge==="github"&&x.forgeEnvironment!==undefined){try{if(!E.ACTIONS_ID_TOKEN_REQUEST_URL||!E.ACTIONS_ID_TOKEN_REQUEST_TOKEN)throw new Error("the job may request no OIDC token (no ACTIONS_ID_TOKEN_REQUEST_URL); it needs the id-token: write permission");const r=await fetch(E.ACTIONS_ID_TOKEN_REQUEST_URL+"&audience="+encodeURIComponent(A),{headers:{authorization:"bearer "+E.ACTIONS_ID_TOKEN_REQUEST_TOKEN}});if(!r.ok)throw new Error("the OIDC token request answered "+r.status);const v=(await r.json()).value;if(typeof v!=="string")throw new Error("the OIDC token request answered no token");c=claimsOf(v);s.forgeEnvironment=typeof c.environment==="string"&&c.environment!==""?c.environment:null}catch(e){s.forgeEnvironmentError=e&&e.message?e.message:String(e)}}const run=c&&typeof c.runner_environment==="string"?c.runner_environment:E.RUNNER_ENVIRONMENT;if(run)s.runnerEnvironment=run;return foSeen(bmSeen(s))}seenOf().then((s)=>{const P=[],C=[],S=[];const fe=x.forgeEnvironment;if(x.forge==="forgejo")S.push("forge environment (Forgejo has none)");else if(fe!==undefined){if(s.forgeEnvironmentError!==undefined)P.push("forge environment: expected "+fe+", and it could not be read: "+s.forgeEnvironmentError);else if(s.forgeEnvironment!==fe)P.push("forge environment: expected "+fe+", found "+shown(s.forgeEnvironment));else C.push("forge environment "+fe)}const b=x.branches.filter((v)=>v!=="");const DV=x.forge==="gitlab"?"CI_DEFAULT_BRANCH":"CHANT_DEFAULT_BRANCH";const D=x.defaultBranch?String(E[DV]||"").trim():"";if(D!==""&&!b.includes(D))b.unshift(D);if(b.length===0)P.push(x.defaultBranch?"ref: the job runs from the default branch, and the forge names none (no "+DV+")":"ref: the job names no branch to run from");else if(x.forge==="gitlab"){if(!s.ref||!b.includes(s.ref))P.push("ref: expected "+b.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref);if(s.refProtected!=="true")P.push("ref: expected a protected ref (CI_COMMIT_REF_PROTECTED true), found "+shown(s.refProtected));else C.push("protected ref")}else{const refs=b.map((v)=>"refs/heads/"+v);if(!s.ref||!refs.includes(s.ref))P.push("ref: expected "+refs.join(" or ")+", found "+shown(s.ref));else C.push("ref "+s.ref)}if(s.beforeMerge){const r=s.beforeMerge;if(!x.beforeMerge)P.push("before merge: the run names pull request "+(r.pr||"none")+"\u0027s head "+(r.head||"none")+", and this job applies only the pushes to its branches");else if(s.bmErr!==undefined)P.push("before merge: the decisions on chant/lifecycle could not be read: "+s.bmErr);else{const Q=bmProblems(x.beforeMerge.op,r,s.rec||undefined);if(Q.length)P.push(...Q);else C.push("before merge: pull request "+r.pr+"\u0027s decided head "+r.head.slice(0,12))}}{const F=foProblems(x.rest,foRun,bmOn);P.push(...F.p);if(F.c){const G=!x.beforeMerge?["follow-on: this job names no op whose follow-on records it reads, so it admits no follow-on"]:s.foErr!==undefined?["follow-on: the follow-on records on chant/lifecycle could not be read: "+s.foErr]:foRecProblems(x.beforeMerge.op,foRun.wave,(bmOn?bmRun.head:foRun.commit)||"",bmOn?(bmRun.digest||""):undefined,s.foRec);if(G.length)P.push(...G);else C.push(F.c)}}if(x.forge==="gitlab"){const w=x.runnerTags||[];if(w.length>0){const h=s.runnerTags;const miss=w.filter((t)=>!(h||[]).includes(t));if(h===undefined)P.push("runner: expected tags "+w.join(", ")+", and the job has no CI_RUNNER_TAGS");else if(miss.length>0)P.push("runner: expected tags "+w.join(", ")+", found "+(h.length?h.join(", "):"none"));else C.push("runner tags "+w.join(", "))}}else if(x.selfHosted){if(s.runnerEnvironment===undefined)S.push("runner (the runner says nothing about itself: no RUNNER_ENVIRONMENT)");else if(s.runnerEnvironment!=="self-hosted")P.push("runner: expected self-hosted, found "+s.runnerEnvironment);else C.push("self-hosted runner")}const at=(x.product||"chant")+" check-job: "+x.job;if(P.length>0){for(const p of P)console.error(at+": "+p);console.error(at+": this job does not run where the spec set it to run, so it stops before any credential is taken or code checked out");process.exit(9)}console.log(at+": "+(C.length?C.join(", "):"nothing to check")+(S.length?"; not checked: "+S.join(", "):""))}).catch((e)=>fail(e&&e.message?e.message:String(e)));'')'
+    - terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --render-spec
+  allow_failure:
+    exit_codes:
+      - 1
   artifacts:
     name: terragucci-report-apply-wave-2
     when: always
     paths:
+      - .chant/op-waves/tf-apply/outcomes/
       - terragucci-report/
+    expire_in: '30 days'
+
+apply-wave-1-status:
+  stage: apply
+  image: img:1
   tags:
     - prod
     - docker
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH)
+      when: always
+  needs:
+    - apply-wave-1
+  script:
+    - terragucci run wave --op tf-apply --wave 1 --of 2 --apply-status terragucci/apply --at "$CI_COMMIT_SHA" --forge gitlab
+  allow_failure: true
+
+apply-done:
+  stage: apply
+  image: img:1
+  tags:
+    - prod
+    - docker
+  variables:
+    GIT_DEPTH: '0'
+  rules:
+    - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH)
+      when: always
+  needs:
+    - apply-wave-2
+  script:
+    - terragucci run wave --op tf-apply --wave 2 --of 2 --apply-status terragucci/apply --at "$CI_COMMIT_SHA" --forge gitlab
+  allow_failure: true
+
+stale-notes:
+  stage: apply
+  image: img:1
+  tags:
+    - prod
+    - docker
+  variables:
+    TIP_SHA: '$CI_COMMIT_SHA'
+  rules:
+    - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH)
+  script:
+    - npx --no-install terragucci components pr-post --stale --tip "$TIP_SHA" --env default --forge gitlab --context terragucci/plan
+  allow_failure: true
+
+resume:
+  stage: resume
+  image: img:1
+  tags:
+    - prod
+    - docker
+  rules:
+    - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "schedule")
+  resource_group: terragucci-resume
+  script:
+    - rc=0; terragucci run resume --op tf-apply || rc=$?; terragucci run resume --op tf-migrate || rc=$?; exit $rc
 
 tips:
   stage: tips
   image:
     name: img:1
   needs:
-    - apply-wave-2
+    - apply-done
   variables:
     TF_IN_AUTOMATION: '1'
     TF_INPUT: '0'
@@ -373,7 +368,7 @@ publish:
   image:
     name: img:1
   needs:
-    - apply-wave-2
+    - apply-done
   variables:
     TF_IN_AUTOMATION: '1'
     TF_INPUT: '0'
@@ -411,24 +406,6 @@ comments:
       terragucci comment --forge gitlab --poll --layers 'network;app,cache'
       COMMENTS
   tags:
-    - docker
-
-resume:
-  stage: resume
-  image:
-    name: img:1
-  variables:
-    TG_TOKEN: '$GITLAB_TOKEN'
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "resume"'
-  resource_group: terragucci-resume
-  script:
-    - |
-      bash <<'RESUME' || exit $?
-      terragucci resume --forge gitlab
-      RESUME
-  tags:
-    - prod
     - docker
 
 ephemeral:

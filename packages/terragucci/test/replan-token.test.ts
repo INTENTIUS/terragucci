@@ -251,7 +251,8 @@ describe("the re-plan's Terragrunt cache", () => {
       .filter(([name]) => !restoring.includes(name))
       .flatMap(([name, job]) => cacheSteps(job.steps ?? []).map((c) => [name, c] as const));
     // The drift job is chant's Op in a workflow of its own, which caches with its setup step (chant-drift-op.test.ts).
-    expect(saving.map(([name]) => name)).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2"]);
+    // chant's waves jobs take the waves' setup steps, the cache among them; the comment job applies nothing and caches nothing.
+    expect(saving.map(([name]) => name)).toEqual(["apply-wave-1", "apply-wave-2", "apply-wave-1-status", "apply-done", "stale-notes"]);
     expect(cacheSteps(steps(doc, "plan")).map((x) => action(x.uses))).toEqual([RESTORE]);
     for (const [name, c] of saving) {
       expect(action(c.uses), name).toBe(SAVE);

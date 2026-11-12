@@ -51,7 +51,6 @@
  *   terragucci config identities [--config <file>] [--project <host/path>] [--forge <f>] [--repo <owner/name>] [--default-branch <b>] [--owner-id <id>] [--repo-id <id>] [--no-roots]
  *   terragucci forge check [--config <file>] [--project <host/path>] [--forge <f>] [--repo <owner/name>] [--default-branch <b>] [--owner-id <id>] [--repo-id <id>] [--no-roots] [--require-clouds]   (the identities contract next to the live forge and cloud setup; read-only)
   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]
-  terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
  *   terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run] [--no-resume]   (approve a waiting wave's or migration's digest on chant/lifecycle, then start its apply again with your token)
  *   terragucci approve export|unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a state export request, or the release of a state lock)
  *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
@@ -60,7 +59,6 @@
  *   terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci action` comment or the action workflow's dispatch; run by the generated action workflow)
  *   terragucci action --from <file> [--forge forgejo]   (run the action the decision names and reply on its pull request; run by the generated action workflow)
  *   terragucci action --resume [--dry-run] [--out <file>]   (run each action whose approval now stands, as the person who asked; run by the resume job)
- *   terragucci resume [--forge github|forgejo|gitlab] [--out <file>]   (find a waiting wave an approval now stands for, or an approved apply that was killed; run by the pipeline's resume job)
  *   terragucci migrate revert <migration>   (write the migration that puts back the states an applied migration wrote)
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
@@ -68,13 +66,12 @@
  *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
- *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
+ *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--waves <n>] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
  *   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge forgejo|gitlab]   (read a `/terragucci agent <ask>` comment)
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge gitlab]   (push the agent's change to the pull request's head branch)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]   (locks: plan: lock the roots a pull request's head reaches, or release them; run by the generated pipeline)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
-  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]   (read a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; run by the generated pipeline)
- *   terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]   (merge a pull request applied before merge, with apply.merge: auto; run by the generated pipeline)
+ *   terragucci reach --layers <a,b;c> [--terragrunt]   (print the roots the change from BASE_SHA to HEAD_SHA reaches, one a line: chant's reach line before merge)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci post status|reply|stale <args> [--forge github|gitlab|forgejo]   (say something on a pull request or commit through chant's forge client; the generated pipeline's tg function runs it)
  *   terragucci plan-handoff --report <dir> [--env <env>] [--exit <code>]   (write the plan note hand-off chant's note job posts, from the plan report; the plan verb's last line)
@@ -130,8 +127,7 @@ import { writePlanNoteNotices } from "./plan-note";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
-import { decideApplyComment, decidePlanLock, mergePullRequest } from "./comment-apply";
-import { decideGitLabApply, mergeGitLabMR } from "./comment-apply-gitlab";
+import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
 import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
@@ -159,9 +155,7 @@ import { MARKER } from "./render";
 import { describeEstate, estate } from "./estate";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
-import { applyWave, branchRootProblems, parseBranches, parseGroups, readLedger } from "./apply";
-import { resumeStep, resumeWithChant } from "./resume";
-import { pointQuestions } from "./point-gate";
+import { applyWave, branchRootProblems, parseBranches, parseGroups } from "./apply";
 import { checkPolicyTests, checkRoot, checkSourcesResult, checkUnitPins, emitCheck } from "./check";
 import { ciBaseRef } from "@intentius/chant/ci-base";
 import { checkMirror, describeRecipe, planRecipe } from "./image-recipe";
@@ -181,7 +175,7 @@ import { configIdentities, describeForgeCheck, describeIdentities, forgeCheck, f
 import type { Fetch } from "./forge";
 import { renderText } from "./report/views";
 import { parseLayers, runStage } from "./report/stage";
-import { MIGRATE_LEDGER, migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
+import { migrationPipelineProblems, runMigrations, writeRevert } from "./migrate";
 import { exportState } from "./export";
 import { StoreError } from "@intentius/chant/object-store";
 import { StateSourceError } from "@intentius/chant-lexicon-terraform/state";
@@ -234,11 +228,9 @@ const USAGE = `usage:
   terragucci config identities [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots]   (per environment and stage: roots, runner, forge environment, cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs)
   terragucci forge check [--config <file>] [--project <host/path>] [--forge github|gitlab|forgejo] [--repo <owner/name>] [--default-branch <branch>] [--owner-id <id>] [--repo-id <id>] [--no-roots] [--require-clouds]   (compare that contract with the live forge environments, runners, protections and cloud trusts, read-only; exit 1 on a mismatch)
   terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
-  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--agent on] [--review]
+  terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--waves <n>] [--agent on] [--review]
   terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge github|forgejo|gitlab]
-  terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab] [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
-  terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
   terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]
   terragucci post status|reply|stale <args> [--forge github|gitlab|forgejo]
   terragucci plan-handoff --report <dir> [--env <env>] [--exit <code>]
@@ -1025,7 +1017,8 @@ export async function main(argv: string[]): Promise<number> {
           if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment's --when is merge or pull-request");
           const requires = requiresOf(str(flags, "requires"), "comment");
           if (agent !== "off" && agent !== "on" && agent !== "chant") throw new ConfigError("comment --forge gitlab --poll's --agent is off, on or chant");
-          const poll = await pollGitLabComments({ layers: parseLayers(layers), when, ...(requires ? { requires } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
+          const waves = str(flags, "waves") !== undefined ? wholeFlag("waves", str(flags, "waves")!) : undefined;
+          const poll = await pollGitLabComments({ layers: parseLayers(layers), ...(waves !== undefined ? { waves } : {}), when, ...(requires ? { requires } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
           for (const r of poll.reviews ?? []) console.log(`terragucci comment: !${r.mr} review: ${r.reason}`);
           for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
           if (poll.outcomes.length === 0 && !poll.fail) console.log("terragucci comment: no new /terragucci notes");
@@ -1053,37 +1046,18 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`terragucci comment: ${decision.go ? "" : agent === "run" ? "no agent: " : "no re-plan: "}${decision.reason}`);
         return 0;
       }
-      case "comment-apply": {
+      case "reach": {
+        // chant's reach line (the product plan's `reach`): the roots (units, instances) the change from BASE_SHA to HEAD_SHA
+        // reaches, one a line, read from git as data. chant takes their locks at stage apply when it decides a head before merge.
         const layers = str(flags, "layers");
-        const out = str(flags, "out");
-        const forge = str(flags, "forge") ?? "github";
-        const canary = str(flags, "canary");
-        const when = str(flags, "when") ?? "merge";
-        if (!layers || !out) throw new ConfigError("comment-apply needs --layers <a,b;c> and --out <file>");
-        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("comment-apply's --forge is github, forgejo or gitlab");
-        if (when !== "merge" && when !== "pull-request") throw new ConfigError("comment-apply's --when is merge or pull-request");
-        const requires = requiresOf(str(flags, "requires"), "comment-apply");
-        // waves.after: a root it puts after a root the change reaches is locked with it. synth: a change can reach every root.
+        const from = process.env.BASE_SHA;
+        const to = process.env.HEAD_SHA;
+        if (!layers || !from || !to) throw new ConfigError("reach needs --layers <a,b;c>, and BASE_SHA and HEAD_SHA in the environment");
         const { after, synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
-        if (forge === "gitlab") {
-          // GitLab: the mr-apply job of the pipeline the comments job started; the merge request, the note and the head come from its variables, read again from the API.
-          if (when !== "pull-request") throw new ConfigError("comment-apply --forge gitlab is apply before merge's: pass --when pull-request");
-          const decision = await decideGitLabApply({ layers: parseLayers(layers), ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
-          writeDecision(resolve(cwd, out), decision);
-          if (decision.fail) {
-            console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
-            return 1;
-          }
-          console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
-          return 0;
-        }
-        const decision = await decideApplyComment({ layers: parseLayers(layers), forge, when, ...(canary ? { canary: canary.split(",") } : {}), ...(after ? { after } : {}), ...(requires ? { requires } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(flags.again === true ? { again: true } : {}) });
-        writeDecision(resolve(cwd, out), decision);
-        if (decision.fail) {
-          console.error(`terragucci comment-apply: failed, nothing applied: ${decision.reason}`);
-          return 1;
-        }
-        console.log(`terragucci comment-apply: ${decision.go ? "" : "nothing applied: "}${decision.reason}`);
+        const git = (a: string[]) => spawnSync("git", a, { cwd, encoding: "utf-8" }) as ReturnType<Parameters<typeof reached>[1]>;
+        const r = reached(cwd, git, from, to, parseLayers(layers), { ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(after ? { after } : {}), ...(synth ? { synth: true } : {}) });
+        if (r.every) console.error(`terragucci reach: every ${r.kind}: ${r.every}`);
+        for (const u of r.units) console.log(u);
         return 0;
       }
       case "pr-lock": {
@@ -1101,21 +1075,6 @@ export async function main(argv: string[]): Promise<number> {
         }
         console.log(`terragucci pr-lock: ${decision.reason}`);
         return 0;
-      }
-      case "pr-merge": {
-        const pr = Number(str(flags, "pr"));
-        const sha = str(flags, "sha");
-        const forge = str(flags, "forge") ?? "github";
-        if (!Number.isInteger(pr) || pr < 1 || !sha) throw new ConfigError("pr-merge needs --pr <n> and --sha <sha>");
-        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("pr-merge's --forge is github, forgejo or gitlab");
-        try {
-          console.log(`terragucci pr-merge: ${forge === "gitlab" ? await mergeGitLabMR({ pr, sha }) : await mergePullRequest({ pr, sha, forge })}`);
-          return 0;
-        } catch (e) {
-          if (e instanceof ConfigError) throw e;
-          console.error(`terragucci pr-merge: not merged: ${(e as Error).message}`);
-          return 1;
-        }
       }
       case "approve": {
         const sign = flags.sign === true ? true : str(flags, "sign");
@@ -1221,30 +1180,6 @@ export async function main(argv: string[]): Promise<number> {
         const reason = str(flags, "reason");
         if (reason !== "closed" && reason !== "expired") throw new ConfigError("ephemeral down takes --reason closed or --reason expired");
         return await ephemeralDown(cwd, { ...common, pr, reason });
-      }
-      case "resume": {
-        const forge = str(flags, "forge") ?? (process.env.GITLAB_CI === "true" ? "gitlab" : process.env.GITEA_ACTIONS === "true" || process.env.FORGEJO_ACTIONS === "true" ? "forgejo" : "github");
-        if (forge !== "github" && forge !== "forgejo" && forge !== "gitlab") throw new ConfigError("resume's --forge is github, forgejo or gitlab");
-        const out = str(flags, "out");
-        const sha = process.env.TG_SHA || spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf-8" }).stdout.trim();
-        // On GitLab chant run resume starts each job that waits at a gate now answered, or whose apply stopped.
-        if (forge === "gitlab") return await resumeWithChant(cwd, process.env);
-        const ledger = readLedger(cwd);
-        // A wave whose gate asks a decision point resumes once its question has an answer that passes the gate.
-        let questions: Awaited<ReturnType<typeof pointQuestions>>;
-        try {
-          questions = await pointQuestions(cwd, ledger);
-        } catch (e) {
-          console.log(`terragucci resume: the decision point questions could not be read, so no wave waiting on one is resumed: ${(e as Error).message}`);
-        }
-        const step = await resumeStep({ ledger, migrations: readLedger(cwd, MIGRATE_LEDGER), forge, sha, env: process.env, ...(questions ? { questions } : {}) });
-        if (out) writeFileSync(resolve(cwd, out), step.kind === "apply" ? `TG_SHA=${step.sha}\nTG_PR=${step.pr ?? ""}\n` : "");
-        if (step.kind === "none") console.log(`terragucci resume: nothing to resume: ${step.why}`);
-        else {
-          for (const w of step.waves) console.log(w.migration ? `terragucci resume: migration ${w.migration}, which wave 1 runs, was approved by ${w.by} for ${w.digest}` : w.stopped ? `terragucci resume: the apply of wave ${w.wave}, approved by ${w.by} for ${w.digest}, stopped before it finished; the wave applies the rest` : `terragucci resume: wave ${w.wave} was approved by ${w.by} for ${w.digest}`);
-          console.log(`terragucci resume: applying the waves again at ${step.sha.slice(0, 8)}; each gate decides`);
-        }
-        return 0;
       }
       case "notify": {
         if (args[0] === "drift") {
@@ -1394,6 +1329,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "run": {
         // chant's Op waves jobs run `terragucci run wave ...`: chant's wave runner in this process, with terragucci's words and its wave hook.
+        // chant's resume job runs `terragucci run resume --op tf-apply`: chant's resume, answered in terragucci's words.
+        if (args[0] === "resume") return runChantInProcess(["run", "resume", ...argv.slice(argv.indexOf("resume") + 1)], TERRAGUCCI_WORDS);
         if (args[0] !== "wave") throw new ConfigError("usage: terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]], or another line of chant's run wave");
         return runWave(cwd, argv.slice(argv.indexOf("wave") + 1));
       }

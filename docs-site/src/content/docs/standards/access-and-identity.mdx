@@ -28,7 +28,7 @@ Each row names who may take the action, what enforces it, and the key that chang
 |---|---|---|---|
 | Open a pull request and get a plan | anyone with write access; a fork's pull request gets no plan | the forge; the plan job's role is read-only and its trust names your repo | `oidc.plan_role` |
 | Re-plan from a comment or a dispatch | write access (on GitLab, Developer or above); anyone else gets no plan ([comment checks](/terragucci/reference/pipeline/#apply-from-a-comment)) | the forge's permissions, read by the comment job | `comments` on GitLab |
-| Lock or unlock a pull request's roots, `/terragucci lock` and `unlock` | write access | the comment job | `apply.when: pull-request` or `locks: plan`; without either, the comment is refused |
+| Lock or unlock a pull request's roots, `/terragucci lock` and `unlock` | write access | the `pr-lock` job | `locks: plan` under `apply.when: merge`; otherwise the comment does not run, and with `apply.when: pull-request` `/terragucci apply` takes the locks |
 | Merge | branch protection: required reviews and the required `terragucci/plan` status ([settings per forge](/terragucci/reference/threat-model/#branch-protection)) | the forge | the forge's rules |
 | Apply an open pull request, `/terragucci apply` | write access, once each of `apply.requires` holds: by default an approval of the head by a reviewer other than its authors, passing checks, mergeable, and up to date with the default branch. Always: `terragucci/plan` passed, the head did not move, the pipeline file is unchanged, and no other pull request holds a lock on a root it reaches. Gated waves still wait | the comment job, then the gate | `apply.when`, `apply.requires` |
 | Approve a waiting wave | an approval the [approval mode](#approval-modes) counts, from someone who had [no hand in the change](/terragucci/guides/approve-a-wave/#eligible-approvers) | the wave's job, against the ledger | `approval`, at base |
@@ -68,7 +68,7 @@ The mode is read at base, as are the signers file and [`chant.workspace.json`](/
 
 | Secret | Held by | Never held by |
 |---|---|---|
-| the forge token `token_env` names | the rollout job and `respond --mode apply` on GitHub and Forgejo, whose other jobs use the run's own token; on GitLab, every generated job, as `TG_TOKEN` | the steps that run a pull request's code ([forge tokens](/terragucci/reference/environment/#forge-tokens)) |
+| the forge token `token_env` names | the rollout job and `respond --mode apply` on GitHub and Forgejo, whose other jobs use the run's own token; on GitLab, every generated job, as `TG_TOKEN`, and the wave jobs as `CHANT_FORGE_TOKEN` | the steps that run a pull request's code ([forge tokens](/terragucci/reference/environment/#forge-tokens)) |
 | the merge token, `apply.merge_token_env` | the `pr-merge` job; on GitLab also the comments job, in the `terragucci-merge` environment | every job that runs a pull request's code |
 | `agent.token_env` | the agent's push jobs | the agent's own step |
 | the relay token | the relay, in your cloud, which refuses one that administers the repo, may push to the default branch or, on GitLab, has the `api` scope | every generated job |
