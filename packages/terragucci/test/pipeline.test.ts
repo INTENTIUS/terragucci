@@ -379,7 +379,9 @@ describe("apply before merge (apply.when: pull-request)", () => {
   it.each(["github", "forgejo"] as const)("%s: the comment job decides the head and dispatches the split waves, and the push after the merge confirms instead of applying", (forge) => {
     const doc = renderPr(forge);
     const job = doc.jobs["apply-comment"];
-    expect(job.if).toBe("github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/terragucci apply')");
+    // Before merge it answers lock and unlock too, by the reach line (chant issue 5061).
+    expect(job.if).toBe("github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/terragucci apply') || startsWith(github.event.comment.body, '/terragucci lock') || startsWith(github.event.comment.body, '/terragucci unlock'))");
+    expect(JSON.stringify(job)).toContain("terragucci reach --layers 'network;app,cache'");
     expect(doc.jobs.replan.if).toContain("!startsWith(github.event.comment.body, '/terragucci apply') && !startsWith(github.event.comment.body, '/terragucci lock') && !startsWith(github.event.comment.body, '/terragucci unlock')");
     // Forgejo ignores permissions:, so only GitHub's jobs carry them.
     if (forge === "github") expect(job.permissions).toMatchObject({ actions: "write", contents: "write", checks: "read" });
@@ -434,13 +436,13 @@ describe("apply before merge (apply.when: pull-request)", () => {
       }
       expect(JSON.stringify(doc["apply-wave-1"])).not.toContain("MERGE_TOKEN");
       // apply.merge manual: chant's pr-merge job says the head applied and merges nothing, so it holds no merge token.
-      expect(doc["pr-merge"].script).toEqual(["terragucci run wave --op tf-apply --wave 2 --merge manual --forge gitlab"]);
+      expect(doc["pr-merge"].script).toEqual(["terragucci run wave --op tf-apply --wave 2 --merge manual --forge gitlab --gate tf-apply"]);
       expect(JSON.stringify(doc["pr-merge"])).not.toContain("MERGE_TOKEN");
     });
 
     it("the comments job polls with --when pull-request and holds the merge token, in the merge environment, as chant's pr-merge does", () => {
       const doc = gl({ applyMerge: "auto", applyRequires: ["approved", "checks"] });
-      expect(doc.comments.variables).toEqual({ TG_TOKEN: "$GITLAB_TOKEN", TG_MERGE_TOKEN: "$MERGE_TOKEN", GIT_DEPTH: "0" });
+      expect(doc.comments.variables).toEqual({ TG_TOKEN: "$GITLAB_TOKEN", TG_MERGE_TOKEN: "$MERGE_TOKEN", GIT_DEPTH: "0", CHANT_LOCK_REACH: "terragucci reach --layers 'network;app,cache'" });
       expect(doc.comments.environment).toEqual({ name: "terragucci-merge", action: "access" });
       expect(doc.comments.script.join("\n")).toContain("terragucci comment --forge gitlab --poll --layers 'network;app,cache' --when pull-request --requires approved,checks");
       const merge = doc["pr-merge"];
@@ -448,7 +450,7 @@ describe("apply before merge (apply.when: pull-request)", () => {
       expect(merge.environment).toEqual({ name: "terragucci-merge", action: "access" });
       expect(merge.variables).toEqual({ GIT_DEPTH: "0", CHANT_MERGE_TOKEN: "$MERGE_TOKEN" });
       expect(merge.id_tokens).toBeUndefined();
-      expect(merge.script).toEqual(["terragucci run wave --op tf-apply --wave 2 --merge auto --forge gitlab --merge-token-env CHANT_MERGE_TOKEN"]);
+      expect(merge.script).toEqual(["terragucci run wave --op tf-apply --wave 2 --merge auto --forge gitlab --gate tf-apply --merge-token-env CHANT_MERGE_TOKEN"]);
       expect(JSON.stringify(doc["apply-wave-1"])).not.toContain("MERGE_TOKEN");
     });
   });
@@ -461,7 +463,8 @@ describe("apply before merge (apply.when: pull-request)", () => {
       const merge = doc.jobs["pr-merge"];
       expect(merge.needs).toEqual(["apply-wave-2-record"]);
       const step = merge.steps.at(-1);
-      expect(step.run).toBe(`terragucci run wave --op tf-apply --wave 2 --merge auto --forge ${forge} --merge-token-env CHANT_MERGE_TOKEN`);
+      // The merge releases the locks the decision took in terragucci's lock file (gate tf-apply).
+      expect(step.run).toBe(`terragucci run wave --op tf-apply --wave 2 --merge auto --forge ${forge} --gate tf-apply --merge-token-env CHANT_MERGE_TOKEN`);
       expect(step.env.CHANT_MERGE_TOKEN).toBe("${{ secrets.MERGE_TOKEN }}");
       expect(JSON.stringify(merge)).not.toContain(OIDC.apply_role);
       for (const [name, job] of Object.entries(doc.jobs as Record<string, any>)) {

@@ -130,7 +130,7 @@ describe("control: the control repo is told once per commit", () => {
   it("gitlab: one control job, and the resume job drops the control tokens GitLab hands every job before it runs", () => {
     const d = doc(withControl("gitlab", { resume: 15 }).content);
     expect(Object.keys(d).filter((k) => /control/.test(k))).toEqual(["control"]);
-    expect(d.resume.script).toEqual(["unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN TERRAGUCCI_CONTROL_TOKEN TERRAGUCCI_CONTROL_READ_TOKEN", "terragucci run resume --op tf-apply"]);
+    expect(d.resume.script).toEqual(["unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN TERRAGUCCI_CONTROL_TOKEN TERRAGUCCI_CONTROL_READ_TOKEN", "rc=0; terragucci run resume --op tf-apply || rc=$?; terragucci run resume --op tf-migrate || rc=$?; exit $rc"]);
   });
   it("no control, no job and no output", () => {
     const r = renderPipeline({ forge: "github", ...input, resume: 15 });

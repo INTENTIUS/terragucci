@@ -12,7 +12,7 @@ Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub re
 
 ## In 0.4.59
 
-Both the npm package and the four CI images now carry chant `0.124.94`.
+Both the npm package and the four CI images now carry chant `0.124.95`.
 
 `terragucci run wave` runs one job of chant's Op waves pipeline with terragucci's hooks in the job's process.
 
@@ -23,8 +23,6 @@ The apply waves now run on chant's Op waves jobs. Each of them runs `terragucci 
 Job names and the required checks stay as they were, and so do the report artifacts. After each wave comes a status job, and the last one is `apply-done`. Plan notes a push made stale are flagged by the new `stale-notes` job. The `terragucci/apply` descriptions now come from chant.
 
 GitLab's `mr-apply` job is gone, with its artifact `terragucci-report-mr-apply`. The artifacts `terragucci-report-apply-comment` and `terragucci-report-resume` are gone too. Before merge chant splits each wave into four jobs, so the change's code never runs beside a write token.
-
-On GitHub and Forgejo the agent's input now sits in `terragucci-report-<job>` in place of `terragucci-respond-<job>`, as on GitLab.
 
 Wave jobs take chant's defaults for every product. That means a 180-minute timeout and the full history. The checkout pin is chant's too.
 

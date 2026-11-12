@@ -106,7 +106,8 @@ describe("apply.resume in the pipeline", () => {
     const d = doc(out.content);
     expect(d.resume.stage).toBe("resume");
     expect(d.resume.rules).toEqual([{ if: '(($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "schedule")' }]);
-    expect(d.resume.script).toEqual(["terragucci run resume --op tf-apply"]);
+    // The state migrations' gate resumes too (tf-migrate), and the job fails when either resume failed.
+    expect(d.resume.script).toEqual(["rc=0; terragucci run resume --op tf-apply || rc=$?; terragucci run resume --op tf-migrate || rc=$?; exit $rc"]);
     expect(driftOp(out, "gitlab")!.job.rules[0].if).toContain('$TERRAGUCCI_SCHEDULE != "resume"');
     // A wave job runs on a push to the default branch.
     expect(d["apply-wave-1"].rules[0].if).toContain('$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH');

@@ -1674,7 +1674,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const wavesProduct = productPipelineJobs(forge, PLAN_ENV, {
     // The waves' jobs answer apply; the plan's answer plan.
     words: { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: [] },
-    productPlan: planOptions(planInput, { noReply: forge !== "gitlab", ...(reachLine ? { reach: reachLine } : {}) }),
+    // GitLab's comments poll is terragucci's, and carries the reach line itself (CHANT_LOCK_REACH).
+    productPlan: planOptions(planInput, { noReply: forge !== "gitlab", ...(reachLine && forge !== "gitlab" ? { reach: reachLine } : {}) }),
     waves: wavesShape(wavesInput),
     wavesSpecFile: WAVES_SPEC,
     wavesJobNames: wavesNames,

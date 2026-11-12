@@ -334,7 +334,7 @@ resume:
     - if: (($CI_PIPELINE_SOURCE != "schedule" || $TERRAGUCCI_SCHEDULE == "resume") && $CHANT_PLAN_NOTES == null) && ($CI_PIPELINE_SOURCE == "schedule")
   resource_group: terragucci-resume
   script:
-    - terragucci run resume --op tf-apply
+    - rc=0; terragucci run resume --op tf-apply || rc=$?; terragucci run resume --op tf-migrate || rc=$?; exit $rc
 
 tips:
   stage: tips
