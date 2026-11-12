@@ -5,10 +5,9 @@
  * roots are its units, each planned with its own `terragrunt plan`; in an
  * Atmos repo they are its written instances, each in its own workspace.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { binaryEnv } from "./binary-env";
+import { runBinary, terragruntExec } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type Binary } from "./config";
 import { globMatch } from "./detect";
 import { detectShape, type RootInit, type Shape } from "./shape";
@@ -44,19 +43,26 @@ export async function planTargets(repo: string, options: PlanOptions): Promise<{
   return { binary: terragrunt ? binary : settings.binary ?? shape.binary(found.roots.map((r) => r.root)).value, roots, ...(terragrunt ? { terragrunt } : {}), shape };
 }
 
-function run(binary: string, dir: string, terragrunt: boolean, env: NodeJS.ProcessEnv, ...args: string[]) {
-  return terragrunt
-    ? spawnSync(process.env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt", ["--working-dir", dir, "--non-interactive", "--no-color", ...args], { encoding: "utf-8", env: binaryEnv({ ...env, TG_TF_PATH: binary }) })
-    : spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: binaryEnv(env) });
+interface Run {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** The binary through the engine runner's `exec`, or Terragrunt through its Terragrunt runner, with the forge tokens left out. */
+async function run(binary: string, dir: string, terragrunt: boolean, env: NodeJS.ProcessEnv, ...args: string[]): Promise<Run> {
+  if (terragrunt) return terragruntExec(process.env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt", ["--working-dir", dir, "--non-interactive", "--no-color", ...args], { cwd: process.cwd(), env: { ...env, TG_TF_PATH: binary } });
+  const r = await runBinary(binary, args, dir, env);
+  return { code: r.code, stdout: r.stdout, stderr: `${r.stderr ?? ""}${r.error ?? ""}` };
 }
 
 /**
  * Init a root: in default, then its own workspace selected, when it names one
  * (an Atmos instance), so the plan reads that workspace's state.
  */
-function initRoot(binary: string, dir: string, ws: RootInit): ReturnType<typeof run> {
-  const init = run(binary, dir, false, ws?.init ?? process.env, "init", "-input=false", "-no-color");
-  if (init.status !== 0 || !ws) return init;
+async function initRoot(binary: string, dir: string, ws: RootInit): Promise<Run> {
+  const init = await run(binary, dir, false, ws?.init ?? process.env, "init", "-input=false", "-no-color");
+  if (init.code !== 0 || !ws) return init;
   return run(binary, dir, false, ws.selectEnv, ...ws.select);
 }
 
@@ -66,19 +72,19 @@ export async function plan(repo: string, options: PlanOptions, out: (line: strin
   for (const root of roots) {
     const dir = join(repo, root);
     // Terragrunt runs init itself, with mock outputs where a unit allows them for plan.
-    const init = terragrunt ? { status: 0, stderr: "", stdout: "" } : initRoot(binary, dir, shape.rootInit(root, process.env));
-    if (init.status !== 0) {
+    const init = terragrunt ? { code: 0, stderr: "", stdout: "" } : await initRoot(binary, dir, shape.rootInit(root, process.env));
+    if (init.code !== 0) {
       results.push({ root, ok: false, summary: `init failed: ${(init.stderr || init.stdout).trim().split("\n").pop()}` });
       out(`${root}: init failed`);
       out((init.stderr || init.stdout).trim());
       continue;
     }
-    const p = run(binary, dir, terragrunt, shape.rootEnv(root, process.env), "plan", "-input=false", "-no-color");
+    const p = await run(binary, dir, terragrunt, shape.rootEnv(root, process.env), "plan", "-input=false", "-no-color");
     const text = `${p.stdout}${p.stderr}`;
-    const summary = text.match(/Plan: .*|No changes\..*/)?.[0] ?? (p.status === 0 ? "planned" : "failed");
-    results.push({ root, ok: p.status === 0, summary });
+    const summary = text.match(/Plan: .*|No changes\..*/)?.[0] ?? (p.code === 0 ? "planned" : "failed");
+    results.push({ root, ok: p.code === 0, summary });
     out(`${root}: ${summary}`);
-    if (p.status !== 0) out(text.trim());
+    if (p.code !== 0) out(text.trim());
   }
   return results;
 }

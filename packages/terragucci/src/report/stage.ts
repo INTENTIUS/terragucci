@@ -10,7 +10,7 @@
  * on main. It then opens, updates or closes the project's one drift issue.
  * It applies nothing.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
@@ -88,7 +88,8 @@ import { readChanges } from "./history";
 import { markPerpetual, PERPETUAL_WAVES } from "./perpetual";
 import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
-import { binaryEnv, terragruntExec } from "../binary-env";
+import { runBinary, runBinarySync, terragruntExec } from "../binary-env";
+import { asUpstreamCommands, withTerraformCommandHook } from "@intentius/chant-lexicon-terraform/engine-runner";
 import { synthAffected } from "../synth";
 import { outsideWatch, settingsChanged, type OutsideRoots } from "../affected";
 import { detectActor } from "../actor";
@@ -329,44 +330,25 @@ export function preventDestroyIn(rootDir: string): Set<string> {
  * that was read and found empty.
  */
 export function stateIsEmpty(binary: string, dir: string, env: NodeJS.ProcessEnv): boolean | undefined {
-  const opts = { encoding: "utf-8" as const, maxBuffer: 512 * 1024 * 1024, env: binaryEnv(env) };
-  const init = spawnSync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], opts);
-  if (init.status !== 0) return undefined;
-  const pull = spawnSync(binary, [`-chdir=${dir}`, "state", "pull"], opts);
-  if (pull.status !== 0) return undefined;
+  if (runBinarySync(binary, ["init", "-input=false", "-no-color"], dir, env).code !== 0) return undefined;
+  const pull = runBinarySync(binary, ["state", "pull"], dir, env);
+  if (pull.code !== 0) return undefined;
   return emptyStateText(pull.stdout);
 }
 
-/** `stateIsEmpty` without blocking, its init taking its turn with the roots' inits. */
+/**
+ * `stateIsEmpty` without blocking, its init taking its turn with the roots' inits. Its runs are an upstream's reads,
+ * so a stage that calls it inside a root's command hook does not time or trace them as that root's.
+ */
 export async function stateIsEmptyAsync(binary: string, dir: string, env: NodeJS.ProcessEnv, initTurn: Turn = (fn) => fn()): Promise<boolean | undefined> {
-  const wsInit = workspaceInit(env, dir);
-  const init = await initTurn(() => spawnAsync(binary, [`-chdir=${dir}`, "init", "-input=false", "-no-color"], wsInit?.init ?? env));
-  if (init.status !== 0) return undefined;
-  if (wsInit && (await spawnAsync(binary, [`-chdir=${dir}`, ...wsInit.select], wsInit.selectEnv)).status !== 0) return undefined;
-  const pull = await spawnAsync(binary, [`-chdir=${dir}`, "state", "pull"], env);
-  if (pull.status !== 0) return undefined;
-  return emptyStateText(pull.stdout);
-}
-
-/** What one run of the binary printed and how it exited, read without blocking the other roots. */
-export interface Spawned {
-  status: number | null;
-  stdout: string;
-  stderr: string;
-  error?: Error;
-}
-
-/** Run the binary with the job's environment less its forge tokens (binaryEnv). */
-export function spawnAsync(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<Spawned> {
-  return new Promise((done) => {
-    const child = spawn(file, args, { env: binaryEnv(env), stdio: ["ignore", "pipe", "pipe"] });
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    let error: Error | undefined;
-    child.stdout.on("data", (d: Buffer) => out.push(d));
-    child.stderr.on("data", (d: Buffer) => err.push(d));
-    child.on("error", (e) => (error = e));
-    child.on("close", (code) => done({ status: error ? null : code, stdout: Buffer.concat(out).toString("utf-8"), stderr: Buffer.concat(err).toString("utf-8"), ...(error ? { error } : {}) }));
+  return asUpstreamCommands(dir, async () => {
+    const wsInit = workspaceInit(env, dir);
+    const init = await initTurn(() => runBinary(binary, ["init", "-input=false", "-no-color"], dir, wsInit?.init ?? env));
+    if (init.code !== 0) return undefined;
+    if (wsInit && (await runBinary(binary, wsInit.select, dir, wsInit.selectEnv)).code !== 0) return undefined;
+    const pull = await runBinary(binary, ["state", "pull"], dir, env);
+    if (pull.code !== 0) return undefined;
+    return emptyStateText(pull.stdout);
   });
 }
 
@@ -636,12 +618,9 @@ async function planUnits(
       return exec(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper, TERRAGUCCI_TG_NEXT: opts.env.TG_TF_PATH ?? binary, [NO_FETCH_FROM_STATE]: "true", [PHASE_ENV]: phase } });
     };
   };
-  /** One group's run: Terragrunt calls the group's binary through the wrappers, the spans one sending each unit's plan spans to the stage. */
-  const planGroup: PlanWave = (input) => {
-    const inner = servingExec(input.workDir);
-    const wrapped = options.observer ? (unitSpansExec(inner, input.binary ?? binary, [...input.units], input.workDir, options.observer, env) ?? inner) : inner;
-    return planTerragruntWave({ ...input, exec: wrapped });
-  };
+  /** One group's run: Terragrunt calls the group's binary through the wrappers, chant's sending each unit's plan to the stage's command hook. */
+  const planGroup: PlanWave = (input) =>
+    planTerragruntWave({ ...input, exec: servingExec(input.workDir), ...(options.observer ? { onCommand: options.observer.unitCommandHook(), binary: input.binary ?? binary } : {}) });
   // Units that pin a binary or Terragrunt release of their own run it, installed once per version; one run --all per pair of releases.
   const tools = new Map<string, UnitTools>();
   const pinFailed = new Map<string, string>();
@@ -910,72 +889,6 @@ export function unitSeconds(reportFile: string): Map<string, number> {
   return new Map([...unitTimes(reportFile)].map(([unit, t]) => [unit, (t.end - t.start) / 1000]));
 }
 
-const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
-
-/**
- * The `TG_TF_PATH` wrapper for one wave: a shell script that runs the binary
- * with the variables of the unit whose plan it runs. Terragrunt hands each
- * unit's plan `-out=<out-dir>/<unit>/tfplan.tfplan`, which names the unit;
- * every other call (init, show, output, version) runs the binary as it is.
- * `outDirs` are the wave's plan directory as given and as its real path.
- */
-export function unitWrapper(binary: string, outDirs: string[], units: Map<string, Record<string, string>>): string {
-  const lines = [
-    "#!/bin/sh",
-    "# terragucci: each unit's plan sends its spans to the stage. Written for one wave.",
-    'out=""',
-    'prev=""',
-    'for a in "$@"; do',
-    '  case "$a" in -out=*|--out=*) out="${a#*=}" ;; esac',
-    '  if [ "$prev" = "-out" ] || [ "$prev" = "--out" ]; then out="$a"; fi',
-    '  prev="$a"',
-    "done",
-    'case "$out" in',
-  ];
-  for (const [unit, vars] of units) {
-    const set = Object.entries(vars);
-    if (set.length === 0) continue;
-    const patterns = [...new Set(outDirs.map((d) => join(d, unit, "tfplan.tfplan")))].map(shq).join(" | ");
-    lines.push(`  ${patterns}) export ${set.map(([k, v]) => `${k}=${shq(v)}`).join(" ")} ;;`);
-  }
-  lines.push("esac", `exec ${shq(binary)} "$@"`);
-  return lines.join("\n") + "\n";
-}
-
-/**
- * The runner with `TG_TF_PATH` pointed at a wave's wrapper (`unitWrapper`),
- * so each unit's plan sends its spans to the stage's span receiver, under
- * the unit's span when tracing. The wrapper carries the binary's name, which
- * Terragrunt prefixes its log lines with. When there is nothing to send to,
- * the runner is returned as it is.
- */
-function unitSpansExec(
-  inner: TerragruntExec | undefined,
-  binary: string,
-  units: string[],
-  workDir: string,
-  observer: StageObserver,
-  env: NodeJS.ProcessEnv,
-): TerragruntExec | undefined {
-  const vars = new Map(units.map((u) => [u, observer.unitEnv(u, "plan", env)]));
-  if ([...vars.values()].every((v) => Object.keys(v).length === 0)) return inner;
-  mkdirSync(workDir, { recursive: true });
-  const plans = join(resolve(workDir), "plans");
-  let real = plans;
-  try {
-    real = join(realpathSync(workDir), "plans");
-  } catch {
-    // The path as given is matched alone.
-  }
-  const dir = `${resolve(workDir)}.bin`;
-  mkdirSync(dir, { recursive: true });
-  const wrapper = join(dir, basename(binary) || "tofu");
-  writeFileSync(wrapper, unitWrapper(binary, [plans, real], vars));
-  chmodSync(wrapper, 0o755);
-  const run = inner ?? terragruntExec;
-  return (file, args, opts) => run(file, args, { ...opts, env: { ...opts.env, TG_TF_PATH: wrapper } });
-}
-
 /**
  * The runner with the default `-lock-timeout` added to the binary's plan
  * command (`lockTimeoutArgs`), unless the job's `TF_CLI_ARGS` names one, so a
@@ -1076,6 +989,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const started = new Date().toISOString();
   const observer = new StageObserver(telemetryFromEnv(env), stage, env);
   if (roots.length > 0) await observer.collectSpans(log);
+  const commandHook = observer.commandHook();
   const work = mkdtempSync(join(tmpdir(), "terragucci-plan-"));
   // apply.branches: drift checks a root another branch applies from that branch, which is what applied it (../branch-checkouts.ts).
   const sources = drift ? branchCheckouts(repo, settings.apply?.branches, roots, work, log) : undefined;
@@ -1236,8 +1150,11 @@ export async function runStage(stage: string, repo: string, options: StageOption
     const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);
     // The binary's own: rootEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its hooks keep rootEnv.
     let binaryEnv = rootEnv;
-    const runIn = (env: NodeJS.ProcessEnv, ...args: string[]) =>
-      observer.commandAsync(timing, path, args, env, (e) => spawnAsync(path, [`-chdir=${dir}`, ...args], e));
+    // The engine runner's exec, inside the stage's command hook: each run is timed on the root and traced under its span.
+    const runIn = async (env: NodeJS.ProcessEnv, ...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+      const r = await withTerraformCommandHook(commandHook, { root, method: "plan" }, () => runBinary(path, args, dir, env));
+      return { code: r.code, stdout: r.stdout, stderr: `${r.stderr ?? ""}${r.error ?? ""}` };
+    };
     const run = (...args: string[]) => runIn(binaryEnv, ...args);
     const ran: ReportStep[] = [];
     const holds: string[] = [];
@@ -1286,10 +1203,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
       if (stepError) return failed(stepError, `${root}: a hook before observe failed`);
       const wsInit = workspaceInit(binaryEnv, dir);
       const init = await initTurn(() => (wsInit ? runIn(wsInit.init, "init", "-input=false", "-no-color") : run("init", "-input=false", "-no-color")));
-      if (init.status !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
+      if (init.code !== 0) return failed(`init failed:\n${tail(init.stderr || init.stdout)}`, `${root}: init failed`);
       if (wsInit) {
         const sel = await runIn(wsInit.selectEnv, ...wsInit.select);
-        if (sel.status !== 0) return failed(`workspace select failed:\n${tail(sel.stderr || sel.stdout)}`, `${root}: workspace select failed`);
+        if (sel.code !== 0) return failed(`workspace select failed:\n${tail(sel.stderr || sel.stdout)}`, `${root}: workspace select failed`);
       }
       for (const d of providerDownloads(init.stdout)) lines.push(`${root}: downloaded ${d}`);
       // sources: the modules init fetched and the providers it locked, before any of their code plans (../sources.ts).
@@ -1337,7 +1254,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       } finally {
         linked?.restore();
       }
-      if (linked && (p.status !== 0 || !existsSync(planFile))) {
+      if (linked && (p.code !== 0 || !existsSync(planFile))) {
         // A plan the planned outputs fail (a count or for_each on an unknown value) plans again on the applied state, and says so.
         const why = (p.stderr || p.stdout).match(/Error: (.*)/)?.[1]?.trim() ?? "the plan failed";
         lines.push(`${root}: the plan on the planned outputs of ${links.map((l) => l.upstream).join(", ")} failed (${why}), so it plans on their applied state`);
@@ -1349,7 +1266,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
         reads.push(...linked.reads);
         for (const r of linked.reads) lines.push(plannedReadLine(root, r));
       }
-      if (estate.args.length > 0 && p.status !== 0) {
+      if (estate.args.length > 0 && p.code !== 0) {
         // choudoufu refused a read of the upstreams' planned outputs. An unknown one is known once the upstream's wave
         // applies, and the root plans then; a sensitive one never crosses to another estate, so the root fails.
         const refused = estateRefusals(`${p.stderr}\n${p.stdout}`);
@@ -1366,9 +1283,9 @@ export async function runStage(stage: string, repo: string, options: StageOption
           return { root, lines, deferred: { unit: root, after, why, previewed: false }, unknownFrom: after };
         }
       }
-      if (p.status === 0) for (const r of estate.reads) if (r.outputs === "planned") lines.push(plannedReadLine(root, r));
+      if (p.code === 0) for (const r of estate.reads) if (r.outputs === "planned") lines.push(plannedReadLine(root, r));
       reads.sort((a, b) => (a.upstream < b.upstream ? -1 : a.upstream > b.upstream ? 1 : a.data < b.data ? -1 : 1));
-      if (p.status !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
+      if (p.code !== 0 || !existsSync(planFile)) return failed(`plan failed:\n${tail(p.stderr || p.stdout)}`, `${root}: plan failed`);
       const planCone = cone.length && coneBase ? readPlanCone(`${p.stdout}\n${p.stderr}`, planFile, coneBase) : undefined;
       if (planCone) lines.push(coneLogLine(root, planCone));
       stepError = await step("after-plan", planFile);

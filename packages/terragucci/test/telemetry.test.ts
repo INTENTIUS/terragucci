@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runStage } from "../src/report/stage";
 import { parseOtlpPairs } from "@intentius/chant/otlp";
-import { binaryEnv, telemetryFromEnv, Trace, tracesBody } from "../src/telemetry";
+import { commandTraceEnv } from "@intentius/chant-lexicon-terraform/engine-runner";
+import { telemetryFromEnv, Trace, tracesBody } from "../src/telemetry";
 import { tmp, write } from "./helpers";
 
 const TOFU = spawnSync("tofu", ["version"]).status === 0;
@@ -42,11 +43,11 @@ describe("OTLP bodies", () => {
     expect(top.parentSpanId).toBe("b7ad6b7169203331");
     const child = trace.start("tofu plan", top, { n: 2 }, { kind: 3 });
     trace.end(child, {}, "exit 1");
-    const env = binaryEnv({ OTEL_RESOURCE_ATTRIBUTES: "team=infra" }, trace, child, "envs/a");
+    const env = commandTraceEnv({ OTEL_RESOURCE_ATTRIBUTES: "team=infra" }, trace, child, { prefix: "terragucci", root: "envs/a" });
     expect(env.TRACEPARENT).toBe(`00-0af7651916cd43dd8448eb211c80319c-${child.spanId}-01`);
     expect(env.OTEL_TRACES_EXPORTER).toBe("otlp");
     expect(parseOtlpPairs(env.OTEL_RESOURCE_ATTRIBUTES)).toEqual({ team: "infra", "terragucci.trace_id": trace.traceId, "terragucci.span_id": child.spanId, "terragucci.root": "envs/a" });
-    expect(binaryEnv({ OTEL_TRACES_EXPORTER: "none" }, trace, child, "a").OTEL_TRACES_EXPORTER).toBe("none");
+    expect(commandTraceEnv({ OTEL_TRACES_EXPORTER: "none" }, trace, child, { prefix: "terragucci", root: "a" }).OTEL_TRACES_EXPORTER).toBe("none");
 
     const body = tracesBody(trace.spans, { "service.name": "terragucci" }) as any;
     const spans = body.resourceSpans[0].scopeSpans[0].spans;

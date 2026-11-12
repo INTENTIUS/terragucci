@@ -12,8 +12,8 @@
  * reaches it. The runners are the terraform lexicon's engine runner
  * (chant#4954), given terragucci's two token variables.
  */
-import { engineRunner } from "@intentius/chant-lexicon-terraform/engine-runner";
-import { tokenlessBinaryExec, type BinaryExec } from "@intentius/chant-lexicon-terraform/state";
+import { engineRunner, type BinaryExecSync } from "@intentius/chant-lexicon-terraform/engine-runner";
+import type { BinaryExec } from "@intentius/chant-lexicon-terraform/state";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 
 /** terragucci's own token variables, which the binary never sees beside chant's forge token variables. */
@@ -29,11 +29,14 @@ export const FORGE_TOKEN_ENV: readonly string[] = engine.tokens;
 export const binaryEnv = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => engine.env(env);
 
 /**
- * The terraform lexicon's run of the binary, with the forge tokens left out of its environment. It is not the engine
- * runner's `exec`, which also sends each run through the command hook it runs under: terragucci's stages still trace
- * their own commands (report/observe.ts), so a run through the hook would be traced twice.
+ * The engine runner's `exec`: the binary with the forge tokens left out of its environment. Inside
+ * `withTerraformCommandHook` each run goes through that hook, which is how a stage times and traces its own commands
+ * (report/observe.ts `commandHook`, chant#5007); outside one it just runs.
  */
-export const runBinary: BinaryExec = tokenlessBinaryExec(TG_TOKEN_ENV);
+export const runBinary: BinaryExec = engine.exec;
+
+/** `runBinary` for a caller that cannot wait: the engine runner's `execSync`, through no hook. */
+export const runBinarySync: BinaryExecSync = engine.execSync;
 
 /**
  * The binary chant's step runs in place of `binary` (terragucci#1303): the engine runner's script of the same name in

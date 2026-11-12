@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { binaryEnv, FORGE_TOKEN_ENV, terragruntExec } from "../src/binary-env";
-import { spawnAsync, stateIsEmpty } from "../src/report/stage";
+import { binaryEnv, FORGE_TOKEN_ENV, runBinary, runBinarySync, terragruntExec } from "../src/binary-env";
+import { stateIsEmpty } from "../src/report/stage";
 import { defaultPolicyExec } from "../src/report/policy";
 import { tmp } from "./helpers";
 
@@ -22,16 +22,17 @@ describe("the binary's environment", () => {
     expect(binaryEnv({ TG_TOKEN: "", HOME: "" })).toEqual({ HOME: "" });
   });
 
-  it("the plan stage's runner, its state check and Terragrunt's runner give the binary none", async () => {
+  it("the engine runner's exec and execSync, the state check and Terragrunt's runner give the binary none", async () => {
     for (const [k, v] of Object.entries(TOKENS)) vi.stubEnv(k, v);
     try {
       const dir = tmp("tg-binary-env-");
       const bin = join(dir, "tofu");
       writeFileSync(bin, `#!/usr/bin/env bash\nenv >> ${JSON.stringify(join(dir, "seen"))}\nenv\n`);
       chmodSync(bin, 0o755);
-      const plan = await spawnAsync(bin, ["plan"], { ...process.env });
+      const plan = await runBinary(bin, ["plan"], dir, { ...process.env });
       forgeFree(plan.stdout);
       expect(plan.stdout).toMatch(/^PATH=/m);
+      forgeFree(runBinarySync(bin, ["show"], dir, { ...process.env }).stdout);
       stateIsEmpty(bin, dir, { ...process.env });
       const tg = await terragruntExec(bin, ["run", "--all", "--", "plan"], { cwd: dir, env: { TG_TF_PATH: "tofu", TG_TOKEN: "job-token-1234" } });
       forgeFree(tg.stdout);

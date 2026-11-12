@@ -33,7 +33,6 @@
  * choudoufu is refused here by its engine's name, with the version terragucci
  * runs it at, before any binary runs.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -41,7 +40,7 @@ import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
 import { actorOf } from "@intentius/chant/actor";
 import { readLedger, type PendingRecord } from "./apply";
 import { approvalRule, checkoutApproval } from "./approval";
-import { binaryEnv } from "./binary-env";
+import { runBinarySync } from "./binary-env";
 import { stateOps } from "./gated-request";
 import { type ChantStateOps, type ChantGatedRequestRead, type ChantInvokeActionResult, type ChantRootRun } from "./chant-next";
 import { ACTION_ADDRESS } from "./comment";
@@ -134,9 +133,10 @@ export interface ActionOptions {
   log?: (line: string) => void;
 }
 
+/** The engine runner's blocking run of the binary (`runBinarySync`), in the shape `exec` takes. */
 const runBinary = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv): { status: number; stdout: string; out: string } => {
-  const p = spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 1 << 26 });
-  return { status: p.status ?? 1, stdout: p.stdout ?? "", out: `${p.stdout ?? ""}${p.stderr ?? ""}${p.error ? p.error.message : ""}` };
+  const r = runBinarySync(binary, args, dir, env);
+  return { status: r.code, stdout: r.stdout, out: r.out };
 };
 
 const tail = (s: string): string => s.trim().split("\n").slice(-10).join("\n");

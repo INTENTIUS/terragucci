@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { engineRunner, withTerraformCommandHook } from "@intentius/chant-lexicon-terraform/engine-runner";
 import { buildReport } from "../src/report/build";
 import { StageObserver } from "../src/report/observe";
 import { telemetryFromEnv } from "../src/telemetry";
@@ -23,7 +24,9 @@ async function sent(env: NodeJS.ProcessEnv, drive: (o: StageObserver) => Promise
 }
 
 const value = (attrs: { key: string; value: Record<string, unknown> }[], key: string) => Object.values(attrs.find((a) => a.key === key)?.value ?? {})[0];
-const ok = { status: 0 };
+/** The engine runner's exec over a binary that exits 0, run as `root`'s command through the observer's hook. */
+const engine = engineRunner({ exec: async () => ({ code: 0, stdout: "", out: "", stderr: "" }) });
+const run = (o: StageObserver, root: string, method: string, ...args: string[]) => withTerraformCommandHook(o.commandHook(), { root, method }, () => engine.exec("tofu", args, ".", {}));
 
 describe("a tf-apply wave's trace (behold#571)", () => {
   it("names its project, commit, pipeline run and job on the resource", async () => {
@@ -48,14 +51,14 @@ describe("a tf-apply wave's trace (behold#571)", () => {
     const body = await sent({}, async (o) => {
       const plan = o.phase("plan");
       const t = o.root("envs/dev/orders");
-      await o.commandAsync(t, "tofu", ["plan"], {}, async () => ok);
+      await run(o, t.path, "plan", "plan");
       o.endRoot(t);
       o.endPhase(plan);
       const gate = o.phase("gate", { "terragucci.gate.status": "approved" });
       o.endPhase(gate);
       const apply = o.phase("apply");
       o.reopen(t);
-      await o.commandAsync(t, "tofu", ["apply"], {}, async () => ok);
+      await run(o, t.path, "run", "apply");
       o.endRoot(t);
       o.endPhase(apply);
       o.endPhase(o.phase("report"));

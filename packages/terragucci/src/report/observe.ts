@@ -11,10 +11,10 @@
  * resources and provider calls.
  */
 import { spawnSync } from "node:child_process";
-import { binaryEnv, metricsBody, nowNanos, send, Trace, tracesBody, type Attrs, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
+import { metricsBody, nowNanos, send, Trace, tracesBody, type Attrs, type Gauge, type OtlpFetch, type Span, type Telemetry } from "../telemetry";
 import { METRIC } from "../dashboards/names";
 import { pinVersion } from "../rollout/pins";
-import type { TerraformCommandHook } from "@intentius/chant-lexicon-terraform/components/capability-plugin";
+import { commandTrace, composeCommandHooks, type TerraformCommandHook } from "@intentius/chant-lexicon-terraform/engine-runner";
 import type { Report } from "./schema";
 import { drifted } from "./drift";
 import { waveGauges, waveResult, type WaveFacts } from "./wave-telemetry";
@@ -111,7 +111,7 @@ export class StageObserver {
   private receiver?: SpanReceiver;
   /** Terragrunt units' times from its run report, by unit, in seconds. */
   private readonly units = new Map<string, number>();
-  /** Terragrunt units' spans, by unit, timed from its run report. */
+  /** Terragrunt units' `root <unit>` spans, by unit, timed from its run report; each unit's plan span hangs under its own. */
   private readonly unitSpans = new Map<string, Span>();
   /** Set by the stage before `finish`: the module pins its plans read. */
   pins: ModulePin[] = [];
@@ -266,83 +266,71 @@ export class StageObserver {
     }
   }
 
-  /**
-   * The variables one Terragrunt unit's run of the binary gets, beside the
-   * job's own: the span receiver's exporter with a token naming the unit and
-   * the command, and, when tracing, a `root <unit>` span the binary's spans
-   * hang under. Empty when neither is on. terragucci's `TG_TF_PATH` wrapper
-   * sets them for the one run they name.
-   */
-  unitEnv(path: string, command: string, env: NodeJS.ProcessEnv): Record<string, string> {
-    let span = this.unitSpans.get(path);
-    if (this.trace && !span) {
-      span = this.trace.start(`root ${path}`, this.current ?? this.stageSpan, { "terragucci.root": path });
-      this.unitSpans.set(path, span);
-    }
-    const traced = span ? binaryEnv(env, this.trace!, span, path) : env;
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(traced)) if (v !== undefined && env[k] !== v) out[k] = v;
-    return { ...out, ...(this.receiver?.exporter(runKey(path, command)) ?? {}) };
-  }
-
-  /** Run the binary inside a root, as a span of its own when tracing. */
-  command<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => R): R {
-    if (!this.trace || !t.span) return spawn(env);
-    const span = this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, { kind: 3 });
-    const r = spawn(binaryEnv(env, this.trace, span, t.path));
-    this.trace.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
-    return r;
-  }
-
-  /**
-   * `command` for a run that does not block, so roots can plan at once. The
-   * binary's spans also go to the stage's span receiver, which a blocking
-   * run would starve.
-   */
-  async commandAsync<R extends { status: number | null; error?: Error }>(t: RootTiming, binary: string, args: string[], env: NodeJS.ProcessEnv, spawn: (env: NodeJS.ProcessEnv) => Promise<R>): Promise<R> {
-    const start = nowNanos();
-    const span = this.trace && t.span ? this.trace.start(`${binary} ${args[0]}`, t.span, { "process.executable.name": binary, "process.command_args": args.join(" ") }, { kind: 3 }) : undefined;
-    let runEnv = span ? binaryEnv(env, this.trace!, span, t.path) : env;
-    if (this.receiver) runEnv = { ...runEnv, ...this.receiver.exporter(runKey(t.path, args[0])) };
-    const r = await spawn(runEnv);
-    t.commands.push({ command: args[0], seconds: seconds(start, nowNanos()) });
-    if (span) this.trace!.end(span, { "process.exit.code": r.status ?? -1 }, r.status === 0 ? undefined : (r.error?.message ?? `exit ${r.status}`));
-    return r;
-  }
-
   /** The root's timing: the one this stage already has for it, else a new one. */
   timed(path: string): RootTiming {
     return this.roots.find((x) => x.path === path) ?? this.root(path);
   }
 
   /**
-   * chant's hook around each engine command of a `terraform-apply` step
-   * (`onCommand`, chant issue 4865), doing for a wave's roots what
-   * `commandAsync` does for the stage's own runs: each command is a span
-   * under its root's, with the span receiver's variables, and its time goes
-   * on the root's commands. The root's time starts at its first command,
-   * stops after its plan's `show`, starts again with the apply and stops
-   * after its `output`. An upstream's reads for a root are not timed.
+   * The span a root's commands hang under: the root's own span when the
+   * stage timed the root, else a Terragrunt unit's `root <unit>` span, under
+   * the phase open now or the stage span, made the first time a unit's plan
+   * asks and timed from the run report (`unitTimed`).
+   */
+  private parentOf(root: string): Span | undefined {
+    if (!this.trace) return undefined;
+    const t = this.roots.find((x) => x.path === root);
+    if (t) return t.span;
+    let span = this.unitSpans.get(root);
+    if (!span) {
+      span = this.trace.start(`root ${root}`, this.current ?? this.stageSpan, { "terragucci.root": root });
+      this.unitSpans.set(root, span);
+    }
+    return span;
+  }
+
+  /**
+   * chant's hook around each engine command (`onCommand`, chant issue 4865):
+   * a `terraform-apply` step's, the stage's own runs of the binary (run
+   * inside `withTerraformCommandHook`) and a Terragrunt unit's plan
+   * (`planTerragruntWave`). The timing half is terragucci's: the span
+   * receiver's variables, and each command's time on its root's commands.
+   * The root's time starts at its first command, stops after its plan's
+   * `show`, starts again with the apply and stops after its `output`. The
+   * trace half is chant's `commandTrace` (chant#5007), each command a span
+   * under its root's (`parentOf`). The timing hook goes first, so a root
+   * reopened in a later phase is the parent the trace reads. An upstream's
+   * reads for a root are not timed or traced.
    */
   commandHook(): TerraformCommandHook {
-    return (c) => {
+    return this.traced((c) => {
       if (c.upstream) return;
       const t = this.timed(c.root);
       if (t.end !== undefined && c.method !== "plan") this.reopen(t);
-      const span = this.trace && t.span ? this.trace.start(`${c.binary} ${c.name}`, t.span, { "process.executable.name": c.binary, "process.command_args": c.args.join(" ") }, { kind: 3 }) : undefined;
-      let runEnv: NodeJS.ProcessEnv = span ? binaryEnv(c.env, this.trace!, span, t.path) : c.env;
-      if (this.receiver) runEnv = { ...runEnv, ...this.receiver.exporter(runKey(t.path, c.name)) };
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(runEnv)) if (v !== undefined && c.env[k] !== v) env[k] = v;
       return {
-        env,
+        ...(this.receiver ? { env: this.receiver.exporter(runKey(t.path, c.name)) } : {}),
         after: (r) => {
           t.commands.push({ command: c.name, seconds: r.seconds });
-          if (span) this.trace!.end(span, { "process.exit.code": r.code ?? -1 }, r.code === 0 || (c.name === "plan" && r.code === 2) ? undefined : `exit ${r.code}`);
           if ((c.method === "plan" && c.name === "show") || (c.method !== "plan" && c.name === "output")) this.endRoot(t);
         },
       };
-    };
+    });
+  }
+
+  /**
+   * The hook a Terragrunt wave's plan takes (`planTerragruntWave({ onCommand })`):
+   * Terragrunt runs the binary, so each unit's plan only gets the span
+   * receiver's variables, and its time comes from the run report
+   * (`unitTimed`). Traced as `commandHook` is, under the unit's
+   * `root <unit>` span.
+   */
+  unitCommandHook(): TerraformCommandHook {
+    return this.traced((c) => (c.upstream || !this.receiver ? undefined : { env: this.receiver.exporter(runKey(c.root, c.name)) }));
+  }
+
+  /** `timing` with chant's command trace after it, when tracing. */
+  private traced(timing: TerraformCommandHook): TerraformCommandHook {
+    return composeCommandHooks(timing, this.trace ? commandTrace({ trace: this.trace, prefix: "terragucci", parent: (c) => this.parentOf(c.root) }) : undefined);
   }
 
   /**

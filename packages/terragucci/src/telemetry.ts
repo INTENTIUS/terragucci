@@ -21,7 +21,7 @@
  * `terragucci.span_id` as resource attributes, so its trace names the span
  * that ran it.
  */
-import { formatOtlpPairs, OtlpTrace, otlpFromEnv, otlpTracesBody, parseOtlpPairs, type OtlpAttrs, type OtlpAttrValue, type OtlpSpan, type OtlpSpanEvent, type OtlpTarget } from "@intentius/chant/otlp";
+import { OtlpTrace, otlpFromEnv, otlpTracesBody, type OtlpAttrs, type OtlpAttrValue, type OtlpSpan, type OtlpSpanEvent, type OtlpTarget } from "@intentius/chant/otlp";
 import { otlpMetricsBody, otlpMetricsFromEnv } from "@intentius/chant/otlp-metrics";
 
 export { sendOtlp as send, type OtlpFetch } from "@intentius/chant/otlp";
@@ -80,20 +80,4 @@ export interface Gauge {
 export function metricsBody(gauges: readonly Gauge[], resource: Attrs, at: bigint = nowNanos()): unknown {
   // chant's attribute writer takes numbers and booleans as they are.
   return otlpMetricsBody(gauges as never, resource, at);
-}
-
-/**
- * The environment a binary runs with inside `span`: its spans join the trace
- * where it reads TRACEPARENT, and name the span as resource attributes where
- * it does not. Its OTLP exporter is turned on unless the environment chose
- * one already (`none` keeps it off).
- */
-export function binaryEnv(env: NodeJS.ProcessEnv, trace: Trace, span: Span, root: string): NodeJS.ProcessEnv {
-  const resource = { ...parseOtlpPairs(env.OTEL_RESOURCE_ATTRIBUTES), "terragucci.trace_id": trace.traceId, "terragucci.span_id": span.spanId, "terragucci.root": root };
-  return {
-    ...env,
-    TRACEPARENT: trace.traceparent(span),
-    OTEL_TRACES_EXPORTER: env.OTEL_TRACES_EXPORTER || "otlp",
-    OTEL_RESOURCE_ATTRIBUTES: formatOtlpPairs(resource),
-  };
 }

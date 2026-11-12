@@ -228,17 +228,17 @@ export function liveEstate(dir: string): { estate: string; record_store: string;
  * only when the plan leaves a secret in state and the binary has a way to
  * keep one out. `note` says why no counterpart could be named.
  */
-export async function rootSecrets(plan: unknown, bin: { name: string; version?: string }, schema: () => Promise<{ status: number | null; stdout: string }>): Promise<{ secrets: StoredSecret[]; note?: string }> {
+export async function rootSecrets(plan: unknown, bin: { name: string; version?: string }, schema: () => Promise<{ code: number | null; stdout: string }>): Promise<{ secrets: StoredSecret[]; note?: string }> {
   const stored = storedSecrets(plan);
   const can = outOfState(bin);
   if (stored.length === 0 || (!can.writeOnly && !can.ephemeral)) return { secrets: stored };
   const r = await schema();
   let doc: unknown;
   try {
-    doc = r.status === 0 ? JSON.parse(r.stdout) : undefined;
+    doc = r.code === 0 ? JSON.parse(r.stdout) : undefined;
   } catch {
     doc = undefined;
   }
-  if (doc === undefined) return { secrets: stored, note: `providers schema -json gave no schema (exit ${r.status}), so no write-only argument or ephemeral resource is named for its secrets in state` };
+  if (doc === undefined) return { secrets: stored, note: `providers schema -json gave no schema (exit ${r.code}), so no write-only argument or ephemeral resource is named for its secrets in state` };
   return { secrets: withCounterparts(stored, doc, can) };
 }

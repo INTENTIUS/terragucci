@@ -89,7 +89,7 @@ import type { TeardownOutcome } from "@intentius/chant/lexicon";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { decideGate, LEDGER_READ_REF, lockTimeoutArgs, readLedger } from "./apply";
 import { approvalRule } from "./approval";
-import { binaryEnv } from "./binary-env";
+import { binaryEnv, runBinarySync } from "./binary-env";
 import {
   ConfigError,
   EPHEMERAL_TTL,
@@ -187,9 +187,10 @@ export function remoteStateReadsSuffix(repo: string): { ok: true } | { ok: false
 
 export type EphemeralExec = (binary: string, args: string[], dir: string, env: NodeJS.ProcessEnv) => { status: number; stdout: string; out: string };
 
+/** The engine runner's blocking run of the binary (`runBinarySync`), in the shape `EphemeralExec` takes. */
 const runBinary: EphemeralExec = (binary, args, dir, env) => {
-  const p = spawnSync(binary, [`-chdir=${dir}`, ...args], { encoding: "utf-8", env: binaryEnv(env), maxBuffer: 512 * 1024 * 1024 });
-  return { status: p.status ?? 1, stdout: p.stdout ?? "", out: `${p.stdout ?? ""}${p.stderr ?? ""}${p.error ? p.error.message : ""}` };
+  const r = runBinarySync(binary, args, dir, env);
+  return { status: r.code, stdout: r.stdout, out: r.out };
 };
 
 const tail = (s: string, n = 20): string => s.trim().split("\n").slice(-n).join("\n");
