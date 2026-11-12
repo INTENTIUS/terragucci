@@ -185,6 +185,10 @@ dashboards: true
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
 | `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment) and [`drift`](#the-drift-agent) |
+| `evidence.identity` | none (nothing signed) | `oidc`: the jobs sign check evidence keyless, from each job's OIDC token. The plan note job signs `plan` and `policy`. Each wave signs `plan:wave-<k>`. A wave that trades cloud credentials signs in its own `apply-wave-<k>-evidence` job. On GitLab the `plan-evidence` job signs in the plan notes pipeline. `init` writes `.chant/trust.json` with the workflow's identity, the ref gate's rule for the default branch and a `pre-push` hook. See [Signed checks](/terragucci/reference/pipeline/#signed-checks) |
+| `evidence.audience` | `sigstore` | with `identity`: the OIDC token's audience |
+| `evidence.runner_key_secret` | none | the secret (GitHub, Forgejo) or CI/CD variable (GitLab) that holds the runner key, in place of `identity`. `.chant/trust.json` lists its public half under `runners` |
+| `evidence.local` | `false` | `true`: `init` names the check hooks under `local.checks` in `.chant/trust.json`. A hook proven on a person's machine is then skipped in CI |
 | `atlantis_comments` | `false` (off) | `true`: `atlantis plan` and `atlantis apply` comments work as `/terragucci plan` and `/terragucci apply`, with the same checks; see [Comment forms](/terragucci/guides/re-plan-from-a-comment/#comment-forms) |
 | `review` | none (off) | `agent`, `command`, `key_secret`, `instructions`, `timeout`: a model reviews each pull request's description against its plan; see [The review](#the-review) |
 | `decide` | none | the typed-decision service a few responses may ask; see [The decide block](#the-decide-block) |

@@ -27,6 +27,7 @@ import type { ProductPlanOptions, ProductPlanSetupStep } from "@intentius/chant/
 import { resolveCloudIdentity, type CloudIdentityDeclaration, type CloudIdentityRule, type CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type { CloudLoginSpec } from "@intentius/chant/ci-login";
 import type { ScheduledWatch } from "@intentius/chant/op/schedule-overdue";
+import type { PipelineEvidence } from "@intentius/chant/ci-evidence-jobs";
 import type { ForgeName, OidcSettings, RolePair } from "./config";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { rootRoles } from "./cloud-identity";
@@ -80,6 +81,12 @@ export interface PlanJobsInput {
   atlantis?: boolean;
   /** GitHub and Forgejo: the note job's lines before `pr-post` (notices) and after it (terragucci/approval). */
   noteSteps?: { before: string[]; after: string[] };
+  /**
+   * `evidence`: chant's runner identity (terragucci issue 1413). The note
+   * job signs the plan job's `plan` and `policy` checks before it posts; on
+   * GitLab a `plan-evidence` job of the plan notes pipeline signs them.
+   */
+  evidence?: PipelineEvidence;
 }
 
 /** The product plan's options for terragucci, on every forge. */
@@ -120,7 +127,7 @@ function planWords(atlantis: boolean): typeof TERRAGUCCI_WORDS {
 /** GitHub and Forgejo: chant's plan, plan-note, replan and replan-note jobs, as the workflow's jobs. */
 export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<string, unknown>]> {
   const forge = input.forge as "github" | "forgejo";
-  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input) });
+  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.evidence ? { evidence: input.evidence } : {}) });
   const jobs = doc.jobsDoc as Record<string, Record<string, unknown>>;
   const names = PLAN_NAMES.jobNames;
   const out: Array<[string, Record<string, unknown>]> = [];
@@ -153,14 +160,23 @@ export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unk
   return { ...job, container, if: cond };
 }
 
-/** GitLab: chant's plan job and its note job, which runs in the plan notes pipeline. */
-export function gitlabPlanJobs(input: PlanJobsInput): { plan: Record<string, unknown>; note: Record<string, unknown> } {
-  const { entries } = generateGitlabProductPlanPipeline(PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.cache !== undefined ? { cache: input.cache } : {}) });
+/** GitLab: the job of the plan notes pipeline that signs the plan job's checks, with `evidence`. */
+export const PLAN_EVIDENCE_JOB = `${PLAN_NAMES.jobNames.plan}-evidence`;
+
+/**
+ * GitLab: chant's plan job and its note job, which runs in the plan notes
+ * pipeline, and with `evidence` the `plan-evidence` job before the note.
+ */
+export function gitlabPlanJobs(input: PlanJobsInput): { plan: Record<string, unknown>; note: Record<string, unknown>; evidence?: Record<string, unknown> } {
+  const { entries } = generateGitlabProductPlanPipeline(PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.cache !== undefined ? { cache: input.cache } : {}), ...(input.evidence ? { evidence: input.evidence } : {}) });
   const found = new Map(entries);
   const plan = found.get(PLAN_NAMES.jobNames.plan) as Record<string, unknown> | undefined;
   const note = found.get(PLAN_NAMES.jobNames.note) as Record<string, unknown> | undefined;
   if (!plan || !note) throw new Error("chant's GitLab product plan wrote no plan or plan-note job");
-  return { plan, note };
+  if (!input.evidence) return { plan, note };
+  const evidence = found.get(PLAN_EVIDENCE_JOB) as Record<string, unknown> | undefined;
+  if (!evidence) throw new Error(`chant's GitLab product plan wrote no ${PLAN_EVIDENCE_JOB} job`);
+  return { plan, note, evidence };
 }
 
 /** The rules of one cloud: a rule with `targets` per root glob, then the job's own identity. */

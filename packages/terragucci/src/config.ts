@@ -345,6 +345,50 @@ export interface CheckSettings {
 
 export const CHECK_KEYS = ["pre_commit"] as const;
 
+/**
+ * `evidence`: the runner identity the generated jobs sign check evidence
+ * with, as chant's generators take it (`PipelineEvidence`). The plan note
+ * job signs `plan` and `policy`, and each wave signs `plan:<wave>` and
+ * `policy:<wave>`. `init` writes `.chant/trust.json` from it, with the ref
+ * gate's rule for the default branch. Absent: nothing is signed.
+ */
+export interface EvidenceSettings {
+  /** `oidc`: sign keyless from each job's OIDC token. */
+  identity?: "oidc";
+  /** With `identity`: the token's audience. Default chant's, `sigstore`. */
+  audience?: string;
+  /** The secret (GitHub, Forgejo) or CI/CD variable (GitLab) holding the runner key. Not with `identity`. */
+  runner_key_secret?: string;
+  /** `true`: init names the check hooks under `local.checks`, so a hook proven on a person's machine is skipped in CI. */
+  local?: boolean;
+}
+
+export const EVIDENCE_KEYS = ["identity", "audience", "runner_key_secret", "local"] as const;
+
+/** chant's `PipelineEvidence` for `evidence`, or undefined without it. */
+export function pipelineEvidence(e: EvidenceSettings | undefined): { identity: "oidc"; audience?: string } | { runnerKeySecret: string } | undefined {
+  if (!e) return undefined;
+  if (e.identity === "oidc") return { identity: "oidc", ...(e.audience ? { audience: e.audience } : {}) };
+  return e.runner_key_secret ? { runnerKeySecret: e.runner_key_secret } : undefined;
+}
+
+function checkEvidence(e: unknown, where: string, problems: string[]): void {
+  if (!isObject(e)) {
+    problems.push(`${where} must be a map with identity or runner_key_secret`);
+    return;
+  }
+  for (const k of Object.keys(e)) if (!(EVIDENCE_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${EVIDENCE_KEYS.join(", ")})`);
+  if (e.identity !== undefined && e.identity !== "oidc") problems.push(`${where}.identity must be oidc, the one identity chant signs keyless with`);
+  if (e.identity !== undefined && e.runner_key_secret !== undefined) problems.push(`${where} sets identity and runner_key_secret; the jobs sign with one of them`);
+  if (e.identity === undefined && e.runner_key_secret === undefined) problems.push(`${where} sets neither identity nor runner_key_secret; give one, or leave evidence out`);
+  if (e.runner_key_secret !== undefined && (typeof e.runner_key_secret !== "string" || !SECRET_NAME.test(e.runner_key_secret))) problems.push(`${where}.runner_key_secret must be a secret name: letters, digits and _, not starting with a digit`);
+  if (e.audience !== undefined) {
+    if (e.identity === undefined) problems.push(`${where}.audience goes with identity: oidc`);
+    else if (typeof e.audience !== "string" || !/^[\x21-\x7e]+$/.test(e.audience)) problems.push(`${where}.audience must be printable ASCII with no space`);
+  }
+  if (e.local !== undefined && typeof e.local !== "boolean") problems.push(`${where}.local must be true or false`);
+}
+
 export interface AtmosSettings {
   /** The Atmos release every job installs. Default: the one this terragucci release pins. */
   version?: string;
@@ -767,6 +811,8 @@ export interface ProjectSettings {
   sources?: SourcesSettings;
   /** What tf-check runs beyond its own checks: the repo's pre-commit hooks; see CheckSettings. */
   check?: CheckSettings;
+  /** The runner identity the jobs sign check evidence with; see EvidenceSettings. Off when absent. */
+  evidence?: EvidenceSettings;
   /**
    * `atlantis plan` and `atlantis apply` comments read as `/terragucci plan`
    * and `/terragucci apply`. Off by default. The alias changes the words
@@ -1157,7 +1203,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1381,6 +1427,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       if (s.check.pre_commit !== undefined && typeof s.check.pre_commit !== "boolean") problems.push(`${where}.check.pre_commit must be true or false`);
     }
   }
+  if (s.evidence !== undefined) checkEvidence(s.evidence, `${where}.evidence`, problems);
   if (s.respond !== undefined) {
     if (!isObject(s.respond)) problems.push(`${where}.respond must map events to responses`);
     else {

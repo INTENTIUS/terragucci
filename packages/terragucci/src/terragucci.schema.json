@@ -1290,6 +1290,33 @@
       "additionalProperties": false,
       "description": "What tf-check runs beyond its own checks: the repo's pre-commit hooks."
     },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "enum": [
+            "oidc"
+          ],
+          "description": "oidc: sign keyless from each job's OIDC token."
+        },
+        "audience": {
+          "type": "string",
+          "pattern": "^[\\x21-\\x7e]+$",
+          "description": "With identity: the token's audience. Default sigstore."
+        },
+        "runner_key_secret": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "description": "The secret or CI/CD variable holding the runner key."
+        },
+        "local": {
+          "type": "boolean",
+          "description": "true: a check hook proven on a person's machine is skipped in CI."
+        }
+      },
+      "additionalProperties": false,
+      "description": "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret."
+    },
     "atlantis_comments": {
       "type": "boolean",
       "description": "Read atlantis plan and atlantis apply comments as terragucci's."
@@ -3244,6 +3271,33 @@
           },
           "additionalProperties": false,
           "description": "What tf-check runs beyond its own checks: the repo's pre-commit hooks."
+        },
+        "evidence": {
+          "type": "object",
+          "properties": {
+            "identity": {
+              "enum": [
+                "oidc"
+              ],
+              "description": "oidc: sign keyless from each job's OIDC token."
+            },
+            "audience": {
+              "type": "string",
+              "pattern": "^[\\x21-\\x7e]+$",
+              "description": "With identity: the token's audience. Default sigstore."
+            },
+            "runner_key_secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "description": "The secret or CI/CD variable holding the runner key."
+            },
+            "local": {
+              "type": "boolean",
+              "description": "true: a check hook proven on a person's machine is skipped in CI."
+            }
+          },
+          "additionalProperties": false,
+          "description": "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret."
         },
         "atlantis_comments": {
           "type": "boolean",

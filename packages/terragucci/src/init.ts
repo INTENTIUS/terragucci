@@ -32,6 +32,7 @@ import {
   imageMirror,
   imageName,
   PROJECT_FILE_KEYS,
+  pipelineEvidence,
   resolveRepo,
   responseTo,
   type Approval,
@@ -71,6 +72,7 @@ import { CHANT_AGENT_PATHS } from "./render-chant-agent";
 import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
+import { TRUST_FILE, trustPlan } from "./trust";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -367,8 +369,10 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.apply?.point ? { point: settings.apply.point } : {}),
     ...(tgMode && tgInput ? { terragrunt: { layers: layers.filter((l) => l.length > 0), exclude: tgInput.exclude, binary: binary.value, terragrunt: "terragrunt" } } : {}),
   }));
+  const evidence = pipelineEvidence(settings.evidence);
   const pipeline = renderPipeline({
     ...checkHooksInput,
+    ...(evidence ? { evidence } : {}),
     ...(stepSpec ? { wavesSpec: stepSpec } : {}),
     forge: forgeChoice.value,
     binary: binary.value,
@@ -504,6 +508,23 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     const at = files.findIndex((f) => f.path === declFile);
     if (at >= 0) files[at] = change;
     else files.push(change);
+  }
+  // evidence: .chant/trust.json with the ref gate's rule, the runner identity and the local checks, and the pre-push hook (./trust.ts).
+  if (evidence) {
+    const declNow = hooked ?? declSoFar;
+    let hooks: string[] = [];
+    try {
+      hooks = declNow ? checkHooksLib.checkHooksOf(JSON.parse(declNow.replace(/^\s*\/\/.*$/gm, "")), null).map(checkHooksLib.checkHookName) : [];
+    } catch {
+      notes.push(`evidence: ${basename(declFile)} did not read, so no check hook is named under local.checks`);
+    }
+    try {
+      const trust = trustPlan(repo, { forge: forgeChoice.value, evidence, local: settings.evidence?.local === true, hooks, ...(settings.url ? { server: settings.url } : {}) });
+      files.push(...trust.files);
+      notes.push(...trust.notes);
+    } catch (e) {
+      notes.push(`evidence: init wrote no ${TRUST_FILE}: ${(e as Error).message}`);
+    }
   }
   if (!preCommitOn && existsSync(join(repo, PRE_COMMIT_CONFIG))) {
     notes.push(`tip: ${PRE_COMMIT_CONFIG} is here; set check.pre_commit: true in terragucci.yml and tf-check runs its hooks over each change, with PCT_TFPATH set to ${binary.value} and terraform_fmt skipped (the job's image needs pre-commit and the tools the file names)`);
