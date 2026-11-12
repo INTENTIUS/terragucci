@@ -296,7 +296,7 @@ describe("stack/demo.sh under pipefail", () => {
     const dir = join(root, "example-demo-choudoufu-compose", "scenarios");
     const text = ["choudoufu-compose-edit", "choudoufu-compose-create"].flatMap((sc) => ["ask.json", "about.json"].map((f) => readFileSync(join(dir, sc, f), "utf8"))).join("\n");
     expect(text).toContain("one record store for every estate");
-    expect(text).toContain("Each record is written only if it is unchanged since it was read: resource-level locking at the cloud level.");
+    expect(text).toContain("Each record is written only if it is unchanged since it was read, so a run that loses a race re-plans or names the collision. The three estates need no coordination, and inside one, terragucci's waves hold each resource they change.");
     expect(text).toContain("One plan, one apply, across estates");
     const all = text + readFileSync(join(root, "example-demo-choudoufu-compose", "README.md"), "utf8");
     expect(all).not.toMatch(/transaction|atomic|terraform cloud|spacelift|env0|scalr|atlantis/i);
