@@ -1669,10 +1669,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // takes the before-merge settings as they are.
   const wavesNames = wavesJobNames(cut.length);
   const wavesBm = prApply ? wavesBeforeMerge(forge, wavesInput.beforeMerge!, input.applyRequires) : undefined;
+  // Before merge chant takes the locks of what the change reaches as it decides the head, in terragucci's lock file (gate tf-apply).
+  const reachLine = prApply ? `terragucci reach --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${tg ? " --terragrunt" : ""}` : undefined;
   const wavesProduct = productPipelineJobs(forge, PLAN_ENV, {
     // The waves' jobs answer apply; the plan's answer plan.
     words: { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: [] },
-    productPlan: planOptions(planInput, { noReply: forge !== "gitlab" }),
+    productPlan: planOptions(planInput, { noReply: forge !== "gitlab", ...(reachLine ? { reach: reachLine } : {}) }),
     waves: wavesShape(wavesInput),
     wavesSpecFile: WAVES_SPEC,
     wavesJobNames: wavesNames,
@@ -1681,7 +1683,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     staleNotes: true,
     ...(forge !== "gitlab" ? { commentJob: { jobName: "apply-comment" }, ...(wavesBm ? { wavesBeforeMerge: wavesBm } : {}) } : {}),
   } as never) as { waves?: { pipeline: Record<string, unknown> } };
-  const wavesPipeline = { ...(wavesProduct.waves?.pipeline ?? {}), ...(forge === "gitlab" && wavesBm ? { beforeMerge: wavesBm } : {}) };
+  const wavesPipeline = { ...(wavesProduct.waves?.pipeline ?? {}), ...(forge === "gitlab" && wavesBm ? { beforeMerge: { ...wavesBm, gate: "tf-apply" } } : {}) };
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   // agent.comment is chant's agent job (chant#4616), in a workflow of its own.
@@ -1894,7 +1896,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         stage: "comments",
         image: jobImage,
         // Before merge the poll records chant's decision on chant/lifecycle, from a checkout of the default branch it may push from.
-        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, ...(prApply ? { TG_MERGE_TOKEN: `$${input.applyMergeTokenEnv}`, GIT_DEPTH: "0" } : {}), ...(input.atlantisComments ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {}), ...(prApply ? {} : { GIT_STRATEGY: "none" }) },
+        variables: { TG_TOKEN: gitlabEnv.TG_TOKEN, ...(prApply ? { TG_MERGE_TOKEN: `$${input.applyMergeTokenEnv}`, GIT_DEPTH: "0", ...(reachLine ? { CHANT_LOCK_REACH: reachLine } : {}) } : {}), ...(input.atlantisComments ? { [ATLANTIS_COMMENTS_ENV]: "1" } : {}), ...(prApply ? {} : { GIT_STRATEGY: "none" }) },
         rules: [new Rule({ if: `$CI_PIPELINE_SOURCE == "schedule" && $${SCHEDULE_VAR} == "comments"` })],
         resource_group: "terragucci-comments",
         ...(prApply ? mergeEnvironment : {}),
@@ -2135,7 +2137,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     commentJob: { jobName: "apply-comment" },
     wavesJobNames: wavesNames,
     ...(wavesBm ? { wavesBeforeMerge: wavesBm } : {}),
-  }, `github.event_name == 'issue_comment' && ${atlantis ? `(${applySays})` : applySays}`);
+  }, `github.event_name == 'issue_comment' && ${atlantis ? `(${applySays})` : applySays}`, reachLine);
   entities.set("apply-comment", new Job(commentJob as never) as never);
   if (prReview) {
     // A review of the head says again whether the waves the gate will hold are approved.

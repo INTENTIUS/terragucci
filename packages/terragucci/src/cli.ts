@@ -71,6 +71,7 @@
  *   terragucci comment --agent push --change <dir> [--policy-dir <dir>] [--forge gitlab]   (push the agent's change to the pull request's head branch)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]   (locks: plan: lock the roots a pull request's head reaches, or release them; run by the generated pipeline)
  *   terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
+ *   terragucci reach --layers <a,b;c> [--terragrunt]   (print the roots the change from BASE_SHA to HEAD_SHA reaches, one a line: chant's reach line before merge)
  *   terragucci approval-status [--forge github|forgejo] [--report <dir>] [--agent-login <login>]   (post terragucci/approval on a pull request's head, with approval: pr-review; run by the generated pipeline)
  *   terragucci post status|reply|stale <args> [--forge github|gitlab|forgejo]   (say something on a pull request or commit through chant's forge client; the generated pipeline's tg function runs it)
  *   terragucci plan-handoff --report <dir> [--env <env>] [--exit <code>]   (write the plan note hand-off chant's note job posts, from the plan report; the plan verb's last line)
@@ -96,7 +97,7 @@
  * config error; 3 waiting on an approval; 4 a wave's plans changed after
  * its approval, so it applied nothing.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,7 +127,7 @@ import { writePlanNoteNotices } from "./plan-note";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
-import { decidePlanLock } from "./comment-apply";
+import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
 import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
@@ -1043,6 +1044,20 @@ export async function main(argv: string[]): Promise<number> {
           return 1;
         }
         console.log(`terragucci comment: ${decision.go ? "" : agent === "run" ? "no agent: " : "no re-plan: "}${decision.reason}`);
+        return 0;
+      }
+      case "reach": {
+        // chant's reach line (the product plan's `reach`): the roots (units, instances) the change from BASE_SHA to HEAD_SHA
+        // reaches, one a line, read from git as data. chant takes their locks at stage apply when it decides a head before merge.
+        const layers = str(flags, "layers");
+        const from = process.env.BASE_SHA;
+        const to = process.env.HEAD_SHA;
+        if (!layers || !from || !to) throw new ConfigError("reach needs --layers <a,b;c>, and BASE_SHA and HEAD_SHA in the environment");
+        const { after, synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
+        const git = (a: string[]) => spawnSync("git", a, { cwd, encoding: "utf-8" }) as ReturnType<Parameters<typeof reached>[1]>;
+        const r = reached(cwd, git, from, to, parseLayers(layers), { ...(flags.terragrunt === true ? { terragrunt: true } : {}), ...(after ? { after } : {}), ...(synth ? { synth: true } : {}) });
+        if (r.every) console.error(`terragucci reach: every ${r.kind}: ${r.every}`);
+        for (const u of r.units) console.log(u);
         return 0;
       }
       case "pr-lock": {

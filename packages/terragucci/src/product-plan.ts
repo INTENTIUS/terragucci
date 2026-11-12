@@ -83,7 +83,7 @@ export interface PlanJobsInput {
 }
 
 /** The product plan's options for terragucci, on every forge. */
-export function planOptions(input: PlanJobsInput, o: { noReply?: boolean } = {}): ProductPlanOptions {
+export function planOptions(input: PlanJobsInput, o: { noReply?: boolean; reach?: string } = {}): ProductPlanOptions {
   const github = input.forge !== "gitlab";
   return {
     command: input.command,
@@ -107,6 +107,8 @@ export function planOptions(input: PlanJobsInput, o: { noReply?: boolean } = {})
     ...(github && input.noteSteps && (input.noteSteps.before.length > 0 || input.noteSteps.after.length > 0) ? { noteSteps: { ...input.noteSteps, pullRequest: true } } : {}),
     // GitLab's merge request widget reads the plan's counts from the terraform report.
     ...(github ? {} : { artifacts: { reports: { terraform: "{output}/gitlab-terraform.json" } } }),
+    // Before merge: what the change reaches, whose locks chant takes as it decides a head, beside terragucci's own (gate tf-apply).
+    ...(o.reach ? { reach: { command: o.reach, gate: "tf-apply" } } : {}),
   };
 }
 
@@ -139,10 +141,10 @@ export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<stri
  * `waves` are the product pipeline's options for them: the waves' shape,
  * the spec file, the job names and the before-merge settings.
  */
-export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unknown>, cond: string): Record<string, unknown> {
+export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unknown>, cond: string, reach?: string): Record<string, unknown> {
   const forge = input.forge as "github" | "forgejo";
   const words = { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: input.atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan" || a.command === "apply") : [] };
-  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true }), ...waves } as never);
+  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true, ...(reach ? { reach } : {}) }), ...waves } as never);
   const job = (doc.jobsDoc as Record<string, Record<string, unknown>>)["apply-comment"];
   if (!job) throw new Error("chant's product pipeline wrote no apply-comment job");
   const container = typeof job.container === "string" ? { image: job.container } : job.container;

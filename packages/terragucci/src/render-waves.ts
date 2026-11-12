@@ -335,9 +335,36 @@ export function githubWaves(input: WavesInput & { forge: "github" | "forgejo" },
   return {
     jobs: asJobs(doc.jobsDoc),
     inputs: doc.on?.workflow_dispatch?.inputs ?? {},
-    ...(resume ? { resume: asJobs(resume.jobsDoc) } : {}),
+    ...(resume ? { resume: asJobs(resume.jobsDoc).map(([n, j]): [string, Record<string, unknown>] => [n, n === "resume" ? withMigrationResume(j) : j]) } : {}),
     spec,
   };
+}
+
+/** The resume line of the waves' op, as chant writes it, and the same line for the state migrations' gates. */
+const RESUME_WAVES = `terragucci run resume --op ${WAVES_OP}`;
+// The migrations' op, migrate.ts's MIGRATE_OP (migrate.ts imports render.ts, which imports this file).
+const RESUME_MIGRATIONS = "terragucci run resume --op tf-migrate";
+
+/**
+ * The resume job also starts a wave 1 that waits on a state migration's own
+ * gate (`tf-migrate`, ./migrate.ts) once that approval stands, as
+ * terragucci's own resume did: chant's resume takes one op, so a second step
+ * (GitHub, Forgejo) or line (GitLab) runs it for the migrations' gates.
+ */
+function withMigrationResume(job: Record<string, unknown>): Record<string, unknown> {
+  const steps = (job.steps as Array<Record<string, unknown>> | undefined) ?? [];
+  const at = steps.findIndex((s) => typeof s.run === "string" && s.run.includes(RESUME_WAVES));
+  if (at < 0) return job;
+  const waves = steps[at]!;
+  const migrations = { ...waves, name: "Resume the state migrations whose approval arrived", if: "${{ !cancelled() }}", run: String(waves.run).replace(RESUME_WAVES, RESUME_MIGRATIONS) };
+  return { ...job, steps: [...steps.slice(0, at + 1), migrations, ...steps.slice(at + 1)] };
+}
+
+/** GitLab's resume job runs both resumes, and fails when either failed. */
+function withGitlabMigrationResume(job: Record<string, unknown>): Record<string, unknown> {
+  const script = (job.script as string[] | undefined) ?? [];
+  if (!script.some((l) => l.includes(RESUME_WAVES))) return job;
+  return { ...job, script: script.map((l) => (l.includes(RESUME_WAVES) ? `rc=0; ${l} || rc=$?; ${l.replace(RESUME_WAVES, RESUME_MIGRATIONS)} || rc=$?; exit $rc` : l)) };
 }
 
 /** Every job of terragucci's workflow names its container as `{ image }`. */
@@ -378,7 +405,7 @@ export function gitlabWaves(input: WavesInput & { forge: "gitlab"; tokenEnv?: st
   const jobs = Object.entries(doc)
     .filter(([k, v]) => k !== "stages" && k !== "variables" && k !== "workflow" && k !== "default" && v !== null && typeof v === "object" && !Array.isArray(v) && "script" in (v as Record<string, unknown>))
     .map(([k, v]): [string, Record<string, unknown>] => {
-      const job = v as Record<string, unknown>;
+      const job = k === "resume" ? withGitlabMigrationResume(v as Record<string, unknown>) : (v as Record<string, unknown>);
       return [k, Object.keys(own).length ? { ...job, variables: { ...own, ...((job.variables as Record<string, string> | undefined) ?? {}) } } : job];
     });
   return { jobs, stages, spec };

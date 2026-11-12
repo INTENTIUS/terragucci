@@ -912,7 +912,8 @@ describe("the Terragrunt example", () => {
     expect(r.roots).toHaveLength(15);
     expect(r.layers.map((w) => w.length)).toEqual([1, 4, 2, 7, 1]);
     // The example is committed as the pinned chant renders it, whose handover takes terragucci's words (chant#4554).
-    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    // terragucci issue 1411: the waves' spec is committed beside the pipeline, which chant's wave jobs render their rules from.
+    expect(r.files.map((f) => f.status)).toEqual(["unchanged", "unchanged", "unchanged", "unchanged"]);
   });
 
   it("every scenario applies to the example as committed", () => {

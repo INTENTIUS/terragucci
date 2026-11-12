@@ -219,7 +219,7 @@ async function beforeMergeRun(ask: Ask, c: NoteCommand): Promise<NoteRun> {
   const { beforeMergeDeps } = await import("@intentius/chant/cli/handlers/pr-comment");
   const { defaultPipelineFiles } = await import("@intentius/chant/op/before-merge-decide");
   const waves = { op: WAVES_OP, count: ask.waves ?? ask.layers.length };
-  const wavesBeforeMerge = { ...(ask.requires ? { requires: [...ask.requires] } : {}), plan: [PLAN_NAMES.statusContext], pipelineFiles: defaultPipelineFiles("gitlab") };
+  const wavesBeforeMerge = { ...(ask.requires ? { requires: [...ask.requires] } : {}), plan: [PLAN_NAMES.statusContext], pipelineFiles: defaultPipelineFiles("gitlab"), ...(ask.env.CHANT_LOCK_REACH ? { locks: { gate: "tf-apply" } } : {}) };
   const deps = await beforeMergeDeps(ask.forge as never, { waves, wavesBeforeMerge } as never, ask.env);
   return chantNoteRuns({ waves, wavesBeforeMerge }, { beforeMerge: deps })(c as never) as Promise<NoteRun>;
 }

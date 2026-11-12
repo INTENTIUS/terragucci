@@ -1,0 +1,104 @@
+{
+  "name": "tf-apply",
+  "op": "tf-apply",
+  "gateName": "wave-{k}",
+  "digest": {
+    "over": "changing"
+  },
+  "neverOverMcp": true,
+  "approvals": {
+    "spend": true,
+    "remainder": true,
+    "spendStanding": true
+  },
+  "waves": [
+    {
+      "name": "wave-1",
+      "runs": [],
+      "discover": true,
+      "gate": "on-destructive",
+      "approval": "sealed",
+      "together": true
+    },
+    {
+      "name": "wave-2",
+      "runs": [],
+      "discover": true,
+      "gate": "on-destructive",
+      "approval": "sealed",
+      "together": true
+    },
+    {
+      "name": "wave-3",
+      "runs": [],
+      "discover": true,
+      "gate": "on-destructive",
+      "approval": "sealed",
+      "together": true
+    },
+    {
+      "name": "wave-4",
+      "runs": [],
+      "discover": true,
+      "gate": "on-destructive",
+      "approval": "sealed",
+      "together": true
+    },
+    {
+      "name": "wave-5",
+      "runs": [],
+      "discover": true,
+      "gate": "on-destructive",
+      "approval": "sealed",
+      "together": true
+    }
+  ],
+  "step": {
+    "kind": "terragrunt-apply",
+    "unit": "{target}",
+    "layers": [
+      [
+        "live/dev/platform"
+      ],
+      [
+        "live/dev/email",
+        "live/dev/orders",
+        "live/dev/payments",
+        "live/dev/search"
+      ],
+      [
+        "live/prod/platform",
+        "live/staging/platform"
+      ],
+      [
+        "live/prod/email",
+        "live/prod/orders",
+        "live/prod/payments",
+        "live/staging/email",
+        "live/staging/orders",
+        "live/staging/payments",
+        "live/staging/search"
+      ],
+      [
+        "live/prod/search"
+      ]
+    ],
+    "binary": "tofu",
+    "terragrunt": "terragrunt"
+  },
+  "hooks": {
+    "after": {
+      "gate": [
+        {
+          "name": "report",
+          "command": [
+            "node",
+            ".chant/op-waves/tf-apply/terragucci-call.cjs",
+            "gate",
+            "{runs}"
+          ]
+        }
+      ]
+    }
+  }
+}
