@@ -57,18 +57,26 @@
  * The job runs nothing it reads: it calls GitLab's API with the project's
  * token and holds no cloud credentials.
  */
-import { memoryNoteLog, noteCommandMarker, NOTE_COMMANDS_WINDOW_MINUTES, pollNoteCommands, type NoteCommand, type NoteLog, type NoteOutcome, type NoteRun } from "@intentius/chant/ci-note-commands";
+import { gitlabPipelines, memoryNoteLog, noteCommandMarker, NOTE_COMMANDS_WINDOW_MINUTES, pollNoteCommands, type GitlabPipelines, type NoteCommand, type NoteLog, type NoteOutcome, type NoteRun } from "@intentius/chant/ci-note-commands";
 import type { ForgeReads } from "@intentius/chant/pr-forge-reads";
 import { commentProductWords, productWords } from "./ci-words";
-import { agentSettingsAt } from "./involved";
 import { allowRoot, parseComment, parseOptions, SHA } from "./comment";
-import { HEAD_VAR, MR_VAR, NOTE_VAR, openChecks, pipelinesWith } from "./comment-apply-gitlab";
+import { WAVES_OP } from "./chant-waves";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
+import { PLAN_NAMES } from "./product-plan";
 import { jobReads, poster, type Fetch } from "./forge";
 import { CHANT_AGENT_ASK_VAR, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, defaultPipelines, startReview, type ReviewStart } from "./gitlab-agent";
 
 export type { NoteOutcome } from "@intentius/chant/ci-note-commands";
+
+/** chant's pipeline calls with `token`: the project token, or with apply.when: pull-request the merge token on the protected default branch. */
+export function pipelinesWith(env: NodeJS.ProcessEnv, token: string | undefined, doFetch?: Fetch, jobToken = false): GitlabPipelines {
+  const api = env.CI_API_V4_URL;
+  const project = env.CI_PROJECT_ID;
+  if (!api || !project || !token) throw new ConfigError("starting a GitLab pipeline needs CI_API_V4_URL, CI_PROJECT_ID and a token in the environment");
+  return gitlabPipelines({ apiBase: api, project, token, ...(jobToken ? { tokenHeader: "JOB-TOKEN" as const } : {}), ...(doFetch ? { fetch: doFetch } : {}) });
+}
 
 /** The marker a reply carries, naming the note it answers. */
 export const noteMarker = (id: number): string => noteCommandMarker("terragucci", id);
@@ -79,6 +87,8 @@ const WAVE_JOBS = /^apply-wave-([1-9][0-9]*)(?:-share-([1-9][0-9]*))?$/;
 export interface GitLabPollOptions {
   /** The roots the pipeline was written with, one array per layer. */
   layers: string[][];
+  /** How many waves the pipeline has (the canary wave counts). Default: one per layer. */
+  waves?: number;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
   /** The poll's clock. Default: now. */
@@ -146,7 +156,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
     log,
     now,
     env: parseEnv,
-    runs: (c) => answer({ env, fetch: doFetch, reads, forge, layers: o.layers, ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: o.agent } : {}) }, c),
+    runs: (c) => answer({ env, fetch: doFetch, reads, forge, layers: o.layers, ...(o.waves !== undefined ? { waves: o.waves } : {}), ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: o.agent } : {}) }, c),
   });
   return { outcomes: poll.outcomes, reviews, ...(poll.fail ? { fail: poll.fail } : {}) };
 }
@@ -187,11 +197,30 @@ interface Ask {
   reads: ForgeReads;
   forge: ReturnType<typeof poster>;
   layers: string[][];
+  waves?: number;
   when?: ApplyWhen;
   requires?: readonly ApplyRequire[];
   wait?: (ms: number) => Promise<void>;
   /** `agent.comment` is set; `"chant"` on chant's agent job. */
   agent?: boolean | "chant";
+}
+
+/**
+ * An open merge request's `/terragucci apply [wave-<n>]` with `apply.when:
+ * pull-request`: chant's answer (`chantNoteRuns` with the waves before merge),
+ * with chant's reads and writes for the decision (`beforeMergeDeps`): it
+ * checks `apply.requires`, the `terragucci/plan` status and the pipeline
+ * files at the head, records the decision on `chant/lifecycle` and starts
+ * the waves' pipeline of the default branch with the decided head.
+ */
+async function beforeMergeRun(ask: Ask, c: NoteCommand): Promise<NoteRun> {
+  const { chantNoteRuns } = await import("@intentius/chant/ci-note-commands");
+  const { beforeMergeDeps } = await import("@intentius/chant/cli/handlers/pr-comment");
+  const { defaultPipelineFiles } = await import("@intentius/chant/op/before-merge-decide");
+  const waves = { op: WAVES_OP, count: ask.waves ?? ask.layers.length };
+  const wavesBeforeMerge = { ...(ask.requires ? { requires: [...ask.requires] } : {}), plan: [PLAN_NAMES.statusContext], pipelineFiles: defaultPipelineFiles("gitlab") };
+  const deps = await beforeMergeDeps(ask.forge as never, { waves, wavesBeforeMerge } as never, ask.env);
+  return chantNoteRuns({ waves, wavesBeforeMerge }, { beforeMerge: deps })(c as never) as Promise<NoteRun>;
 }
 
 /** What a Developer's command runs: terragucci's answer to chant's poll. */
@@ -245,27 +274,15 @@ async function answer(ask: Ask, c: NoteCommand): Promise<NoteRun> {
       }
       return reply(`!${iid} is not open, so it holds no lock: the next merge request that reaches its roots takes them over`);
     }
+    if (parsed.kind !== "apply") return reply(`\`/terragucci ${parsed.kind}\` does not run here: \`/terragucci apply\` takes the locks of what the merge request reaches when it decides its head`);
     if (fork) return reply("a merge request from a fork is never applied: its code would run with this project's apply credentials");
     if (mr.base !== base) return reply(`!${iid} targets ${String(mr.base)}, not the default branch ${base}, so it is not applied`);
-    const sha = mr.headSha;
-    if (typeof sha !== "string" || !SHA.test(sha)) return broke(`!${iid}'s head is not a commit`);
-    if (parsed.kind === "apply") {
-      const verdict = await openChecks({ reads: ask.reads, forge: ask.forge, mr, base, ...(await agentSettingsAt(process.cwd())), env: ask.env, fetch: ask.fetch, ...(ask.requires ? { requires: ask.requires } : {}), ...(ask.wait ? { wait: ask.wait } : {}) });
-      if (verdict && "fail" in verdict) return broke(verdict.fail);
-      if (verdict) return reply(verdict.refuse);
-    }
     // A pipeline on a protected default branch needs a token that may merge there; the comments job's own may not.
     if (!ask.env.TG_MERGE_TOKEN) return broke(`the comments job has no TG_MERGE_TOKEN, the token apply.merge_token_env names, so it cannot start a pipeline on ${base} for !${iid}`);
-    const wave = parsed.kind === "apply" ? parsed.wave : undefined;
-    const through = wave !== undefined ? ` through wave ${wave}` : "";
-    const doing = parsed.kind === "apply" ? `apply !${iid}'s head ${short(sha)}${through}` : `${parsed.kind} the roots of !${iid}`;
-    return {
-      kind: "pipeline",
-      ref: base,
-      variables: { [MR_VAR]: String(iid), [NOTE_VAR]: String(note.id), [HEAD_VAR]: sha },
-      doing: `${doing} (its job reads !${iid} again before it ${parsed.kind === "apply" ? "applies" : parsed.kind + "s"})`,
-      with: pipelinesWith(ask.env, ask.env.TG_MERGE_TOKEN, ask.fetch),
-    };
+    // chant's decision before merge (chant issue 4984): the requires, the plan status and the pipeline files at the head, the
+    // record on chant/lifecycle, and the waves' pipeline of the default branch started with the decided head.
+    const run = await beforeMergeRun(ask, c);
+    return run.kind === "pipeline" ? { ...run, with: pipelinesWith(ask.env, ask.env.TG_MERGE_TOKEN, ask.fetch) } : run;
   }
 
   if (parsed.kind === "plan") {

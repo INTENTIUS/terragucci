@@ -1,46 +1,13 @@
 /**
- * `terragucci comment-apply`: the decision behind `/terragucci apply
- * [wave-<n>]` on a pull request.
+ * `terragucci pr-lock` under `locks: plan`, and what a change reaches: the
+ * roots (or Terragrunt units, Atmos instances) a pull request's diff
+ * reaches (reachedRoots, reached), and who counts as an approver of it
+ * (approverFilter).
  *
- * On a merged pull request the comment is a deploy button for an apply that
- * already has what it needs: it starts `tf-apply` again on the default
- * branch, at the pull request's merge commit, the way a re-run of the wave's
- * job does. It approves nothing. A wave whose gate has no verified, sealed
- * record still waits, and one whose plans changed since the approval is still
- * refused; `stage tf-apply` decides both, as it does for a push.
- *
- * With `apply.when: pull-request` the comment also applies an open pull
- * request, from its head, in the same waves and under the same gates. Before
- * anything runs, each requirement `apply.requires` lists (all four by
- * default) is asked through chant's requires checks (./apply-requires.ts)
- * and refused by name: `approved`, the head has an approval from a reviewer
- * other than its authors, given on that head, by someone with write access;
- * `checks`, its statuses and checks passed; `mergeable`, the forge says it
- * can merge (no conflicts, and on GitHub no branch protection blocking it);
- * `undiverged`, it contains the default branch. Whatever `apply.requires`
- * says, `terragucci/plan` passed on the head (a policy denial fails it, and
- * nothing waives a denial), the head did not move while the comment was
- * read, it does not change the pipeline file, which the comment's job runs
- * from the default branch, and no other open pull request holds a lock on a
- * root it reaches (root-locks.ts, chant's target locks). The decision then
- * takes those locks. In a
- * Terragrunt repo the locks are on units (reachedUnits). `/terragucci lock`
- * takes them without applying, and `/terragucci unlock` releases them. GitLab
- * applies before merge from a pipeline of the default branch instead
- * (comment-apply-gitlab.ts): its merge request pipelines come from the merge
- * request itself.
- *
- * The comment is untrusted input, read from the event file and parsed by the
- * one grammar in comment.ts. What leaves this file for the pipeline's shell is
- * a pull request number, a commit sha and a wave number, each checked against
- * a pattern with no shell syntax in it.
- *
- * Refused, with a reply, before any credential is asked for: a commenter
- * without write access, a pull request from a fork, one merged into another
- * branch, one closed without merging, an open one unless `apply.when` is
- * pull-request, a merge commit the default branch no longer reaches, one a
- * later apply superseded (the reply names that run), a wave the repo does not
- * have, and any other text.
+ * `/terragucci apply` is chant's comment job (terragucci issue 1411): on a
+ * merged pull request it re-runs the waves' jobs of the merge commit, and
+ * with `apply.when: pull-request` it decides an open pull request's head and
+ * dispatches the waves for it (`@intentius/chant/op/before-merge-decide`).
  */
 import { terragucciStatus } from "./ci-words";
 import { spawnSync } from "node:child_process";
@@ -48,16 +15,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { posix } from "node:path";
 import { changedRoots } from "@intentius/chant-lexicon-terraform/changed-roots";
-import { applyWaves } from "./apply";
 import { apiOf, BRANCH, LOGIN, parseComment, parseOptions, SHA, type CommentDecision } from "./comment";
 import type { PrApproverFilter } from "@intentius/chant/pr-forge";
-import { unmetApplyRequires } from "./apply-requires";
-import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
+import type { ApplyRequire, ApplyWhen } from "./config";
 import { atmosDependencies, atmosEdges, detectAtmos } from "./atmos";
 import { rootOrder, type WavesAfter } from "./detect";
-import { agentSettingsAt, pullInvolvement, type Involved } from "./involved";
+import type { Involved } from "./involved";
 import type { OpenPullRequest } from "@intentius/chant/pr-forge";
-import { commitStatuses, jobReads, poster, type Fetch } from "./forge";
+import { jobReads, poster, type Fetch } from "./forge";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
 
@@ -71,12 +36,6 @@ export interface ApplyCommentDecision extends Omit<CommentDecision, "root"> {
 
 /** Permissions that may ask for an apply: the same as may push to the repo. */
 export const MAY_APPLY = new Set(["admin", "owner", "maintain", "write"]);
-
-/** How many commits after the merge commit are read for a later apply; more than this and the merge commit counts as superseded. */
-export const NEWER_LIMIT = 50;
-
-/** The status every apply posts on the commit it applied. */
-const APPLY_CONTEXT = (): string => terragucciStatus("apply");
 
 export type Git = (args: string[]) => { status: number | null; stdout: string; stderr: string };
 
@@ -110,161 +69,6 @@ export interface ApplyCommentOptions {
 
 const short = (sha: string): string => sha.slice(0, 8);
 
-export async function decideApplyComment(o: ApplyCommentOptions): Promise<ApplyCommentDecision> {
-  const env = o.env ?? process.env;
-  const doFetch: Fetch = o.fetch ?? fetch;
-  const git: Git = o.git ?? ((args) => spawnSync("git", args, { encoding: "utf-8" }) as ReturnType<Git>);
-  const stop = (reason: string): ApplyCommentDecision => ({ go: false, reason });
-  const broke = (reason: string): ApplyCommentDecision => ({ go: false, fail: true, reason });
-  const eventPath = env.GITHUB_EVENT_PATH;
-  if (!eventPath) return broke("comment-apply reads the event file; GITHUB_EVENT_PATH is not set");
-  let event: any;
-  try {
-    event = JSON.parse(readFileSync(eventPath, "utf-8"));
-  } catch (e) {
-    return broke(`could not read the event file ${eventPath} (${(e as Error).message})`);
-  }
-  if (event === null || typeof event !== "object") return broke(`the event file ${eventPath} is not a JSON object`);
-
-  if (event.action !== "created") return stop("not a new comment");
-  const parsed = parseComment(event.comment?.body, parseOptions(env));
-  // A plan comment, or one not addressed to terragucci, belongs to the replan job.
-  if (!parsed || parsed.kind === "plan" || parsed.kind === "agent" || parsed.kind === "action") return stop("the comment does not ask for an apply");
-  const prMode = o.when === "pull-request";
-  const number = event.issue?.number;
-  if (!Number.isInteger(number) || number < 1) return stop("the comment has no issue number");
-  if (!event.issue?.pull_request && event.issue?.is_pull !== true) return stop("the comment is not on a pull request");
-  const user = event.comment?.user?.login;
-  if (typeof user !== "string" || !LOGIN.test(user)) return stop("the comment has no usable author");
-
-  const { api, repo, token } = apiOf(env);
-  const call = async (method: string, path: string, body?: unknown): Promise<any> => {
-    const r = await doFetch(`${api}/${path}`, {
-      method,
-      headers: { "content-type": "application/json", authorization: `token ${token}` },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}`);
-    return r.status === 204 ? null : r.json();
-  };
-  const forge = poster(o.forge ?? "github", env, doFetch);
-  const reply = async (text: string): Promise<void> => {
-    try {
-      await forge.addComment(number, `terragucci: ${text}`);
-    } catch (e) {
-      console.error(`terragucci: could not reply: ${(e as Error).message}`);
-    }
-  };
-  const refuse = async (reason: string): Promise<ApplyCommentDecision> => {
-    await reply(reason);
-    return stop(reason);
-  };
-
-  // Who asked comes first, and nothing runs for someone who cannot push.
-  const noWrite = `${user} has no write access to this repository, so nothing is applied`;
-  if (o.forge === "forgejo") {
-    // The commenter's permission comes from the event (see comment.ts); an event that does not hold together gets no answer.
-    if (event.repository?.full_name !== repo) return stop("the event is not for this repository");
-    if (event.sender?.login !== user) return stop("the comment's author is not the event's sender");
-    const p = event.repository?.permissions;
-    if (p?.push !== true && p?.admin !== true) return refuse(noWrite);
-  } else {
-    let permission: unknown;
-    try {
-      permission = await jobReads("github", env, doFetch).permission(user);
-    } catch (e) {
-      return broke(`could not read ${user}'s permission, so nothing is applied (${(e as Error).message})`);
-    }
-    if (typeof permission !== "string" || !MAY_APPLY.has(permission)) return refuse(noWrite);
-  }
-
-  if (parsed.kind === "refused") return refuse(parsed.reason);
-  if (parsed.kind === "unlock") {
-    if (!prMode) return refuse("this repository applies after merge, so no pull request holds a lock and there is nothing to unlock");
-    let released: string[];
-    try {
-      released = await releaseRootLocks(o.repo ?? process.cwd(), number);
-    } catch (e) {
-      return broke(`could not release the locks of pull request ${number} (${(e as Error).message})`);
-    }
-    const text = released.length ? `released the locks pull request ${number} held on ${released.map((r) => `\`${r}\``).join(", ")}, for ${user}` : `pull request ${number} holds no lock`;
-    await reply(text);
-    return stop(text);
-  }
-  if (parsed.kind === "lock") {
-    if (!prMode) return refuse("this repository applies after merge, so pull requests take no locks");
-    let pr: any;
-    try {
-      pr = await call("GET", `repos/${repo}/pulls/${number}`);
-    } catch (e) {
-      return broke(`could not read pull request ${number} (${(e as Error).message})`);
-    }
-    return decideLock({ ...o, git, number, user, pr, base: event.repository?.default_branch, call, refuse, broke, reply });
-  }
-
-  const waves = applyWaves(o.layers, o.canary).length;
-  if (parsed.wave !== undefined && parsed.wave > waves) return refuse(`this repository applies in ${waves} wave${waves === 1 ? "" : "s"}, so there is no wave-${parsed.wave}`);
-
-  let pr: any;
-  try {
-    pr = await call("GET", `repos/${repo}/pulls/${number}`);
-  } catch (e) {
-    return broke(`could not read pull request ${number} (${(e as Error).message})`);
-  }
-  if (prMode && pr?.state === "open" && pr?.merged !== true) {
-    return decideOpen({ ...o, git, number, user, pr, base: event.repository?.default_branch, wave: parsed.wave, call, refuse, broke, reply });
-  }
-  // Only merged code applies: never an open pull request's head, never a closed one's.
-  if (pr?.merged !== true) {
-    return refuse(pr?.state === "open"
-      ? `pull request ${number} is not merged: \`/terragucci apply\` re-runs the apply of a merged pull request, from the default branch, and never applies a pull request's branch`
-      : `pull request ${number} was closed without merging, so there is nothing of it to apply`);
-  }
-  if (pr?.head?.repo?.full_name !== repo) return refuse("a pull request from a fork is not applied on a comment: its apply runs when it is pushed to the default branch");
-  const base = event.repository?.default_branch;
-  if (typeof base !== "string" || !BRANCH.test(base) || base.split("/").some((s: string) => s === ".." || s === "")) return broke("the event names no default branch this command passes on");
-  if (pr?.base?.ref !== base) return refuse(`pull request ${number} was merged into ${String(pr?.base?.ref)}, not the default branch ${base}, so nothing applies from it`);
-  const sha = pr?.merge_commit_sha;
-  if (typeof sha !== "string" || !SHA.test(sha)) return broke(`pull request ${number} has no merge commit`);
-
-  // The merge commit must still be on the default branch, as origin has it now.
-  const remote = `refs/remotes/origin/${base}`;
-  const fetched = git(["fetch", "-q", "origin", `+refs/heads/${base}:${remote}`]);
-  if (fetched.status !== 0) return broke(`could not fetch ${base} (${fetched.stderr.trim()})`);
-  const reach = git(["merge-base", "--is-ancestor", sha, remote]);
-  if (reach.status === 1 || (reach.status !== 0 && /not a valid|bad object|no such|unknown/i.test(reach.stderr))) {
-    return refuse(`the merge commit ${short(sha)} of pull request ${number} is no longer on ${base}, so it is not applied`);
-  }
-  if (reach.status !== 0) return broke(`could not tell whether ${short(sha)} is on ${base} (${reach.stderr.trim()})`);
-
-  // A later commit whose apply started applied a newer tree: going back to this one would undo it.
-  const newer = git(["rev-list", `--max-count=${NEWER_LIMIT + 1}`, `${sha}..${remote}`]);
-  if (newer.status !== 0) return broke(`could not list the commits on ${base} after ${short(sha)} (${newer.stderr.trim()})`);
-  const later = newer.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
-  if (later.length > NEWER_LIMIT) return refuse(`more than ${NEWER_LIMIT} commits reached ${base} after the merge commit ${short(sha)}; the apply of the newest one applies them, so this one is not applied`);
-  for (const c of later) {
-    if (!SHA.test(c)) return broke(`git listed ${c} as a commit`);
-    let applied: { target_url?: unknown } | undefined;
-    try {
-      // chant's forge client reads each context's newest status (chant#4554).
-      const st = (await commitStatuses(forge, c)).find((s) => s.context === APPLY_CONTEXT());
-      applied = st ? { target_url: st.targetUrl } : undefined;
-    } catch (e) {
-      return broke(`could not read the statuses of ${short(c)} (${(e as Error).message})`);
-    }
-    if (applied) {
-      const run = typeof applied.target_url === "string" && /^https?:\/\//.test(applied.target_url) ? ` (${applied.target_url})` : "";
-      return refuse(`a later apply already ran on ${base} at ${short(c)}${run}, so the merge commit ${short(sha)} of pull request ${number} is not applied: comment on the pull request that commit came from, or push again`);
-    }
-  }
-
-  const through = parsed.wave !== undefined ? ` through wave ${parsed.wave}` : "";
-  return { go: true, reason: `apply pull request ${number}'s merge commit ${short(sha)}${through} for ${user}`, pr: number, sha, base, ...(parsed.wave !== undefined ? { wave: parsed.wave } : {}) };
-}
-
-
-/** The status the plan job posts on the head it planned. */
-const PLAN_CONTEXT = (): string => terragucciStatus("plan");
 
 const validBranch = (b: unknown): b is string => typeof b === "string" && BRANCH.test(b) && !b.split("/").some((s) => s === ".." || s === "") && !b.endsWith(".lock");
 
@@ -427,96 +231,8 @@ export const approverFilter = (involved: Involved): PrApproverFilter => ({
   exclude: [...[...TOKEN_USERS].map((login) => ({ login, reason: `${login} is the pipeline's own token` })), ...involved.people.map((p) => ({ login: p.who, reason: p.why }))],
 });
 
-interface OpenInput extends ApplyCommentOptions {
-  git: Git;
-  number: number;
-  user: string;
-  pr: any;
-  base: unknown;
-  wave?: number;
-  call: (method: string, path: string, body?: unknown) => Promise<any>;
-  refuse: (reason: string) => Promise<ApplyCommentDecision>;
-  broke: (reason: string) => ApplyCommentDecision;
-  reply: (text: string) => Promise<void>;
-}
-
-/** An open pull request's head, read and fetched: the head commit and branch, the default branch, and the remote ref it was fetched to. */
-interface OpenHead {
-  sha: string;
-  base: string;
-  remote: string;
-  repoName: string;
-}
-
-/**
- * What an apply and a lock both check first on an open pull request: it is
- * this repository's, it targets the default branch, and its head is a commit
- * on a branch whose name passes; then both are fetched, and the head must
- * still be the commit the forge named.
- */
-async function openHead(i: OpenInput): Promise<OpenHead | ApplyCommentDecision> {
-  const { git, number, pr, refuse, broke } = i;
-  const repoName = apiOf(i.env ?? process.env).repo;
-  if (pr?.state !== "open" || pr?.merged === true) return refuse(`pull request ${number} is not open, so nothing of it is locked`);
-  if (pr?.head?.repo?.full_name !== repoName) return refuse("a pull request from a fork is never applied: its code would run with this repository's apply credentials");
-  const base = i.base;
-  if (!validBranch(base)) return broke("the event names no default branch this command passes on");
-  if (pr?.base?.ref !== base) return refuse(`pull request ${number} targets ${String(pr?.base?.ref)}, not the default branch ${base}, so it is not applied`);
-  const sha = pr?.head?.sha;
-  const headRef = pr?.head?.ref;
-  if (typeof sha !== "string" || !SHA.test(sha)) return broke(`pull request ${number}'s head is not a commit`);
-  if (!validBranch(headRef)) return broke(`pull request ${number}'s head branch has a name this command does not pass on`);
-  const remote = `refs/remotes/origin/${base}`;
-  const headRemote = "refs/remotes/terragucci/pull-request-head";
-  const fetched = git(["fetch", "-q", "origin", `+refs/heads/${base}:${remote}`, `+refs/heads/${headRef}:${headRemote}`]);
-  if (fetched.status !== 0) return broke(`could not fetch ${base} and ${headRef} (${fetched.stderr.trim()})`);
-  const now = git(["rev-parse", headRemote]).stdout.trim();
-  if (now !== sha) return refuse(`pull request ${number} moved while this comment was read (its head is now ${short(now)}); comment again once its checks pass`);
-  return { sha, base, remote, repoName };
-}
-
-/**
- * Take the locks of the roots (in a Terragrunt repo, the units) a pull
- * request reaches. A refusal names every root another open pull request
- * holds. `every` is set when a change locks every Terragrunt unit or Atmos instance, and says why.
- */
-async function lockRoots(i: OpenInput, h: OpenHead, how: "apply" | "lock"): Promise<{ roots: string[]; every?: string; kind: Reach["kind"] } | ApplyCommentDecision> {
-  const repo = i.repo ?? process.cwd();
-  const reach = reached(repo, i.git, h.remote, h.sha, i.layers, { ...(i.terragrunt ? { terragrunt: true } : {}), ...(i.after ? { after: i.after } : {}), ...(i.synth ? { synth: true } : {}) });
-  const roots = reach.units;
-  let locked;
-  try {
-    locked = await takeRootLocks(repo, roots, { pr: i.number, by: i.user, at: new Date().toISOString(), head: h.sha, stage: how }, async (n) => {
-      const other = await i.call("GET", `repos/${h.repoName}/pulls/${n}`);
-      return other?.state === "open";
-    });
-  } catch (e) {
-    return i.broke(`could not take the root locks (${(e as Error).message})`);
-  }
-  if (!locked.ok) {
-    const what = how === "lock" ? "locked" : "applied";
-    return i.refuse(`${describeHeld(locked.held)}, so pull request ${i.number} is not ${what}. It ${how === "lock" ? "locks" : "applies"} once that pull request merges or closes, or someone with write access comments \`/terragucci unlock\` on it`);
-  }
-  return { roots, kind: reach.kind, ...(reach.every ? { every: reach.every } : {}) };
-}
-
 /** The reply's words for a change that locks every unit (Terragrunt) or instance (Atmos). */
 const everyUnit = (number: number, why: string, kind: Reach["kind"] = "unit"): string => `pull request ${number} locks every ${kind}: ${why}`;
-
-const isDecision = (x: object): x is ApplyCommentDecision => "go" in x;
-
-/** `/terragucci lock` on an open pull request under `apply.when: pull-request`: lock the roots it reaches, apply nothing. */
-async function decideLock(i: OpenInput): Promise<ApplyCommentDecision> {
-  const h = await openHead(i);
-  if (isDecision(h)) return h;
-  const l = await lockRoots(i, h, "lock");
-  if (isDecision(l)) return l;
-  const text = l.roots.length
-    ? `${l.every ? `${everyUnit(i.number, l.every, l.kind)}. ` : ""}locked ${l.roots.map((r) => `\`${r}\``).join(", ")} for pull request ${i.number} at ${short(h.sha)}, for ${i.user}; nothing was applied. The locks hold until it merges or closes, or someone with write access comments \`/terragucci unlock\``
-    : `pull request ${i.number} reaches no ${l.kind}, so nothing is locked`;
-  await i.reply(text);
-  return { go: false, reason: text };
-}
 
 // ── locks: plan, the pr-lock job ─────────────────────────────────────────
 
@@ -724,109 +440,3 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
 const HEAD_READS = 4;
 const HEAD_WAIT_MS = 3000;
 
-/**
- * An open pull request under `apply.when: pull-request`: every requirement
- * `apply.requires` lists, asked through chant's requires checks
- * (./apply-requires.ts), then its plan, the pipeline file and its locks.
- */
-async function decideOpen(i: OpenInput): Promise<ApplyCommentDecision> {
-  const { git, number, user, pr, call, refuse, broke } = i;
-  const h = await openHead(i);
-  if (isDecision(h)) return h;
-  const { sha, base, remote, repoName } = h;
-
-  // approved counts the forge's rule, and never the run's own token or someone who had a hand in the change (./involved.ts).
-  const approvers = async (): Promise<PrApproverFilter> => {
-    const involved = await pullInvolvement({ forge: i.forge ?? "github", reads: jobReads(i.forge ?? "github", i.env ?? process.env, i.fetch), pr: { number, head: sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env: i.env ?? process.env, ...(i.fetch ? { fetch: i.fetch } : {}), ...(await agentSettingsAt(i.repo ?? process.cwd())) });
-    for (const line of involved.notes) console.log(`terragucci: ${line}`);
-    return approverFilter(involved);
-  };
-  const forge = poster(i.forge ?? "github", i.env ?? process.env, i.fetch);
-  const unmet = await unmetApplyRequires(forge, number, sha, { approvers, ignore: [APPLY_CONTEXT()], ...(i.requires ? { requires: i.requires } : {}), ...(i.wait ? { wait: i.wait } : {}) });
-  if (unmet) return refuse(`pull request ${number} does not meet apply.requires at ${short(sha)}, so nothing is applied: ${unmet}. Comment again once that is fixed and its plan passes`);
-
-  // The plan passed on the head, whatever apply.requires says.
-  let plan: { state: string } | undefined;
-  try {
-    // chant's forge client reads each context's newest status (chant#4554).
-    plan = (await commitStatuses(forge, sha)).find((st) => st.context === PLAN_CONTEXT());
-  } catch (e) {
-    return broke(`could not read the statuses of ${short(sha)} (${(e as Error).message})`);
-  }
-  if (plan?.state !== "success") return refuse(`the plan of pull request ${number} has not passed on its head ${short(sha)}, so nothing is applied; push to it or comment \`/terragucci plan\`, then comment again`);
-
-  // The comment's job runs the default branch's pipeline, so a change to it applies after it merges.
-  const pipeline = PIPELINE_FILES[i.forge ?? "github"];
-  const touched = git(["diff", "--name-only", `${remote}...${sha}`, "--", pipeline]);
-  if (touched.status === 0 && touched.stdout.trim()) {
-    return refuse(`pull request ${number} changes ${pipeline}, and the apply runs the pipeline of ${base}, so it is not applied before merge. Merge it, then comment \`/terragucci apply\` on it to apply from the merge commit`);
-  }
-
-  // No other open pull request holds a root this one reaches.
-  const l = await lockRoots(i, h, "apply");
-  if (isDecision(l)) return l;
-  // The apply's own reply comes at the end of its run; a lock on every unit is said before it starts.
-  if (l.every && !i.again) await i.reply(`${everyUnit(number, l.every, l.kind)}. Applying its head ${short(sha)}`);
-
-  const through = i.wave !== undefined ? ` through wave ${i.wave}` : "";
-  const what = l.roots.length ? `, locking ${l.roots.join(", ")}` : "";
-  return { go: true, open: true, reason: `apply pull request ${number}'s head ${short(sha)}${through} for ${user}${what}`, pr: number, sha, base, ...(i.wave !== undefined ? { wave: i.wave } : {}) };
-}
-
-/** The generated pipeline's path on each forge (render.ts's PIPELINE_PATHS). */
-const PIPELINE_FILES: Record<"github" | "forgejo", string> = {
-  github: ".github/workflows/terragucci.yml",
-  forgejo: ".forgejo/workflows/terragucci.yml",
-};
-
-// ── the merge after the last wave ────────────────────────────────────────
-
-export interface MergeOptions {
-  pr: number;
-  sha: string;
-  forge?: "github" | "forgejo";
-  env?: NodeJS.ProcessEnv;
-  fetch?: Fetch;
-  repo?: string;
-}
-
-/**
- * Merge a pull request whose every wave applied from its head
- * (`apply.merge: auto`), then release its locks. The `pr-merge` job runs it
- * with a sha a job that ran the pull request's code handed on, so before the
- * merge it checks, with the job's own token, that the pull request is open,
- * its head is still `sha`, and chant's `approved` passes for that head under
- * the apply's approverFilter; the forge then merges only while
- * the head is `sha`. It merges with TG_MERGE_TOKEN (apply.merge_token_env's
- * secret) when the job has it, else with TG_TOKEN. Returns what to reply;
- * throws with the reason when it does not merge.
- */
-export async function mergePullRequest(o: MergeOptions): Promise<string> {
-  const env = o.env ?? process.env;
-  const doFetch: Fetch = o.fetch ?? fetch;
-  if (!SHA.test(o.sha)) throw new ConfigError("--sha must be a commit sha");
-  const { api, repo } = apiOf(env);
-  const read = env.TG_TOKEN;
-  if (!read) throw new ConfigError("pr-merge needs TG_TOKEN in the environment");
-  const get = async (path: string): Promise<any> => {
-    const r = await doFetch(`${api}/repos/${repo}/${path}`, { method: "GET", headers: { "content-type": "application/json", authorization: `token ${read}` } });
-    if (!r.ok) throw new Error(`GET ${path} answered ${r.status}`);
-    return r.json();
-  };
-  const pr = await get(`pulls/${o.pr}`);
-  if (pr?.state !== "open" || pr?.merged === true) throw new Error(`pull request ${o.pr} is not open`);
-  if (pr?.head?.sha !== o.sha) throw new Error(`pull request ${o.pr} moved after it applied (its head is now ${short(String(pr?.head?.sha))})`);
-  if (pr?.head?.repo?.full_name !== repo) throw new Error(`pull request ${o.pr} comes from a fork`);
-  // approved counts as the apply's decision did: chant's prApproved under approverFilter, read with the job's own token.
-  const involved = await pullInvolvement({ forge: o.forge ?? "github", reads: jobReads(o.forge ?? "github", env, doFetch), pr: { number: o.pr, head: o.sha, ...(typeof pr?.user?.login === "string" ? { author: pr.user.login } : {}) }, env, fetch: doFetch, ...(await agentSettingsAt(o.repo ?? process.cwd())) });
-  for (const line of involved.notes) console.log(`terragucci: ${line}`);
-  const forge = poster(o.forge ?? "github", env, doFetch, "TG_TOKEN");
-  if (!forge.prApproved) throw new Error(`this ${forge.kind} client cannot say whether pull request ${o.pr} is approved`);
-  const approval = await forge.prApproved(o.pr, o.sha, approverFilter(involved));
-  if (!approval.passed) throw new Error(`pull request ${o.pr} is not approved: ${approval.reason}`);
-  // The forge merges only while the head is still `sha`, with apply.merge_token_env's secret when set: Forgejo refuses a merge made with the job's own token.
-  const merged = await poster(o.forge ?? "github", env, doFetch, env.TG_MERGE_TOKEN ? "TG_MERGE_TOKEN" : "TG_TOKEN").mergePullRequest(o.pr, { sha: o.sha });
-  if (!merged.merged) throw new Error(`the forge refused the merge${merged.reason ? ` (${merged.reason})` : ""}`);
-  const released = await releaseRootLocks(o.repo ?? process.cwd(), o.pr);
-  return `merged pull request ${o.pr} at ${short(o.sha)}${released.length ? ` and released its locks on ${released.join(", ")}` : ""}`;
-}

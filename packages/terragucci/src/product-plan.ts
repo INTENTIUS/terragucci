@@ -83,7 +83,7 @@ export interface PlanJobsInput {
 }
 
 /** The product plan's options for terragucci, on every forge. */
-export function planOptions(input: PlanJobsInput): ProductPlanOptions {
+export function planOptions(input: PlanJobsInput, o: { noReply?: boolean } = {}): ProductPlanOptions {
   const github = input.forge !== "gitlab";
   return {
     command: input.command,
@@ -102,7 +102,8 @@ export function planOptions(input: PlanJobsInput): ProductPlanOptions {
     ...(input.setup.length > 0 ? { setup: input.setup } : {}),
     ...(input.watches?.length ? { watches: input.watches } : {}),
     // GitLab's re-plan stays the comments poll's, which plans the merge request again in its own pipeline.
-    ...(github ? { replan: { dispatch: { argument: "root" }, reply: { others: input.others }, notAffected: true } } : {}),
+    // `noReply`: for chant's comment job, which answers `/terragucci apply` alone in terragucci's workflow (githubCommentJob).
+    ...(github ? { replan: { dispatch: { argument: "root" }, ...(o.noReply ? {} : { reply: { others: input.others } }), notAffected: true } } : {}),
     ...(github && input.noteSteps && (input.noteSteps.before.length > 0 || input.noteSteps.after.length > 0) ? { noteSteps: { ...input.noteSteps, pullRequest: true } } : {}),
     // GitLab's merge request widget reads the plan's counts from the terraform report.
     ...(github ? {} : { artifacts: { reports: { terraform: "{output}/gitlab-terraform.json" } } }),
@@ -128,6 +129,25 @@ export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<stri
     out.push([name, { ...job, container }]);
   }
   return out;
+}
+
+/**
+ * GitHub and Forgejo: chant's comment job, `apply-comment` (chant issues 4984,
+ * 5022, 5027). `/terragucci apply` on a merged pull request re-runs the
+ * waves' jobs of its merge commit that did not succeed; before merge it
+ * decides the open pull request's head and dispatches the waves for it.
+ * `waves` are the product pipeline's options for them: the waves' shape,
+ * the spec file, the job names and the before-merge settings.
+ */
+export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unknown>, cond: string): Record<string, unknown> {
+  const forge = input.forge as "github" | "forgejo";
+  const words = { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: input.atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan" || a.command === "apply") : [] };
+  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true }), ...waves } as never);
+  const job = (doc.jobsDoc as Record<string, Record<string, unknown>>)["apply-comment"];
+  if (!job) throw new Error("chant's product pipeline wrote no apply-comment job");
+  const container = typeof job.container === "string" ? { image: job.container } : job.container;
+  // The re-plan answers every other comment (its reply), and terragucci's other jobs their own: this job starts on `/terragucci apply`.
+  return { ...job, container, if: cond };
 }
 
 /** GitLab: chant's plan job and its note job, which runs in the plan notes pipeline. */
@@ -162,19 +182,36 @@ function withEvery<T extends { targets?: Array<Record<string, unknown>> }>(spec:
  * whose provider takes only the token itself.
  */
 export function planTrade(oidc: OidcSettings | undefined, credentials: Record<string, RolePair> | undefined, reportsRole: string | undefined, env: Record<string, string>, audience: string): CloudTradeSpec | undefined {
+  return stageTrade("plan", oidc, credentials, reportsRole, env, audience);
+}
+
+/**
+ * The apply identities as chant's trade, for a wave job of chant's Op waves
+ * (the wave's or a job group's `cloud`): the apply role, each root glob's
+ * apply role, a Terragrunt repo's unit roles and `reports.role` (the report
+ * upload), and GCP's apply service accounts. chant trades before the
+ * checkout, so the wave's command holds the credentials and no OIDC token.
+ * Undefined when no identity is named, and for oidc.azure.
+ */
+export function applyTrade(oidc: OidcSettings | undefined, credentials: Record<string, RolePair> | undefined, reportsRole: string | undefined, env: Record<string, string>, audience: string): CloudTradeSpec | undefined {
+  return stageTrade("apply", oidc, credentials, reportsRole, env, audience);
+}
+
+function stageTrade(stage: "plan" | "apply", oidc: OidcSettings | undefined, credentials: Record<string, RolePair> | undefined, reportsRole: string | undefined, env: Record<string, string>, audience: string): CloudTradeSpec | undefined {
   if (oidc?.azure) return undefined;
   const decl: CloudIdentityDeclaration = {};
-  const byGlob = oidc?.roles && Object.keys(oidc.roles).length > 0 ? rootRoles(oidc.roles, "plan") : [];
-  const units = credentials ? rootRoles(credentials, "plan") : [];
-  const own = oidc?.plan_role && oidc.apply_role ? oidc.plan_role : undefined;
+  const byGlob = oidc?.roles && Object.keys(oidc.roles).length > 0 ? rootRoles(oidc.roles, stage) : [];
+  const units = credentials ? rootRoles(credentials, stage) : [];
+  const own = oidc?.plan_role && oidc.apply_role ? (stage === "plan" ? oidc.plan_role : oidc.apply_role) : undefined;
   const roles = [...new Set([own, ...byGlob.map(([, r]) => r), ...units.map(([, r]) => r), reportsRole].filter((r): r is string => Boolean(r)))];
   const endpoint = env.AWS_ENDPOINT_URL_STS || env.AWS_ENDPOINT_URL;
   if (roles.length > 0) decl.aws = { region: env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1", audience, ...(endpoint ? { endpoint: endpoint.replace(/\/+$/, "") } : {}), rules: rules(byGlob, own) };
   const gcp = oidc?.gcp;
-  const gcpByGlob = gcp?.roles && Object.keys(gcp.roles).length > 0 ? rootRoles(gcp.roles, "plan") : [];
-  const sas = [...new Set([gcp?.plan_service_account, ...gcpByGlob.map(([, s]) => s)].filter((s): s is string => Boolean(s)))];
+  const gcpByGlob = gcp?.roles && Object.keys(gcp.roles).length > 0 ? rootRoles(gcp.roles, stage) : [];
+  const ownSa = stage === "plan" ? gcp?.plan_service_account : gcp?.apply_service_account;
+  const sas = [...new Set([ownSa, ...gcpByGlob.map(([, s]) => s)].filter((s): s is string => Boolean(s)))];
   if (gcp && sas.length > 0) {
-    decl.gcp = { provider: gcp.workload_identity_provider, ...(gcp.token_url ? { stsEndpoint: gcp.token_url } : {}), rules: rules(gcpByGlob, gcp.plan_service_account) };
+    decl.gcp = { provider: gcp.workload_identity_provider, ...(gcp.token_url ? { stsEndpoint: gcp.token_url } : {}), rules: rules(gcpByGlob, ownSa) };
   }
   const plan = resolveCloudIdentity(decl, PLAN_ENV)?.plan ?? {};
   // Roles no root's glob takes (a Terragrunt unit's, reports.role) are traded as targets with no glob.
