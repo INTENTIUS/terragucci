@@ -143,7 +143,8 @@ export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<stri
  */
 export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unknown>, cond: string, reach?: string): Record<string, unknown> {
   const forge = input.forge as "github" | "forgejo";
-  const words = { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: input.atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan" || a.command === "apply") : [] };
+  // Before merge (`reach`) it answers lock and unlock too (chant issue 5061).
+  const words = { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply", ...(reach ? { lock: "lock", unlock: "unlock" } : {}) }, aliases: input.atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan" || a.command === "apply") : [] };
   const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true, ...(reach ? { reach } : {}) }), ...waves } as never);
   const job = (doc.jobsDoc as Record<string, Record<string, unknown>>)["apply-comment"];
   if (!job) throw new Error("chant's product pipeline wrote no apply-comment job");

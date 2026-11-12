@@ -275,7 +275,9 @@ async function answer(ask: Ask, c: NoteCommand): Promise<NoteRun> {
       }
       return reply(`!${iid} is not open, so it holds no lock: the next merge request that reaches its roots takes them over`);
     }
-    if (parsed.kind !== "apply") return reply(`\`/terragucci ${parsed.kind}\` does not run here: \`/terragucci apply\` takes the locks of what the merge request reaches when it decides its head`);
+    // `/terragucci lock` and `/terragucci unlock` are chant's too, by the reach line (chant issue 5061).
+    if (parsed.kind === "lock" || parsed.kind === "unlock") return beforeMergeRun(ask, c);
+    if (parsed.kind !== "apply") return reply(`\`/terragucci ${parsed.kind}\` does not run here`);
     if (fork) return reply("a merge request from a fork is never applied: its code would run with this project's apply credentials");
     if (mr.base !== base) return reply(`!${iid} targets ${String(mr.base)}, not the default branch ${base}, so it is not applied`);
     // A pipeline on a protected default branch needs a token that may merge there; the comments job's own may not.

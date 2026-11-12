@@ -2137,7 +2137,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     commentJob: { jobName: "apply-comment" },
     wavesJobNames: wavesNames,
     ...(wavesBm ? { wavesBeforeMerge: wavesBm } : {}),
-  }, `github.event_name == 'issue_comment' && ${atlantis ? `(${applySays})` : applySays}`, reachLine);
+  // Before merge it also answers `/terragucci lock` and `/terragucci unlock` by the reach line (chant issue 5061).
+  }, `github.event_name == 'issue_comment' && ${prApply ? `(${applySays} || ${says(comment.lock)} || ${says(comment.unlock)})` : atlantis ? `(${applySays})` : applySays}`, reachLine);
   entities.set("apply-comment", new Job(commentJob as never) as never);
   if (prReview) {
     // A review of the head says again whether the waves the gate will hold are approved.

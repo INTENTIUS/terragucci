@@ -38,7 +38,7 @@ Let a killed apply on Forgejo finish or resume before you upgrade. chant does no
 
 `/terragucci apply` now runs as chant's comment job. On a merged pull request it starts the failed wave jobs again. Before merge it decides the head and starts the waves for it. That replaces the `control-comment` job.
 
-With `apply.when: pull-request`, `/terragucci lock` and `/terragucci unlock` are gone. `/terragucci apply` takes the locks as it decides the head.
+With `apply.when: pull-request`, chant answers `/terragucci lock` and `/terragucci unlock` too. `/terragucci apply` takes the same locks as it decides the head, through the new `terragucci reach`. A member of a control repo that applies before merge tells it once the merge is pushed.
 
 The commands `terragucci comment-apply`, `terragucci pr-merge` and `terragucci resume` are gone, since chant's jobs do that work.
 
