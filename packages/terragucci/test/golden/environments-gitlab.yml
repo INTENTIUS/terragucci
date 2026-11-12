@@ -177,7 +177,6 @@ plan:
     - |
       bash <<'PLAN' || exit $?
       set +e -uo pipefail
-      unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
       export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
       [ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"
       terragucci stage tf-plan --out terragucci-report --binary tofu --layers 'envs/dev/network,envs/prod/network,shared/dns;envs/dev/app,envs/prod/app' --report-url "$CI_JOB_URL/artifacts/file/terragucci-report/report.html" ${TG_ROOT:+--root "$TG_ROOT"}

@@ -140,13 +140,7 @@ describe("the token-request variables", () => {
         expect(JSON.stringify(doc.jobs.check), name).not.toContain("enable-openid-connect");
         continue;
       }
-      // oidc.azure is logged in to, not traded, and chant's plan step then keeps the variables (chant issue 5021): the plan verb's
-      // own shell drops them before any of the change's code runs.
-      if (_ === "azure") {
-        expect(restart, name).toBe(-1);
-        expect(lines.findIndex((l) => l === "unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN"), name).toBeLessThan(lines.findIndex((l) => l.includes("terragucci stage")));
-        continue;
-      }
+      // oidc.azure is logged in to, not traded; chant's plan step starts again without them after the login all the same.
       expect(restart, name).toBeGreaterThanOrEqual(0);
       const before = lines.slice(0, restart).join("\n");
       expect(before, name).not.toMatch(/terragucci stage|synth|terragrunt |tofu /);

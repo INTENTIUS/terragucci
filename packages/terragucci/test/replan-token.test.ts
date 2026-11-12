@@ -54,8 +54,8 @@ describe("the re-plan's rendered steps", () => {
     // The plan step restarts without the forge tokens and the token-request variables, and asks for no token.
     const run = planStep(s).run!;
     for (const v of OIDC_REQUEST_VARS) expect(run.split("\n")[0]).toContain(`-u ${v}`);
-    // Past the restart, only the plan verb's own unset names them (chant issue 5021, for a login).
-    expect(after(run).replace(`unset ${OIDC_REQUEST_VARS.join(" ")}`, "")).not.toMatch(/ACTIONS_ID_TOKEN_REQUEST|AWS_WEB_IDENTITY_TOKEN_FILE|CHANT_CLOUD_LOGIN|AWS_ROLE_ARN/);
+    // Past the restart, nothing names them.
+    expect(after(run)).not.toMatch(/ACTIONS_ID_TOKEN_REQUEST|AWS_WEB_IDENTITY_TOKEN_FILE|CHANT_CLOUD_LOGIN|AWS_ROLE_ARN/);
   });
 
   it.each(["github", "forgejo"] as const)("%s: the pull request's own plan job trades too, and no other job does", (forge) => {
