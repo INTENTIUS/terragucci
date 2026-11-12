@@ -1,0 +1,109 @@
+{
+  "name": "tf-apply",
+  "op": "tf-apply",
+  "gateName": "wave-{k}",
+  "digest": {
+    "over": "changing"
+  },
+  "neverOverMcp": true,
+  "approvals": {
+    "spend": true,
+    "remainder": true,
+    "spendStanding": true
+  },
+  "waves": [
+    {
+      "name": "wave-1",
+      "runs": [
+        {
+          "target": "envs/dev/platform"
+        }
+      ],
+      "gate": "on-destructive",
+      "approval": "sealed"
+    },
+    {
+      "name": "wave-2",
+      "runs": [
+        {
+          "target": "envs/dev/email"
+        },
+        {
+          "target": "envs/dev/orders"
+        },
+        {
+          "target": "envs/dev/payments"
+        },
+        {
+          "target": "envs/dev/search"
+        }
+      ],
+      "gate": "on-destructive",
+      "approval": "sealed"
+    },
+    {
+      "name": "wave-3",
+      "runs": [
+        {
+          "target": "envs/prod/platform"
+        },
+        {
+          "target": "envs/staging/platform"
+        }
+      ],
+      "gate": "on-destructive",
+      "approval": "sealed"
+    },
+    {
+      "name": "wave-4",
+      "runs": [
+        {
+          "target": "envs/prod/email"
+        },
+        {
+          "target": "envs/prod/orders"
+        },
+        {
+          "target": "envs/prod/payments"
+        },
+        {
+          "target": "envs/prod/search"
+        },
+        {
+          "target": "envs/staging/email"
+        },
+        {
+          "target": "envs/staging/orders"
+        },
+        {
+          "target": "envs/staging/payments"
+        },
+        {
+          "target": "envs/staging/search"
+        }
+      ],
+      "gate": "on-destructive",
+      "approval": "sealed"
+    }
+  ],
+  "step": {
+    "kind": "terraform-apply",
+    "root": "{target}",
+    "dir": "{target}"
+  },
+  "hooks": {
+    "after": {
+      "gate": [
+        {
+          "name": "report",
+          "command": [
+            "node",
+            ".chant/op-waves/tf-apply/terragucci-call.cjs",
+            "gate",
+            "{runs}"
+          ]
+        }
+      ]
+    }
+  }
+}
