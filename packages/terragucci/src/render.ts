@@ -1882,8 +1882,6 @@ export function planVerbScript(binary: Binary, layers: string[][], forge: ForgeN
     "bash <<'PLAN' || exit $?",
     // Off first: every later line reads an exit code itself.
     READS_EXIT,
-    // After a login (oidc.azure) chant's step keeps the token-request variables (chant issue 5021); the change's code starts without them.
-    `unset ${OIDC_REQUEST_VARS.join(" ")}`,
     'export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"',
     '[ -n "${GITHUB_BASE_REF:-}${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ] || export TG_BASE="${TG_BASE:-${BASE_SHA:-}}"',
     ...(report.synth

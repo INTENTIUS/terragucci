@@ -114,24 +114,6 @@ function planWords(atlantis: boolean): typeof TERRAGUCCI_WORDS {
   return { ...TERRAGUCCI_WORDS, commands: { plan: "plan" }, aliases: atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan") : [] };
 }
 
-/** The head of the pull request, where the plan status goes and the note's head is: GitHub's `github.sha` is the merge commit of a `pull_request` run. */
-const PR_HEAD = "${{ github.event.pull_request.head.sha }}";
-
-/**
- * The plan job's status and the note's head on the pull request's head (chant issue 5020): chant names
- * `github.sha`, which a pull_request run sets to the merge commit, so `terragucci/plan` would land where
- * branch protection does not look. The plan step's TG_SHA is the head too, so the hand-off is for it.
- */
-function onTheHead(job: Record<string, unknown>): Record<string, unknown> {
-  const steps = (job.steps as Array<Record<string, unknown>>).map((s) => {
-    const env = s.env as Record<string, string> | undefined;
-    if (!env) return s;
-    const fixed = Object.fromEntries(Object.entries(env).map(([k, v]) => [k, (k === "HEAD_SHA" || k === "CHANT_PENDING_SHA") && v === "${{ github.sha }}" ? PR_HEAD : v]));
-    return { ...s, env: fixed };
-  });
-  return { ...job, steps };
-}
-
 /** GitHub and Forgejo: chant's plan, plan-note, replan and replan-note jobs, as the workflow's jobs. */
 export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<string, unknown>]> {
   const forge = input.forge as "github" | "forgejo";
@@ -143,8 +125,7 @@ export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<stri
     const job = jobs[name];
     if (!job) throw new Error(`chant's product plan wrote no ${name} job`);
     const container = typeof job.container === "string" ? { image: job.container } : job.container;
-    const own = { ...job, container };
-    out.push([name, name === names.plan || name === names.note ? onTheHead(own) : own]);
+    out.push([name, { ...job, container }]);
   }
   return out;
 }

@@ -453,7 +453,7 @@ The `plan` and `replan` jobs are chant's product plan's.
 
 The `plan` job trades the same way, before its checkout.
 
-With `oidc.azure` neither job trades: the azurerm provider and backend take only the token itself. chant's login fetches it in a step before the plan, and the plan step keeps the token-request variables in its own process (chant issue 5021); the plan's shell unsets them before the change's code runs. A re-plan's token carries the default branch's subject. To plan an Azure change without that token, push to the pull request instead of commenting `/terragucci plan`.
+With `oidc.azure` neither job trades: the azurerm provider and backend take only the token itself. chant's login fetches it in a step before the plan, and the plan step starts again without the token-request variables once it has logged in. A re-plan's token carries the default branch's subject. To plan an Azure change without that token, push to the pull request instead of commenting `/terragucci plan`.
 
 ## Token scrub limits
 
