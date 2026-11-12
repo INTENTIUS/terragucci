@@ -180,6 +180,21 @@ With `approval: pr-review` (GitHub and Forgejo) the pipeline also posts `terragu
 
 When the default branch changes a root that a pull request's plan note covers, the note is marked stale by the `stale-notes` job, which runs beside wave 1 on the push. Pushing to the pull request plans it again.
 
+## Signed checks
+
+With [`evidence`](/terragucci/reference/config/#keys) set, the jobs sign chant check evidence for the commit's tree. The evidence goes to `refs/notes/chant/evidence`. No job that runs the change's code holds the signing key or token.
+
+| Job | Signs | Where |
+|---|---|---|
+| `plan-note` (GitHub, Forgejo) | `plan`, and `policy` when no policy denied a root | its own signing step, after it takes the plan report back |
+| `plan-evidence` (GitLab) | the same, for every open merge request | the plan notes pipeline, before `plan-note` |
+| `apply-wave-<k>` | `plan:wave-<k>` | its own step, with a runner key |
+| `apply-wave-<k>-evidence` | `plan:wave-<k>`, from the forge's record of the wave job's steps | a wave that trades cloud credentials and signs keyless |
+
+`terragucci init` writes `.chant/trust.json` from `evidence`. It holds a `refs` rule for the default branch that needs `plan` and `policy`, and with `identity: oidc` the workflow's identity under `keyless`. On Forgejo init leaves the identity to you, since the certificate comes from your own authority. Init also writes a `pre-push` hook in your clone, which runs `terragucci workspace ref-gate pre-push`. Merge `.chant/trust.json` in a reviewed pull request: chant reads it at base.
+
+`tf-check` runs its check hooks through `terragucci ci check`. A hook whose current local evidence the policy at base accepts is skipped. With `evidence.local`, init names the check hooks under `local.checks`. The check job's hooks are not signed by a runner yet, so the `refs` rule names none of them.
+
 ## Runners
 
 [`runner`](/terragucci/reference/config/#runners) places each job by its stage:

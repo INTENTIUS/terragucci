@@ -14,6 +14,7 @@
 import {
   AGENT_COMMENT_KEYS,
   CONTROL_KEYS,
+  EVIDENCE_KEYS,
   TEMPLATES_KEYS,
   TEMPLATES_REQUIRE,
   CONTROL_NAME,
@@ -506,6 +507,15 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     policy: { ...policy, description: "Policy checks over each plan." },
     sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init." },
     check: { ...map(CHECK_KEYS, { pre_commit: bool }), description: "What tf-check runs beyond its own checks: the repo's pre-commit hooks." },
+    evidence: {
+      ...map(EVIDENCE_KEYS, {
+        identity: { ...enumOf(["oidc"]), description: "oidc: sign keyless from each job's OIDC token." },
+        audience: { type: "string", pattern: "^[\\x21-\\x7e]+$", description: "With identity: the token's audience. Default sigstore." },
+        runner_key_secret: { ...secret, description: "The secret or CI/CD variable holding the runner key." },
+        local: { ...bool, description: "true: a check hook proven on a person's machine is skipped in CI." },
+      }),
+      description: "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret.",
+    },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
     respond: {
       ...map(Object.keys(RESPONSES), each(Object.keys(RESPONSES), (event) => enumOf(RESPONSES[event as keyof typeof RESPONSES]))),

@@ -32,6 +32,8 @@
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]   (tf-check's last step: chant's `ci check`, the ci.hooks.check hooks chant.workspace.json names at base)
+ *   terragucci ci evidence sign ...   (chant's `ci evidence sign`, which the jobs run with `evidence` set)
+ *   terragucci workspace ref-gate ...   (chant's ref gate, which the pre-push hook init writes runs)
  *   terragucci check-mirror [--config <file>] [--platform <os_arch>]
  *   terragucci image recipe [--out <dir>] [--from <image>] [--binary <b>] [--platform <os/arch>[,...]] [--config <file>]
  *   terragucci registry edge [--out <dir>] [--origin <url>] [--config <file>]
@@ -1353,10 +1355,17 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "ci": {
         // tf-check's last step (chant issue 4914): chant's check stage, `ci.hooks.check` read at base, in terragucci's words.
-        if (args[0] !== "check") throw new ConfigError("usage: terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]");
         const rest = argv.slice(argv.indexOf("ci") + 1);
+        // evidence (terragucci issue 1413): the signing lines chant's plan note, plan-evidence and wave evidence jobs run.
+        if (args[0] === "evidence") return runChantInProcess(["ci", ...rest], TERRAGUCCI_WORDS);
+        if (args[0] !== "check") throw new ConfigError("usage: terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...], or terragucci ci evidence sign ...");
         const base = rest.some((a) => a === "--base" || a.startsWith("--base=")) ? [] : ["--base", ciBaseRef(process.env, { base: process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }) ?? "HEAD"];
         return runChantInProcess(["ci", ...rest, ...base], TERRAGUCCI_WORDS);
+      }
+      case "workspace": {
+        // The ref gate's pre-push hook init writes with evidence set (./trust.ts): chant's `workspace ref-gate`.
+        if (args[0] !== "ref-gate") throw new ConfigError("usage: terragucci workspace ref-gate pre-push|status|install ...");
+        return runChantInProcess(["workspace", ...argv.slice(argv.indexOf("workspace") + 1)], TERRAGUCCI_WORDS);
       }
       case "agent": {
         const sub = args[0];

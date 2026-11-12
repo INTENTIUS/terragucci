@@ -194,7 +194,8 @@ import type { ResolvedControl } from "./control-repo";
 import { rootRoles } from "./cloud-identity";
 import { cloudLogin, LOGIN_RESTART_MARKER, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import { BEFORE_MERGE_HEAD_ENV } from "@intentius/chant/op/before-merge";
-import { applyTrade, githubCommentJob, githubPlanJobs, gitlabPlanJobs, PLAN_ENV, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR, planOptions, planTrade, type PlanJobsInput } from "./product-plan";
+import type { PipelineEvidence } from "@intentius/chant/ci-evidence-jobs";
+import { applyTrade, githubCommentJob, githubPlanJobs, gitlabPlanJobs, PLAN_ENV, PLAN_EVIDENCE_JOB, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR, planOptions, planTrade, type PlanJobsInput } from "./product-plan";
 import { githubWaves, gitlabWaves, wavesBeforeMerge, wavesJobNames, wavesShape, type WavesInput } from "./render-waves";
 import { driftWatch } from "./report/overdue";
 import type { AgentCommentInput } from "./agent-comment";
@@ -325,6 +326,12 @@ export interface PipelineInput {
    * reads it. Set when `check.pre_commit` is on (`preCommit`, ./pre-commit.ts) or chant.workspace.json names check hooks.
    */
   checkHooks?: { preCommit: boolean };
+  /**
+   * `evidence` (terragucci issue 1413): chant's runner identity. The plan note job (GitLab: `plan-evidence`)
+   * signs `plan` and `policy`, and each wave `plan:<wave>` and `policy:<wave>`, a wave that trades cloud
+   * credentials and signs keyless in its `<wave job>-evidence` job.
+   */
+  evidence?: PipelineEvidence;
   /** Roots in apply order: each inner list applies together. In Terragrunt mode, units by wave. */
   layers: string[][];
   /**
@@ -1585,6 +1592,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     forge,
     image,
     waves: cut,
+    ...(input.evidence ? { evidence: input.evidence } : {}),
     ...(tg ? { terragrunt: { binary, ...(tg.exclude?.length ? { exclude: tg.exclude } : {}), parallelism: tg.parallelism } } : {}),
     shares: sharesOf,
     ...(groups ? { groups } : {}),
@@ -1662,6 +1670,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(drift ? { watches: [driftWatch(drift, forge)] } : {}),
     others: [],
     ...(input.atlantisComments ? { atlantis: true } : {}),
+    ...(input.evidence ? { evidence: input.evidence } : {}),
   };
   // chant's product pipeline gives the generator the apply status, the stale marking of the plan notes, the before-merge
   // mode and the names its comment job re-runs or dispatches by, from the same shape and names (./render-waves.ts).
@@ -1760,7 +1769,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // The note job runs in the plan stage: the plan notes pipeline runs no other job, so the project's stages need no new one.
     // It posts with the project token token_env names, which chant reads as CHANT_GITLAB_TOKEN before GITLAB_TOKEN.
     const noteVars = (chantPlan.note.variables as Record<string, string> | undefined) ?? {};
-    const planNote = new GitLabJob({ ...chantPlan.note, stage: "plan", image: jobImage, variables: { ...noteVars, ...(tokenEnv && tokenEnv !== "GITLAB_TOKEN" ? { CHANT_GITLAB_TOKEN: `$${tokenEnv}` } : {}) } } as never);
+    // With evidence, chant's plan-evidence job signs first, in the same stage, and the note waits for it (a failed one leaves the note to post).
+    const planEvidence = chantPlan.evidence ? new GitLabJob({ ...chantPlan.evidence, stage: "plan", image: jobImage } as never) : undefined;
+    const planNote = new GitLabJob({ ...chantPlan.note, stage: "plan", image: jobImage, ...(planEvidence ? { needs: [{ job: PLAN_EVIDENCE_JOB, artifacts: true }] } : {}), variables: { ...noteVars, ...(tokenEnv && tokenEnv !== "GITLAB_TOKEN" ? { CHANT_GITLAB_TOKEN: `$${tokenEnv}` } : {}) } } as never);
     const jobs = new Map<string, never>([["check", check as never]]);
     if (glFmt) {
       // After a check that found formatting on a branch with a merge request, chant's commit job (chant#4749) runs
@@ -1786,6 +1797,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       jobs.set("fmt-push", new GitLabJob(pushJob as never) as never);
     }
     jobs.set("plan", plan as never);
+    if (planEvidence) jobs.set(PLAN_EVIDENCE_JOB, planEvidence as never);
     jobs.set("plan-note", planNote as never);
     // The waves are chant's jobs (./render-waves.ts): every wave job, the status jobs, the stale marking, before merge the
     // split jobs and pr-merge, the control dispatch and the resume. Every other job of terragucci's waits on apply-done.

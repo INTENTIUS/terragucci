@@ -24,6 +24,7 @@ import { buildForgejoOpWavesDoc } from "@intentius/chant-lexicon-forgejo/compone
 import { generateGitlabOpWavesPipeline } from "@intentius/chant-lexicon-gitlab/components/generate-op-waves-pipeline";
 import { cloudLogin, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import type { CloudTradeSpec } from "@intentius/chant/ci-identity";
+import type { PipelineEvidence } from "@intentius/chant/ci-evidence-jobs";
 import { parseYAML } from "@intentius/chant/yaml";
 import { WAVES_OP, WAVES_SPEC } from "./chant-waves";
 import { TERRAGUCCI_WORDS } from "./ci-words";
@@ -151,6 +152,11 @@ export interface WavesInput {
   cache?: unknown;
   /** GitLab: the condition every wave job's rule adds (the schedules and pipelines the waves sit out). */
   gitlabRunIf?: string;
+  /**
+   * `evidence` (terragucci issue 1413): each wave signs `plan:<wave>` and `policy:<wave>`. A wave that
+   * trades cloud credentials and signs keyless signs in chant's `<wave job>-evidence` job (chant issue 4926).
+   */
+  evidence?: PipelineEvidence;
 }
 
 /** The spec's `respond`: apply-failed's agent is chant's triage, and the agent's input terragucci's report keeps. */
@@ -283,6 +289,7 @@ function commonOptions(input: WavesInput, spec: { waves: unknown[] }, pipeline: 
     renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: true },
     ...pipeline,
     applyStatus: { context: APPLY_STATUS },
+    ...(input.evidence ? { evidence: input.evidence } : {}),
     waveJobs: Object.fromEntries((spec.waves as { name: string }[]).map((w) => [w.name, job])),
     jobNames: wavesJobNames(input.waves.length),
   };
