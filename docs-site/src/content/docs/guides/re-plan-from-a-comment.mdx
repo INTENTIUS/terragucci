@@ -133,10 +133,10 @@ The text is untrusted and never reaches a script. `terragucci comment` reads it 
 |---|---|---|---|
 | `/terragucci plan` | a re-plan | every GitHub and Forgejo pipeline | a new merge request pipeline |
 | `/terragucci plan <root>` | a re-plan of that root, which must be exactly a root the pipeline knows | every GitHub and Forgejo pipeline | the root is checked, and the whole merge request is planned |
-| `/terragucci apply` | the approved waves | merged pull requests; open ones with `apply.when: pull-request` | merged merge requests: a retry of the merge commit's first apply job that did not succeed; with `apply.when: pull-request`, open ones: an `mr-apply` pipeline on the default branch |
+| `/terragucci apply` | the approved waves | merged pull requests; open ones with `apply.when: pull-request` | merged merge requests: a retry of the merge commit's first apply job that did not succeed; with `apply.when: pull-request`, open ones: [chant](/terragucci/concepts/glossary/#chant)'s decision, then the waves' pipeline on the default branch |
 | `/terragucci apply wave-<n>` | the approved waves up to wave n | as above | an open merge request with `apply.when: pull-request`; otherwise refused, since GitLab runs the waves after a retried job by itself |
-| `/terragucci lock` | locks on the roots (in a Terragrunt repo, the units) this pull request reaches, with no apply | `apply.when: pull-request` or `locks: plan` | `apply.when: pull-request`, through `mr-apply`; otherwise answered as unsupported |
-| `/terragucci unlock` | a release of this pull request's locks | `apply.when: pull-request` or `locks: plan` | as `lock` |
+| `/terragucci lock` | locks on the roots (in a Terragrunt repo, the units) this pull request reaches, with no apply | `locks: plan` under `apply.when: merge`; with `apply.when: pull-request`, `/terragucci apply` takes the locks | answered as unsupported |
+| `/terragucci unlock` | a release of this pull request's locks | as `lock` | as `lock` |
 | `atlantis plan [-d <dir>]`, `atlantis apply` | the same as `/terragucci plan [<root>]` and `/terragucci apply`, with the same checks | `atlantis_comments: true` | the same, with `atlantis_comments: true` |
 | `/terragucci agent <ask>` | a coding agent's change | `agent.comment` set; see [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) | with `agent.comment` set, starts the agent's pipeline on the default branch; otherwise answered that it is off |
 
@@ -149,36 +149,35 @@ No comment approves, and a re-plan cannot change what an approval binds. [When a
 
 ## Apply a merged pull request
 
-On a merged pull request, `/terragucci apply` re-runs `tf-apply` for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
+On a merged pull request, `/terragucci apply` re-runs the waves' jobs of the merge commit's run that did not succeed, for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.
 
 | Part | What happens |
 |---|---|
-| Workflow | `apply-comment` runs the default branch's workflow at the merge commit, never the head |
-| Checks | `terragucci comment-apply` checks the comment before any credential, against the [merged-PR column](/terragucci/reference/pipeline/#ignored-comments) |
-| Credentials | the job assumes `oidc.apply_role`, beside any push's apply |
+| Workflow | `apply-comment`, chant's comment job, runs the default branch's workflow; it holds no cloud credential and runs none of the change's code |
+| Checks | `apply-comment` checks the comment before it re-runs anything, against the [merged-PR column](/terragucci/reference/pipeline/#ignored-comments) |
+| Credentials | the re-run wave jobs assume `oidc.apply_role`, as on a push |
 | Another run's resources | with [choudoufu](/terragucci/concepts/glossary/#choudoufu), a wave that changes a resource another run is applying is refused; the reply names that run, and you comment again once it is done |
 | Waves | from wave 1 until one does not apply; `wave-<n>` stops after wave n |
 | A waiting wave | waits as on a push |
 | A refused wave | prints its diff (`respond.wave-refused`) |
 | A failed wave | prints its triage (`respond.apply-failed`) |
-| [Terragrunt](/terragucci/guides/use-terragrunt/) | the same job and refusals; each wave runs `tf-apply --terragrunt` on its units from the merge commit |
+| [Terragrunt](/terragucci/guides/use-terragrunt/) | the same job and refusals; each wave job runs `terragucci run wave` on its units from the merge commit |
 
 | On GitLab | |
 |---|---|
 | `/terragucci apply` | retries the waiting wave's job in the merge commit's pipeline |
-| The gate | `stage tf-apply` decides it again, so a wave with no approval waits again; the waves after it follow, each behind its own gate |
+| The gate | the wave job decides it again, so a wave with no approval waits again; the waves after it follow, each behind its own gate |
 | A merge commit a later apply superseded | refused, as on GitHub |
 
 ## Apply an open pull request
 
 With [`apply.when: pull-request`](/terragucci/reference/config/#apply-before-merge), `/terragucci apply` on an open pull request applies its head before merge. [Apply a pull request before it merges](/terragucci/guides/apply-before-merge/) has the steps.
 
-Anyone with write access can lock or unlock, and the reply names what was locked or released. [Locks](/terragucci/guides/apply-before-merge/#locks) lists everything that takes and releases one.
+`/terragucci apply` takes the locks of the roots the change reaches when it decides the head, and `/terragucci lock` and `/terragucci unlock` do not run. [Locks](/terragucci/guides/apply-before-merge/#locks) lists everything that takes and releases one.
 
 | Comment | Does | Refused when |
 |---|---|---|
-| `/terragucci lock` | locks the roots the pull request reaches, applying nothing, so no other pull request applies them first; needs no approval or checks | another open pull request holds one of those roots; the reply names it |
-| `/terragucci unlock` | releases the pull request's locks so another can apply those roots; under [`locks: plan`](/terragucci/reference/config/#plan-locks) it locks again on its next push or `/terragucci plan` | |
+| `/terragucci apply` | locks the roots the pull request reaches, then applies its head | another open pull request holds one of those roots; the reply names it |
 | `/terragucci plan`, under `locks: plan` | takes the locks again once a holder is gone | |
 
 ## Next

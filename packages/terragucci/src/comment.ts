@@ -3,10 +3,11 @@
  * `/terragucci plan [root]` re-plans what the pull request changes, read-only.
  * Nothing here applies, approves or unlocks, and a re-plan changes nothing an
  * approval covers, since approvals bind digests. `/terragucci apply [wave-<n>]`,
- * `/terragucci lock` and `/terragucci unlock` parse here too, and are decided
- * by `terragucci comment-apply` (comment-apply.ts): it re-runs an already
- * approved apply after the merge, or, with `apply.when: pull-request`,
- * applies an open pull request, and takes and releases its root locks.
+ * `/terragucci lock` and `/terragucci unlock` parse here too. The apply is
+ * chant's comment job (./product-plan.ts): it re-runs an already approved
+ * apply after the merge, or, with `apply.when: pull-request`, decides an open
+ * pull request's head and dispatches its waves. The locks are the pr-lock
+ * job's (comment-apply.ts).
  *
  * The comment is untrusted input. It is read from the event file, never from
  * an expression in a script, and it is parsed against one strict grammar. The
@@ -366,13 +367,13 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
     await reply(parsed.reason);
     return stop(parsed.reason);
   }
-  // A pipeline with the comment-apply job sends `/terragucci apply` there and never here; one written before it had the job says so.
+  // A pipeline with the apply-comment job sends `/terragucci apply` there and never here; one written before it had the job says so.
   if (parsed.kind === "apply") {
     const reason = "this pipeline does not apply on a comment: re-run the apply job on the forge, or push to the default branch again";
     await reply(reason);
     return stop(reason);
   }
-  // With `apply.when: pull-request` the comment-apply job reads `/terragucci lock` and `/terragucci unlock`; any other pipeline takes no locks.
+  // With `locks: plan` the pr-lock job reads `/terragucci lock` and `/terragucci unlock`; any other pipeline takes no locks.
   if (parsed.kind === "lock") {
     const reason = "this repository applies after merge, so pull requests take no locks";
     await reply(reason);

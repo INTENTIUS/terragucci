@@ -26,9 +26,10 @@ import { cloudLogin, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import type { CloudTradeSpec } from "@intentius/chant/ci-identity";
 import { parseYAML } from "@intentius/chant/yaml";
 import { WAVES_OP, WAVES_SPEC } from "./chant-waves";
+import { TERRAGUCCI_WORDS } from "./ci-words";
 import type { ResolvedControl } from "./control-repo";
 import type { ApplyGroup } from "./cloud-identity";
-import type { ApplyMerge, ForgeName, RolePair, RunnerSpec } from "./config";
+import type { ApplyMerge, ApplyRequire, ForgeName, RunnerSpec } from "./config";
 
 /** The status context the waves' status jobs post, which branch protection names. */
 export const APPLY_STATUS = "terragucci/apply";
@@ -275,6 +276,9 @@ function commonOptions(input: WavesInput, spec: { waves: unknown[] }, pipeline: 
   return {
     specFile: WAVES_SPEC,
     bin: "terragucci",
+    // terragucci's words: the control dispatch's event and the control repo's workflow are terragucci-applied and
+    // terragucci-dependents.yml, as the control repo's pipeline (./control-repo.ts) listens for them.
+    words: TERRAGUCCI_WORDS,
     image: input.image,
     renderSpec: { command: ["terragucci", "waves-spec"], runsAtHead: true },
     ...pipeline,
@@ -284,9 +288,10 @@ function commonOptions(input: WavesInput, spec: { waves: unknown[] }, pipeline: 
   };
 }
 
-/** chant's before-merge settings for the product pipeline (`wavesBeforeMerge`), from apply.merge and its token. */
-export function wavesBeforeMerge(forge: ForgeName, bm: { merge: ApplyMerge; tokenSecret?: string }): Record<string, unknown> {
+/** chant's before-merge settings for the product pipeline (`wavesBeforeMerge`), from apply.merge and its token, and apply.requires (unset: every one). */
+export function wavesBeforeMerge(forge: ForgeName, bm: { merge: ApplyMerge; tokenSecret?: string }, requires?: readonly ApplyRequire[]): Record<string, unknown> {
   return {
+    ...(requires ? { requires: [...requires] } : {}),
     merge: bm.merge,
     ...(bm.tokenSecret ? { mergeTokenSecret: bm.tokenSecret } : {}),
     ...(forge === "gitlab" ? { environment: MERGE_ENVIRONMENT } : { workflowFile: "terragucci.yml", dispatchInputs: { pr: WAVES_DISPATCH_INPUTS.pr, head: WAVES_DISPATCH_INPUTS.head, digest: WAVES_DISPATCH_INPUTS.digest } }),

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
 import { earlierWaveOutcomes, waveOutcomeFileName as outcomeFileName } from "@intentius/chant/wave-blocked";
+import { parseYAML } from "@intentius/chant/yaml";
 import { renderPipeline } from "../src/render";
 import { tmp } from "./helpers";
 import { setup } from "./apply-helpers";
@@ -131,12 +132,17 @@ describe("the pipeline hands each wave's outcome to the next (#1161)", () => {
     renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: LAYERS, env: {}, ...extra } as never).content;
 
   it("runs a later wave once the one before it applied or failed, after fetching the earlier reports", () => {
+    // chant's wave jobs: a later wave runs unless the run was cancelled, downloads the earlier jobs' outcomes, and chant's
+    // wave runner blocks only the roots a failure holds.
     for (const forge of ["github", "forgejo"] as const) {
-      const text = render(forge);
-      expect(text).toContain("needs.apply-wave-1.result == ''success'' || needs.apply-wave-1.result == ''failure''");
-      expect(text).toContain("!cancelled() && (needs.apply-wave-2.result == ''success''");
-      expect(text.match(/Fetch the earlier waves' outcomes/g)).toHaveLength(2);
-      expect(text.match(/--after terragucci-earlier/g)).toHaveLength(3);
+      const doc = parseYAML(render(forge).split("\n").filter((l) => !l.startsWith("#")).join("\n")) as { jobs: Record<string, { if: string; needs: string[]; steps: { name?: string }[] }> };
+      for (const k of [2, 3]) {
+        const job = doc.jobs[`apply-wave-${k}`]!;
+        expect(job.needs, `wave ${k}`).toEqual([`apply-wave-${k - 1}`]);
+        expect(job.if, `wave ${k}`).toContain("!cancelled()");
+        expect(job.steps.map((s) => s.name), `wave ${k}`).toContain("Download the earlier jobs' outcomes");
+      }
+      expect(doc.jobs["apply-wave-1"].steps.map((s) => s.name)).not.toContain("Download the earlier jobs' outcomes");
     }
   });
 

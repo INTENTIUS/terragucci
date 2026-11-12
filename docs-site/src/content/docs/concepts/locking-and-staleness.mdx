@@ -20,7 +20,7 @@ terragucci adds these on every binary and repo shape. Each works per root, or pe
 
 ### Pull request locks
 
-Under `apply.when: pull-request` a pull request holds each root it reaches until it merges or closes; `/terragucci lock` takes the hold without applying. Another pull request that reaches a held root is refused with the holder named. With `locks: plan` the hold starts at the first plan. In a Terragrunt repo dependency blocks extend the reach; in an Atmos repo a stack manifest change reaches every instance; with `synth`, such as a CDK Terrain app, a change to the app reaches every stack. [Apply before merge](/terragucci/guides/apply-before-merge/#locks), [plan locks](/terragucci/reference/pipeline/#plan-locks).
+Under `apply.when: pull-request` a pull request holds each root it reaches from the moment `/terragucci apply` decides its head until it merges or closes. Another pull request that reaches a held root is refused with the holder named. With `locks: plan` the hold starts at the first plan. In a Terragrunt repo dependency blocks extend the reach; in an Atmos repo a stack manifest change reaches every instance; with `synth`, such as a CDK Terrain app, a change to the app reaches every stack. [Apply before merge](/terragucci/guides/apply-before-merge/#locks), [plan locks](/terragucci/reference/pipeline/#plan-locks).
 
 ### Applies kept apart
 

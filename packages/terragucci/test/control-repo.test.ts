@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig, type ControlSettings } from "../src/config";
-import { chantControlPipelineFile, dispatchScript, resolveControl } from "../src/control-repo";
-import { commentApplyScript, renderPipeline, resumeScript } from "../src/render";
+import { chantControlPipelineFile, resolveControl } from "../src/control-repo";
+import { renderPipeline } from "../src/render";
 import { tmp } from "./helpers";
 
 const layers = [["a"]];
@@ -13,16 +13,15 @@ const input = { binary: "tofu" as const, version: "1.13.1", image: "img:1", laye
 const control: ControlSettings = { repo: "github.com/acme/control", op: "deploy" };
 const doc = (text: string): any => parseYAML(text);
 
-/** Runs a script with a fake curl and npm/npx that record their arguments. */
-function run(script: string, env: Record<string, string>): { status: number; out: string; log: string } {
+/** Runs a script with a fake curl that records its arguments, and a fake terragucci whose `post sent` prints `sent`. */
+function run(script: string, env: Record<string, string>, sent = "0"): { status: number; out: string; log: string } {
   const dir = tmp();
   const bin = join(dir, "bin");
   mkdirSync(bin);
   const log = join(dir, "calls.log");
   for (const [name, body] of Object.entries({
-    curl: `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${log}\nprev=""; for a in "$@"; do [ "$prev" = "-o" ] && echo '{}' > "$a"; prev="$a"; done\nprintf 200`,
-    npm: `#!/usr/bin/env bash\necho "npm $*" >> ${log}`,
-    npx: `#!/usr/bin/env bash\necho "npx $*" >> ${log}`,
+    curl: `#!/usr/bin/env bash\nprintf 'curl %s\\n' "$*" >> ${log}\nprev=""; for a in "$@"; do [ "$prev" = "-o" ] && echo '{}' > "$a"; prev="$a"; done\nprintf 200`,
+    terragucci: `#!/usr/bin/env bash\nprintf 'terragucci %s\\n' "$*" >> ${log}\n[ "$2" = sent ] && echo ${sent}\nexit 0`,
   })) {
     writeFileSync(join(bin, name), body);
     chmodSync(join(bin, name), 0o755);
@@ -52,38 +51,50 @@ describe("control: the member's settings", () => {
   });
 });
 
-describe("control: the dispatch step in a member's pipeline", () => {
-  const c = resolveControl(control, "infra");
-  it("github: a repository_dispatch to the control repo, with the token in a header", () => {
-    const r = run(dispatchScript(c), { TG_CONTROL_TOKEN: "sekret", TG_SHA: "abc123" });
+// The member's dispatch is chant's control job beside the waves (./render-waves.ts), in terragucci's words.
+const host = { github: "github.com", gitlab: "gitlab.com", forgejo: "codeberg.org" } as const;
+const withControl = (forge: keyof typeof host, extra: object = {}) => renderPipeline({ forge, ...input, control: resolveControl({ repo: `${host[forge]}/acme/control`, op: "deploy" }, "infra"), ...extra });
+/** The control job's dispatch script: its last step on GitHub and Forgejo, its heredoc on GitLab. */
+const dispatchOf = (forge: keyof typeof host): { run: string; env: Record<string, string> } => {
+  const d = doc(withControl(forge).content);
+  if (forge === "gitlab") return { run: (d.control.script as string[]).find((s) => s.includes("CONTROL_DISPATCH"))!, env: {} };
+  const step = d.jobs.control.steps.at(-1);
+  return { run: step.run, env: step.env };
+};
+
+describe("control: the dispatch in a member's pipeline", () => {
+  it("github: a repository_dispatch to the control repo, with the token in a header, under the event the control repo listens for", () => {
+    const r = run(dispatchOf("github").run, { CHANT_CONTROL_TOKEN: "sekret", CHANT_CONTROL_SHA: "abc123", CHANT_CONTROL_OUTCOME: "applied" });
     expect(r.status).toBe(0);
     expect(r.log).toContain("https://api.github.com/repos/acme/control/dispatches");
     expect(r.log).toContain('"event_type":"terragucci-applied"');
     expect(r.log).toContain('"member":"infra","op":"deploy","sha":"abc123"');
     expect(r.out).not.toContain("sekret");
+    expect(chantControlPipelineFile("github").content).toContain("terragucci-applied");
   });
-  it("gitlab and forgejo: a pipeline trigger and a workflow dispatch", () => {
-    const gl = dispatchScript(resolveControl({ repo: "gitlab.com/acme/ctl", op: "deploy" }, "infra"));
-    expect(gl).toContain("https://gitlab.com/api/v4/projects/acme%2Fctl/trigger/pipeline");
+  it("gitlab and forgejo: a pipeline trigger, and a dispatch of the workflow terragucci writes in the control repo", () => {
+    const gl = dispatchOf("gitlab").run;
+    expect(gl).toContain("https://gitlab.com/api/v4/projects/acme%2Fcontrol/trigger/pipeline");
     expect(gl).toContain("variables[CHANT_CONTROL_MEMBER]=$member");
-    const fj = dispatchScript(resolveControl({ repo: "codeberg.org/acme/ctl", op: "deploy" }, "infra"));
-    expect(fj).toContain("https://codeberg.org/api/v1/repos/acme/ctl/actions/workflows/terragucci-dependents.yml/dispatches");
+    const fj = dispatchOf("forgejo").run;
+    const file = chantControlPipelineFile("forgejo").path.split("/").at(-1);
+    expect(file).toBe("terragucci-dependents.yml");
+    expect(fj).toContain(`https://codeberg.org/api/v1/repos/acme/control/actions/workflows/${file}/dispatches`);
   });
-  it.each(["github", "gitlab", "forgejo"] as const)("%s: only the default branch's last apply sends it, through a job of its own", (forge) => {
-    const host = { github: "github.com", gitlab: "gitlab.com", forgejo: "codeberg.org" }[forge];
+  it.each(["github", "gitlab", "forgejo"] as const)("%s: only the default branch's waves send it, through a job of its own that alone holds the token", (forge) => {
     const plain = renderPipeline({ forge, ...input });
-    const r = renderPipeline({ forge, ...input, control: resolveControl({ repo: `${host}/acme/control`, op: "deploy" }, "infra") });
-    expect(plain.content).not.toContain("TG_CONTROL_TOKEN");
+    const r = withControl(forge);
+    expect(plain.content).not.toContain("TERRAGUCCI_CONTROL_TOKEN");
     const d = doc(r.content);
     const job = forge === "gitlab" ? d.control : d.jobs.control;
-    expect(job).toBeDefined();
+    expect(job.needs).toEqual(["apply-wave-1"]);
     if (forge === "gitlab") {
-      expect(job.needs).toEqual(["apply-wave-1"]);
-      expect(job.variables.TG_CONTROL_TOKEN).toBe("$TERRAGUCCI_CONTROL_TOKEN");
+      expect(job.resource_group).toBe("terragucci-control");
+      expect(dispatchOf(forge).run).toContain('CHANT_CONTROL_TOKEN="${TERRAGUCCI_CONTROL_TOKEN:-}"');
     } else {
-      expect(job.needs).toBe("apply-wave-1");
-      expect(job.env.TG_CONTROL_TOKEN).toBe("${{ secrets.TERRAGUCCI_CONTROL_TOKEN }}");
-      expect(job.permissions ?? { statuses: "write" }).toEqual({ statuses: "write" });
+      expect(dispatchOf(forge).env.CHANT_CONTROL_TOKEN).toBe("${{ secrets.TERRAGUCCI_CONTROL_TOKEN }}");
+      expect(r.content.split("secrets.TERRAGUCCI_CONTROL_TOKEN").length).toBe(2);
+      expect(job.concurrency.group).toContain("github.sha");
     }
   });
 });
@@ -107,112 +118,38 @@ describe("control: the control repo as a typed member", () => {
   });
 });
 
-describe("control: every path that completes an apply tells the control repo, once", () => {
-  const forges = ["github", "forgejo"] as const;
-  const host = { github: "github.com", forgejo: "codeberg.org" };
-  const c = (forge: (typeof forges)[number]) => resolveControl({ repo: `${host[forge]}/acme/control`, op: "deploy" }, "infra");
-  const render = (forge: (typeof forges)[number], extra: object = {}) => renderPipeline({ forge, ...input, resume: 15, control: c(forge), ...extra });
-  const resumeDoc = (r: ReturnType<typeof renderPipeline>) => doc(r.extra!.find((e) => /resume/.test(e.path))!.content);
-
-  it.each(forges)("%s: the resume workflow hands its commit to a control job of its own", (forge) => {
-    const d = resumeDoc(render(forge));
-    const step = d.jobs.resume.steps.find((st: any) => st.id === "resume");
-    expect(step.run).toContain('echo "control_sha=$TG_SHA" >> "$GITHUB_OUTPUT"');
-    expect(d.jobs.resume.outputs.control_sha).toBe("${{ steps.resume.outputs.control_sha }}");
-    const job = d.jobs.control;
-    expect(job.needs).toBe("resume");
-    expect(job.if).toBe("needs.resume.outputs.control_sha != ''");
-    expect(job.env.TG_SHA).toBe("${{ needs.resume.outputs.control_sha }}");
-    expect(job.env.TG_CONTROL_TOKEN).toBe("${{ secrets.TERRAGUCCI_CONTROL_TOKEN }}");
-    expect(job.permissions ?? { statuses: "write" }).toEqual({ statuses: "write" });
-    expect(JSON.stringify(d.jobs.resume)).not.toContain("TG_CONTROL_TOKEN");
-    expect(job.steps[0].run).toContain("/dispatches");
+describe("control: the control repo is told once per commit", () => {
+  // A comment's re-run and the resume start the wave jobs of the run again, and that run's control job tells the control repo.
+  it.each(["github", "forgejo"] as const)("%s: the resume workflow and the comment job hold no control token", (forge) => {
+    const r = withControl(forge, { resume: 15 });
+    const resume = r.extra!.find((e) => /resume/.test(e.path))!;
+    expect(Object.keys(doc(resume.content).jobs)).toEqual(["resume"]);
+    expect(resume.content).not.toContain("CONTROL");
+    expect(JSON.stringify(doc(r.content).jobs["apply-comment"])).not.toContain("CONTROL_TOKEN");
   });
-  it.each(forges)("%s: a comment that applied a merged commit hands it on, and the open head does not", (forge) => {
-    const d = doc(render(forge).content);
-    expect(d.jobs["apply-comment"].outputs.control_sha).toBe("${{ steps.apply.outputs.control_sha }}");
-    expect(d.jobs["apply-comment"].steps.find((st: any) => st.id === "apply")).toBeDefined();
-    expect(JSON.stringify(d.jobs["apply-comment"])).not.toContain("TG_CONTROL_TOKEN");
-    const job = d.jobs["control-comment"];
-    expect(job.needs).toBe("apply-comment");
-    expect(job.env.TG_SHA).toBe("${{ needs.apply-comment.outputs.control_sha }}");
-    expect(job.steps[0].run).toContain("/dispatches");
-    // apply.when: pull-request: the push after the merge confirms and dispatches; a comment dispatches only for a merged commit.
-    const pr = doc(render(forge, { applyWhen: "pull-request" }).content);
-    expect(pr.jobs.control.needs).toBe("confirm");
-    expect(pr.jobs["control-comment"].needs).toBe("apply-comment");
-  });
-  it.each(forges)("%s: the push, the resume and the comment dispatch share one script, so one mark", (forge) => {
-    const d = doc(render(forge).content);
-    const r = resumeDoc(render(forge));
-    const scripts = [d.jobs.control.steps[0].run, d.jobs["control-comment"].steps[0].run, r.jobs.control.steps[0].run];
-    expect(new Set(scripts).size).toBe(1);
-    expect(scripts[0]).toContain("terragucci post sent terragucci/control");
-    expect(d.jobs.control.concurrency.group).toContain("github.sha");
+  it("gitlab: one control job, and the resume job drops the control tokens GitLab hands every job before it runs", () => {
+    const d = doc(withControl("gitlab", { resume: 15 }).content);
+    expect(Object.keys(d).filter((k) => /control/.test(k))).toEqual(["control"]);
+    expect(d.resume.script).toEqual(["unset CHANT_CONTROL_TOKEN CHANT_CONTROL_READ_TOKEN TERRAGUCCI_CONTROL_TOKEN TERRAGUCCI_CONTROL_READ_TOKEN", "terragucci run resume --op tf-apply"]);
   });
   it("no control, no job and no output", () => {
     const r = renderPipeline({ forge: "github", ...input, resume: 15 });
-    expect(r.content).not.toContain("control");
+    expect(r.content).not.toContain("terragucci/control");
+    expect(doc(r.content).jobs.control).toBeUndefined();
     expect(r.extra!.map((e) => e.content).join("")).not.toContain("control");
   });
-  it("gitlab: a retried wave unblocks the one control job, and mr-apply applies a head, so neither adds a dispatch", () => {
-    const d = doc(renderPipeline({ forge: "gitlab", ...input, resume: 15, comments: "*/5 * * * *", applyWhen: "pull-request", applyMergeTokenEnv: "MERGE_TOKEN", control: resolveControl({ repo: "gitlab.com/acme/ctl", op: "deploy" }, "infra") }).content);
-    expect(Object.keys(d).filter((k) => /control/.test(k))).toEqual(["control"]);
-    expect(d.control.needs).toEqual(["confirm"]);
-    expect(JSON.stringify(d["mr-apply"])).not.toContain("CONTROL");
-    expect(JSON.stringify(d.resume)).not.toContain("CONTROL");
-  });
-
-  const hand = (open: string, last: string) => {
-    const line = commentApplyScript("tofu", layers, "github", undefined, { control: true, when: "pull-request" }).split("\n").find((l) => l.includes("control_sha"))!;
-    const out = join(tmp(), "out");
-    const r = spawnSync("bash", ["-c", `last=${last}; count=1; TG_SHA=abc123; TG_OPEN=${open}; ${line}`], { env: { ...process.env, GITHUB_OUTPUT: out }, encoding: "utf-8" });
-    let written = "";
-    try {
-      written = readFileSync(out, "utf-8");
-    } catch {}
-    return { status: r.status, written };
-  };
-  it("a comment hands on the commit only when every wave applied from the merge commit", () => {
-    expect(hand("0", "1").written).toBe("control_sha=abc123\n");
-    expect(hand("1", "1").written).toBe("");
-    expect(hand("0", "2").written).toBe("");
-  });
-  it("resumeScript hands its commit on after the wave loop", () => {
-    const lines = resumeScript("tofu", layers, "github", undefined, { control: true }).split("\n");
-    const loop = lines.findIndex((l) => l.includes("tf-apply"));
-    expect(lines.findIndex((l) => l.includes("control_sha"))).toBeGreaterThan(loop);
-    expect(resumeScript("tofu", layers, "github", undefined, {})).not.toContain("control_sha");
-  });
-
   it("sends once: a commit already marked is not sent again, and a new send marks it", () => {
-    const script = dispatchScript(c("github"), "github");
-    const withPost = (sent: string) => {
-      const dir = tmp();
-      const bin = join(dir, "bin");
-      mkdirSync(bin);
-      const log = join(dir, "calls.log");
-      const body = {
-        curl: `#!/usr/bin/env bash\nprintf 'curl %s\\n' "$*" >> ${log}\nprev=""; for a in "$@"; do [ "$prev" = "-o" ] && echo '{}' > "$a"; prev="$a"; done\nprintf 200`,
-        terragucci: `#!/usr/bin/env bash\nprintf 'terragucci %s\\n' "$*" >> ${log}\n[ "$2" = sent ] && echo ${sent}\nexit 0`,
-      };
-      for (const [name, text] of Object.entries(body)) {
-        writeFileSync(join(bin, name), text);
-        chmodSync(join(bin, name), 0o755);
-      }
-      const r = spawnSync("bash", ["-c", script], { env: { PATH: `${bin}:${process.env.PATH}`, TG_CONTROL_TOKEN: "t", TG_SHA: "abc123" }, encoding: "utf-8" });
-      return { status: r.status, log: readFileSync(log, "utf-8") };
-    };
-    const first = withPost("0");
+    const env = { CHANT_CONTROL_TOKEN: "t", CHANT_CONTROL_SHA: "abc123", CHANT_CONTROL_OUTCOME: "applied" };
+    const first = run(dispatchOf("github").run, env, "0");
     expect(first.status).toBe(0);
     expect(first.log).toContain("curl ");
     expect(first.log).toContain("post status terragucci/control success");
-    const again = withPost("1");
+    const again = run(dispatchOf("github").run, env, "1");
     expect(again.status).toBe(0);
     expect(again.log).not.toContain("curl ");
   });
   it("refuses a commit that is not a sha", () => {
-    const r = run(dispatchScript(c("github"), "github"), { TG_CONTROL_TOKEN: "t", TG_SHA: "x; rm -rf /" });
+    const r = run(dispatchOf("github").run, { CHANT_CONTROL_TOKEN: "t", CHANT_CONTROL_SHA: "x; rm -rf /", CHANT_CONTROL_OUTCOME: "applied" });
     expect(r.status).toBe(1);
     expect(r.log).toBe("");
   });

@@ -86,7 +86,7 @@ A root that refused to plan exits 1.
 
 ## The apply outcome
 
-On every exit but a usage error, `stage tf-apply` writes its wave's outcome to the file `TG_OUTCOME_JSON` names. With `--rest` the file holds the last wave that ran. The generated apply jobs set the variable when `notify` is on, and `terragucci notify` reads the file. A waiting wave's file carries the `terragucci approve` command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
+On every exit but a usage error, `stage tf-apply` writes its wave's outcome to the file `TG_OUTCOME_JSON` names. With `--rest` the file holds the last wave that ran. `terragucci notify` reads the file. The generated wave jobs run [`run wave`](/terragucci/reference/cli/#run-wave) and do not set the variable. A waiting wave's file carries the `terragucci approve` command that approves it and where its gate's record lives on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle).
 
 ```json
 {

@@ -22,12 +22,12 @@ These holds work across pull requests. The backend's state lock keeps two writer
 
 | Setting | Roots are held | Forges |
 |---|---|---|
-| `locks: apply` (the default), with `apply.when: pull-request` | when the change applies before merge, or a writer comments `/terragucci lock` | GitHub, GitLab, Forgejo |
+| `locks: apply` (the default), with `apply.when: pull-request` | when `/terragucci apply` decides the change's head before merge | GitHub, GitLab, Forgejo |
 | `locks: plan` | from the first plan, and again on each push or `/terragucci plan` | GitHub, Forgejo |
 
 Under the defaults, `apply.when: merge` and `locks: apply`, nothing is held.
 
-`init` and `config check` refuse `locks: plan` on GitLab. The hold is taken by a job that runs from the default branch, and no merge request event on GitLab runs such a job. With [`apply.when: pull-request`](/terragucci/guides/apply-before-merge/) on GitLab, the [comments](/terragucci/guides/re-plan-from-a-comment/) schedule reads `/terragucci apply` and `/terragucci lock` on a merge request and takes the hold.
+`init` and `config check` refuse `locks: plan` on GitLab. The hold is taken by a job that runs from the default branch, and no merge request event on GitLab runs such a job. With [`apply.when: pull-request`](/terragucci/guides/apply-before-merge/) on GitLab, the [comments](/terragucci/guides/re-plan-from-a-comment/) schedule reads `/terragucci apply` on a merge request and takes the hold.
 
 ## Steps
 
@@ -65,14 +65,14 @@ Nothing queues a refused change. Once the holder lets go, comment `/terragucci p
 | `/terragucci lock` | holds every root the change reaches and applies nothing; the reply names the roots |
 | `/terragucci unlock` | lets go of the change's roots; the reply names them |
 
-On GitLab a Developer or above comments, and the comments schedule answers on its next run. Both need `apply.when: pull-request` or `locks: plan`.
+Both need `locks: plan` under `apply.when: merge`, so they run on GitHub and Forgejo only. With `apply.when: pull-request` they do not run: `/terragucci apply` takes the hold.
 
 ## Release
 
 | Event | Held roots |
 |---|---|
 | the holder merges or closes | released |
-| `/terragucci unlock` on the holder | released |
+| `/terragucci unlock` on the holder, under `locks: plan` and `apply.when: merge` | released |
 | a push stops reaching a root, with `locks: plan` | that root is released |
 
 The holds are chant's [target locks](https://intentius.io/chant/guide/target-locks/) of the gate `tf-apply`, kept in `_locks/tf-apply.json` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle). A hold whose pull request merged or closed counts as released. A fork's pull request takes none. To see who holds what from a checkout, run `npx chant lock --list --gate tf-apply`.

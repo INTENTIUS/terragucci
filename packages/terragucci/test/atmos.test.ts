@@ -224,11 +224,12 @@ describe("init in an Atmos repo", () => {
     expect(r.roots).toEqual(["dev/app", "dev/vpc", "prod/app", "prod/vpc"]);
     expect(r.layers).toEqual([["dev/vpc", "prod/vpc"], ["dev/app", "prod/app"]]);
     const jobs = body(r.files[0].content);
-    for (const k of ["apply-wave-1", "apply-wave-2"]) {
+    // chant's wave jobs: the waves are the spec's, which each job renders at base through `terragucci waves-spec`.
+    for (const [i, k] of ["apply-wave-1", "apply-wave-2"].entries()) {
       const runs = (jobs[k].steps ?? []).map((s) => s.run ?? "").join("\n");
       expect(runs, k).toContain(`terragucci install atmos ${ATMOS_VERSION}`);
       expect(runs, k).toContain(`( set -e; ${ATMOS_WRITE} )`);
-      expect(runs, k).toContain("--layers 'dev/vpc,prod/vpc;dev/app,prod/app'");
+      expect(runs, k).toContain(`terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave ${i + 1} --render-spec`);
     }
     expect(jobs["apply-wave-3"]).toBeUndefined();
   });

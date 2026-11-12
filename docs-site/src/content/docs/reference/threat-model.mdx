@@ -36,7 +36,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | Approvers: under `approval: ledger` anyone who can push to `chant/lifecycle`, under `sealed` the people `.chant/allowed_signers` lists | release a gated wave | the plan digest the approval names, and under `sealed` its seal |
 | Overriders: the people `policy.override` lists at base | let one denied plan of one root through `tf-apply` | the root, plan digest and rules the override names, and under `sealed` its seal |
 | The default branch's pipeline | apply with the apply role | the apply role's trust, set to the default branch's subject alone, or with `environments` on GitHub to each environment's own subject ([State access per environment](#state-access-per-environment)) |
-| On GitLab, anyone allowed to run a pipeline on the default branch | start `mr-apply` with any variables | `mr-apply` reads the merge request, the note and the head from GitLab, and refuses a head the merge request does not have |
+| On GitLab, anyone allowed to run a pipeline on the default branch | start the waves' pipeline with any `CHANT_BEFORE_MERGE_PR`, `CHANT_BEFORE_MERGE_HEAD` and `CHANT_BEFORE_MERGE_DIGEST` | each wave job applies nothing unless a decision on `chant/lifecycle` names that head and digest, and nothing if the merge request's head moved since |
 | The review command, with `review.agent` | read a change and write a note about it | no forge token and no cloud role in its step; the note approves nothing ([The review](#the-review)) |
 | The drift agent's command, with `agent.drift` | edit files after the drift job opens the drift issue | no forge token and no cloud role in its step; its change comes back as a pull request, refused when it touches a guarded path, that plans and applies like any other |
 | An agent connected to `terragucci mcp` | read the estate, reports, state versions, audit trail and DORA figures | the server's tools only read, and it holds the reports bucket's read credentials from its own environment, never from the agent |
@@ -61,12 +61,15 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `plan-note` | after `plan` | none of the change's; the plan job's report, note and status read as data | `github.token`: statuses and pull requests write | none |
 | `replan` | `/terragucci plan` | the change's head, from the default branch's workflow | `github.token`: statuses and pull requests write, only in the step that reads the comment and the two checkouts, before the head's code runs; the step that runs it is the job's last | plan role, as keys traded for the job's OIDC token before the change's code runs; with `oidc.azure`, the token ([Re-plan](#re-plan)) |
 | `replan-note` | after `replan` | as `plan-note` | as `plan-note` | none |
-| `apply-wave-<k>` | a push to the default branch | merged code | `github.token`, `contents: write` | apply role; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
-| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | `github.token`, `contents: write` | apply role |
-| `apply-wave-<k>-<group>`, and `-share-<s>` with `waves.jobs` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | `github.token`, `contents: write` | its group's apply identities alone; an environment's group runs in its forge environment |
-| `apply-done` | with `waves.jobs` or groups, after the last wave's share or group jobs | none | `github.token`, `statuses: write` | none |
-| `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | `github.token`, `contents: write` | apply role |
-| `pr-merge` | `apply.merge: auto` | none of the change's | the merge token | none |
+| `apply-wave-<k>` | a push to the default branch | merged code | `github.token`, `contents: write`, `pull-requests: write`; the command's step gets it as `GITHUB_TOKEN` | apply role, traded before the checkout; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
+| `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | `github.token`, `contents: write`, `pull-requests: write` | apply role |
+| `apply-wave-<k>-<group>`, and `-share-<s>` with `waves.jobs` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | `github.token`, `contents: write`, `pull-requests: write` | its group's apply identities alone; an environment's group runs in its forge environment |
+| `apply-wave-<k>-plan`, `apply-wave-<k>` with `apply.when: pull-request` | the waves `apply-comment` dispatches | the decided head of the open change | `github.token`, `contents: read` | apply role in `apply-wave-<k>`, which applies the saved plan |
+| `apply-wave-<k>-gate`, `apply-wave-<k>-record` | the same | none of the change's | `github.token`, `contents: write`, `pull-requests: write` | none |
+| `apply-wave-<k>-status`, `apply-done` | after each wave; `apply-done` after the last | none | `github.token`, `statuses: write` | none |
+| `stale-notes` | a push to the default branch, beside wave 1 | none | `github.token`, `pull-requests: write`, `statuses: write` | none |
+| `apply-comment` | `/terragucci apply` | none of the change's: the default branch's commit | `github.token`, `actions: write`, `contents: write`, `pull-requests: write` | none |
+| `pr-merge` | `apply.merge: auto`, after the last wave | none of the change's | the merge token; `github.token`, `contents: write`, `pull-requests: write` | none |
 | `pr-lock` | `pull_request_target` and lock comments, with `locks: plan` | none of the change's; its diff read as data, from the default branch's workflow | `github.token`, `contents: write`, statuses and pull requests write | none |
 | `confirm` | a push, with `apply.when: pull-request` | merged code | contents read, statuses write | plan role |
 | `approval` | a review of a pull request from the repo, with `approval: pr-review` | none of the change's; the head's plan note read as data | `github.token`: statuses write, pull requests read | none |
@@ -74,7 +77,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `tips` | a push to the default branch | merged code | `contents: write`, pull requests | none |
 | `version-bump` | after the last apply, with `respond.version-bump: suggest` | merged code; it opens release pull requests | `github.token`, `contents: write`, pull requests; the `decide` key when set | none |
 | `publish` | after the last apply, with `modules.publish` | merged code; it pushes module tags | `github.token`, `contents: write`; the registry secrets, and with `modules.attest` `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`, which no other job holds | none |
-| `resume` | the resume schedule, with `apply.resume` | merged code: the default branch's commit | `github.token`, `contents: write` | apply role |
+| `resume` | the resume schedule, with `apply.resume` | none; it re-runs a waiting wave's job through the API | `github.token` | none |
 | `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else `github.token`; `contents: write`, pull requests | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the job's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
@@ -99,7 +102,8 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `plan` | a merge request from the project | the change | `GITLAB_TOKEN`, `api` scope; none with `gitlab.token: protected` | plan role |
 | `apply-wave-<k>` | a push to the default branch | merged code | `GITLAB_TOKEN` | apply role; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
 | `apply-wave-<k>-<group>` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | `GITLAB_TOKEN` | its group's apply identities alone; an environment's group runs in its forge environment, whose claims its token carries, with its `oidc.audience` as `aud` when set |
-| `apply-done` | with groups, after the last wave's group jobs | none | `GITLAB_TOKEN` | none |
+| `apply-wave-<k>-status`, `apply-done` | after each wave; `apply-done` after the last | none | `GITLAB_TOKEN` | none |
+| `stale-notes` | a push to the default branch, beside wave 1 | none | `GITLAB_TOKEN` | none |
 | `drift` | a pipeline schedule | the default branch | `GITLAB_TOKEN` | plan role |
 | `tips` | a push to the default branch | merged code | `GITLAB_TOKEN` | none |
 | `version-bump` | after the last apply, with `respond.version-bump: suggest` | merged code; it opens release merge requests | `GITLAB_TOKEN` | none |
@@ -107,8 +111,9 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `resume` | the schedule with `TERRAGUCCI_SCHEDULE=resume`, with `apply.resume` | none; it retries the default branch's waiting apply job through the API | `GITLAB_TOKEN` | none |
 | `rollout` | the schedule with `TERRAGUCCI_SCHEDULE=rollouts`, with `rollouts:` | the default branch; it edits pins and opens merge requests, and runs none of their code | `GITLAB_TOKEN` | none |
 | `comments` | the comments schedule, with `comments:` set | the default branch; notes read as data, the author's role checked; with `gitlab.token: protected`, the plan job's note and status read as data | `GITLAB_TOKEN`, to reply, post plan notes, and start or retry pipelines; with `apply.when: pull-request` also the merge token | none |
-| `mr-apply` | a default-branch pipeline `comments` starts, with `apply.when: pull-request` | the default branch's pipeline file, then the open change's head | `GITLAB_TOKEN` | apply role |
-| `pr-merge` | after `mr-apply`, with `apply.merge: auto` | none of the change's, and none of `mr-apply`'s artifacts | the merge token | none |
+| `apply-wave-<k>-plan`, `apply-wave-<k>` | a default-branch pipeline `comments` starts, with `apply.when: pull-request` | the default branch's pipeline file, then the decided head of the open change | none: both drop the forge tokens before the head's code runs | apply role in `apply-wave-<k>`, which applies the saved plan |
+| `apply-wave-<k>-gate`, `apply-wave-<k>-record` | the same pipeline | none of the change's | `GITLAB_TOKEN` | none |
+| `pr-merge` | after the last wave, with `apply.merge: auto` | none of the change's | the merge token | none |
 | `confirm` | a push, with `apply.when: pull-request` | merged code | `GITLAB_TOKEN` | plan role |
 
 | GitLab fact | What it means |
@@ -116,7 +121,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | no agent comment | no job pushes to a merge request's branch |
 | a merge request's own pipeline never applies | with `apply.when: pull-request` the apply runs in a pipeline of the default branch, so its OIDC subject is the default branch's and the apply role keeps trusting that alone |
 | the `comments` job starts that pipeline with the merge token | the one token that may run a pipeline on the protected default branch; protected and scoped to the `terragucci-merge` environment, which only `comments` and `pr-merge` name |
-| the pipeline's variables name the merge request, the note and the head | they are pointers: `mr-apply` reads the note, its author's role, the merge request and its head from GitLab before any credential, and refuses a head that differs |
+| the pipeline's variables name the merge request, the decided head and the decision's digest | they are pointers: each wave job checks them against the decision on `chant/lifecycle` before any credential, and applies nothing when the merge request's head moved |
 | by default a merge request's code runs with `GITLAB_TOKEN` | its author can edit any job in the merge request's pipeline, and the token acts as the project's bot: it posts notes and statuses and pushes branches, `chant/lifecycle` included, so under `approval: ledger` it can write an approval line |
 | the plan job holds no token | chant's plan job drops the forge tokens before the merge request's code runs and writes its note and status into its report; chant's `plan-note` job posts them from the plan notes schedule's pipeline of the default branch |
 | `gitlab: { token: protected }` | `GITLAB_TOKEN` is a protected variable, which no merge request or branch pipeline gets, so a job the merge request adds to its own pipeline cannot read it either |
@@ -139,9 +144,12 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `apply-wave-<k>` | a push to the default branch | merged code | the run's own | apply role; with [one apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity), every group's plan identities on the plan audience, and no apply role |
 | `apply-wave-<k>-share-<s>` | with `waves.jobs`, after its wave's deciding job | merged code | the run's own | apply role |
 | `apply-wave-<k>-<group>`, and `-share-<s>` with `waves.jobs` | with groups, after its wave's deciding job | merged code; it applies its group's roots alone | the run's own | its group's apply identities alone, on a token with the same subject as every other group's |
-| `apply-done` | with `waves.jobs` or groups, after the last wave's share or group jobs | none | the run's own | none |
-| `apply-comment` | `/terragucci apply` | the merge commit; with `apply.when: pull-request`, the open change's head | the run's own | apply role |
-| `pr-merge` | `apply.merge: auto` | none of the change's | the merge token, required | none |
+| `apply-wave-<k>-plan`, `apply-wave-<k>` with `apply.when: pull-request` | the waves `apply-comment` dispatches | the decided head of the open change | the run's own, dropped from the step that runs the head's code | apply role in `apply-wave-<k>`, which applies the saved plan |
+| `apply-wave-<k>-gate`, `apply-wave-<k>-record` | the same | none of the change's | the run's own | none |
+| `apply-wave-<k>-status`, `apply-done` | after each wave; `apply-done` after the last | none | the run's own | none |
+| `stale-notes` | a push to the default branch, beside wave 1 | none | the run's own | none |
+| `apply-comment` | `/terragucci apply` | none of the change's: the default branch's commit | the run's own | none |
+| `pr-merge` | `apply.merge: auto`, after the last wave | none of the change's | the merge token, required | none |
 | `pr-lock` | `pull_request_target` and lock comments, with `locks: plan` | none of the change's; its diff read as data, from the default branch's workflow | the run's own | none |
 | `confirm` | a push, with `apply.when: pull-request` | merged code | the run's own | plan role |
 | `approval` | a review of a pull request from the repo, with `approval: pr-review` | none of the change's; the head's plan note read as data | the run's own | none |
@@ -149,7 +157,7 @@ The pipeline runs as jobs in your CI, so its trust is your forge's. Each stage g
 | `tips` | a push to the default branch | merged code | the run's own | none |
 | `version-bump` | after the last apply, with `respond.version-bump: suggest` | merged code; it opens release pull requests | the run's own; the `decide` key when set | none |
 | `publish` | after the last apply, with `modules.publish` | merged code; it pushes module tags | the run's own; the registry secrets, and with `modules.attest` `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`, which no other job holds | none |
-| `resume` | the resume schedule, with `apply.resume` | merged code: the default branch's commit | the run's own | apply role |
+| `resume` | the resume schedule, with `apply.resume` | none; it dispatches a waiting wave's job again | the run's own | none |
 | `rollout` | the rollout schedule, with `rollouts:` | the default branch; it edits pins and opens pull requests, and runs none of their code | the `token_env` secret, else the run's own | none |
 | `agent` | `/terragucci agent` | the change's head, with no credentials in the checkout | the run's own, kept from the agent's step | none |
 | `agent-push` | after `agent` | a patch, never run | the `agent.token_env` secret | none |
@@ -309,19 +317,19 @@ No generated job runs `terragucci override` or writes an override line: the wave
 
 ## Apply before merge
 
-With `apply.when: pull-request`, the open change's head runs with the apply role. The reviewer who approves the head is the guard. On GitLab the `comments` job runs the checks, and `mr-apply` runs them again.
+With `apply.when: pull-request`, the open change's head runs with the apply role. The reviewer who approves the head is the guard. The checks run in chant's decision: in the `apply-comment` job on GitHub and Forgejo, and in the `comments` job on GitLab. Each wave job then checks that the decision on `chant/lifecycle` names the head it was given.
 
 | Check before any credential | Stops |
 |---|---|
 | Forks never apply | outside code meeting the apply role |
 | A reviewer other than the author approved the head; no reviewer's last review asks for changes (on GitLab, an approval after the latest push) | unreviewed code meeting the apply role |
-| On GitLab, the head the pipeline's variable names is the merge request's head now | a pipeline started by hand for code nobody approved |
-| The head did not move while the comment was read, and contains the default branch as it is now | applying code nobody reviewed, or undoing merged changes |
+| The head a wave job is given has a decision on `chant/lifecycle`, and is still the pull request's head | a run started by hand for code nobody approved |
+| The head did not move after it was decided, and contains the default branch as it is now | applying code nobody reviewed, or undoing merged changes |
 | The change does not edit the pipeline file | a change rewriting the job that applies it |
 | Waves, gate, signers, policy, config and `ci.hooks` come from the default branch | a change loosening its own gate, or adding a hook that runs with the apply role |
 | No other open pull request holds a lock on its roots | two changes applying the same root |
 
-After the checks the change's providers, modules and external data sources run with the apply role and the job's `contents: write` token; review them before approving the head ([what they can reach](/terragucci/reference/pipeline/#pull-request-code-access)).
+After the checks the change's providers, modules and external data sources run with the apply role. chant splits each wave so they never run beside a write token; review them before approving the head ([what they can reach](/terragucci/reference/pipeline/#pull-request-code-access)).
 
 ## The chat relay
 
@@ -467,8 +475,8 @@ terragucci starts the binary, Terragrunt and the policy engine with every forge 
 | On GitHub and Forgejo, a process the change's code leaves running in the `check`, `plan` or `replan` job's container, or a file it writes to `GITHUB_ENV` or `GITHUB_PATH` | no: the step that runs the code is the job's last, so no later step runs beside that process or starts with those files. No action in the job has a post step: the checkout is a git script, and the Terragrunt cache is restored and never saved. The job hands its report on as its outputs, and the container is gone before the job that keeps the report and posts the note starts |
 | GitLab's `check` job | no variable once its script starts; the runner's job token stays in the checkout's remote |
 | GitLab's `plan` job | yes: `GITLAB_TOKEN`, `api` scope, and the job token in the checkout's remote; with `gitlab.token: protected`, only the job token |
-| `apply-comment` and `mr-apply` with `apply.when: pull-request` | yes: the job's token, in the job's environment and the checkout, which the stage pushes the locks and the gate's records with |
-| The jobs that run merged code: the apply waves and their share jobs, `confirm`, `drift`, `tips`, `version-bump`, `publish`, `resume`, `rollout` | yes: the job's token, and in `publish` the registry and signing secrets; the code there was reviewed and merged, and `rollout` runs none of the pull requests it opens |
+| `apply-wave-<k>-plan` and `apply-wave-<k>` with `apply.when: pull-request` | no: the step that runs the head's code starts without the forge tokens, and on GitHub the job holds only `contents: read` |
+| The jobs that run merged code: the apply waves and their share jobs, `confirm`, `drift`, `tips`, `version-bump`, `publish`, `rollout` | yes: the job's token, and in `publish` the registry and signing secrets; the code there was reviewed and merged, and `rollout` runs none of the pull requests it opens |
 | A change that edits its own pipeline file | whatever that pipeline asks for |
 
 Each of these is a writer's own code in a job the forge gives a token to; branch protection keeps that token from reaching the default branch.

@@ -24,14 +24,15 @@
  *        terragucci/apply status and marks plan notes the push made stale.
  *        A Terragrunt repo's waves are the same jobs over its units' dependency
  *        layers, each behind the same gate; the last job also runs any layer
- *        the repo grew after init wrote the pipeline.
- * apply-comment  `/terragucci apply [wave-<n>]` on a merged pull request
- *        (GitHub and Forgejo, plain roots and Terragrunt units): the same
- *        stage at its merge commit, under the same lock, approving nothing.
- * mr-apply  GitLab with `apply.when: pull-request`: the default branch's
- *        pipeline the comments job starts for an open merge request's
- *        `/terragucci apply`, `lock` or `unlock`; it reads the merge request
- *        again and applies its head in waves, and `pr-merge` merges it.
+ *        the repo grew after init wrote the pipeline. The wave jobs, their
+ *        status and stale-notes jobs, the resume and the control dispatch
+ *        are chant's Op waves jobs (./render-waves.ts).
+ * apply-comment  `/terragucci apply [wave-<n>]` (GitHub and Forgejo): chant's
+ *        comment job, which re-runs a merged pull request's wave jobs, or
+ *        with `apply.when: pull-request` decides an open one's head and
+ *        dispatches its waves (./product-plan.ts). On GitLab the comments
+ *        job hands an open merge request's apply to chant's decision
+ *        (./comment-gitlab.ts).
  *
  * drift  only when `drift:` names a schedule: `terragucci stage tf-drift` plans
  *        every root with -refresh-only, keeps the same report, and opens,
@@ -52,7 +53,8 @@
  *        note and status from its plan job's report), and start a merge
  *        request pipeline for `/terragucci plan`, or retry
  *        the merge commit's apply jobs for `/terragucci apply` (with
- *        `apply.when: pull-request`, start the `mr-apply` pipeline).
+ *        `apply.when: pull-request`, chant decides the head and starts the
+ *        waves' pipeline for it).
  *
  * Each stage is one job here; the file holds all of them.
  */
@@ -188,7 +190,7 @@ import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
 import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
-import { dispatchScript, type ResolvedControl } from "./control-repo";
+import type { ResolvedControl } from "./control-repo";
 import { rootRoles } from "./cloud-identity";
 import { cloudLogin, LOGIN_RESTART_MARKER, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import { BEFORE_MERGE_HEAD_ENV } from "@intentius/chant/op/before-merge";
@@ -206,8 +208,8 @@ import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
 import { GL_REVIEW_ARTIFACT, REVIEW_JOB, REVIEW_MR_VAR } from "./gitlab-agent";
 import { REVIEW_PATHS, type ReviewInput } from "./review-agent";
-import { applyWaves, branchesArg, DECIDED_DIR, shareCount } from "./apply";
-import { groupsArg, type ApplyGroup } from "./cloud-identity";
+import { applyWaves, shareCount } from "./apply";
+import type { ApplyGroup } from "./cloud-identity";
 import { CHECK_DIR } from "./check";
 import { dropForgeTokens as chantDropForgeTokens, FORGE_TOKEN_VARS } from "@intentius/chant/ci-handover";
 import { checkoutScript, handoverOutputs, handoverTrap, takeOverScript } from "./handover";
@@ -221,7 +223,7 @@ import {
   terragruntJobEnv,
   type TerragruntPipelineInput,
 } from "./render-terragrunt";
-import { CHECKOUT, downloadArtifact, tagComments, uploadArtifact } from "./action-pins";
+import { CHECKOUT, tagComments, uploadArtifact } from "./action-pins";
 import { resolveCommitSpec } from "@intentius/chant/ci-commit";
 import { ciToolInstallLine } from "@intentius/chant/ci-image";
 import { githubCommitJobs } from "@intentius/chant-lexicon-github/components/commit-jobs";
@@ -404,11 +406,11 @@ export interface PipelineInput {
   atlantisComments?: boolean;
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
-  /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the `mr-apply` pipeline), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
+  /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the waves' pipeline it starts), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
   applyWhen?: ApplyWhen;
   /** `apply.merge`: with `auto`, a pull request whose every wave applied is merged. */
   applyMerge?: ApplyMerge;
-  /** `apply.merge_token_env`: the secret whose token the `pr-merge` job merges with, in place of the job's own. Only that job gets it; on GitLab the comments job too, which starts the `mr-apply` pipeline with it. */
+  /** `apply.merge_token_env`: the secret whose token the `pr-merge` job merges with, in place of the job's own. Only that job gets it; on GitLab the comments job too, which starts the waves' pipeline with it. */
   applyMergeTokenEnv?: string;
   /** `apply.requires`: what an open pull request needs before it applies. Every requirement when unset. */
   applyRequires?: ApplyRequire[];
@@ -447,7 +449,7 @@ export interface PipelineApplyJob {
   name: string;
   /** Its `needs`, as the workflow has them: wave 1's job needs `check` on GitHub and Forgejo, and nothing on GitLab. */
   needs: string[];
-  /** The wave it runs; unset for the job that applies every wave of a pull request (`apply-comment`, GitLab's `mr-apply`). */
+  /** The wave it runs; unset for a job that applies no single wave. */
   wave?: number;
   /** The roots it applies: a wave's, a share's or a group's. A job that only decides a split wave, or only says every wave applied, applies none. */
   applies: string[];
@@ -687,15 +689,6 @@ export function synthScript(command: string, status?: string): string {
     `( set -e; ${command} ) || { ${status ? `tg status ${status} failure "the synth command failed"; ` : ""}echo "terragucci: the synth command failed" >&2; exit 1; }`,
   ].join("\n");
 }
-
-/** With `notify`, the line a wave's outcome runs: post it to the chat webhooks. A webhook that fails never fails the job. */
-function notifyLine(event: "waiting" | "refused" | "failed", wave: string): string {
-  return `terragucci notify ${event} --wave ${wave} --outcome "$outcome" --outcome-json "$outcome_json" || true; `;
-}
-
-/** With `notify`, the stage also writes its outcome as JSON (`TG_OUTCOME_JSON`), which notify reads. */
-const OUTCOME_JSON = 'outcome_json="$(mktemp)"';
-const outcomeEnv = (notify: boolean | undefined): string => (notify ? 'TG_OUTCOME_JSON="$outcome_json" ' : "");
 
 export function checkScript(binary: Binary, roots: string[], synth?: string, rootPins = false, generate = false, atmos = false, sources = false, mirror = false, parallelism?: number): string {
   // With roots that pin their own version, each root inits and validates with its own binary, installed when the job's is not it.
@@ -977,155 +970,8 @@ export function loginIdTokens(oidc: LoginOidc | undefined, stage: "plan" | "appl
 }
 
 /**
- * Roots that changed in the push, or all of them when the push cannot be diffed.
- * grep reads the whole list (no -q): under pipefail, a grep -q that quits at its
- * first match can leave printf with SIGPIPE on a long list and report no match.
- */
-export function movedRoots(roots: string[]): string {
-  return [
-    'if [ -n "${TG_BEFORE:-}" ] && [ "${TG_BEFORE#0000000}" = "$TG_BEFORE" ] && git fetch -q --depth=1 origin "$TG_BEFORE" 2>/dev/null; then',
-    '  changed="$(git diff --name-only "$TG_BEFORE" HEAD)"',
-    "else",
-    "  changed=",
-    "fi",
-    'moved=""',
-    `for dir in ${roots.map(sh).join(" ")}; do`,
-    '  if [ -z "$changed" ] || printf \'%s\\n\' "$changed" | grep "^$dir/" >/dev/null; then moved="${moved:+$moved,}$dir"; fi',
-    "done",
-  ].join("\n");
-}
-
-/**
- * Under a repo-wide scope (applyScope), applies on Forgejo run one at a time
- * through a tag on the remote. The tag
- * points at a commit whose subject is the holder's lease, "run <id> <epoch>".
- * A runner that kills a job never runs its exit trap, so a waiter takes the
- * lock over, atomically, when the holder's run is no longer running or the
- * lease is older than TG_LOCK_STALE seconds. A run that finds a newer push on
- * the branch stands down, since that push applies the whole tree. An apply a
- * comment started does not: it applies a merge commit that is not the tip by
- * design, and `terragucci comment-apply`, run again once it holds the lock,
- * decides whether a later apply superseded it.
- */
-/** Releases the apply lock forgejoLock took when the step ends. */
-const LOCK_RELEASE = "trap 'git push -q --force-with-lease=\"$lock_ref:$mine\" origin \":$lock_ref\" || true' EXIT";
-
-export function forgejoLock(standDown = true): string {
-  const id = '${GITHUB_RUN_ID:-$$}';
-  return [
-    'lock_ref="refs/tags/terragucci-apply-lock"',
-    'empty="$(git mktree </dev/null)"',
-    `mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${id} $(date +%s)")"`,
-    "tries=0",
-    'until git push -q origin "$mine:$lock_ref" 2>/dev/null; do',
-    '  held="$(git ls-remote origin "$lock_ref" | cut -f1)"',
-    '  if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then',
-    '    lease="$(git log -1 --format=%s "$lock_ref")"',
-    '    holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"',
-    '    if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then',
-    '      echo "the apply lock was held by run $holder, which is gone; taking it over"',
-    '      git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null && break',
-    "    fi",
-    "  fi",
-    '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi',
-    '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
-    "done",
-    LOCK_RELEASE,
-    ...(standDown ? [STAND_DOWN] : []),
-  ].join("\n");
-}
-
-/**
- * The apply lock of a pipeline that splits a wave across jobs (`waves.jobs`),
- * on every forge (on GitLab in place of the apply jobs' resource group, which
- * runs one job at a time): forgejoLock's tag, held by a run rather than a
- * job, so the share jobs of a wave apply side by side while no other run
- * applies. Each job first pushes a hold tag naming its run and itself, then
- * takes the lock, or joins it when its own run holds it. On exit a job drops
- * its hold, and the last of its run to leave lets go of the lock. Two that
- * leave at once may each still see the other's hold and both leave the lock
- * held: the run's next job joins it and lets it go, and once the run ends a
- * waiter takes it over, as from any run that is gone, and drops that run's
- * holds.
- */
-export function sharedApplyLock(job: string, forge: ForgeName = "github"): string {
-  // On GitLab the run is the pipeline, and `tg alive` asks GitLab whether it still runs.
-  const id = forge === "gitlab" ? "${CI_PIPELINE_ID}" : "${GITHUB_RUN_ID:-$$}";
-  return [
-    'lock_ref="refs/tags/terragucci-apply-lock"',
-    `hold_prefix="refs/tags/terragucci-apply-hold-${id}-"`,
-    `hold_ref="\${hold_prefix}${job}"`,
-    'empty="$(git mktree </dev/null)"',
-    `mine="$(GIT_AUTHOR_NAME=terragucci GIT_AUTHOR_EMAIL=terragucci@localhost GIT_COMMITTER_NAME=terragucci GIT_COMMITTER_EMAIL=terragucci@localhost git commit-tree "$empty" -m "run ${id} $(date +%s) ${job}")"`,
-    // The hold goes up before the lock is taken, so a job of this run that leaves never lets go of a lock another still needs.
-    'git push -q --force origin "$mine:$hold_ref" 2>/dev/null || { echo "could not push $hold_ref, so the apply lock cannot be shared" >&2; exit 1; }',
-    "release_lock() {",
-    '  git push -q origin ":$hold_ref" 2>/dev/null || true',
-    '  [ -z "$(git ls-remote origin "${hold_prefix}*")" ] || return 0',
-    '  held="$(git ls-remote origin "$lock_ref" | cut -f1)"',
-    '  { [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; } || return 0',
-    `  [ "$(git log -1 --format=%s "$lock_ref" | cut -d" " -f2)" = "${id}" ] || return 0`,
-    '  git push -q --force-with-lease="$lock_ref:$held" origin ":$lock_ref" 2>/dev/null || true',
-    "}",
-    "trap release_lock EXIT",
-    "tries=0",
-    'until git push -q origin "$mine:$lock_ref" 2>/dev/null; do',
-    '  held="$(git ls-remote origin "$lock_ref" | cut -f1)"',
-    '  if [ -n "$held" ] && git fetch -q origin "+$lock_ref:$lock_ref" 2>/dev/null; then',
-    '    lease="$(git log -1 --format=%s "$lock_ref")"',
-    '    holder="$(echo "$lease" | cut -d" " -f2)"; since="$(echo "$lease" | cut -d" " -f3)"',
-    `    if [ "$holder" = "${id}" ]; then echo "this run holds the apply lock; ${job} joins it"; break; fi`,
-    '    if [ "$(tg alive "$holder")" = dead ] || [ $(( $(date +%s) - ${since:-0} )) -ge "${TG_LOCK_STALE:-7200}" ]; then',
-    '      echo "the apply lock was held by run $holder, which is gone; taking it over"',
-    '      if git push -q --force-with-lease="$lock_ref:$held" origin "+$mine:$lock_ref" 2>/dev/null; then',
-    '        for gone in $(git ls-remote origin "refs/tags/terragucci-apply-hold-$holder-*" | cut -f2); do git push -q origin ":$gone" 2>/dev/null || true; done',
-    "        break",
-    "      fi",
-    "    fi",
-    "  fi",
-    '  if [ "$tries" -ge 360 ]; then echo "another apply has held $lock_ref for an hour" >&2; exit 1; fi',
-    '  sleep "${TG_LOCK_POLL:-10}"; tries=$((tries + 1))',
-    "done",
-    STAND_DOWN,
-  ].join("\n");
-}
-
-/**
- * A push's wave that runs once the branch has moved past its commit stands
- * down, because the newer push applies the whole tree. It runs at the top of
- * the wave on GitHub and Forgejo, and the stage checks again once the wave
- * may apply (`--stand-down`), so a push that lands while it plans still wins.
- * Under a repo-wide scope it runs once the wave holds the lock tag on
- * Forgejo, and on GitHub once the apply concurrency group starts the wave.
- */
-export const STAND_DOWN = [
-  'tip="$([ -z "${GITHUB_REF_NAME:-}" ] || git ls-remote origin "refs/heads/${GITHUB_REF_NAME}" 2>/dev/null | cut -f1)"',
-  'if [ -n "$tip" ] && [ "$tip" != "${GITHUB_SHA:-}" ]; then',
-  '  echo "a newer push to ${GITHUB_REF_NAME} applies everything; standing down"',
-  '  tg status terragucci/apply success "superseded by a newer push"',
-  "  exit 0",
-  "fi",
-].join("\n");
-
-/**
- * Under a repo-wide scope, the concurrency group of every apply job on GitHub: each wave of a push and
- * the apply a comment starts. One runs at a time. `queue: max` keeps up to 100
- * waiting, in the order they began to wait; with the default (`single`) a job
- * that starts waiting cancels the one already waiting, whatever
- * cancel-in-progress says, so a push and a comment could cancel each other.
- * Nothing is cancelled now, so a push's wave that finds a newer push on the
- * branch stands down instead (STAND_DOWN), and the comment's apply decides
- * once the group starts it, when no other apply runs. Forgejo runs a
- * workflow's jobs whatever their concurrency says, and holds the lock tag.
- */
-export function applyConcurrency(forge: ForgeName): Record<string, unknown> {
-  return { group: "terragucci-apply-${{ github.repository }}", "cancel-in-progress": false, ...(forge === "github" ? { queue: "max" } : {}) };
-}
-
-/**
  * The first line of a script that reads a stage's exit code: the plan and
- * re-plan, the apply waves (a Terragrunt repo's too), the apply a comment
- * starts and the drift sweep. A step with `shell: bash` runs as
+ * re-plan and the drift sweep. A step with `shell: bash` runs as
  * `bash --noprofile --norc -e -o pipefail {0}` on GitHub and on Forgejo's
  * runner, so without `set +e` a stage that fails, a wave that waits (3) or
  * one that is refused (4) ends the step at the stage, before its status, its
@@ -1135,7 +981,6 @@ export function applyConcurrency(forge: ForgeName): Record<string, unknown> {
  */
 export const READS_EXIT = "set +e -uo pipefail";
 
-/** One apply job of a push: a wave's, a share of a wave split across jobs, or the job after the last wave's shares. */
 /** A job of chant's waves that applies roots, as the components declaration names it. */
 interface ApplyJob {
   name: string;
@@ -1153,592 +998,6 @@ export function shareRoots(roots: readonly string[], share: number, shares: numb
   return sorted.slice(start, start + base + (share <= extra ? 1 : 0));
 }
 
-/** Which wave an apply job runs, and how the waves are cut and gated. */
-export interface ApplyWaveInput {
-  /** 1-based. */
-  wave: number;
-  /** Globs for wave 1, from `waves.canary`. */
-  canary?: string[];
-  gate?: Gate;
-  /** The waves' `--approval`, when the pipeline carries one (PipelineInput.approval). */
-  approval?: Approval;
-  /** The response to each event; apply-failed and wave-refused are called from the wave's exit code. */
-  respond?: PipelineInput["respond"];
-  /** A Terragrunt repo: the layers are its waves of units, and the stage runs Terragrunt after this shell (credentials, caches). */
-  terragrunt?: { prelude: string };
-  /** `synth`: the command that writes the roots, run before the credentials. */
-  synth?: string;
-  /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
-  notify?: boolean;
-  /** `waves.jobs`, on the job of a wave that splits across jobs: it decides the wave, and its share jobs apply. */
-  shares?: number;
-  /** With `shares`: the share this job applies, from 1. */
-  share?: number;
-  /** The pipeline splits a wave across jobs, so every apply job holds the run's shared lock (sharedApplyLock) under this job name. */
-  sharedLock?: string;
-  /** `apply.branches`: the job passes the map and the branch it runs on, and the stage applies that branch's roots alone (branchLayers). */
-  branches?: Record<string, string[]>;
-  /** One apply job per identity: the groups' selectors as `--groups` takes them (groupsArg). Without `group`, the job decides the wave with the plan identities. */
-  groups?: string;
-  /** With `groups`: the group this job applies. */
-  group?: string;
-  /** An environment's group: the `terragucci check-job` line that stops the job, before any token is fetched or traded, unless it runs where the environment's apply is set to run (checkJobLine). */
-  checkJob?: string;
-  /** terragucci#1161: the stage reads the earlier waves' outcomes from EARLIER_DIR, writes its own, and blocks only the roots a failure holds. */
-  after?: boolean;
-}
-
-/**
- * One wave's apply job: `terragucci stage tf-apply` plans the wave's roots,
- * decides the wave's gate against its set digest, and applies the plans it
- * made. The first wave marks stale plan notes and posts the pending status;
- * the last posts the one success. A wave that waits for an approval, or whose
- * plans changed after one, says so in the status and fails the job, so the
- * waves after it do not start. In a Terragrunt repo the stage cuts the waves
- * from `terragrunt find` when it runs, and the last job passes `--rest`: it
- * also runs every wave the repo has past the ones init gave a job.
- */
-export function applyScript(
-  binary: Binary,
-  layers: string[][],
-  forge: ForgeName = "github",
-  oidc?: PipelineInput["oidc"],
-  input: ApplyWaveInput = { wave: 1 },
-): string {
-  const roots = layers.flat().sort();
-  const total = layers.flat().length;
-  const gate = input.gate ?? "on-destructive";
-  const count = applyWaves(layers, input.canary).length;
-  const tg = input.terragrunt;
-  // A wave split across jobs: its own job decides (first, as wave 1's always is), and its shares or groups apply; the done job posts the last success.
-  const share = input.shares !== undefined ? input.share : undefined;
-  const piece = share !== undefined || input.group !== undefined;
-  const first = input.wave === 1 && !piece;
-  // A Terragrunt pipeline whose last wave splits ends with a job past it, which runs any later wave with --rest.
-  const last = input.wave >= count && input.shares === undefined && input.groups === undefined;
-  // The job that decides a wave split by identity plans every root with the plan identities, and the plan audience: it applies nothing.
-  const deciding = input.groups !== undefined && input.group === undefined;
-  const stage: "plan" | "apply" = deciding ? "plan" : "apply";
-  const triage = responds(input.respond, "apply-failed");
-  // shape: a repo-wide scope serializes the waves under a lock; otherwise a push's wave stands down for a newer push once it may apply.
-  const scope = applyScope(binary);
-  const repoWide = scope === "repo";
-  // A share refused for plans that moved since its wave decided has no approved report for respond to compare.
-  const refused = responds(input.respond, "wave-refused") && !piece;
-  const args = [
-    "--wave", String(input.wave),
-    "--layers", sh(layers.map((l) => l.join(",")).join(";")),
-    ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []),
-    "--binary", binary,
-    "--gate", gate,
-    ...(input.approval ? ["--approval", input.approval] : []),
-    ...(repoWide ? [] : ["--stand-down"]),
-    ...(tg ? ["--terragrunt"] : []),
-    ...(tg && last ? ["--rest"] : []),
-    ...(input.shares !== undefined ? ["--shares", String(input.shares)] : []),
-    ...(share !== undefined ? ["--share", String(share)] : []),
-    ...(input.branches ? ["--branches", sh(branchesArg(input.branches)), "--branch", forge === "gitlab" ? '"$CI_COMMIT_BRANCH"' : '"$GITHUB_REF_NAME"'] : []),
-    ...(input.groups !== undefined ? ["--groups", sh(input.groups)] : []),
-    ...(input.group !== undefined ? ["--group", input.group] : []),
-    ...(input.after ? ["--after", EARLIER_DIR] : []),
-  ];
-  // With --rest the wave that stopped may be a later one: its outcome line names it.
-  const waveNow = tg && last ? `"$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"` : String(input.wave);
-  const login = cloudLoginLines(forge, oidc, stage, "terragucci-apply");
-  return [
-    ...(input.checkJob ? [input.checkJob] : []),
-    ...loginFirst(forge, login),
-    READS_EXIT,
-    forgeApi(forge),
-    ...(input.synth ? [synthScript(input.synth, first ? "terragucci/apply" : undefined)] : []),
-    ...loginInline(forge, login),
-    ...(tg ? [tg.prelude] : []),
-    ...(first
-      ? [movedRoots(roots), '# The base branch moved under these roots: plan notes that cover them are stale.', 'tg stale "$moved" "${TG_BRANCH:-}"']
-      : []),
-    // GitLab's lock tags go up with the project's token, as the ledger's pushes do. A split wave's jobs hold their run's shared lock
-    // whatever the scope; otherwise only a repo-wide scope serializes, and a push's wave stands down for a newer push.
-    ...(input.sharedLock ? [...(forge === "gitlab" ? [gitlabPushRemote] : []), sharedApplyLock(input.sharedLock, forge)] : repoWide && forge === "forgejo" ? [forgejoLock()] : forge === "github" || forge === "forgejo" ? [STAND_DOWN] : []),
-    ...(first ? ['tg status terragucci/apply pending "applying"'] : []),
-    // A waiting wave records what it planned on the chant/lifecycle branch, and so does a policy denial, so the job's checkout
-    // must be able to push; GitLab's own job token cannot. Under any gate: the wave's job takes the stricter of --gate and the
-    // top-level gate at base, and a cost, a step, a policy, a migration or an environment can hold a wave whatever --gate says.
-    // A wave that holds the resources it changes (scope resource) records them there too.
-    ...(forge === "gitlab" && !input.sharedLock ? [gitlabPushRemote] : []),
-    'outcome="$(mktemp)"',
-    ...(input.notify ? [OUTCOME_JSON] : []),
-    ...(triage ? ['log="$(mktemp)"'] : []),
-    `TG_OUTCOME="$outcome" ${outcomeEnv(input.notify)}terragucci stage tf-apply ${args.join(" ")}${triage ? ' 2>&1 | tee "$log"' : ""}`,
-    triage ? "rc=${PIPESTATUS[0]}" : "rc=$?",
-    'case "$rc" in',
-    "  0) ;;",
-    // GitLab reuses a running status and refuses to move it to pending or running again (400), and a status left running keeps the pipeline running, so a waiting wave fails it there; a retry posts a new one.
-    `  3) tg status terragucci/apply ${forge === "gitlab" ? "failure" : "pending"} "$(cat "$outcome")"; ${input.notify ? notifyLine("waiting", waveNow) : ""}exit 3 ;;`,
-    // A wave waiting at a gate (3) is not a failure. A refused wave (4) and a failed apply are, and each gets its response before the job fails.
-    `  4) tg status terragucci/apply failure "$(cat "$outcome")"; ${refused ? `terragucci respond wave-refused --wave ${waveNow} --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current || true; ` : ""}${input.notify ? notifyLine("refused", waveNow) : ""}exit 4 ;;`,
-    // A newer push applies the whole tree; this wave stood down once it could apply (--stand-down).
-    ...(repoWide ? [] : ['  6) tg status terragucci/apply success "superseded by a newer push"; exit 0 ;;']),
-    `  *) tg status terragucci/apply failure "an apply failed"; ${triage ? 'terragucci respond apply-failed --log "$log" || true; ' : ""}${input.notify ? notifyLine("failed", waveNow) : ""}exit 1 ;;`,
-    "esac",
-    ...(last
-      ? tg
-        ? ['tg status terragucci/apply success "every wave of units applied"', 'echo "all units applied"']
-        : [`tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`, 'echo "all roots applied"']
-      : [
-          input.group !== undefined
-            ? `echo "wave ${input.wave} of ${count}, group ${input.group}${share !== undefined ? `, share ${share}` : ""}, applied"`
-            : share !== undefined
-              ? `echo "wave ${input.wave} of ${count}, share ${share}, applied"`
-              : deciding
-                ? `echo "wave ${input.wave} of ${count} decided; its groups apply"`
-                : input.shares !== undefined ? `echo "wave ${input.wave} of ${count} decided; its shares apply"` : `echo "wave ${input.wave} of ${count} applied"`,
-        ]),
-  ].join("\n");
-}
-
-/** The job after the shares of a last wave split across jobs: every share applied, so the commit gets the one success. */
-export function applyDoneScript(layers: string[][], forge: ForgeName = "github"): string {
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    `tg status terragucci/apply success "${layers.flat().length} roots in ${layers.length} groups applied"`,
-    'echo "all roots applied"',
-  ].join("\n");
-}
-
-/** Reads the decision file `terragucci comment-apply` wrote: the pull request, the merge commit and the last wave ("-" for every wave). */
-const APPLY_DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-"].join(" "):"")';
-/** With `apply.when: pull-request`: also whether the pull request is open (1), so its head applies, and its base branch. */
-const PR_DECISION_JS = 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8"));console.log(d.go?[d.pr,d.sha,d.wave||"-",d.open?1:0,d.base].join(" "):"")';
-
-/** What a waiting wave's reply asks for next, as the comment's job says it. */
-const COMMENT_AGAIN = "A comment approves nothing: approve the plans with \\\`$cmd\\\` and comment \\\`/terragucci apply\\\` again";
-
-/** How the apply a comment starts is cut, gated and answered. */
-export interface CommentApplyInput {
-  canary?: string[];
-  gate?: Gate;
-  /** The waves' `--approval`, when the pipeline carries one. */
-  approval?: Approval;
-  respond?: PipelineInput["respond"];
-  /** `apply.when`. With `pull-request` an open pull request applies from its head. */
-  when?: ApplyWhen;
-  /** `apply.merge`. With `auto` a pull request whose every wave applied from its head is merged. */
-  merge?: ApplyMerge;
-  /** `apply.requires`. Unset, or every requirement, writes no `--requires`. */
-  requires?: ApplyRequire[];
-  /** A Terragrunt repo: the layers are its waves of units, and each wave runs Terragrunt after this shell (credentials, caches). */
-  terragrunt?: { prelude: string };
-  /** `synth`: the command that writes the roots, run on the checked-out commit before the credentials. */
-  synth?: string;
-  /** `control` is set: an apply of the default branch's commit that ran every wave hands the commit on (`control_sha`), for the job that tells the control repo. */
-  control?: boolean;
-  /** `notify` is set: a wave that waits, is refused or fails posts to the chat webhooks. */
-  notify?: boolean;
-  /** GitHub, when the pipeline splits a wave across jobs: the apply takes the lock tag those jobs hold, as on Forgejo, since the shares run outside the concurrency group. */
-  lockTag?: boolean;
-  /** `apply.branches`: the apply of a merge into the default branch skips the roots another branch applies. */
-  branches?: Record<string, string[]>;
-}
-
-/**
- * The waves of an apply a comment started, from wave 1 to
- * `$last`, as a re-run does: a wave already applied plans no change, a gated
- * wave counts only an approval of the plans it makes now, and the
- * first wave that does not apply stops the run, with a reply that says why.
- * In a Terragrunt repo a comment that asks for every wave runs the last one
- * with `--rest`, so the waves past the pipeline's jobs apply too.
- */
-function waveLoop(binary: Binary, layers: string[][], input: CommentApplyInput, base: string, again = COMMENT_AGAIN, statuses = true, refuseHeld = false): string[] {
-  // GitLab's mr-apply job posts no status on the head: a failed one would fail the merge request's own pipeline, and with it the next apply's checks.
-  const status = (line: string): string[] => (statuses ? [line] : []);
-  const triage = responds(input.respond, "apply-failed");
-  const refused = responds(input.respond, "wave-refused");
-  const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const args = ["--layers", layerArg, ...(input.canary?.length ? ["--canary", sh(input.canary.join(","))] : []), "--binary", binary, "--gate", input.gate ?? "on-destructive", ...(input.approval ? ["--approval", input.approval] : []), ...(refuseHeld ? ["--on-held", "refuse"] : []), ...(input.terragrunt ? ["--terragrunt"] : []), ...(input.branches ? ["--branches", sh(branchesArg(input.branches))] : []), ...(base ? [base] : [])];
-  return [
-    'outcome="$(mktemp)"',
-    ...(input.notify ? [OUTCOME_JSON] : []),
-    ...(triage ? ['log="$(mktemp)"'] : []),
-    'done_waves=""',
-    'for wave in $(seq 1 "$last"); do',
-    '  : >"$outcome"',
-    ...(input.terragrunt ? ['  rest=""; if [ "$TG_WAVE" = "-" ] && [ "$wave" = "$last" ]; then rest="--rest"; fi'] : []),
-    `  TG_OUTCOME="$outcome" ${outcomeEnv(input.notify)}terragucci stage tf-apply --wave "$wave" ${args.join(" ")}${input.terragrunt ? " $rest" : ""}${triage ? ' 2>&1 | tee "$log"' : ""}`,
-    triage ? "  rc=${PIPESTATUS[0]}" : "  rc=$?",
-    // With --rest the wave that stopped may be a later one: its outcome line names it.
-    ...(input.terragrunt ? [`  [ -s "$outcome" ] && wave="$(sed -n 's/^wave \\([0-9]*\\) .*/\\1/p' "$outcome")"`] : []),
-    '  case "$rc" in',
-    input.terragrunt
-      ? '    0) done_waves="${done_waves:+$done_waves, }$wave${rest:+ and every wave after it}" ;;'
-      : '    0) done_waves="${done_waves:+$done_waves, }$wave" ;;',
-    "    3)",
-    ...status('      tg status terragucci/apply pending "$(cat "$outcome")"'),
-    `      digest="$(sed -n 's/.*--plan \\([^ ]*\\).*/\\1/p' "$outcome")"`,
-    `      cmd="$(sed -n 's/^wave [0-9]* waits: //p' "$outcome")"`,
-    `      tg reply "wave $wave waits for an approval of its set digest $digest, so nothing in it was applied\${done_waves:+ (applied: wave $done_waves)}. ${again}. $run_url"`,
-    ...(input.notify ? [`      ${notifyLine("waiting", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
-    "      exit 3 ;;",
-    "    4)",
-    ...status('      tg status terragucci/apply failure "$(cat "$outcome")"'),
-    // The responses a push's wave runs, on the same exit codes (applyScript).
-    ...(refused ? [`      terragucci respond wave-refused --wave "$wave" --approved ${REPORT_DIR}/approved --current ${REPORT_DIR}/current${base ? ` ${base}` : ""} || true`] : []),
-    '      tg reply "wave $wave was refused: its plans changed since it was approved, so nothing in it was applied (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). $run_url"',
-    ...(input.notify ? [`      ${notifyLine("refused", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
-    "      exit 4 ;;",
-    // Another run is applying a resource this wave changes (--on-held refuse): the reply names it, and a person asks again.
-    ...(refuseHeld
-      ? [
-          "    5)",
-          ...status('      tg status terragucci/apply failure "$(cat "$outcome")"'),
-          '      tg reply "wave $wave was not applied: another run is applying what it changes (${done_waves:+applied: wave $done_waves; }$(cat "$outcome")). Comment \\`/terragucci apply\\` again once that run is done. $run_url"',
-          ...(input.notify ? [`      ${notifyLine("refused", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
-          "      exit 5 ;;",
-        ]
-      : []),
-    "    *)",
-    ...status('      tg status terragucci/apply failure "an apply failed"'),
-    ...(triage ? [`      terragucci respond apply-failed --log "$log"${base ? ` ${base}` : ""} || true`] : []),
-    '      why="$(cat "$outcome")"',
-    '      tg reply "wave $wave did not apply${why:+ ($why)}${done_waves:+; applied: wave $done_waves}. The run has the log: $run_url"',
-    ...(input.notify ? [`      ${notifyLine("failed", '"$wave"').trimEnd().replace(/;$/, "")}`] : []),
-    "      exit 1 ;;",
-    "  esac",
-    "done",
-  ];
-}
-
-/**
- * After every wave of an open pull request applied from its head. With
- * `apply.merge: auto` the step hands the pull request's head and its applied
- * waves to the `pr-merge` job as outputs, and that job merges it (mergeScript):
- * this job ran the pull request's code, so it never holds the merge token.
- * With `manual` it says the pull request is left for a person. A run that
- * stopped at a wave never gets here, so a pull request whose apply partly
- * failed is never merged.
- */
-function openReply(count: number, merge: ApplyMerge | undefined, forge: ForgeName = "github"): string[] {
-  const applied = forge === "gitlab" ? "applied wave $done_waves of !$TG_PR at ${TG_SHA:0:8}" : "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}";
-  // On GitLab the reply is what pr-merge looks for, through the API: no artifact or dotenv of this job, which ran the merge request's code, reaches the job with the merge token.
-  const handOn = forge === "gitlab" ? `  tg reply "${applied}; pr-merge merges it next. $run_url ${APPLIED_MARKER}"` : '  { echo "merge=1"; echo "sha=$TG_SHA"; echo "waves=$done_waves"; } >> "$GITHUB_OUTPUT"';
-  return [
-    `if [ "$last" = ${count} ]; then`,
-    ...(merge === "auto"
-      ? [handOn]
-      : [`  tg reply "${applied}. Merge it when you are ready; its root locks hold until it merges or closes. $run_url"`]),
-    "else",
-    `  tg reply "${applied}. $run_url"`,
-    "fi",
-  ];
-}
-
-/**
- * The `pr-merge` job's script (`apply.merge: auto`): merge the pull request
- * the comment named, at the head the apply step handed on, through
- * `terragucci pr-merge`, which merges only while that head is still the pull
- * request's head and approved by a reviewer other than its author, then
- * releases its locks. It runs in a job of its own, from the default branch's
- * checkout, so the merge token never shares a job with the pull request's
- * code. The outputs it reads come from a step that ran that code, so they
- * are read as data: the head must be a commit sha and the waves only digits.
- */
-export function mergeScript(forge: Exclude<ForgeName, "gitlab">): string {
-  const applied = "applied wave $waves of pull request $TG_PR at ${TG_SHA:0:8}";
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    'case "$TG_SHA" in ""|*[!0-9a-f]*) echo "terragucci: the apply job handed on no commit sha, so nothing is merged" >&2; exit 1 ;; esac',
-    // A Terragrunt run's last wave reads "2 and every wave after it": the words go, and so do the spaces they leave.
-    `waves="$(printf '%s' "\${TG_WAVES:-}" | tr -cd '0-9, ' | tr -s ' ' | sed 's/ *$//')"`,
-    `if merged="$(terragucci pr-merge --pr "$TG_PR" --sha "$TG_SHA"${forge === "github" ? "" : ` --forge ${forge}`} 2>&1)"; then`,
-    `  tg reply "${applied}, and \${merged#terragucci pr-merge: }. $run_url"`,
-    "else",
-    `  tg reply "${applied}, and it was not merged: \${merged#terragucci pr-merge: not merged: }. Merge it by hand. $run_url"`,
-    "  exit 1",
-    "fi",
-  ].join("\n");
-}
-
-/** What the GitLab mr-apply job's reply carries once every wave applied: the head and the pipeline, which pr-merge looks for. */
-const APPLIED_MARKER = "<!-- terragucci:applied head=$TG_SHA pipeline=$CI_PIPELINE_ID -->";
-
-/**
- * The GitLab `pr-merge` job's script (`apply.merge: auto`). It runs in the
- * mr-apply pipeline after that job, from the default branch's checkout, with
- * the merge token, and takes nothing from the mr-apply job, which ran the
- * merge request's code: the merge request and its head are the pipeline's
- * variables, which that job's decision checked against GitLab. `terragucci
- * pr-merge` merges only when the mr-apply job's reply says every wave of that
- * head applied in this pipeline, and checks the merge request again. A
- * decision that refused, a lock, a run of some waves or a wave that stopped
- * leaves no such reply, and nothing merges.
- */
-export function gitlabMergeScript(): string {
-  return [
-    READS_EXIT,
-    forgeApi("gitlab"),
-    gitlabPushRemote,
-    'run_url="$CI_PIPELINE_URL"',
-    'case "${TERRAGUCCI_MR:-}" in ""|*[!0-9]*) echo "terragucci: the pipeline names no merge request, so nothing is merged" >&2; exit 1 ;; esac',
-    'case "${TERRAGUCCI_HEAD:-}" in ""|*[!0-9a-f]*) echo "terragucci: the pipeline names no head commit, so nothing is merged" >&2; exit 1 ;; esac',
-    'export TG_PR="$TERRAGUCCI_MR" TG_SHA="$TERRAGUCCI_HEAD"',
-    'merged="$(terragucci pr-merge --forge gitlab --pr "$TG_PR" --sha "$TG_SHA" 2>&1)"',
-    'if [ $? -ne 0 ]; then',
-    '  tg reply "!$TG_PR was not merged: ${merged#terragucci pr-merge: not merged: }. Merge it by hand. $run_url"',
-    "  exit 1",
-    "fi",
-    'case "$merged" in',
-    '  "terragucci pr-merge: merged "*) tg reply "${merged#terragucci pr-merge: }. $run_url" ;;',
-    '  *) echo "$merged" ;;',
-    "esac",
-  ].join("\n");
-}
-
-/**
- * The GitLab `mr-apply` job's script (`apply.when: pull-request`): the
- * default branch's pipeline file, in the pipeline the comments job starts
- * for an open merge request's note. `terragucci comment-apply --forge
- * gitlab` decides before any credential, from GitLab's answers and never
- * from the pipeline's variables alone, and takes the root locks (it also
- * answers `/terragucci lock` and `unlock`, which apply nothing). The job then
- * checks out the head the decision checked and runs its waves from wave 1,
- * reading the gate rule, the signers and the settings from the default
- * branch (`--base`), beside any other apply. It posts no
- * status on the head; its replies say what happened.
- */
-export function gitlabApplyScript(binary: Binary, layers: string[][], oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
-  const count = applyWaves(layers, input.canary).length;
-  const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const canaryArg = input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : "";
-  const requires = input.requires && !APPLY_REQUIRES.every((r) => input.requires!.includes(r)) ? ` --requires ${input.requires.length ? input.requires.join(",") : "none"}` : "";
-  return [
-    READS_EXIT,
-    forgeApi("gitlab"),
-    // The locks and a waiting wave's record are pushed to chant/lifecycle.
-    gitlabPushRemote,
-    `terragucci comment-apply --forge gitlab --layers ${layerArg}${canaryArg} --when pull-request${requires}${input.terragrunt ? " --terragrunt" : ""} --out terragucci-comment.json || exit 1`,
-    "read -r TG_PR TG_SHA TG_WAVE TG_OPEN TG_BASE <<EOF",
-    `$(node -e '${PR_DECISION_JS}' terragucci-comment.json)`,
-    "EOF",
-    '[ -n "$TG_PR" ] || exit 0',
-    "export TG_PR TG_SHA",
-    `last=${count}`,
-    '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
-    'run_url="$CI_JOB_URL"',
-    'tf_base="--base origin/$TG_BASE"',
-    'git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the head ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }',
-    ...(input.synth ? [synthScript(input.synth)] : []),
-    ...cloudLoginLines("gitlab", oidc, "apply", "terragucci-apply"),
-    ...(input.terragrunt ? [input.terragrunt.prelude] : []),
-    ...waveLoop(binary, layers, input, "$tf_base", COMMENT_AGAIN, false, applyScope(binary) !== "repo"),
-    ...openReply(count, input.merge, "gitlab"),
-  ].join("\n");
-}
-
-/**
- * The apply a comment starts, `/terragucci apply [wave-<n>]`. The workflow
- * and this script are the default branch's (the comment event's);
- * `terragucci comment-apply` decides from the event file and the forge,
- * before any credential is asked for, whether the comment may apply. On a
- * merged pull request the job then checks out its merge commit. With
- * `apply.when: pull-request`, on an open pull request it checks out the head
- * the decision checked (approved, green, up to date, its roots locked), and
- * each wave reads the gate rule and the signers from the default branch
- * (`--base`), never from the pull request. It holds the lock a push's apply
- * holds (on Forgejo the lock tag, and the decision is made again once it is
- * held; on GitHub the apply concurrency group, which starts the job only when
- * no other apply runs), and runs `stage tf-apply` wave by wave from wave 1
- * (waveLoop). A refused wave and a failed apply get the responses a push's
- * wave gets (respond wave-refused, respond apply-failed) before the reply.
- * The reply says what happened and links the run. In a Terragrunt repo the
- * waves are its waves of units, and each runs `stage tf-apply --terragrunt`
- * after the apply jobs' prelude (caches, the auth provider's apply roles),
- * so a comment applies them through the gate a push's wave job uses.
- */
-export function commentApplyScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
-  const total = layers.flat().length;
-  const count = applyWaves(layers, input.canary).length;
-  const prMode = input.when === "pull-request";
-  const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const canaryArg = input.canary?.length ? ` --canary ${sh(input.canary.join(","))}` : "";
-  // Fewer requirements than every one are written out; `none` for an empty list.
-  const requires = prMode && input.requires && !APPLY_REQUIRES.every((r) => input.requires!.includes(r)) ? ` --requires ${input.requires.length ? input.requires.join(",") : "none"}` : "";
-  // Before merge, a Terragrunt repo's locks are on the units a pull request reaches.
-  const tgLocks = prMode && input.terragrunt ? " --terragrunt" : "";
-  const decideWith = (again: string) => `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""}${prMode ? " --when pull-request" : ""}${requires}${tgLocks}${again} --out terragucci-comment.json || exit 1`;
-  const decide = decideWith("");
-  const decisionJs = prMode ? PR_DECISION_JS : APPLY_DECISION_JS;
-  const locks = applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag);
-  // The login (cloudLoginLines) comes once the decision and the lock are made, so no token waits out the lock, and before
-  // the checkout and the change's code. The step then starts again past them: the decision's values and the lock's names
-  // go on in its environment, and the lock's release is set again.
-  const login = cloudLoginLines(forge, oidc, "apply", "terragucci-apply");
-  const once = login.length > 0;
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    ...(once ? [`if [ -z "\${${LOGIN_RESTART_MARKER}:-}" ]; then`] : []),
-    // Before any credential: the comment, the commenter, the pull request and the merge commit (or, open, the head and its locks).
-    decide,
-    prMode ? "read -r TG_PR TG_SHA TG_WAVE TG_OPEN TG_BASE <<EOF" : "read -r TG_PR TG_SHA TG_WAVE <<EOF",
-    `$(node -e '${decisionJs}' terragucci-comment.json)`,
-    "EOF",
-    '[ -n "$TG_PR" ] || exit 0',
-    // shape: only a repo-wide scope holds the lock tag here; otherwise the waves refuse what another run is applying.
-    ...(locks
-      ? [
-          forgejoLock(false),
-          // A push may have applied while this run waited for the lock: decide again, now that nothing else applies.
-          decideWith(tgLocks ? " --again" : ""),
-          prMode ? "read -r again _ _ _ _ <<EOF" : "read -r again _ _ <<EOF",
-          `$(node -e '${decisionJs}' terragucci-comment.json)`,
-          "EOF",
-          '[ -n "$again" ] || exit 0',
-        ]
-      : []),
-    ...(once ? [`export TG_PR TG_SHA TG_WAVE${prMode ? " TG_OPEN TG_BASE" : ""}${locks ? " lock_ref mine" : ""}`, "fi", ...login, ...(locks ? [LOCK_RELEASE] : [])] : []),
-    'export TG_PR TG_SHA',
-    `last=${count}`,
-    '[ "$TG_WAVE" = "-" ] || last="$TG_WAVE"',
-    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    ...(prMode
-      ? [
-          'what="the merge commit"; tf_base=""',
-          // An open pull request applies its head, and the waves read the gate rule and the signers from its base.
-          'if [ "$TG_OPEN" = 1 ]; then what="the head"; tf_base="--base origin/$TG_BASE"; fi',
-          'git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out $what ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }',
-        ]
-      : ['git checkout --quiet --detach "$TG_SHA" || { tg reply "could not check out the merge commit ${TG_SHA:0:8}, so nothing was applied: $run_url"; exit 1; }']),
-    ...(input.synth ? [synthScript(input.synth)] : []),
-    ...(input.terragrunt ? [input.terragrunt.prelude] : []),
-    'tg status terragucci/apply pending "applying on a comment"',
-    ...waveLoop(binary, layers, input, prMode ? "$tf_base" : "", COMMENT_AGAIN, true, applyScope(binary) !== "repo"),
-    `if [ "$last" = ${count} ]; then`,
-    input.terragrunt
-      ? '  tg status terragucci/apply success "every wave of units applied"'
-      : `  tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
-    "else",
-    `  tg status terragucci/apply pending "wave $last of ${count} applied"`,
-    "fi",
-    // Every wave applied from the default branch's merge commit (not an open pull request's head): the control repo is told by a job of its own.
-    ...(input.control ? [`if [ "$last" = ${count} ] && [ "\${TG_OPEN:-0}" != 1 ]; then ${HAND_ON_COMMIT}; fi`] : []),
-    ...(prMode
-      ? ['if [ "$TG_OPEN" = 1 ]; then', ...openReply(count, input.merge).map((l) => `  ${l}`), "else", '  tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"', "fi"]
-      : ['tg reply "applied wave $done_waves of pull request $TG_PR at ${TG_SHA:0:8}. $run_url"']),
-  ].join("\n");
-}
-
-/**
- * The apply-comment job's script with `environments` (./cloud-identity.ts): each
- * environment's roots apply in jobs of their own, with their own identities,
- * which one comment job cannot be. It decides who asked, as the apply would,
- * and answers how to apply again, holding no credential.
- */
-export function groupedCommentScript(layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", canary?: string[]): string {
-  const layerArg = sh(layers.map((l) => l.join(",")).join(";"));
-  const canaryArg = canary?.length ? ` --canary ${sh(canary.join(","))}` : "";
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    `terragucci comment-apply --layers ${layerArg}${canaryArg}${forge === "forgejo" ? " --forge forgejo" : ""} --out terragucci-comment.json || exit 1`,
-    "read -r TG_PR TG_SHA TG_WAVE <<EOF",
-    `$(node -e '${APPLY_DECISION_JS}' terragucci-comment.json)`,
-    "EOF",
-    '[ -n "$TG_PR" ] || exit 0',
-    "export TG_PR TG_SHA",
-    'tg reply "each environment applies in jobs of its own, with its own identities, so a comment applies nothing in this repo. To apply ${TG_SHA:0:8} again, re-run the apply jobs of the run its push started."',
-  ].join("\n");
-}
-
-/**
- * The first line of an environment's apply job (./cloud-identity.ts): `terragucci
- * check-job` with what the job is expected to see, which stops the job before
- * any token is fetched or traded unless it runs in the environment's forge
- * environment, on a branch it applies from, and on its runner
- * (./check-job.ts). The expected values are rendered here, from the config
- * init read, so the check reads nothing from the commit the job runs. The
- * default branch comes from the forge: GitLab's CI_DEFAULT_BRANCH, and on
- * GitHub and Forgejo the push event's default branch (TG_BRANCH). On GitHub
- * the forge environment is read from an OIDC token's claims, so it is checked
- * only in a job that may request one. On GitHub and Forgejo the step restarts
- * once it has logged in (cloudLoginLines), and the check runs before that,
- * once. The line exits with check-job's own code, so a refusal that exits 9
- * (chant's `misplaced`) is not turned back into 1: GitLab's op-wave jobs allow
- * exit 1 alone, and a refused job must fail and stop the waves.
- */
-export function checkJobLine(forge: ForgeName, group: ApplyGroup, runner: RunnerSpec | undefined, branches: readonly string[], tokens: boolean): string {
-  const labels = runner === undefined ? [] : typeof runner === "string" ? [runner] : Array.isArray(runner) ? runner : (runner.labels ?? []);
-  const args = [
-    "--forge", forge,
-    "--environment", sh(group.environment ?? group.name),
-    "--branches", `"${[forge === "gitlab" ? "$CI_DEFAULT_BRANCH" : "$TG_BRANCH", ...branches].join(",")}"`,
-    ...(group.forgeEnvironment !== undefined && (forge === "gitlab" || (forge === "github" && tokens)) ? ["--forge-environment", sh(group.forgeEnvironment)] : []),
-    ...(forge === "gitlab" && labels.length > 0 ? ["--runner-tags", sh(labels.join(","))] : []),
-    ...(forge !== "gitlab" && labels.includes("self-hosted") ? ["--self-hosted"] : []),
-  ];
-  const line = `terragucci check-job ${args.join(" ")} || exit $?`;
-  return forge === "gitlab" ? line : `if [ -z "\${${LOGIN_RESTART_MARKER}:-}" ]; then ${line}; fi`;
-}
-
-/** The line that gives the job telling the control repo the commit whose every wave applied (the step's id is `apply`). */
-const HAND_ON_COMMIT = 'echo "control_sha=$TG_SHA" >> "$GITHUB_OUTPUT"';
-
-const RESUME_AGAIN = "Approve the plans with \\`$cmd\\`; the resume job applies them on its next run";
-
-/**
- * The resume job's script (GitHub and Forgejo): `terragucci resume` reads the
- * ledger and, when a waiting wave's digest has an approval no apply used,
- * names the default branch's commit (and the pull request that made it, for
- * replies). The waves then run from wave 1 at that commit as a comment's
- * apply does: a wave already applied plans no change, and each gate decides
- * against the plans it makes now. With nothing to resume it stops before any
- * credential.
- */
-export function resumeScript(binary: Binary, layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", oidc?: PipelineInput["oidc"], input: CommentApplyInput = {}): string {
-  const total = layers.flat().length;
-  const count = applyWaves(layers, input.canary).length;
-  // The login comes once there is something to resume and the lock is held, so no token waits out the lock, and before
-  // the change's code. Its restart runs the step again from its top, past the read and the lock, and sets the lock's
-  // release again.
-  const login = cloudLoginLines(forge, oidc, "apply", "terragucci-apply");
-  const locks = applyScope(binary) === "repo" && (forge === "forgejo" || input.lockTag);
-  const once = login.length > 0;
-  return [
-    READS_EXIT,
-    forgeApi(forge),
-    ...onceBeforeLogin(login, forge, [
-      `terragucci resume --forge ${forge} --out terragucci-resume.env || exit 1`,
-      "[ -s terragucci-resume.env ] || exit 0",
-      ...(locks ? [forgejoLock(false), ...(once ? ["export lock_ref mine"] : [])] : []),
-    ]),
-    ...login,
-    ...(once && locks ? [LOCK_RELEASE] : []),
-    ". ./terragucci-resume.env",
-    "export TG_PR TG_SHA",
-    // A commit no pull request made has nowhere to reply: its replies are log lines.
-    'eval "tg_forge () $(declare -f tg | tail -n +2)"',
-    'tg() { if [ "$1" = reply ] && [ -z "$TG_PR" ]; then echo "terragucci: $2"; else tg_forge "$@"; fi; }',
-    `last=${count}`,
-    'TG_WAVE="-"',
-    'run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"',
-    'git checkout --quiet --detach "$TG_SHA" || { echo "terragucci: could not check out ${TG_SHA:0:8}" >&2; exit 1; }',
-    ...(input.synth ? [synthScript(input.synth)] : []),
-    ...(input.terragrunt ? [input.terragrunt.prelude] : []),
-    'tg status terragucci/apply pending "applying after an approval"',
-    ...waveLoop(binary, layers, input, "", RESUME_AGAIN),
-    input.terragrunt ? 'tg status terragucci/apply success "every wave of units applied"' : `tg status terragucci/apply success "${total} roots in ${layers.length} groups applied"`,
-    ...(input.control ? [HAND_ON_COMMIT] : []),
-    'tg reply "applied wave $done_waves at ${TG_SHA:0:8} after its approval. $run_url"',
-  ].join("\n");
-}
-
-/**
- * The `pr-lock` job's script (`locks: plan`): `terragucci pr-lock` reads the
- * event and the change, takes or releases the locks and posts
- * `terragucci/lock`. A pull request held by another fails the status, not the
- * job: the job fails only when the locks could not be read or written.
- */
 /**
  * The check's body on GitHub and Forgejo with respond.fmt on: it runs as
  * before, and when it exits FMT_FINDING (formatting found) the step says so
@@ -1768,6 +1027,12 @@ export function gitlabFindingBody(body: string): string {
 /** Where chant's GitLab commit job reads the check's finding from. */
 const gitlabFindingDir = ".chant/commit";
 
+/**
+ * The `pr-lock` job's script (`locks: plan`): `terragucci pr-lock` reads the
+ * event and the change, takes or releases the locks and posts
+ * `terragucci/lock`. A pull request held by another fails the status, not the
+ * job: the job fails only when the locks could not be read or written.
+ */
 export function planLockScript(layers: string[][], forge: Exclude<ForgeName, "gitlab"> = "github", prMode = false, terragrunt = false): string {
   return [
     "set -euo pipefail",
@@ -1818,9 +1083,6 @@ function reportKeyEnv(forge: ForgeName, reports: PlanReportInput["reports"]): Re
 
 /** The plan report's directory in the job's workspace. */
 export const REPORT_DIR = "terragucci-report";
-
-/** Where a pipeline's apply job downloads the earlier waves' report artifacts, the directory `--after` names (terragucci#1161). */
-export const EARLIER_DIR = "terragucci-earlier";
 
 /**
  * Where the note links the HTML report when the bucket's address is not
@@ -2104,21 +1366,6 @@ const GL_KEYWORDS_NOT_JOBS = ["default", "include", "stages", "variables", "work
 /** The line above the jobs `own_jobs` adds, which says where they come from. */
 export const OWN_JOBS_LINE = "# Your own jobs, from own_jobs in terragucci.yml, as they are there.";
 
-/** The job that sends the control repo its dispatch (GitHub, Forgejo): holds the dispatch token and a status-only token, and no code. */
-function controlJob(c: ResolvedControl, forge: Exclude<ForgeName, "gitlab">, image: string, at: { needs: string; cond: string; sha: string }): never {
-  return new Job({
-    "runs-on": "ubuntu-latest",
-    container: { image },
-    needs: at.needs,
-    if: at.cond,
-    permissions: { statuses: "write" },
-    // One send at a time per commit, so the path that tells the control repo second finds the first's mark.
-    concurrency: { group: `terragucci-control-\${{ github.repository }}-${at.sha}`, "cancel-in-progress": false },
-    env: { TG_CONTROL_TOKEN: `\${{ secrets.${c.tokenEnv} }}`, TG_TOKEN: "${{ github.token }}", TG_SHA: at.sha },
-    steps: [new Step({ name: `Tell ${c.repo} that this repo applied`, shell: "bash", run: dispatchScript(c, forge) })],
-  } as never) as never;
-}
-
 /**
  * `own_jobs`, after the jobs terragucci writes: on GitHub and Forgejo under
  * the workflow's `jobs:`, which the serializer writes last, and on GitLab as
@@ -2222,8 +1469,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const prReview = input.prReview === true && forge !== "gitlab";
   // agent.login is checked against a login's pattern (config.ts), so it is safe on a command line.
   const agentLogin = input.agentLogin && AGENT_LOGIN.test(input.agentLogin) ? input.agentLogin : undefined;
-  // review.agent: an apply job reads the verdict from the review job's artifact in the pull request's run, which takes actions: read on GitHub.
-  const reviewRead: Record<string, string> = input.review ? { actions: "read" } : {};
   // A job asks the forge for an OIDC token when it assumes a role, by oidc or by unit path.
   const needsToken = Boolean(oidc || credentials);
   // The canary wave comes from the repo's terragucci.yml at plan time, so a repo
@@ -2269,30 +1514,23 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const checkBody = withConsumersCheck(withCheckHooks(tg ? terragruntCheckScript(tg, binary) : checkScript(binary, roots, input.synth, input.rootPins === true, input.generate === true, input.atmos !== undefined, input.sources === true, input.mirror === true, input.parallelism), roots, input.checkHooks, tg !== undefined), input.control !== undefined, tg !== undefined);
   // The check hooks are read from the declaration at base, so the check job takes the history, as the policy tests do.
   const checkHistory = Boolean(input.policy) || input.mirror === true || input.terragrunt?.mirror === true || input.checkHooks !== undefined;
-  const synth = input.synth ? { synth: input.synth } : {};
   // cost: the plan jobs, and the apply jobs that price a wave's plans for the policy and cost.approve_above, get the estimator's key
   // as INFRACOST_API_KEY, and Infracost unless cost.command names another estimator.
   const costEnv: Record<string, string> = input.cost ? { INFRACOST_API_KEY: forge === "gitlab" ? `$${input.cost.keySecret}` : `\${{ secrets.${input.cost.keySecret} }}` } : {};
   // GitLab gives every job the project's variables by name, so a key already named INFRACOST_API_KEY needs no mapping.
   const glCostEnv = input.cost && input.cost.keySecret !== "INFRACOST_API_KEY" ? costEnv : {};
   const costInstall = input.cost?.install ? installScript("infracost", INFRACOST_VERSION, forge) : undefined;
-  // notify: the apply jobs post a waiting, refused or failed wave to the webhooks, read from the secrets the key names.
-  const notifyOn = input.notify ? { notify: true } : {};
-  const notifyEnv = Object.fromEntries(
-    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"], ["webhook", "TERRAGUCCI_WEBHOOK"], ["webhook_key", "TERRAGUCCI_WEBHOOK_KEY"], ["relay_key", "TERRAGUCCI_RELAY_KEY"]] as const)
+  // notify: the drift job posts drift to Slack and Teams, so it gets their secrets alone, never the generic webhook's.
+  // The waves read notify from wavesInput (./render-waves.ts).
+  const driftNotifyEnv = Object.fromEntries(
+    ([["slack", "TERRAGUCCI_SLACK_WEBHOOK"], ["teams", "TERRAGUCCI_TEAMS_WEBHOOK"]] as const)
       .filter(([k]) => input.notify?.[k])
       .map(([k, v]) => [v, forge === "gitlab" ? `$${input.notify![k]}` : `\${{ secrets.${input.notify![k]} }}`]),
   );
-  // notify.relay: the relay's name, a plain value, so a waiting wave's message offers its buttons.
-  if (input.notify?.relay) notifyEnv.TERRAGUCCI_RELAY = input.notify.relay;
-  // The drift job posts drift to Slack and Teams: their secrets alone, never the generic webhook's.
-  const driftNotifyEnv = Object.fromEntries(Object.entries(notifyEnv).filter(([k]) => k === "TERRAGUCCI_SLACK_WEBHOOK" || k === "TERRAGUCCI_TEAMS_WEBHOOK"));
   const driftNotify = Object.keys(driftNotifyEnv).length > 0;
   // A wave per job, each behind its gate. A Terragrunt repo's layers are its units' dependency layers, canary first, as init found them;
   // the stage cuts them again from terragrunt find, and the last job also runs any wave past them.
-  const gate = input.gate ?? "on-destructive";
   const waveCount = tg ? layers.length : applyWaves(layers, input.canary).length;
-  const tgApply = tg ? { terragrunt: { prelude: [cacheExports(), ...terragruntCredentials("apply", credentials)].join("\n") } } : {};
   // With apply.when: pull-request a pull request applies before it merges, and the push after the merge runs the confirm job instead of the waves.
   const prApply = input.applyWhen === "pull-request";
   // A Terragrunt repo's layers are its waves already; the stage splits a wave's units across its share jobs as it cuts them.
@@ -2309,9 +1547,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   }
   // An environment's audience: every group's job, and the deciding job, fetch their tokens first and drop the token-request variables
   // (GitHub and Forgejo), so a job's code cannot ask for another environment's audience. GitLab declares each job's in id_tokens.
-  const groupAudience = groups?.some((g) => g.audience !== undefined) === true;
-  const audienceMap = (o: OidcSettings | undefined, apply?: string): OidcSettings | undefined =>
-    o && groupAudience ? { ...o, audience: { plan: stageAudience(o, "plan"), apply: apply ?? stageAudience(o, "apply"), drift: stageAudience(o, "drift") } } : o;
   // The jobs that apply roots, named as chant's wave jobs are (./render-waves.ts): a wave's job, each share's and each
   // group's. Before merge each wave's applying job applies it. Their needs come from the jobs the generator writes.
   const applyJobs: ApplyJob[] = [];
@@ -2394,7 +1629,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
   const tipsOn = responds(input.respond, "tips");
   // An agent response writes its input file; the job keeps it as an artifact.
-  const agentApply = responseTo({ respond: input.respond }, "apply-failed") === "agent";
   const agentDrift = !tg && responseTo({ respond: input.respond }, "drift") === "agent";
   // Attribution reads CloudTrail through the aws CLI, which the images do not carry.
   const awsStep = responseTo({ respond: input.respond }, "drift") === "attribute" ? awsCliScript() : undefined;
@@ -2434,7 +1668,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // On GitLab terragucci's comments poll decides the head before merge through chant (./comment-gitlab.ts), so the generator
   // takes the before-merge settings as they are.
   const wavesNames = wavesJobNames(cut.length);
-  const wavesBm = prApply ? wavesBeforeMerge(forge, wavesInput.beforeMerge!) : undefined;
+  const wavesBm = prApply ? wavesBeforeMerge(forge, wavesInput.beforeMerge!, input.applyRequires) : undefined;
   const wavesProduct = productPipelineJobs(forge, PLAN_ENV, {
     // The waves' jobs answer apply; the plan's answer plan.
     words: { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: [] },
@@ -2480,9 +1714,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     // A scheduled pipeline is the plan notes', drift's, the comments poll's, the resume's or the rollouts'; the push and merge request jobs sit it out.
     // The plan notes schedule (PLAN_NOTES_VAR) runs on every project, so every GitLab pipeline has a scheduled one.
     const scheduled = true;
-    // With apply.when: pull-request the comments job starts a pipeline on the default branch for a merge request; only mr-apply and pr-merge run in it.
-    // Likewise the agent's and the review's pipelines, which the comments job starts on the default branch: only their own jobs run in them,
-    // and the plan notes pipeline, started by its schedule or by hand, where chant's plan-note job alone runs.
+    // The agent's and the review's pipelines, which the comments job starts on the default branch, run only their own jobs,
+    // and the plan notes pipeline, started by its schedule or by hand, runs chant's plan-note job alone.
     const others = [PLAN_NOTES_VAR, ...(input.agentComment ? [CHANT_AGENT_PR_VAR] : []), ...(input.review ? [REVIEW_MR_VAR] : [])];
     // Before merge chant's waves run in a pipeline of the default branch started with the decided head (CHANT_BEFORE_MERGE_HEAD).
     const startedBy = [...others, ...(prApply ? [BEFORE_MERGE_HEAD_ENV] : [])];
@@ -2490,9 +1723,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     const notOthers = others.map((v) => ` && $${v} == null`).join("");
     const notScheduled = scheduled ? { rules: [new Rule({ if: `$CI_PIPELINE_SOURCE != "schedule"${notMrApply}` })] } : {};
     const onDefault = `${scheduled ? '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule"' : "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}${notMrApply}`;
-    // apply.branches: a push to a named branch runs the apply jobs too, for that branch's roots.
-    const onBranches = branchNames.map((b) => ` || $CI_COMMIT_BRANCH == "${b}"`).join("");
-    const onApply = onBranches ? `($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH${onBranches})${scheduled ? ' && $CI_PIPELINE_SOURCE != "schedule"' : ""}${notMrApply}` : onDefault;
+    // apply.branches: a push to a named branch runs chant's wave jobs too, so no fmt job runs there.
     const notBranches = branchNames.map((b) => ` && $CI_COMMIT_BRANCH != "${b}"`).join("");
     // Only the jobs that run no merge request code see the merge token: GitLab gives a variable scoped to this environment to the jobs that name it.
     const mergeEnvironment = { environment: { name: MERGE_ENVIRONMENT, action: "access" } };
@@ -2658,7 +1889,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       // GitLab starts no pipeline for a merge request note, so a schedule polls for them. The job runs from the
       // default branch, reads notes and calls the API with the project's token; it takes no cloud credentials,
       // and one poll at a time answers a note.
-      // With apply.when: pull-request it also holds the merge token, to start the mr-apply pipeline on the protected default branch.
+      // With apply.when: pull-request it also holds the merge token, to start the waves' pipeline on the protected default branch.
       jobs.set("comments", new GitLabJob({
         stage: "comments",
         image: jobImage,
@@ -2767,7 +1998,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     on: {
       push: { branches: ["**"] },
       pull_request: {},
-      // `/terragucci plan [root]` in a pull request comment re-plans it (comment.ts); `/terragucci apply` on a merged one re-runs its apply (comment-apply.ts).
+      // `/terragucci plan [root]` in a pull request comment re-plans it (comment.ts); `/terragucci apply` is chant's comment job (apply-comment).
       issue_comment: { types: ["created"] },
       // approval: pr-review: a review of the head re-posts terragucci/approval.
       ...(prReview ? { pull_request_review: {} } : {}),
@@ -2803,7 +2034,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     main,
   ];
   const upload = uploadArtifact(forge);
-  const download = downloadArtifact(forge);
   // A job that runs the change's code checks it out with no credentials left in the git config, and with a script,
   // not actions/checkout, whose post step runs at the job's end with the token as its input (./handover.ts).
   const bareCheckout = (history: boolean, ref?: string, cond?: string, name = "Check out the change"): InstanceType<typeof Step> =>
@@ -2858,10 +2088,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const comment = commentWords(input, forge, prApply, locksPlan);
   const applySays = atlantis ? `${says(comment.apply)} || ${says(comment.alias.apply)}` : says(comment.apply);
   const planSays = atlantis ? `(${says(comment.plan)} || ${says(comment.alias.plan)})` : says(comment.plan);
-  // With apply.when: pull-request, `/terragucci lock` and `/terragucci unlock` are the apply-comment job's too: it holds the locks.
-  const APPLY_COMMENT = prApply
-    ? `(${applySays} || ${says(comment.lock)} || ${says(comment.unlock)})`
-    : atlantis ? `(${applySays})` : applySays;
   // With locks: plan and apply.when: merge, `/terragucci lock` and `/terragucci unlock` are the pr-lock job's.
   const LOCK_COMMENT = `(${says(comment.lock)} || ${says(comment.unlock)})`;
   // The plan, plan-note, replan and replan-note jobs are chant's product plan (./product-plan.ts), under terragucci's names.

@@ -4,7 +4,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChantCiControl, ChantControlEntry, ChantControlLedgerPort } from "../src/chant-next";
 import { importControlConfigAt, LEDGER_PATH, putEntryAt, readEntriesAt, retireEntryAt, validateSettings } from "../src/control-records";
-import { dispatchScript, resolveControl } from "../src/control-repo";
 import { git, tmp } from "./helpers";
 
 /** The fake chant's control module calls go to, when a case sets one. */
@@ -64,7 +63,6 @@ function fakeControl(lines: string[] = []): { chant: ChantCiControl; calls: stri
 const entryLine = (project: string): string =>
   JSON.stringify({ id: "ctl-001", entry: "project", project, settings: {}, estates: ["net"], digest: "d1", at: "2026-10-27T00:00:00Z" });
 
-const control = { repo: "github.com/acme/control", op: "deploy" };
 
 describe("control entries on the ledger", () => {
   it("reads an empty ledger as no entries, and writes the first one there", async () => {
@@ -114,19 +112,5 @@ describe("control entries on the ledger", () => {
     expect(git(dir, "show", "chant/lifecycle:_control/entries.jsonl")).toContain("github.com/acme/app");
     const entries = await readEntriesAt(dir);
     expect(entries.map((e) => [e.project, e.settings, e.estates, e.path])).toEqual([["github.com/acme/app", { binary: "terraform" }, ["net"], LEDGER_PATH]]);
-  });
-});
-
-describe("the member's dispatch", () => {
-  it("is chant's, with terragucci's secrets and mark", async () => {
-    const { chant, calls } = fakeControl();
-    stand.in = chant;
-    const c = resolveControl({ ...control, token_env: "MY_DISPATCH", read_token_env: "MY_READ" }, "app");
-    const script = dispatchScript(c, "github");
-    expect(script.split("\n").slice(0, 3)).toEqual(['export CHANT_CONTROL_TOKEN="${TG_CONTROL_TOKEN:-}"', 'export CHANT_CONTROL_SHA="${TG_SHA:-}"', "export TG_FORGE=github"]);
-    expect(script).toContain("chant-dispatch sent=terragucci post sent terragucci/control");
-    expect(calls).toEqual(["target token=MY_DISPATCH read=MY_READ"]);
-    expect(dispatchScript(c, "gitlab")).toContain("chant-dispatch sent= mark=");
-    stand.in = undefined;
   });
 });

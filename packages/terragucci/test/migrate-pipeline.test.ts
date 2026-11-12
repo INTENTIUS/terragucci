@@ -8,9 +8,9 @@ import { PIPELINE_PATHS, renderPipeline } from "../src/render";
 import { tmp, twoRootRepo, write } from "./helpers";
 
 const doc = (text: string): Record<string, any> => parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-/** Each apply job's `permissions.contents`, by job name. */
+/** Each wave job's `permissions.contents`, by job name: chant's jobs that run a wave, not its status jobs. */
 const applyContents = (text: string): Record<string, string> =>
-  Object.fromEntries(Object.entries(doc(text).jobs as Record<string, { permissions?: { contents?: string } }>).filter(([n]) => /^apply/.test(n)).map(([n, j]) => [n, j.permissions?.contents ?? ""]));
+  Object.fromEntries(Object.entries(doc(text).jobs as Record<string, { permissions?: { contents?: string } }>).filter(([n]) => /^apply-wave-\d+$/.test(n)).map(([n, j]) => [n, j.permissions?.contents ?? ""]));
 const MIGRATION = "moves:\n  - from: network\n    to: app\n    addresses: [aws_s3_bucket.logs]\n";
 
 describe("the pipeline of a repo that carries migrations", () => {
@@ -34,7 +34,8 @@ describe("a pipeline that cannot run its migrations", () => {
     const dir = write(twoRootRepo(), { "terragucci.yml": "forge: github\ngate: never\n" });
     await init(dir, { binary: "tofu" });
     const path = join(dir, PIPELINE_PATHS.github);
-    writeFileSync(path, readFileSync(path, "utf-8").replace(/^(\s+)contents: write\n(\s+statuses: write\n\s+pull-requests: write)/gm, "$1contents: read\n$2"));
+    // chant's wave jobs, as an older pipeline had them: contents read beside pull-requests write.
+    writeFileSync(path, readFileSync(path, "utf-8").replace(/^(\s+)contents: write\n(\s+pull-requests: write)/gm, "$1contents: read\n$2"));
     if (withMigration) write(dir, { "migrations/move-logs.yml": MIGRATION });
     return dir;
   }
@@ -43,7 +44,7 @@ describe("a pipeline that cannot run its migrations", () => {
     const dir = await repo(true);
     const problems = migrationPipelineProblems(dir);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toMatch(/^migrations\/ holds a migration \(migrations\/move-logs\.yml\), and in \.github\/workflows\/terragucci\.yml apply-comment, apply-wave-1, apply-wave-2 may not write chant\/lifecycle, where a migration waits for its approval; run terragucci init to write the pipeline again$/);
+    expect(problems[0]).toMatch(/^migrations\/ holds a migration \(migrations\/move-logs\.yml\), and in \.github\/workflows\/terragucci\.yml apply-wave-1, apply-wave-2 may not write chant\/lifecycle, where a migration waits for its approval; run terragucci init to write the pipeline again$/);
     await init(dir, { binary: "tofu" });
     expect(migrationPipelineProblems(dir)).toEqual([]);
   });

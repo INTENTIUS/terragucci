@@ -41,14 +41,17 @@ describe("runner", () => {
     // The checkout and handover steps are chant's scripts where chant takes terragucci's words (chant#4554); each has its golden.
     golden("runner-github.yml", out.content);
     const jobs = jobsOf(out.content);
+    // chant's waves jobs (the wave jobs, their status jobs and the stale marking) run where the spec's runner puts them: the apply stage's.
+    const chantWaves = (name: string): boolean => /^apply-wave-|^apply-done$|^stale-notes$/.test(name);
     for (const [name, job] of Object.entries(jobs)) {
-      const stage = jobStage(name);
+      const stage = chantWaves(name) ? "apply" : jobStage(name);
       expect(job["runs-on"], name).toEqual(stage ? BY_STAGE[stage] : BY_STAGE.default);
     }
     expect(jobs.plan["runs-on"]).toBe("plan-runner");
     expect(jobs.replan["runs-on"]).toBe("plan-runner");
     expect(jobs["apply-wave-2"]["runs-on"]).toEqual(["self-hosted", "prod"]);
-    expect(jobs["apply-comment"]["runs-on"]).toEqual(["self-hosted", "prod"]);
+    // chant's comment job applies nothing (it re-runs the wave jobs), so it runs on the default runner.
+    expect(jobs["apply-comment"]["runs-on"]).toEqual(["self-hosted", "linux"]);
     expect(jobs.ephemeral["runs-on"]).toEqual(["self-hosted", "prod"]);
     // The drift job is chant's drift Op in a workflow of its own, on the drift stage's runner.
     expect(jobs.drift).toBeUndefined();
@@ -101,7 +104,8 @@ describe("pass", () => {
       const out = render(forge, { ...RICH, pass: PASS });
       const jobs = jobsOf(out.content);
       const holders = Object.entries(jobs).filter(([, j]) => j.env?.TF_VAR_db_password).map(([n]) => n).sort();
-      expect(holders).toEqual(["apply-comment", "apply-wave-1", "apply-wave-2", "ephemeral", "plan", "replan"]);
+      // chant's comment job applies nothing (it re-runs the wave jobs), so it gets none.
+      expect(holders).toEqual(["apply-wave-1", "apply-wave-2", "ephemeral", "plan", "replan"]);
       // The drift job is chant's drift Op (chant issue 4622), whose job gets them as the spec's variables.
       const drift = (out.extra ?? []).find((f) => f.path === `.${forge}/workflows/terragucci-drift.yml`)!;
       expect(jobsOf(drift.content)["terragucci-drift"].env.TF_VAR_db_password).toBe("${{ secrets.TF_VAR_db_password }}");

@@ -91,7 +91,7 @@ These are plain CI jobs in your pipeline.
 | One grouped plan note and a `terragucci/plan` status | open or push to the pull request | all three | [Get your first plan note](/terragucci/getting-started/) |
 | Tips and policy results on the plan | on by default with the plan; `tips: false` turns tips off, `policy` adds checks | all three | [Tips](/terragucci/reference/tips/), [Policy](/terragucci/reference/policy/) |
 | A re-plan | comment `/terragucci plan [root]` | all three; GitLab through the comments schedule | [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
-| Root locks by comment | comment `/terragucci lock` or `/terragucci unlock` | GitHub and Forgejo; GitLab with `apply.when: pull-request` and `comments:` set | [Locks](/terragucci/guides/apply-before-merge/#locks) |
+| Root locks by comment | comment `/terragucci lock` or `/terragucci unlock` | GitHub and Forgejo, with `locks: plan` under `apply.when: merge`; with `apply.when: pull-request`, `/terragucci apply` takes the locks | [Locks](/terragucci/guides/apply-before-merge/#locks) |
 | Root locks from the first plan | `locks: plan` | GitHub and Forgejo | [Locks](/terragucci/guides/apply-before-merge/#locks) |
 | Apply before merge, then merge after the last wave | `apply.when: pull-request`, then comment `/terragucci apply [wave-<n>]` | GitHub, Forgejo, and GitLab with `comments:` set | [Apply before merge](/terragucci/guides/apply-before-merge/) |
 | An approval for a waiting wave | `approval: ledger`, `pr-review` or `sealed`; run `terragucci approve` | all three | [Approve a waiting wave](/terragucci/guides/approve-a-wave/) |

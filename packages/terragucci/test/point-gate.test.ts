@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { applyWave, EXIT, readLedger } from "../src/apply";
 import { chantCommand } from "@intentius/chant/chant-install";
 import { pointQuestions } from "../src/point-gate";
-import { resumable } from "../src/resume";
+import { planGateResumes } from "@intentius/chant/op/gate-resume-plan";
 import { relayToken } from "@intentius/chant/notify";
 import { decideRelayClick } from "@intentius/chant/notify-relay";
 import { checkoutRelayDeps } from "@intentius/chant/cli/handlers/notify-relay";
@@ -187,11 +187,12 @@ describe("a wave gate that asks a decision point, answered from chat", () => {
     const points = chantJson(reader, "workspace", "points", "--json");
     expect(points.questions.find((q: { id: string }) => q.id === id)).toMatchObject({ state: "answered", answer: true, answeredBy: ["alice@acme.com"], relayedBy: "terragucci-relay", subject: "gate:tf-apply/wave-1" });
 
-    // The resume job, in the job's checkout, sees the answer pass the gate and resumes wave 1.
+    // chant's resume, in the job's checkout, sees the answer pass the gate and resumes wave 1.
     const ledgerNow = readLedger(job);
     const questions = await pointQuestions(job, ledgerNow);
     expect(questions?.get(id)).toMatchObject({ state: "answered", answer: true });
-    expect(resumable(ledgerNow, new Date().toISOString(), undefined, questions)).toMatchObject([{ wave: 1, digest: D, by: "alice@acme.com" }]);
+    const resumes = planGateResumes({ op: "tf-apply", pending: ledgerNow.pending as never, resolutions: ledgerNow.resolutions as never, applied: (ledgerNow.applied ?? []) as never, finished: (ledgerNow.finished ?? []) as never, now: new Date().toISOString(), ...(questions ? { questions } : {}) }).filter((c) => c.resumable);
+    expect(resumes).toMatchObject([{ gate: "wave-1", planDigest: D, approvedBy: "alice@acme.com" }]);
 
     // The wave's next run passes on the answer, records the resolution that cites it once, and applies.
     expect(await wave(job, bin, outcome)).toBe(EXIT.applied);

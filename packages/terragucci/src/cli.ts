@@ -1314,6 +1314,8 @@ export async function main(argv: string[]): Promise<number> {
       }
       case "run": {
         // chant's Op waves jobs run `terragucci run wave ...`: chant's wave runner in this process, with terragucci's words and its wave hook.
+        // chant's resume job runs `terragucci run resume --op tf-apply`: chant's resume, answered in terragucci's words.
+        if (args[0] === "resume") return runChantInProcess(["run", "resume", ...argv.slice(argv.indexOf("resume") + 1)], TERRAGUCCI_WORDS);
         if (args[0] !== "wave") throw new ConfigError("usage: terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]], or another line of chant's run wave");
         return runWave(cwd, argv.slice(argv.indexOf("wave") + 1));
       }

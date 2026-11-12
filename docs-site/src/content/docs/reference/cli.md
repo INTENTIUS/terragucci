@@ -29,21 +29,19 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `rollout` | moves a module's or provider's pin one wave at a time |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
-| `comment-apply` | reads a `/terragucci apply [wave-<n>]`, `/terragucci lock` or `/terragucci unlock` comment; the generated pipeline runs it |
 | `pr-lock` | takes or releases a pull request's plan locks under `locks: plan`; the generated pipeline runs it |
 | `approve` | approves a waiting wave: finds it on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), prints what it does and records an approval of its digest, with `--sign` under `approval: sealed`; also approves a migration, a state export, a lock release and a pull request environment; a person runs it |
 | `override` | overrides a policy denial of one root's plan: finds the denial a `tf-apply` wave recorded, checks the rules named are the ones that denied it, and records the override with the reason; a person `policy.override` lists runs it |
 | `approval-status` | with `approval: pr-review`, posts `terragucci/approval` on a pull request's head: pending while a wave the gate will hold has no approving review of that head; the generated pipeline runs it |
 | `post` | sets a commit status, posts or edits the plan note, replies, or marks plan notes stale; the generated pipeline's jobs run it |
 | `plan-note` | on GitHub and Forgejo, posts the plan job's note and `terragucci/plan` from its report, read as data; the generated `plan-note` and `replan-note` jobs run it |
-| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated apply and drift jobs run it |
+| `notify` | posts a wave that waits, is refused or fails to the Slack, Teams and generic webhooks `notify` names, and drift to Slack and Teams; the generated drift job runs it |
 | `relay` | serves the Approve and Decline buttons of Slack and Teams messages, in your own cloud |
 | `query` | runs one SQL statement over the inventory, versions, changes, history, audit trail and state edges in the reports bucket, on your machine, and prints the rows |
 | `mcp` | an MCP server on stdio over what terragucci wrote to the reports bucket and the repo, for a coding agent; read-only, and with `--propose` it also pushes a branch, opens a pull request, requests an app from a template and reads the plan |
 | `guard` | writes wrappers for the binaries and a Claude Code hook that refuse an apply in a root of the pipeline, for a coding agent's shell |
 | `view` | runs [behold](https://intentius.io/behold/using/terragucci/) on your machine over the repo and its reports bucket: the roots as one graph, each resource marked with what the newest runs found; `--export` writes a static copy |
 | `drift-agent` | writes the drift agent's prompt and opens a pull request with its change, with [`agent.drift`](/terragucci/guides/agent-fix-drift/) |
-| `pr-merge` | merges a pull request every wave of which applied before merge, with `apply.merge: auto`; the generated pipeline runs it |
 | `config check` | validates the config file and lists every problem, then prints the approval mode in force and where it comes from; with `oidc.roles`, the state each role reaches, and a warning for each role that reaches another environment's state; [config check tips](/terragucci/reference/tips/#config-check-tips) after `ok` |
 | `config identities` | per environment and stage, prints the roots, the runner, the forge environment, the cloud identities, the OIDC subject and audience each job presents, and the trust each cloud needs to accept that job |
 | `forge check` | compares what `config identities` expects with the live forge environments, runners, protections and variables and each cloud's trust, reading only, and exits 1 on a mismatch; a person or a scheduled job of the team's own runs it |
@@ -52,7 +50,6 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `image recipe` | writes a Dockerfile, CLI config and build script for an image `FROM` terragucci's that carries every provider the lock files pin; you build and push it |
 | `registry edge` | writes the edge function for `modules.registry`, with its deploy config, so Terraform installs from a bucket-hosted registry; you deploy it |
 | `check-job` | the first line of an environment's apply job: stops the job unless it runs in the environment's forge environment, on a branch it applies from and on its runner; the generated pipeline runs it |
-| `resume` | applies a waiting wave once its approval stands, or the rest of a killed approved apply; the generated resume job runs it |
 | `ephemeral` | applies a pull request's copy of the [ephemeral](/terragucci/reference/config/#ephemeral-environments) roots, destroys it on close, and sweeps the copies whose TTL passed; the generated pipeline runs it |
 | `unlock-state` | releases a root's state lock a killed job left, once no run that may hold it is alive and an approval of its lock ID stands, and records the release; a person runs it |
 | `auth-provider` | internal: Terragrunt's `auth-provider-cmd`, which the generated Terragrunt pipeline runs |
@@ -103,7 +100,7 @@ The approval mode decides what else `init` writes.
 
 ### chant.config.ts and the waves' spec
 
-In a repo of plain roots, `init` also writes two files for chant. `chant.config.ts` at the repo's root names each root under `terraform.roots`, keyed by its path. `.chant/op-waves/tf-apply.spec.json` holds the apply waves' rules, which each wave job reads at the commit before the one it applies. Commit both with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root. A wave job runs the binary `terraform.binary` names there; when a root plans with another one, the wave plans and applies it through terragucci's own calls and the job says why.
+`init` also writes `.chant/op-waves/tf-apply.spec.json` in every repo, Terragrunt, Atmos and Terramate repos too. Each wave job renders its rules with [`waves-spec`](#waves-spec) from that file and `terragucci.yml` at base, and takes the runs from the commit it applies. In a repo of plain roots, `init` also writes `chant.config.ts` at the repo's root, which names each root under `terraform.roots`, keyed by its path. Commit these with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root. A wave job runs the binary `terraform.binary` names there; when a root plans with another one, the wave plans and applies it through terragucci's own calls and the job says why.
 
 ### The components file
 
@@ -120,7 +117,7 @@ In a repo of plain roots, `init` also writes two files for chant. `chant.config.
 
 A root's `dependsOn` is the roots it must follow: those whose state it reads, those [`waves.after`](/terragucci/reference/config/) puts before it, or in a Terragrunt, Atmos or Terramate repo the order that tool gives. When that order alone would group the roots into other waves than the pipeline's, as [`waves.canary`](/terragucci/reference/config/) does, each root also depends on every root of the wave before its own. Grouping the components by `dependsOn` then gives the pipeline's waves.
 
-In `pipeline.jobs`, a wave split by `waves.jobs` or by environment has a job that decides the wave and applies no root, and a job per share or group that lists its own roots. `apply-done` and `apply-rest` apply none. In a Terragrunt repo, the share jobs' roots are the layer's units as `init` found them; the stage cuts them again when it runs. With `apply.when: pull-request`, the list holds the one job that applies a pull request's every wave, `apply-comment` (`mr-apply` on GitLab), with no `wave` and every root.
+In `pipeline.jobs`, a wave split by `waves.jobs` or by environment has a job that decides the wave and applies no root, and a job per share or group that lists its own roots. `apply-done` and `apply-rest` apply none. In a Terragrunt repo, the share jobs' roots are the layer's units as `init` found them; the stage cuts them again when it runs. With `apply.when: pull-request`, the list holds each wave's applying job, `apply-wave-<k>`, which applies the wave of the decided head.
 
 The [agent jobs](/terragucci/guides/agent-change-a-pull-request/) refuse a change to the file.
 
@@ -273,7 +270,7 @@ terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--bina
 
 Both `stage tf-plan` and `stage tf-drift` write the report even when a root refuses to plan. [The plan report](/terragucci/reference/report/) lists the files.
 
-`stage tf-apply` applies one wave, as the generated `apply-wave-<n>` job does. Wave 1 first runs each [state migration](/terragucci/reference/migration-files/) that has not applied, behind its own gate, and `stage tf-plan` proves them. It refuses `--json` with exit 1. With `TG_OUTCOME_JSON` set it writes the wave's outcome to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
+`stage tf-apply` applies one wave. The generated `apply-wave-<n>` jobs no longer run it: they run [`run wave`](#run-wave), which hands chant what this command runs a wave with. Wave 1 first runs each [state migration](/terragucci/reference/migration-files/) that has not applied, behind its own gate, and `stage tf-plan` proves them. It refuses `--json` with exit 1. With `TG_OUTCOME_JSON` set it writes the wave's outcome to that file as [JSON](/terragucci/reference/cli-json/#the-apply-outcome).
 
 | Flag | Environment | Meaning |
 |---|---|---|
@@ -415,10 +412,10 @@ terragucci respond rollout [--mode dry-run|apply]
 terragucci comment --layers <a,b;c> --out <file> [--forge github|forgejo] [--agent off|on]
 terragucci comment --agent run --out <file> --prompt <file> [--policy-dir <dir>] [--forge github|forgejo]
 terragucci comment --agent push --change <dir> [--policy-dir <dir>]
-terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none]
+terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--waves <n>]
 ```
 
-Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job is chant's and decides with chant's re-plan step, not this command; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `comment-apply`. Each `--agent` mode runs in its own job.
+Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and writes a decision to `--out`: plan, or stop with a reason. A refused command is answered on the pull request. `--forge github` (the default) asks the API for the commenter's permission and `--forge forgejo` reads it from the event. The generated `replan` job is chant's and decides with chant's re-plan step, not this command; see [Re-plan a pull request from a comment](/terragucci/guides/re-plan-from-a-comment/). `/terragucci apply` is read by `apply-comment`, chant's comment job. Each `--agent` mode runs in its own job.
 
 | `--agent` | Run by job | Does |
 |---|---|---|
@@ -427,7 +424,7 @@ Reads the pull request comment in the event file (`GITHUB_EVENT_PATH`) and write
 | `run` | `agent` | decides on a `/terragucci agent <ask>` comment with the same checks and writes the prompt to `--prompt`; a fork or default-branch pull request gets no agent |
 | `push` | `agent-push` | refuses the patch in `--change` when it touches a path an agent may not change, `--policy-dir` (default `policy`) among them, and commits a passing patch to the pull request's head branch with the `TG_*` variables in [Environment variables](/terragucci/reference/environment/) |
 
-On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)).
+On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments` job runs it on the comments schedule ([`comments`](/terragucci/reference/config/#keys)). `--waves` is how many waves the pipeline has, the canary wave included; without it, one per layer. `init` writes it when the two differ.
 
 | Poll | Does |
 |---|---|
@@ -440,9 +437,8 @@ On GitLab, `--forge gitlab --poll` reads no event file; the generated `comments`
 | any | the author is a Developer or above; anyone else gets no reply | |
 | `/terragucci plan [root]` | the merge request is open and from this project; a named root is a root of the pipeline | starts a merge request pipeline, which plans the whole merge request |
 | `/terragucci apply` | the merge request merged into the default branch from this project; no later commit there has an apply of its own; no `wave-<n>` | retries the merge commit's first apply job that did not succeed; its gate decides again |
-| `/terragucci apply [wave-<n>]`, with `--when pull-request` | the merge request is open, from this project, into the default branch; `--requires` (all four by default), `terragucci/plan` and the pipeline files, as `comment-apply` checks them | starts a pipeline on the default branch with `TG_MERGE_TOKEN` and the variables `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` |
-| `/terragucci lock`, `unlock`, with `--when pull-request` | the merge request is open | starts the same pipeline |
-| `/terragucci lock`, `unlock` without it, `agent` | | replies that the verb does not run here |
+| `/terragucci apply [wave-<n>]`, with `--when pull-request` | the merge request is open, from this project, into the default branch; then chant's decision checks `--requires` (all four by default), `terragucci/plan` and the pipeline files at the head | chant's decision takes the locks of what the merge request reaches and records the decision on `chant/lifecycle`; then the poll starts the waves' pipeline on the default branch with `TG_MERGE_TOKEN` and the variables `CHANT_BEFORE_MERGE_PR`, `CHANT_BEFORE_MERGE_HEAD` and `CHANT_BEFORE_MERGE_DIGEST` |
+| `/terragucci lock`, `unlock`, `agent` | | replies that the verb does not run here; with `--when pull-request`, that `/terragucci apply` takes the locks |
 
 [The generated pipeline](/terragucci/reference/pipeline/#the-agent-comment) lists the guarded paths, and [When a comment runs nothing](/terragucci/reference/pipeline/#ignored-comments) lists the checks every comment passes before a job uses a credential.
 
@@ -468,41 +464,7 @@ The `review` and `review-note` jobs of the generated review workflow run the two
 terragucci pr-lock --layers <a,b;c> [--forge github|forgejo] [--when merge|pull-request] [--terragrunt]
 ```
 
-Reads the event file (a `pull_request_target` event, or a `/terragucci plan`, `lock` or `unlock` comment) and takes or releases the pull request's plan locks on `chant/lifecycle`. It posts `terragucci/lock` on the head and replies when another pull request holds a root. The generated `pr-lock` job runs it under [`locks: plan`](/terragucci/reference/config/#plan-locks). `--when pull-request` leaves `lock` and `unlock` to `comment-apply`; `--terragrunt` locks units.
-
-## comment-apply
-
-```text
-terragucci comment-apply --layers <a,b;c> --out <file> [--canary <globs>] [--forge github|forgejo|gitlab]
-    [--when merge|pull-request] [--requires <list>|none] [--terragrunt] [--again]
-```
-
-Reads a `/terragucci apply [wave-<n>]` comment, checks the commenter's permission as `comment` does, and writes a decision to `--out`: the merge commit and last wave to apply, or why nothing applies. The generated `apply-comment` job runs it before any credential. See [Apply a merged pull request](/terragucci/guides/re-plan-from-a-comment/#apply-a-merged-pull-request).
-
-| `--when` | An open pull request |
-|---|---|
-| `merge` (the default) | does not apply |
-| `pull-request` (written when `apply.when` is `pull-request`) | applies from its head once the checks in [Apply before merge](/terragucci/reference/pipeline/#apply-before-merge) pass; the command takes the root locks, `/terragucci lock` takes them without applying, and `/terragucci unlock` releases them |
-
-`--requires` is a comma-separated list of `approved`, `mergeable`, `undiverged` and `checks`, or `none`; without it all four apply. `init` writes it from [`apply.requires`](/terragucci/reference/config/#apply-before-merge) when that leaves one out. `--terragrunt` (written in a Terragrunt repo under `apply.when: pull-request`) puts the locks on the units the pull request reaches, as [Locks](/terragucci/guides/apply-before-merge/#locks) describes. `--again` marks the second decision on Forgejo, which does not repeat a reply the first one posted.
-
-The `mr-apply` job runs `--forge gitlab --when pull-request`, which reads no event file. `TERRAGUCCI_MR`, `TERRAGUCCI_NOTE` and `TERRAGUCCI_HEAD` name the merge request, note and head it reads from GitLab. Nothing runs unless the note is a Developer's `apply`, `lock` or `unlock` and the head is still the merge request's head.
-
-## pr-merge
-
-```text
-terragucci pr-merge --pr <n> --sha <sha> [--forge github|forgejo|gitlab]
-```
-
-Merges the pull request while its head is still `--sha` and releases its root locks. The generated `pr-merge` job runs it after the last wave applied before merge, with `apply.merge: auto`. The sha comes from a job that ran the pull request's code, so the command first checks with `TG_TOKEN` that:
-
-- the pull request is open;
-- its head is `--sha`;
-- a reviewer other than the author approved that head.
-
-It merges with `TG_MERGE_TOKEN` if set (named by `apply.merge_token_env`), else `TG_TOKEN`.
-
-With `--forge gitlab` it first looks for the `mr-apply` reply, from `TG_TOKEN`'s user, that says every wave of `--sha` applied in this pipeline (`CI_PIPELINE_ID`). Without one it exits 0 and prints `nothing to merge`. The approval it checks is one given after the merge request's latest push.
+Reads the event file (a `pull_request_target` event, or a `/terragucci plan`, `lock` or `unlock` comment) and takes or releases the pull request's plan locks on `chant/lifecycle`. It posts `terragucci/lock` on the head and replies when another pull request holds a root. The generated `pr-lock` job runs it under [`locks: plan`](/terragucci/reference/config/#plan-locks). With `--when pull-request` it answers no `lock` or `unlock` comment, since `/terragucci apply` takes the locks then; `--terragrunt` locks units.
 
 ## post
 
@@ -613,7 +575,7 @@ Sets `terragucci/approval` on the head `TG_SHA` and `TG_PR` name. The status sta
 terragucci notify waiting|refused|failed --wave <n> [--outcome <file>] [--outcome-json <file>] [--report <dir>]
 ```
 
-Sends one wave's outcome to whichever of `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOOK` and `TERRAGUCCI_WEBHOOK` are set. The generic webhook gets a [`chant.notify/v1`](/terragucci/reference/notify-event/) event signed with `TERRAGUCCI_WEBHOOK_KEY` over `<timestamp>.<body>`, and nothing when the key is empty. With `notify` set, the generated apply jobs run it on any nonzero exit.
+Sends one wave's outcome to whichever of `TERRAGUCCI_SLACK_WEBHOOK`, `TERRAGUCCI_TEAMS_WEBHOOK` and `TERRAGUCCI_WEBHOOK` are set. The generic webhook gets a [`chant.notify/v1`](/terragucci/reference/notify-event/) event signed with `TERRAGUCCI_WEBHOOK_KEY` over `<timestamp>.<body>`, and nothing when the key is empty. The generated wave jobs do not run it: with `notify` set, `run wave` sends a wave's outcome from the spec's `notify`, which names the secrets as `terragucci.yml` gives them.
 
 | Read from | For |
 |---|---|
@@ -1067,14 +1029,6 @@ These are config errors (exit 1):
 
 A destroy that fails is tried once more. If it still fails, the copy stays live, and the next sweep tries again. `up`, `down` and `sweep` also read the copies recorded in `_gates/tf-ephemeral/done.jsonl` by terragucci 0.4.42 and earlier.
 
-## resume
-
-```text
-terragucci resume [--forge github|forgejo|gitlab] [--out <file>]
-```
-
-The resume job runs it ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)). From `chant/lifecycle` it finds each waiting wave, and each state migration wave 1 waits on, whose digest has an approval no apply has used. An approved migration resumes wave 1, which runs it. It also finds a wave whose approved choudoufu apply was killed, once that run is gone ([Stopped applies](/terragucci/reference/pipeline/#stopped-applies)). It writes `TG_SHA` and `TG_PR` to `--out` for the job's waves to apply on GitHub and Forgejo, and retries the waiting apply job on GitLab. It exits 0 when there is nothing to resume.
-
 ## override
 
 ```bash
@@ -1182,9 +1136,8 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `rollout` | complete | stopped | waiting | |
 | `request` | pull request opened or already open, or with `--dry-run` its files listed | a refusal, or a chant without template requests | | |
 | `respond` | event handled, even when the response is `off` | unknown event or missing flag | | |
-| `comment`, `comment-apply` | decision written, or every note answered | forge error, unreadable event file | | |
+| `comment` | decision written, or every note answered | forge error, unreadable event file | | |
 | `pr-lock` | locks taken, refused or released | the locks could not be read or pushed, unreadable event file | | |
-| `pr-merge` | merged | not merged | | |
 | `config check` | `ok`, with or without warnings | problems found | | |
 | `config identities` | printed | no config, an unknown project, or no forge to name | | |
 | `forge check` | no mismatch | a mismatch, or with `--require-clouds` a cloud not checked; no config, an unknown project, or no forge to name | | |
@@ -1199,7 +1152,7 @@ The codes are the same with or without `--json`, and they are chant's: a pipelin
 | `ephemeral` | applied, destroyed, or nothing to do | a root failed to plan, apply or destroy; no `ephemeral` roots, a backend no key suffix fits, a Terragrunt unit whose `remote_state` key does not read `TERRAGUCCI_EPHEMERAL_SUFFIX` | the copy waits for an approval | an approval stands for other plans of the copy |
 | `unlock-state` | released, or no lock held | no forge token, a forge it cannot read, a backend with no lock file, or a request that released already | waits for an approval of the lock | |
 | `approve`, `override` | approved | `approve --plan` names a digest no wave waits for; no wave waiting, several waiting and none named, no recorded denial, or the rules differ | | |
-| `resume`, `notify`, `plan-note`, `approval-status` | always, once the flags parse | a bad flag | | |
+| `notify`, `plan-note`, `approval-status` | always, once the flags parse | a bad flag | | |
 | `relay` | never: it serves until stopped | a missing setting, a token that can do more than approve, or a repo it cannot read | | |
 | `query` | rows printed | a bad flag or config, a statement that does not run or writes | | |
 | `mcp` | the client closed stdin | a bad flag or config | | |

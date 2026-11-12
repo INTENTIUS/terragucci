@@ -31,8 +31,8 @@ A message in your channel each time an apply job stops at a wave or the drift jo
 
 | You need | Why |
 |---|---|
-| The [pipeline](/terragucci/getting-started/) | `init` maps the secret into the apply jobs |
-| An incoming webhook for the channel | the apply job posts to it |
+| The [pipeline](/terragucci/getting-started/) | `init` maps the secret into the wave jobs |
+| An incoming webhook for the channel | the wave job posts to it |
 | A secret in your forge's store holding the webhook's address | the address is a credential: anyone holding it can post |
 
 ## Steps
@@ -80,7 +80,7 @@ A message in your channel each time an apply job stops at a wave or the drift jo
    npx terragucci init
    ```
 
-   The apply jobs get the secret as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK`, and each runs `terragucci notify` when its wave stops. With a [drift schedule](/terragucci/guides/turn-on-drift-checks/), so does the drift job; no plan job gets it.
+   The wave jobs get the secret under its own name, and each posts when its wave stops. With a [drift schedule](/terragucci/guides/turn-on-drift-checks/), the drift job gets it as `TERRAGUCCI_SLACK_WEBHOOK` or `TERRAGUCCI_TEAMS_WEBHOOK` and runs `terragucci notify drift`; no plan job gets it.
 
 5. Read the next message.
 
@@ -184,7 +184,7 @@ After the review, run the wave again: comment `/terragucci apply` on the pull re
 
    `config check` refuses one without the other: an event is never sent unsigned.
 
-3. Run `npx terragucci init` and merge. The apply jobs get the secrets as `TERRAGUCCI_WEBHOOK` and `TERRAGUCCI_WEBHOOK_KEY`.
+3. Run `npx terragucci init` and merge. The wave jobs get both secrets under their own names.
 
 4. Verify each request before reading it. The body is a [`chant.notify/v1`](/terragucci/reference/notify-event/) event from `source: "terragucci"`.
 
@@ -209,7 +209,7 @@ After the review, run the wave again: comment `/terragucci apply` on the pull re
 
 </Steps>
 
-The event carries the wave's outcome as the stage wrote it, in `detail` ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
+The event carries the wave's outcome as the wave job wrote it, in `detail` ([its fields](/terragucci/reference/notify-event/#fields)). It approves nothing, and the receiver's answer changes nothing: a webhook that fails or is slow is logged like the chat ones.
 
 To approve from a chat click, [`terragucci relay`](/terragucci/guides/approve-from-chat/) does it without this event: the buttons carry the wave and its digest, signed with the relay key, and the relay checks who clicked.
 

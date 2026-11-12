@@ -94,7 +94,8 @@ describe("cost: an estimate per root", () => {
     expect(apply.INFRACOST_API_KEY).toBe(forge === "gitlab" ? "$COST_KEY" : "${{ secrets.COST_KEY }}");
     const applyScript = forge === "gitlab" ? doc["apply-wave-1"].script.join("\n") : doc.jobs["apply-wave-1"].steps.map((s: { run?: string }) => s.run ?? "").join("\n");
     expect(applyScript).toContain(`terragucci install infracost ${INFRACOST_VERSION}`);
-    if (forge !== "gitlab") expect(doc.jobs["apply-comment"].env.INFRACOST_API_KEY).toBe("${{ secrets.COST_KEY }}");
+    // chant's comment job plans nothing (it re-runs the wave jobs), so it gets no key.
+    if (forge !== "gitlab") expect(JSON.stringify(doc.jobs["apply-comment"])).not.toContain("COST_KEY");
     const without = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {} }).content;
     expect(without).not.toContain("INFRACOST_API_KEY");
     expect(confirmScript("tofu", [["a"]], forge, undefined, { cost: true })).toContain("--no-cost");
@@ -129,9 +130,10 @@ function based(main: Record<string, string>, head: Record<string, string>): stri
 
 describe("cost.approve_above: a wave over the amount waits", () => {
   it.each(["github", "gitlab"] as const)("%s: under gate: never, the apply jobs can record a wave approve_above holds on chant/lifecycle", (forge) => {
-    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", cost: { keySecret: "COST_KEY", install: false, approveAbove: true } }).content;
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, gate: "never", tokenEnv: "MY_TOKEN", cost: { keySecret: "COST_KEY", install: false, approveAbove: true } }).content;
     const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-    if (forge === "gitlab") expect(doc["apply-wave-1"].script.join("\n")).toContain("git remote set-url");
+    // GitLab's job token cannot push, so chant's wave job pushes the record with the project token, under chant's name.
+    if (forge === "gitlab") expect(doc["apply-wave-1"].variables.CHANT_FORGE_TOKEN).toBe("$MY_TOKEN");
     else expect(doc.jobs["apply-wave-1"].permissions.contents).toBe("write");
   });
 

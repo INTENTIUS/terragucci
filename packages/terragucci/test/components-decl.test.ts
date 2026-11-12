@@ -28,11 +28,15 @@ const sortWaves = (waves: string[][]): string[][] => waves.map((w) => [...w].sor
 /** chant's waves for the declared components. */
 const chantWaves = (d: ComponentsDecl): string[][] => sortWaves(resolveComponentGraph(d.components).waves);
 
-/** The job keys of a rendered pipeline that apply roots on a push or, under apply.when: pull-request, an open pull request. */
+/**
+ * The job keys of a rendered pipeline that apply roots: chant's wave, share and group jobs, and before merge each
+ * wave's applying job. A wave's status job, its split plan, gate and record jobs, and the job that only decides a
+ * wave its shares or groups apply, apply nothing.
+ */
 function applyKeys(text: string, forge: ForgeName): string[] {
   const doc = parseYAML(text.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>;
-  const jobs = Object.keys(forge === "gitlab" ? doc : doc.jobs);
-  return jobs.filter((k) => /^apply-(wave-\d|rest$|done$)/.test(k));
+  const jobs = Object.keys(forge === "gitlab" ? doc : doc.jobs).filter((k) => /^apply-wave-\d/.test(k) && !/-(status|plan|gate|record)$/.test(k));
+  return jobs.filter((k) => !jobs.some((o) => o.startsWith(`${k}-`)));
 }
 
 function needsOf(text: string, forge: ForgeName, job: string): string[] {
@@ -163,21 +167,23 @@ describe("terragucci.components.json", () => {
     expect(chantWaves(decl)).toEqual(sortWaves(waves));
   });
 
-  it("apply.when: pull-request: the one job that applies a pull request lists every root", () => {
+  it("apply.when: pull-request: each wave's applying job, after its gate job, applies that wave", () => {
     for (const forge of ["github", "gitlab"] as ForgeName[]) {
       const rendered = renderPipeline(base(forge, { applyWhen: "pull-request", ...(forge === "gitlab" ? { comments: "*/5 * * * *", applyMergeTokenEnv: "MERGE_TOKEN" } : {}) }));
-      const name = forge === "gitlab" ? "mr-apply" : "apply-comment";
-      expect(rendered.applyJobs).toEqual([{ name, needs: [], applies: LAYERS.flat().sort() }]);
-      expect(rendered.content).toMatch(new RegExp(`^ *${name}:`, "m"));
+      expect(rendered.applyJobs).toEqual([
+        { name: "apply-wave-1", needs: ["apply-wave-1-gate"], wave: 1, applies: LAYERS[0] },
+        { name: "apply-wave-2", needs: ["apply-wave-2-gate"], wave: 2, applies: LAYERS[1] },
+      ]);
+      expect(rendered.applyJobs.map((j) => j.name)).toEqual(applyKeys(rendered.content, forge));
     }
   });
 
-  it("a Terragrunt repo's waves are its layers, and its last wave's shares end in apply-rest", () => {
+  it("a Terragrunt repo's waves are its layers, and a wave split across jobs applies in its shares", () => {
     const layers = [["live/a", "live/b", "live/c"]];
     const rendered = renderPipeline(base("github", { layers, waveJobs: 2, terragrunt: { version: "0.99.0", parallelism: 4, exclude: [], installs: [] } }));
     const decl = componentsDecl({ waves: layers, order: new Map(), pipeline: { path: rendered.path, forge: "github", applyJobs: rendered.applyJobs } });
     expect(decl.pipeline.jobs.map((j) => j.name)).toEqual(applyKeys(rendered.content, "github"));
-    expect(decl.pipeline.jobs.map((j) => [j.name, j.applies])).toEqual([["apply-wave-1", []], ["apply-wave-1-share-1", ["live/a", "live/b"]], ["apply-wave-1-share-2", ["live/c"]], ["apply-rest", []]]);
+    expect(decl.pipeline.jobs.map((j) => [j.name, j.applies])).toEqual([["apply-wave-1-share-1", ["live/a", "live/b"]], ["apply-wave-1-share-2", ["live/c"]]]);
     expect(chantWaves(decl)).toEqual(layers);
   });
 

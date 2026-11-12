@@ -261,8 +261,10 @@ export function migrationPipelineProblems(repo: string): string[] {
     return [];
   }
   const jobs = (doc as { jobs?: Record<string, { permissions?: { contents?: string }; steps?: { run?: string }[] }> } | undefined)?.jobs ?? {};
-  // Only a job that runs a wave can run a migration: not apply-done, nor an apply-comment that applies nothing.
-  const runsWaves = (job: { steps?: { run?: string }[] } | undefined): boolean => (job?.steps ?? []).some((st) => typeof st.run === "string" && st.run.includes("terragucci stage tf-apply"));
+  // Only a job that runs a wave can run a migration: chant's wave jobs (`run wave --spec`), or an older pipeline's `stage tf-apply`;
+  // not the status jobs (`run wave --op ... --apply-status`), apply-done, nor an apply-comment that applies nothing.
+  const runsWaves = (job: { steps?: { run?: string }[] } | undefined): boolean =>
+    (job?.steps ?? []).some((st) => typeof st.run === "string" && (st.run.includes("terragucci run wave --spec") || st.run.includes("terragucci stage tf-apply")));
   const readOnly = Object.entries(jobs)
     .filter(([name, job]) => /^apply/.test(name) && runsWaves(job) && job?.permissions?.contents !== "write")
     .map(([name]) => name)
@@ -273,7 +275,8 @@ export function migrationPipelineProblems(repo: string): string[] {
 
 /**
  * The generated pipeline that applies each wave in a job per identity
- * (./cloud-identity.ts), or undefined: its apply jobs pass `--groups`. Wave 1's
+ * (./cloud-identity.ts), or undefined: its group jobs pass `--group` to chant's
+ * wave runner (an older pipeline's apply jobs pass `--groups`). Wave 1's
  * deciding job runs the state migrations, and in such a pipeline it holds
  * the plan identities alone, which cannot write a state.
  */
@@ -282,7 +285,7 @@ export function groupedPipeline(repo: string): string | undefined {
     const path = join(repo, rel);
     if (!existsSync(path)) continue;
     const text = readFileSync(path, "utf-8");
-    if (text.startsWith(MARKER) && /terragucci stage tf-apply [^\n]* --groups /.test(text)) return rel;
+    if (text.startsWith(MARKER) && /terragucci (?:run wave --spec [^\n]* --group |stage tf-apply [^\n]* --groups )/.test(text)) return rel;
   }
   return undefined;
 }

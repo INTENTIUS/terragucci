@@ -60,7 +60,7 @@ wave 3  app-01 … app-06    blocked by cluster-a
 | The run | it still fails. The last wave's job ends with its count, such as `the run: 8 applied, 1 failed, 6 blocked` |
 | A wave that waits for an approval | holds only its own roots and those behind them; a later wave whose every held root waits behind it ends as waiting, so the commit's status stays pending |
 
-Each wave's job writes its roots' outcomes beside its report, and the next wave's job reads them from the earlier jobs' report artifacts (`stage tf-apply --after`). Rerunning the failed jobs plans again what is left. A Terragrunt repo's waves, GitLab's, a [composed run](#a-composed-run) and the apply a comment starts still stop at the first wave that does not apply.
+Each wave's job writes its roots' outcomes beside its report, and the next wave's job reads them from the earlier jobs' artifacts (on GitHub and Forgejo, `terragucci-report-<job>-outcome`). Rerunning the failed jobs plans again what is left. A Terragrunt repo's waves, GitLab's, a [composed run](#a-composed-run) and the apply a comment starts still stop at the first wave that does not apply.
 
 ## Approval binding
 

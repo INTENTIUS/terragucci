@@ -28,11 +28,12 @@
  *   as on GitHub (chant checks it). GitLab cannot stop the waves after a
  *   retried one, so `wave-<n>` is refused.
  * - With `apply.when: pull-request`, `/terragucci apply [wave-<n>]` on an
- *   open merge request is checked against `apply.requires` here, then starts
- *   a pipeline on the default branch whose `mr-apply` job applies the head
- *   (comment-apply-gitlab.ts); `/terragucci lock` and `/terragucci unlock`
- *   start the same pipeline, which locks or releases the merge request's
- *   roots. It is started with TG_MERGE_TOKEN (apply.merge_token_env), since
+ *   open merge request goes to chant's decision before merge (beforeMergeRun):
+ *   it checks `apply.requires`, records the decision on `chant/lifecycle`
+ *   and starts the waves' pipeline on the default branch with the decided
+ *   head. `/terragucci lock` and `/terragucci unlock` are refused there:
+ *   the apply takes the locks of what the merge request reaches. That
+ *   pipeline is started with TG_MERGE_TOKEN (apply.merge_token_env), since
  *   a pipeline on a protected default branch needs a token that may merge
  *   there. A merged merge request has nothing to apply: it applied before it
  *   merged.
