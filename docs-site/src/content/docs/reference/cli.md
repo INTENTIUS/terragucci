@@ -19,6 +19,8 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `audit` | appends every approval, apply, policy override and refused wave across the projects to the [audit trail](/terragucci/reference/audit-trail/), `audit.jsonl` in the reports bucket, with its page and a link to it, and every state version no wave or migration wrote; `--check` reports what the record lacks |
 | `plan` | plans every root and prints the result |
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
+| `run wave` | one job of a chant Op waves pipeline: chant's `run wave` in terragucci's words, with the root hooks, the report and the spec's hooks in the job's process |
+| `waves-spec` | prints the `tf-apply` waves spec at a commit, its rules read from `terragucci.yml` there |
 | `publish` | publishes each changed module at a new version |
 | `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
 | `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers; `deprecate`, `yank` and `restore` mark a version on the release ledger |
@@ -550,6 +552,48 @@ terragucci components pr-post ...
 ```
 
 chant's `components` commands in terragucci's words. chant's `plan-note` job runs `pr-post`, which posts the plan note and `terragucci/plan` from the plan job's hand-off.
+
+## run wave
+
+```text
+terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record]
+    [--decide | --share <i> | --group <name> [--share <i>]]
+terragucci run wave <any other line of chant's run wave>
+```
+
+chant's `run wave`, run in terragucci's process with terragucci's words. It is the line each job of a chant Op waves pipeline runs when the pipeline names `terragucci` as its bin. The flags are chant's, passed on as they are.
+
+A wave job's line, one with `--spec` and `--wave`, also hands chant what [`stage tf-apply`](#plan-and-stage) runs a wave with: each root's binary, environment, sources check and `ci.hooks`, the report rows, the cost, the policy and the holds, and the spec's own hooks (`migrations`, `migration gate` and `report`), which run in the job's own process. With `--phase`, the job is one of a split wave's four:
+
+| `--phase` | What terragucci adds | Report in `terragucci-report/` |
+|---|---|---|
+| none | everything, in one job | the wave's plans and what applied |
+| `plan` | the root hooks, the after-plan hook and wave 1's state migrations | the wave's plans, with the wave's state `applying` |
+| `gate` | the gate's `report` hook: the approve command of a waiting wave, a policy override that does not count | none |
+| `apply` | the root hooks around each apply | the plans chant applied, what applied, and the gate from chant's decision file (`.chant/op-waves/tf-apply/wave-<k>.json`) |
+| `record` | nothing: chant writes the run records | none |
+
+With `--render-spec`, chant reads the spec that [`waves-spec`](#waves-spec) prints at `--base`. The lines that run no wave job (`--merge`, `--apply-status`, `--waves-outcome`, `--record-plans` and `--approval-status`) take terragucci's words alone. The exit code is chant's, except that a wave terragucci's own hooks stopped exits with their code, as in `stage tf-apply`. `--json` prints chant's result.
+
+## waves-spec
+
+```text
+terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]
+```
+
+| Flag | Environment | Meaning |
+|---|---|---|
+| `--at` | `CHANT_WAVES_SPEC_AT` | the commit to read the spec at; default `HEAD` |
+| `--spec` | `CHANT_WAVES_SPEC_FILE` | the spec file; default `.chant/op-waves/tf-apply.spec.json` |
+| `--config` | | the config file, when it is not at the repo root |
+
+Prints the `tf-apply` Op waves spec at a commit, which chant's wave jobs read their rules from. Everything in it comes from that commit, never from the working tree. The waves, their roots, shares and job groups are the spec file `init` commits there. The rules are `terragucci.yml` there:
+
+- each wave's gate, the stricter of the spec's and the top-level `gate`, or with `environments` the strictest of its roots';
+- the approval mode, `approval_rules` and the agent's account;
+- `apply.point`, `apply.branches` (the job's branch applies only its roots), `apply.resume` and `notify`.
+
+Each root's workspace and Atmos reads come from the checkout. Wave 1 always carries the state migration hooks, which find no migration and do nothing when the change has none. A commit with no spec file prints nothing and exits 0. A commit the checkout lacks, or a config there that cannot be read, exits 1.
 
 ## approval-status
 

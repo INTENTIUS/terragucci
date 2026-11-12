@@ -107,7 +107,7 @@ import { plannerForBinary } from "@intentius/chant-lexicon-terraform/change-set"
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { terragruntApplyCapability } from "@intentius/chant-lexicon-terraform/terragrunt/capability";
 import { APPROVALS, ConfigError, findConfig, GATES, LEDGER_PROVES_NOBODY, loadConfig, normalizeGate, resolveRepo, type Approval, type Gate, type GateName, type ResolvedSettings } from "./config";
-import { explicitOrder, globMatch, liveBody, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
+import { detectBinary, explicitOrder, globMatch, liveBody, remoteStateReads, rootDependencies, rootOrder, rootStates, unitStates } from "./detect";
 import { detectShape } from "./shape";
 import { blockedMembers, blockedWords, earlierWaveOutcomes, onlyWaiting, passesThrough, runSummary, writeWaveOutcomeFile, type WaveMemberOutcome, type WaveMemberStatus } from "@intentius/chant/wave-blocked";
 import { runSkeleton, updateRunView, type RunWave } from "./report/run-view";
@@ -178,7 +178,7 @@ import type { GateAnswerRef } from "@intentius/chant/point-decision";
 import { anyRootGate, environmentOf, strictestGate, topGate, waveGate as rootsGate } from "./environments";
 import { rootsByGroup } from "./cloud-identity";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
-import { committedSpecAt, WAVES_SPEC, readCallFile, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesStepSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
+import { committedSpecAt, WAVE_CLIENT, WAVES_SPEC, readCallFile, readWaveRecord, serveWave, specAtBase, waveCallArgv, waveExit, waveRecordPath, wavesStepSpec, writeSpec, type WaveCall, type WaveRequest } from "./chant-waves";
 import { compositionFor, compositionLine, composeTarget, isComposeTarget, specWavesWithRun, stepWavesWithRun, wavesWithRun, type Composition } from "./compose";
 import { composeGroup } from "@intentius/chant-lexicon-terraform/components/compose-group";
 import { groupOf } from "./cloud-identity";
@@ -1976,6 +1976,255 @@ async function runStepWave(
     copyFileSync(join(repo, path), join(repo, WAVE_REPORT_DIR, dir, "report.json"));
   }
   return { code: result.exitCode, result };
+}
+
+/** What `terragucci run wave` hands its job (runWaveJob). */
+export interface RunWaveJob {
+  /** The wave the job runs, from `--wave`. */
+  wave: number;
+  /** The spec the job runs: the one `terragucci waves-spec` renders at base under `--render-spec`, else the `--spec` file. */
+  spec: OpWavesSpec;
+  /** `--phase`: one of a split wave's four jobs. */
+  phase?: "plan" | "gate" | "apply" | "record";
+  share?: number;
+  group?: string;
+  /** `--base`, as the job's shell gave it. */
+  base?: string;
+  config?: string;
+  env?: NodeJS.ProcessEnv;
+  now?: string;
+  installer?: Installer;
+  terragruntExec?: TerragruntExec;
+  fetch?: Fetch;
+  costRunner?: CostRunner;
+  policy?: PolicyOptions;
+}
+
+/** Runs chant's `run wave` line in this process with the wave hook: `runChantInProcess(["run", "wave", ...argv], words, { wave })`. */
+export type RunChantWave = (hook: import("@intentius/chant/op").ProductWaveHook | undefined) => Promise<number>;
+
+/**
+ * One job of chant's Op waves pipeline (`terragucci run wave`), in this
+ * process. chant runs the wave, and terragucci hands it, as the wave hook,
+ * what `stage tf-apply` gave `runOpWave`: each root's run hooks (its
+ * environment, binary, sources check and `ci.hooks`), the after-plan hook
+ * (the report rows, the cost, the policy and the holds), the lexicon's
+ * capability with terragucci's resolver, and the spec's own hooks
+ * (`migrations`, `migration gate` and `report`) served by name in this
+ * process, in whichever job of a split wave runs them.
+ *
+ * chant's wave hook gives back only the exit code, so the job's report is
+ * built from what the hooks saw: the plans (the after-plan hook, or in a
+ * split wave's applying job, which plans nothing of its own for terragucci,
+ * each run as chant hands it to apply), each run's apply outcome (the
+ * after-apply hook) and chant's decision file for the wave. The plan job
+ * writes the report of its plans, the applying job (and the one-job shape)
+ * the report of what applied, and the gate job none, since the plan job's
+ * report already holds its plans. The record job runs chant's record with
+ * terragucci's words and nothing else.
+ */
+export async function runWaveJob(repo: string, job: RunWaveJob, run: RunChantWave): Promise<number> {
+  if (job.phase === "record") return run(undefined);
+  const env = job.env ?? process.env;
+  const spec = job.spec;
+  const k = job.wave;
+  const listed = spec.waves[k - 1] ?? spec.waves[spec.waves.length - 1];
+  if (!listed) return run(undefined);
+  const step = spec.step as { kind?: string; layers?: string[][]; binary?: string; terragrunt?: string } | undefined;
+  const terragrunt = step?.kind === "terragrunt-apply";
+  const layers = terragrunt ? (step.layers ?? []) : spec.waves.map((w) => (w.runs ?? []).map((r) => r.target));
+  const configPath = job.config ?? findConfig(repo);
+  const checkout = resolveRepo(configPath ? await loadConfig(configPath) : {});
+  let options: ApplyWaveOptions = {
+    wave: k,
+    layers,
+    binary: terragrunt && step.binary ? step.binary : (checkout.binary ?? detectBinary(repo, layers.flat()).value),
+    gate: normalizeGate(listed.gate) ?? "on-destructive",
+    env,
+    ...(job.base ? { base: job.base } : {}),
+    ...(configPath ? { config: configPath } : {}),
+    ...(job.now ? { now: job.now } : {}),
+    ...(job.installer ? { installer: job.installer } : {}),
+    ...(job.terragruntExec ? { terragruntExec: job.terragruntExec } : {}),
+    ...(job.fetch ? { fetch: job.fetch } : {}),
+    ...(job.costRunner ? { costRunner: job.costRunner } : {}),
+    ...(job.policy ? { policy: job.policy } : {}),
+    ...(terragrunt ? { terragrunt: true, terragruntPath: env.TERRAGUCCI_TERRAGRUNT ?? step.terragrunt ?? "terragrunt" } : {}),
+    ...(listed.rest ? { rest: true } : {}),
+    ...(listed.shares !== undefined && listed.shares > 1 ? { shares: listed.shares } : {}),
+    ...(job.share !== undefined ? { share: job.share } : {}),
+    ...(listed.jobs ? { groups: Object.fromEntries(listed.jobs.map((g) => [g.name, g.runs ?? []])) } : {}),
+    ...(job.group !== undefined ? { group: job.group } : {}),
+    ...(spec.standDown ? { standDown: true } : {}),
+  };
+  const began = nowNanos();
+  const work = mkdtempSync(join(tmpdir(), "terragucci-wave-"));
+  const jobs = new Map<number, WaveJob>();
+  const jobOf = (n: number): WaveJob => {
+    let j = jobs.get(n);
+    if (!j) {
+      const facts: WaveFacts = {};
+      const observer = new StageObserver(telemetryFromEnv(env), APPLY_OP, env, began);
+      observer.wave = { number: n, facts };
+      j = { k: n, w: { observer }, facts, label: `wave ${n}` };
+      jobs.set(n, j);
+    }
+    return j;
+  };
+  let code: number = EXIT.failed;
+  try {
+    const base = options.base ?? baseCommit(repo);
+    let rule: ApprovalRule | undefined;
+    try {
+      rule = await approvalRule(repo, { at: base, ...(configPath ? { config: configPath } : {}) });
+    } catch (e) {
+      if (options.gate !== "never") throw e;
+    }
+    const unattended = rule?.policyOutcomes?.includes("allow_unattended") === true;
+    if (unattended) {
+      // The spec's gate is never under allow_unattended; the after-plan hook holds the wave its gate at base would hold.
+      const { gates } = await environmentWaveGates(repo, base, configPath, { ...options, gate: "never" }, terragrunt ? k : layers);
+      options = { ...options, gate: gates[terragrunt ? 0 : k - 1] ?? gates[0]! };
+      console.log(`wave ${k}: policy.outcomes at base names allow_unattended, so the wave's gate (${options.gate}) is decided once the policy reads its plans, and holds the wave through its held hook`);
+    }
+    // A group's job: its part of the wave from 1, counted across the wave's groups and their shares, as the run view counts shares.
+    const groups = listed.jobs ?? [];
+    const at = job.group !== undefined ? groups.findIndex((g) => g.name === job.group) : -1;
+    const part = at >= 0 ? groups.slice(0, at).reduce((n, g) => n + (g.shares ?? 1), 0) + (job.share ?? 1) : undefined;
+    const ctx: WavesContext = { rule, ...(configPath ? { configPath } : {}), work, ...(part !== undefined ? { part } : {}), planned: (n) => jobs.get(n)?.w.planned, ...(unattended ? { unattended } : {}), migrated: new Set() };
+    const read = await waveSettings(repo, options, configPath);
+    if ("error" in read) {
+      console.log(`wave ${k}: ${read.error}, so nothing in it was applied`);
+      return (code = EXIT.failed);
+    }
+    const settings = read.settings;
+    const stepsRead = waveSteps(repo, options);
+    if ("error" in stepsRead) {
+      console.log(`wave ${k}: ${stepsRead.error}, so nothing in it was applied`);
+      return (code = EXIT.failed);
+    }
+    const chant = await import("@intentius/chant/op");
+    const binaries = new RootBinaries(repo, options.binary, settings.version, env, options.installer);
+    const cache = waveCache(work, process.env);
+    const s: StepContext = { repo, options, ctx, settings, chant, spec, binaries, cache, ...(stepsRead.ws ? { ws: stepsRead.ws } : {}), roots: new Map(), migrationMembers: [], jobOf };
+    try {
+      const sources = await sourceChecker(repo, settings.sources, waveSourcesBase(repo, options.base), configPath ? { config: configPath } : {}, { log: (l) => console.log(`wave ${k}: ${l}`) });
+      if (sources) s.sources = sources;
+    } catch (e) {
+      console.log(`wave ${k}: ${(e as Error).message}, so nothing in it was applied`);
+      return (code = EXIT.failed);
+    }
+    if (terragrunt) s.units = stepUnits(s, options.terragruntPath!);
+    // chant stores the change set on the local ledger before its gate fetches the remote one: bring a stale copy up to date first.
+    if (job.phase !== "plan" && job.phase !== "apply") await fetchLifecycleStatus({ cwd: repo });
+    if (!s.units && job.phase !== "gate") await jobOf(k).w.observer.collectSpans((l) => console.log(`wave ${k}: ${l}`));
+    const hook = waveJobHook(s, work);
+    // The terraform lexicon checks choudoufu's release by name on the job's own PATH: the job's choudoufu, through its tokenless script.
+    const own = stepBinary(work, options.binary, { ...process.env, ...env });
+    const path = process.env.PATH;
+    if (own.path) process.env.PATH = own.path(path);
+    try {
+      code = await run(hook);
+    } finally {
+      if (own.path) process.env.PATH = path;
+      for (const [unit, lines] of s.units?.refused ?? []) unitFailed(s.units!, jobOf(k).w, unit, `${UNIT_REFUSED}\n${lines.join("\n")}`);
+    }
+    for (const j of jobs.values()) await settleWaveJob(repo, j, job, options);
+    const last = Math.max(k, ...jobs.keys());
+    return (code = waveExit(code, jobOf(last).code));
+  } finally {
+    const last = Math.max(k, ...jobs.keys());
+    for (const n of [...jobs.keys()].sort((a, b) => a - b)) {
+      const { w } = jobs.get(n)!;
+      const c = n === last ? code : EXIT.applied;
+      w.observer.wave!.code = c;
+      writeOutcomeJson(env, n, c, w);
+      w.state = waveState(c, w);
+      w.ended = new Date().toISOString();
+      // The gate job keeps no report: its plan job's report holds the plans, and its applying job's what applied.
+      if (w.planned && job.phase !== "gate") await writeWaveReport(repo, { ...options, wave: n }, w as Required<WaveRun>, env).catch((e) => console.log(`wave ${n}: the report was not written: ${(e as Error).message}`));
+    }
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The wave hook a `terragucci run wave` job hands chant: the after-plan and
+ * run hooks of a wave on chant's step, the capability, and the spec's hooks
+ * served by name in this process. Beside terragucci's run hooks, one more
+ * keeps what the report needs from each run chant applies: its plan, when
+ * the job planned nothing through the after-plan hook (a split wave's
+ * applying job), and its outcome.
+ */
+function waveJobHook(s: StepContext, work: string): import("@intentius/chant/op").ProductWaveHook {
+  const { repo, options, ctx, jobOf } = s;
+  const report: import("@intentius/chant/op").OpWaveRunHooks = {
+    name: "terragucci report",
+    beforeApply(run) {
+      const j = jobOf(run.wave);
+      const { w } = j;
+      if (w.planned?.some((p) => p.root === run.target)) return;
+      w.settings ??= s.settings;
+      w.started ??= new Date().toISOString();
+      if (options.share !== undefined) w.share = ctx.part ?? options.share;
+      else if (ctx.part !== undefined) w.share = ctx.part;
+      const json = (run.artifact as { planJson?: string } | undefined)?.planJson;
+      const planJson = json ? (json.startsWith("/") ? json : join(repo, json)) : undefined;
+      const p = stepPlannedRoot(repo, options, w, { target: run.target, planDigest: run.planDigest, plan: run.plan, ...(planJson ? { planJson } : {}) }, s.roots.get(run.target));
+      w.planned = [...(w.planned ?? []), p];
+      w.roots = [...(w.roots ?? []), run.target];
+      w.plannedAt ??= new Date().toISOString();
+      if (changesSomething(p.plan)) w.changedRoots = [...(w.changedRoots ?? []), run.target].sort();
+    },
+    afterApply(run) {
+      const { w } = jobOf(run.wave);
+      if (run.outcome === "applied") {
+        w.applyStarted ??= w.plannedAt;
+        (w.applied ??= new Set()).add(run.target);
+      } else if (run.outcome === "failed") {
+        w.failed = [...new Set([...(w.failed ?? []), run.target])];
+      }
+    },
+  };
+  // A spec hook's command is `node <client> <call> {runs}`; served here, its call is the hook's own.
+  const served = (what: WaveCall): import("@intentius/chant/op").OpWaveInProcessHook => async (call) => {
+    const i = call.argv.indexOf(WAVE_CLIENT);
+    const rest = i >= 0 ? call.argv.slice(i + 2) : [];
+    return waveCall(repo, options, ctx, { args: [what, ...rest], env: call.env, cwd: call.cwd }, jobOf);
+  };
+  const c = options.composition?.wave !== undefined && !options.composition.fallback && options.composition.terraform ? options.composition : undefined;
+  return {
+    afterPlan: stepAfterPlan(s),
+    capabilities: (s.units ? unitCapabilities(s, s.units) : waveCapabilities(repo, s.binaries, s.cache, work, jobOf(options.wave).w.observer, c, options.env)) as never,
+    hookExec: s.chant.spawnExecAsync,
+    runHooks: [report, stepRunHooks(s)],
+    hooks: { migrations: served("migrate-check"), "migration gate": served("migrate"), report: served("gate") },
+  };
+}
+
+/**
+ * What a `terragucci run wave` job's report takes from chant's decision file
+ * for wave `j.k`, since chant's wave hook does not hand back the wave's
+ * result: the digest the gate decided and, in a job that applies under
+ * another job's decision (a split wave's applying job, a share or group
+ * job), how that gate stood. A plan job's plans apply in a job of their
+ * own, so its report says the wave is applying. The reports chant keeps
+ * beside an approval of other plans go where the respond job reads them.
+ */
+async function settleWaveJob(repo: string, j: WaveJob, job: RunWaveJob, options: ApplyWaveOptions): Promise<void> {
+  const { w } = j;
+  const decision = readWaveRecord(repo, j.k);
+  if (decision?.digest) w.digest ??= decision.digest;
+  const piece = job.phase === "apply" || job.share !== undefined || job.group !== undefined;
+  if (piece && decision && (decision.status === "approved" || decision.status === "not-required")) w.approval ??= decision.status;
+  if (job.phase === "plan" && w.planned) w.decided = true;
+  // How the apply under an approval that named its changes ended (finishApplied).
+  if (w.appliedUnder) await finishApplied(repo, j.label, w, w.failed?.length ? "failed" : "applied", options.now);
+  for (const [dir, path] of Object.entries(decision?.reports ?? {})) {
+    if (!path || !existsSync(join(repo, path))) continue;
+    mkdirSync(join(repo, WAVE_REPORT_DIR, dir), { recursive: true });
+    copyFileSync(join(repo, path), join(repo, WAVE_REPORT_DIR, dir, "report.json"));
+  }
 }
 
 /**

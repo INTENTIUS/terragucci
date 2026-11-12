@@ -27,6 +27,8 @@
  *   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   (open a pull request that adds an app's root from a template, or with --app one add-on's module call to that app's root)
  *   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <key>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
  *   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
+ *   terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]]   (one job of chant's Op waves pipeline, terragucci's hooks in process)
+ *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
  *   terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]   (tf-check's last step: chant's `ci check`, the ci.hooks.check hooks chant.workspace.json names at base)
@@ -104,6 +106,8 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
 import { runChantInProcess } from "@intentius/chant/ci-product";
+import { runWave } from "./run-wave";
+import { printWavesSpec } from "./waves-spec";
 import { actorOf } from "@intentius/chant/actor";
 import { planFile, writePlannedFiles } from "@intentius/chant/planned-files";
 import { TERRAGUCCI_WORDS } from "./ci-words";
@@ -207,6 +211,8 @@ const USAGE = `usage:
   terragucci publish [--dry-run] [--config <file>]
   terragucci stage tf-plan|tf-drift [--root <glob>] [--project <host/path>] [--config <file>] [--out <dir>] [--report-url <url>] [--layers <a,b;c>] [--binary <b>] [--bucket <url>] [--bucket-endpoint <url>] [--bucket-prefix <p>] [--bucket-url <url>] [--terragrunt] [--base <ref>] [--forge github|forgejo|gitlab] [--parallelism <n>] [--no-cost]
   terragucci stage tf-apply --wave <n> --layers <a,b;c> [--canary <globs>] [--binary <b>] [--gate always|on-destructive|never] [--approval ledger|pr-review|sealed] [--config <file>] [--parallelism <n>] [--terragrunt [--rest]] [--base <ref>] [--shares <n> [--share <s>] [--decided <file>]] [--branches <branch>=<globs>[;...] [--branch <name>]] [--groups <group>=<globs>[;...] [--group <name>]] [--on-held wait|refuse] [--stand-down]
+  terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]]   one job of chant's Op waves pipeline, with terragucci's hooks in this process; chant's other run wave lines pass through
+  terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   print the tf-apply spec at a commit (default CHANT_WAVES_SPEC_AT, else HEAD), or nothing when the commit has none
   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   the templates in the release catalog, with the versions a request may name and their form fields; read only
   terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   the apps made from templates, with their versions, add-ons and actions; read only
   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
@@ -464,7 +470,8 @@ export async function main(argv: string[]): Promise<number> {
   };
   try {
     // `action --json` prints the action's own object (action.ts ActionJson), which behold and scripts read.
-    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
+    // `run wave --json` is chant's own: it prints the wave's result.
+    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action" && cmd !== "run") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
@@ -1380,6 +1387,15 @@ export async function main(argv: string[]): Promise<number> {
         const r = writePlanHandoff({ report: resolve(cwd, report), env: str(flags, "env") ?? "default", exit: Number.isInteger(exit) ? exit : 1 });
         console.error(r.said);
         return r.code;
+      }
+      case "waves-spec": {
+        // chant's wave jobs (renderSpec, chant issue 4982) run this with CHANT_WAVES_SPEC_AT set, and read the tf-apply spec at that commit from what it prints.
+        return printWavesSpec(cwd, { ...(str(flags, "at") ? { at: str(flags, "at") } : {}), ...(str(flags, "spec") ? { specFile: str(flags, "spec") } : {}), ...(str(flags, "config") ? { config: str(flags, "config") } : {}) });
+      }
+      case "run": {
+        // chant's Op waves jobs run `terragucci run wave ...`: chant's wave runner in this process, with terragucci's words and its wave hook.
+        if (args[0] !== "wave") throw new ConfigError("usage: terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]], or another line of chant's run wave");
+        return runWave(cwd, argv.slice(argv.indexOf("wave") + 1));
       }
       case "components": {
         // chant's note job runs `pr-post` through terragucci's bin (the product plan's words), answered in terragucci's words.
