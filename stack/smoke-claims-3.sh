@@ -3375,9 +3375,9 @@ claim_security/replan_apply_role() {
   # no token-request variable. floci
   # grants any role a token names, so the subject and the audience are the
   # probe's own check, as they are an apply role's trust.
-  # BREAK: init runs a bundle that renders the re-plan as it was: no trade
-  # step, and a plan step that keeps the token-request variables and writes
-  # the job's token to AWS_WEB_IDENTITY_TOKEN_FILE.
+  # BREAK: init runs a bundle whose re-plan logs in in place of chant's
+  # trade: no trade step, and a plan step that keeps the token-request
+  # variables and the job's token in AWS_WEB_IDENTITY_TOKEN_FILE.
   log() { echo "[smoke replan-apply-role] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
@@ -3387,8 +3387,7 @@ claim_security/replan_apply_role() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      render.ts '      ...(trades ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' '      ...(false ? [new Step({ if: go, name: "Trade the job'"'"'s OIDC token for the plan identities"' \
-      render.ts ': `${dropForgeTokens("bash", true)}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, traded: trades })}`,' ': `${dropForgeTokens()}\n${planFilesScript(binary, layers, forge, oidc, report, { replan: true, sweep: false })}`,' \
+      render.ts 'const planTradeSpec = needsToken ? planTrade(' 'const planTradeSpec = false ? planTrade(' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   fresh_repo replan-apply-role || { drop_work "$work"; return 1; }
@@ -3526,7 +3525,7 @@ claim_security/replan_cache() {
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
     break_bundle "$TERRAGUCCI" \
-      render.ts '      ...toolSteps(true, true, go, true),' '      ...toolSteps(true, true, go),' \
+      render.ts '...(forgeCacheRestore() as { uses: string; with: Record<string, unknown> })' '...(forgeCache(forge) as { uses: string; with: Record<string, unknown> })' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   gated_repo replan-cache tg-gated-waves || { drop_work "$work"; return 1; }
