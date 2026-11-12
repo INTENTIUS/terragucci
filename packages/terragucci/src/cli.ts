@@ -97,7 +97,7 @@
  * its approval, so it applied nothing.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHANT_EXIT } from "@intentius/chant/exit-codes";
@@ -745,12 +745,8 @@ export async function main(argv: string[]): Promise<number> {
         const plan = planEdge(reg, { ...(str(flags, "origin") ? { origin: str(flags, "origin") } : {}) });
         const out = str(flags, "out") ?? "registry-edge";
         const dir = resolve(cwd, out);
-        // A bundle file is bytes, which chant's planned files (text alone) do not carry.
-        for (const f of plan.files) {
-          const file = resolve(dir, f.path);
-          mkdirSync(dirname(file), { recursive: true });
-          writeFileSync(file, f.content);
-        }
+        // The bundles are bytes and the configs text; chant's planned files carry both.
+        writePlannedFiles(plan.files.map((f) => planFile(resolve(dir, f.path), f.content)));
         console.log(describeEdge(plan, relative(cwd, dir) || "."));
         return 0;
       }
