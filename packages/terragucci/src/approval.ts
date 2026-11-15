@@ -56,6 +56,13 @@ export interface ApprovalRule extends ApprovalMode, SealRule {
   policyOutcomes?: PolicyOutcome[];
 }
 
+/**
+ * The mode as chant's gate counts approvals: `prow-labels` is ledger there,
+ * and the labels' approval is the one the wave answer hands chant
+ * (./prow-labels.ts), as a covered round's is.
+ */
+export const chantApprovalMode = (mode: Approval): Exclude<Approval, "prow-labels"> => (mode === "prow-labels" ? "ledger" : mode);
+
 /** Whether a value is one of APPROVALS. */
 export const isApproval = (v: unknown): v is Approval => typeof v === "string" && (APPROVALS as readonly string[]).includes(v);
 

@@ -138,6 +138,24 @@ export interface AzureIdentity {
   claims_matching_expression: string | null;
 }
 
+/**
+ * Under `runtime: prow`, the identity of a stage's pod: its Kubernetes
+ * service account on the trusted cluster, which the cluster binds to a cloud
+ * identity, in place of a forge's OIDC token. Null on runtime: forge.
+ */
+export interface PodIdentity {
+  cluster: string;
+  /** `prow.namespace`, or null when the Prow installation's pod namespace applies. */
+  namespace: string | null;
+  service_account: string;
+  /** The subject of the service account's tokens, which an EKS IRSA or AKS federated credential trust names: system:serviceaccount:<namespace>:<name>. */
+  subject: string;
+  /** The member GKE Workload Identity binds to the Google service account with roles/iam.workloadIdentityUser: serviceAccount:<project>.svc.id.goog[<namespace>/<name>]. */
+  gke_member: string;
+  /** The stages whose pods take the same service account. */
+  trusts: IdentityStage[];
+}
+
 export interface StageIdentities {
   runner: Runner | null;
   /** The forge environment the apply jobs run in (GitHub and GitLab); null for plan and drift, on Forgejo, and for roots in no environment. */
@@ -146,6 +164,7 @@ export interface StageIdentities {
   aws: AwsIdentity | null;
   gcp: GcpIdentity | null;
   azure: AzureIdentity | null;
+  pod: PodIdentity | null;
 }
 
 export interface EnvironmentIdentities {
@@ -457,7 +476,17 @@ function stageOf(stage: IdentityStage, forge: ForgeName, repository: Repository,
     };
   }
 
-  return { runner: runnerValue(runnerFor(stage, settings.runner, grouped ? e : undefined)), forge_environment: forgeEnvironment, token, aws, gcp, azure };
+  return { runner: runnerValue(runnerFor(stage, settings.runner, grouped ? e : undefined)), forge_environment: forgeEnvironment, token, aws, gcp, azure, pod: podOf(stage, settings) };
+}
+
+/** Under runtime: prow, the pod a stage runs as: plan and drift the plan service account, apply the apply one (./render-prow.ts). */
+function podOf(stage: IdentityStage, settings: ProjectSettings): PodIdentity | null {
+  const prow = settings.runtime === "prow" ? settings.prow : undefined;
+  if (!prow) return null;
+  const sa = identityStage(stage) === "apply" ? prow.service_accounts.apply : prow.service_accounts.plan;
+  const ns = prow.namespace ?? null;
+  const shown = ns ?? "<namespace>";
+  return { cluster: prow.trusted_cluster, namespace: ns, service_account: sa, subject: `system:serviceaccount:${shown}:${sa}`, gke_member: `serviceAccount:<project>.svc.id.goog[${shown}/${sa}]`, trusts: [stage] };
 }
 
 /**
@@ -476,6 +505,10 @@ function trustAcross(stages: Record<IdentityStage, StageIdentities | null>): voi
       const same = present.filter((o) => identityStage(o) === identityStage(s) && stages[o]!.aws?.role === aws.role);
       aws.trusts = same;
       aws.assume_role_policy = awsTrustPolicy(same.map((o) => ({ token: stages[o]!.token, audience: stages[o]!.aws!.audience })), aws.role ?? Object.values(aws.root_roles)[0] ?? null);
+    }
+    if (st.pod) {
+      const sa = st.pod.service_account;
+      st.pod.trusts = present.filter((o) => stages[o]!.pod?.service_account === sa);
     }
     if (st.gcp) {
       const sa = st.gcp.service_account;
@@ -526,6 +559,7 @@ export function describeIdentities(c: Identities): string {
       if (st.aws) out.push(`    aws ${st.aws.role ?? "(by root)"} aud ${st.aws.audience}`);
       if (st.gcp) out.push(`    gcp ${st.gcp.service_account} aud ${st.gcp.audience}`);
       if (st.azure) out.push(`    azure ${st.azure.client_id} aud ${st.azure.audiences.join(", ")}`);
+      if (st.pod) out.push(`    pod service account ${st.pod.service_account} on ${st.pod.cluster} (${st.pod.subject})`);
     }
   }
   const ph = new Set(c.environments.flatMap((e) => IDENTITY_STAGES.flatMap((s) => e.stages[s]?.token.placeholders ?? [])));

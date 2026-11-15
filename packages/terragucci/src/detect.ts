@@ -177,6 +177,22 @@ export function modulesLeftOut(repo: string, globs: string[] | undefined): strin
   return matchedDirs(repo, globs).left;
 }
 
+/**
+ * Whether a directory, given as a path relative to `repo`, is one `modulesLeftOut`
+ * leaves out: a directory calls it as a local module and it keeps no state of
+ * its own. Unlike a roots glob, a path named here gets no exemption, so an
+ * import can ask it of the directories a source tool's projects name. The
+ * repo is read on the first call.
+ */
+export function moduleChecker(repo: string): (rel: string) => boolean {
+  let called: Set<string> | undefined;
+  return (rel) => {
+    const dir = bare(rel) || ".";
+    called ??= calledModules(repo, dirs(repo));
+    return called.has(dir) && existsSync(join(repo, dir)) && tfFiles(join(repo, dir)).length > 0 && !hasOwnState(join(repo, dir));
+  };
+}
+
 function matchedDirs(repo: string, globs: string[] | undefined): { kept: RootReason[]; left: string[] } {
   const kept: RootReason[] = [];
   const left: string[] = [];

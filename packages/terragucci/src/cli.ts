@@ -121,6 +121,7 @@ import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, che
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
+import { commentAllowAt } from "./comment-allow";
 import { describeAction, noActionReply, readActionDecision, resumeActions, runAction } from "./action";
 import { jobReads, poster } from "./forge";
 import { pollGitLabComments } from "./comment-gitlab";
@@ -1027,7 +1028,8 @@ export async function main(argv: string[]): Promise<number> {
           const requires = requiresOf(str(flags, "requires"), "comment");
           if (agent !== "off" && agent !== "on" && agent !== "chant") throw new ConfigError("comment --forge gitlab --poll's --agent is off, on or chant");
           const waves = str(flags, "waves") !== undefined ? wholeFlag("waves", str(flags, "waves")!) : undefined;
-          const poll = await pollGitLabComments({ layers: parseLayers(layers), ...(waves !== undefined ? { waves } : {}), when, ...(requires ? { requires } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
+          const allow = await commentAllowAt(cwd);
+          const poll = await pollGitLabComments({ layers: parseLayers(layers), ...(allow ? { allow } : {}), ...(waves !== undefined ? { waves } : {}), when, ...(requires ? { requires } : {}), ...(agent === "on" ? { agent: true } : agent === "chant" ? { agent: "chant" as const } : {}), ...(flags.review === true ? { review: true } : {}) });
           for (const r of poll.reviews ?? []) console.log(`terragucci comment: !${r.mr} review: ${r.reason}`);
           for (const n of poll.outcomes) console.log(`terragucci comment: !${n.mr} note ${n.note}: ${n.ran ? "" : "nothing run: "}${n.reason}`);
           if (poll.outcomes.length === 0 && !poll.fail) console.log("terragucci comment: no new /terragucci notes");
@@ -1045,7 +1047,8 @@ export async function main(argv: string[]): Promise<number> {
         const prompt = str(flags, "prompt");
         if (agent === "run" ? !out || !prompt : !layers || !out) throw new ConfigError(agent === "run" ? "comment --agent run needs --out <file> and --prompt <file>" : "comment needs --layers <a,b;c> and --out <file>");
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("comment's --forge is github or forgejo");
-        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, agent: agent as "off" | "on" | "run", noAction: noActionReply(await configBinary(cwd)) });
+        const allow = await commentAllowAt(cwd);
+        const decision = await decideComment({ layers: layers ? parseLayers(layers) : [], forge, ...(allow ? { allow } : {}), agent: agent as "off" | "on" | "run", noAction: noActionReply(await configBinary(cwd)) });
         writeDecision(resolve(cwd, out!), decision);
         if (decision.go && decision.ask && prompt) writePrompt(resolve(cwd, prompt), { ask: decision.ask, pr: decision.pr!, head: decision.head!, user: decision.user!, policyDir });
         if (decision.fail) {
@@ -1077,7 +1080,8 @@ export async function main(argv: string[]): Promise<number> {
         if (forge !== "github" && forge !== "forgejo") throw new ConfigError("pr-lock's --forge is github or forgejo");
         if (when !== "merge" && when !== "pull-request") throw new ConfigError("pr-lock's --when is merge or pull-request");
         const { synth } = flags.terragrunt === true ? {} : await lockShapeAt(cwd);
-        const decision = await decidePlanLock({ layers: parseLayers(layers), forge, when, ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
+        const allow = await commentAllowAt(cwd);
+        const decision = await decidePlanLock({ layers: parseLayers(layers), forge, when, ...(allow ? { allow } : {}), ...(synth ? { synth } : {}), ...(flags.terragrunt === true ? { terragrunt: true } : {}) });
         if (decision.fail) {
           console.error(`terragucci pr-lock: failed: ${decision.reason}`);
           return 1;
@@ -1136,7 +1140,8 @@ export async function main(argv: string[]): Promise<number> {
           const layers = str(flags, "layers");
           const out = str(flags, "out");
           if (!layers || !out) throw new ConfigError("action --decide needs --layers <a,b;c> and --out <file>");
-          const decision = await decideComment({ layers: parseLayers(layers), forge, action: "run" });
+          const allow = await commentAllowAt(cwd);
+          const decision = await decideComment({ layers: parseLayers(layers), forge, ...(allow ? { allow } : {}), action: "run" });
           writeDecision(resolve(cwd, out), decision);
           if (decision.fail) {
             console.error(`terragucci action: failed, nothing runs: ${decision.reason}`);

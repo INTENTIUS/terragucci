@@ -11,6 +11,8 @@
  * with the small validator below: the bundle carries no JSON Schema library.
  * The schema ships as dist/terragucci.schema.json and on the docs site.
  */
+import { DNS_SUBDOMAIN, PROW_KEYS } from "./prow-config";
+import { COMMENT_ALLOW_COMMANDS, COMMENT_ALLOW_PATTERN } from "./comment-allow";
 import {
   AGENT_COMMENT_KEYS,
   CONTROL_KEYS,
@@ -551,7 +553,33 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       description: "Apps from templates: the registry whose catalog lists them, the path of a requested app's root, and the attestation a version needs.",
     },
     gitlab: { ...map(TOKEN_PROTECTION_KEYS, { token: enumOf(TOKEN_PROTECTIONS) }), description: "GitLab only: how the project keeps its forge token." },
-    runtime: { ...enumOf(RUNTIMES), description: "Where the stages run." },
+    runtime: { ...enumOf(RUNTIMES), description: "Where the stages run: forge, the forge's CI, or prow, ProwJobs on a Prow installation." },
+    prow: {
+      ...map(PROW_KEYS, {
+        config_repo: { type: "string", pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", description: "The repository whose job config holds the jobs, when it is not this one." },
+        path: { type: "string", pattern: "\\.ya?ml$", description: "Where init writes the job config. Default prow/terragucci.yaml." },
+        cluster: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", description: "The build cluster of the checks presubmit, which holds no credential. Default default." },
+        trusted_cluster: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$", description: "The build cluster of the plan, apply and drift jobs." },
+        namespace: pat(DNS_SUBDOMAIN),
+        service_accounts: {
+          type: "object",
+          properties: { plan: pat(DNS_SUBDOMAIN), apply: pat(DNS_SUBDOMAIN) },
+          required: ["plan", "apply"],
+          additionalProperties: false,
+          description: "The pods' service accounts on the trusted cluster: read-only for plan and drift, write for apply.",
+        },
+        token_secret: {
+          type: "object",
+          properties: { name: pat(DNS_SUBDOMAIN), key: { type: "string", pattern: "^[-._a-zA-Z0-9]+$" } },
+          required: ["name"],
+          additionalProperties: false,
+          description: "The Secret on the trusted cluster with the GitHub token the jobs there post with.",
+        },
+        plan_before_merge: { ...bool, description: "A plan presubmit on the trusted cluster for pull requests from this repository." },
+        deck: { type: "string", pattern: "^https?://[^\\s/?#]+", description: "Deck's address, so the report and the notes link each job." },
+      }, { required: ["trusted_cluster", "service_accounts", "token_secret"] }),
+      description: "With runtime: prow: the build clusters, the pods' service accounts, the token's Secret and where the job config goes.",
+    },
     reports: {
       type: "object",
       properties: { bucket: str, endpoint: {}, prefix: {}, url: { type: "string", pattern: "^https?://[^\\s?#]+$" }, role: { type: "string", pattern: "^arn:aws[\\w-]*:iam::\\d{12}:role/\\S+$" } },
@@ -598,6 +626,13 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
         local: { ...bool, description: "true: a check hook proven on a person's machine is skipped in CI." },
       }),
       description: "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret.",
+    },
+    comment_allow: {
+      type: "object",
+      additionalProperties: false,
+      minProperties: 1,
+      properties: Object.fromEntries([...COMMENT_ALLOW_COMMANDS, "default"].map((k) => [k, { type: "array", minItems: 1, items: { type: "string", pattern: COMMENT_ALLOW_PATTERN } }])),
+      description: "Who may run each comment command, beyond write access: logins and team:<org>/<team> entries per command, and default for the rest. Read from the default branch.",
     },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
     respond: {

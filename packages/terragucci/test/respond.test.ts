@@ -49,7 +49,7 @@ describe("respond: the config", () => {
 
   it("refuses runtime fountain and agent.via fountain, and takes forge for both", () => {
     expect(problems({ runtime: "fountain", agent: { via: "fountain", token_env: "AGENT_TOKEN" } })).toEqual([
-      "config.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime",
+      "config.runtime: fountain is not supported; the stages run on the forge's CI or on Prow, so remove runtime or set it to prow",
       "config.agent.via: fountain is not supported; the agent runs in a forge job, so use forge",
     ]);
     expect(problems({ runtime: "forge", agent: { via: "forge", token_env: "AGENT_TOKEN" } })).toEqual([]);

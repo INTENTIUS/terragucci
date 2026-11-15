@@ -40,6 +40,7 @@ import { commentProductWords, productWords } from "./ci-words";
 import { ConfigError } from "./config";
 import { jobReads, poster, type Fetch } from "./forge";
 import { commentCell, leftOut } from "./import/guide";
+import { jobTeamReads, mayRun, type AllowCommand, type CommentAllow, type TeamReads } from "./comment-allow";
 
 /** The commands. Everything else is refused, by name when it is a command people may expect. `agent` runs only where `agent.comment` is set. */
 export const COMMENT_COMMANDS = ["plan", "apply", "action", "agent"] as const;
@@ -227,6 +228,10 @@ export interface CommentOptions {
    * and `address` inputs, and nothing else.
    */
   action?: "run";
+  /** `comment_allow`, read from the default branch's terragucci.yml: who may run each command beyond write access (./comment-allow.ts). */
+  allow?: CommentAllow;
+  /** Team membership, for `allow`'s teams. Default: the forge's API with the job's token. */
+  teams?: TeamReads;
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
 }
@@ -340,6 +345,16 @@ export async function decideComment(o: CommentOptions): Promise<CommentDecision>
       return broke(`could not read ${user}'s permission, so nothing runs (${(e as Error).message})`);
     }
     if (typeof permission !== "string" || !MAY_PLAN.has(permission)) return stop(`${user} has no write access, so the ${dispatch ? "dispatch" : "comment"} is ignored`);
+  }
+
+  // comment_allow narrows the command this job runs: the re-plan, the agent or the action. A command another job answers is that job's to limit.
+  const limited: AllowCommand | undefined = o.action === "run" ? (parsed.kind === "action" ? "action" : undefined) : o.agent === "run" ? (parsed.kind === "agent" ? "agent" : undefined) : parsed.kind === "plan" ? "plan" : undefined;
+  if (limited && o.allow) {
+    const may = await mayRun(o.allow, limited, user, o.teams ?? jobTeamReads(o.forge ?? "github", env, doFetch));
+    if (!may.ok) {
+      await reply(may.reason);
+      return may.fail ? broke(may.reason) : stop(may.reason);
+    }
   }
 
   // The action workflow answers an action comment, a refused one included, and leaves every other comment to the pipeline's jobs.

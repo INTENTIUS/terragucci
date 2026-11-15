@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TeamReadError } from "../src/comment-allow";
 import { decidePlanLock, reached, reachedInstances, reachedSynthesized, reachedUnits, type Git } from "../src/comment-apply";
 import type { Fetch } from "../src/forge";
 import { readTargetLocks } from "@intentius/chant/lifecycle/target-lock";
@@ -374,6 +375,40 @@ describe("locks: plan, the pr-lock job", () => {
     const elsewhere = setup("/terragucci unlock", { pr: OPEN(r.head) });
     expect((await lock(r, elsewhere, "pull-request")).reason).toBe("another job reads this comment");
     expect((await lock(r, setup("/terragucci apply", { pr: OPEN(r.head) }))).reason).toBe("another job reads this comment");
+  });
+
+  it("comment_allow: a writer outside the unlock list is told so and moves no lock; one on it, or in its team, unlocks", async () => {
+    const r = repos();
+    await lock(r, setup("/terragucci plan", { pr: OPEN(r.head) }));
+    const allow = { unlock: ["alice", "team:acme/platform"] };
+    const teams = { member: async (team: string, login: string) => team === "acme/platform" && login === "dev" };
+    const nobody = { member: async () => false };
+    const denied = setup("/terragucci unlock", { pr: OPEN(r.head) });
+    const d = await decidePlanLock({ layers, env: denied.env, fetch: denied.fetch, git: r.git, repo: r.work, allow, teams: nobody });
+    expect(d).toMatchObject({ go: false, reason: expect.stringContaining("dev may not run `/terragucci unlock` here") });
+    expect(d.fail).toBeUndefined();
+    expect(replies(denied)[0]).toContain("limited to `alice`, `team:acme/platform`");
+    expect((await readLocks(r.work)).locks.network).toBeDefined();
+    const ok = setup("/terragucci unlock", { pr: OPEN(r.head) });
+    await decidePlanLock({ layers, env: ok.env, fetch: ok.fetch, git: r.git, repo: r.work, allow, teams });
+    expect(replies(ok)[0]).toBe("terragucci: released the locks pull request 7 held on `network`, for dev");
+    expect((await readLocks(r.work)).locks).toEqual({});
+  });
+
+  it("comment_allow: a plan comment from outside its list takes no lock and gets no reply here, since the re-plan job answers it; a forge that cannot say fails the job", async () => {
+    const r = repos();
+    const allow = { plan: ["team:acme/platform"] };
+    const quiet = setup("/terragucci plan", { pr: OPEN(r.head) });
+    const d = await decidePlanLock({ layers, env: quiet.env, fetch: quiet.fetch, git: r.git, repo: r.work, allow, teams: { member: async () => false } });
+    expect(d.go).toBe(false);
+    expect(replies(quiet)).toEqual([]);
+    expect((await readLocks(r.work)).locks).toEqual({});
+    const broken = setup("/terragucci unlock", { pr: OPEN(r.head) });
+    const f = await decidePlanLock({ layers, env: broken.env, fetch: broken.fetch, git: r.git, repo: r.work, allow: { unlock: ["team:acme/platform"] }, teams: { member: async () => { throw new TeamReadError("GitHub team acme/platform answered 404"); } } });
+    expect(f).toMatchObject({ go: false, fail: true });
+    expect(f.reason).toContain("TG_TOKEN must hold a token that can read the team's members");
+    // The reply tells the commenter what the job needs, so the refusal is not a silent no.
+    expect(replies(broken)[0]).toContain("could not read team membership for dev, so nothing runs");
   });
 });
 

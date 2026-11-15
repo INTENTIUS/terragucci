@@ -20,7 +20,10 @@ import { type BucketRef } from "@intentius/chant/object-store";
 import { parseReportsBucket } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 import { declaredKind, shapeProblems } from "./refusals";
+import { commentAllowForgeProblems, commentAllowProblems, type CommentAllow } from "./comment-allow";
 import { noteRootConfig } from "./root-config";
+import { prowProblems, type ProwSettings } from "./prow-config";
+export { PROW_JOBS_PATH, PROW_KEYS, PROW_TOKEN_KEY, type ProwSettings } from "./prow-config";
 export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_GENERATE, SYNTH_ROLLOUTS } from "./refusals";
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
@@ -42,9 +45,12 @@ export function normalizeGate(v: unknown): Gate | undefined {
  * signed or not. `pr-review`: also the merged pull request's approving review
  * of its head (on GitLab, an approval after its latest push), when the plans
  * have not moved since (./review.ts). `sealed`: only one sealed with a key the signers file at base
- * lists for its approver. Every mode binds the digest.
+ * lists for its approver. `prow-labels` (runtime: prow): also the merged pull
+ * request's lgtm and approved labels, from people with no hand in the
+ * change, when the plan the plan presubmit posted on its head is the plan
+ * the wave makes now (./prow-labels.ts). Every mode binds the digest.
  */
-export const APPROVALS = ["ledger", "pr-review", "sealed"] as const;
+export const APPROVALS = ["ledger", "pr-review", "sealed", "prow-labels"] as const;
 /** The keys of `approval:` as a map: the mode, and whether a ledger approval must be signed. */
 export const APPROVAL_KEYS = ["mode", "require_signed"] as const;
 
@@ -102,8 +108,8 @@ export interface ApprovalRuleSettings {
   roles?: string[];
   not_author?: boolean;
 }
-/** Every stage runs on the forge's CI. */
-export const RUNTIMES = ["forge"] as const;
+/** Where the stages run: the forge's CI, or ProwJobs on a Prow installation in front of a GitHub repository (./prow-config.ts). */
+export const RUNTIMES = ["forge", "prow"] as const;
 export const DEPENDENTS = ["follow", "plan"] as const;
 /** What a pull request does with the dependents of a changed unit when terragrunt.dependents is unset. */
 export const DEFAULT_DEPENDENTS: Dependents = "plan";
@@ -893,6 +899,8 @@ export interface ProjectSettings {
   /** GitLab only: how the project keeps its forge token; see TOKEN_PROTECTIONS. */
   gitlab?: { token?: GitLabToken };
   runtime?: Runtime;
+  /** With `runtime: prow`: the build clusters, the pods' service accounts, the token's Secret and where the job config goes (ProwSettings). */
+  prow?: ProwSettings;
   /**
    * A bucket for plan reports: `s3://<bucket>`, `gs://<bucket>` or
    * `az://<account>/<container>`. `url` is the address that serves the bucket's
@@ -962,6 +970,13 @@ export interface ProjectSettings {
    * only: the same checks decide (comment.ts).
    */
   atlantis_comments?: boolean;
+  /**
+   * Who may run each comment command, beyond write access: a list of logins
+   * and `team:<org>/<team>` entries per command (`plan`, `apply`, `lock`,
+   * `unlock`, `agent`, `action`, `skip-soak`) and `default` for the rest. Read
+   * from the default branch (comment-allow.ts).
+   */
+  comment_allow?: CommentAllow;
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
@@ -1291,6 +1306,7 @@ export const BUILT_IN: ResolvedSettings = {
 export const PROJECT_FILE_KEYS = [
   "policy",
   "sources",
+  "comment_allow",
   "reports",
   "approval",
   "approval_rules",
@@ -1306,6 +1322,7 @@ export const PROJECT_FILE_KEYS = [
   "cost",
   "tips",
   "runtime",
+  "prow",
   "telemetry",
   "respond",
   "review",
@@ -1349,7 +1366,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1466,8 +1483,9 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (s.forge === "gitlab") problems.push(...gitlabPrApplyProblems(s, where));
   oneOf(s.locks, LOCKS, `${where}.locks`, problems);
   if (s.forge === "gitlab" && s.locks === "plan") problems.push(`${where}.locks: ${NO_GITLAB_PLAN_LOCKS}`);
-  if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; every stage runs on the forge's CI, so remove runtime`);
+  if (s.runtime === "fountain") problems.push(`${where}.runtime: fountain is not supported; the stages run on the forge's CI or on Prow, so remove runtime or set it to prow`);
   else oneOf(s.runtime, RUNTIMES, `${where}.runtime`, problems);
+  problems.push(...prowProblems(s, where));
   for (const k of ["url", "token_env"] as const) {
     if (s[k] !== undefined && typeof s[k] !== "string") problems.push(`${where}.${k} must be a string`);
   }
@@ -1509,6 +1527,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.atlantis_comments !== undefined && typeof s.atlantis_comments !== "boolean") problems.push(`${where}.atlantis_comments must be true or false`);
+  if (s.comment_allow !== undefined) {
+    const own = commentAllowProblems(s.comment_allow, `${where}.comment_allow`);
+    problems.push(...own, ...(own.length === 0 ? commentAllowForgeProblems(s.comment_allow as CommentAllow, s as { forge?: string; locks?: unknown; apply?: { when?: unknown } }, `${where}.comment_allow`) : []));
+  }
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }

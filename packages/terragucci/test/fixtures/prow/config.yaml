@@ -1,0 +1,17 @@
+# The least Prow config its loader takes for decorated jobs, for the Prow job
+# tests (packages/terragucci/test/prow.test.ts). The images and the bucket are
+# never pulled or written.
+prowjob_namespace: prow
+pod_namespace: test-pods
+plank:
+  default_decoration_config_entries:
+    - config:
+        gcs_configuration:
+          bucket: example-prow-artifacts
+          path_strategy: explicit
+        gcs_credentials_secret: gcs-credentials
+        utility_images:
+          clonerefs: us-docker.pkg.dev/k8s-infra-prow/images/clonerefs:v20261107-86b2c4908
+          entrypoint: us-docker.pkg.dev/k8s-infra-prow/images/entrypoint:v20261107-86b2c4908
+          initupload: us-docker.pkg.dev/k8s-infra-prow/images/initupload:v20261107-86b2c4908
+          sidecar: us-docker.pkg.dev/k8s-infra-prow/images/sidecar:v20261107-86b2c4908

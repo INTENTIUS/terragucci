@@ -40,7 +40,7 @@ import {
   type ForgeName,
   type ProjectSettings,
 } from "../config";
-import { applyLayers, detectForge, findRoots, rootDependencies } from "../detect";
+import { applyLayers, detectForge, findRoots, moduleChecker, rootDependencies } from "../detect";
 import { workspaceName } from "../init";
 import { APPLY_TIMING_TABLE, GUIDE_URL, plain, SCALE_URL, type SettingRow } from "./guide";
 import { isMap, list, Notes, rootOf, wavesAfterOf, type ImportNote, type NoteKind, type RepoShape } from "./notes";
@@ -56,7 +56,7 @@ export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 /** The file each source reads when none is named, first found wins. */
 export const SOURCE_FILES: Record<ImportSource, string[]> = {
-  atlantis: ["atlantis.yaml", "atlantis.yml"],
+  atlantis: ["atlantis.yaml", "atlantis.yml", ".atlantis.yaml", ".atlantis.yml"],
   digger: ["digger.yml", "digger.yaml"],
   "terragrunt-scale": [".gruntwork"],
   spacelift: SPACELIFT_FILES,
@@ -124,10 +124,16 @@ interface Gathered {
   workflowInputs: Map<string, { backend: string[]; vars: string[]; at: string[] }>;
   /** Atlantis: each project that names a workflow, by its root and its name. */
   projectFlows: { root: string; name?: string; workflow: string; workspace: boolean }[];
+  /** Atlantis: the repo as detection finds it, when the import has it. */
+  repo?: RepoShape;
+  /** Atlantis: `autodiscover` is on, so the file does not list the roots to plan. */
+  autodiscover: boolean;
+  /** Atlantis: the projects that name each workflow, by the workflow's name. */
+  workflowProjects: Map<string, string[]>;
 }
 
 function gathered(): Gathered {
-  return { roots: [], afterMerge: false, requirements: new Map(), projectsWithRequirements: 0, projects: 0, versions: new Map(), tofu: [], env: new Map(), envConflicts: new Set(), named: new Map(), dependsOn: [], terragrunt: false, workflowInputs: new Map(), projectFlows: [] };
+  return { roots: [], afterMerge: false, requirements: new Map(), projectsWithRequirements: 0, projects: 0, versions: new Map(), tofu: [], env: new Map(), envConflicts: new Set(), named: new Map(), dependsOn: [], terragrunt: false, workflowInputs: new Map(), projectFlows: [], autodiscover: false, workflowProjects: new Map() };
 }
 
 /** An env step's variable with a fixed value; anything else is a custom step. */
@@ -256,11 +262,32 @@ const ATLANTIS_PROJECT_KEYS = new Set([
   "execution_order_group", "depends_on", "workflow", "repo_locks", "custom_policy_check",
 ]);
 
+/**
+ * `autodiscover`: with the mode `auto` (the default) or `enabled`, the file does
+ * not name every directory to plan, so no `roots` is written and detection
+ * decides, which is what terragucci does with no key. `disabled` plans only the
+ * projects, so their directories are written as `roots`.
+ */
+function takeAutodiscover(raw: unknown, g: Gathered, notes: Notes): void {
+  if (raw === undefined) return;
+  const mode = isMap(raw) && typeof raw.mode === "string" ? raw.mode : "auto";
+  if (mode === "disabled") {
+    notes.covered("autodiscover", "Which directories", "mode disabled, so the projects' directories are what is planned and are written as roots");
+    return;
+  }
+  g.autodiscover = true;
+  const found = g.repo?.roots.length;
+  notes.covered("autodiscover", "Which directories", `mode ${mode}, so roots is left out and terragucci plans every root detection finds${found === undefined ? "" : ` (${found} here)`}, not only the projects' directories`);
+  if (isMap(raw) && raw.ignore_paths !== undefined) notes.unmapped("autodiscover.ignore_paths", "Which directories", "roots has no exclusions; narrow the roots globs instead");
+}
+
 function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): void {
+  // The flag is the server's, so no atlantis.yaml shows it: the note is there whether or not the server sets it.
+  notes.unmapped("--gh-team-allowlist", "Who may comment", "atlantis.yaml cannot show it. If the server sets it, write the same teams under comment_allow");
   for (const k of Object.keys(doc)) {
     if (!["version", "projects", "workflows", "automerge", "parallel_plan", "parallel_apply", "autodiscover", "abort_on_execution_order_fail", "repo_locks"].includes(k)) notes.unknown(k);
   }
-  if (doc.autodiscover !== undefined) notes.covered("autodiscover", "Which directories");
+  takeAutodiscover(doc.autodiscover, g, notes);
   if (doc.abort_on_execution_order_fail !== undefined) notes.unmapped("abort_on_execution_order_fail", "Order");
   if (doc.automerge === true) g.autoMerge = "automerge";
   if (doc.repo_locks !== undefined) locks(g, notes, "repo_locks", doc.repo_locks);
@@ -272,13 +299,20 @@ function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): 
     const at = `projects[${typeof p.name === "string" ? p.name : root ?? i}]`;
     for (const k of Object.keys(p)) if (!ATLANTIS_PROJECT_KEYS.has(k)) notes.unknown(`${at}.${k}`);
     if (root === undefined) notes.unmapped(`${at}.dir`, "Which directories", `${JSON.stringify(p.dir)} is not a directory inside the repo`);
-    else if (!g.roots.includes(root)) g.roots.push(root);
+    else if (g.repo?.isModule?.(root)) notes.own(`${at}.dir`, "unmapped", `${root} is a module some directory calls and it keeps no state of its own, so detection leaves it out of the roots and it is not planned; name it in roots to plan it anyway`);
+    else if (!g.roots.includes(root)) {
+      g.roots.push(root);
+      if (g.autodiscover && g.repo?.roots.length && !g.repo.roots.includes(root)) notes.own(`${at}.dir`, "unmapped", `${root} is not a root by detection (it has no backend, cloud block or provider), and with autodiscover roots is left out, so it is not planned; set roots to plan it`);
+    }
     if (p.name !== undefined) notes.covered("projects[].name", "Project name");
     if (p.workspace !== undefined && p.workspace !== "default") notes.unmapped(`${at}.workspace`, "Workspace", `workspace ${String(p.workspace)} is not planned`);
     if (typeof p.terraform_version === "string") g.versions.set(p.terraform_version.replace(/^v/, ""), [...(g.versions.get(p.terraform_version.replace(/^v/, "")) ?? []), at]);
     if (isMap(p.autoplan)) {
       if (p.autoplan.when_modified !== undefined) notes.covered("projects[].autoplan.when_modified", "What triggers a plan");
-      if (p.autoplan.enabled === false) notes.unmapped(`${at}.autoplan.enabled`, "What triggers a plan", "no key turns the plan off for a root");
+      if (p.autoplan.enabled === false) {
+        if (root !== undefined && g.repo?.isModule?.(root)) notes.covered(`${at}.autoplan.enabled`, "What triggers a plan", `${root} is a module and is left out of roots, so it is not planned`);
+        else notes.unmapped(`${at}.autoplan.enabled`, "What triggers a plan", "no key turns the plan off for a root");
+      }
     }
     takeRequirements(g, notes, `${at}.apply_requirements`, p.apply_requirements);
     if (p.plan_requirements !== undefined) notes.unmapped(`${at}.plan_requirements`, "Plan requirements");
@@ -288,6 +322,7 @@ function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): 
     if (p.depends_on !== undefined && root !== undefined) g.dependsOn.push({ at: `${at}.depends_on`, root, names: p.depends_on });
     if (p.repo_locks !== undefined) locks(g, notes, `${at}.repo_locks`, p.repo_locks);
     if (p.custom_policy_check !== undefined) notes.unmapped(`${at}.custom_policy_check`, "Policy");
+    if (typeof p.workflow === "string") g.workflowProjects.set(p.workflow, [...(g.workflowProjects.get(p.workflow) ?? []), typeof p.name === "string" ? p.name : root ?? String(i)]);
     if (typeof p.workflow === "string" && root !== undefined) {
       g.projectFlows.push({ root, ...(typeof p.name === "string" ? { name: p.name } : {}), workflow: p.workflow, workspace: p.workspace !== undefined && p.workspace !== "default" });
     }
@@ -312,6 +347,23 @@ function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): 
         else notes.unknown(at);
       }
     }
+  }
+  workflowNotes(doc, g, notes);
+}
+
+/**
+ * `projects[].workflow`, once per workflow name. A workflow this file defines
+ * is read from `workflows` (its notes are above). One it does not define is
+ * the server's, from `repos.yaml`, which is not in the file the import read,
+ * so what its steps pass to init and plan is unknown here.
+ */
+function workflowNotes(doc: Record<string, unknown>, g: Gathered, notes: Notes): void {
+  const defined = isMap(doc.workflows) ? doc.workflows : {};
+  for (const [name, projects] of g.workflowProjects) {
+    const who = projects.length === 1 ? `project ${projects[0]}` : `${projects.length} projects (${projects.join(", ")})`;
+    const key = `projects[].workflow: ${name}`;
+    if (name in defined) notes.unmapped(key, "Custom steps", `${who} run workflow ${name}, defined under workflows in this file; its steps are read there`);
+    else notes.unmapped(key, "Custom steps", `${who} run workflow ${name}, which this file does not define. A workflow defined in the server's repos.yaml is not in the file the import read, so any -backend-config or -var-file it passes is not written: read it there and set backend_config and var_files for these roots`);
   }
 }
 
@@ -471,11 +523,12 @@ export function convert(source: Exclude<ImportSource, "terragrunt-scale">, doc: 
   if (source === "env0") return convertEnv0({ discovery: doc, flows: [], resources: [] }, o);
   const notes = new Notes();
   const g = gathered();
+  if (o.repo) g.repo = o.repo;
   if (source === "atlantis") readAtlantis(doc, g, notes);
   else readDigger(doc, g, notes);
   const s: ProjectSettings = {};
 
-  if (g.roots.length) {
+  if (g.roots.length && !g.autodiscover) {
     s.roots = [...g.roots].sort();
     notes.mapped("projects[].dir", "Which directories", `roots: ${s.roots.join(", ")}`);
   }
@@ -582,10 +635,11 @@ export interface ImportResult extends Converted {
 function repoShape(repo: string): RepoShape {
   const roots = findRoots(repo);
   const reads = rootDependencies(repo, roots);
+  const isModule = moduleChecker(repo);
   try {
-    return { roots, layers: applyLayers(repo, roots), reads };
+    return { roots, layers: applyLayers(repo, roots), reads, isModule };
   } catch {
-    return { roots, layers: [roots], reads: new Map() };
+    return { roots, layers: [roots], reads: new Map(), isModule };
   }
 }
 

@@ -11,6 +11,8 @@ export interface RepoShape {
   roots: string[];
   layers: string[][];
   reads: Map<string, Set<string>>;
+  /** Whether a directory is a local module some directory calls and keeps no state of its own, which detection leaves out of the roots. */
+  isModule?: (root: string) => boolean;
 }
 
 export interface ImportNote {

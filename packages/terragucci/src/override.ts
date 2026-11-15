@@ -164,7 +164,8 @@ export function decideOverride(ledger: GateLedger, rule: OverrideRule, root: str
     applied: (ledger.applied ?? []).filter((a): a is AppliedRecord & { kind: "applied" } => a.kind === "applied"),
     overriders: rule.overriders,
     overridersPath: OVERRIDERS_KEY,
-    mode: rule.mode,
+    // prow-labels counts as ledger at chant's gate (chantApprovalMode in ./approval.ts).
+    mode: rule.mode === "prow-labels" ? "ledger" : rule.mode,
     ...(rule.signers ? { signers: rule.signers } : {}),
     subject: root,
     planDigest,

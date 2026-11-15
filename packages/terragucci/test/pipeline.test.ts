@@ -1971,3 +1971,13 @@ describe("atlantis_comments", () => {
     expect(() => validateConfig({ atlantis_comments: "yes" }, "t")).toThrow(/atlantis_comments must be true or false/);
   });
 });
+
+describe("comment_allow's team token", () => {
+  const render = (forge: ForgeName, extra: Record<string, unknown> = {}) => renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, locksPlan: true, ...extra } as never).content;
+
+  it.each(["github", "forgejo"] as const)("%s: the pr-lock job gets the TG_TEAM_TOKEN secret only when a team is named, since the workflow's own token cannot read a team", (forge) => {
+    expect(body(render(forge, { teamToken: true })).jobs["pr-lock"].env).toEqual({ TG_TOKEN: "${{ github.token }}", TG_TEAM_TOKEN: "${{ secrets.TG_TEAM_TOKEN }}" });
+    expect(body(render(forge)).jobs["pr-lock"].env).toEqual({ TG_TOKEN: "${{ github.token }}" });
+    expect(render(forge)).not.toContain("TG_TEAM_TOKEN");
+  });
+});

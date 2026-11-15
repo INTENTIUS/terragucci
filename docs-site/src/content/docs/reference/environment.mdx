@@ -389,6 +389,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
+| `TG_JOB_URL` |  | the job's page, which the report links in place of the forge run's; the Prow jobs of `runtime: prow` set it to Deck's page of the job when `prow.deck` is set |
 | `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
 | `TG_STAGE`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [hook](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the root, the checkout's path and, after a plan and before an apply, the plan file; chant's `CHANT_HOOK` names the moment |
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `terragucci approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |
@@ -426,6 +427,7 @@ Internal; a value set in `env:` is overwritten.
 | `TERRAGUCCI_EPHEMERAL_SUFFIX` | Terragrunt repos, the `ephemeral` job, while it prepares a unit: `-pr-<n>`, which a unit's `remote_state` key reads; empty in every other job |
 | `TG_ACTION` | the `ephemeral` job on GitHub and Forgejo: the pull request event's action; `closed` destroys the pull request's [ephemeral environment](/terragucci/guides/ephemeral-environments/) |
 | `TG_ATLANTIS_COMMENTS` | every job, `1`, with `atlantis_comments: true`: the comment commands read `atlantis plan` and `atlantis apply` |
+| `TG_TEAM_TOKEN` | the jobs that check `comment_allow`'s teams (the `pr-lock` job, the action workflow's decide step and the rollout job on GitHub and Forgejo, from the secret of that name; the comments job on GitLab, from a CI/CD variable): a token that can read team members, used in place of `TG_TOKEN` for that read alone; see [Limit comments to a team](/terragucci/guides/re-plan-from-a-comment/#limit-comments-to-a-team) |
 | `CHANT_NO_FORGE_TOKEN` | a step that runs a pull request's code, once its shell has started again without the forge token variables |
 | `CHANT_CLOUD_LOGGED_IN`, `CHANT_CLOUD_TOKEN_FILES` | GitHub and Forgejo with `oidc`: a step that took the job's cloud identity, once its shell has started again without the token-request variables, and the token files chant's login wrote before that, which the step empties when it ends ([Audience per stage](#audience-per-stage)) |
 | `TF_IN_AUTOMATION`, `TF_INPUT` | every job: `1` and `0` |

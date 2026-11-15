@@ -411,6 +411,8 @@ export interface PipelineInput {
   agentDrift?: AgentCommentInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
+  /** `comment_allow` names a team: the jobs that check it on GitHub and Forgejo get the secret TG_TEAM_TOKEN as `TG_TEAM_TOKEN`, since the workflow's own token cannot read a team's members (comment-allow.ts). GitLab jobs read a CI/CD variable of that name. */
+  teamToken?: boolean;
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the waves' pipeline it starts), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
@@ -2099,6 +2101,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // A comment's first words, as the jobs' conditions test them; with atlantis_comments, `atlantis plan` and `atlantis apply` start the same jobs.
   const says = (p: string): string => `startsWith(github.event.comment.body, '${p}')`;
   const atlantis = input.atlantisComments === true;
+  const teamEnv: Record<string, string> = input.teamToken ? { TG_TEAM_TOKEN: "${{ secrets.TG_TEAM_TOKEN }}" } : {};
   // The comments each job answers: chant's product pipeline names them from terragucci's words when the installed chant has it.
   const comment = commentWords(input, forge, prApply, locksPlan);
   const applySays = atlantis ? `${says(comment.apply)} || ${says(comment.alias.apply)}` : says(comment.apply);
@@ -2175,7 +2178,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       if: `github.event_name == 'pull_request_target' || (github.event_name == 'issue_comment' && ${planLockIf})`,
       permissions: { contents: "write", statuses: "write", "pull-requests": "write" },
       concurrency: { group: "terragucci-lock-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}", "cancel-in-progress": false },
-      env: { TG_TOKEN: "${{ github.token }}" },
+      env: { TG_TOKEN: "${{ github.token }}", ...teamEnv },
       steps: [
         new Step({ uses: CHECKOUT, with: { "fetch-depth": 0 } }),
         new Step({ name: "Lock the roots the pull request reaches, or release them", shell: "bash", run: planLockScript(layers, forge, prApply, Boolean(tg)) }),
@@ -2322,7 +2325,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         concurrency: { group: "terragucci-action-${{ github.repository }}", "cancel-in-progress": false },
         env: { ...passed, TG_TOKEN: "${{ github.token }}", ...headersEnv },
         steps: [
-          ...steps(new Step({ id: "decide", name: "Read the comment or the dispatch and decide whether an action runs", shell: "bash", run: actionDecideScript(layers, forge) }), false, true),
+          ...steps(new Step({ id: "decide", name: "Read the comment or the dispatch and decide whether an action runs", shell: "bash", run: actionDecideScript(layers, forge), ...(input.teamToken ? { env: teamEnv } : {}) }), false, true),
           new Step({ if: "steps.decide.outputs.go == '1'", name: "Ask for the action, and run it once an approval by someone else stands", shell: "bash", run: actionRunScript(forge, oidc) }),
         ],
       } as never) as never],
@@ -2348,7 +2351,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // review.agent: the review is a workflow of its own, which the forge runs from the default branch (render-review.ts).
   if (input.review) extra.push({ path: REVIEW_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(reviewWorkflow(forge, image, input.review, { pipelineName: "terragucci", env: jobEnv })) });
   if (input.templates) extra.push({ path: REQUEST_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(requestWorkflow(image, jobEnv, tokenEnv)) });
-  if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined)) });
+  if (rollouts) extra.push({ path: ROLLOUT_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(rolloutWorkflow(forge, image, rollouts, jobEnv, tokenEnv, installStep ? { name: installName, run: installStep } : undefined, input.teamToken === true)) });
   const ghNeeds = new Map(ghWaves.jobs.map(([n, j]) => [n, needsOf(j.needs)]));
   const ghApplyJobs = applyJobs.map((j) => ({ name: j.name, needs: ghNeeds.get(j.name) ?? [], wave: j.wave, applies: j.applies }));
   return { path: PIPELINE_PATHS[forge], content: header(image, input.imageFromConfig) + serialize(entities) + ownJobsYAML(input.ownJobs, [...entities.keys()].filter((k) => k !== "workflow"), forge), applyJobs: ghApplyJobs, ...(extra.length ? { extra } : {}) };
@@ -2422,7 +2425,7 @@ function requestWorkflow(image: string, env: Record<string, string>, tokenEnv: s
  * config names one: GitHub starts no workflow for a pull request the job's own
  * token opens, so the wave would get no plan. Without it, the job's own token.
  */
-function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cron: string, env: Record<string, string>, tokenEnv: string | undefined, install?: { name: string; run: string }): Map<string, never> {
+function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cron: string, env: Record<string, string>, tokenEnv: string | undefined, install?: { name: string; run: string }, teamToken = false): Map<string, never> {
   const token = tokenEnv ? `\${{ secrets.${tokenEnv} }}` : "${{ github.token }}";
   const workflow = new Workflow({
     name: "terragucci-rollout",
@@ -2437,7 +2440,7 @@ function rolloutWorkflow(forge: Exclude<ForgeName, "gitlab">, image: string, cro
     container: { image },
     // It reads each wave's merge commit's checks and statuses, pushes the next wave's branch and opens its pull request.
     permissions: { contents: "write", "pull-requests": "write", statuses: "read", ...(forge === "github" ? { checks: "read" } : {}) },
-    env: { TG_TOKEN: token, TG_MODULE: "${{ github.event.inputs.module }}", TG_VERSION: "${{ github.event.inputs.version }}" },
+    env: { TG_TOKEN: token, TG_MODULE: "${{ github.event.inputs.module }}", TG_VERSION: "${{ github.event.inputs.version }}", ...(teamToken ? { TG_TEAM_TOKEN: "${{ secrets.TG_TEAM_TOKEN }}" } : {}) },
     steps: [
       new Step({ uses: CHECKOUT, with: { "fetch-depth": 0, ...(tokenEnv ? { token } : {}) } }),
       ...(install ? [new Step(install)] : []),
