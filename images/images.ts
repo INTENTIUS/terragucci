@@ -33,12 +33,12 @@ const ciImage = (name: string, description: string, tools: CiImageTool[]): Docke
       description,
       source: "https://github.com/INTENTIUS/terragucci",
       tools,
-      // The HCL parser the tips and rollouts read with. /usr/local/node_modules is on the
-      // bundle's module path, so `terragucci` finds it with no further setup.
-      npm: [`@cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]}`],
-      // chant, whose bin a wave job runs (`chant run wave`) and approve and the relay record
-      // through, as the release the package pins. No chant package is installed, so the bundle
-      // finds this `chant` on the path.
+      // What the bundle imports at run time from /usr/local/node_modules, which is on its module
+      // path: the installed chant it is built against (the release the package pins, whose core
+      // subpaths the bundle leaves external) and the HCL parser the tips and rollouts read with.
+      npm: [`@intentius/chant@${pkg.dependencies["@intentius/chant"]}`, `@cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]}`],
+      // chant's bin, which a wave job runs (`chant run wave`) and approve and the relay record
+      // through, as the release the package pins.
       chant: pkg.dependencies["@intentius/chant"],
       bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
     }),
