@@ -21,6 +21,7 @@ import { join } from "node:path";
 import type { TerragruntExec } from "@intentius/chant-lexicon-terraform/terragrunt/run";
 import { ATMOS_MARKER, ATMOS_WRITE, atmosEdges, atmosInstances, describeStacks, detectAtmos, instanceStates, instanceWaves, type AtmosInstance } from "./atmos";
 import { rootWorkspace, workspaceEnv, workspaceInit } from "./workspace";
+import { rootConfigOf, rootDir, rootInputsEnv } from "./root-config";
 import { ConfigError, type Binary, type ResolvedSettings } from "./config";
 import { applyLayers, detectBinary, explicitOrder, findRootsWithReasons, rootDependencies, rootOrder, rootStates, type Detected, type WavesAfter, type RootReason, type StateAddress } from "./detect";
 import { refusal, shapeProblems, type Feature, type ShapeKind } from "./refusals";
@@ -86,6 +87,8 @@ export interface Shape {
   rootEnv(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   /** How a root that names its workspace is initialised (init in default, then select); undefined for one that names none. */
   rootInit(root: string, env: NodeJS.ProcessEnv): RootInit;
+  /** The environment a root's init runs with: `rootInit`'s when the root names a workspace, else `rootEnv`'s. Either way it holds the root's `-backend-config` files. */
+  initEnv(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   /** Where a root keeps its state, read from its code; undefined when the code does not say. */
   stateAddress(root: string): StateAddress | undefined;
   /** Why the shape refuses `feature`, whatever the settings say; undefined when it does not. */
@@ -157,7 +160,7 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
       const stack = generatingStack(root);
       return stack === undefined ? root : stackFile(stack);
     }
-    if (kind !== "atmos") return root;
+    if (kind !== "atmos") return rootDir(repo, root);
     return instances?.find((i) => i.path === root)?.componentPath ?? atmosEdges(join(repo, root))?.component ?? root;
   };
 
@@ -210,6 +213,8 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
       );
     }
     const paths = roots.map((r) => r.root);
+    const unfound = Object.keys(rootConfigOf(repo).instances ?? {}).filter((d) => !paths.some((r) => rootDir(repo, r) === d));
+    if (unfound.length) throw new ConfigError(`instances names ${unfound.join(", ")}, which ${unfound.length === 1 ? "is" : "are"} not a root directory${settings.roots ? ` any roots glob matches` : ""}`);
     const reads = rootDependencies(repo, paths);
     // waves.after adds order the reads do not give: a root applies after the roots it names, and plans when they change.
     const after = plainAfter;
@@ -231,7 +236,7 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
       const i = instances?.find((x) => x.path === root);
       if (i) return instanceStates([i]).states.get(root);
       // Written by atmos write: its backend and workspace are beside it.
-      const dir = join(repo, root);
+      const dir = join(repo, rootDir(repo, root));
       const ws = rootWorkspace(dir);
       const file = join(dir, "backend.tf.json");
       if (!ws || !existsSync(file)) return undefined;
@@ -248,6 +253,11 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
     return rootStates(repo, [root]).get(root)?.state;
   };
 
+  const rootInit = (root: string, env: NodeJS.ProcessEnv): RootInit => {
+    const w = workspaceInit(env, join(repo, rootDir(repo, root)));
+    return w ? { ...w, init: rootInputsEnv(repo, root, w.init), selectEnv: rootInputsEnv(repo, root, w.selectEnv, false) } : undefined;
+  };
+
   return {
     kind,
     reason,
@@ -259,8 +269,9 @@ export function detectShape(repo: string, settings: ResolvedSettings): Shape {
     ...(plainAfter ? { after: plainAfter } : {}),
     discover,
     binary,
-    rootEnv: (root, env) => workspaceEnv(env, join(repo, root)),
-    rootInit: (root, env) => workspaceInit(env, join(repo, root)),
+    rootEnv: (root, env) => rootInputsEnv(repo, root, workspaceEnv(env, join(repo, rootDir(repo, root)))),
+    rootInit,
+    initEnv: (root, env) => rootInit(root, env)?.init ?? rootInputsEnv(repo, root, workspaceEnv(env, join(repo, rootDir(repo, root)))),
     stateAddress,
     refuses: (feature) => refusal(kind, feature),
     problems: (where = "config") => [...conflicts, ...shapeProblems(kind, settings, where)],

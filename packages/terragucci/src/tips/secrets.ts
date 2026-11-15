@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { blockBody, liveBody } from "../detect";
 import { knownLiveSetup, liveRecordStore, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
 import { isObject } from "../report/redact";
+import { rootPath } from "../root-config";
 
 /** One secret in a root's state: the resource, the attribute, and what could keep it out. */
 export interface StoredSecret {
@@ -203,7 +204,7 @@ export const REFUSE_BLOCK = `terraform {\n  live {\n    strict {\n      secrets 
  * secrets for an estate that sets nothing, so it gives no tip.
  */
 export function choudoufuSecretsMessage(repo: string, root: string, env: NodeJS.ProcessEnv = {}): string | undefined {
-  const s = liveSecrets(join(repo, root));
+  const s = liveSecrets(rootPath(repo, root));
   if (!s || s.setting === "refuse") return undefined;
   if (!s.written && env.CHOUDOUFU_STRICT_PIN === "1") return undefined;
   const now = s.written ? `sets secrets = "${s.setting}"` : `does not set strict { secrets }, whose default is "store"`;

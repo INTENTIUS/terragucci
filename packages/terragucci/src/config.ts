@@ -20,6 +20,7 @@ import { type BucketRef } from "@intentius/chant/object-store";
 import { parseReportsBucket } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 import { declaredKind, shapeProblems } from "./refusals";
+import { noteRootConfig } from "./root-config";
 export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_GENERATE, SYNTH_ROLLOUTS } from "./refusals";
 
 export const BINARIES = ["terraform", "tofu", "choudoufu"] as const;
@@ -659,6 +660,21 @@ export const REVIEW_KEYS = ["agent", "command", "key_secret", "instructions", "t
 export interface ProjectSettings {
   /** Globs of root directories. Detected when absent. */
   roots?: string[];
+  /**
+   * Root glob to the `-backend-config` file or files the root's init takes,
+   * relative to the root's directory. A root a glob matches reads its state
+   * from them, and init, plan, apply, drift and the locks all use them.
+   */
+  backend_config?: Record<string, string | string[]>;
+  /** Root glob to the `-var-file` file or files the root's plan takes, relative to the root's directory. An apply uses the plan it made. */
+  var_files?: Record<string, string | string[]>;
+  /**
+   * A root directory to the names it runs under. Each name is a root called
+   * `<directory>@<name>`, planned and applied in that directory with the
+   * `backend_config` and `var_files` its own glob gives it, and ordered by
+   * `waves.canary` and `waves.after` like any root.
+   */
+  instances?: Record<string, string[]>;
   /** The binary the pipeline runs. Detected when absent. */
   binary?: Binary;
   /**
@@ -1153,6 +1169,9 @@ export const PROJECT_FILE_KEYS = [
   "approval_rules",
   "gate",
   "roots",
+  "backend_config",
+  "var_files",
+  "instances",
   "waves",
   "parallelism",
   "synth",
@@ -1203,7 +1222,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1245,6 +1264,56 @@ function checkVersion(v: unknown, binary: unknown, where: string, problems: stri
   }
 }
 
+/** Why `backend_config`, `var_files` and `instances` are refused beside `waves.compose`: a composed run plans and applies its roots as one root. */
+export const ROOT_INPUTS_COMPOSE = "a composed run plans and applies its roots as one root, with one init, and backend_config, var_files and instances give each root its own; leave waves.compose unset";
+/** Why they are refused beside `ephemeral`: a pull request's copy rewrites the root's backend key, which a `-backend-config` file would set over. */
+export const ROOT_INPUTS_EPHEMERAL = "an ephemeral copy gets its own state key by rewriting the root's backend block, and a -backend-config file sets the key over it, and a copy of an instance has no directory of its own; leave ephemeral unset, or keep these roots out of it";
+
+/** Why `instances` is refused beside `generate` and `rollouts`, which edit a root's own files: an instance shares its directory's. */
+export const INSTANCES_GENERATE = "generate writes a backend, provider and version file into each root's directory, and the instances of one directory share it; set the backend with backend_config and leave generate unset";
+export const INSTANCES_ROLLOUTS = "a rollout moves a pin in a root's own files, and the instances of one directory share them, so no instance can move a pin alone; leave rollouts unset and move the pin in the directory";
+
+/** A path in `backend_config` or `var_files`: a file name relative to the root's directory, or an absolute one. */
+const INPUT_FILE_OK = (f: unknown): f is string => typeof f === "string" && f.trim() !== "" && !/[\n\r\0]/.test(f);
+
+/** The problems with `backend_config`, `var_files` and `instances`. */
+function rootInputProblems(s: Record<string, unknown>, where: string, problems: string[]): void {
+  for (const key of ["backend_config", "var_files"] as const) {
+    const v = s[key];
+    if (v === undefined) continue;
+    if (!isObject(v) || Object.keys(v).length === 0) {
+      problems.push(`${where}.${key} must map a root glob to a file or a list of files, such as { "envs/prod/**": "prod.tfbackend" }`);
+      continue;
+    }
+    for (const [glob, files] of Object.entries(v)) {
+      const list = typeof files === "string" ? [files] : files;
+      if (glob.trim() === "") problems.push(`${where}.${key} has an empty root glob`);
+      else if (!Array.isArray(list) || list.length === 0 || !list.every(INPUT_FILE_OK)) {
+        problems.push(`${where}.${key}[${JSON.stringify(glob)}] must be a file or a list of files, relative to the root's directory, such as ["prod.tfvars"]`);
+      }
+    }
+  }
+  const inputs = [s.backend_config, s.var_files, s.instances].some((v) => isObject(v) && Object.keys(v).length > 0);
+  if (inputs && isObject(s.waves) && s.waves.compose === true) problems.push(`${where}: ${ROOT_INPUTS_COMPOSE}`);
+  if (inputs && s.ephemeral !== undefined) problems.push(`${where}: ${ROOT_INPUTS_EPHEMERAL}`);
+  if (isObject(s.instances) && Object.keys(s.instances).length > 0) {
+    if (s.generate !== undefined) problems.push(`${where}: ${INSTANCES_GENERATE}`);
+    if (s.rollouts) problems.push(`${where}: ${INSTANCES_ROLLOUTS}`);
+  }
+  const inst = s.instances;
+  if (inst === undefined) return;
+  if (!isObject(inst) || Object.keys(inst).length === 0) {
+    problems.push(`${where}.instances must map a root directory to the names it runs under, such as { "prow-build-cluster": ["canary", "prod"] }`);
+    return;
+  }
+  for (const [dir, names] of Object.entries(inst)) {
+    if (dir.trim() === "" || /[*?[\]{}@]/.test(dir)) problems.push(`${where}.instances: ${JSON.stringify(dir)} must be the path of one root directory, with no glob and no "@"`);
+    else if (!Array.isArray(names) || names.length < 2 || !names.every((n) => typeof n === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(n)) || new Set(names).size !== names.length) {
+      problems.push(`${where}.instances[${JSON.stringify(dir)}] must list at least two different names, each letters, digits, "_", "." or "-", such as ["canary", "prod"]`);
+    }
+  }
+}
+
 function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (!isObject(s)) {
     problems.push(`${where} must be a map of settings`);
@@ -1255,6 +1324,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     else if (!SETTING_KEYS.has(k)) problems.push(`${where}.${k} is not a setting (settings: ${[...SETTING_KEYS].join(", ")})`);
   }
   stringList(s.roots, `${where}.roots`, problems);
+  rootInputProblems(s, where, problems);
   oneOf(s.binary, BINARIES, `${where}.binary`, problems);
   oneOf(s.forge, FORGES, `${where}.forge`, problems);
   if (s.gate !== undefined && normalizeGate(s.gate) === undefined) problems.push(`${where}.gate is ${JSON.stringify(s.gate)}; use one of ${GATES.join(", ")}`);
@@ -2595,8 +2665,13 @@ const canonical = (v: unknown): string => {
 export async function loadConfig(path: string, mode: ConfigMode = "fold"): Promise<TerragucciConfig> {
   if (!existsSync(path)) throw new ConfigError(`${path} does not exist`);
   if (path.endsWith(".ts")) {
-    if (mode === "run") return validateConfig(await runConfig(path), path);
+    if (mode === "run") {
+      const ran = await runConfig(path);
+      noteRootConfig(dirname(resolve(path)), ran);
+      return validateConfig(ran, path);
+    }
     const folded = await foldConfig(path);
+    noteRootConfig(dirname(resolve(path)), folded);
     if (mode === "check") {
       const ran = await runConfig(path);
       if (canonical(folded) !== canonical(ran)) {

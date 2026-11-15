@@ -10,6 +10,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { globMatch, rootDependencies, stateOf, type StateRef } from "./detect";
 import type { OidcSettings, RolePair } from "./config";
+import { rootPath } from "./root-config";
 
 /** One identity and what it reaches: the roots that take it, their states, and the other roots' states they read. */
 export interface RoleReach {
@@ -54,7 +55,7 @@ interface CloudRoles {
 
 /** The backend type a root's `.tf` files name, or undefined. */
 function backendType(repo: string, root: string): string | undefined {
-  const dir = join(repo, root);
+  const dir = rootPath(repo, root);
   if (!existsSync(dir)) return undefined;
   for (const f of readdirSync(dir).filter((n) => n.endsWith(".tf"))) {
     const m = /\bbackend\s+"([^"]+)"/.exec(readFileSync(join(dir, f), "utf-8"));

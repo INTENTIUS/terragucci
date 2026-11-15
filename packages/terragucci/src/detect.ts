@@ -11,6 +11,7 @@ import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { ConfigError, findConfig, forgeFromHost, type Binary, type ForgeName } from "./config";
 import { atmosStateReads } from "./atmos";
 import { literal, stateAddress, type Attr } from "./state-address";
+import { instanceRoot, instancesOf, rootBackendConfigs, rootDir } from "./root-config";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
 
@@ -198,7 +199,12 @@ function matchedDirs(repo: string, globs: string[] | undefined): { kept: RootRea
 
 /** `findRoots`, with why each directory counts: the backend, cloud block or provider found, or the glob matched. */
 export function findRootsWithReasons(repo: string, globs?: string[]): RootReason[] {
-  return matchedDirs(repo, globs).kept.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
+  // A directory `instances` names is its instances, not a root of its own (./root-config.ts).
+  const expanded = matchedDirs(repo, globs).kept.flatMap((r) => {
+    const names = instancesOf(repo, r.root);
+    return names.length ? names.map((n) => ({ root: instanceRoot(r.root, n), reason: `${r.reason}; instance ${n} of ${r.root}` })) : [r];
+  });
+  return expanded.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
 }
 
 export interface Detected<T> {
@@ -220,7 +226,7 @@ export function detectBinary(repo: string, roots: string[]): Detected<Binary> {
   if (existsSync(join(repo, ".opentofu-version"))) return { value: "tofu", reason: ".opentofu-version" };
   if (existsSync(join(repo, ".terraform-version"))) return { value: "terraform", reason: ".terraform-version" };
   // A root not on disk yet (one a synth or atmos write makes) says nothing.
-  if (roots.some((r) => existsSync(join(repo, r)) && readdirSync(join(repo, r)).some((n) => n.endsWith(".tofu")))) {
+  if (roots.some((r) => existsSync(join(repo, rootDir(repo, r))) && readdirSync(join(repo, rootDir(repo, r))).some((n) => n.endsWith(".tofu")))) {
     return { value: "tofu", reason: ".tofu files" };
   }
   if (onPath("tofu")) return { value: "tofu", reason: "tofu on the path" };
@@ -231,7 +237,7 @@ export function detectBinary(repo: string, roots: string[]): Detected<Binary> {
 /** The binary's version when every root pins the same exact one (`= 1.13.1` or `1.13.1`). A range is not a pin. */
 export function detectVersion(repo: string, roots: string[]): string | undefined {
   const seen = new Set<string>();
-  for (const r of roots) for (const v of exactRequiredVersions(join(repo, r))) seen.add(v);
+  for (const r of roots) for (const v of exactRequiredVersions(join(repo, rootDir(repo, r)))) seen.add(v);
   return seen.size === 1 ? [...seen][0] : undefined;
 }
 
@@ -559,6 +565,10 @@ function jsonState(
  */
 export function stateOf(repo: string, root: string, initArgs: string[] = initBackendConfigs(repo)): RootStateCode {
   const out: RootStateCode = { reads: [], unresolved: [] };
+  // An instance reads its code from its directory; the files its own settings name over the job's -backend-config.
+  const at = rootDir(repo, root);
+  const rootArgs = rootBackendConfigs(repo, root);
+  initArgs = rootArgs.length ? [...initArgs, ...rootArgs] : initArgs;
   let declared = false;
   const own = (o: { ref?: StateRef; why?: string }): void => {
     declared = true;
@@ -568,7 +578,7 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
     } else out.ownUnresolved = o.why;
   };
   // A backend block's settings, with the -backend-config the root's init takes over them, as init merges them.
-  const supplied = initArgs.length ? backendConfigLayers(repo, root, initArgs) : undefined;
+  const supplied = initArgs.length ? backendConfigLayers(repo, at, initArgs) : undefined;
   const backend = (type: string, get: Attr): { ref?: StateRef; why?: string } => {
     const a = addressed(type, supplied ? overlaid(get, supplied.layers) : get, root);
     if (a.ref) return a;
@@ -576,8 +586,8 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
     const one = (list: string[], singular: string, plural: string): string => (list.length === 1 ? singular : plural);
     const read = supplied?.files ?? [];
     const missing = supplied?.missing ?? [];
-    const beside = conventionFiles(join(repo, root))
-      .map((n) => posix(root === "." ? n : `${root}/${n}`))
+    const beside = conventionFiles(join(repo, at))
+      .map((n) => posix(at === "." ? n : `${at}/${n}`))
       .filter((b) => !read.includes(b));
     const notes = [
       ...(read.length ? [`the -backend-config ${one(read, "file", "files")} ${read.join(", ")} from terragucci.yml's env ${one(read, "does", "do")} not supply it either`] : []),
@@ -586,7 +596,7 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
     ];
     return notes.length ? { why: `${a.why}; ${notes.join("; ")}` } : a;
   };
-  for (const f of tfFiles(join(repo, root))) {
+  for (const f of tfFiles(join(repo, at))) {
     if (isJson(f)) {
       const j = jsonState(readFileSync(f, "utf-8"), root, backend);
       if (j.declared) own(j.own ? { ref: j.own } : { why: j.ownUnresolved });
@@ -607,7 +617,7 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
   }
   if (!declared) own(addressed("local", () => undefined, root));
   // A Terragrunt unit's remote_state configures the backend init runs with, over its blocks: it writes the backend file, or passes its config as -backend-config.
-  const tg = terragruntRemoteState(repo, root);
+  const tg = terragruntRemoteState(repo, at);
   if (tg?.ref) own(tg);
   else if (tg?.why) {
     delete out.own;
@@ -675,7 +685,7 @@ export const estateRecords = (estate: string): string => `tofu-records/${estate}
  * `terraform_estate_outputs` read as a read of that estate's records.
  */
 function withEstate(repo: string, root: string, s: { own?: StateRef; reads: RemoteRead[] }): { own?: StateRef; reads: RemoteRead[] } {
-  const dir = join(repo, root);
+  const dir = join(repo, rootDir(repo, root));
   const { estate } = estateOf(dir);
   const reads = [...s.reads, ...estateOutputReads(dir).map((e) => ({ name: e.name, key: estateRecords(e.estate), repeated: false }))];
   const implicit = addressed("local", () => undefined, root).ref;
@@ -838,7 +848,7 @@ export function localsText(dir: string): Map<string, string> {
 export function rootDependencies(repo: string, roots: string[], { estates: withEstates = true }: { estates?: boolean } = {}): Map<string, Set<string>> {
   const reads = remoteStateReads(repo, roots);
   const atmos = atmosStateReads(repo, roots);
-  const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, r)) : { reads: [] as string[] }]));
+  const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, rootDir(repo, r))) : { reads: [] as string[] }]));
   const owner = new Map<string, string>();
   for (const [r, e] of estates) if ("estate" in e && e.estate) owner.set(e.estate, r);
   return new Map(

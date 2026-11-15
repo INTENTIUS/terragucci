@@ -47,6 +47,7 @@ import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config"
 import type { DriverComponent } from "@intentius/chant/components";
 import { backendConfigArgs, explicitOrder, initBackendConfigs, type WavesAfter } from "./detect";
 import { rootWorkspace } from "./workspace";
+import { rootDir } from "./root-config";
 import { rootRoleEnv } from "./cloud-identity";
 import type { BinaryExec } from "./migrate";
 import type { ReportCompose, ReportComposedMember, ReportRead } from "./report/schema";
@@ -158,8 +159,9 @@ export function chantProject(repo: string, input: Pick<CompositionInput, "all" |
   const binary = BINARIES.find((b) => b === one);
   const roots: TerraformConfig["roots"] = {};
   for (const r of input.all) {
-    const ws = rootWorkspace(join(repo, r));
-    roots[r] = { dir: r === "" ? "." : r, ...(ws ? { workspace: ws } : {}), ...(Object.keys(backendConfig).length ? { backendConfig } : {}) };
+    const dir = rootDir(repo, r);
+    const ws = rootWorkspace(join(repo, dir));
+    roots[r] = { dir: dir === "" ? "." : dir, ...(ws ? { workspace: ws } : {}), ...(Object.keys(backendConfig).length ? { backendConfig } : {}) };
   }
   const ups = upstreamsOf(input);
   const components: DriverComponent[] = input.all.map((r) => {

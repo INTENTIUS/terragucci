@@ -155,6 +155,7 @@ import { binaryEnv, runBinarySync, terragruntExec, tokenlessBinary } from "./bin
 import { azureBootstrapRefusal, backendBootstrap, bootstrapUnits } from "./generate";
 import { readStateVersion } from "@intentius/chant-lexicon-terraform/state";
 import { rootWorkspace, workspaceEnv } from "./workspace";
+import { rootDir, rootInputsEnv, rootPath } from "./root-config";
 import { STORE_WORDS } from "./report/object-store";
 import { atmosEdges, type UpstreamOutputs } from "./atmos";
 import { rootRoleEnv } from "./cloud-identity";
@@ -750,7 +751,7 @@ function waveCache(work: string, env: NodeJS.ProcessEnv): WaveCache {
  * from it for the report. Undefined when the state cannot be shown; the report then leaves those values unknown.
  */
 function showAppliedState(repo: string, p: PlannedRoot): unknown {
-  const show = runBinarySync(p.binary, ["show", "-json", "-no-color"], join(repo, p.root), p.env);
+  const show = runBinarySync(p.binary, ["show", "-json", "-no-color"], rootPath(repo, p.root), p.env);
   try {
     return show.code === 0 ? JSON.parse(show.stdout) : undefined;
   } catch {
@@ -1161,7 +1162,7 @@ function waveCapabilities(repo: string, binaries: RootBinaries, cache: WaveCache
   const cap = terraformApplyCapabilityWith({
     resolveRoot: async (root) => {
       const run = stepBinary(work, (await binaries.resolve(root)).path, job);
-      const readEnv = binaryEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), join(repo, root)));
+      const readEnv = binaryEnv(rootInputsEnv(repo, root, workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: cache.dir }, root), rootPath(repo, root))));
       return { binary: run.binary, readEnv: definedEnv(run.path ? { ...readEnv, PATH: run.path(readEnv.PATH) } : readEnv) };
     },
     // Each root's plan and apply timings and spans, from chant's hook around the engine's commands (chant issue 4865).
@@ -1340,8 +1341,8 @@ function unitCapabilities(s: StepContext, u: StepUnits): CapabilityRegistry {
 /** The `ci.hooks` environment of a root: the job's, with its role, workspace and the wave's provider cache, never its secrets. */
 function stepHookEnv(s: StepContext, root: string): WaveSteps | undefined {
   if (!s.ws) return undefined;
-  const dir = join(s.repo, root);
-  return { ...s.ws, env: rootCacheEnv(workspaceEnv(rootRoleEnv({ ...s.ws.env, TF_PLUGIN_CACHE_DIR: s.cache.dir }, root), dir), dir, s.binaries.expected(root).name) };
+  const dir = rootPath(s.repo, root);
+  return { ...s.ws, env: rootCacheEnv(rootInputsEnv(s.repo, root, workspaceEnv(rootRoleEnv({ ...s.ws.env, TF_PLUGIN_CACHE_DIR: s.cache.dir }, root), dir)), dir, s.binaries.expected(root).name) };
 }
 
 /** Every value set, as chant hands a run's environment to its engine. */
@@ -1363,7 +1364,7 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
     async beforePlan(run) {
       if (s.units) return unitBeforePlan(s, s.units, run.target);
       const root = run.target;
-      const dir = join(repo, root);
+      const dir = rootPath(repo, root);
       const expected = s.binaries.expected(root);
       const own: StepRoot = { env: {}, binary: options.binary, bin: expected, steps: [], holds: [] };
       s.roots.set(root, own);
@@ -1378,7 +1379,7 @@ function stepRunHooks(s: StepContext): import("@intentius/chant/op").OpWaveRunHo
       own.binary = resolved.path;
       own.bin = { name: resolved.name, ...(resolved.version ? { version: resolved.version } : {}), ...(resolved.pin ? { pin: resolved.pin } : {}) };
       if (own.bin.pin) console.log(`${root}: ${binaryText(own.bin)}`);
-      const roleEnv = rootCacheEnv(workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: s.cache.dir }, root), dir), dir, expected.name);
+      const roleEnv = rootCacheEnv(rootInputsEnv(repo, root, workspaceEnv(rootRoleEnv({ ...process.env, TF_PLUGIN_CACHE_DIR: s.cache.dir }, root), dir)), dir, expected.name);
       try {
         own.env = await rootSecretEnv(roleEnv, root, settings.secrets);
         // choudoufu runs by name, its tokenless script first on PATH (stepBinary).
@@ -1859,9 +1860,10 @@ async function runStepWave(
   const all = listed?.flat() ?? [];
   const terragrunt = options.terragrunt ? (options.terragruntPath ?? env.TERRAGUCCI_TERRAGRUNT ?? "terragrunt") : undefined;
   // A root that names its workspace (an Atmos instance's) plans in it, and an Atmos read is read from the upstream's own workspace (chant#4855, #4858).
-  const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(join(repo, r)); return w ? [[r, w]] : []; }));
+  const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(rootPath(repo, r)); return w ? [[r, w]] : []; }));
+  const dirs = Object.fromEntries(all.flatMap((r) => (rootDir(repo, r) !== r ? [[r, rootDir(repo, r)]] : [])));
   const reads = Object.fromEntries(all.flatMap((r) => {
-    const list = terraformAtmosReads(atmosEdges(join(repo, r)), (u) => u, (u) => { const w = rootWorkspace(join(repo, u)); return { dir: u, ...(w ? { workspace: w } : {}) }; });
+    const list = terraformAtmosReads(atmosEdges(rootPath(repo, r)), (u) => u, (u) => { const w = rootWorkspace(rootPath(repo, u)); return { dir: u, ...(w ? { workspace: w } : {}) }; });
     return list.length ? [[r, list]] : [];
   }));
   const rule = ctx.rule;
@@ -1880,6 +1882,7 @@ async function runStepWave(
   };
   const spec = wavesStepSpec({
     ...(Object.keys(workspaces).length ? { workspaces } : {}),
+    ...(Object.keys(dirs).length ? { dirs } : {}),
     ...(Object.keys(reads).length ? { reads } : {}),
     ...(rule && !rule.point ? { approvals } : {}),
     waves: listed ?? at.specWaves,
@@ -2719,8 +2722,8 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
     const versions = w.recordVersions?.get(p.root);
     const reads = w.reads?.get(p.root)?.length ? { reads: w.reads.get(p.root) } : {};
     // An applied choudoufu live root names its record store in place of a state (appliedStateVersion).
-    const live = w.applied?.has(p.root) ? liveEstate(join(repo, p.root)) : undefined;
-    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(join(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(live ? { live } : {}), ...(w.appliedStates?.has(p.root) ? { appliedState: w.appliedStates.get(p.root) } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
+    const live = w.applied?.has(p.root) ? liveEstate(rootPath(repo, p.root)) : undefined;
+    return { path: p.root, plan: p.plan, planner: plannerForBinary(binary), ...(p.bin ? { binary: p.bin } : {}), ...(p.cone ? { cone: p.cone } : {}), files: { json: planFiles(p.root).json }, ...(p.error ? { error: p.error } : {}), ...policy, ...steps, ...reads, ...(w.applied?.has(p.root) ? { applied: true, versions: rootVersions(rootPath(repo, p.root), env) } : {}), ...(state ? { state } : {}), ...(live ? { live } : {}), ...(w.appliedStates?.has(p.root) ? { appliedState: w.appliedStates.get(p.root) } : {}), ...(versions ? { recordVersions: versions } : {}), ...deps };
   }
   if (w.cost) report.cost = w.cost;
   w.observer.addTimings(report, ["plan", "apply"]);
@@ -2748,7 +2751,7 @@ async function writeWaveReport(repo: string, options: ApplyWaveOptions, w: Requi
       console.log(`wave ${wave}: the report was not copied to ${settings.reports.bucket}: ${(e as Error).message}`);
     }
     // Each applied root's roster, from the plan it applied (./report/roster.ts). A roster that is not written never fails the wave.
-    const rosters = waveRosters(report, new Map(w.planned.filter((p) => p.plan !== undefined).map((p) => [p.root, { plan: p.plan, estate: resolvedEstate(join(repo, p.root)) }])));
+    const rosters = waveRosters(report, new Map(w.planned.filter((p) => p.plan !== undefined).map((p) => [p.root, { plan: p.plan, estate: resolvedEstate(rootPath(repo, p.root)) }])));
     try {
       const keys = await uploadRosters(storeFromEnv(settings.reports, env), rosters, settings.reports.prefix);
       if (rosters.length > 0) console.log(`wave ${wave}: rosters of ${rosters.map((r) => `${r.roster.estate} (${r.roster.resources.length})`).join(", ")} written to ${keys[keys.length - 1]}`);
@@ -2900,7 +2903,7 @@ async function listRecordVersions(repo: string, applied: PlannedRoot[], limit: n
   const out = new Map<string, Map<string, ReportRecordVersions>>();
   await eachLimited(applied, limit, async (p) => {
     if (!p.plan || applyScope(p.bin.name ?? p.binary) !== "resource") return;
-    const dir = join(repo, p.root);
+    const dir = rootPath(repo, p.root);
     await readLiveSetup(dir, { binary: p.binary });
     const estate = resolvedEstate(dir);
     if (!estate) return;
@@ -3106,7 +3109,7 @@ function rootReads(repo: string, waves: readonly string[][], wave: number, reads
     for (const r of rs) {
       const k = waveOf.get(r.upstream);
       if (k === undefined || k >= wave) continue;
-      const outputs = rootOutputsRead(join(repo, root), r.data);
+      const outputs = rootOutputsRead(rootPath(repo, root), r.data);
       const id = `${root}\n${r.upstream}`;
       const had = out.get(id);
       const merged = had ? (had.outputs && outputs ? new Set([...had.outputs, ...outputs]) : undefined) : outputs;
@@ -3128,7 +3131,7 @@ function toolReads(repo: string, waves: readonly string[][], wave: number, reade
   const waveOf = new Map(waves.flatMap((rs, i) => rs.map((r) => [r, i + 1] as const)));
   const out = new Map<string, WaveRead & { outputs: Set<string> }>();
   for (const root of [...readers].sort()) {
-    for (const r of atmosEdges(join(repo, root))?.reads ?? []) {
+    for (const r of atmosEdges(rootPath(repo, root))?.reads ?? []) {
       const k = waveOf.get(r.upstream);
       if (k === undefined || k >= wave || r.output.length === 0) continue;
       const id = `${root}\n${r.upstream}`;

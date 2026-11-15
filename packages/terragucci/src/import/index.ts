@@ -120,10 +120,14 @@ interface Gathered {
   dependsOn: { at: string; root: string; names: unknown }[];
   /** Projects Terragrunt runs (OpenTaco's `terragrunt`). */
   terragrunt: boolean;
+  /** Atlantis: the `-backend-config` and `-var-file` files each workflow's `init` and `plan` steps pass, by workflow name, with the step that names them. */
+  workflowInputs: Map<string, { backend: string[]; vars: string[]; at: string[] }>;
+  /** Atlantis: each project that names a workflow, by its root and its name. */
+  projectFlows: { root: string; name?: string; workflow: string; workspace: boolean }[];
 }
 
 function gathered(): Gathered {
-  return { roots: [], afterMerge: false, requirements: new Map(), projectsWithRequirements: 0, projects: 0, versions: new Map(), tofu: [], env: new Map(), envConflicts: new Set(), named: new Map(), dependsOn: [], terragrunt: false };
+  return { roots: [], afterMerge: false, requirements: new Map(), projectsWithRequirements: 0, projects: 0, versions: new Map(), tofu: [], env: new Map(), envConflicts: new Set(), named: new Map(), dependsOn: [], terragrunt: false, workflowInputs: new Map(), projectFlows: [] };
 }
 
 /** An env step's variable with a fixed value; anything else is a custom step. */
@@ -141,8 +145,34 @@ function takeEnv(g: Gathered, notes: Notes, key: string, name: unknown, value: u
   if (!had) g.env.set(name, { value, key });
 }
 
-/** The steps both tools write: built-in names, `extra_args`, `run`, `env`. */
-function steps(g: Gathered, notes: Notes, key: string, raw: unknown): void {
+/**
+ * The files an `init` step's `-backend-config` or a `plan` step's `-var-file`
+ * arguments name, and the arguments left over. A `-backend-config` that is a
+ * `key=value` pair, a path that is absolute, and one with a variable in it
+ * name no file of the repo, so they stay with the rest.
+ */
+function takeFiles(args: unknown[], flag: "backend-config" | "var-file"): { files: string[]; rest: unknown[] } {
+  const files: string[] = [];
+  const rest: unknown[] = [];
+  const own = new RegExp(`^--?${flag}(?:=(.*))?$`);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const m = typeof a === "string" ? own.exec(a) : null;
+    if (!m) {
+      rest.push(a);
+      continue;
+    }
+    const value = m[1] ?? (typeof args[i + 1] === "string" ? (args[++i] as string) : undefined);
+    const file = value?.replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1");
+    const pair = flag === "backend-config" && file !== undefined && file.includes("=");
+    if (file && !pair && !file.startsWith("/") && !file.includes("$")) files.push(file);
+    else rest.push(a);
+  }
+  return { files, rest };
+}
+
+/** The steps both tools write: built-in names, `extra_args`, `run`, `env`. `inputs`, for an Atlantis workflow, takes the init step's `-backend-config` files and the plan step's `-var-file` files. */
+function steps(g: Gathered, notes: Notes, key: string, raw: unknown, inputs?: { backend: string[]; vars: string[]; at: string[] }): void {
   list(raw).forEach((step, i) => {
     const at = `${key}[${i}]`;
     if (typeof step === "string") {
@@ -157,7 +187,15 @@ function steps(g: Gathered, notes: Notes, key: string, raw: unknown): void {
         if (isMap(body)) takeEnv(g, notes, k, body.name, body.value);
         else notes.unmapped(k, "Custom steps");
       } else if (name === "run" || name === "multienv") notes.unmapped(k, "Custom steps");
-      else if (isMap(body) && body.extra_args !== undefined) notes.leftOut(`${k}.extra_args`, "Flags at run time");
+      else if (isMap(body) && body.extra_args !== undefined) {
+        const flag = name === "init" ? "backend-config" : name === "plan" ? "var-file" : undefined;
+        const taken = inputs && flag ? takeFiles(list(body.extra_args), flag) : undefined;
+        if (taken?.files.length) {
+          inputs![flag === "backend-config" ? "backend" : "vars"].push(...taken.files);
+          inputs!.at.push(`${k}.extra_args`);
+        }
+        if (!taken || taken.rest.length) notes.leftOut(`${k}.extra_args`, "Flags at run time");
+      }
       else if (name === "policy_check") notes.unmapped(k, "Policy", "set `policy:` and keep the Rego in the repo");
       else if (name === "import" || name === "state_rm") notes.leftOut(k, "`import` or `state rm` from a comment");
       else if (!["init", "plan", "apply", "show"].includes(name)) notes.unknown(k);
@@ -250,6 +288,9 @@ function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): 
     if (p.depends_on !== undefined && root !== undefined) g.dependsOn.push({ at: `${at}.depends_on`, root, names: p.depends_on });
     if (p.repo_locks !== undefined) locks(g, notes, `${at}.repo_locks`, p.repo_locks);
     if (p.custom_policy_check !== undefined) notes.unmapped(`${at}.custom_policy_check`, "Policy");
+    if (typeof p.workflow === "string" && root !== undefined) {
+      g.projectFlows.push({ root, ...(typeof p.name === "string" ? { name: p.name } : {}), workflow: p.workflow, workspace: p.workspace !== undefined && p.workspace !== "default" });
+    }
   });
   for (const k of ["parallel_plan", "parallel_apply"] as const) {
     if (doc[k] === false) notes.mapped(k, "Concurrency", "parallelism: 1");
@@ -263,7 +304,11 @@ function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): 
         const at = `workflows.${name}.${stage}`;
         if (stage === "import" || stage === "state_rm") notes.leftOut(at, "`import` or `state rm` from a comment");
         else if (stage === "policy_check") notes.unmapped(at, "Policy", "set `policy:` and keep the Rego in the repo");
-        else if (stage === "plan" || stage === "apply") steps(g, notes, `${at}.steps`, isMap(body) ? body.steps : undefined);
+        else if (stage === "plan" || stage === "apply") {
+          const inputs = g.workflowInputs.get(name) ?? { backend: [], vars: [], at: [] };
+          g.workflowInputs.set(name, inputs);
+          steps(g, notes, `${at}.steps`, isMap(body) ? body.steps : undefined, inputs);
+        }
         else notes.unknown(at);
       }
     }
@@ -365,6 +410,60 @@ function readDigger(doc: Record<string, unknown>, g: Gathered, notes: Notes): vo
 
 // ── both ────────────────────────────────────────────────────────────────────
 
+/** A name an instance can carry: the project's, when it has one. */
+const INSTANCE_OK = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+/**
+ * The files a project's workflow passes to `init` as `-backend-config` and to
+ * `plan` as `-var-file`, as `backend_config` and `var_files` by root. Projects
+ * that share a directory and pass different files are one directory run as
+ * several roots: each is an instance named by its project, in `instances`.
+ * Projects that share one and pass the same files, or that select workspaces,
+ * stay one root.
+ */
+function inputsOf(g: Gathered, notes: Notes, s: ProjectSettings): void {
+  const files = (workflow: string) => g.workflowInputs.get(workflow);
+  const key = (workflow: string): string | undefined => files(workflow)?.at[0];
+  const backend: Record<string, string[]> = {};
+  const vars: Record<string, string[]> = {};
+  const instances: Record<string, string[]> = {};
+  const wrote = new Map<string, string[]>();
+  const byRoot = new Map<string, Gathered["projectFlows"]>();
+  for (const f of g.projectFlows) byRoot.set(f.root, [...(byRoot.get(f.root) ?? []), f]);
+  const note = (workflow: string, what: string): void => {
+    for (const at of files(workflow)?.at ?? []) wrote.set(at, [...(wrote.get(at) ?? []), what]);
+  };
+  const pairOf = (workflow: string): string => JSON.stringify([files(workflow)?.backend ?? [], files(workflow)?.vars ?? []]);
+  const set = (rootKey: string, workflow: string): void => {
+    const w = files(workflow);
+    if (!w || (!w.backend.length && !w.vars.length)) return;
+    if (w.backend.length) backend[rootKey] = [...new Set(w.backend)];
+    if (w.vars.length) vars[rootKey] = [...new Set(w.vars)];
+    note(workflow, rootKey);
+  };
+  for (const [root, flows] of byRoot) {
+    const flowsWithFiles = flows.filter((f) => key(f.workflow) !== undefined);
+    if (flowsWithFiles.length === 0) continue;
+    const differ = new Set(flows.map((f) => pairOf(f.workflow))).size > 1;
+    const named = flows.every((f) => f.name !== undefined && INSTANCE_OK.test(f.name)) && new Set(flows.map((f) => f.name)).size === flows.length;
+    if (flows.length > 1 && differ && named && root !== "." && !flows.some((f) => f.workspace)) {
+      instances[root] = flows.map((f) => f.name!);
+      for (const f of flows) set(`${root}@${f.name}`, f.workflow);
+    } else {
+      // One root: the first project's files stand, and the others' are named when they differ.
+      set(root, flows[0]!.workflow);
+      if (flows.length > 1 && differ) for (const f of flows.slice(1)) for (const at of files(f.workflow)?.at ?? []) notes.unmapped(at, "Backend config and var files", `${root} has projects that pass different files, and they cannot be told apart here: ${flows.some((x) => x.workspace) ? "one selects a workspace" : "each needs a name"}, and the first project's files are written`);
+    }
+  }
+  if (Object.keys(backend).length) s.backend_config = backend;
+  if (Object.keys(vars).length) s.var_files = vars;
+  if (Object.keys(instances).length) s.instances = instances;
+  for (const [at, what] of wrote) {
+    const parts = [...new Set(what)].map((r) => `${r}${backend[r] ? ` backend_config ${backend[r]!.join(", ")}` : ""}${vars[r] ? ` var_files ${vars[r]!.join(", ")}` : ""}`);
+    notes.mapped(at, "Backend config and var files", `${parts.join("; ")}${Object.keys(instances).length ? `; instances: ${Object.entries(instances).map(([d, n]) => `${d}: ${n.join(", ")}`).join("; ")}` : ""}`);
+  }
+}
+
 /** Turn a parsed atlantis.yaml or digger.yml into terragucci settings and a note per setting. */
 export function convert(source: Exclude<ImportSource, "terragrunt-scale">, doc: unknown, o: ImportOptions = {}): Converted & { missing?: string[] } {
   if (!isMap(doc)) throw new ConfigError(`the ${SOURCE_NAMES[source]} config is not a map of settings`);
@@ -380,6 +479,8 @@ export function convert(source: Exclude<ImportSource, "terragrunt-scale">, doc: 
     s.roots = [...g.roots].sort();
     notes.mapped("projects[].dir", "Which directories", `roots: ${s.roots.join(", ")}`);
   }
+
+  inputsOf(g, notes, s);
 
   // Which binary and version.
   const versions = [...g.versions.keys()];

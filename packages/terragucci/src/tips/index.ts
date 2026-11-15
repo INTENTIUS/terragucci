@@ -40,6 +40,7 @@ import type { ResolvedSettings } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
 import { choudoufuSecretsMessage, secretInStateMessage, type StoredSecret } from "./secrets";
+import { rootPath } from "../root-config";
 
 /** Chant's checks that become tips, by rule id. */
 export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
@@ -231,7 +232,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
       for (const check of checks) for (const d of await check.check(ctx)) tips.push(codeTip(check.id, dir, d.message));
     }
     for (const root of roots) {
-      const entities = await parseTerraformRootDir(join(repo, root), root, parser);
+      const entities = await parseTerraformRootDir(rootPath(repo, root), root, parser);
       const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;
       for (const check of checks) {
         for (const d of await check.check(ctx)) {

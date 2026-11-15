@@ -66,6 +66,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Which directories | `projects[].dir`, `autodiscover` | `projects[].dir`, `generate_projects` | detected: every directory with a backend, `cloud` block or provider; `roots` globs to narrow, which an import writes from the projects' directories |
 | Project name | `projects[].name` | `projects[].name` | none: a root goes by its path from the repo root |
 | Workspace | `projects[].workspace` | `projects[].workspace` | none: each root is a directory with one state |
+| Backend config and var files | a workflow's `extra_args` on `init` and `plan`: `-backend-config`, `-var-file` |  | `backend_config` and `var_files`, a root glob to files in the root's directory; `instances` runs one directory as several roots, which an import writes for projects that share a directory and a name each |
 | What triggers a plan | `autoplan.when_modified`, `autoplan.enabled` | `include_patterns`, `exclude_patterns`, `on_pull_request_pushed` | no key: a root plans when a file in it, a local module it calls or its var files changed, and so does every root that reads its state |
 | Binary version | `terraform_version` | a project's `opentofu`, or the action's `terraform-version` or `opentofu-version` input | `binary` and `version`, or the pins the roots carry |
 | Order | `execution_order_group`, `depends_on`, `abort_on_execution_order_fail` | `depends_on`, layering | waves from `terraform_remote_state` reads; `waves.after`, which an import writes from `depends_on`, for an order the reads do not give; `waves.canary` puts roots first; Terragrunt's dependency layers |
@@ -104,7 +105,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Passing a failed policy from a comment | | a policy decides from the base branch; an override names one root's plan and its rules, and only a person the base lists can write one | change the code, change the policy in a reviewed pull request, or [`terragucci override`](/terragucci/reference/policy/#overriding-a-denial) by a listed approver |
 | Approving from a comment | | an approval binds the wave's set digest, which a comment does not carry | `terragucci approve` from a checkout, a review under `approval: pr-review`, or a Slack or Teams click through [`terragucci relay`](/terragucci/guides/approve-from-chat/) in your own cloud, which approves the digest the message showed; the approval is signed only under `approval: sealed`, which the relay leaves to the approver's own key |
 | Applying one root of a wave | | an approval covers the wave's plans as one set | split the change, or `waves.canary` to send roots out first |
-| Flags at run time | a step's `extra_args` | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml` |
+| Flags at run time | a step's `extra_args` | what an approval covers is fixed by the commit and the config | the change itself, or a key in `terragucci.yml`; `-backend-config` and `-var-file` files are `backend_config` and `var_files` |
 | A server or web UI | | the jobs run in your CI and write to your git and your bucket | the plan note, the report artifact, and [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
 
 ## Next

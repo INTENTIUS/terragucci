@@ -17,6 +17,7 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { rootRoleEnv } from "../cloud-identity";
 import { rootSecretEnv } from "../root-secrets";
 import { workspaceEnv, workspaceInit } from "../workspace";
+import { rootDir, rootInputsEnv, rootPath } from "../root-config";
 import { atmosDependencies, fillReads, upstreamOutputs, type UpstreamOutputs } from "../atmos";
 import { plannerForBinary, terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
 import { planTerragruntWave, TerragruntMockRefusal, type TerragruntExec, type TerragruntWavePlan } from "@intentius/chant-lexicon-terraform/terragrunt/run";
@@ -486,7 +487,7 @@ export function rootsParallelism(repo: string, roots: readonly string[], setting
   const backends = new Set<string>();
   let gitlab = false;
   for (const root of roots) {
-    for (const f of tfFiles(join(repo, root))) {
+    for (const f of tfFiles(rootPath(repo, root))) {
       const text = readFileSync(f, "utf-8").replace(/(^|[^:"])(#|\/\/).*$/gm, "$1");
       for (const m of text.matchAll(/\bbackend\s+"([^"]+)"\s*\{([^}]*)\}/g)) {
         backends.add(m[1]);
@@ -936,7 +937,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // The pipeline names the roots init found. When none is on disk they are written by a command that has not run here.
   // An Atmos repo's instances are written by terragucci atmos write, its synth when terragucci.yml names none.
   const synth = shape.prepare;
-  if (!options.root && layers.flat().every((r) => !existsSync(join(repo, r)))) {
+  if (!options.root && layers.flat().every((r) => !existsSync(rootPath(repo, r)))) {
     throw new ConfigError(`found no roots: none of the ${layers.flat().length} the pipeline names is on disk${synth ? `; the synth command (${synth}) writes them, so run it first` : "; roots a command writes, such as CDK Terrain's stacks, need synth in terragucci.yml"}`);
   }
   // A pull request plans only the roots its change reaches, and their dependents. Drift reads every root.
@@ -1003,7 +1004,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const limit = options.parallelism !== undefined ? { value: options.parallelism, reason: "--parallelism" } : rootsParallelism(repo, roots, settings, env);
   if (roots.length > 1) log(`planning ${limit.value === 1 ? "one root at a time" : `up to ${limit.value} roots at once`} (${limit.reason})`);
   // Roots whose lock file does not pin their providers at the binary's registry take them from the shared cache (#737).
-  const unlocked = roots.filter((r) => !lockCovers(join(checkoutOf(r), r), binariesOf(r).expected(r).name));
+  const unlocked = roots.filter((r) => !lockCovers(join(checkoutOf(r), rootDir(repo, r)), binariesOf(r).expected(r).name));
   if (unlocked.length > 0) log(`${unlocked.length === 1 ? `${unlocked[0]} takes its providers` : `${unlocked.length} roots take their providers`} from the shared cache with no lock entry to check them against: commit a .terraform.lock.hcl for the binary's registry to pin them`);
   // The roots share one provider cache, the job's or one of the stage's own, so a provider downloads once per job rather
   // than once per root (some 700 MB for the AWS provider). The binary takes a provider from the cache only for a root
@@ -1055,12 +1056,12 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // upstream's plan in this run (plan -estate-outputs-from, ../estate-planned.ts). An upstream whose estate a root of the
   // run reads keeps its show -json in a file for that flag.
   const estatePlans = !drift && plansOnPlannedEstates(binary);
-  const estateReadsOf = new Map(estatePlans ? roots.map((r) => [r, estateOutputReads(join(repo, r))] as const) : []);
+  const estateReadsOf = new Map(estatePlans ? roots.map((r) => [r, estateOutputReads(rootPath(repo, r))] as const) : []);
   const estateOwner = new Map<string, string>();
   // choudoufu's resolved estate (choudoufu#2293) for each live root, where the binary prints it; else the live block's.
-  for (const r of estatePlans ? liveRoots(repo, all) : []) await readLiveSetup(join(repo, r), { binary });
+  for (const r of estatePlans ? liveRoots(repo, all) : []) await readLiveSetup(rootPath(repo, r), { binary });
   for (const r of estatePlans ? all : []) {
-    const e = resolvedEstate(join(repo, r));
+    const e = resolvedEstate(rootPath(repo, r));
     if (e) estateOwner.set(e, r);
   }
   const readEstates = new Set([...estateReadsOf.values()].flat().map((b) => b.estate));
@@ -1082,8 +1083,8 @@ export async function runStage(stage: string, repo: string, options: StageOption
   const outputsRead = new Map<string, Promise<UpstreamOutputs>>();
   const outputsOf = (up: string): Promise<UpstreamOutputs> => {
     if (!outputsRead.has(up)) {
-      const upDir = join(repo, up);
-      outputsRead.set(up, binaries.resolve(up).then((b) => b.path, () => binary).then((b) => upstreamOutputs(b, upDir, workspaceEnv(rootRoleEnv(binEnv, up), upDir), initTurn)));
+      const upDir = rootPath(repo, up);
+      outputsRead.set(up, binaries.resolve(up).then((b) => b.path, () => binary).then((b) => upstreamOutputs(b, upDir, rootInputsEnv(repo, up, workspaceEnv(rootRoleEnv(binEnv, up), upDir)), initTurn)));
     }
     return outputsRead.get(up)!;
   };
@@ -1127,7 +1128,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       lines.push(`${root}: planned by migration ${pending.name}`);
       return { root, lines, deferred: { unit: root, after: [], why: `planned by migration ${pending.name}: ${pendingWhy(pending)}, and the root plans on its own once the migration applies`, previewed: false } };
     }
-    const dir = join(checkoutOf(root), root);
+    const dir = join(checkoutOf(root), rootDir(repo, root));
     const { links, reads } = linksFor(root);
     const estate = estateLinks(root, estateReadsOf.get(root) ?? [], estateOwner, (r) => roots.includes(r), (r) => (upstreamPlanFiles.has(r) ? { plan: upstreamPlans.get(r), file: upstreamPlanFiles.get(r)! } : undefined));
     reads.push(...estate.reads);
@@ -1147,8 +1148,10 @@ export async function runStage(stage: string, repo: string, options: StageOption
     // The root's own role, when `oidc.roles` names one (../cloud-identity.ts).
     // An Atmos instance names its workspace (../atmos.ts): it plans there, not in default.
     const rootEnv = rootCacheEnv(workspaceEnv(rootRoleEnv(binEnv, root), dir), dir, bin.name);
-    // The binary's own: rootEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its hooks keep rootEnv.
-    let binaryEnv = rootEnv;
+    // With the files the root's settings name for its init and plan, and an instance's data directory (../root-config.ts).
+    const planEnv = rootInputsEnv(repo, root, rootEnv);
+    // The binary's own: planEnv with the values `secrets` gives the root, read below as its identity (../root-secrets.ts). Its hooks keep planEnv.
+    let binaryEnv = planEnv;
     // The engine runner's exec, inside the stage's command hook: each run is timed on the root and traced under its span.
     const runIn = async (env: NodeJS.ProcessEnv, ...args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
       const r = await withTerraformCommandHook(commandHook, { root, method: "plan" }, () => runBinary(path, args, dir, env));
@@ -1160,7 +1163,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     /** Run one moment's hooks; the error when one failed the root. */
     const step = async (when: HookMoment, file?: string): Promise<string | undefined> => {
       if (hookCount(hooks) === 0) return undefined;
-      const o = await runHooks(hooks, when, { repo: checkoutOf(root), root, stage: drift ? "tf-drift" : "tf-plan", env: rootEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
+      const o = await runHooks(hooks, when, { repo: checkoutOf(root), root, stage: drift ? "tf-drift" : "tf-plan", env: planEnv, ...(file ? { planFile: file } : {}), log: (l) => lines.push(l) });
       ran.push(...o.runs);
       holds.push(...o.holds);
       return o.error;
@@ -1186,7 +1189,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
     }
     try {
       try {
-        binaryEnv = await rootSecretEnv(rootEnv, root, settings.secrets);
+        binaryEnv = await rootSecretEnv(planEnv, root, settings.secrets);
       } catch (e) {
         return failed((e as Error).message, `${root}: not ${drift ? "checked" : "planned"}, a value of secrets could not be read: ${(e as Error).message}`);
       }
@@ -1211,7 +1214,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       // sources: the modules init fetched and the providers it locked, before any of their code plans (../sources.ts).
       let fetched: string[] = [];
       try {
-        fetched = sourcesOf ? await sourcesOf.afterInit(root, checkoutOf(root), rootEnv) : [];
+        fetched = sourcesOf ? await sourcesOf.afterInit(root, checkoutOf(root), planEnv) : [];
       } catch (e) {
         return failed((e as Error).message, `${root}: ${(e as Error).message}`);
       }
@@ -1233,7 +1236,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       const planArgs = [...(drift && !live.has(root) ? ["-refresh-only"] : []), "-input=false", "-no-color", "-lock=false", ...estate.args, `-out=${planFile}`];
       // choudoufu plans a pull request's live root as the cone of its change since base (../cone.ts), but not one planned
       // on another estate's planned outputs, which choudoufu would plan in full anyway.
-      const cone = estate.args.length > 0 ? [] : coneArgs(bin.name, coneBase, planArgs, coneRoot(checkoutOf(root), root));
+      const cone = estate.args.length > 0 ? [] : coneArgs(bin.name, coneBase, planArgs, coneRoot(checkoutOf(root), rootDir(repo, root)));
       const planOnce = () => run("plan", ...cone, ...planArgs);
       // Linked: the root plans on the planned outputs of the upstreams this run planned, its files put back once the plan is made.
       let linked: Linked | undefined;
@@ -1386,7 +1389,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
       await eachLimited(ups, limit.value, async (up) => {
         // The upstream's own binary reads its state; the job's when its pin cannot be installed, and its own plan says why.
         const upBinary = await binaries.resolve(up).then((b) => b.path, () => binary);
-        upstreamState.set(up, await stateIsEmptyAsync(upBinary, join(repo, up), workspaceEnv(rootRoleEnv(binEnv, up), join(repo, up)), initTurn));
+        upstreamState.set(up, await stateIsEmptyAsync(upBinary, rootPath(repo, up), rootInputsEnv(repo, up, workspaceEnv(rootRoleEnv(binEnv, up), rootPath(repo, up))), initTurn));
       });
       const first = index;
       index += layer.length;
@@ -1520,7 +1523,7 @@ async function planComposedStage(repo: string, c: Composition, ctx: ComposeStage
       redacted: safe.values,
       ...(holds.get(root)?.length ? { holds: holds.get(root) } : {}),
       plan: { text: scrubPlanText(plan.texts.get(root) ?? "", slice).text, json: JSON.stringify(safe.plan, null, 2) + "\n" },
-      input: { path: root, plan: slice, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(join(repo, root)), ...(ran.get(root)?.length ? { steps: ran.get(root) } : {}), ...(reads.length ? { reads } : {}), composed: { wave: c.wave!, module } },
+      input: { path: root, plan: slice, planner, binary: bin, files: planFiles(root), preventDestroy: preventDestroyIn(rootPath(repo, root)), ...(ran.get(root)?.length ? { steps: ran.get(root) } : {}), ...(reads.length ? { reads } : {}), composed: { wave: c.wave!, module } },
     };
   });
   return { plan, outcomes };
@@ -1820,8 +1823,9 @@ export function affectedRoots(repo: string, base: string, all: string[], roots: 
   }
   const files = diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
   const watch = outside.watch ?? {};
-  const own = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r }])), files);
-  const read = Object.keys(watch).length ? changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: r, ...(watch[r] ? { varFiles: watch[r] } : {}) }])), files) : own;
+  // An instance's files are its directory's, so a change there reaches each instance of it.
+  const own = changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: rootDir(repo, r) }])), files);
+  const read = Object.keys(watch).length ? changedRoots(repo, Object.fromEntries(roots.map((r) => [r, { dir: rootDir(repo, r), ...(watch[r] ? { varFiles: watch[r] } : {}) }])), files) : own;
   const fromSettings = [...(outside.settings?.keys() ?? [])].filter((r) => roots.includes(r));
   const changed = [...new Set([...read, ...fromSettings])].sort();
   const deps = rootDependencies(repo, all);

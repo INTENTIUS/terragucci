@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { localsText } from "../detect";
 import { estateOutputReads, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
 import type { ReportBlastResource, ReportBlastReach } from "./schema";
+import { rootPath } from "../root-config";
 
 /** A root's plan as `show -json` prints it, as much as this reads. */
 interface PlanJson {
@@ -320,7 +321,7 @@ function depthsFrom(
 export function blastRootsOf(repo: string, all: readonly string[], plans: readonly { path: string; plan?: unknown }[], blocks: ReadonlyMap<string, readonly { name: string; upstream: string }[]>): BlastRoot[] {
   const owner = new Map<string, string>();
   for (const r of all) {
-    const e = resolvedEstate(join(repo, r));
+    const e = resolvedEstate(rootPath(repo, r));
     if (e) owner.set(e, r);
   }
   return plans
