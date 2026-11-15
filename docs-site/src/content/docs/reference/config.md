@@ -56,7 +56,7 @@ A key the control repo sets away from its default reaches each project one of tw
 
 | How it reaches the project | Keys |
 |---|---|
-| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `reports`, `approval`, `approval_rules`, `gate`, `roots`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too), `environments` (each environment's roles are in the pipeline too, by its root globs) |
+| `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `reports`, `approval`, `approval_rules`, `gate`, `roots`, `backend_config`, `var_files`, `instances`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too), `environments` (each environment's roles are in the pipeline too, by its root globs) |
 | in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 `audit_log_group` reaches no project: `terragucci audit` reads it in the control repo.
@@ -138,7 +138,10 @@ dashboards: true
 
 | Key | Default | Meaning |
 |---|---|---|
-| `roots` | detected | globs of root directories. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude`. A [Terramate](/terragucci/guides/use-terramate/) repo's roots are its stacks, so `roots`, `synth`, `generate`, `rollouts` and a drift pull request are config errors there; leave a stack out with `.tmskip` |
+| `roots` | detected | globs of root directories. A glob leaves out a directory that a root calls as a local module (`source = "../modules/x"`) and that has no `backend` or `cloud` block of its own; name it by its exact path to keep it, and `config check` says how many it left out. A Terragrunt repo's units are the ones `terragrunt find` lists, so `roots` there is a config error: leave units out with `terragrunt.exclude`. A [Terramate](/terragucci/guides/use-terramate/) repo's roots are its stacks, so `roots`, `synth`, `generate`, `rollouts` and a drift pull request are config errors there; leave a stack out with `.tmskip` |
+| `backend_config` | none | a root glob mapped to the `-backend-config` file or files its init takes, relative to the root's directory; see [Backend config, var files and instances](#backend-config-var-files-and-instances) |
+| `var_files` | none | a root glob mapped to the `-var-file` file or files its plan takes, relative to the root's directory |
+| `instances` | none | a root directory mapped to the names it runs under; each name is a root called `<directory>@<name>` |
 | `synth` | none | the command that writes the roots, such as `npx cdktn synth`; the check, plan, apply, tips and drift jobs run it on their checkout before reading them, and a pull request plans only the synthesized roots whose output differs from the base's. With it, `rollouts`, `generate`, and a `drift` schedule under `respond.drift: pull-request` are config errors, since each edits the files the command writes, and the app sets backends, providers and `required_version` through its own constructs; see [Plan CDK Terrain stacks](/terragucci/guides/plan-cdk-terrain-stacks/) |
 | `image` | terragucci's image for the binary | the image every job runs in, built `FROM` terragucci's image for the binary so the jobs keep terragucci and the binary; see [Run hooks around a stage](/terragucci/guides/run-steps/#run-the-jobs-in-your-own-image). As a map, `name` is the image and `mirror` says it carries a provider mirror: `true` for the directory [`image recipe`](/terragucci/reference/cli/#image-recipe-and-check-mirror) writes, or the mirror's absolute path. With `mirror`, `tf-check` runs `check-mirror` first and its checkout takes the history |
 | `binary` | detected; see [Defaults with no file](#defaults-with-no-file) | `terraform`, `tofu` or [`choudoufu`](/terragucci/concepts/glossary/#choudoufu) |
@@ -172,7 +175,7 @@ dashboards: true
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `atmos` | detected | Atmos settings: `version`, the Atmos release every job installs (default: the one this terragucci release pins). Set only in a repo with `atmos.yaml` at its root, and never beside `terragrunt`; see [Use Atmos](/terragucci/guides/use-atmos/) |
 | `policy` | none (off) | `engine` (`conftest` or `opa`), `path` (default `policy`), `namespace`, `input` (`plan` or `hcp`), [`source`](/terragucci/reference/policy/#a-shared-policy-source) (`git+https://<host>/<path>@<ref>`), [`override`](/terragucci/reference/policy/#overriding-a-denial) (who may let one denied plan through, read at base; unset, nobody; an entry with `roots`, `who`, `roles` and `rules` names who may for the roots it matches, [scoped overriders](/terragucci/reference/policy/#scoped-overriders)), [`outcomes`](/terragucci/reference/policy/#holding-or-releasing-a-wave) (`[deny]` when unset; `hold` and `allow_unattended` let rules hold a wave or let it apply without an approval, with `engine: opa`, read at base); the [base branch's key](/terragucci/reference/policy/#the-base-branch-decides) decides |
-| `sources` | none (off) | `modules` and `providers`, each a list of globs (`*` within a part, `**` across parts): `tf-check`, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a module source or provider address it uses matches none, and the stages that plan check what `init` fetched before `plan`, a Terragrunt unit's included. `proxies` lists Artifactory (`artifactory: <host>`) or Nexus (`nexus: <url>`) proxies, each with `repo` and optionally `upstream` and a Nexus `host`; a source written through one also matches as its upstream. Read at base; a list left out checks nothing of its kind. See [Allow only listed sources](/terragucci/guides/write-a-policy/#allow-only-listed-sources) |
+| `sources` | none (off) | `modules` and `providers`, each a list of globs (`*` within a part, `**` across parts): `tf-check`, `tf-plan`, `tf-drift` and each `tf-apply` wave refuse a root before its `init` when a module source or provider address it uses matches none, and the stages that plan check what `init` fetched before `plan`, a Terragrunt unit's included. As a map of root glob to such lists with a required `default`, each root takes the first matching glob's lists, and a root the pull request adds takes `default`. `proxies` lists Artifactory (`artifactory: <host>`) or Nexus (`nexus: <url>`) proxies, each with `repo` and optionally `upstream` and a Nexus `host`; a source written through one also matches as its upstream. Read at base; a list left out checks nothing of its kind. See [Allow only listed sources](/terragucci/guides/write-a-policy/#allow-only-listed-sources) |
 | `check.pre_commit` | `false` | `true` runs the repo's `.pre-commit-config.yaml` in `tf-check` after its own checks, over the files the change touches, with `PCT_TFPATH` set to `binary` and `terraform_fmt` skipped. `init` mentions it when it finds the file and never turns it on. The job's image needs `pre-commit` and the tools the file names. See [Run your pre-commit hooks in CI](/terragucci/guides/run-pre-commit-hooks/) |
 | `modules.path` | `modules/*` | a glob of the directories that hold your modules |
 | `modules.publish` | none | an `oci://` registry, `git-tags`, a GitLab module registry (`gitlab` for the project a GitLab CI job runs in, or `gitlab://<host>/<group>/<project>`), an HCP Terraform private registry (`hcp://<organization>`, or `hcp://<host>/<organization>` for Terraform Enterprise), an Artifactory or Nexus hosted repository (`artifactory://<host>/<repository>[/<namespace>]`, `nexus://<host>/<repository>[/<namespace>]`), or a list of them; turns on `tf-publish`; see [Publish to GitLab's module registry](/terragucci/guides/publish-modules/#publish-to-gitlabs-module-registry) and [Publish to HCP Terraform](/terragucci/guides/publish-modules/#publish-to-hcp-terraform) |
@@ -218,9 +221,42 @@ version:
   envs/edge: "1.11.2"
 ```
 
-[Versions and pins](/terragucci/reference/versions-and-pins/) lists every other version a job runs, and [Upgrade terragucci](/terragucci/guides/upgrade-terragucci/) moves terragucci's own. A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
+[Versions and pins](/terragucci/reference/versions-and-pins/) lists every other version a job runs, and [Upgrade terragucci](/terragucci/guides/upgrade-terragucci/) moves terragucci's own. A root that pins nothing runs the version every job runs. A pin that is that version uses the job's binary as it is. Any other pin is installed in the job for the roots that pin it, checked against the release's SHA256SUMS, once per version, under `TOFU_INSTALL_DIR` by version, so a runner that keeps that directory reuses it. A version file that names no exact version (`latest`, `min-required`) and a `required_version` range pin nothing. `terragucci init` and `terragucci config check` name each root whose `required_version` range excludes the version it would run, with the range and the `version` entry that fixes it: the lowest release in the range for `terraform`, and the range itself for `tofu`, since neither command looks up releases. The [report](/terragucci/reference/report-schema/) names each root's binary, version and pin, and so does the plan note once a root pins.
 
 A map of versions goes in the repo's own `terragucci.yml`, which the jobs read; in a control repo, `version` is one version. Only `tofu` and `terraform` take pins. A Terragrunt unit is pinned the same ways. An exact `terragrunt_version_constraint` in its own `terragrunt.hcl` also pins the Terragrunt release that runs it, and the job installs that release like any other pin. One `run --all` runs one Terragrunt and one binary, so a wave whose units pin different releases runs as one `run --all` per pair of releases. Run `npx terragucci init` again after you add or change a pin, so the check job validates each root with its own version. With [`generate`](/terragucci/guides/generate-root-files/#the-version-each-directory-declares) set, each root's generated `required_version` is the version this map gives it, unless `generate` sets one.
+
+## Backend config, var files and instances
+
+A plain root can take its own `-backend-config` files at init and its own `-var-file` files at plan. Each key is a root glob, and each value is a file or a list of files relative to the root's directory, where the binary runs. Every glob a root matches adds its files, in the order the file lists them.
+
+```yaml
+backend_config:
+  "envs/aws/*": atlantis.config
+  envs/legacy/queue: [backend.hcl, tfbackends/prod.tfbackend]
+var_files:
+  "envs/aws/*": atlantis.tfvars
+```
+
+init runs with `-reconfigure -backend-config=<file>` for each, after any `-backend-config` in `env`. plan runs with `-var-file=<file>` for each, after any in `TF_CLI_ARGS_plan`. An apply applies the plan the root made, so a root planned with a var file applies with it. The root's state address, its locks, drift and the plan digest all read the same files: a key the code leaves as a placeholder and a backend file supplies is read from the file, so the roots that read the state of that root are ordered after it. A pull request that changes one of the files plans the roots that name it, and so does a change to which files a root names. `config check` names a key that matches no root and a file that is not there.
+
+One directory can run as several roots. `instances` maps a root directory to the names it runs under, and each name is a root called `<directory>@<name>`:
+
+```yaml
+instances:
+  prow-build-cluster: [canary, prod]
+backend_config:
+  "prow-build-cluster@canary": tfbackends/canary.tfbackend
+  "prow-build-cluster@prod": tfbackends/prod.tfbackend
+var_files:
+  "prow-build-cluster@canary": canary.tfvars
+  "prow-build-cluster@prod": prod.tfvars
+waves:
+  canary: ["prow-build-cluster@canary"]
+```
+
+Each instance plans and applies in the directory with its own files and its own state, so the code is written once. A glob that matches the directory alone, such as `prow-build-cluster`, gives its files to every instance, and a glob that matches one instance adds to that one. The instance name is part of the root's name everywhere: in `waves.canary`, `waves.after`, `oidc.roles`, the plan note and the report. A change to a file in the directory reaches every instance of it. Each instance keeps its `init` data in `.terraform/instances/<name>` under the directory, so two instances never share the backend or the modules init recorded. A name is letters, digits, `_`, `.` and `-`, and a directory needs at least two.
+
+An Atmos or Terragrunt repo gives each root its backend and inputs in its own files, so `backend_config` and `var_files` there are a config error, and so is `instances` in a Terragrunt, Atmos or Terramate repo. A composed run (`waves.compose`) and `ephemeral` refuse all three, and `instances` refuses `generate` and `rollouts`, which edit the files its instances share. In a control repo the three keys go in `defaults` or a project's block, and `reconcile` writes them into the project's file.
 
 ## Root order
 

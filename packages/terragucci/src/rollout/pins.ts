@@ -21,7 +21,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
-import { editPins, isTerragruntFile, readModulePin, type ModuleCallPin } from "@intentius/chant-lexicon-terraform/pin";
+import { editPins, exactVersion, isTerragruntFile, readModulePin, type ModuleCallPin } from "@intentius/chant-lexicon-terraform/pin";
+import { isUnversionedRegistry, pinRange, UNVERSIONED } from "./range";
 
 /** One module call that names the module. */
 export interface ModuleCall {
@@ -32,7 +33,16 @@ export interface ModuleCall {
   pin: ModuleCallPin;
   /** The version part of the pin (`1.3.0` of `modules/network/v1.3.0`), or the pin itself. */
   version: string | null;
+  /** The call's `version` argument as written, when it has one. A constraint is the `from` of `terragucci pin modules`. */
+  written?: string;
 }
+
+/** Whether `from` is a constraint (`~> 5.0`) rather than one exact version: a rollout from it is a pin of what the constraint resolved to. */
+export const isRange = (from: string | undefined): from is string => from !== undefined && exactVersion(from) === null;
+
+/** Whether a call's `version` argument is the constraint `from` as written, or, for `UNVERSIONED`, absent from a call a registry resolves. */
+export const atRange = (c: ModuleCall, from: string | undefined): boolean =>
+  isRange(from) && c.pin.pin === null && (from === UNVERSIONED ? c.written === undefined && isUnversionedRegistry(c.pin.module, undefined) : c.pin.at === "version" && c.written === from);
 
 const VERSION_TAIL = /^(.*?)(v?)(\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 
@@ -85,7 +95,7 @@ export async function moduleCalls(repo: string, root: string, wanted: string, pa
       if (typeof body.source !== "string") continue;
       const pin = readModulePin(body.source, typeof body.version === "string" ? body.version : undefined);
       if (!namesModule(pin.module, wanted) && !aliases.includes(pin.module.toLowerCase())) continue;
-      out.push({ file, call, pin, version: pin.pin === null ? null : pinVersion(pin.pin) });
+      out.push({ file, call, pin, version: pin.pin === null ? null : pinVersion(pin.pin), ...(typeof body.version === "string" ? { written: body.version } : {}) });
     }
   }
   return out;
@@ -103,9 +113,20 @@ export async function movePins(
   parser: Hcl2Json,
 ): Promise<{ edits: Map<string, string> } | { refused: string }> {
   const edits = new Map<string, string>();
-  const moving = calls.filter((c) => c.pin.pin !== null && (c.version === from || c.pin.pin === from));
+  const moving = calls.filter((c) => atRange(c, from) || (c.pin.pin !== null && (c.version === from || c.pin.pin === from)));
   for (const file of [...new Set(moving.map((c) => c.file))]) {
     let text = readFileSync(join(repo, file), "utf-8");
+    if (isRange(from)) {
+      // A constraint becomes the exact version it resolved to, as written: no shape to keep.
+      for (const module of new Set(moving.filter((c) => c.file === file).map((c) => c.pin.module))) {
+        const result = await pinRange(text, file, { module, from, to }, parser);
+        const refused = result.calls.find((c) => c.outcome === "refused");
+        if (refused) return { refused: `${file} ${refused.call}: ${refused.reason}` };
+        text = result.content;
+      }
+      edits.set(file, text);
+      continue;
+    }
     const requests = new Map<string, { module: string; from: string; to: string }>();
     for (const c of moving.filter((m) => m.file === file)) {
       const req = { module: c.pin.module, from: c.pin.pin!, to: shapePin(c.pin.pin!, to) };

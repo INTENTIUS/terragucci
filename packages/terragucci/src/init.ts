@@ -64,6 +64,7 @@ import { ATMOS_VERSION } from "./atmos";
 import { TERRAMATE_VERSION } from "./terramate";
 import { parallelism, pinnedTerragrunt } from "./terragrunt";
 import { unitTerragruntPin } from "./unit-pins";
+import { conflictNotes, rangeConflicts, type RangeConflict } from "./version-range";
 import { withEnvironmentRoles } from "./environments";
 import type { ChantCheckHooks } from "./chant-next";
 import * as checkHooksLib from "@intentius/chant/components/check-hooks";
@@ -73,6 +74,7 @@ import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 import { TRUST_FILE, trustPlan } from "./trust";
+import { rootPath } from "./root-config";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -163,6 +165,8 @@ export interface InitResult {
   version: { value: string; reason: string };
   /** Roots that run a version of their own, and where each pins it. */
   pins: RootVersion[];
+  /** Roots whose `required_version` range excludes the version they would run. */
+  rangeConflicts: RangeConflict[];
   forge: { value: ForgeName; reason: string };
   /** Under choudoufu: each live root's record store and estate, and its bucket check. */
   records: LiveRecords[];
@@ -287,6 +291,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     const tgPin = tgMode ? unitTerragruntPin(repo, root) : undefined;
     if (tgPin && tgPin !== terragrunt?.version.value) pins.push({ root, tool: "terragrunt", version: tgPin, source: "terragrunt_version_constraint" });
   }
+  // A range in required_version pins nothing; name each root whose range the version it runs falls outside.
+  const conflicts = tgMode || !BINARY[binary.value].releaseInRequiredVersion ? [] : rangeConflicts(repo, roots, binary.value, settings.version, version.value);
+  notes.push(...conflictNotes(conflicts));
 
   const detectedForge = detectForge(repo);
   const forgeChoice = settings.forge
@@ -629,7 +636,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   files.push(planFile(componentsPath, componentsJson(components)));
 
   if (!options.dryRun) writePlannedFiles(files);
-  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, forge: forgeChoice, records, files, notes, configNote };
+  return { roots, rootReasons, layers, ...(terragrunt ? { terragrunt } : {}), ...(atmos ? { atmos } : {}), ...(terramate ? { terramate } : {}), binary, image: imageName(settings.image) ?? imageReference(ref), version, pins, rangeConflicts: conflicts, forge: forgeChoice, records, files, notes, configNote };
 }
 
 /**
@@ -643,7 +650,7 @@ async function liveRecords(repo: string, roots: string[], options: InitOptions):
   const env = options.env ?? process.env;
   const out: LiveRecords[] = [];
   for (const root of roots) {
-    const dir = join(repo, root);
+    const dir = rootPath(repo, root);
     const setup = await readLiveSetup(dir, { ...(options.liveExec ? { exec: options.liveExec } : {}) });
     if (!setup) {
       const estate = estateOf(dir).estate;
@@ -863,6 +870,7 @@ export function initJson(repo: string, r: InitResult, dryRun: boolean): Record<s
     binary: r.binary,
     version: r.version,
     ...(r.pins.length > 0 ? { pins: r.pins } : {}),
+    ...(r.rangeConflicts.length > 0 ? { rangeConflicts: r.rangeConflicts } : {}),
     forge: r.forge,
     ...(r.records.length > 0 ? { records: r.records } : {}),
     image: r.image,

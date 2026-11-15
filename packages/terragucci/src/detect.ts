@@ -11,6 +11,7 @@ import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { ConfigError, findConfig, forgeFromHost, type Binary, type ForgeName } from "./config";
 import { atmosStateReads } from "./atmos";
 import { literal, stateAddress, type Attr } from "./state-address";
+import { instanceRoot, instancesOf, rootBackendConfigs, rootDir } from "./root-config";
 
 const SKIP_DIRS = new Set([".git", ".terraform", ".terragrunt-cache", "node_modules", ".terragucci"]);
 
@@ -128,8 +129,10 @@ export function globMatch(glob: string, path: string): boolean {
 
 /**
  * The repo's roots, as paths relative to `repo`, sorted. With `globs`, a
- * directory counts when it matches a glob and holds Terraform files; without
- * them, every directory that is a root by `isRoot`.
+ * directory counts when it matches a glob and holds Terraform files, unless a
+ * directory calls it as a local module and it keeps no state of its own (an
+ * exact path still names it); without them, every directory that is a root by
+ * `isRoot`.
  */
 export function findRoots(repo: string, globs?: string[]): string[] {
   return findRootsWithReasons(repo, globs).map((r) => r.root);
@@ -140,20 +143,68 @@ export interface RootReason {
   reason: string;
 }
 
-/** `findRoots`, with why each directory counts: the backend, cloud block or provider found, or the glob matched. */
-export function findRootsWithReasons(repo: string, globs?: string[]): RootReason[] {
-  const out: RootReason[] = [];
-  for (const d of dirs(repo)) {
+/**
+ * The directories some directory calls by local path, as `module "x" { source = "./m" }`
+ * or `"../m"`, relative to `repo`. Registry, git and other sources are not local.
+ */
+function calledModules(repo: string, all: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const d of all) {
+    for (const f of tfFiles(d).filter((x) => !isJson(x))) {
+      const text = stripComments(readFileSync(f, "utf-8"));
+      for (const m of text.matchAll(/^\s*module\s+"[^"]*"\s*\{/gm)) {
+        const src = attr(blockBody(text, m.index ?? 0), "source");
+        if (src === undefined || !/^\.{1,2}\//.test(src)) continue;
+        const rel = posix(relative(repo, resolve(d, src)));
+        if (rel && !rel.startsWith("..")) out.add(rel);
+      }
+    }
+  }
+  return out;
+}
+
+/** Whether a directory keeps state of its own: a backend, a cloud block or a live block. A provider alone does not. */
+const hasOwnState = (dir: string): boolean => /^(backend |cloud block|choudoufu live block)/.test(rootReason(dir) ?? "");
+
+const bare = (p: string): string => posix(p).replace(/^\.\//, "").replace(/\/+$/, "");
+
+/**
+ * With `globs`, the directories a glob matched that are left out because a
+ * directory calls them as a local module and they hold no backend or cloud
+ * block. A glob that is the directory's exact path keeps it.
+ */
+export function modulesLeftOut(repo: string, globs: string[] | undefined): string[] {
+  return matchedDirs(repo, globs).left;
+}
+
+function matchedDirs(repo: string, globs: string[] | undefined): { kept: RootReason[]; left: string[] } {
+  const kept: RootReason[] = [];
+  const left: string[] = [];
+  const all = dirs(repo);
+  const called = globs ? calledModules(repo, all) : new Set<string>();
+  for (const d of all) {
     const rel = posix(relative(repo, d)) || ".";
     if (globs) {
       const g = globs.find((x) => globMatch(x, rel));
-      if (g !== undefined && tfFiles(d).length > 0) out.push({ root: rel, reason: `matches roots glob ${g}` });
+      if (g === undefined || tfFiles(d).length === 0) continue;
+      if (called.has(rel) && bare(g) !== rel && !hasOwnState(d)) left.push(rel);
+      else kept.push({ root: rel, reason: `matches roots glob ${g}` });
     } else {
       const reason = rootReason(d);
-      if (reason) out.push({ root: rel, reason });
+      if (reason) kept.push({ root: rel, reason });
     }
   }
-  return out.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
+  return { kept, left };
+}
+
+/** `findRoots`, with why each directory counts: the backend, cloud block or provider found, or the glob matched. */
+export function findRootsWithReasons(repo: string, globs?: string[]): RootReason[] {
+  // A directory `instances` names is its instances, not a root of its own (./root-config.ts).
+  const expanded = matchedDirs(repo, globs).kept.flatMap((r) => {
+    const names = instancesOf(repo, r.root);
+    return names.length ? names.map((n) => ({ root: instanceRoot(r.root, n), reason: `${r.reason}; instance ${n} of ${r.root}` })) : [r];
+  });
+  return expanded.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
 }
 
 export interface Detected<T> {
@@ -175,7 +226,7 @@ export function detectBinary(repo: string, roots: string[]): Detected<Binary> {
   if (existsSync(join(repo, ".opentofu-version"))) return { value: "tofu", reason: ".opentofu-version" };
   if (existsSync(join(repo, ".terraform-version"))) return { value: "terraform", reason: ".terraform-version" };
   // A root not on disk yet (one a synth or atmos write makes) says nothing.
-  if (roots.some((r) => existsSync(join(repo, r)) && readdirSync(join(repo, r)).some((n) => n.endsWith(".tofu")))) {
+  if (roots.some((r) => existsSync(join(repo, rootDir(repo, r))) && readdirSync(join(repo, rootDir(repo, r))).some((n) => n.endsWith(".tofu")))) {
     return { value: "tofu", reason: ".tofu files" };
   }
   if (onPath("tofu")) return { value: "tofu", reason: "tofu on the path" };
@@ -186,7 +237,7 @@ export function detectBinary(repo: string, roots: string[]): Detected<Binary> {
 /** The binary's version when every root pins the same exact one (`= 1.13.1` or `1.13.1`). A range is not a pin. */
 export function detectVersion(repo: string, roots: string[]): string | undefined {
   const seen = new Set<string>();
-  for (const r of roots) for (const v of exactRequiredVersions(join(repo, r))) seen.add(v);
+  for (const r of roots) for (const v of exactRequiredVersions(join(repo, rootDir(repo, r)))) seen.add(v);
   return seen.size === 1 ? [...seen][0] : undefined;
 }
 
@@ -514,6 +565,10 @@ function jsonState(
  */
 export function stateOf(repo: string, root: string, initArgs: string[] = initBackendConfigs(repo)): RootStateCode {
   const out: RootStateCode = { reads: [], unresolved: [] };
+  // An instance reads its code from its directory; the files its own settings name over the job's -backend-config.
+  const at = rootDir(repo, root);
+  const rootArgs = rootBackendConfigs(repo, root);
+  initArgs = rootArgs.length ? [...initArgs, ...rootArgs] : initArgs;
   let declared = false;
   const own = (o: { ref?: StateRef; why?: string }): void => {
     declared = true;
@@ -523,7 +578,7 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
     } else out.ownUnresolved = o.why;
   };
   // A backend block's settings, with the -backend-config the root's init takes over them, as init merges them.
-  const supplied = initArgs.length ? backendConfigLayers(repo, root, initArgs) : undefined;
+  const supplied = initArgs.length ? backendConfigLayers(repo, at, initArgs) : undefined;
   const backend = (type: string, get: Attr): { ref?: StateRef; why?: string } => {
     const a = addressed(type, supplied ? overlaid(get, supplied.layers) : get, root);
     if (a.ref) return a;
@@ -531,8 +586,8 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
     const one = (list: string[], singular: string, plural: string): string => (list.length === 1 ? singular : plural);
     const read = supplied?.files ?? [];
     const missing = supplied?.missing ?? [];
-    const beside = conventionFiles(join(repo, root))
-      .map((n) => posix(root === "." ? n : `${root}/${n}`))
+    const beside = conventionFiles(join(repo, at))
+      .map((n) => posix(at === "." ? n : `${at}/${n}`))
       .filter((b) => !read.includes(b));
     const notes = [
       ...(read.length ? [`the -backend-config ${one(read, "file", "files")} ${read.join(", ")} from terragucci.yml's env ${one(read, "does", "do")} not supply it either`] : []),
@@ -541,7 +596,7 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
     ];
     return notes.length ? { why: `${a.why}; ${notes.join("; ")}` } : a;
   };
-  for (const f of tfFiles(join(repo, root))) {
+  for (const f of tfFiles(join(repo, at))) {
     if (isJson(f)) {
       const j = jsonState(readFileSync(f, "utf-8"), root, backend);
       if (j.declared) own(j.own ? { ref: j.own } : { why: j.ownUnresolved });
@@ -562,7 +617,7 @@ export function stateOf(repo: string, root: string, initArgs: string[] = initBac
   }
   if (!declared) own(addressed("local", () => undefined, root));
   // A Terragrunt unit's remote_state configures the backend init runs with, over its blocks: it writes the backend file, or passes its config as -backend-config.
-  const tg = terragruntRemoteState(repo, root);
+  const tg = terragruntRemoteState(repo, at);
   if (tg?.ref) own(tg);
   else if (tg?.why) {
     delete out.own;
@@ -630,7 +685,7 @@ export const estateRecords = (estate: string): string => `tofu-records/${estate}
  * `terraform_estate_outputs` read as a read of that estate's records.
  */
 function withEstate(repo: string, root: string, s: { own?: StateRef; reads: RemoteRead[] }): { own?: StateRef; reads: RemoteRead[] } {
-  const dir = join(repo, root);
+  const dir = join(repo, rootDir(repo, root));
   const { estate } = estateOf(dir);
   const reads = [...s.reads, ...estateOutputReads(dir).map((e) => ({ name: e.name, key: estateRecords(e.estate), repeated: false }))];
   const implicit = addressed("local", () => undefined, root).ref;
@@ -793,7 +848,7 @@ export function localsText(dir: string): Map<string, string> {
 export function rootDependencies(repo: string, roots: string[], { estates: withEstates = true }: { estates?: boolean } = {}): Map<string, Set<string>> {
   const reads = remoteStateReads(repo, roots);
   const atmos = atmosStateReads(repo, roots);
-  const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, r)) : { reads: [] as string[] }]));
+  const estates = new Map(roots.map((r) => [r, withEstates ? estateOf(join(repo, rootDir(repo, r))) : { reads: [] as string[] }]));
   const owner = new Map<string, string>();
   for (const [r, e] of estates) if ("estate" in e && e.estate) owner.set(e.estate, r);
   return new Map(

@@ -48,6 +48,7 @@
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
+ *   terragucci pin modules [--providers] | pin providers [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *   terragucci config identities [--config <file>] [--project <host/path>] [--forge <f>] [--repo <owner/name>] [--default-branch <b>] [--owner-id <id>] [--repo-id <id>] [--no-roots]
@@ -134,7 +135,8 @@ import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
 import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
-import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
+import { addressWarnings, detectForge, findRoots, modulesLeftOut, type WavesAfter } from "./detect";
+import { rootConfigOf, rootsInputProblems } from "./root-config";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { terramateWrite } from "./terramate";
 import { credentialWarnings, stateAccess, type StateAccess } from "./state-access";
@@ -172,6 +174,7 @@ import { PROJECT_CONSUMERS, projectConsumersDocument } from "./publish/consumers
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { detectShape } from "./shape";
+import { conflictNotes, jobVersionOf, rangeConflicts } from "./version-range";
 import { formatTree } from "./fmt";
 import { configIdentities, describeForgeCheck, describeIdentities, forgeCheck, forgeCheckExit } from "./identities";
 import type { Fetch } from "./forge";
@@ -182,6 +185,7 @@ import { exportState } from "./export";
 import { StoreError } from "@intentius/chant/object-store";
 import { StateSourceError } from "@intentius/chant-lexicon-terraform/state";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
+import { describePins, pinExit, pinModules, pinModulesArgs } from "./pin-modules";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";
 import { startRelay } from "./relay-host";
@@ -214,6 +218,7 @@ const USAGE = `usage:
   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
+  terragucci pin modules [--providers] | pin providers [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]   (rewrite each module call's, and with --providers or pin providers each required_providers entry's, version constraint to the exact version its root runs, adding a missing version, as a rollout whose plans show no changes; --dry-run prints the table only)
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
   terragucci check-mirror [--config <file>] [--platform <os_arch>]   (image.mirror: the prepared image's provider mirror covers every lock file; a gap warns once, then fails)
@@ -1481,6 +1486,13 @@ export async function main(argv: string[]): Promise<number> {
         console.log(describeRollout(result));
         return code;
       }
+      case "pin": {
+        const result = await pinModules(cwd, pinModulesArgs(args, flags));
+        const code = pinExit(result);
+        if (json) return emit(envelope("pin", code, result));
+        console.log(describePins(result));
+        return code;
+      }
       case "profiles": {
         const path = str(flags, "config") ?? findConfig(cwd);
         console.log(profilesFor(path ? await loadConfig(resolve(path)) : {}, path ? undefined : cwd).join(" "));
@@ -1548,6 +1560,10 @@ export async function main(argv: string[]): Promise<number> {
             const found = shape.kind === "terragrunt" ? walkUnits(repoDir, config.terragrunt?.exclude).map((u) => u.path) : shape.kind === "atmos" ? [] : findRoots(repoDir, config.roots);
             problems.push(...branchRootProblems(found, config.apply.branches));
           }
+          // The roots backend_config, var_files and instances name, and the files they give each, read from the roots found.
+          if (shape && problems.length === 0 && (config.backend_config || config.var_files || config.instances) && shape.engine === "per-root" && shape.kind !== "atmos") {
+            problems.push(...rootsInputProblems(repoDir, rootConfigOf(repoDir), findRoots(repoDir, config.roots), shape.kind === "synth"));
+          }
           // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients, and each environment's.
           const oidc = withEnvironmentRoles(config.oidc, config.environments);
           const clouds = !oidc ? [] : (["aws", "gcp", "azure"] as const).filter((c) => (c === "aws" ? oidc.roles : oidc[c]?.roles));
@@ -1562,6 +1578,17 @@ export async function main(argv: string[]): Promise<number> {
           }
           // A state the roots' code does not address can't order a reader after its writer: say which.
           if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
+          // A roots glob keeps out the directories a root calls as local modules; say how many.
+          if (shape && problems.length === 0 && config.roots && shape.engine === "per-root" && shape.kind !== "atmos" && shape.kind !== "terragrunt") {
+            const left = modulesLeftOut(repoDir, config.roots);
+            if (left.length > 0) warnings.push(`roots left out ${left.length} matched ${left.length === 1 ? "directory" : "directories"} that a root calls as a local module: ${left.join(", ")}; name one by its exact path to plan it as a root`);
+          }
+          // A root whose required_version range excludes the version its job runs, with the version entry that fixes it.
+          if (shape && problems.length === 0 && !config.projects && shape.engine === "per-root" && shape.kind !== "atmos" && shape.kind !== "terragrunt") {
+            const found = findRoots(repoDir, config.roots);
+            const binary = config.binary ?? shape.binary(found).value;
+            warnings.push(...conflictNotes(rangeConflicts(repoDir, found, binary, config.version, jobVersionOf(repoDir, binary, config.version))));
+          }
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // One apply job per identity: groups whose jobs carry the same token subject get a tip, never a warning.
           // Only a config that can split into groups looks for its roots, and a tip never fails the check.

@@ -12,7 +12,8 @@
  *                  directory it points at, passed to `changedRoots` the same way.
  *   settings       terragucci.yml's keys that change what a root plans:
  *                  `version`, `generate`, `pass`, `env` and `oidc` (its roles
- *                  by glob resolved for the root). A root whose resolved
+ *                  by glob resolved for the root), and the files `backend_config`
+ *                  and `var_files` name for it. A root whose resolved
  *                  settings differ between the base and the head plans.
  *
  * `policy`, `approval`, `gate`, `steps` and `sources` are read from the config
@@ -25,6 +26,7 @@ import { globMatch } from "./detect";
 import { withEnvironmentRoles } from "./environments";
 import { rootSettings, versionPin } from "./generate";
 import { secretsOf } from "./root-secrets";
+import { inputsIn, rootDir, rootInputs } from "./root-config";
 
 /** The variables whose `-var-file` arguments a root's plan reads. */
 export const VAR_FILE_ENV = ["TF_CLI_ARGS", "TF_CLI_ARGS_plan"] as const;
@@ -32,6 +34,8 @@ export const VAR_FILE_ENV = ["TF_CLI_ARGS", "TF_CLI_ARGS_plan"] as const;
 /** The terragucci.yml keys whose change selects the roots it changes. */
 export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "secrets"] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
+/** The files a root's init and plan take: `backend_config` and `var_files`, read for the root. */
+export type ChangedKey = PlanKey | "inputs";
 
 /** Directories under a root that hold no file of the root's own. */
 const SKIP_DIRS = new Set([".terraform", ".git", "node_modules", "terragucci-report"]);
@@ -93,7 +97,7 @@ export function symlinkTargets(repo: string, root: string): string[] {
   let dir: string;
   try {
     top = realpathSync(repo);
-    dir = realpathSync(join(repo, root));
+    dir = realpathSync(join(repo, rootDir(repo, root)));
   } catch {
     return [];
   }
@@ -134,7 +138,7 @@ function pairOf(roles: Record<string, RolePair> | undefined, plan: string | unde
 }
 
 /** The settings that shape one root's plan, each key as the root sees it. */
-export function planSettings(s: Partial<ResolvedSettings>, root: string): Record<PlanKey, unknown> {
+export function planSettings(s: Partial<ResolvedSettings>, root: string): Record<ChangedKey, unknown> {
   let generate: unknown;
   try {
     // No generate key and one that sets nothing for this root read the same.
@@ -156,7 +160,10 @@ export function planSettings(s: Partial<ResolvedSettings>, root: string): Record
   }
   // The values a root takes from `secrets`, by name and path (./root-secrets.ts): a change to them reaches that root alone.
   const secrets = secretsOf(root, s.secrets);
-  return { version: versionPin(s.version, root)?.version, generate, pass: s.pass, env: s.env && Object.keys(s.env).length ? s.env : undefined, oidc, secrets: secrets.length ? secrets : undefined };
+  // The files the root's init and plan take (./root-config.ts): a change to which files a root names reaches it.
+  const files = inputsIn(s, root);
+  const inputs = files.backendConfig.length || files.varFiles.length ? files : undefined;
+  return { version: versionPin(s.version, root)?.version, generate, pass: s.pass, env: s.env && Object.keys(s.env).length ? s.env : undefined, oidc, secrets: secrets.length ? secrets : undefined, inputs };
 }
 
 /** JSON with its keys sorted, so two equal values read the same. */
@@ -173,12 +180,13 @@ function stable(v: unknown): string {
 }
 
 /** For each of `roots` whose plan settings differ between `base` and `head`, the keys that differ. */
-export function settingsChanged(base: Partial<ResolvedSettings>, head: Partial<ResolvedSettings>, roots: readonly string[]): Map<string, PlanKey[]> {
-  const out = new Map<string, PlanKey[]>();
+export function settingsChanged(base: Partial<ResolvedSettings>, head: Partial<ResolvedSettings>, roots: readonly string[]): Map<string, ChangedKey[]> {
+  const out = new Map<string, ChangedKey[]>();
   for (const root of roots) {
     const a = planSettings(base, root);
     const b = planSettings(head, root);
-    const keys = PLAN_KEYS.filter((k) => stable(a[k]) !== stable(b[k]));
+    const keys: ChangedKey[] = PLAN_KEYS.filter((k) => stable(a[k]) !== stable(b[k]));
+    if (stable(a.inputs) !== stable(b.inputs)) keys.push("inputs");
     if (keys.length) out.set(root, keys);
   }
   return out;
@@ -189,7 +197,7 @@ export interface OutsideRoots {
   /** Root to the paths, relative to it, it reads outside its directory: var files and symlink targets. */
   watch?: Record<string, string[]>;
   /** Root to the terragucci.yml keys whose change reaches it. */
-  settings?: Map<string, PlanKey[]>;
+  settings?: Map<string, ChangedKey[]>;
 }
 
 /** Each root's var files and symlink targets; a root with none is left out. */
@@ -197,7 +205,10 @@ export function outsideWatch(repo: string, roots: readonly string[], env: Record
   const vars = envVarFiles(env);
   const out: Record<string, string[]> = {};
   for (const root of roots) {
-    const paths = [...new Set([...vars, ...symlinkTargets(repo, root)])];
+    // The files the root's own settings name, beside the job's: a change to one plans the root.
+    const own = rootInputs(repo, root);
+    const named = [...own.backendConfig, ...own.varFiles].filter((f) => !isAbsolute(f) && !f.includes("$"));
+    const paths = [...new Set([...vars, ...named, ...symlinkTargets(repo, root)])];
     if (paths.length) out[root] = paths;
   }
   return out;

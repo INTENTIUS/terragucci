@@ -36,10 +36,11 @@ import { registryCatalog as tf } from "../chant-catalog";
 import * as tf046Lib from "@intentius/chant-lexicon-terraform/lint/post-synth/tf046";
 import * as moduleCatalogLib from "@intentius/chant-lexicon-terraform/module-catalog";
 import type { ChantModuleCatalog, ChantModuleCompatibility, ChantReleaseCatalogDoc, ChantTf046 } from "../chant-next";
-import type { ResolvedSettings } from "../config";
+import { isSourcesByRoot, type ResolvedSettings, type SourcesConfig } from "../config";
 import type { ReportTip } from "../report/schema";
 import type { Rename } from "./moved";
 import { choudoufuSecretsMessage, secretInStateMessage, type StoredSecret } from "./secrets";
+import { rootPath } from "../root-config";
 
 /** Chant's checks that become tips, by rule id. */
 export const CODE_RULES: Readonly<Record<string, PostSynthCheck>> = {
@@ -231,7 +232,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
       for (const check of checks) for (const d of await check.check(ctx)) tips.push(codeTip(check.id, dir, d.message));
     }
     for (const root of roots) {
-      const entities = await parseTerraformRootDir(join(repo, root), root, parser);
+      const entities = await parseTerraformRootDir(rootPath(repo, root), root, parser);
       const ctx = { outputs: new Map(), entities } as unknown as PostSynthContext;
       for (const check of checks) {
         for (const d of await check.check(ctx)) {
@@ -329,7 +330,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
  * allows by name (`modules.example.com/acme/*`), the registries a consuming
  * repo has said it reads from.
  */
-export function catalogHosts(settings: { modules?: { registry?: { url: string } }; sources?: { modules?: string[] } }): string[] {
+export function catalogHosts(settings: { modules?: { registry?: { url: string } }; sources?: SourcesConfig }): string[] {
   const out = new Set<string>();
   if (settings.modules?.registry?.url) {
     try {
@@ -338,7 +339,9 @@ export function catalogHosts(settings: { modules?: { registry?: { url: string } 
       // config check refuses a bad url
     }
   }
-  for (const glob of settings.sources?.modules ?? []) {
+  const sources = settings.sources;
+  const lists = !sources ? [] : isSourcesByRoot(sources) ? Object.entries(sources).flatMap(([k, v]) => (k !== "proxies" && v && !Array.isArray(v) ? [v] : [])) : [sources];
+  for (const glob of lists.flatMap((l) => l.modules ?? [])) {
     const host = /^([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)\//.exec(glob)?.[1];
     if (host) out.add(host.toLowerCase());
   }

@@ -36,6 +36,7 @@ import { ConfigError, type ResolvedSettings } from "./config";
 import { findRoots } from "./detect";
 import { detectShape } from "./shape";
 import { walkUnits } from "./terragrunt";
+import { rootPath } from "./root-config";
 
 /** The binaries the guard wraps. */
 export const GUARD_BINARIES = ["tofu", "terraform", "terragrunt", "choudoufu"] as const;
@@ -333,7 +334,7 @@ export function writeGuard(o: GuardOptions): GuardResult {
   const node = o.node ?? process.execPath;
   const roots = guardRoots(repo, o.settings);
   mkdirSync(bin, { recursive: true });
-  writeFileSync(script, guardScript({ repo, roots: roots.map((r) => join(repo, r)), bin }));
+  writeFileSync(script, guardScript({ repo, roots: roots.map((r) => rootPath(repo, r)), bin }));
   for (const b of GUARD_BINARIES) {
     const p = join(bin, b);
     writeFileSync(p, wrapperScript(node, script, b));

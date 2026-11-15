@@ -35,6 +35,7 @@ import { actorOf } from "@intentius/chant/actor";
 import { approvalRule } from "./approval";
 import { runBinarySync } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type ResolvedSettings } from "./config";
+import { rootDir as rootDirOf } from "./root-config";
 import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape } from "./shape";
 import { DEFAULT_TOKEN_ENV, type Fetch } from "./forge";
@@ -102,10 +103,11 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   const env = options.env ?? process.env;
   const exec = options.exec ?? runBinary;
   const rel = root.replace(/\/+$/, "");
-  const dir = resolve(repo, rel);
-  if (!rel || rel.split("/").includes("..") || !existsSync(dir) || !statSync(dir).isDirectory()) throw new ConfigError(`${root} is not a root of this repository`);
   const configPath = options.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(resolve(configPath)) : {};
+  // An instance (`<directory>@<name>`) runs in its directory, with the files its own settings name.
+  const dir = resolve(repo, rootDirOf(repo, rel));
+  if (!rel || rel.split("/").includes("..") || !existsSync(dir) || !statSync(dir).isDirectory()) throw new ConfigError(`${root} is not a root of this repository`);
   if (config.projects) throw new ConfigError("unlock-state runs in a project's own checkout, not a control repo");
   const settings: ResolvedSettings = resolveRepo(config);
   const shape = detectShape(repo, settings);
@@ -119,7 +121,7 @@ export async function unlockState(repo: string, root: string, options: UnlockOpt
   }
 
   // A root that names its workspace (an Atmos instance) inits in default and keeps its state, and its lock, under its own.
-  const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
+  const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.initEnv(rel, env));
   if (init.status !== 0) throw new ConfigError(`${rel}: ${binary} init failed:\n${tail(init.out)}`);
 
   // Fails closed: a forge that cannot be asked cannot say the holder is gone. Read only once a lock is held.

@@ -13,7 +13,7 @@ import type { ProjectSettings } from "./config";
 export type ShapeKind = "roots" | "synth" | "atmos" | "terragrunt" | "terramate";
 
 /** What a setting asks the pipeline to do, which a shape may refuse. */
-export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "oidc-gcp-roles" | "oidc-azure-roles" | "ephemeral" | "waves-after" | "environment-oidc" | "environment-parallelism" | "environment-jobs" | "secrets";
+export type Feature = "roots" | "synth" | "generate" | "drift-pr" | "rollouts" | "oidc-roles" | "oidc-gcp-roles" | "oidc-azure-roles" | "ephemeral" | "waves-after" | "environment-oidc" | "environment-parallelism" | "environment-jobs" | "secrets" | "root-inputs" | "instances";
 
 /** The key each feature is set by, as a problem names it. */
 export const FEATURE_KEY: Record<Feature, string> = {
@@ -31,6 +31,8 @@ export const FEATURE_KEY: Record<Feature, string> = {
   "environment-parallelism": "environments",
   "environment-jobs": "environments",
   secrets: "secrets",
+  "root-inputs": "backend_config",
+  instances: "instances",
 };
 
 export const ROOTS_NOT_ATMOS = "an Atmos repo's roots are the instances atmos describe stacks lists, so remove roots and leave an instance out with metadata.enabled: false";
@@ -89,13 +91,21 @@ export const OIDC_CLOUD_ROLES_NOT_TERRAGRUNT = "identities by root glob are for 
 /** A Terragrunt wave runs its units in one run --all, so no unit's binary has an environment of its own to set a value in. */
 export const SECRETS_NOT_TERRAGRUNT = "secrets sets each value in its own root's binary environment, and Terragrunt runs a wave's units in one run --all; pass the value with pass.secrets instead";
 
+/** An Atmos instance's backend and workspace are set by its stack, and a Terragrunt unit's by its terragrunt.hcl, so no per-root `-backend-config` or `-var-file` reaches them. */
+export const ROOT_INPUTS_NOT_ATMOS = "an Atmos instance's backend, workspace and vars come from its stack, which terragucci atmos write copies into the instance; set them in the stack and remove backend_config and var_files";
+export const ROOT_INPUTS_NOT_TERRAGRUNT = "Terragrunt gives each unit its backend and inputs in its terragrunt.hcl (remote_state, inputs and extra_arguments), and runs a wave's units in one run --all; set them there and remove backend_config and var_files";
+/** An instance is one directory run as several roots, which the other shapes already name in their own files. */
+export const INSTANCES_NOT_ATMOS = "an Atmos repo runs one component as several instances through its stacks, so name them there and remove instances";
+export const INSTANCES_NOT_TERRAGRUNT = "a Terragrunt repo runs one module as several units, each with its own terragrunt.hcl, so add a unit for each and remove instances";
+export const INSTANCES_NOT_TERRAMATE = "a Terramate repo's roots are its stacks, so add a stack for each instance and remove instances";
+
 /** The shape each feature is refused in, with why. A shape and feature not listed are allowed. */
 const TABLE: Record<ShapeKind, Partial<Record<Feature, string>>> = {
   roots: {},
   synth: { generate: SYNTH_GENERATE, "drift-pr": SYNTH_DRIFT_PR, rollouts: SYNTH_ROLLOUTS },
-  atmos: { roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL, "waves-after": WAVES_AFTER_NOT_ATMOS },
-  terramate: { roots: ROOTS_NOT_TERRAMATE, synth: SYNTH_NOT_TERRAMATE, generate: TERRAMATE_GENERATE, "drift-pr": TERRAMATE_DRIFT_PR, rollouts: TERRAMATE_ROLLOUTS, "waves-after": WAVES_AFTER_NOT_TERRAMATE },
-  terragrunt: { roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT, "oidc-gcp-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "oidc-azure-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "waves-after": WAVES_AFTER_NOT_TERRAGRUNT, "environment-oidc": ENVIRONMENT_OIDC_NOT_TERRAGRUNT, "environment-parallelism": ENVIRONMENT_PARALLELISM_NOT_TERRAGRUNT, "environment-jobs": ENVIRONMENT_JOBS_NOT_TERRAGRUNT, secrets: SECRETS_NOT_TERRAGRUNT },
+  atmos: { "root-inputs": ROOT_INPUTS_NOT_ATMOS, instances: INSTANCES_NOT_ATMOS, roots: ROOTS_NOT_ATMOS, synth: SYNTH_NOT_ATMOS, generate: ATMOS_GENERATE, "drift-pr": ATMOS_DRIFT_PR, rollouts: ATMOS_ROLLOUTS, ephemeral: ATMOS_EPHEMERAL, "waves-after": WAVES_AFTER_NOT_ATMOS },
+  terramate: { instances: INSTANCES_NOT_TERRAMATE, roots: ROOTS_NOT_TERRAMATE, synth: SYNTH_NOT_TERRAMATE, generate: TERRAMATE_GENERATE, "drift-pr": TERRAMATE_DRIFT_PR, rollouts: TERRAMATE_ROLLOUTS, "waves-after": WAVES_AFTER_NOT_TERRAMATE },
+  terragrunt: { "root-inputs": ROOT_INPUTS_NOT_TERRAGRUNT, instances: INSTANCES_NOT_TERRAGRUNT, roots: ROOTS_NOT_TERRAGRUNT, synth: SYNTH_NOT_TERRAGRUNT, "oidc-roles": OIDC_ROLES_NOT_TERRAGRUNT, "oidc-gcp-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "oidc-azure-roles": OIDC_CLOUD_ROLES_NOT_TERRAGRUNT, "waves-after": WAVES_AFTER_NOT_TERRAGRUNT, "environment-oidc": ENVIRONMENT_OIDC_NOT_TERRAGRUNT, "environment-parallelism": ENVIRONMENT_PARALLELISM_NOT_TERRAGRUNT, "environment-jobs": ENVIRONMENT_JOBS_NOT_TERRAGRUNT, secrets: SECRETS_NOT_TERRAGRUNT },
 };
 
 /** Why `kind` refuses `feature`, or undefined when it does not. */
@@ -125,6 +135,10 @@ export function wants(s: ProjectSettings, feature: Feature): boolean {
     }
     case "secrets":
       return Array.isArray(s.secrets) && s.secrets.length > 0;
+    case "root-inputs":
+      return (s.backend_config !== undefined && Object.keys(s.backend_config).length > 0) || (s.var_files !== undefined && Object.keys(s.var_files).length > 0);
+    case "instances":
+      return s.instances !== undefined && Object.keys(s.instances).length > 0;
     case "ephemeral":
       return s.ephemeral !== undefined;
     case "waves-after":

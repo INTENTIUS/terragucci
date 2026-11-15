@@ -47,6 +47,7 @@ import { configAtBase } from "./report/policy";
 import { forgeOfEnv, rootsParallelism } from "./report/stage";
 import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
 import { rootWorkspace } from "./workspace";
+import { rootDir, rootPath } from "./root-config";
 
 /** The variables chant hands the command (chant's `OP_WAVES_SPEC_AT_ENV` and `OP_WAVES_SPEC_FILE_ENV`). */
 export const SPEC_AT_ENV = "CHANT_WAVES_SPEC_AT";
@@ -174,13 +175,15 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   const approvals = rule.point ? { ...WAVES_APPROVALS } : { ...WAVES_APPROVALS, reviewLedger: WAVES_OP, involved: { ...(agent ? { agents: [agent] } : {}), exclude: true as const }, ...(quorum ? { quorum } : {}) };
 
   const all = layers.flat().filter((r) => !isComposeTarget(r));
-  const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(join(repo, r)); return w ? [[r, w]] : []; }));
+  const workspaces = Object.fromEntries(all.flatMap((r) => { const w = rootWorkspace(rootPath(repo, r)); return w ? [[r, w]] : []; }));
   const reads = Object.fromEntries(all.flatMap((r) => {
     const list = terraformAtmosReads(atmosEdges(join(repo, r)), (u) => u, (u) => { const w = rootWorkspace(join(repo, u)); return { dir: u, ...(w ? { workspace: w } : {}) }; });
     return list.length ? [[r, list]] : [];
   }));
+  // An instance (`<directory>@<name>`) plans and applies in its directory; every other root's step directory is its own path.
+  const dirs = Object.fromEntries(all.flatMap((r) => (rootDir(repo, r) !== r ? [[r, rootDir(repo, r)]] : [])));
   const runInput = (root: string): Record<string, unknown> | undefined => {
-    const i = { ...(reads[root]?.length ? { reads: reads[root] } : {}), ...(workspaces[root] ? { workspace: workspaces[root] } : {}) };
+    const i = { ...(reads[root]?.length ? { reads: reads[root] } : {}), ...(workspaces[root] ? { workspace: workspaces[root] } : {}), ...(dirs[root] ? { dir: dirs[root] } : {}) };
     return Object.keys(i).length ? i : undefined;
   };
 

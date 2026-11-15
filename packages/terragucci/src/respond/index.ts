@@ -34,6 +34,7 @@ import { versionBumps } from "./version-bump";
 import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
 import { continueExit, continueRollouts, describeContinue } from "../rollout";
+import { rootPath } from "../root-config";
 
 export const EVENTS = Object.keys(RESPONSES) as RespondEvent[];
 
@@ -295,7 +296,7 @@ async function drift(repo: string, roots: string[], binary: string, imports: { a
   if (imports.length && roots.length !== 1) throw new ConfigError(`--import needs --root to name one root; ${roots.length} match`);
   const d = { codified: [] as Codified[], left: [] as Left[], files: new Map<string, string>(), imports: [] as string[], attributions: [] as Attribution[], routed: [] as string[], notes: [] as string[] };
   for (const root of roots) {
-    const dir = join(repo, root);
+    const dir = rootPath(repo, root);
     const run = (...args: string[]) => {
       const p = spawnSync(binary, [`-chdir=${dir}`, args[0]!, "-no-color", ...args.slice(1)], { encoding: "utf-8", maxBuffer: 1 << 29, env: binaryEnv(env) });
       if (p.status !== 0 && args[0] !== "query" && !args.some((a) => a.startsWith("-generate"))) throw new ConfigError(`${root}: ${binary} ${args[0]} failed:\n${tail(p.stderr || p.stdout)}`);

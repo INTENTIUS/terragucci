@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyLayers, detectBinary, detectForge, detectVersion, findRoots, findRootsWithReasons, globMatch, hostOfRemote } from "../src/detect";
+import { applyLayers, detectBinary, detectForge, detectVersion, findRoots, findRootsWithReasons, globMatch, hostOfRemote, modulesLeftOut } from "../src/detect";
 import { backend, git, remoteState, tmp, twoRootRepo, write } from "./helpers";
 
 describe("roots", () => {
@@ -30,8 +30,23 @@ describe("roots", () => {
 
   it("globs choose the roots instead, among directories with Terraform files", () => {
     const dir = twoRootRepo();
-    expect(findRoots(dir, ["modules/*"])).toEqual(["modules/svc"]);
     expect(findRoots(dir, ["*"])).toEqual(["app", "network"]);
+    expect(findRoots(dir, ["modules/*"])).toEqual([]);
+  });
+
+  it("a glob leaves out a directory a root calls as a local module, unless it names the path exactly", () => {
+    const dir = twoRootRepo();
+    write(dir, {
+      "modules/own/main.tf": backend("own.tfstate"),
+      "app/own.tf": `module "own" {\n  source = "../modules/own"\n}\nmodule "reg" {\n  source = "hashicorp/consul/aws"\n}\n`,
+      "lone/main.tf": `resource "null_resource" "x" {}\n`,
+    });
+    expect(findRoots(dir, ["**"])).toEqual(["app", "lone", "modules/own", "network"]);
+    expect(findRoots(dir, ["modules/*"])).toEqual(["modules/own"]);
+    expect(modulesLeftOut(dir, ["modules/*"])).toEqual(["modules/svc"]);
+    expect(findRoots(dir, ["modules/svc"])).toEqual(["modules/svc"]);
+    expect(findRoots(dir, ["./modules/svc/"])).toEqual(["modules/svc"]);
+    expect(modulesLeftOut(dir, ["modules/svc"])).toEqual([]);
   });
 
   it.each([
