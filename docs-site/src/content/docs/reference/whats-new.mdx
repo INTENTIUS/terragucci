@@ -1,14 +1,42 @@
 ---
-title: Changes in 0.4.53
-description: "terragucci 0.4.53, released 2026-11-08."
+title: Changes in 0.4.60
+description: "terragucci 0.4.60, released 2026-11-15."
 ---
 
-Release `0.4.53` is on npm as `@intentius/terragucci@0.4.53`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.53) lists every change.
+Release `0.4.60` is on npm as `@intentius/terragucci@0.4.60`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.60) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.53 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.60 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.60
+
+The npm package and the four CI images now carry chant `0.124.98`.
+
+A `roots` glob leaves out a directory that a root calls as a local module and that has no backend or `cloud` block of its own. Name it by its exact path to keep it. `terragucci config check` says how many matched directories were left out.
+
+`terragucci init` and `config check` name each root whose `required_version` range excludes the version its job runs, with the `version` entry that fixes it.
+
+A root takes its own `-backend-config` and `-var-file` files with `backend_config` and `var_files`, each a map of root globs. One directory can run as several roots with `instances`. Each instance is a root named `<directory>@<name>` with its own data directory. `terragucci import atlantis` writes these from a project's `extra_args`.
+
+`sources` can be a map of root globs, so each root allows its own sources. The map needs a `default` list, and a root that a pull request adds gets that list. The threat model page has a section on what runs at plan time and which of it `sources` stops.
+
+`terragucci pin modules` and `terragucci pin providers` turn version ranges into the exact versions `init` resolved, and open the change as a rollout whose plans show no change. A call with no version gets one where the edit is safe. `--dry-run` prints the table.
+
+`rollouts` can now be a map. `rollouts.watch` starts a rollout when a module or provider it follows has a newer release, with `follow` and `min_age` per rule, and a Renovate or Dependabot pull request for the same version counts as the canary. `rollouts.soak` holds the next wave until the one before it has soaked. It can also wait until the wave has no drift and no failed apply. A person with write access can skip it with `/terragucci skip-soak`. `terragucci estate` shows how far behind each module and provider version is.
+
+`terragucci import atlantis` finds `.atlantis.yaml` on its own and follows `autodiscover`. It leaves out module directories and names each project's `workflow`.
+
+`runtime: prow` writes the stages as Prow jobs. Plan and apply run as postsubmits and drift as a periodic job. The check presubmit holds no credential, and `plan_before_merge` adds a plan presubmit. With `approval: prow-labels` a wave applies once it has `lgtm` and `approved` from someone outside the change, and its plan matches the plan note. The plan and apply stages run as different service accounts, and `config identities` names each stage's pod identity.
+
+`comment_allow` limits the comment commands to logins and `team:<org>/<team>` entries, read from the default branch. On GitHub and Forgejo it covers `plan`, `apply`, `lock`, `unlock`, `agent`, `action` and `skip-soak`. On GitLab it covers every command but `action`. A team the token cannot read stops the command with a message. `TG_TEAM_TOKEN` is passed to the jobs that read teams, only when a team is named.
+
+`terragucci modules adopt <dir>` moves each local call of a module to its published source, caller by caller, as a rollout. Each wave's plan shows no change.
+
+`modules.attest: { identity: oidc }` signs modules with the publish job's OIDC identity, with no key. A `modules.trusted` entry can trust an `identity: { issuer, subject }` in place of a key.
+
+A new page, Repository dependencies, says what a repository depends on after `init`. It covers what `init` writes and every outbound call, and how to stay on a pinned release or leave.
 
 ## In 0.4.59
 
