@@ -43,14 +43,21 @@ describe("comment_allow in terragucci.yml", () => {
     expect(() => validateConfig({ comment_allow: { action: "alice" } }, "terragucci.yml")).toThrow(/comment_allow\.action must be a list/);
   });
 
-  it("refuses, on GitHub and Forgejo, a list for a command no job of terragucci's reads, so no list looks like a limit and is none", () => {
+  it("refuses, on GitHub and Forgejo, a list for a command no job reads: lock and unlock outside the locks setups, and every chant-answered command below the chant floor", () => {
     for (const forge of [undefined, "github", "forgejo"]) {
       const f = forge ? { forge } : {};
       expect(() => validateConfig({ ...f, comment_allow: { action: ["team:acme/ops"], "skip-soak": ["team:acme/release"] } }, "terragucci.yml")).not.toThrow();
-      for (const k of ["plan", "apply", "agent", "default"]) expect(() => validateConfig({ ...f, comment_allow: { [k]: ["alice"] } }, "terragucci.yml"), `${forge} ${k}`).toThrow(/is not read here/);
+      // At the pin chant's re-plan, apply comment and agent jobs carry the list, so these are accepted.
+      for (const k of ["plan", "apply", "agent", "default"]) {
+        expect(() => validateConfig({ ...f, comment_allow: { [k]: ["alice"] } }, "terragucci.yml"), `${forge} ${k}`).not.toThrow();
+        // Below the floor they are refused, by passing an older chant explicitly.
+        expect(commentAllowForgeProblems({ [k]: ["alice"] }, f, "c", "0.124.97")[0], `${forge} ${k} below`).toMatch(/is not read here/);
+      }
       expect(() => validateConfig({ ...f, comment_allow: { unlock: ["alice"] } }, "terragucci.yml")).toThrow(/limited under locks: plan with apply.when: merge/);
       expect(() => validateConfig({ ...f, locks: "plan", comment_allow: { lock: ["alice"], unlock: ["alice"] } }, "terragucci.yml")).not.toThrow();
-      expect(() => validateConfig({ ...f, locks: "plan", apply: { when: "pull-request" }, comment_allow: { unlock: ["alice"] } }, "terragucci.yml")).toThrow(/is not read here/);
+      // With apply.when: pull-request chant's comment job answers lock and unlock at the floor.
+      expect(() => validateConfig({ ...f, locks: "plan", apply: { when: "pull-request" }, comment_allow: { unlock: ["alice"] } }, "terragucci.yml")).not.toThrow();
+      expect(commentAllowForgeProblems({ unlock: ["alice"] }, { ...f, locks: "plan", apply: { when: "pull-request" } }, "c", "0.124.97")[0]).toMatch(/is not read here/);
     }
   });
 
@@ -335,7 +342,7 @@ describe("pollGitLabComments with comment_allow", () => {
 describe("comment_allow for chant's jobs, from the chant release that carries it", () => {
   const allow = { plan: ["team:acme/release"], apply: ["alice"], agent: ["bob"], default: ["carol"] };
 
-  it("names the chant floor, which the pin does not yet meet, and reads versions as chant numbers them", () => {
+  it("names the chant floor, which the pin meets, and reads versions as chant numbers them", () => {
     expect(COMMENT_ALLOW_CHANT_FLOOR).toBe("0.124.98");
     expect(CHANT_PIN).toBe(dependencies["@intentius/chant"]);
     expect(chantAtLeast("0.124.98", "0.124.98")).toBe(true);
@@ -372,7 +379,7 @@ describe("comment_allow for chant's jobs, from the chant release that carries it
     expect(commentAllowForgeProblems(lock, {}, "c", "0.124.98")[0]).toContain("pr-lock job");
   });
 
-  it("validateConfig uses the pin: a list for apply is refused today, with the version named", () => {
+  it("validateConfig uses the pin: a list for apply is accepted at the floor and refused, with the version named, below it", () => {
     expect(chantCarriesCommentAllow()).toBe(chantAtLeast(CHANT_PIN, COMMENT_ALLOW_CHANT_FLOOR));
     const run = () => validateConfig({ comment_allow: { apply: ["alice"] } }, "terragucci.yml");
     if (chantCarriesCommentAllow()) expect(run).not.toThrow();

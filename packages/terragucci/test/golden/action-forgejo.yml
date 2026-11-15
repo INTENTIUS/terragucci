@@ -42,7 +42,7 @@ jobs:
       - id: decide
         name: Read the comment or the dispatch and decide whether an action runs
         shell: bash
-        run: |
+        run: |-
           set -uo pipefail
           terragucci action --decide --layers 'apps/orders,apps/web' --forge forgejo --out terragucci-action.json || exit 1
           node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf-8")).go?0:1)' terragucci-action.json || exit 0
@@ -50,7 +50,7 @@ jobs:
       - if: steps.decide.outputs.go == '1'
         name: Ask for the action, and run it once an approval by someone else stands
         shell: bash
-        run: |
+        run: |-
           set -uo pipefail
           terragucci action --from terragucci-action.json --forge forgejo
           code=$?

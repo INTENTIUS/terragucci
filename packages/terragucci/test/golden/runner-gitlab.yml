@@ -29,7 +29,7 @@ check:
   rules:
     - if: '$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   script:
-    - |
+    - |-
       unset TG_TOKEN TG_MERGE_TOKEN CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
       mkdir -p .chant/commit
       set +e
@@ -108,7 +108,7 @@ fmt:
       artifacts: true
   script:
     - if [ "${CHANT_COMMIT_FINDING:-0}" != "1" ]; then echo "the check found nothing, so terragucci-fmt does not run"; exit 0; fi
-    - |
+    - |-
       case "$CI_COMMIT_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
       git -c protocol.version=2 fetch -q --no-tags origin "+$CI_COMMIT_SHA:refs/chant/commit-head"
     - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
@@ -148,7 +148,7 @@ fmt-push:
       artifacts: true
   script:
     - if [ ! -f .chant/commit/decision.json ]; then echo "terragucci-fmt did not run"; exit 0; fi
-    - |
+    - |-
       case "$CI_COMMIT_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
       git -c protocol.version=2 fetch -q --no-tags origin "+$CI_COMMIT_SHA:refs/chant/commit-head"
     - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
@@ -179,7 +179,7 @@ plan:
   script:
     - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
     - unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN
-    - |
+    - |-
       bash <<'PLAN' || exit $?
       set +e -uo pipefail
       export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
@@ -353,7 +353,7 @@ tips:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   resource_group: terragucci-tips
   script:
-    - |
+    - |-
       bash <<'TIPS' || exit $?
       set -u
       export GITLAB_TOKEN="$TG_TOKEN"
@@ -380,7 +380,7 @@ publish:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   resource_group: terragucci-publish
   script:
-    - |
+    - |-
       bash <<'PUBLISH' || exit $?
       set -eu
       git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
@@ -401,7 +401,7 @@ comments:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "comments"'
   resource_group: terragucci-comments
   script:
-    - |
+    - |-
       bash <<'COMMENTS' || exit $?
       terragucci comment --forge gitlab --poll --layers 'network;app,cache'
       COMMENTS
@@ -424,7 +424,7 @@ ephemeral:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_PATH == $CI_PROJECT_PATH'
   resource_group: terragucci-ephemeral-$CI_MERGE_REQUEST_IID
   script:
-    - |
+    - |-
       bash <<'EPHEMERAL' || exit $?
       git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
       git fetch -q origin "+refs/heads/${CI_DEFAULT_BRANCH}:refs/remotes/origin/${CI_DEFAULT_BRANCH}"
@@ -449,7 +449,7 @@ ephemeral-sweep:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $TERRAGUCCI_SCHEDULE == "ephemeral"'
   resource_group: terragucci-ephemeral-sweep
   script:
-    - |
+    - |-
       bash <<'SWEEP' || exit $?
       git remote set-url origin "${CI_SERVER_PROTOCOL}://oauth2:${TG_TOKEN}@${CI_SERVER_FQDN}/${CI_PROJECT_PATH}.git"
       terragucci ephemeral sweep --binary tofu

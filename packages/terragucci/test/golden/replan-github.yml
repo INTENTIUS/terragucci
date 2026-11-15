@@ -47,7 +47,7 @@
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
           CHANT_REPLAN_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -75,7 +75,7 @@
           echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - if: steps.decide.outputs.go == '1'
         name: Install terragrunt 0.99.0
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u CHANT_ID_TOKEN_AWS -u CHANT_ID_TOKEN_GCP -u CHANT_ID_TOKEN_AZURE -u CHANT_ID_TOKEN_PULUMI -u CHANT_CLOUD_TRADE CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL CHANT_ID_TOKEN_AWS CHANT_ID_TOKEN_GCP CHANT_ID_TOKEN_AZURE CHANT_ID_TOKEN_PULUMI CHANT_CLOUD_TRADE
           dir="$(terragucci install terragrunt 0.99.0)"
           echo "$dir" >> "$GITHUB_PATH"
@@ -93,7 +93,7 @@
           BASE_SHA: '${{ steps.decide.outputs.base }}'
           PR_NUMBER: '${{ steps.decide.outputs.pr }}'
           CHANT_PLAN_ARGUMENT: '${{ steps.decide.outputs.argument }}'
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL -u CHANT_ID_TOKEN_AWS -u CHANT_ID_TOKEN_GCP -u CHANT_ID_TOKEN_AZURE -u CHANT_ID_TOKEN_PULUMI -u CHANT_CLOUD_TRADE CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN ACTIONS_ID_TOKEN_REQUEST_URL CHANT_ID_TOKEN_AWS CHANT_ID_TOKEN_GCP CHANT_ID_TOKEN_AZURE CHANT_ID_TOKEN_PULUMI CHANT_CLOUD_TRADE
           chant_report="$PWD/terragucci-report"
           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=450000,PARTS=1,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }

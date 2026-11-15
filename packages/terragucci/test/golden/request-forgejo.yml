@@ -62,7 +62,7 @@ jobs:
           fetch-depth: 0
       - name: Open the pull request that adds the app's root or the add-on from the template
         shell: bash
-        run: |
+        run: |-
           set -eu
           inputs="$(mktemp)"
           printf '%s' "${TG_INPUTS:-}" > "$inputs"
