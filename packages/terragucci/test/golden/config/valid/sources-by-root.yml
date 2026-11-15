@@ -1,0 +1,18 @@
+sources:
+  proxies:
+    - artifactory: acme.jfrog.io
+      repo: terraform-remote
+  "projects/prow/**":
+    modules:
+      - "./**"
+    providers:
+      - "hashicorp/*"
+      - "hashicorp/http"
+  "projects/**":
+    providers:
+      - "hashicorp/google"
+  default:
+    modules:
+      - "./**"
+    providers:
+      - "hashicorp/google"

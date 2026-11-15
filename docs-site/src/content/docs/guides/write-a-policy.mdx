@@ -158,6 +158,30 @@ The list is read at base, as `policy` is. A pull request that adds an entry, or 
 
 terragucci's CI images carry the HCL parser the check reads with; elsewhere, `npm i -D @cdktn/hcl2json`.
 
+### Sources by root glob
+
+A repo-wide list has to allow a provider everywhere to keep the one root that needs it. Write `sources` as a map of root glob to lists instead, and a provider can be allowed where it is used and refused elsewhere:
+
+```yaml
+sources:
+  "projects/prow/**":
+    modules: ["./**"]
+    providers: ["hashicorp/google", "hashicorp/http"]
+  "projects/**":
+    providers: ["hashicorp/google"]
+  default:
+    modules: ["./**"]
+    providers: ["hashicorp/google"]
+```
+
+A root takes the first glob in the file that matches it, as `version` does, so the narrow globs go first. An entry holds `modules`, `providers` or both. An instance of a directory that `instances` runs more than once takes the entry its own name or its directory matches.
+
+`default` is required. It serves a root no glob matches and a root the pull request adds: a root with no Terraform file in its directory at the base takes `default` whatever glob its path matches. So a pull request cannot give a new root a longer list than the base gave the existing ones, and a root moved to a new directory is checked as new until the move merges.
+
+`proxies` stays one list for the repo, written beside the globs. A top-level `modules` or `providers` cannot sit beside root globs; put those under `default`. A root directory called `modules`, `providers`, `proxies` or `default` takes a glob with a trailing slash, such as `"modules/"`.
+
+`terragucci config check` refuses a map with no `default` and an entry with no list. The [plan-time execution](/terragucci/reference/threat-model/#plan-time-execution) section of the threat model says which data sources and provisioners run code or reach the network, and which of them `sources` stops.
+
 ### Sources through a registry proxy
 
 A team that reads the public registry through Artifactory or Nexus names the proxy under `proxies`. A source written through it then matches the entries as the upstream source it stands for, so one entry covers both forms:

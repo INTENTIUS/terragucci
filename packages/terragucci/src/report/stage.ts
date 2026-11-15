@@ -34,7 +34,7 @@ import { applyWaves, lockTimeoutArgs, readLedger } from "../apply";
 import { approvalRule, declaredGates, ruleReport } from "../approval";
 import { quorumRuleProgress, quorumRulesFor, trustRolesAt, type GateQuorumRule } from "@intentius/chant/gate-decision";
 import { decideOverride, OVERRIDE_LEDGER, overrideRule, overridersFor } from "../override";
-import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
+import { agentLoginWarning, approvalModeOf, CONFIG_NAMES, ConfigError, DEFAULT_DEPENDENTS, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, sourceProxiesOf, type ForgeName, type PolicySettings, type ProjectSettings } from "../config";
 import { anyRootGate, environmentOf, GATE_ORDER, topGate, waveGate as rootsGate } from "../environments";
 import { readLiveSetup } from "../live-setup";
 import { estateOutputReads, liveRoots, resolvedEstate } from "@intentius/chant-lexicon-terraform/live-roots";
@@ -1016,7 +1016,7 @@ export async function runStage(stage: string, repo: string, options: StageOption
   // modules.require: attested, checked for every root before any plans, one at a time, since each check fetches into the checkout.
   const pinRefusals = new Map<string, string[]>();
   if (!drift && roots.length > 0) {
-    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env, ...(settings.sources?.proxies ? { proxies: settings.sources.proxies } : {}) });
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env, ...(sourceProxiesOf(settings.sources) ? { proxies: sourceProxiesOf(settings.sources)! } : {}) });
     for (const root of pins ? roots : []) {
       const r = await pins!(root);
       if (r.refused.length) pinRefusals.set(root, r.refused);
@@ -1640,7 +1640,7 @@ async function runTerragruntStage(
   // modules.require: attested, checked for every unit before any wave plans, as for plain roots: a refused unit fails and does not plan.
   const refusedUnits: RootInput[] = [];
   if (!drift) {
-    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env, ...(settings.sources?.proxies ? { proxies: settings.sources.proxies } : {}) });
+    const pins = await pinChecker(repo, settings.modules, base, policyTrust(repo, options), { env, ...(sourceProxiesOf(settings.sources) ? { proxies: sourceProxiesOf(settings.sources)! } : {}) });
     for (const unit of pins ? waves.flat() : []) {
       const r = await pins!(unit);
       if (r.refused.length) {

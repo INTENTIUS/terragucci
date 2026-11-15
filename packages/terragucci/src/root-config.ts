@@ -5,6 +5,7 @@
  *   backend_config  root glob to the `-backend-config` files init takes
  *   var_files       root glob to the `-var-file` files plan takes
  *   instances       directory to the names it runs under
+ *   sources         root glob to the module and provider lists its roots are checked against
  *
  * The paths are relative to the root's directory, where the binary runs. A
  * directory in `instances` is not a root itself: each name makes a root
@@ -20,7 +21,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
-import { findConfig } from "./config";
+import { findConfig, type SourceLists, type SourcesByRoot } from "./config";
 import { globMatch } from "./detect";
 
 /** What separates a directory from the instance's name in a root's name. */
@@ -219,4 +220,27 @@ export function rootsInputProblems(repo: string, config: RootConfig, roots: read
   }
   if (!written) out.push(...rootFileProblems(repo, roots));
   return out;
+}
+
+/** The keys of a by-root `sources` that are not a root glob. */
+const SOURCES_RESERVED = new Set(["default", "proxies"]);
+
+/**
+ * The lists `root` is checked against under a by-root `sources`: the first
+ * entry, in the order the file lists them, whose glob matches the root (or
+ * its directory, for an instance); else `default`. A root the pull request
+ * adds (`added`) matches no entry whatever its path, so it gets `default`
+ * and never a list a glob of the base gives a root that was already there.
+ * Undefined when the root has no list to be checked against.
+ */
+export function sourceListsIn(sources: SourcesByRoot, config: RootConfig, root: string, added = false): SourceLists | undefined {
+  const entry = (v: unknown): SourceLists | undefined => (isObject(v) ? (v as SourceLists) : undefined);
+  if (!added) {
+    const { dir, instance } = splitIn(config, root);
+    for (const [glob, lists] of Object.entries(sources)) {
+      if (SOURCES_RESERVED.has(glob)) continue;
+      if (globMatch(glob, root) || (instance !== undefined && globMatch(glob, dir))) return entry(lists);
+    }
+  }
+  return entry(sources.default);
 }

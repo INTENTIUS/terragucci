@@ -47,6 +47,7 @@ A glob's `*` matches within one path segment, `**` across segments (and `a/**` m
 | `terragrunt.credentials` | the first in the file's order; a unit that sets its own `iam_role` keeps it | the unit's own configuration and the job's credentials |
 | `environments.<name>.roots` | refused: `config check` names a root two environments match, and a root given identities by both its environment and `oidc.roles` | the top-level `gate`, `oidc`, `runner` and `parallelism` |
 | `generate.dirs` | every match, in the file's order, each over the last; then `generate.roots` for the root's exact path | the repo-level `generate` keys |
+| `sources` (map) | the first in the file's order | `sources.default`, which a root the pull request adds takes too |
 | `secrets[].roots` | every matching entry; `config check` refuses two entries that give one root the same variable | no values from a store |
 | `ephemeral.roots` | any match gets a copy | no copy |
 | `apply.branches` | refused: `config check` names a root two branches' globs match | applies from the default branch |

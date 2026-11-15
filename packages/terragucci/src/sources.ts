@@ -25,6 +25,19 @@
  * in `.terraform.lock.hcl`, named by the module that uses it. A remote
  * module's own calls and providers are only known once `init` has fetched it.
  *
+ * `sources` may also be a map of root glob to such lists, with a `default`:
+ *
+ *   sources:
+ *     "projects/prow/**": { providers: ["hashicorp/*", "hashicorp/http"] }
+ *     default:            { providers: ["hashicorp/google"] }
+ *
+ * A root takes the lists of the first glob that matches it (its directory's
+ * glob, for an instance of one directory), else `default`. A root the pull
+ * request adds, one with no Terraform file at the base, takes `default`
+ * whatever glob it matches, so a pull request cannot give a new root a
+ * longer list than the base gave the roots that were there. `proxies` stays
+ * one list for the repo.
+ *
  * A module source is matched as written, without its `?` query (a `ref`,
  * `version` or `tag` pins a release; it does not move where the code comes
  * from). A provider address is matched in lower case. An address written
@@ -59,7 +72,9 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { dataDir } from "@intentius/chant-lexicon-terraform/state";
-import { ConfigError, resolveProject, resolveRepo, type SourceProxy, type SourcesSettings } from "./config";
+import { spawnSync } from "node:child_process";
+import { ConfigError, isSourcesByRoot, resolveProject, resolveRepo, sourceProxiesOf, type SourceProxy, type SourcesConfig, type SourcesSettings } from "./config";
+import { rootConfigOf, rootDir, sourceListsIn } from "./root-config";
 import * as registryLib from "@intentius/chant-lexicon-terraform/registry";
 import type { ChantRegistryProxies, ChantRegistryProxy, ChantSourceForms } from "./chant-next";
 
@@ -226,7 +241,7 @@ async function dirSources(abs: string, shown: string, prefix: string, top: boole
 export async function rootSources(repo: string, root: string, parser: Hcl2Json): Promise<{ used: UsedSource[]; unread: { file: string; block: string; source: string; why: string }[] }> {
   const used: UsedSource[] = [];
   const unread: { file: string; block: string; source: string; why: string }[] = [];
-  const start = posix.normalize(root).replace(/\/+$/, "") || ".";
+  const start = posix.normalize(rootDir(repo, root)).replace(/\/+$/, "") || ".";
   // A unit an explicit stack generates from a remote source: the stack file's unit block names it.
   const stacked = await stackUnitSource(repo, start, parser);
   if (stacked) used.push({ kind: "module", file: stacked.file, block: `unit.${stacked.name}`, source: stacked.source });
@@ -308,9 +323,9 @@ const providerKey = (address: string): string => {
  * when one is set.
  */
 export async function lockedSources(repo: string, root: string, parser: Hcl2Json, env: NodeJS.ProcessEnv = {}): Promise<UsedSource[]> {
-  const rootDir = join(repo, posix.normalize(root).replace(/\/+$/, "") || ".");
+  const rootAbs = join(repo, posix.normalize(rootDir(repo, root)).replace(/\/+$/, "") || ".");
   const shownOf = (abs: string): string => relative(repo, abs).split(sep).join("/") || ".";
-  const manifest = join(dataDir(rootDir, env), "modules", "modules.json");
+  const manifest = join(dataDir(rootAbs, env), "modules", "modules.json");
   let modules: RecordedModule[] = [];
   if (existsSync(manifest)) {
     try {
@@ -320,16 +335,16 @@ export async function lockedSources(repo: string, root: string, parser: Hcl2Json
       throw new ConfigError(`sources: ${shownOf(manifest)} could not be read (${(e as Error).message.split("\n")[0]}), so the modules init fetched cannot be checked`);
     }
   }
-  const lockFile = join(rootDir, ".terraform.lock.hcl");
+  const lockFile = join(rootAbs, ".terraform.lock.hcl");
   const lockText = existsSync(lockFile) ? readFileSync(lockFile, "utf-8") : "";
   const locked = forms.lockedProviders(lockText);
   // The root and every module init recorded, read from their files: the calls each makes, and the providers each uses.
   const calls = new Map<string, { file: string; source: string }>();
   const users = new Map<string, UsedSource[]>();
-  const dirs: { key: string; dir: string }[] = [{ key: "", dir: rootDir }];
+  const dirs: { key: string; dir: string }[] = [{ key: "", dir: rootAbs }];
   for (const m of modules) {
     if (typeof m.Key !== "string" || m.Key === "" || typeof m.Dir !== "string") continue;
-    dirs.push({ key: m.Key, dir: isAbsolute(m.Dir) ? m.Dir : join(rootDir, m.Dir) });
+    dirs.push({ key: m.Key, dir: isAbsolute(m.Dir) ? m.Dir : join(rootAbs, m.Dir) });
   }
   if (modules.length > 0 || locked.length > 0) {
     for (const d of dirs) {
@@ -378,7 +393,7 @@ export function sourceRefusalLines(root: string, refused: readonly SourceRefusal
 
 /** The `sources:` key in force, and where it was read. */
 export interface GoverningSources {
-  sources?: SourcesSettings;
+  sources?: SourcesConfig;
   from: "checkout" | "base";
 }
 
@@ -389,7 +404,7 @@ export interface GoverningSources {
  * cannot be read throws when the checkout sets the key, and checks nothing
  * when it does not.
  */
-export async function governingSources(repo: string, checkout: SourcesSettings | undefined, base: string | undefined, trust: TrustedOptions = {}): Promise<GoverningSources> {
+export async function governingSources(repo: string, checkout: SourcesConfig | undefined, base: string | undefined, trust: TrustedOptions = {}): Promise<GoverningSources> {
   const own: GoverningSources = { ...(checkout ? { sources: checkout } : {}), from: "checkout" };
   if (!base) return own;
   const read = await configAtBase(repo, base, trust);
@@ -444,6 +459,33 @@ export interface SourceChecker {
   unitAfterInit(unit: string, workDir: string, env?: NodeJS.ProcessEnv): Promise<string[]>;
 }
 
+/** Whether the base has no Terraform file in the root's directory: the pull request adds the root. A base that cannot be read counts as not having it. */
+function addedSince(repo: string, base: string, dir: string): boolean {
+  const target = posix.normalize(dir).replace(/\/+$/, "");
+  const args = ["-C", repo, "ls-tree", "--name-only", base, ...(target === "." || target === "" ? [] : ["--", `${target}/`])];
+  const r = spawnSync("git", args, { encoding: "utf-8" });
+  if (r.status !== 0) return true;
+  return !r.stdout.split("\n").some((f) => /\.(tf|tofu|hcl)$|\.(tf|tofu)\.json$/.test(f));
+}
+
+/**
+ * The lists one root is checked against, with the repo's proxies: the lists
+ * of `sources` for every root, or the entry its glob gives it. Undefined when
+ * the root has none, so nothing of it is checked.
+ */
+function listsFor(sources: SourcesConfig, repo: string, root: string, added: boolean): SourcesSettings | undefined {
+  const proxies = sourceProxiesOf(sources);
+  const lists = isSourcesByRoot(sources) ? sourceListsIn(sources, rootConfigOf(repo), root, added) : sources;
+  if (!lists || (!lists.modules && !lists.providers)) return undefined;
+  return { ...(lists.modules ? { modules: lists.modules } : {}), ...(lists.providers ? { providers: lists.providers } : {}), ...(proxies ? { proxies } : {}) };
+}
+
+/** Whether `sources` holds a list for some root. */
+function anyList(sources: SourcesConfig): boolean {
+  if (!isSourcesByRoot(sources)) return Boolean(sources.modules || sources.providers);
+  return Object.entries(sources).some(([k, v]) => k !== "proxies" && v && !Array.isArray(v) && (v.modules || v.providers));
+}
+
 /**
  * The checks a stage runs on each root, or undefined when no `sources:` key
  * is in force, so a repo without one reads nothing and runs nothing here.
@@ -453,24 +495,44 @@ export interface SourceChecker {
  */
 export async function sourceChecker(
   repo: string,
-  checkout: SourcesSettings | undefined,
+  checkout: SourcesConfig | undefined,
   base: string | undefined,
   trust: TrustedOptions = {},
   options: { parser?: Hcl2Json; log?: (line: string) => void; afterInit?: boolean } = {},
 ): Promise<SourceChecker | undefined> {
   const governing = await governingSources(repo, checkout, base, trust);
   const lists = governing.sources;
-  if (!lists || (!lists.modules && !lists.providers)) return undefined;
+  if (!lists || !anyList(lists)) return undefined;
+  const byRoot = isSourcesByRoot(lists);
+  const baseRef = governing.from === "base" ? base : undefined;
+  // The roots the pull request adds take `default`, so the base's own list is what says which roots were there.
+  const addedRoots = new Map<string, boolean>();
+  const listsOf = (from: string, root: string): SourcesSettings | undefined => {
+    let added = false;
+    if (byRoot && baseRef) {
+      const key = `${from}\0${root}`;
+      if (!addedRoots.has(key)) addedRoots.set(key, addedSince(from, baseRef, rootDir(from, root)));
+      added = addedRoots.get(key)!;
+    }
+    return listsFor(lists, from, root, added);
+  };
   const when = options.afterInit === false ? "before init" : "before init, and what init fetched and locked before plan,";
-  options.log?.(`sources: each root's module and provider sources are checked ${when} against the list in the config ${governing.from === "base" ? `at ${base}` : "of this checkout"}`);
+  options.log?.(`sources: each root's module and provider sources are checked ${when} against the ${byRoot ? "list its root glob gives it, or the default, " : "list "}in the config ${governing.from === "base" ? `at ${base}` : "of this checkout"}`);
   const parser = options.parser ?? (await loadHclParser("sources: reads each root's module and provider sources"));
   return {
-    before: async (root, dir) => sourceRefusalLines(root, await checkRootSources(dir ?? repo, root, lists, parser)),
-    afterInit: async (root, dir, env) => sourceRefusalLines(root, await checkLockedSources(dir ?? repo, root, lists, parser, env)),
+    before: async (root, dir) => {
+      const own = listsOf(repo, root);
+      return own ? sourceRefusalLines(root, await checkRootSources(dir ?? repo, root, own, parser)) : [];
+    },
+    afterInit: async (root, dir, env) => {
+      const own = listsOf(repo, root);
+      return own ? sourceRefusalLines(root, await checkLockedSources(dir ?? repo, root, own, parser, env)) : [];
+    },
     unitAfterInit: async (unit, workDir, env) => {
       // The working directory as a path from the repo, so each file the lines name reads from the repo's root.
       const from = realPath(repo);
-      return sourceRefusalLines(unit, await checkLockedSources(from, relative(from, realPath(workDir)).split(sep).join("/") || ".", lists, parser, env));
+      const own = listsOf(repo, unit);
+      return own ? sourceRefusalLines(unit, await checkLockedSources(from, relative(from, realPath(workDir)).split(sep).join("/") || ".", own, parser, env)) : [];
     },
   };
 }

@@ -823,8 +823,8 @@ export interface ProjectSettings {
   atmos?: AtmosSettings;
   /** Opt-in policy checks over each plan; see PolicySettings. */
   policy?: PolicySettings;
-  /** The module and provider sources a root may use, checked before init; see SourcesSettings. Off when absent. */
-  sources?: SourcesSettings;
+  /** The module and provider sources a root may use, checked before init, for every root or by root glob; see SourcesSettings and SourcesByRoot. Off when absent. */
+  sources?: SourcesConfig;
   /** What tf-check runs beyond its own checks: the repo's pre-commit hooks; see CheckSettings. */
   check?: CheckSettings;
   /** The runner identity the jobs sign check evidence with; see EvidenceSettings. Off when absent. */
@@ -1786,18 +1786,47 @@ export function gitlabPublishToken(m: ModulesSettings | undefined): string | und
 }
 
 /**
- * `sources`: the module and provider sources a root may use (./sources.ts).
- * A list that is set refuses every source of its kind that no glob in it
- * matches, before `init` downloads anything; a list that is not set checks
- * nothing of its kind. Read at base, as `policy` is.
+ * The lists one root's sources are checked against. A list that is set
+ * refuses every source of its kind that no glob in it matches, before `init`
+ * downloads anything; a list that is not set checks nothing of its kind.
  */
-export interface SourcesSettings {
+export interface SourceLists {
   /** Globs of module sources, as written and without their `?` query, such as `./**` for local paths. */
   modules?: string[];
   /** Globs of provider addresses, such as `hashicorp/*` or `registry.example.com/acme/*`. */
   providers?: string[];
+}
+
+/**
+ * `sources`: the module and provider sources a root may use (./sources.ts),
+ * one set of lists for every root. Read at base, as `policy` is.
+ */
+export interface SourcesSettings extends SourceLists {
   /** Registry proxies a source may be written through, each standing for its upstream (terragucci#1302). */
   proxies?: SourceProxy[];
+}
+
+/**
+ * `sources` by root glob: each key but `proxies` and `default` is a root glob
+ * mapped to the lists the roots it matches are checked against (the first
+ * glob in the file that matches a root gives it its lists), and `default`
+ * holds the lists of a root no glob matches and of a root the pull request
+ * adds. `proxies` stays one list for the repo.
+ */
+export type SourcesByRoot = { proxies?: SourceProxy[]; default?: SourceLists } & { [glob: string]: SourceLists | SourceProxy[] | undefined };
+
+/** What `sources` takes: the lists for every root, or the lists by root glob. */
+export type SourcesConfig = SourcesSettings | SourcesByRoot;
+
+/** Whether `sources` is the by-root form: some key beyond `modules`, `providers` and `proxies`. */
+export function isSourcesByRoot(s: SourcesConfig | undefined): s is SourcesByRoot {
+  return s !== undefined && Object.keys(s).some((k) => !SOURCES_KEYS.includes(k));
+}
+
+/** The registry proxies `sources` names, in either form. */
+export function sourceProxiesOf(s: SourcesConfig | undefined): SourceProxy[] | undefined {
+  const p = s?.proxies;
+  return Array.isArray(p) && p.length > 0 ? (p as SourceProxy[]) : undefined;
 }
 
 /**
@@ -2099,12 +2128,45 @@ function checkPolicy(p: unknown, where: string, problems: string[], mode?: unkno
 
 function checkSources(v: unknown, where: string, problems: string[]): void {
   if (!isObject(v) || Object.keys(v).length === 0) {
-    problems.push(`${where} must be a map with modules, providers or both, each a list of globs, such as modules: ["./**"]`);
+    problems.push(`${where} must be a map with modules, providers or both, each a list of globs, such as modules: ["./**"], or a map of root glob to those lists`);
     return;
   }
+  if (v.proxies !== undefined) checkSourceProxies(v.proxies, `${where}.proxies`, problems);
+  const globs = Object.keys(v).filter((k) => !SOURCES_KEYS.includes(k));
+  if (globs.length === 0) {
+    checkSourceLists(v, where, problems);
+    return;
+  }
+  // By root glob: modules and providers at the top would be a second, repo-wide list beside the entries.
+  for (const k of ["modules", "providers"]) {
+    if (v[k] !== undefined) problems.push(`${where}.${k} is beside root globs: put the list for every other root under default, and write a root directory called ${k} as a glob such as "${k}/"`);
+  }
+  for (const k of globs) {
+    if (Array.isArray(v[k])) {
+      problems.push(`${where}.${k} is not a setting (settings: ${SOURCES_KEYS.join(", ")}); a root glob maps to a map of modules and providers lists`);
+      continue;
+    }
+    if (k.trim() === "" || /[\s,;'"]/.test(k)) problems.push(`${where}[${JSON.stringify(k)}] is not a root glob: no whitespace, commas, semicolons or quotes`);
+    checkSourceEntry(v[k], k === "default" ? `${where}.default` : `${where}[${JSON.stringify(k)}]`, problems);
+  }
+  if (v.default === undefined) {
+    problems.push(`${where}.default is missing: it holds the lists of a root no glob matches and of a root a pull request adds, so no root goes unchecked`);
+  }
+}
+
+/** One by-root entry: a map of `modules` and `providers`, at least one. */
+function checkSourceEntry(v: unknown, where: string, problems: string[]): void {
+  if (!isObject(v) || Object.keys(v).length === 0) {
+    problems.push(`${where} must be a map with modules, providers or both, each a list of globs`);
+    return;
+  }
+  for (const k of Object.keys(v)) if (k !== "modules" && k !== "providers") problems.push(`${where}.${k} is not a setting (settings: modules, providers)`);
+  checkSourceLists(v, where, problems);
+}
+
+function checkSourceLists(v: Record<string, unknown>, where: string, problems: string[]): void {
   for (const k of Object.keys(v)) if (!SOURCES_KEYS.includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${SOURCES_KEYS.join(", ")})`);
   const glob = new RegExp(SOURCE_GLOB);
-  if (v.proxies !== undefined) checkSourceProxies(v.proxies, `${where}.proxies`, problems);
   for (const k of ["modules", "providers"]) {
     const list = v[k];
     if (list === undefined) continue;

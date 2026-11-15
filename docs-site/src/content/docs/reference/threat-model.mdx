@@ -426,6 +426,19 @@ In a Terragrunt repo, a wave inits and plans its units in one `run --all`. With 
 
 With no `sources` key, nothing is checked and nothing is read for it.
 
+### Plan-time execution
+
+A provider is a program the binary starts, so whatever a root's providers do, they do in `plan`, with the plan job's identity and the pull request's code. `sources.providers` decides which providers a root may use. Two data sources make that concrete:
+
+| In the root | When | What it does | Stopped by `sources` |
+|---|---|---|---|
+| `data "external"` (`hashicorp/external`) | each plan | runs a program the root names | yes, when `providers` does not list `hashicorp/external` for the root |
+| `data "http"` (`hashicorp/http`) | each plan | makes an HTTP request from the runner | yes, when `providers` does not list `hashicorp/http` for the root |
+| `provisioner "local-exec"` or `"remote-exec"`, on `terraform_data` or another resource | `apply`, when the resource is created or destroyed | runs a command on the runner, or on the resource | no: `sources` reads module sources and provider addresses, and a provisioner uses the binary's own `terraform_data` or a provider already allowed |
+| a module `source` | `init` | downloads the module's code, which then runs as part of the plan | yes, before `init` for the sources written in the root and its local modules, and after `init` for what `init` fetched |
+
+The check reads provider addresses, so it stops a data source by stopping its provider: a root that may use `hashicorp/http` may use every `data "http"` in it. To allow a provider for one root and refuse it elsewhere, give `sources` [a list per root glob](/terragucci/guides/write-a-policy/#sources-by-root-glob). A root the pull request adds takes `default`, so a new `data "http"` block in a new root is refused when `default` leaves the provider out. A pull request that adds a block to a root that already may use the provider is a change to review, and the plan note shows the data source's address.
+
 ## The review
 
 The review command reads text the change's author wrote: the title, the description and the diff. A model can follow an instruction hidden in them.
