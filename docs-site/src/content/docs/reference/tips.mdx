@@ -30,7 +30,7 @@ Code tips read the HCL itself. Those and the [shared-module tip](#terragucci-sha
 
 ### terragucci-shared-module
 
-Ten or more roots include a local module. Publish it with `tf-publish` and pin it, so `tf-rollout` moves only the pinned roots, in waves.
+Ten or more roots include a local module. Publish it with `tf-publish`, then run [`terragucci modules adopt <dir>`](/terragucci/reference/cli/#modules) to pin each root's call, so `tf-rollout` moves only the pinned roots, in waves.
 
 ### terragucci-floating-range
 

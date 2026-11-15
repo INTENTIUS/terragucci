@@ -226,6 +226,23 @@ gh workflow run terragucci-rollout.yml -f module=acme/bucket/aws -f version=1.3.
 
 A dispatch that finds the wave still open, or its apply not yet reported, ends without failing. Without a readable catalog the run names roots instead of apps and adds a note.
 
+## Move a local module to a pinned source
+
+A module kept in the repository and called by relative path (`source = "../modules/network"`) has no version, so a change to it reaches every root that calls it in one commit. `terragucci modules adopt` moves each call to the source the module is published at, caller by caller, and an ordinary rollout takes over from there.
+
+Publish the module first (see [Publish modules](/terragucci/guides/publish-modules/)). This command does not publish, and it stops with the steps when the version it needs does not exist. Then:
+
+```bash
+npx terragucci modules adopt modules/network --dry-run
+npx terragucci modules adopt modules/network --mode apply
+```
+
+The first command lists each call of the directory, in a root or in another module, and the waves of roots it would open, without asking the forge for anything. The source comes from `modules.publish` (`git-tags` gives `git::<origin>//modules/network?ref=modules/network/v<version>`, an `oci://` address gives its tag) or `modules.registry`, or from `--source` with the address and no pin. The version is the newest published, or `--version`.
+
+For a git source, the command clones the tag and compares its files with the directory. A directory that differs from its release is refused with the files that differ, because the plan of each wave can show no changes only when they match. Each wave's pull request changes the `source` line of its roots' calls and no other byte, and its plan should show no changes. `terragucci respond rollout` opens the next wave once the last one has merged and applied. A call inside another module stays a relative path, since a rollout reads roots; a root with a call it cannot edit, such as a `version` argument beside the local source or a source built from an expression, is listed with the reason and left out.
+
+When every wave has merged, `terragucci rollout modules/network <version>` moves the module like any other.
+
 ## Next
 
 - [Changes that reach many roots](/terragucci/reference/stages/#changes-that-reach-many-roots) puts rollouts beside local modules and `reconcile`.
