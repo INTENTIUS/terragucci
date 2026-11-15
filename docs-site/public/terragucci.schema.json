@@ -462,9 +462,162 @@
         },
         {
           "const": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schedule": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "watch": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "module": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "follow": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "patch",
+                        "minor",
+                        "major"
+                      ]
+                    }
+                  },
+                  "min_age": {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*[mhd]$"
+                  }
+                },
+                "additionalProperties": false,
+                "oneOf": [
+                  {
+                    "required": [
+                      "module"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                ]
+              },
+              "description": "Module and provider globs whose newer releases start a rollout, with the bumps to follow and the age a release reaches first."
+            },
+            "soak": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(0|[1-9]\\d*[mhd])$"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "after": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d*[mhd])$"
+                    },
+                    "conditions": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "drift",
+                          "apply",
+                          "policy"
+                        ]
+                      }
+                    },
+                    "overrides": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "module": {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          "after": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d*[mhd])$"
+                          },
+                          "conditions": {
+                            "type": "array",
+                            "minItems": 1,
+                            "uniqueItems": true,
+                            "items": {
+                              "enum": [
+                                "drift",
+                                "apply",
+                                "policy"
+                              ]
+                            }
+                          }
+                        },
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "module"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "provider"
+                            ]
+                          }
+                        ],
+                        "anyOf": [
+                          {
+                            "required": [
+                              "after"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "conditions"
+                            ]
+                          }
+                        ]
+                      },
+                      "description": "Per module or provider glob: the first rule that names the rollout sets its wait, its conditions, or both."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "after"
+                  ]
+                }
+              ],
+              "description": "How long a wave applied before the next one opens, and what must hold on its roots meanwhile."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "schedule"
+          ]
         }
       ],
-      "description": "A cron schedule for the job that opens each rollout's next wave, or false."
+      "description": "A cron schedule for the job that opens each rollout's next wave, or false; or a map of that schedule and the watch rules."
     },
     "control": {
       "type": "object",

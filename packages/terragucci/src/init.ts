@@ -35,6 +35,7 @@ import {
   pipelineEvidence,
   resolveRepo,
   responseTo,
+  rolloutsSchedule,
   type Approval,
   type Binary,
   type ForgeName,
@@ -351,7 +352,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   }
   const carried = (TOOL_VERSIONS as Record<string, string>)[binary.value];
   // The rollout job: when rollouts names a schedule and respond.rollout is not off.
-  const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? settings.rollouts : undefined;
+  const rollouts = settings.rollouts && responseTo(settings, "rollout") !== "off" ? rolloutsSchedule(settings.rollouts) : undefined;
   const control = settings.control ? resolveControl(settings.control, options.name ?? basename(resolve(repo))) : undefined;
   // check.pre_commit: tf-check runs the repo's pre-commit hooks as a chant check hook (./pre-commit.ts). The check
   // job also runs chant's ci check when the declaration already names check hooks of its own.

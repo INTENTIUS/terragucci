@@ -105,6 +105,14 @@ describe("init", () => {
     await expect(init(dir, { binary: "tofu", dryRun: true })).rejects.toThrow(/terragucci-review.yml exists and terragucci did not write it/);
   });
 
+  it("rollouts as a map with a schedule and watch rules writes the same rollout workflow on that cron", async () => {
+    const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'rollouts:\n  schedule: "*/20 * * * *"\n  watch:\n    - module: "acme/*/aws"\n' });
+    await init(dir, { binary: "tofu" });
+    const text = readFileSync(join(dir, ".github/workflows/terragucci-rollout.yml"), "utf-8");
+    expect(text).toContain("terragucci respond rollout --mode apply");
+    expect(text).toContain("*/20 * * * *");
+  });
+
   it("rollouts refuses to overwrite a rollout workflow it did not write, and on GitLab names the schedule to add", async () => {
     const dir = write(withRemote("https://github.com/acme/infra.git"), { "terragucci.yml": 'rollouts: "*/15 * * * *"\n', ".github/workflows/terragucci-rollout.yml": "name: mine\n" });
     await expect(init(dir, { binary: "tofu", dryRun: true })).rejects.toThrow(/terragucci-rollout.yml exists and terragucci did not write it/);

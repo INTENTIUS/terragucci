@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { binaryEnv } from "../binary-env";
-import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
+import { checkMode, ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, responseTo, rolloutsWatch, RESPONSES, type RespondEvent, type ResolvedSettings, type TerragucciConfig } from "../config";
 import { findRoots, globMatch } from "../detect";
 import { liveRoots } from "@intentius/chant-lexicon-terraform/live-roots";
 import { detectShape, fullDriftPlans, type Shape } from "../shape";
@@ -34,6 +34,8 @@ import { versionBumps } from "./version-bump";
 import type { DecideFetch } from "../decide";
 import { describeTriage, triage } from "./triage";
 import { continueExit, continueRollouts, describeContinue } from "../rollout";
+import { describeWatch, watchExit, watchRollouts } from "../rollout/watch";
+import type { ReleaseSources } from "../rollout/releases";
 import { rootPath } from "../root-config";
 
 export const EVENTS = Object.keys(RESPONSES) as RespondEvent[];
@@ -69,6 +71,8 @@ export interface RespondOptions {
   since?: string;
   /** version-bump and description: the decision service's HTTP client, for tests. */
   decideFetch?: DecideFetch;
+  /** For tests: the releases `rollouts.watch` reads, in place of the registries. */
+  watchSources?: ReleaseSources;
   /** description: the pull request's title and description; by default read from the job's event. */
   title?: string;
   description?: string;
@@ -269,7 +273,10 @@ export async function respond(event: string, repo: string, o: RespondOptions = {
   } else {
     // rollout with no module named: continue every rollout in flight. `respond rollout <module> [<version>]` runs `terragucci rollout` itself (cli.ts).
     const c = await continueRollouts(repo, { mode, config: o.config, env, ...(o.fetch ? { fetch: o.fetch } : {}) });
-    r = { text: describeContinue(c), data: c, ...(continueExit(c) ? { exit: continueExit(c) } : {}) };
+    // With `rollouts.watch`, a release a rule follows starts a rollout once the ones in flight have had their turn.
+    const w = rolloutsWatch(settings.rollouts).length > 0 ? await watchRollouts(repo, { mode, config: o.config, env, inFlight: c.rollouts, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.watchSources ? { sources: o.watchSources } : {}) }) : undefined;
+    const exit = Math.max(continueExit(c), w ? watchExit(w) : 0);
+    r = { text: [describeContinue(c), ...(w ? [describeWatch(w)] : [])].join("\n"), data: w ? { ...c, watch: w } : c, ...(exit ? { exit } : {}) };
   }
 
   return { event: ev, response, ...r };
