@@ -48,6 +48,7 @@
  *   terragucci auth-provider   (Terragrunt's auth-provider-cmd, run by the generated pipeline)
  *   terragucci rollout <module> [<version>] [--from v] [--mode dry-run|apply] [--config <file>]
  *   terragucci rollout --provider <address> <version> [--from v] [--mode dry-run|apply]
+ *   terragucci pin modules [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]
  *   terragucci profiles --config <file>
  *   terragucci config check [--config <file>]
  *   terragucci config identities [--config <file>] [--project <host/path>] [--forge <f>] [--repo <owner/name>] [--default-branch <b>] [--owner-id <id>] [--repo-id <id>] [--no-roots]
@@ -184,6 +185,7 @@ import { exportState } from "./export";
 import { StoreError } from "@intentius/chant/object-store";
 import { StateSourceError } from "@intentius/chant-lexicon-terraform/state";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
+import { describePins, pinExit, pinModules, pinModulesArgs, registryLookup } from "./pin-modules";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";
 import { startRelay } from "./relay-host";
@@ -216,6 +218,7 @@ const USAGE = `usage:
   terragucci request <template> --name <app> [--app <app>] [--version <v>] [--input <k>=<v>]... [--inputs-file <f.json>] [--via form|mcp|cli] [--requested-by <who>] [--claimed-by <who>] [--registry <url>] [--dry-run] [--json] [--config <file>]   open a pull request that adds the app's root from the template, or with --app an add-on to that app
   terragucci rollout <module> [<version>] [--from <version>] [--mode dry-run|apply] [--config <file>]
   terragucci rollout --provider <address> <version> [--from <version>] [--mode dry-run|apply]
+  terragucci pin modules [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]   (rewrite each module call's version constraint to the exact version its root runs, as a rollout whose plans show no changes; --dry-run prints the table only)
   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>]
   terragucci check-policy [--config <file>] [--base <ref>]
   terragucci check-mirror [--config <file>] [--platform <os_arch>]   (image.mirror: the prepared image's provider mirror covers every lock file; a gap warns once, then fails)
@@ -1481,6 +1484,13 @@ export async function main(argv: string[]): Promise<number> {
         const code = rolloutExit(result);
         if (json) return emit(envelope("rollout", code, result));
         console.log(describeRollout(result));
+        return code;
+      }
+      case "pin": {
+        const result = await pinModules(cwd, pinModulesArgs(args, flags, registryLookup()));
+        const code = pinExit(result);
+        if (json) return emit(envelope("pin", code, result));
+        console.log(describePins(result));
         return code;
       }
       case "profiles": {

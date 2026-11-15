@@ -25,6 +25,7 @@
  * default branch or merges anything.
  */
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
@@ -44,7 +45,7 @@ import { newestPublished, ociRepoFor, registryAliases } from "./discover";
 import { appliedState, fetchForge, type ListedPullRequest, type RolloutForge } from "./forge";
 import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locker } from "./lock";
 import { loadHclParser } from "./parser";
-import { moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
+import { atRange, isRange, moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
 import { appOf, changelogLines, movesYanked, templateContext, templateTarget, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
 import { planWaves, type Wave } from "./waves";
 
@@ -71,6 +72,12 @@ export interface RolloutOptions {
   locker?: (binary: string) => Locker;
   /** For tests: the registry client for OCI and module registry discovery. */
   registryFetch?: RegistryFetch;
+  /**
+   * Only these roots are in the rollout; every other root reads as absent. A
+   * `from` that is a constraint resolved to a different version in each root,
+   * so `terragucci pin modules` names the roots one `to` is right for.
+   */
+  only?: string[];
   /** Set by the walk: the registry addresses (`host/namespace/name/system`) a module named by its path is published at. */
   aliases?: string[];
 }
@@ -297,17 +304,18 @@ interface Classified {
 }
 
 function classifyModule(project: string, root: string, calls: ModuleCall[], from: string | undefined, to: string, tmpl?: TemplateContext): Classified {
+  // A `from` that is a constraint: a call whose `version` reads it counts as pinned at it.
   const base = { project, root, ...(tmpl && calls.length > 0 ? { app: appOf(tmpl, root) } : {}) };
   if (calls.length === 0) return { status: { project, root, state: "absent" } };
-  const refused = calls.filter((c) => c.pin.pin === null);
+  const refused = calls.filter((c) => c.pin.pin === null && !atRange(c, from));
   if (refused.length > 0) return { status: { ...base, state: "refused", reason: refused.map((c) => `${c.file} ${c.call}: ${c.pin.unpinned}`).join("; ") }, calls };
-  const at = (c: ModuleCall, v: string) => c.version === v || c.pin.pin === v;
+  const at = (c: ModuleCall, v: string) => c.version === v || c.pin.pin === v || (v === from && atRange(c, from));
   if (calls.every((c) => at(c, to))) return { status: { ...base, state: "to", version: to }, calls };
   if (from !== undefined && calls.every((c) => at(c, from) || at(c, to))) return { status: { ...base, state: "from", version: from, ...(movesYanked(tmpl, from, to) ? { yanked: true as const } : {}) }, calls };
   // A template's app pinned to a yanked version below `to` moves from that version.
-  const pins = [...new Set(calls.filter((c) => !at(c, to)).map((c) => c.version!))];
+  const pins = [...new Set(calls.filter((c) => !at(c, to)).map((c) => c.version ?? c.written!))];
   if (pins.length === 1 && movesYanked(tmpl, pins[0]!, to)) return { status: { ...base, state: "from", version: pins[0]!, yanked: true }, calls };
-  const others = [...new Set(calls.filter((c) => !(from !== undefined && at(c, from)) && !at(c, to)).map((c) => c.version!))];
+  const others = [...new Set(calls.filter((c) => !(from !== undefined && at(c, from)) && !at(c, to)).map((c) => c.version ?? c.written!))];
   if (from !== undefined && calls.some((c) => at(c, from))) {
     return { status: { ...base, state: "refused", reason: `its calls are pinned at more than one version (${[from, ...others].join(", ")})` }, calls };
   }
@@ -365,8 +373,10 @@ function slug(value: string): string {
   return value.replace(/^[a-z]+:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
 }
 
-export function waveBranch(name: string, to: string, wave: number): string {
-  return `terragucci/rollout/${slug(name)}-${slug(to)}/wave-${wave}`;
+export function waveBranch(name: string, to: string, wave: number, from?: string): string {
+  // Two constraints on one module can resolve to one version: the constraint, hashed, keeps their branches apart.
+  const range = isRange(from) ? `-from-${createHash("sha1").update(from).digest("hex").slice(0, 8)}` : "";
+  return `terragucci/rollout/${slug(name)}-${slug(to)}${range}/wave-${wave}`;
 }
 
 /** What a wave's pull request body records about its rollout. `waves` is missing from a body written before it was recorded. */
@@ -378,6 +388,8 @@ interface Marker {
   wave?: number;
   waves?: number;
   roots?: string[];
+  /** The roots the whole rollout is for, when `from` is a constraint and each root resolved on its own. */
+  scope?: string[];
 }
 
 function readMarker(body: string): Marker | undefined {
@@ -493,7 +505,7 @@ export async function continueRollouts(cwd: string, options: Omit<RolloutOptions
       // `terragucci rollout: <what>, wave 1 of 3`, or a template's `Upgrade bucket to 1.3.0: orders (wave 1 of 3)`.
       const of = /(?:, wave \d+ of (\d+)|\(wave \d+ of (\d+)\))$/.exec(pr.title);
       const marker = { ...m, ...(m.waves === undefined && of ? { waves: Number(of[1] ?? of[2]) } : {}) } as Seen["marker"];
-      const id = JSON.stringify([m.kind, m.name, m.to]);
+      const id = JSON.stringify([m.kind, m.name, m.to, m.from ?? null]);
       groups.set(id, [...(groups.get(id) ?? []), { marker, state: pr.state, url: pr.url }]);
     }
   }
@@ -512,7 +524,7 @@ export async function continueRollouts(cwd: string, options: Omit<RolloutOptions
     else if (waves !== undefined && wave >= waves) rollouts.push({ ...base, action: "done", reason: `wave ${wave} of ${waves}, the last, merged` });
     else {
       try {
-        const result = await rollout(repo, { ...options, mode, kind: m.kind, name: m.name, to: m.to, ...(m.from !== undefined ? { from: m.from } : {}) });
+        const result = await rollout(repo, { ...options, mode, kind: m.kind, name: m.name, to: m.to, ...(m.from !== undefined ? { from: m.from } : {}), ...(m.scope ? { only: m.scope } : {}) });
         rollouts.push({ ...base, result });
       } catch (e) {
         rollouts.push({ ...base, action: "failed", reason: (e as Error).message });
@@ -545,7 +557,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   // A project whose shape refuses rollouts (synth, Atmos) has no root in its checkout to move: it is listed refused, with why.
   const refusedOf = new Map(projects.map((p) => [p.key, detectShape(p.dir, p.settings).refuses("rollouts")]));
   for (const p of projects) {
-    roots.set(p.key, refusedOf.get(p.key) ? [] : rootsOf(p));
+    roots.set(p.key, refusedOf.get(p.key) ? [] : rootsOf(p).filter((r) => options.only === undefined || options.only.includes(r)));
     if (options.kind === "module") for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!, options.aliases));
   }
 
@@ -583,7 +595,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   }
   const toVersion = options.kind === "module" ? pinVersion(to) : to;
 
-  let from = options.from !== undefined ? pinVersion(options.from) : undefined;
+  let from = options.from !== undefined ? (isRange(options.from) ? options.from : pinVersion(options.from)) : undefined;
   if (from === undefined) {
     const seen = new Set<string>();
     if (options.kind === "module") {
@@ -659,7 +671,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     waves: plan.map((w) => ({
       wave: w.wave,
       canary: w.canary,
-      parts: w.parts.map((p) => ({ ...p, branch: waveBranch(options.name, toVersion, w.wave), state: "not-reached" as PartState, ...(tmpl ? { apps: p.roots.map((r) => appOf(tmpl!, r)) } : {}) })),
+      parts: w.parts.map((p) => ({ ...p, branch: waveBranch(options.name, toVersion, w.wave, from), state: "not-reached" as PartState, ...(tmpl ? { apps: p.roots.map((r) => appOf(tmpl!, r)) } : {}) })),
     })),
     roots: statuses,
     tips: [],
@@ -783,9 +795,10 @@ async function openPart(
         `This pull request moves ${options.kind === "module" ? "the pin" : `\`${LOCK_FILE}\``} for these roots and changes no other file:`,
         "",
         ...moving.map((r) => `- \`${r}\``),
+        ...(isRange(result.from) ? ["", `Each root's \`version = "${result.from}"\` becomes the version init resolved for it, ${result.to}. Its plan should show no changes: that is the proof the pin is the version the root already runs.`] : []),
       ];
   const body = [
-    `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving })} -->`,
+    `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving, ...(options.only ? { scope: options.only } : {}) })} -->`,
     ...intro,
     ...(others.length > 0 ? ["", "Not moved by this rollout:", "", ...others.map((r) => `- \`${r.root}\`: ${r.reason}`)] : []),
     "",
