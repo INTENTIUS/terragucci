@@ -172,6 +172,7 @@ import { PROJECT_CONSUMERS, projectConsumersDocument } from "./publish/consumers
 import { pinChecker } from "./publish/require";
 import { authProviderOutput, detectTerragrunt, walkUnits } from "./terragrunt";
 import { detectShape } from "./shape";
+import { conflictNotes, jobVersionOf, rangeConflicts } from "./version-range";
 import { formatTree } from "./fmt";
 import { configIdentities, describeForgeCheck, describeIdentities, forgeCheck, forgeCheckExit } from "./identities";
 import type { Fetch } from "./forge";
@@ -1566,6 +1567,12 @@ export async function main(argv: string[]): Promise<number> {
           if (shape && problems.length === 0 && config.roots && shape.engine === "per-root" && shape.kind !== "atmos" && shape.kind !== "terragrunt") {
             const left = modulesLeftOut(repoDir, config.roots);
             if (left.length > 0) warnings.push(`roots left out ${left.length} matched ${left.length === 1 ? "directory" : "directories"} that a root calls as a local module: ${left.join(", ")}; name one by its exact path to plan it as a root`);
+          }
+          // A root whose required_version range excludes the version its job runs, with the version entry that fixes it.
+          if (shape && problems.length === 0 && !config.projects && shape.engine === "per-root" && shape.kind !== "atmos" && shape.kind !== "terragrunt") {
+            const found = findRoots(repoDir, config.roots);
+            const binary = config.binary ?? shape.binary(found).value;
+            warnings.push(...conflictNotes(rangeConflicts(repoDir, found, binary, config.version, jobVersionOf(repoDir, binary, config.version))));
           }
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // One apply job per identity: groups whose jobs carry the same token subject get a tip, never a warning.
