@@ -389,6 +389,7 @@ The [observability reference](/terragucci/reference/observability/#turning-it-on
 | `TG_BASE` | `--base` | the ref policy is read from, such as `origin/main`; the target branch by default |
 | `TG_BRANCH` |  | the default branch; other pushes read policy from `origin/<that branch>` |
 | `TG_PR`, `TG_SHA`, `TG_HEAD` |  | the pull request number, commit and head branch |
+| `TG_JOB_URL` |  | the job's page, which the report links in place of the forge run's; the Prow jobs of `runtime: prow` set it to Deck's page of the job when `prow.deck` is set |
 | `TG_PLAN_JSON` |  | set for the `cost.command` estimator: the path of the root's stored plan, `show -json` with sensitive values redacted; `TG_ROOT` names the root |
 | `TG_STAGE`, `TG_ROOT`, `TG_REPO`, `TG_PLAN_FILE` |  | set for a [hook](/terragucci/guides/run-steps/): the stage (`tf-plan`, `tf-apply` or `tf-drift`), the root, the checkout's path and, after a plan and before an apply, the plan file; chant's `CHANT_HOOK` names the moment |
 | `GITHUB_ACTOR`, `GITLAB_USER_LOGIN`, `USER` |  | the approver for `terragucci approve` without `--actor`; under `approval: sealed` it must be in `.chant/allowed_signers` |

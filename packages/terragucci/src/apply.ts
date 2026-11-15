@@ -136,7 +136,8 @@ import { uploadReport, writeReportDir } from "./report/store";
 import { uploadRosters, waveRosters, type Roster, type RosterWrite } from "./report/roster";
 import { nowNanos, telemetryFromEnv, type Attrs } from "./telemetry";
 import { version as VERSION } from "../package.json";
-import { approvalRule, ruleReport, type ApprovalRule } from "./approval";
+import { approvalRule, chantApprovalMode, ruleReport, type ApprovalRule } from "./approval";
+import { labelWave } from "./prow-labels";
 import { forgePrincipalOf } from "@intentius/chant/pr-forge";
 import { quorumRuleLine, quorumWaiting, trustRolesAt, type GateQuorumRuleProgress } from "@intentius/chant/gate-decision";
 import { mayOverride, overrideCommand, overridersFor, type Overriders } from "./override";
@@ -1050,7 +1051,7 @@ async function runWaves(repo: string, given: ApplyWaveOptions): Promise<number> 
       return (code = EXIT.failed);
     }
     // The migration hooks and the gate's report run in this process, by name (runStepWave's inProcessHooks): terragucci's own opinion pieces.
-    const ran = await runStepWave(repo, options, ctx, jobOf, { chant: await import("@intentius/chant/op"), settings: read.settings, specWaves, base, gates, approval: rule?.mode ?? "ledger", ...(rule?.point ? { point: rule.point } : {}), ...(grouped ? { grouped } : {}) });
+    const ran = await runStepWave(repo, options, ctx, jobOf, { chant: await import("@intentius/chant/op"), settings: read.settings, specWaves, base, gates, approval: rule ? chantApprovalMode(rule.mode) : "ledger", ...(rule?.point ? { point: rule.point } : {}), ...(grouped ? { grouped } : {}) });
     const rest = ran.result?.rest;
     if (rest?.length) last = rest[rest.length - 1]!.wave;
     const j = jobOf(last);
@@ -1704,7 +1705,7 @@ async function stepGateApprovals(s: StepContext, j: WaveJob, digest: string, pla
   for (const p of ledger.pending) if (p.gate === name && (!latest || stamp(p.timestamp) >= stamp(latest.timestamp))) latest = p;
   const since = latest ? stamp(latest.timestamp) : 0;
   const standing = ledger.resolutions.filter((r) => r.gate === name && stamp(r.timestamp) >= since);
-  if (standing.length > 0 || rule.mode === "pr-review") {
+  if (standing.length > 0 || rule.mode === "pr-review" || rule.mode === "prow-labels") {
     j.involved ??= await waveInvolvement(repo, options, rule);
     for (const n of j.involved.notes) console.log(`${label}: ${n}`);
   }
@@ -1729,11 +1730,26 @@ async function stepGateApprovals(s: StepContext, j: WaveJob, digest: string, pla
   if (decision.status !== "waiting") return [];
   // The rest of a stopped apply under its approval is chant's to take up, at the commit it stopped at (approvals.remainder).
   if (decision.spent) console.log(`${label}: the approval of ${decision.spent.approved} by ${decision.spent.by} was used by the apply of those plans; unless chant takes these plans up as the rest of that apply, they need an approval of their own`);
-  if (rule.mode !== "pr-review") return [];
+  if (rule.mode !== "pr-review" && rule.mode !== "prow-labels") return [];
   // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
   const sha = jobCommit(env, repo);
   const priced = costMember(w.waveCost);
   const changesDigest = reviewDigest(plans.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
+  // Under prow-labels the merged pull request's lgtm and approved labels count, when the note on its head showed these plans (./prow-labels.ts).
+  if (rule.mode === "prow-labels") {
+    const l = await labelWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), sha, wave, digest: changesDigest, ...(w.covered ? { covered: w.covered.digest } : {}), ...(involved ? { involved } : {}) });
+    if (l.excluded?.length) {
+      for (const e of l.excluded) console.log(`${label}: ${notCounted(e, "approval")}`);
+      w.excluded = mergeExcluded(w.excluded ?? [], l.excluded);
+    }
+    if (l.kind === "approved") {
+      console.log(`${label}: pull request ${l.pr} merged with the lgtm and approved labels on its head ${l.head.slice(0, 8)}, from ${l.by.join(", ")}, and the plans are the ones its note showed (${changesDigest})`);
+      return [{ resolvedBy: l.by.join(","), note: `the lgtm and approved labels of pull request ${l.pr} on its head ${l.head}` }];
+    }
+    if (l.kind === "moved") console.log(`${label}: the plans moved after pull request ${l.pr}'s note showed ${l.reviewed}; approve ${changesDigest} with terragucci approve`);
+    else console.log(`${label}: the labels do not approve this wave: ${l.why}; approve its plans with terragucci approve`);
+    return [];
+  }
   const r = await reviewWave({ env, ...(options.fetch ? { fetch: options.fetch } : {}), forge: forgeOfEnv(env), sha, wave, digest: changesDigest, ...(w.covered ? { covered: w.covered.digest } : {}), ...(involved ? { involved } : {}) });
   if (r.excluded?.length) {
     for (const e of r.excluded) console.log(`${label}: ${notCounted(e, "review")}`);
@@ -1836,7 +1852,7 @@ async function runStepWave(
   options: ApplyWaveOptions,
   ctx: WavesContext,
   jobOf: (k: number) => WaveJob,
-  at: { chant: StepChant; settings: ResolvedSettings; specWaves: string[][] | number; base: string; gates: Gate[]; approval: Approval; point?: string; grouped?: { name: string; roots: string[]; shares: number }[] },
+  at: { chant: StepChant; settings: ResolvedSettings; specWaves: string[][] | number; base: string; gates: Gate[]; approval: Exclude<Approval, "prow-labels">; point?: string; grouped?: { name: string; roots: string[]; shares: number }[] },
 ): Promise<{ code: number; result?: RunOpWaveResult }> {
   const settings = at.settings;
   const env = options.env ?? process.env;

@@ -51,7 +51,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "decide": {
             "runner": {
@@ -81,7 +82,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -110,7 +112,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-prod-apply\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:environment:production\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "drift": {
             "runner": {
@@ -139,7 +142,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::222222222222:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           }
         }
       },
@@ -180,7 +184,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "decide": {
             "runner": {
@@ -210,7 +215,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -239,7 +245,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-apply\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:environment:dev\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "drift": {
             "runner": {
@@ -268,7 +275,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::333333333333:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           }
         }
       },
@@ -307,7 +315,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "decide": {
             "runner": {
@@ -337,7 +346,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -366,7 +376,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-apply\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "drift": {
             "runner": {
@@ -395,7 +406,8 @@
               "assume_role_policy": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:pull_request\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"terragucci-plan\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}},{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"token.actions.githubusercontent.com:aud\":\"sts.amazonaws.com\",\"token.actions.githubusercontent.com:sub\":\"repo:acme/infra:ref:refs/heads/main\"}}}]}"
             },
             "gcp": null,
-            "azure": null
+            "azure": null,
+            "pod": null
           }
         }
       }

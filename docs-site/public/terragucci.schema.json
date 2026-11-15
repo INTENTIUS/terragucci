@@ -137,7 +137,8 @@
           "enum": [
             "ledger",
             "pr-review",
-            "sealed"
+            "sealed",
+            "prow-labels"
           ]
         },
         {
@@ -148,7 +149,8 @@
               "enum": [
                 "ledger",
                 "pr-review",
-                "sealed"
+                "sealed",
+                "prow-labels"
               ],
               "description": "What counts as a waiting wave's approval."
             },
@@ -697,9 +699,92 @@
     },
     "runtime": {
       "enum": [
-        "forge"
+        "forge",
+        "prow"
       ],
-      "description": "Where the stages run."
+      "description": "Where the stages run: forge, the forge's CI, or prow, ProwJobs on a Prow installation."
+    },
+    "prow": {
+      "type": "object",
+      "properties": {
+        "config_repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "The repository whose job config holds the jobs, when it is not this one."
+        },
+        "path": {
+          "type": "string",
+          "pattern": "\\.ya?ml$",
+          "description": "Where init writes the job config. Default prow/terragucci.yaml."
+        },
+        "cluster": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "description": "The build cluster of the checks presubmit, which holds no credential. Default default."
+        },
+        "trusted_cluster": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "description": "The build cluster of the plan, apply and drift jobs."
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+        },
+        "service_accounts": {
+          "type": "object",
+          "properties": {
+            "plan": {
+              "type": "string",
+              "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "apply": {
+              "type": "string",
+              "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            }
+          },
+          "required": [
+            "plan",
+            "apply"
+          ],
+          "additionalProperties": false,
+          "description": "The pods' service accounts on the trusted cluster: read-only for plan and drift, write for apply."
+        },
+        "token_secret": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "key": {
+              "type": "string",
+              "pattern": "^[-._a-zA-Z0-9]+$"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "description": "The Secret on the trusted cluster with the GitHub token the jobs there post with."
+        },
+        "plan_before_merge": {
+          "type": "boolean",
+          "description": "A plan presubmit on the trusted cluster for pull requests from this repository."
+        },
+        "deck": {
+          "type": "string",
+          "pattern": "^https?://[^\\s/?#]+",
+          "description": "Deck's address, so the report and the notes link each job."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "trusted_cluster",
+        "service_accounts",
+        "token_secret"
+      ],
+      "description": "With runtime: prow: the build clusters, the pods' service accounts, the token's Secret and where the job config goes."
     },
     "reports": {
       "type": "object",
@@ -2455,7 +2540,8 @@
               "enum": [
                 "ledger",
                 "pr-review",
-                "sealed"
+                "sealed",
+                "prow-labels"
               ]
             },
             {
@@ -2466,7 +2552,8 @@
                   "enum": [
                     "ledger",
                     "pr-review",
-                    "sealed"
+                    "sealed",
+                    "prow-labels"
                   ],
                   "description": "What counts as a waiting wave's approval."
                 },
@@ -2854,9 +2941,92 @@
         },
         "runtime": {
           "enum": [
-            "forge"
+            "forge",
+            "prow"
           ],
-          "description": "Where the stages run."
+          "description": "Where the stages run: forge, the forge's CI, or prow, ProwJobs on a Prow installation."
+        },
+        "prow": {
+          "type": "object",
+          "properties": {
+            "config_repo": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+              "description": "The repository whose job config holds the jobs, when it is not this one."
+            },
+            "path": {
+              "type": "string",
+              "pattern": "\\.ya?ml$",
+              "description": "Where init writes the job config. Default prow/terragucci.yaml."
+            },
+            "cluster": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "description": "The build cluster of the checks presubmit, which holds no credential. Default default."
+            },
+            "trusted_cluster": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+              "description": "The build cluster of the plan, apply and drift jobs."
+            },
+            "namespace": {
+              "type": "string",
+              "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+            },
+            "service_accounts": {
+              "type": "object",
+              "properties": {
+                "plan": {
+                  "type": "string",
+                  "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+                },
+                "apply": {
+                  "type": "string",
+                  "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+                }
+              },
+              "required": [
+                "plan",
+                "apply"
+              ],
+              "additionalProperties": false,
+              "description": "The pods' service accounts on the trusted cluster: read-only for plan and drift, write for apply."
+            },
+            "token_secret": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+                },
+                "key": {
+                  "type": "string",
+                  "pattern": "^[-._a-zA-Z0-9]+$"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false,
+              "description": "The Secret on the trusted cluster with the GitHub token the jobs there post with."
+            },
+            "plan_before_merge": {
+              "type": "boolean",
+              "description": "A plan presubmit on the trusted cluster for pull requests from this repository."
+            },
+            "deck": {
+              "type": "string",
+              "pattern": "^https?://[^\\s/?#]+",
+              "description": "Deck's address, so the report and the notes link each job."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "trusted_cluster",
+            "service_accounts",
+            "token_secret"
+          ],
+          "description": "With runtime: prow: the build clusters, the pods' service accounts, the token's Secret and where the job config goes."
         },
         "reports": {
           "type": "object",

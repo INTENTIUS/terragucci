@@ -56,7 +56,8 @@ import { agentCommentInput, agentDriftInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { resolveControl } from "./control-repo";
-import { EPHEMERAL_PATHS, MARKER, RenderError, renderPipeline, REQUEST_PATHS, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { EPHEMERAL_PATHS, MARKER, PIPELINE_PATHS, RenderError, renderPipeline, REQUEST_PATHS, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
+import { prowPipeline } from "./init-prow";
 import { PLAN_NOTES_CRON, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR } from "./product-plan";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
@@ -378,7 +379,33 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(tgMode && tgInput ? { terragrunt: { layers: layers.filter((l) => l.length > 0), exclude: tgInput.exclude, binary: binary.value, terragrunt: "terragrunt" } } : {}),
   }));
   const evidence = pipelineEvidence(settings.evidence);
-  const pipeline = renderPipeline({
+  // runtime: prow: the stages as Prow jobs, in one job config file in place of the workflow (./render-prow.ts).
+  const prowJobs = settings.runtime === "prow"
+    ? prowPipeline(repo, settings, {
+        forge: forgeChoice.value,
+        plain: plainRoots,
+        binary: binary.value,
+        image: imageName(settings.image) ?? imageReference(ref),
+        layers,
+        ...(version.value !== carried ? { install: { binary: binary.value, version: version.value } } : {}),
+        ...(stepSpec ? { wavesSpec: stepSpec } : {}),
+        check: {
+          ...(pins.length > 0 ? { rootPins: true } : {}),
+          ...(settings.generate ? { generate: true } : {}),
+          ...(settings.sources ? { sources: true } : {}),
+          ...(imageMirror(settings.image) ? { mirror: true } : {}),
+          ...(settings.parallelism !== undefined ? { parallelism: settings.parallelism } : {}),
+          ...(shape.prepare ? { synth: shape.prepare } : {}),
+        },
+        report: {
+          ...(settings.reports ? { reports: settings.reports } : {}),
+          ...(settings.waves?.canary?.length ? { canary: settings.waves.canary } : {}),
+          ...(shape.prepare ? { synth: shape.prepare } : {}),
+        },
+      })
+    : undefined;
+  if (prowJobs) notes.push(...prowJobs.notes);
+  const pipeline = prowJobs ?? renderPipeline({
     ...checkHooksInput,
     ...(evidence ? { evidence } : {}),
     ...(stepSpec ? { wavesSpec: stepSpec } : {}),
@@ -445,6 +472,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.pass !== undefined ? { pass: settings.pass } : {}),
   });
   const pipelinePath = join(repo, pipeline.path);
+  // Moving to Prow: the workflow an earlier init wrote goes, since the Prow jobs run the stages now.
+  const forgeWorkflow = prowJobs ? join(repo, PIPELINE_PATHS.github) : undefined;
+  const leftWorkflow = forgeWorkflow && existsSync(forgeWorkflow) && readFileSync(forgeWorkflow, "utf-8").startsWith(MARKER) ? planRemoval(forgeWorkflow) : undefined;
   if (existsSync(pipelinePath) && !options.force && !readFileSync(pipelinePath, "utf-8").startsWith(MARKER)) {
     throw new ConfigError(`${pipeline.path} exists and terragucci did not write it; move it aside or pass --force`);
   }
@@ -455,7 +485,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   const resumeRel = forgeChoice.value === "gitlab" ? undefined : RESUME_PATHS[forgeChoice.value];
   const agentRel = CHANT_AGENT_PATHS[forgeChoice.value];
   const driftRel = CHANT_DRIFT_PATHS[forgeChoice.value];
-  const files: PlannedFile[] = [planFile(pipelinePath, pipeline.content)];
+  const files: PlannedFile[] = [planFile(pipelinePath, pipeline.content), ...(leftWorkflow ? [leftWorkflow] : [])];
   for (const f of pipeline.extra ?? []) {
     const path = join(repo, f.path);
     // The rollout, review, ephemeral and resume workflows, like the pipeline, overwrite only a file terragucci wrote.

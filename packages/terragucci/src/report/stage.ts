@@ -208,6 +208,8 @@ export function runFacts(repo: string, env: NodeJS.ProcessEnv, forge?: ForgeName
     web = env.CI_PROJECT_URL ?? (env.CI_SERVER_URL ? `${env.CI_SERVER_URL.replace(/\/+$/, "")}/${env.CI_PROJECT_PATH}` : undefined);
     gitlab = true;
   }
+  // A ProwJob names its own page (./render-prow.ts): Deck's view of the job, in place of a forge run's.
+  if (env.TG_JOB_URL) job_url = env.TG_JOB_URL;
   project ??= (() => {
     const remote = git(repo, "remote", "get-url", "origin");
     return remote ? projectFromRemote(remote) : undefined;

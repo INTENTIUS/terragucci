@@ -45,7 +45,8 @@
                 "api://AzureADTokenExchangeUSGov"
               ],
               "claims_matching_expression": null
-            }
+            },
+            "pod": null
           },
           "decide": {
             "runner": null,
@@ -69,7 +70,8 @@
                 "api://AzureADTokenExchangeUSGov"
               ],
               "claims_matching_expression": null
-            }
+            },
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -94,7 +96,8 @@
                 "api://AzureADTokenExchangeUSGov"
               ],
               "claims_matching_expression": null
-            }
+            },
+            "pod": null
           },
           "drift": null
         }
@@ -131,7 +134,8 @@
                 "api://AzureADTokenExchangeUSGov"
               ],
               "claims_matching_expression": null
-            }
+            },
+            "pod": null
           },
           "decide": {
             "runner": null,
@@ -155,7 +159,8 @@
                 "api://AzureADTokenExchangeUSGov"
               ],
               "claims_matching_expression": null
-            }
+            },
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -180,7 +185,8 @@
                 "api://AzureADTokenExchangeUSGov"
               ],
               "claims_matching_expression": null
-            }
+            },
+            "pod": null
           },
           "drift": null
         }

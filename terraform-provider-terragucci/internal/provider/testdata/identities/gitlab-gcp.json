@@ -52,7 +52,8 @@
               ],
               "attribute_condition": "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "decide": {
             "runner": {
@@ -83,7 +84,8 @@
               ],
               "attribute_condition": "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -117,7 +119,8 @@
               ],
               "attribute_condition": "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk' && assertion.environment == 'production' && assertion.environment_protected == 'true' && assertion.ref_protected == 'true'"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "drift": {
             "runner": {
@@ -148,7 +151,8 @@
               ],
               "attribute_condition": "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           }
         }
       },
@@ -191,7 +195,8 @@
               ],
               "attribute_condition": "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "decide": {
             "runner": {
@@ -222,7 +227,8 @@
               ],
               "attribute_condition": "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "confirm": null,
           "apply": {
@@ -256,7 +262,8 @@
               ],
               "attribute_condition": "assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk' && assertion.environment == 'staging' && assertion.environment_protected == 'true' && assertion.ref_protected == 'true'"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           },
           "drift": {
             "runner": {
@@ -287,7 +294,8 @@
               ],
               "attribute_condition": "(assertion.sub.startsWith('project_path:acme/platform/infra:ref_type:branch:ref:')) || (assertion.sub == 'project_path:acme/platform/infra:ref_type:branch:ref:trunk')"
             },
-            "azure": null
+            "azure": null,
+            "pod": null
           }
         }
       }
