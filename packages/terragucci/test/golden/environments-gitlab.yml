@@ -23,7 +23,7 @@ check:
   rules:
     - if: '$CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   script:
-    - |
+    - |-
       unset TG_TOKEN TG_MERGE_TOKEN CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
       mkdir -p .chant/commit
       set +e
@@ -100,7 +100,7 @@ fmt:
       artifacts: true
   script:
     - if [ "${CHANT_COMMIT_FINDING:-0}" != "1" ]; then echo "the check found nothing, so terragucci-fmt does not run"; exit 0; fi
-    - |
+    - |-
       case "$CI_COMMIT_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
       git -c protocol.version=2 fetch -q --no-tags origin "+$CI_COMMIT_SHA:refs/chant/commit-head"
     - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
@@ -138,7 +138,7 @@ fmt-push:
       artifacts: true
   script:
     - if [ ! -f .chant/commit/decision.json ]; then echo "terragucci-fmt did not run"; exit 0; fi
-    - |
+    - |-
       case "$CI_COMMIT_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
       git -c protocol.version=2 fetch -q --no-tags origin "+$CI_COMMIT_SHA:refs/chant/commit-head"
     - git fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
@@ -174,7 +174,7 @@ plan:
     - eval "$CHANT_CLOUD_TRADE_VARS"; unset CHANT_CLOUD_TRADE_VARS
     - unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
     - unset TG_TOKEN TG_MERGE_TOKEN GITLAB_TOKEN
-    - |
+    - |-
       bash <<'PLAN' || exit $?
       set +e -uo pipefail
       export TG_SHA="${TG_SHA:-$(git rev-parse HEAD)}" TG_PR="${TG_PR:-${PR_NUMBER:-}}" TG_ROOT="${CHANT_PLAN_ARGUMENT:-}"
@@ -538,7 +538,7 @@ tips:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "schedule" && $CHANT_PLAN_NOTES == null'
   resource_group: terragucci-tips
   script:
-    - |
+    - |-
       bash <<'TIPS' || exit $?
       set -u
       export GITLAB_TOKEN="$TG_TOKEN"

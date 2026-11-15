@@ -50,7 +50,7 @@ jobs:
           fetch-depth: 0
       - name: Start the dispatched rollout, or open the next wave of each rollout whose last wave merged and applied
         shell: bash
-        run: |
+        run: |-
           set -u
           export GITHUB_TOKEN="$TG_TOKEN"
           if [ -n "${TG_MODULE:-}" ]; then

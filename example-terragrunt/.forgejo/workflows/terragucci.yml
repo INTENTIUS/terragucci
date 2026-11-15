@@ -56,7 +56,7 @@ jobs:
         shell: bash
         env:
           TG_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -82,7 +82,7 @@ jobs:
           esac
       - id: check
         name: Format check and validate, every unit
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN -u TG_TOKEN -u TG_MERGE_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN TG_TOKEN TG_MERGE_TOKEN
           chant_report="$PWD/terragucci-check"
           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["report.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("terragucci: the report is too large to hand to the next job, even cut to report.md; it hands on none of it")}else console.error("terragucci: the report is too large to hand to the next job whole; it hands on report.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "terragucci: the report could not be handed to the next job" >&2; }
@@ -110,7 +110,7 @@ jobs:
     steps:
       - name: Take the check report from the check job
         shell: bash
-        run: |
+        run: |-
           set -u
           node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the check job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the check job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the check job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the check job")' terragucci-check <<'END_OF_REPORT'
           ${{ toJSON(needs.check.outputs.report_0) }}
@@ -149,7 +149,7 @@ jobs:
       - name: Check out the change
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -185,7 +185,7 @@ jobs:
         env:
           BASE_SHA: '${{ github.event.pull_request.base.sha }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           chant_report="$PWD/terragucci-report"
           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
@@ -212,7 +212,7 @@ jobs:
         with:
           ref: '${{ github.event.pull_request.base.sha }}'
       - name: Take the plan report from the plan job
-        run: |
+        run: |-
           set -u
           node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the plan job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the plan job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the plan job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the plan job")' terragucci-report <<'END_OF_REPORT'
           ${{ toJSON(needs.plan.outputs.report_0) }}
@@ -233,7 +233,7 @@ jobs:
           GITHUB_TOKEN: '${{ github.token }}'
           PR_NUMBER: '${{ github.event.pull_request.number }}'
           HEAD_SHA: '${{ github.event.pull_request.head.sha }}'
-        run: |
+        run: |-
           export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
           TG_TOKEN="$GITHUB_TOKEN" TG_PR="$PR_NUMBER" TG_SHA="$HEAD_SHA" terragucci plan-note --forge forgejo --report terragucci-report --notices "$CHANT_PLAN_NOTE_NOTICES" || true
       - name: Post the plan note and terragucci/plan
@@ -244,7 +244,7 @@ jobs:
           PLAN_RESULT: '${{ needs.plan.result }}'
           GITHUB_TOKEN: '${{ github.token }}'
           CHANT_PLAN_NOTE_WORDS: '{"footer":"<sub><img src=\"https://intentius.io/terragucci/brand/taco-small.png\" width=\"26\" height=\"16\" alt=\"\"> Posted by [terragucci](https://intentius.io/terragucci/)</sub>","artifact":"terragucci-report","noReport":"Planned in [this run]({run}), which keeps no report artifact; with `reports` set, the note links the report in the bucket.","marker":"terragucci:waves","anchors":{"member":"root-{id}","group":"group-{id}"},"overrideKey":"policy.override","approvalRulesKey":"approval_rules","applyStage":"tf-apply","productMarker":"terragucci:plan"}'
-        run: |
+        run: |-
           export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
           npx --no-install terragucci components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge forgejo --result "$PLAN_RESULT" --context terragucci/plan
   replan:
@@ -290,7 +290,7 @@ jobs:
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
           CHANT_REPLAN_REF: refs/pull/${{ steps.decide.outputs.pr }}/head
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -330,7 +330,7 @@ jobs:
           BASE_SHA: '${{ steps.decide.outputs.base }}'
           PR_NUMBER: '${{ steps.decide.outputs.pr }}'
           CHANT_PLAN_ARGUMENT: '${{ steps.decide.outputs.argument }}'
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           chant_report="$PWD/terragucci-report"
           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["pr-plan.json","pr-note.md"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant: the plan report is too large to hand to the note job, even cut to the report and the note; it hands on none of it")}else console.error("chant: the plan report is too large to hand to the note job whole; it hands on pr-plan.json and pr-note.md")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant: the plan report could not be handed to the note job" >&2; }
@@ -358,7 +358,7 @@ jobs:
       - name: Check out the target branch's commit
         uses: https://code.forgejo.org/actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Take the plan report from the re-plan job
-        run: |
+        run: |-
           set -u
           node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the replan job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the replan job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the replan job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the replan job")' terragucci-report <<'END_OF_REPORT'
           ${{ toJSON(needs.replan.outputs.report_0) }}
@@ -379,7 +379,7 @@ jobs:
           GITHUB_TOKEN: '${{ github.token }}'
           PR_NUMBER: '${{ needs.replan.outputs.pr }}'
           HEAD_SHA: '${{ needs.replan.outputs.head }}'
-        run: |
+        run: |-
           export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
           TG_TOKEN="$GITHUB_TOKEN" TG_PR="$PR_NUMBER" TG_SHA="$HEAD_SHA" terragucci plan-note --forge forgejo --report terragucci-report --notices "$CHANT_PLAN_NOTE_NOTICES" || true
       - name: Post the plan note and terragucci/plan
@@ -391,7 +391,7 @@ jobs:
           GITHUB_TOKEN: '${{ github.token }}'
           CHANT_PLAN_NOTE_WORDS: '{"footer":"<sub><img src=\"https://intentius.io/terragucci/brand/taco-small.png\" width=\"26\" height=\"16\" alt=\"\"> Posted by [terragucci](https://intentius.io/terragucci/)</sub>","artifact":"terragucci-report","noReport":"Planned in [this run]({run}), which keeps no report artifact; with `reports` set, the note links the report in the bucket.","marker":"terragucci:waves","anchors":{"member":"root-{id}","group":"group-{id}"},"overrideKey":"policy.override","approvalRulesKey":"approval_rules","applyStage":"tf-apply","productMarker":"terragucci:plan"}'
           CHANT_PLAN_ARGUMENT: '${{ needs.replan.outputs.argument }}'
-        run: |
+        run: |-
           export CHANT_PLAN_NOTE_NOTICES="${RUNNER_TEMP:-/tmp}/chant-plan-note-notices"
           npx --no-install terragucci components pr-post --pr "$PR_NUMBER" --head "$HEAD_SHA" --env default --output terragucci-report --forge forgejo --result "$PLAN_RESULT" --context terragucci/plan --not-affected "$CHANT_PLAN_ARGUMENT"
   fmt:
@@ -421,7 +421,7 @@ jobs:
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
           PUSHED_SHA: '${{ github.sha }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -454,7 +454,7 @@ jobs:
         run: npx --no-install terragucci commit prepare --forge forgejo --output .chant/commit
       - id: chant-commit
         name: Run the command
-        run: |
+        run: |-
           if [ -z "${CHANT_NO_FORGE_TOKEN:-}" ] && [ "${0#*/}" != "$0" ] && [ -f "$0" ] && ! { [ "${0##*/}" = sh ] || [ "${0##*/}" = bash ] || [ "${0##*/}" = dash ]; } && command -v env >/dev/null 2>&1 && command -v sh >/dev/null 2>&1; then exec env -u CHANT_FORGE_TOKEN -u CHANT_GITHUB_TOKEN -u CHANT_FORGEJO_TOKEN -u CHANT_GITLAB_TOKEN -u CHANT_CHECKOUT_TOKEN -u GITHUB_TOKEN -u GH_TOKEN -u FORGEJO_TOKEN -u GITEA_TOKEN -u GITLAB_TOKEN -u CI_JOB_TOKEN -u ACTIONS_RUNTIME_TOKEN CHANT_NO_FORGE_TOKEN=1 sh -e "$0"; fi; unset CHANT_FORGE_TOKEN CHANT_GITHUB_TOKEN CHANT_FORGEJO_TOKEN CHANT_GITLAB_TOKEN CHANT_CHECKOUT_TOKEN GITHUB_TOKEN GH_TOKEN FORGEJO_TOKEN GITEA_TOKEN GITLAB_TOKEN CI_JOB_TOKEN ACTIONS_RUNTIME_TOKEN
           chant_report="$PWD/.chant/commit"
           chant_handover() { node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const [dir,out]=process.argv.slice(1);const CHUNK=1000000,PARTS=4,NOTE=["decision.json","rc","output","change.patch"];const all={};const walk=(d,r)=>{let n=[];try{n=fs.readdirSync(d).sort()}catch{return}for(const x of n){const f=p.join(d,x),k=r?r+"/"+x:x;let s;try{s=fs.lstatSync(f)}catch{continue}if(s.isDirectory())walk(f,k);else if(s.isFile())all[k]=fs.readFileSync(f).toString("base64")}};walk(dir,"");const pack=(o)=>z.gzipSync(JSON.stringify(o)).toString("base64");let b=pack(all);if(b.length>CHUNK*PARTS){b=pack(Object.fromEntries(Object.entries(all).filter(([k])=>NOTE.includes(k))));if(b.length>CHUNK*PARTS){b=pack({});console.error("chant-commit: the report is too large to hand to the next job, even cut to decision.json, rc, output, change.patch; it hands on none of it")}else console.error("chant-commit: the report is too large to hand to the next job whole; it hands on decision.json, rc, output, change.patch")}let o="";for(let i=0;i*CHUNK<b.length;i++)o+="report_"+i+"="+b.slice(i*CHUNK,(i+1)*CHUNK)+"\n";fs.appendFileSync(out,o);' "$chant_report" "${GITHUB_OUTPUT:-/dev/null}" || echo "chant-commit: the report could not be handed to the next job" >&2; }
@@ -481,7 +481,7 @@ jobs:
         env:
           CHANT_CHECKOUT_TOKEN: '${{ github.token }}'
           PUSHED_SHA: '${{ github.sha }}'
-        run: |
+        run: |-
           set -eu
           git config --global --add safe.directory "$PWD" 2>/dev/null || true
           [ -d .git ] || git init -q .
@@ -509,7 +509,7 @@ jobs:
           case "$PUSHED_SHA" in *[!0-9a-f]*|'') echo "no pushed commit" >&2; exit 1 ;; esac
           git -c protocol.version=2 fetch -q --no-tags origin "+$PUSHED_SHA:refs/chant/commit-head"
       - name: Take the change from the commit job
-        run: |
+        run: |-
           set -u
           node -e 'const fs=require("fs"),p=require("path"),z=require("zlib");const dir=process.argv[1];let b="";for(const l of fs.readFileSync(0,"utf8").split("\n")){if(!l.trim())continue;let s="";try{s=JSON.parse(l)}catch{}if(typeof s==="string")b+=s}if(!b){console.log("chant: the fmt job handed on no report");process.exit(0)}let files;try{files=JSON.parse(z.gunzipSync(Buffer.from(b,"base64"),{maxOutputLength:268435456}).toString("utf8"))}catch(e){console.log("chant: the report the fmt job handed on does not read: "+e.message);process.exit(0)}if(!files||typeof files!=="object"||Array.isArray(files)){console.log("chant: the report the fmt job handed on is not a set of files");process.exit(0)}let n=0;for(const [k,v] of Object.entries(files)){const parts=k.split("/");if(typeof v!=="string"||k.length>1024||parts.some((x)=>!x||x==="."||x===".."||/[\\\x00-\x1f]/.test(x))){console.log("chant: left out "+JSON.stringify(k));continue}try{const f=p.join(dir,...parts);fs.mkdirSync(p.dirname(f),{recursive:true});fs.writeFileSync(f,Buffer.from(v,"base64"));n++}catch(e){console.log("chant: could not write "+JSON.stringify(k)+": "+e.message)}}console.log("chant: took "+n+" report files from the fmt job")' .chant/commit <<'END_OF_REPORT'
           ${{ toJSON(needs.fmt.outputs.report_0) }}
@@ -522,7 +522,7 @@ jobs:
           CHANT_COMMIT_TOKEN: '${{ github.token }}'
           GITHUB_TOKEN: '${{ github.token }}'
           CHANT_FORGEJO_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           chant_auth="$(printf 'x-access-token:%s' "$CHANT_COMMIT_TOKEN" | base64 | tr -d '\n')"
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $chant_auth"
           unset chant_auth
@@ -570,7 +570,7 @@ jobs:
       - name: Plan, gate and apply wave 1 (wave-1)
         env:
           GITHUB_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 1 --render-spec
       - name: Keep the job's outcome
@@ -621,7 +621,7 @@ jobs:
       - name: Plan, gate and apply wave 2 (wave-2)
         env:
           GITHUB_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 2 --render-spec
       - name: Keep the job's outcome
@@ -672,7 +672,7 @@ jobs:
       - name: Plan, gate and apply wave 3 (wave-3)
         env:
           GITHUB_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 3 --render-spec
       - name: Keep the job's outcome
@@ -723,7 +723,7 @@ jobs:
       - name: Plan, gate and apply wave 4 (wave-4)
         env:
           GITHUB_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 4 --render-spec
       - name: Keep the job's outcome
@@ -774,7 +774,7 @@ jobs:
       - name: Plan, gate and apply wave 5 (wave-5)
         env:
           GITHUB_TOKEN: '${{ github.token }}'
-        run: |
+        run: |-
           export TG_DOWNLOAD_DIR="$PWD/.terragrunt-cache/sources" TG_PROVIDER_CACHE_DIR="$PWD/.terragrunt-cache/providers"
           terragucci run wave --spec .chant/op-waves/tf-apply.spec.json --wave 5 --render-spec
       - name: Keep the job's outcome
@@ -951,7 +951,7 @@ jobs:
           fetch-depth: 0
       - name: Open a pull request for each tip
         shell: bash
-        run: |
+        run: |-
           set -u
           export FORGEJO_TOKEN="$TG_TOKEN"
           terragucci respond tips --mode apply --binary tofu || true
