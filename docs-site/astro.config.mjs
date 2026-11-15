@@ -238,6 +238,7 @@ export default defineConfig({
 						{ label: 'The audit trail', slug: 'reference/audit-trail' },
 						{ label: 'Migration files', slug: 'reference/migration-files' },
 						{ label: 'Versions and pins', slug: 'reference/versions-and-pins' },
+						{ label: 'Repository dependencies', slug: 'reference/what-your-repository-depends-on' },
 						{ label: 'State backends', slug: 'reference/state-backends' },
 						{ label: 'Delivery metrics', slug: 'reference/delivery-metrics' },
 						{ label: 'Environment variables and credentials', slug: 'reference/environment' },
