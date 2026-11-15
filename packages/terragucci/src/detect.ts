@@ -128,8 +128,10 @@ export function globMatch(glob: string, path: string): boolean {
 
 /**
  * The repo's roots, as paths relative to `repo`, sorted. With `globs`, a
- * directory counts when it matches a glob and holds Terraform files; without
- * them, every directory that is a root by `isRoot`.
+ * directory counts when it matches a glob and holds Terraform files, unless a
+ * directory calls it as a local module and it keeps no state of its own (an
+ * exact path still names it); without them, every directory that is a root by
+ * `isRoot`.
  */
 export function findRoots(repo: string, globs?: string[]): string[] {
   return findRootsWithReasons(repo, globs).map((r) => r.root);
@@ -140,20 +142,63 @@ export interface RootReason {
   reason: string;
 }
 
-/** `findRoots`, with why each directory counts: the backend, cloud block or provider found, or the glob matched. */
-export function findRootsWithReasons(repo: string, globs?: string[]): RootReason[] {
-  const out: RootReason[] = [];
-  for (const d of dirs(repo)) {
+/**
+ * The directories some directory calls by local path, as `module "x" { source = "./m" }`
+ * or `"../m"`, relative to `repo`. Registry, git and other sources are not local.
+ */
+function calledModules(repo: string, all: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const d of all) {
+    for (const f of tfFiles(d).filter((x) => !isJson(x))) {
+      const text = stripComments(readFileSync(f, "utf-8"));
+      for (const m of text.matchAll(/^\s*module\s+"[^"]*"\s*\{/gm)) {
+        const src = attr(blockBody(text, m.index ?? 0), "source");
+        if (src === undefined || !/^\.{1,2}\//.test(src)) continue;
+        const rel = posix(relative(repo, resolve(d, src)));
+        if (rel && !rel.startsWith("..")) out.add(rel);
+      }
+    }
+  }
+  return out;
+}
+
+/** Whether a directory keeps state of its own: a backend, a cloud block or a live block. A provider alone does not. */
+const hasOwnState = (dir: string): boolean => /^(backend |cloud block|choudoufu live block)/.test(rootReason(dir) ?? "");
+
+const bare = (p: string): string => posix(p).replace(/^\.\//, "").replace(/\/+$/, "");
+
+/**
+ * With `globs`, the directories a glob matched that are left out because a
+ * directory calls them as a local module and they hold no backend or cloud
+ * block. A glob that is the directory's exact path keeps it.
+ */
+export function modulesLeftOut(repo: string, globs: string[] | undefined): string[] {
+  return matchedDirs(repo, globs).left;
+}
+
+function matchedDirs(repo: string, globs: string[] | undefined): { kept: RootReason[]; left: string[] } {
+  const kept: RootReason[] = [];
+  const left: string[] = [];
+  const all = dirs(repo);
+  const called = globs ? calledModules(repo, all) : new Set<string>();
+  for (const d of all) {
     const rel = posix(relative(repo, d)) || ".";
     if (globs) {
       const g = globs.find((x) => globMatch(x, rel));
-      if (g !== undefined && tfFiles(d).length > 0) out.push({ root: rel, reason: `matches roots glob ${g}` });
+      if (g === undefined || tfFiles(d).length === 0) continue;
+      if (called.has(rel) && bare(g) !== rel && !hasOwnState(d)) left.push(rel);
+      else kept.push({ root: rel, reason: `matches roots glob ${g}` });
     } else {
       const reason = rootReason(d);
-      if (reason) out.push({ root: rel, reason });
+      if (reason) kept.push({ root: rel, reason });
     }
   }
-  return out.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
+  return { kept, left };
+}
+
+/** `findRoots`, with why each directory counts: the backend, cloud block or provider found, or the glob matched. */
+export function findRootsWithReasons(repo: string, globs?: string[]): RootReason[] {
+  return matchedDirs(repo, globs).kept.sort((a, b) => (a.root < b.root ? -1 : a.root > b.root ? 1 : 0));
 }
 
 export interface Detected<T> {

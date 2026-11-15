@@ -134,7 +134,7 @@ import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
 import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
-import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
+import { addressWarnings, detectForge, findRoots, modulesLeftOut, type WavesAfter } from "./detect";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { terramateWrite } from "./terramate";
 import { credentialWarnings, stateAccess, type StateAccess } from "./state-access";
@@ -1562,6 +1562,11 @@ export async function main(argv: string[]): Promise<number> {
           }
           // A state the roots' code does not address can't order a reader after its writer: say which.
           if (shape && problems.length === 0 && shape.engine === "per-root" && shape.kind !== "atmos") warnings.push(...addressWarnings(repoDir, findRoots(repoDir, config.roots)));
+          // A roots glob keeps out the directories a root calls as local modules; say how many.
+          if (shape && problems.length === 0 && config.roots && shape.engine === "per-root" && shape.kind !== "atmos" && shape.kind !== "terragrunt") {
+            const left = modulesLeftOut(repoDir, config.roots);
+            if (left.length > 0) warnings.push(`roots left out ${left.length} matched ${left.length === 1 ? "directory" : "directories"} that a root calls as a local module: ${left.join(", ")}; name one by its exact path to plan it as a root`);
+          }
           if (!config.projects && config.terragrunt?.credentials) warnings.push(...credentialWarnings(config.terragrunt.credentials));
           // One apply job per identity: groups whose jobs carry the same token subject get a tip, never a warning.
           // Only a config that can split into groups looks for its roots, and a tip never fails the check.
