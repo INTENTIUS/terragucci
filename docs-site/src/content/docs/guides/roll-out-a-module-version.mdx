@@ -127,7 +127,7 @@ For each one, the watch asks the registry for its releases and takes the newest 
 
 - A release with no date cannot meet `min_age`. The dates come from the registry's version document (`published_at`), which the public registries serve; a static registry or an OCI repository gives none.
 - Registry modules, `oci://` modules and providers are read. A git module is not, and the run lists it as skipped.
-- A module call whose `version` is a constraint such as `~> 5.0` is not followed. The constraint already floats, and a release outside it needs the constraint changed. `terragucci pin modules` turns constraints into exact pins, and the watch follows them from then on.
+- A module call whose `version` is a constraint such as `~> 5.0` is not followed. The constraint already floats, and a release outside it needs the constraint changed. [`terragucci pin modules`](/terragucci/reference/cli/#pin) turns constraints into exact pins, and the watch follows them from then on.
 - A module with a rollout in flight is left alone until it finishes, and a release whose rollout already ran is not started again. Roots still on an older version are named, with the command that moves them.
 - A dry run (`terragucci respond rollout`, without `--mode apply`) lists what each rule would start and why anything is held.
 
