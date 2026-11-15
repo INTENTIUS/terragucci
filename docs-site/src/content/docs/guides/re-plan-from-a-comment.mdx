@@ -166,15 +166,16 @@ Where it is read depends on who answers the comment.
 | Forge | Limited by `comment_allow` | Write access alone |
 |---|---|---|
 | GitLab | `plan`, `apply`, `lock`, `unlock`, `agent` and `skip-soak`, in the comments job | |
-| GitHub and Forgejo | `action`, `skip-soak`, and `lock` and `unlock` under `locks: plan` with `apply.when: merge` | `plan`, `apply` and `agent`, which chant's comment jobs answer |
+| GitHub and Forgejo | `action`, `skip-soak`, and `lock` and `unlock` under `locks: plan` with `apply.when: merge` | |
+| GitHub and Forgejo, chant's jobs | `plan`, `apply` and `agent`, and `lock` and `unlock` under `apply.when: pull-request`, with a terragucci built on chant 0.124.98 or newer | the same commands, with a terragucci built on an older chant |
 
-On GitHub and Forgejo `config check` refuses a list for a command in the right-hand column, and a `default`, so a list that would limit nothing is never written.
+chant's jobs read the list in the workflow the generator wrote, which is the default branch's copy: the re-plan checks `plan` before it plans, the `apply-comment` job checks `apply` (and `lock` and `unlock` before merge), and the agent checks `agent`. A `default` covers them too. The re-plan and the `apply-comment` job reply to someone the list leaves out; the agent's push job does. With a terragucci built on an older chant, those commands check write access alone, so `config check` refuses a list for them and a `default`, naming the chant release, and a list that would limit nothing is never written. A dispatch of the re-plan asks no list, as it asks no permission.
 
 Team membership is read from the forge's API with a token, and the job's own token cannot read it on GitHub. Set a token that can and name it `TG_TEAM_TOKEN`; a job falls back to `TG_TOKEN` when it is unset.
 
 | Forge | What the token needs |
 |---|---|
-| GitHub | a secret `TG_TEAM_TOKEN` holding a token that can read the organization's members: a fine-grained token or app with the organization permission Members: read, or a classic token with `read:org`; the generated workflows pass it to the jobs that check a team |
+| GitHub | a secret `TG_TEAM_TOKEN` holding a token that can read the organization's members: a fine-grained token or app with the organization permission Members: read, or a classic token with `read:org`; the generated workflows pass it to the jobs that check a team, chant's among them |
 | Forgejo | a secret `TG_TEAM_TOKEN` holding a token with `read:organization` |
 | GitLab | a CI/CD variable `TG_TEAM_TOKEN`, or the comments job's `TG_TOKEN`, belonging to a user who can see the group's members (`read_api`) |
 

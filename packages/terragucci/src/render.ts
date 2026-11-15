@@ -416,6 +416,8 @@ export interface PipelineInput {
   atlantisComments?: boolean;
   /** `comment_allow` names a team: the jobs that check it on GitHub and Forgejo get the secret TG_TEAM_TOKEN as `TG_TEAM_TOKEN`, since the workflow's own token cannot read a team's members (comment-allow.ts). GitLab jobs read a CI/CD variable of that name. */
   teamToken?: boolean;
+  /** `comment_allow`'s entries for chant's jobs (the re-plan, the apply comment and the agent) on GitHub and Forgejo, with the secret a team is read with. Set only when the chant terragucci is built on carries them (./comment-allow.ts `chantCommentAllow`). */
+  commentAllow?: { allow: Record<string, string[]>; tokenSecret?: string };
   /** `review.agent` is on: the review workflow, run from the default branch, reviews a pull request after its plan (render-review.ts). GitHub and Forgejo only. */
   review?: ReviewInput;
   /** `apply.when: pull-request`: an open pull request applies on `/terragucci apply` (on GitLab through the comments job and the waves' pipeline it starts), and the push after the merge only confirms. In a Terragrunt repo its waves are the waves of units. */
@@ -1676,6 +1678,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     others: [],
     ...(input.atlantisComments ? { atlantis: true } : {}),
     ...(input.evidence ? { evidence: input.evidence } : {}),
+    // comment_allow for chant's re-plan and apply comment (GitHub and Forgejo, on a chant that carries it).
+    ...(input.commentAllow && forge !== "gitlab" ? { commentAllow: input.commentAllow } : {}),
   };
   // chant's product pipeline gives the generator the apply status, the stale marking of the plan notes, the before-merge
   // mode and the names its comment job re-runs or dispatches by, from the same shape and names (./render-waves.ts).
@@ -1702,7 +1706,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
 
   if (input.comments && forge !== "gitlab") throw new RenderError(`comments: ${COMMENTS_GITLAB_ONLY}`);
   // agent.comment is chant's agent job (chant#4616), in a workflow of its own.
-  const chantAgent = input.agentComment && !(forge === "gitlab" && !input.comments) ? chantAgentFiles(forge, image, input.agentComment, MARKER) : undefined;
+  const chantAgent = input.agentComment && !(forge === "gitlab" && !input.comments) ? chantAgentFiles(forge, image, input.agentComment, MARKER, undefined, input.commentAllow) : undefined;
   if (input.agentComment && !(forge === "gitlab" && !input.comments) && !chantAgent) throw new RenderError("agent.comment: chant's agent job wrote no jobs for this pipeline");
   if (forge === "gitlab") {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);

@@ -15,7 +15,7 @@ import { CHANT_CONFIG, chantConfigText, chantConfigWrittenByTerragucci } from ".
 import { waveCallArgv, wavesSpecText, wavesStepSpec } from "./chant-waves";
 import { MIGRATIONS_DIR } from "./migrate";
 import { declaredGates } from "./approval";
-import { allowTeams } from "./comment-allow";
+import { allowTeams, chantCommentAllow } from "./comment-allow";
 import { SIGNERS_PATH } from "./seal";
 import {
   approvalModeOf,
@@ -407,6 +407,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
       })
     : undefined;
   if (prowJobs) notes.push(...prowJobs.notes);
+  // chant's re-plan, apply comment and agent take the list for plan, apply and agent (and lock and unlock before merge) once the chant terragucci is built on carries it.
+  const chantAllow = chantCommentAllow(settings.comment_allow, { forge: forgeChoice.value, ...(settings.apply?.when ? { apply: { when: settings.apply.when } } : {}) });
   const pipeline = prowJobs ?? renderPipeline({
     ...checkHooksInput,
     ...(evidence ? { evidence } : {}),
@@ -464,6 +466,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(agentDriftInput(settings) ? { agentDrift: agentDriftInput(settings) } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(allowTeams(settings.comment_allow).length > 0 ? { teamToken: true } : {}),
+    ...(chantAllow ? { commentAllow: chantAllow } : {}),
     ...(reviewInput(settings) ? { review: reviewInput(settings) } : {}),
     ...(settings.apply?.resume ? { resume: settings.apply.resume } : {}),
     ...(settings.apply?.when === "pull-request" ? { applyWhen: "pull-request" as const, ...(settings.apply.merge ? { applyMerge: settings.apply.merge } : {}), ...(settings.apply.merge_token_env ? { applyMergeTokenEnv: settings.apply.merge_token_env } : {}), ...(settings.apply.requires ? { applyRequires: settings.apply.requires } : {}) } : {}),

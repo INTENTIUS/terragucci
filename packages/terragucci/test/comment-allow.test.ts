@@ -4,7 +4,12 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { commentAllowAt, commentAllowProblems, mayRun, TeamReadError, teamReads, type TeamReads } from "../src/comment-allow";
+import { dependencies } from "../package.json";
+import { CHANT_PIN, chantAtLeast, chantCarriesCommentAllow, chantCommentAllow, COMMENT_ALLOW_CHANT_FLOOR, commentAllowAt, commentAllowForgeProblems, commentAllowProblems, mayRun, TeamReadError, teamReads, type TeamReads } from "../src/comment-allow";
+import { chantAgentFiles, chantAgentOptions } from "../src/render-chant-agent";
+import { agentCommentInput } from "../src/agent-comment";
+import { githubCommentJob, githubPlanJobs, type PlanJobsInput } from "../src/product-plan";
+import { MARKER } from "../src/render";
 import { decideComment } from "../src/comment";
 import { pollGitLabComments } from "../src/comment-gitlab";
 import { validateConfig } from "../src/config";
@@ -324,5 +329,103 @@ describe("pollGitLabComments with comment_allow", () => {
     const r = await run({ apply: ["team:acme/platform"] }, table({}));
     expect(r.outcomes[0]).toMatchObject({ ran: false, fail: true });
     expect(r.outcomes[0]!.reason).toContain("could not read team membership");
+  });
+});
+
+describe("comment_allow for chant's jobs, from the chant release that carries it", () => {
+  const allow = { plan: ["team:acme/release"], apply: ["alice"], agent: ["bob"], default: ["carol"] };
+
+  it("names the chant floor, which the pin does not yet meet, and reads versions as chant numbers them", () => {
+    expect(COMMENT_ALLOW_CHANT_FLOOR).toBe("0.124.98");
+    expect(CHANT_PIN).toBe(dependencies["@intentius/chant"]);
+    expect(chantAtLeast("0.124.98", "0.124.98")).toBe(true);
+    expect(chantAtLeast("0.124.99", "0.124.98")).toBe(true);
+    expect(chantAtLeast("0.125.0", "0.124.98")).toBe(true);
+    expect(chantAtLeast("1.0.0", "0.124.98")).toBe(true);
+    expect(chantAtLeast("0.124.97", "0.124.98")).toBe(false);
+    expect(chantAtLeast("0.124.9", "0.124.98")).toBe(false);
+    expect(chantAtLeast("^0.124.98", "0.124.98")).toBe(true);
+    expect(chantAtLeast("next", "0.124.98")).toBe(false);
+    expect(chantCarriesCommentAllow("0.124.97")).toBe(false);
+    expect(chantCarriesCommentAllow("0.124.98")).toBe(true);
+  });
+
+  it("config check accepts plan, apply, agent and default on GitHub and Forgejo at the floor, and still refuses them below it", () => {
+    for (const forge of [undefined, "github", "forgejo"]) {
+      const s = forge ? { forge } : {};
+      expect(commentAllowForgeProblems(allow, s, "c", "0.124.98"), `${forge} at the floor`).toEqual([]);
+      expect(commentAllowForgeProblems(allow, s, "c", "0.125.2"), `${forge} above`).toEqual([]);
+      const below = commentAllowForgeProblems(allow, s, "c", "0.124.97");
+      expect(below.map((p) => p.split(" ")[0]), `${forge} below`).toEqual(["c.plan", "c.apply", "c.agent", "c.default"]);
+      expect(below[0]).toContain("chant 0.124.97 here checks write access alone for it, and chant 0.124.98 and later limit it");
+    }
+    expect(commentAllowForgeProblems({ apply: ["a"] }, { forge: "gitlab" }, "c", "0.124.50")).toEqual([]);
+  });
+
+  it("lock and unlock stay refused where no job reads them, and are read under apply.when: pull-request at the floor", () => {
+    const lock = { lock: ["alice"], unlock: ["alice"] };
+    expect(commentAllowForgeProblems(lock, {}, "c", "0.124.98")).toHaveLength(2);
+    expect(commentAllowForgeProblems(lock, { locks: "plan" }, "c", "0.124.98")).toEqual([]);
+    expect(commentAllowForgeProblems(lock, { apply: { when: "pull-request" } }, "c", "0.124.98")).toEqual([]);
+    expect(commentAllowForgeProblems(lock, { locks: "plan", apply: { when: "pull-request" } }, "c", "0.124.98")).toEqual([]);
+    expect(commentAllowForgeProblems(lock, { apply: { when: "pull-request" } }, "c", "0.124.97")).toHaveLength(2);
+    expect(commentAllowForgeProblems(lock, {}, "c", "0.124.98")[0]).toContain("pr-lock job");
+  });
+
+  it("validateConfig uses the pin: a list for apply is refused today, with the version named", () => {
+    expect(chantCarriesCommentAllow()).toBe(chantAtLeast(CHANT_PIN, COMMENT_ALLOW_CHANT_FLOOR));
+    const run = () => validateConfig({ comment_allow: { apply: ["alice"] } }, "terragucci.yml");
+    if (chantCarriesCommentAllow()) expect(run).not.toThrow();
+    else expect(run).toThrow(new RegExp(`chant ${CHANT_PIN.replace(/\./g, "\\.")} here checks write access alone`));
+  });
+
+  it("hands chant the commands it answers, the team secret only when a team is named, and nothing below the floor or on GitLab", () => {
+    expect(chantCommentAllow({ plan: ["team:acme/release"], apply: ["alice"], action: ["bob"], "skip-soak": ["bob"], lock: ["x"] }, {}, "0.124.98")).toEqual({ allow: { plan: ["team:acme/release"], apply: ["alice"] }, tokenSecret: "TG_TEAM_TOKEN" });
+    expect(chantCommentAllow({ apply: ["alice"], lock: ["x"], unlock: ["y"] }, { apply: { when: "pull-request" } }, "0.124.98")).toEqual({ allow: { apply: ["alice"], lock: ["x"], unlock: ["y"] } });
+    expect(chantCommentAllow({ default: ["carol"] }, {}, "0.124.98")).toEqual({ allow: { default: ["carol"] } });
+    expect(chantCommentAllow({ action: ["bob"] }, {}, "0.124.98")).toBeUndefined();
+    expect(chantCommentAllow({ apply: ["alice"] }, {}, "0.124.97")).toBeUndefined();
+    expect(chantCommentAllow({ apply: ["alice"] }, { forge: "gitlab" }, "0.124.98")).toBeUndefined();
+    expect(chantCommentAllow(undefined, {}, "0.124.98")).toBeUndefined();
+  });
+
+  it("passes the agent's list and the team secret to chant's agent job, and none without a list for agent", () => {
+    const agent = agentCommentInput(validateConfig({ agent: { via: "forge", token_env: "AGENT_FORGE_TOKEN", comment: {} } }, "t"))!;
+    expect(chantAgentOptions(agent, { allow: { agent: ["team:acme/ai"], apply: ["x"] }, tokenSecret: "TG_TEAM_TOKEN" })).toMatchObject({ commentAllow: { agent: ["team:acme/ai"] }, commentAllowTokenEnv: "TG_TEAM_TOKEN" });
+    expect(chantAgentOptions(agent, { allow: { default: ["carol"] } })).toMatchObject({ commentAllow: { default: ["carol"] } });
+    expect(chantAgentOptions(agent, { allow: { default: ["carol"] } })).not.toHaveProperty("commentAllowTokenEnv");
+    expect(chantAgentOptions(agent, { allow: { apply: ["x"] } })).not.toHaveProperty("commentAllow");
+    expect(chantAgentOptions(agent)).not.toHaveProperty("commentAllow");
+    const seen: unknown[] = [];
+    const chant = {
+      CI_AGENT_FLOOR: "0.124.55",
+      productPipelineJobs: (_f: string, _e: string, o: { agent: Record<string, unknown> }) => (seen.push(o.agent), { agent: { comment: "/terragucci agent", name: "terragucci-agent", spec: { name: "terragucci-agent", agent: { on: "comment" } } } }),
+      productDriftAgent: () => ({}),
+      setActiveProductWords: () => undefined,
+      generate: { github: () => ({ files: [{ name: "a.yml", yaml: "x: 1\n" }] }), gitlab: () => ({ files: [] }), forgejo: () => ({ files: [{ name: "a.yml", yaml: "x: 1\n" }] }) },
+    };
+    chantAgentFiles("github", "img", agent, MARKER, chant as never, { allow: { agent: ["bob"] }, tokenSecret: "TG_TEAM_TOKEN" });
+    expect(seen[0]).toMatchObject({ commentAllow: { agent: ["bob"] }, commentAllowTokenEnv: "TG_TEAM_TOKEN" });
+  });
+
+  const planInput = (extra: Partial<PlanJobsInput> = {}): PlanJobsInput => ({ forge: "github", image: "img", command: "terragucci plan", env: {}, setup: [], others: [], ...extra });
+
+  it("leaves the re-plan and the apply comment as chant wrote them without a list", () => {
+    const replan = Object.fromEntries(githubPlanJobs(planInput()));
+    const decide = (replan.replan!.steps as Array<{ id?: string; env?: Record<string, string> }>).find((s) => s.id === "decide")!;
+    expect(decide.env).not.toHaveProperty("CHANT_COMMENT_ALLOW");
+  });
+
+  it("gives the jobs the list when chant carries it: the decision's variables in the re-plan, the comment job's in apply-comment", () => {
+    const input = planInput({ commentAllow: { allow: { plan: ["team:acme/release"], apply: ["alice"] }, tokenSecret: "TG_TEAM_TOKEN" } });
+    const decide = (Object.fromEntries(githubPlanJobs(input)).replan!.steps as Array<{ id?: string; env?: Record<string, string> }>).find((s) => s.id === "decide")!;
+    // An installed chant older than the floor leaves the option out; the variables are there once it carries it.
+    if (chantCarriesCommentAllow()) {
+      expect(JSON.parse(decide.env!.CHANT_COMMENT_ALLOW!)).toEqual({ plan: ["team:acme/release"], apply: ["alice"] });
+      expect(decide.env!.CHANT_COMMENT_ALLOW_TOKEN).toBe("${{ secrets.TG_TEAM_TOKEN }}");
+    } else {
+      expect(decide.env).not.toHaveProperty("CHANT_COMMENT_ALLOW");
+    }
+    expect(githubCommentJob).toBeTypeOf("function");
   });
 });
