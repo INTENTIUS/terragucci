@@ -62,6 +62,8 @@ export interface CatalogOptions {
   binary?: string;
   /** `modules.attest`'s key path, when releases are attested. */
   attestKey?: string;
+  /** Releases are signed keyless, so each attestation is checked with `terragucci verify-release`. */
+  attestKeyless?: boolean;
   dryRun?: boolean;
   parser?: Hcl2Json;
   /** Runs terraform-docs; {@link terraformDocsRunner} by default. */
@@ -251,7 +253,7 @@ export async function publishCatalog(repo: string, reg: RegistrySettings, store:
     }
   }
 
-  if (o.attestKey) {
+  if (o.attestKey || o.attestKeyless) {
     const prefix = ledger.prefix;
     for (const r of versions.values()) {
       const bundle = tryGit(repo, ["cat-file", "-e", `refs/heads/chant/lifecycle:${prefix}${attestDir(r.digest)}/${ATTEST_FILES.signature}`]);
@@ -259,7 +261,7 @@ export async function publishCatalog(repo: string, reg: RegistrySettings, store:
       const v = r.releaseVersion;
       const addr = registryAddress(reg, r.component);
       const tarball = v && (reg.download ?? "tarball") === "tarball" ? `${reg.url.replace(/\/+$/, "")}/${addr.path}/${v}/${tarballName(addr, v)}` : undefined;
-      const verify = tarball
+      const verify = tarball && o.attestKey
         ? `git show origin/chant/lifecycle:${prefix}${attestDir(r.digest)}/${ATTEST_FILES.signature} > signature.bundle && curl -sfL ${tarball} | gunzip > module.tar && cosign verify-blob --key ${o.attestKey} --bundle signature.bundle --insecure-ignore-tlog=true module.tar`
         : `terragucci verify-release ${r.component} ${v ?? r.digest}`;
       attestations.push({ component: r.component, digest: r.digest, state: "signed", verify });

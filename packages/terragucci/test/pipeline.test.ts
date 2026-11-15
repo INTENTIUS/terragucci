@@ -601,6 +601,21 @@ describe("publish job", () => {
     for (const name of ["check", "plan", "apply-wave-1", "apply-wave-2"]) expect(JSON.stringify(jobs[name])).not.toContain("COSIGN");
   });
 
+  it.each(["github", "forgejo"] as const)("%s: with keyless attest, the publish job alone gets an OIDC token, and no key or cosign", (forge) => {
+    const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attestKeyless: { audience: "sigstore" } }).content).jobs;
+    expect(jobs.publish.permissions["id-token"]).toBe("write");
+    expect(JSON.stringify(jobs.publish)).not.toContain("COSIGN");
+    expect(JSON.stringify(jobs.publish)).not.toContain("install cosign");
+    expect(JSON.stringify(body(withPublish(forge)).jobs.publish)).not.toContain("id-token");
+  });
+
+  it("gitlab: with keyless attest, the publish job declares the signing id_token and installs no cosign", () => {
+    const doc = body(renderPipeline({ forge: "gitlab", binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, attestKeyless: { audience: "sigstore" } }).content);
+    expect(doc.publish.id_tokens).toEqual({ CHANT_ID_TOKEN_SIGSTORE: { aud: "sigstore" } });
+    expect(doc.publish.script.join("\n")).not.toContain("install cosign");
+    expect(JSON.stringify(body(withPublish("gitlab")).publish)).not.toContain("id_tokens");
+  });
+
   it.each(["github", "forgejo"] as const)("%s: with modules.registry in a bucket, the publish job alone gets the bucket's key secrets", (forge) => {
     expect(JSON.stringify(body(withPublish(forge)).jobs.publish)).not.toContain("AWS_ACCESS_KEY_ID");
     const jobs = body(renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, publish: true, publishBucket: "s3://acme-modules" }).content).jobs;

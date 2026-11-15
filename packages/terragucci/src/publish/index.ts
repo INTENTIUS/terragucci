@@ -36,11 +36,12 @@ import { globMatch } from "../detect";
 import { ConfigError, registryEdge, type RegistrySettings, type ResolvedSettings } from "../config";
 import { gunzip, gzip, moduleTar, moduleTarAt, moduleZip, sha256, tarEntries } from "./archive";
 import { commitsSince, git, hasCommit, tryGit } from "./git";
-import { attestKey, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
+import { attestKey, attestOn, attestRelease, cosignSigner, type Attested, type OciAccess, type Signer } from "./attest";
+import { keylessSetting, keylessSigner, ownKeylessTrust, trustedRootPath } from "./keyless";
 import { fetchLedger, recordRelease, releaseRecord } from "./ledger";
 import { publishCatalog } from "./catalog";
 import { gitlabTarget, hcpTarget, repositoryTarget, type HostedOptions } from "./hosted";
-import { AttestationError, publicKey, verifyRelease, type VerifiedRelease } from "./verify";
+import { AttestationError, publicKey, verifyRelease, type KeylessTrust, type Trust, type VerifiedRelease } from "./verify";
 import { CONTENT, REVISION, Registry, installable, legacyLayer, moduleManifest, notInstallable, parseOci, type Fetch, type Manifest } from "./oci";
 import { describeChanges, interfaceAt, interfaceBump, interfaceChanges, interfaceOf, smallerThan, type InterfaceChange, type ModuleInterface } from "./interface";
 import { changelogBump } from "@intentius/chant/lifecycle/release-changelog";
@@ -81,6 +82,8 @@ export interface PublishOptions {
   env?: Record<string, string | undefined>;
   /** Signs attested releases; cosign with the job's key by default. */
   signer?: Signer;
+  /** The `fetch` a keyless signer reaches the certificate and timestamp authorities with; a test hands in a fake. */
+  signFetch?: typeof fetch;
   /** The HCL parser an attested release's SBOM is read with. */
   parser?: Hcl2Json;
   /** Runs `modules.test`'s commands, for tests. */
@@ -466,6 +469,7 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
   const head = git(repo, ["rev-parse", "HEAD"]);
   const results: Published[] = [];
   const keyPath = attestKey(settings.modules?.attest);
+  const keyless = keylessSetting(settings.modules?.attest);
   const env = (opts.env ?? process.env) as NodeJS.ProcessEnv;
   const catalog: CatalogStep | undefined =
     registry && registry.catalog !== "off"
@@ -475,6 +479,7 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
             ...(settings.roots ? { roots: settings.roots } : {}),
             ...(settings.binary ? { binary: settings.binary } : {}),
             ...(keyPath ? { attestKey: keyPath } : {}),
+            ...(keyless ? { attestKeyless: true } : {}),
             ...(opts.parser ? { parser: opts.parser } : {}),
             ...(opts.terraformDocs ? { terraformDocs: opts.terraformDocs } : {}),
             ...(settings.control ? { control: settings.control } : {}),
@@ -493,19 +498,32 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
     if (!tested.has(mod.rel)) tested.set(mod.rel, testModule(dir, mod.rel, testBinary, opts.testRunner));
     return tested.get(mod.rel);
   };
-  let attesting: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string } | undefined;
+  let attesting: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string; keyless?: KeylessTrust } | undefined;
   const attestDeps = async () => {
-    if (!keyPath) return undefined;
+    if (!keyPath && !keyless) return undefined;
     if (!attesting) {
-      if (tryGit(repo, ["remote", "get-url", "origin"]) === undefined) throw new ConfigError("modules.attest records each release on chant/lifecycle at origin, and this checkout has no origin");
-      const file = join(repo, keyPath);
-      if (!existsSync(file)) throw new ConfigError(`modules.attest verifies each release against the public key at ${keyPath}, which is not in the repo; commit the cosign.pub of the key pair the publish job signs with`);
-      attesting = {
-        publicKey: readFileSync(file, "utf-8"),
-        keyPath,
-        signer: opts.signer ?? cosignSigner(opts.env ?? process.env),
-        parser: opts.parser ?? (await loadHclParser("modules.attest writes each release's SBOM from its HCL")),
-      };
+      const origin = tryGit(repo, ["remote", "get-url", "origin"]);
+      if (origin === undefined) throw new ConfigError("modules.attest records each release on chant/lifecycle at origin, and this checkout has no origin");
+      if (keyless) {
+        const root = trustedRootPath(keyless);
+        const trust = ownKeylessTrust(repo, keyless, origin, (p) => (existsSync(join(repo, p)) ? readFileSync(join(repo, p), "utf-8") : undefined));
+        attesting = {
+          publicKey: "",
+          keyPath: root,
+          keyless: trust,
+          signer: opts.signer ?? keylessSigner(opts.env ?? process.env, { ...(keyless.audience ? { audience: keyless.audience } : {}), ...(keyless.fulcio ? { fulcio: keyless.fulcio } : {}), ...(keyless.timestamp ? { timestamp: keyless.timestamp } : {}), ...(opts.signFetch ? { fetch: opts.signFetch } : {}) }),
+          parser: opts.parser ?? (await loadHclParser("modules.attest writes each release's SBOM from its HCL")),
+        };
+      } else {
+        const file = join(repo, keyPath!);
+        if (!existsSync(file)) throw new ConfigError(`modules.attest verifies each release against the public key at ${keyPath}, which is not in the repo; commit the cosign.pub of the key pair the publish job signs with`);
+        attesting = {
+          publicKey: readFileSync(file, "utf-8"),
+          keyPath: keyPath!,
+          signer: opts.signer ?? cosignSigner(opts.env ?? process.env),
+          parser: opts.parser ?? (await loadHclParser("modules.attest writes each release's SBOM from its HCL")),
+        };
+      }
     }
     return attesting;
   };
@@ -632,7 +650,7 @@ export async function publish(repo: string, settings: PublishSettings, opts: Pub
         continue;
       }
       if (opts.dryRun) {
-        const would = ["test", "publish", "sign and record"].filter((w) => (w === "test" ? settings.modules?.test === true : w === "sign and record" ? keyPath && target.attests !== false : true));
+        const would = ["test", "publish", "sign and record"].filter((w) => (w === "test" ? settings.modules?.test === true : w === "sign and record" ? (keyPath || keyless) && target.attests !== false : true));
         const bumpNote = bumps ? `; commits: ${bumps.commits}, interface: ${bumps.iface}` : "";
         results.push({ ...row, status: "published", version: formatSemver(version), detail: `dry run: would ${would.join(", ")}${bumpNote}` });
         continue;
@@ -730,7 +748,8 @@ export interface ReleaseCheck {
  */
 export async function verifyPublished(repo: string, settings: Pick<ResolvedSettings, "modules">, module: string, version: string, opts: PublishOptions = {}): Promise<ReleaseCheck[]> {
   const keyPath = attestKey(settings.modules?.attest);
-  if (!keyPath) throw new ConfigError("modules.attest is not set, so no release of this repo is attested");
+  const keyless = keylessSetting(settings.modules?.attest);
+  if (!keyPath && !keyless) throw new ConfigError("modules.attest is not set, so no release of this repo is attested");
   const publishTo = settings.modules?.publish;
   if (!publishTo) throw new ConfigError("modules.publish is not set");
   const v = parseSemver(version);
@@ -738,9 +757,20 @@ export async function verifyPublished(repo: string, settings: Pick<ResolvedSetti
   const modules = findModules(repo, settings.modules?.path ?? "modules/*");
   const mod = modules.find((m) => m.rel === module.replace(/\/+$/, "") || m.name === module);
   if (!mod) throw new ConfigError(`no module ${module} under ${settings.modules?.path ?? "modules/*"}`);
-  const keyFile = join(repo, keyPath);
-  if (!existsSync(keyFile)) throw new ConfigError(`the public key ${keyPath} is not in the repo`);
-  const key = publicKey(readFileSync(keyFile, "utf-8"), keyPath);
+  const fromDisk = (p: string): string | undefined => (existsSync(join(repo, p)) ? readFileSync(join(repo, p), "utf-8") : undefined);
+  let key: Trust;
+  if (keyless) {
+    try {
+      key = ownKeylessTrust(repo, keyless, tryGit(repo, ["remote", "get-url", "origin"]), fromDisk);
+    } catch (e) {
+      if (e instanceof AttestationError) throw new ConfigError(e.message);
+      throw e;
+    }
+  } else {
+    const keyFile = join(repo, keyPath!);
+    if (!existsSync(keyFile)) throw new ConfigError(`the public key ${keyPath} is not in the repo`);
+    key = publicKey(readFileSync(keyFile, "utf-8"), keyPath!);
+  }
   const ledger = fetchLedger(repo, "origin");
   const env = opts.env ?? process.env;
   const out: ReleaseCheck[] = [];

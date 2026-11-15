@@ -50,6 +50,7 @@ import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locke
 import { loadHclParser } from "./parser";
 import { atRange, isRange, moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
 import { appOf, changelogLines, movesYanked, templateContext, templateTarget, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
+import { adoptCalls, LOCAL_FROM, moveAdopted, pinnedSource, type AdoptTarget } from "./adopt";
 import { pinProviderRange, providerEntries, UNVERSIONED } from "./range";
 import { planWaves, type Wave } from "./waves";
 import { forgeHealth, soakNote, soakOf, soakRuleFor, type Health, type SoakRule, type SoakStatus } from "./soak";
@@ -89,6 +90,13 @@ export interface RolloutOptions {
   health?: Health;
   /** For tests: the time now, in milliseconds. */
   clock?: () => number;
+  /**
+   * The module is a local directory the roots call by relative path, and the
+   * rollout moves each call to the source it is published at: `name` is the
+   * directory, `to` the version, and `from` reads as `LOCAL_FROM`
+   * (`terragucci modules adopt`).
+   */
+  adopt?: AdoptTarget;
   /** Set by the walk: the registry addresses (`host/namespace/name/system`) a module named by its path is published at. */
   aliases?: string[];
 }
@@ -341,6 +349,23 @@ function classifyModule(project: string, root: string, calls: ModuleCall[], from
   return { status: { ...base, state: "elsewhere", version: others.join(", "), reason: `pinned at ${others.join(", ")}` }, calls };
 }
 
+/** A root's calls of a local module being adopted: at the local path (`from`), at the published source at `to`, or at another version of it. */
+async function classifyAdopt(dir: string, project: string, root: string, target: AdoptTarget, to: string, parser: Hcl2Json): Promise<RootStatus> {
+  const base = { project, root };
+  const found = await adoptCalls(dir, root, target, parser);
+  if (found.length === 0) return { ...base, state: "absent" };
+  const unreadable = found.filter((c) => c.unreadable);
+  if (unreadable.length > 0) return { ...base, state: "refused", reason: `cannot adopt: ${unreadable.map((c) => `${c.file} ${c.call}: ${c.unreadable}`).join("; ")}` };
+  const local = found.filter((c) => c.local);
+  const others = [...new Set(found.filter((c) => !c.local && c.version !== to).map((c) => c.version!))];
+  if (local.length === 0) return others.length === 0 ? { ...base, state: "to", version: to } : { ...base, state: "elsewhere", version: others.join(", "), reason: `pinned at ${others.join(", ")}` };
+  if (others.length > 0) return { ...base, state: "refused", reason: `cannot adopt: its calls are at the local path and at ${others.join(", ")}` };
+  // The edit is tried on each file, so a call it cannot place is refused now and not after earlier waves merged.
+  const moved = await moveAdopted(dir, root, target, to, parser);
+  if ("refused" in moved) return { ...base, state: "refused", reason: `cannot adopt: ${moved.refused}` };
+  return { ...base, state: "from", version: LOCAL_FROM };
+}
+
 /** Move a provider's `required_providers` entries in one root from a constraint to an exact version. */
 async function moveProviderRange(repo: string, root: string, name: string, from: string, to: string, parser: Hcl2Json): Promise<{ edits: Map<string, string> } | { refused: string }> {
   const edits = new Map<string, string>();
@@ -394,6 +419,9 @@ async function classifyProviderRange(dir: string, project: string, root: string,
 function tipFor(r: RootStatus, to: string): Tip | undefined {
   if (r.state !== "refused" || !r.reason || r.reason === SYNTH_ROLLOUTS || r.reason === ATMOS_ROLLOUTS) return undefined;
   const base = { project: r.project, root: r.root };
+  if (/^cannot adopt:/.test(r.reason)) {
+    return { ...base, rule: "rollout-adopt", message: `${r.root}: ${r.reason}. Change the call by hand so that its source is a plain relative path, or leave the root out with --root, and a later run moves it.` };
+  }
   if (/is a constraint/.test(r.reason)) {
     return { ...base, rule: "rollout-floating-pin", message: `${r.root}: ${r.reason}. Pin one version, such as version = "${to}", so a rollout can move it and the diff shows which roots it moves.` };
   }
@@ -434,6 +462,8 @@ interface Marker {
   roots?: string[];
   /** The roots the whole rollout is for, when `from` is a constraint and each root resolved on its own. */
   scope?: string[];
+  /** A rollout that adopts a local module: where it is published. */
+  adopt?: AdoptTarget;
 }
 
 function readMarker(body: string): Marker | undefined {
@@ -579,7 +609,7 @@ export async function continueRollouts(cwd: string, options: Omit<RolloutOptions
     else if (waves !== undefined && wave >= waves) rollouts.push({ ...base, action: "done", reason: `wave ${wave} of ${waves}, the last, merged` });
     else {
       try {
-        const result = await rollout(repo, { ...options, mode, kind: m.kind, name: m.name, to: m.to, ...(m.from !== undefined ? { from: m.from } : {}), ...(m.scope ? { only: m.scope } : {}) });
+        const result = await rollout(repo, { ...options, mode, kind: m.kind, name: m.name, to: m.to, ...(m.from !== undefined ? { from: m.from } : {}), ...(m.scope ? { only: m.scope } : {}), ...(m.adopt ? { adopt: m.adopt } : {}) });
         rollouts.push({ ...base, result });
       } catch (e) {
         rollouts.push({ ...base, action: "failed", reason: (e as Error).message });
@@ -601,6 +631,10 @@ export function describeContinue(result: ContinueResult): string {
 }
 
 async function walk(repo: string, config: TerragucciConfig, projects: Project[], options: RolloutOptions & { mode: "dry-run" | "apply" }): Promise<RolloutResult> {
+  if (options.adopt) {
+    if (!options.to) throw new ConfigError("adopting a local module needs the version it is published at");
+    options = { ...options, from: LOCAL_FROM };
+  }
   const needsParser = options.kind === "module" || isRange(options.from) || projects.some((p) => terragruntUnits(p.dir).length > 0);
   const parser = options.parser ?? (needsParser ? await loadHclParser() : undefined);
 
@@ -608,18 +642,18 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   const roots = new Map<string, string[]>();
   const calls = new Map<string, ModuleCall[]>();
   // A module named by its path is also every registry address modules.registry publishes it at.
-  if (options.kind === "module") options = { ...options, aliases: registryAliases(options.name, [...projects.map((p) => p.settings), config.defaults ?? {}]) };
+  if (options.kind === "module" && !options.adopt) options = { ...options, aliases: registryAliases(options.name, [...projects.map((p) => p.settings), config.defaults ?? {}]) };
   // A project whose shape refuses rollouts (synth, Atmos) has no root in its checkout to move: it is listed refused, with why.
   const refusedOf = new Map(projects.map((p) => [p.key, detectShape(p.dir, p.settings).refuses("rollouts")]));
   for (const p of projects) {
     roots.set(p.key, refusedOf.get(p.key) ? [] : rootsOf(p).filter((r) => options.only === undefined || options.only.includes(r)));
-    if (options.kind === "module") for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!, options.aliases));
+    if (options.kind === "module" && !options.adopt) for (const r of roots.get(p.key)!) calls.set(`${p.key}\0${r}`, await moduleCalls(p.dir, r, options.name, parser!, options.aliases));
   }
 
   // A template (the catalog says so): the rollout names apps, reads the changelog and moves yanked pins.
   const notes: string[] = [];
   let tmpl: TemplateContext | undefined;
-  if (options.kind === "module" && projects.length > 0) {
+  if (options.kind === "module" && !options.adopt && projects.length > 0) {
     const first = projects[0]!;
     const got = await templateContext(first.dir, config.projects ? resolveRepo(config.defaults ?? {}) : first.settings, options.name);
     tmpl = got.context;
@@ -686,11 +720,13 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     if (refused) statuses.push({ project: p.key, root: ".", state: "refused", reason: refused });
     for (const r of roots.get(p.key)!) {
       const s =
-        options.kind === "module"
-          ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion, tmpl).status
-          : isRange(from)
-            ? await classifyProviderRange(p.dir, p.key, r, options.name, from, toVersion, parser!)
-            : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
+        options.adopt
+          ? await classifyAdopt(p.dir, p.key, r, options.adopt, toVersion, parser!)
+          : options.kind === "module"
+            ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion, tmpl).status
+            : isRange(from)
+              ? await classifyProviderRange(p.dir, p.key, r, options.name, from, toVersion, parser!)
+              : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
       if (s.state !== "absent") statuses.push(s);
       if (s.state === "from" || s.state === "to") list.push(r);
     }
@@ -838,7 +874,9 @@ async function openPart(
   for (const root of moving) {
     const moved =
       options.kind === "module"
-        ? await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!, options.aliases), statusOf(root)?.yanked ? statusOf(root)!.version! : result.from!, result.to, parser!)
+        ? options.adopt
+          ? await moveAdopted(project.dir, root, options.adopt, result.to, parser!)
+          : await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!, options.aliases), statusOf(root)?.yanked ? statusOf(root)!.version! : result.from!, result.to, parser!)
         : isRange(result.from)
           ? await moveProviderRange(project.dir, root, options.name, result.from, result.to, parser!)
           : moveLock(project.dir, root, options.name, result.from!, result.to, lockerFor(project));
@@ -857,7 +895,7 @@ async function openPart(
   }
   for (const [file, content] of edits) writeFileSync(join(project.dir, file), content);
   const total = result.waves.length;
-  const what = options.kind === "module" ? `${options.name} ${result.from} -> ${result.to}` : `provider ${options.name} ${result.from} -> ${result.to}`;
+  const what = options.adopt ? `adopt ${options.name} at ${result.to}` : options.kind === "module" ? `${options.name} ${result.from} -> ${result.to}` : `provider ${options.name} ${result.from} -> ${result.to}`;
   const title = tmpl ? templateTitle(tmpl, result.to, moving, wave.wave, total) : `terragucci rollout: ${what}, wave ${wave.wave} of ${total}`;
   const others = result.roots.filter((r) => r.project === part.project && (r.state === "refused" || r.state === "elsewhere"));
   // The lowest version a moved root leaves, so the changelog covers a yanked pin's versions too.
@@ -867,7 +905,17 @@ async function openPart(
     const yanked = s?.yanked ? `, on ${s.version}, which is yanked${tmpl!.yanked.get(s.version!) ? `: ${tmpl!.yanked.get(s.version!)}` : ""}` : "";
     return `- \`${r}\`${appOf(tmpl!, r) !== r ? ` (${appOf(tmpl!, r)}${yanked})` : yanked ? ` (${yanked.slice(2)})` : ""}`;
   };
-  const intro = tmpl
+  const intro = options.adopt
+    ? [
+        `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: adopt \`${options.name}\` at ${result.to}.`,
+        "",
+        `This pull request changes the \`source\` of each call of \`${options.name}\` in these roots from the local path to \`${pinnedSource(options.adopt, result.to)}\` and changes no other file:`,
+        "",
+        ...moving.map((r) => `- \`${r}\``),
+        "",
+        "The published release holds the same files as the directory, so each root's plan should show no changes: that is the proof. After the last wave, an ordinary `terragucci rollout` moves the module.",
+      ]
+    : tmpl
     ? [
         `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: upgrade the apps built from ${tmpl.template} from ${result.from} to ${result.to}.`,
         "",
@@ -888,7 +936,7 @@ async function openPart(
           : []),
       ];
   const body = [
-    `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving, ...(options.only ? { scope: options.only } : {}) })} -->`,
+    `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving, ...(options.only ? { scope: options.only } : {}), ...(options.adopt ? { adopt: options.adopt } : {}) })} -->`,
     ...intro,
     ...(others.length > 0 ? ["", "Not moved by this rollout:", "", ...others.map((r) => `- \`${r.root}\`: ${r.reason}`)] : []),
     "",

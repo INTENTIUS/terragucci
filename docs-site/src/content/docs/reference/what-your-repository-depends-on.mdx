@@ -1,0 +1,110 @@
+---
+title: Repository dependencies
+description: The files init commits for each runtime, the secrets and variables each one needs, everything a job downloads or calls, how to stay on one terragucci release for as long as you like, and how to leave.
+---
+
+`npx terragucci init` writes plain CI configuration into your repository. The jobs it describes run in one container image, pinned by digest, on your own CI. No terragucci server or account has to stay reachable, and no job calls a terragucci or Intentius service. The one Intentius address a job touches is `ghcr.io/intentius`, which the image is pulled from; [`image`](/terragucci/reference/config/#keys) points the jobs at a registry you run instead.
+
+## Files init writes
+
+`init --dry-run` prints the list below for your repository without writing anything.
+
+| Runtime | The pipeline, committed to your repository |
+|---|---|
+| GitHub Actions | `.github/workflows/terragucci.yml` |
+| GitLab CI | `.gitlab/terragucci.yml`, and an `include:` of it in your `.gitlab-ci.yml`, which `init` creates only when you have none. Your own jobs stay. |
+| Forgejo Actions | `.forgejo/workflows/terragucci.yml` |
+| Prow (`runtime: prow`) | one Prow job config, `prow/terragucci.yaml` or the path `prow.path` names, in place of a workflow. A workflow an earlier `init` wrote at `.github/workflows/terragucci.yml` is removed. |
+
+With `prow.config_repo` set, Prow reads its job config from another repository. `init` still writes the file in this one and says where to copy it; copy it again each time `init` writes it. [Runtimes](/terragucci/reference/runtimes/) lists the jobs.
+
+Each file starts with a generated-by header, and `init` overwrites a pipeline file only when it wrote that file, unless you pass `--force`. Every runtime also gets these:
+
+| File | What it is |
+|---|---|
+| `.chant/op-waves/tf-apply.spec.json` | the waves and their gate, which each apply job reads at the base branch |
+| `terragucci.components.json` | the roots by wave, which a viewer such as behold reads |
+| `chant.config.ts` | for plain Terraform and OpenTofu roots, each root as a `terraform.roots` entry; a file you wrote stays as it is |
+
+Other files appear only when the config asks for them: a workflow of its own on GitHub and Forgejo for each of `rollouts`, `templates`, `review`, `ephemeral`, `apply.resume`, `drift` and the agent features; `.chant/trust.json` with `evidence`; `.chant/allowed_signers` with `approval: sealed` and `--signer`; dashboard and alert files with `dashboards`; and a `terragucci.yml` when a command-line choice differs from what `init` detects.
+
+## Secrets and variables
+
+The config names a secret and never holds one. [Environment variables and credentials](/terragucci/reference/environment/) has every variable and which job reads it. What each runtime needs before the first run:
+
+| Runtime | Forge access | Cloud access |
+|---|---|---|
+| GitHub Actions | the run's own `github.token`, so no secret to create | per-job OIDC roles, which add `id-token: write` to the job that assumes one, or secrets you name |
+| GitLab CI | a `GITLAB_TOKEN` CI/CD variable, a project access token with the `api` scope | `id_tokens` for OIDC roles, or CI/CD variables |
+| Forgejo Actions | the run's own token | OIDC roles on Forgejo 15 and Runner 12.5 or later, or secrets |
+| Prow | a Kubernetes Secret on `prow.trusted_cluster`, named by `prow.token_secret`, holding a GitHub token | the pod's service account: `prow.service_accounts.plan` bound to a read-only identity and `apply` to a write one. No job asks a forge for an OIDC token, so `oidc` is refused. |
+
+Some settings add to that list, and only when you set them:
+
+| Setting | What it adds |
+|---|---|
+| `comment_allow` naming a team | a `TG_TEAM_TOKEN` secret on GitHub and Forgejo, or a CI/CD variable of that name on GitLab, holding a token that can read the organization's members. The generated workflow passes it only when a team is named. Without it a job falls back to its own token, which GitHub does not let read a team. See [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/). |
+| `modules.attest: true`, signing with a key | `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD` secrets on the publish job, `cosign.pub` committed, and a cosign install in that job |
+| `modules.attest: { identity: oidc }`, signing without a key | no key secrets and no cosign. The publish job needs its OIDC token permission (`id-token: write` on GitHub and Forgejo, an `id_tokens` entry named `CHANT_ID_TOKEN_SIGSTORE` on GitLab), and the repository needs Sigstore's trusted root committed at `.chant/trusted_root.json` or the path `trusted_root` names. See [Sign without a key](/terragucci/guides/publish-modules/#sign-without-a-key). |
+| `agent`, `review.agent`, `notify`, `cost`, `telemetry.headers_secret` | the model, webhook, estimator or telemetry secret the setting names |
+
+## Downloads and calls
+
+| What | From | When |
+|---|---|---|
+| the job image | `ghcr.io/intentius/terragucci-<binary>:<tag>@<digest>`, or the image `image` names. It carries terragucci, [chant](/terragucci/concepts/glossary/#chant)'s wave runner and the engine at one version. | every job, pulled by the runner by digest |
+| your repository | your forge, over git | every job |
+| the forge's API | your forge | the jobs that post a note or status, read a comment or push to [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) |
+| a few actions | `actions/checkout`, `actions/upload-artifact` and `actions/download-artifact`, each pinned by commit SHA, from github.com (`code.forgejo.org` on Forgejo) | GitHub and Forgejo workflows only. GitLab and Prow jobs use none. |
+| an engine or tool version the image does not carry | the tool's release page, as a Linux build, checked against the release's checksums | only when a root pins a version other than the image's, or a feature needs the tool: Terragrunt, Atmos, Terramate, the policy engine, cosign for key signing, an estimator for `cost` |
+| providers | the registry each root names, checked against its `.terraform.lock.hcl` hashes | `init` in each root, unless a [prepared image](/terragucci/reference/cli/#image-recipe-and-check-mirror) carries them |
+| modules | the registries, git hosts and OCI registries the roots name | `init` in each root |
+| your cloud | the backend, the providers' APIs and the identity service behind a role | plan, apply and drift jobs |
+
+Nothing else is fetched at run time. In particular a job never runs `npm install`: terragucci and chant's wave runner come in the image.
+
+[`sources`](/terragucci/guides/write-a-policy/#allow-only-listed-sources) decides which of the providers and modules above a root may reach. It takes a list of globs, or a map of root glob to lists with a `default`, so one root can be allowed a provider the others are not. A root that names a source no entry matches is refused before its `init` downloads anything. The list is read at the base branch, so a pull request cannot widen its own.
+
+Some calls are made only when you set the key that asks for them:
+
+| Key | Call |
+|---|---|
+| `reports` | your reports bucket |
+| `secrets` | a cloud secret store |
+| `notify` | a chat or webhook endpoint |
+| `telemetry` | an OTLP endpoint |
+| `agent`, `review.agent` | a model API |
+| `modules.publish` | an OCI registry or a bucket |
+| `modules.attest: { identity: oidc }` | Sigstore's certificate and timestamp authorities, or the ones you run |
+
+## Run from your own registry
+
+The jobs run whatever image the pipeline names. To take ghcr.io out of the path, copy terragucci's image for your binary into your registry with your registry's tooling, or build your own `FROM` it, and set `image` to the reference:
+
+```yaml
+image: registry.example.com/infra/terragucci-tofu:0.4.53@sha256:...
+```
+
+Run `init` again and the pipeline names your reference. The image must still carry terragucci and the binary. `image` can also be a map with `mirror`, for an image that holds every provider your lock files pin; `terragucci image recipe` writes that image's Dockerfile and build script, and `tf-check` tells you when it needs a rebuild. Neither step makes terragucci build or host anything for you.
+
+## Staying on a pinned release
+
+The version lives in two places. `@intentius/terragucci` in `package.json` is what you run on your machine for `init`, `config check` and `approve`. The image tag and digest in the pipeline decide what the jobs run. The pipeline is a static file: a job runs the one image it names, whatever has been published since, so a repository that never upgrades keeps running the version it has. Running `init` again at the same version writes the same files.
+
+That holds until something outside terragucci changes in a way your version cannot handle. An OpenTofu or Terraform version you adopt, a provider, or the forge's API can each do it. Nothing is required before then. An engine, provider or module you pinned stays on its pin as well ([Versions and pins](/terragucci/reference/versions-and-pins/)).
+
+To move on, follow [Upgrade terragucci](/terragucci/guides/upgrade-terragucci/). You install the new version, run `init` and review the pipeline's diff in a pull request. [Changes in each release](/terragucci/reference/whats-new/) lists what moved. A [control repo](/terragucci/concepts/control-repo/) upgrades the projects it manages with `terragucci reconcile`.
+
+## Leave
+
+Delete the pipeline file and the other files listed above. Take out the `include:` line in `.gitlab-ci.yml` if you use GitLab, and the `terragucci/plan` requirement in branch protection. Your Terraform and OpenTofu code and your state are untouched, since the jobs only ran the tools you already use. Approvals and release records sit on the [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) branch of your repository, and reports in your bucket. Keep them or delete them.
+
+## License and publishing
+
+terragucci is licensed Apache-2.0. Each version is an npm package, `@intentius/terragucci`, with a GitHub release on INTENTIUS/terragucci and its images under `ghcr.io/intentius`. npm trusted publishing puts the package on npm, so no npm token is stored anywhere, and every version carries a provenance statement that `npm audit signatures` checks. The package names each image by digest and `init` writes that digest into your pipeline, so a job pulls the bytes the release built.
+
+## Next
+
+- [Add terragucci to a repo](/terragucci/guides/add-to-a-repo/)
+- [Supply chain](/terragucci/standards/supply-chain/) for what proves where each piece comes from.
+- [Threat model](/terragucci/reference/threat-model/)

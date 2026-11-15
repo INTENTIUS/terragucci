@@ -129,6 +129,63 @@ export async function pinRange(text: string, file: string, request: RangeRequest
   return { content, calls };
 }
 
+// ── local module calls ───────────────────────────────────────────────────────
+
+export interface AdoptRequest {
+  /** The module's directory, relative to the repository root. */
+  dir: string;
+  /** The source each local call gets, pin included for a git or OCI source. */
+  source: string;
+  /** For a registry source, the `version` the call gains; its pin is not in the address. */
+  version?: string;
+}
+
+/** A source that names a directory by a relative path. */
+export const isLocalSource = (source: string): boolean => /^\.\.?(\/|$)/.test(source);
+
+/** The directory a local `source` in `file` names, relative to the repository root. */
+export const localTarget = (file: string, source: string): string => posix.normalize(posix.join(posix.dirname(file), source)).replace(/\/+$/, "");
+
+/**
+ * Move every call in one `.tf` file whose local `source` names `request.dir`
+ * to `request.source`. Only the source literal changes, and for a registry
+ * address a `version` line is added after it. A call that already carries a
+ * `version`, or whose `source` is not a plain literal, is refused.
+ */
+export async function adoptLocal(text: string, file: string, request: AdoptRequest, parser: Hcl2Json): Promise<RangeEdit> {
+  const tree = (await parser.parse(file, text)) as Tree;
+  const expected = structuredClone(tree);
+  const blocks = scanBlocks(text, file);
+  const modules = (tree.module as Record<string, Record<string, unknown>[]> | undefined) ?? {};
+  const expectedModules = (expected.module as Record<string, Record<string, unknown>[]> | undefined) ?? {};
+  const calls: RangeEdit["calls"] = [];
+  const splices: Splice[] = [];
+
+  for (const [name, bodies] of Object.entries(modules)) {
+    const scanned = blocks.filter((b) => b.type === "module" && b.labels.length === 1 && b.labels[0] === name);
+    bodies.forEach((body, k) => {
+      if (typeof body.source !== "string" || !isLocalSource(body.source) || localTarget(file, body.source) !== request.dir) return;
+      const call = `module.${name}`;
+      if (body.version !== undefined) return void calls.push({ call, outcome: "refused", reason: "it carries a version argument next to a local source; remove it first" });
+      const literal = scanned[k]?.attributes.find((a) => a.name === "source")?.literal;
+      if (!literal || unescapeHcl(literal.raw) !== body.source) return void calls.push({ call, outcome: "refused", reason: "source is not a plain string literal, so there is no one place to write the pinned source" });
+      if (request.version !== undefined) {
+        const added = addAfter(text, literal.end, request.version);
+        if (typeof added === "string") return void calls.push({ call, outcome: "refused", reason: added });
+        splices.push(added);
+        expectedModules[name]![k]!.version = request.version;
+      }
+      splices.push({ start: literal.start, end: literal.end, text: escapeHcl(request.source) });
+      expectedModules[name]![k]!.source = request.source;
+      calls.push({ call, outcome: "moved" });
+    });
+  }
+
+  const content = applySplices(text, splices);
+  if (splices.length > 0) await verify(parser, file, content, expected);
+  return { content, calls };
+}
+
 // ── required_providers ───────────────────────────────────────────────────────
 
 /** `text` with comments, heredocs and the inside of strings blanked to filler of the same length, so a search of it finds code only and its offsets are the text's. */

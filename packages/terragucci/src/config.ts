@@ -1872,21 +1872,43 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
   if (m.attest !== undefined) {
     // true reads the public key at cosign.pub.
     if (isObject(m.attest)) {
-      for (const k of Object.keys(m.attest)) if (k !== "key") problems.push(`${where}.attest.${k} is not a setting; use key`);
+      const keyless = m.attest.identity !== undefined;
+      const allowed = keyless ? ["identity", "issuer", "subject", "trusted_root", "audience", "fulcio", "timestamp"] : ["key"];
+      for (const k of Object.keys(m.attest)) {
+        if (!allowed.includes(k)) problems.push(keyless || !["issuer", "subject", "trusted_root", "audience", "fulcio", "timestamp"].includes(k) ? `${where}.attest.${k} is not a setting; use ${allowed.join(", ")}` : `${where}.attest.${k} goes with identity: oidc`);
+      }
+      if (keyless && m.attest.identity !== "oidc") problems.push(`${where}.attest.identity must be oidc, the one identity a job signs keyless with`);
+      if (keyless && m.attest.key !== undefined) problems.push(`${where}.attest sets key and identity; releases are signed with one of them`);
       const key = m.attest.key;
       if (key !== undefined && (typeof key !== "string" || key === "")) problems.push(`${where}.attest.key must be the path of the public key, such as cosign.pub`);
-    } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key`);
+      for (const k of ["issuer", "subject", "trusted_root", "audience"]) {
+        const v = m.attest[k];
+        if (v !== undefined && (typeof v !== "string" || v === "")) problems.push(`${where}.attest.${k} must be a non-empty string`);
+      }
+      for (const k of ["fulcio", "timestamp"]) {
+        const v = m.attest[k];
+        if (v !== undefined && !(typeof v === "string" && /^https?:\/\/.+/.test(v))) problems.push(`${where}.attest.${k} must be an http(s) URL`);
+      }
+      if ((m.attest.issuer === undefined) !== (m.attest.subject === undefined)) problems.push(`${where}.attest sets one of issuer and subject; set both, or neither to use the generated workflow's identity`);
+    } else if (typeof m.attest !== "boolean") problems.push(`${where}.attest must be true or a map with key, or with identity: oidc`);
     if (m.attest !== false && m.publish === undefined && m.registry === undefined) problems.push(`${where}.attest signs what publish writes, so set ${where}.publish or ${where}.registry too`);
   }
   if (m.trusted !== undefined) {
-    if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, key and ledger`);
+    if (!Array.isArray(m.trusted)) problems.push(`${where}.trusted must be a list of sources, each with source, ledger and a key or an identity`);
     else {
       m.trusted.forEach((t, i) => {
         const at = `${where}.trusted[${i}]`;
-        if (!isObject(t)) return void problems.push(`${at} must be a map with source, key and ledger`);
-        for (const k of Object.keys(t)) if (!["source", "key", "ledger"].includes(k)) problems.push(`${at}.${k} is not a setting; use source, key, ledger`);
+        if (!isObject(t)) return void problems.push(`${at} must be a map with source, ledger and a key or an identity`);
+        for (const k of Object.keys(t)) if (!["source", "key", "identity", "trusted_root", "ledger"].includes(k)) problems.push(`${at}.${k} is not a setting; use source, key, identity, trusted_root, ledger`);
         if (typeof t.source !== "string" || !/^(oci:\/\/[^/]+\/.+|(git::)?(https?|ssh):\/\/.+)$/.test(t.source)) problems.push(`${at}.source must be an oci:// prefix or a git URL, as the roots' module sources begin`);
-        if (typeof t.key !== "string" || t.key === "") problems.push(`${at}.key must be the path of the publisher's cosign public key`);
+        if ((t.key === undefined) === (t.identity === undefined)) problems.push(`${at} needs one of key (the publisher's cosign public key) and identity (the issuer and subject they sign keyless with)`);
+        if (t.key !== undefined && (typeof t.key !== "string" || t.key === "")) problems.push(`${at}.key must be the path of the publisher's cosign public key`);
+        if (t.identity !== undefined) {
+          const id = t.identity;
+          if (!isObject(id) || typeof id.issuer !== "string" || !id.issuer || typeof id.subject !== "string" || !id.subject) problems.push(`${at}.identity must be a map with issuer and subject`);
+          else for (const k of Object.keys(id)) if (k !== "issuer" && k !== "subject") problems.push(`${at}.identity.${k} is not a setting; use issuer, subject`);
+        }
+        if (t.trusted_root !== undefined && (t.identity === undefined || typeof t.trusted_root !== "string" || t.trusted_root === "")) problems.push(`${at}.trusted_root is the path of a sigstore trusted root and goes with identity`);
         if (typeof t.ledger !== "string" || !/^(https?|ssh|file):\/\/.+/.test(t.ledger)) problems.push(`${at}.ledger must be the URL of the git repository whose chant/lifecycle branch holds the release ledger`);
       });
     }
@@ -1899,12 +1921,47 @@ function checkModules(m: Record<string, unknown>, where: string, problems: strin
   }
 }
 
+/**
+ * `modules.attest: { identity: oidc }`: each release is signed with the
+ * publish job's OIDC identity, and nothing goes to a transparency log.
+ * `issuer` and `subject` name the identity the job's certificate carries;
+ * left out, they are the generated workflow's on GitHub and GitLab, at the
+ * default branch.
+ */
+export interface KeylessAttest {
+  identity: "oidc";
+  /** The OIDC issuer the publish job's certificate names. */
+  issuer?: string;
+  /** The certificate's subject: the repository, the workflow file and the ref, such as `https://github.com/acme/infra/.github/workflows/terragucci.yml@refs/heads/main`. */
+  subject?: string;
+  /** A sigstore `trusted_root.json` in the repo, which the releases verify against. Default `.chant/trusted_root.json`. */
+  trusted_root?: string;
+  /** The token's audience. Default `sigstore`. */
+  audience?: string;
+  /** Another Fulcio certificate authority than sigstore's. */
+  fulcio?: string;
+  /** Another RFC 3161 timestamp authority than sigstore's. */
+  timestamp?: string;
+}
+
+/** The identity a trusted publisher's releases are signed with, in place of a key. */
+export interface TrustedIdentity {
+  /** The OIDC issuer the publisher's certificates name. */
+  issuer: string;
+  /** The certificate subject: the publisher's repository, workflow file and ref. A `*` matches within one `/` part, `**` across parts. */
+  subject: string;
+}
+
 /** A publisher in another repo whose releases `modules.require: attested` checks. */
 export interface TrustedModuleSource {
   /** How the roots' module sources begin: an `oci://` prefix, or the publisher's git URL with or without `git::`. */
   source: string;
-  /** The publisher's cosign public key, a path in this repo. */
-  key: string;
+  /** The publisher's cosign public key, a path in this repo. Exactly one of `key` and `identity`. */
+  key?: string;
+  /** The identity the publisher signs keyless with. Exactly one of `key` and `identity`. */
+  identity?: TrustedIdentity;
+  /** With `identity`: a sigstore `trusted_root.json` in this repo. Default `.chant/trusted_root.json`. */
+  trusted_root?: string;
   /** The git repository whose `chant/lifecycle` branch holds the publisher's release ledger. */
   ledger: string;
 }
@@ -1912,8 +1969,8 @@ export interface TrustedModuleSource {
 export interface ModulesSettings {
   path?: string;
   publish?: string | string[];
-  /** Sign each release, write its provenance and SBOM, and record it in the release ledger. `true` reads the key at cosign.pub. */
-  attest?: boolean | { key?: string };
+  /** Sign each release, write its provenance and SBOM, and record it in the release ledger. `true` reads the key at cosign.pub; `{ identity: oidc }` signs with the publish job's OIDC identity instead of a key. */
+  attest?: boolean | { key?: string } | KeylessAttest;
   /** `attested`: tf-check and tf-plan refuse a root that pins a release of a checked source unless it verifies. */
   require?: "attested";
   /** Publishers in other repos whose releases `require` checks. */

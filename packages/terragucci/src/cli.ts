@@ -17,10 +17,12 @@
   terragucci verify-release <module> <version> [--config <file>]
   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]   (the modules in the registry's release catalog, read with the token Terraform would send; show: one module's versions, status and consumers)
   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]   (mark a published version on the release ledger and write the catalog again: deprecate gives its roots a tip, yank has modules.require refuse it, restore undoes either; the version stays installable)
+  terragucci modules adopt <dir> [--source <address>] [--version <v>] [--root <dir>] [--dry-run] [--mode dry-run|apply] [--config <file>]   (move a local module to the source it is published at, caller by caller, as a rollout whose plans show no changes; the module has to be published already; --dry-run lists the callers and the waves and asks no forge)
   terragucci modules consumers [--check] [--config <file>]   (write consumers.json, the registry module versions this repo's roots pin, which a publisher's catalog joins across the control repo; --check fails when the file differs)
  *   terragucci verify-release <module> <version> [--config <file>]
  *   terragucci modules [list | show <module>] [--registry <url>] [--json] [--config <file>]
  *   terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [--use <version>] [--config <file>]
+ *   terragucci modules adopt <dir> [--source <address>] [--version <v>] [--root <dir>] [--dry-run] [--mode dry-run|apply] [--config <file>]
  *   terragucci modules consumers [--check] [--config <file>]
  *   terragucci templates [list | show <template>] [--registry <url>] [--json] [--config <file>]   (the templates in the release catalog: each with the versions a request may name, their attestation, kind and form fields; read only)
  *   terragucci templates apps [--template <t>] [--ref <ref>] [--registry <url>] [--json] [--config <file>]   (the apps under templates.apps: each with its template, version, add-ons and the action blocks its modules declare; read only)
@@ -187,6 +189,7 @@ import { exportState } from "./export";
 import { StoreError } from "@intentius/chant/object-store";
 import { StateSourceError } from "@intentius/chant-lexicon-terraform/state";
 import { describeRollout, rollout, rolloutArgs, rolloutExit } from "./rollout";
+import { adoptArgs, adoptExit, adoptModule, describeAdopt } from "./modules-adopt";
 import { describePins, pinExit, pinModules, pinModulesArgs } from "./pin-modules";
 import { respond } from "./respond";
 import { driftNotice, notify, notifyDrift, notifyUnrecorded, NOTIFY_EVENTS, readOutcome, unrecordedNotice, waveNotice, type WaveEvent } from "./notify";
@@ -842,6 +845,15 @@ export async function main(argv: string[]): Promise<number> {
           console.log(`${PROJECT_CONSUMERS}: ${doc.consumers.length} module version${doc.consumers.length === 1 ? "" : "s"} pinned${held === doc.text ? ", unchanged" : ""}`);
           return 0;
         }
+        if (sub === "adopt") {
+          // A local module moved to the source it is published at, caller by caller, as a rollout (./modules-adopt.ts).
+          const { dir, options } = adoptArgs(args.slice(1), flags);
+          const result = await adoptModule(cwd, dir, options);
+          const code = adoptExit(result);
+          if (json) return emit(envelope("modules", code, result));
+          console.log(describeAdopt(result));
+          return code;
+        }
         if (sub in STATUS_WORDS) {
           // A status record on the ledger (./publish/status.ts); anyone who can publish may set one.
           const [, module, version] = args;
@@ -852,7 +864,7 @@ export async function main(argv: string[]): Promise<number> {
           console.log(describeStatus(result));
           return 0;
         }
-        if (!["list", "show"].includes(sub) || (sub === "show" && !name)) throw new ConfigError("usage: terragucci modules [list | show <module> | deprecate|yank|restore <module> <version>] [--registry <url>] [--json] [--config <file>]");
+        if (!["list", "show"].includes(sub) || (sub === "show" && !name)) throw new ConfigError("usage: terragucci modules [list | show <module> | adopt <dir> | deprecate|yank|restore <module> <version>] [--registry <url>] [--json] [--config <file>]");
         const registry = str(flags, "registry");
         const path = str(flags, "config") ?? findConfig(cwd);
         const settings = registry ? undefined : resolveRepo(path ? await loadConfig(resolve(path)) : {}).modules?.registry;

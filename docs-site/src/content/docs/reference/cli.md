@@ -321,6 +321,12 @@ terragucci modules deprecate|yank|restore <module> <version> [--reason <text>] [
 Run in the repo that publishes. The status record for the version goes on `chant/lifecycle`, and the release catalog is written again after the push. `deprecate` and `yank` need `--reason`; `--use` names a recorded version to move to. Roots on a deprecated version get a tip. `modules.require: attested` refuses a yanked one, though it stays installable until `restore` clears the mark. See [Deprecate or yank a version](/terragucci/guides/publish-modules/#deprecate-or-yank-a-version).
 
 ```bash
+terragucci modules adopt <dir> [--source <address>] [--version <v>] [--root <dir>] [--dry-run] [--mode dry-run|apply] [--config <file>]
+```
+
+Moves a module kept in the repository and called by relative path to the source it is published at, as a rollout from `(local)` to the published version. Each wave rewrites the `source` of its roots' calls of `<dir>`, and the plan of each shows no changes. The module has to be published already: `--source` names where (`git::<url>//<dir>`, `oci://<host>/<repository>` or a registry address, with no pin) and defaults to `modules.publish` or `modules.registry`, and `--version` defaults to the newest release. `--dry-run` lists the callers and the waves and asks no forge. The [guide](/terragucci/guides/roll-out-a-module-version/#move-a-local-module-to-a-pinned-source) has the rest.
+
+```bash
 terragucci modules consumers [--check] [--config <file>]
 ```
 

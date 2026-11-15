@@ -15,6 +15,8 @@ import { Steps } from '@astrojs/starlight/components';
 
 The repo's pipeline runs the new release, moved by a pull request you reviewed, like any other version.
 
+Nothing requires an upgrade on a schedule. The pipeline is a static file that runs one image by digest, so a repo that stays on its release keeps working ([Repository dependencies](/terragucci/reference/what-your-repository-depends-on/#staying-on-a-pinned-release)).
+
 ## Steps
 
 <Steps>

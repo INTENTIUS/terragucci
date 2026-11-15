@@ -272,7 +272,7 @@ export async function repoTips(repo: string, roots: readonly string[], options: 
       if (by.size < SHARED_MODULE_ROOTS) continue;
       tips.push(ownTip(
         "terragucci-shared-module",
-        `${module} is included by ${by.size} roots, so every change under it plans every one of them. Publish it with tf-publish and pin it in each root, and only the roots whose pin moves are planned.`,
+        `${module} is included by ${by.size} roots, so every change under it plans every one of them. Publish it with tf-publish, then run terragucci modules adopt ${module}: it pins each root's call in waves, and after that only the roots whose pin moves are planned.`,
         module,
       ));
     }
