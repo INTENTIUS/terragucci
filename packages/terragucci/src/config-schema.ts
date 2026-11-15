@@ -94,6 +94,7 @@ import {
   type PolicySettings,
   type ProjectSettings,
   type RegistrySettings,
+  type SourceLists,
   type SourcesSettings,
   type SourceProxy,
   type TerragruntSettings,
@@ -294,7 +295,18 @@ const sourceProxy = map(SOURCE_PROXY_KEYS as (keyof SourceProxy)[], {
   upstream: hostName,
   host: hostName,
 } satisfies Record<keyof SourceProxy, JsonSchema>, { required: ["repo"], oneOf: [{ required: ["artifactory"] }, { required: ["nexus"] }] });
-const sources = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs, proxies: { type: "array", minItems: 1, items: sourceProxy } } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
+const sourcesFlat = map(SOURCES_KEYS as (keyof SourcesSettings)[], { modules: sourceGlobs, providers: sourceGlobs, proxies: { type: "array", minItems: 1, items: sourceProxy } } satisfies Record<keyof SourcesSettings, JsonSchema>, { minProperties: 1 });
+/** One by-root entry: the lists the roots its glob matches are checked against. */
+const sourceEntry = map(["modules", "providers"] as (keyof SourceLists)[], { modules: sourceGlobs, providers: sourceGlobs } satisfies Record<keyof SourceLists, JsonSchema>, { minProperties: 1 });
+/** `sources` by root glob: each key is a glob to its lists, `default` is the lists for every other root and a root a pull request adds, and `proxies` is repo-wide. */
+const sourcesByRoot: JsonSchema = {
+  type: "object",
+  required: ["default"],
+  properties: { default: sourceEntry, proxies: { type: "array", minItems: 1, items: sourceProxy } },
+  propertyNames: { type: "string", pattern: "^[^\\s,;'\"]+$" },
+  additionalProperties: sourceEntry,
+};
+const sources: JsonSchema = { anyOf: [sourcesFlat, sourcesByRoot] };
 
 const oidc = map(OIDC_KEYS, {
   plan_role: { type: "string", minLength: 1 },
@@ -523,7 +535,7 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     terragrunt: { ...terragrunt, description: "Terragrunt settings." },
     atmos: { ...map(ATMOS_KEYS, { version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$" } }), description: "Atmos settings." },
     policy: { ...policy, description: "Policy checks over each plan." },
-    sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init." },
+    sources: { ...sources, description: "Globs of the module sources and provider addresses a root may use, checked before init, for every root or, as a map of root glob to those lists with a default, by root." },
     check: { ...map(CHECK_KEYS, { pre_commit: bool }), description: "What tf-check runs beyond its own checks: the repo's pre-commit hooks." },
     evidence: {
       ...map(EVIDENCE_KEYS, {

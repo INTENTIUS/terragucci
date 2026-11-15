@@ -1,0 +1,4 @@
+sources:
+  "projects/prow/**":
+    providers:
+      - "hashicorp/http"

@@ -1,0 +1,5 @@
+sources:
+  "projects/**": {}
+  default:
+    providers:
+      - "hashicorp/google"

@@ -1,0 +1,9 @@
+sources:
+  modules:
+    - "./**"
+  "projects/**":
+    providers:
+      - "hashicorp/google"
+  default:
+    providers:
+      - "hashicorp/google"
