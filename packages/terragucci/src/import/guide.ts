@@ -13,7 +13,7 @@ export const GUIDE_URL = "https://intentius.io/terragucci/guides/coming-from-atl
 
 /** `## Settings`: setting, Atlantis, OpenTaco (`digger.yml`), terragucci (`terragucci.yml`). */
 export const SETTINGS_TABLE = [
-  ["Which directories", "`projects[].dir`, `autodiscover`", "`projects[].dir`, `generate_projects`", "detected: every directory with a backend, `cloud` block or provider; `roots` globs to narrow, which an import writes from the projects' directories"],
+  ["Which directories", "`projects[].dir`, `autodiscover`", "`projects[].dir`, `generate_projects`", "detected: every directory with a backend, `cloud` block or provider; `roots` globs to narrow, which an import writes from the projects' directories, without a module some directory calls, and leaves out when `autodiscover` is on"],
   ["Project name", "`projects[].name`", "`projects[].name`", "none: a root goes by its path from the repo root"],
   ["Workspace", "`projects[].workspace`", "`projects[].workspace`", "none: each root is a directory with one state"],
   ["Backend config and var files", "a workflow's `extra_args` on `init` and `plan`: `-backend-config`, `-var-file`", "", "`backend_config` and `var_files`, a root glob to files in the root's directory; `instances` runs one directory as several roots, which an import writes for projects that share a directory and a name each"],
@@ -31,7 +31,7 @@ export const SETTINGS_TABLE = [
   ["Lock at plan time", "`repo_locks.mode: on_plan`", "`pr_locks`", "`locks: plan` (GitHub, Forgejo); unset, a root locks when it applies before merge"],
   ["Release locks on close", "automatic", "`on_pull_request_closed: [digger unlock]`, `on_commit_to_default: [digger unlock]`", "automatic: a lock whose pull request merged or closed counts as released"],
   ["Policy", "conftest, set in the server's config; a workflow's `policy_check`; a project's `custom_policy_check`", "a conftest step you add", "`policy`: conftest or OPA over each plan, with Rego in the repo or a shared policy repo at a pinned ref (`policy.source`); the base branch's key decides"],
-  ["Custom steps", "`workflows`", "`workflows`", "none: the jobs are generated; `env` sets variables every job gets, which an import writes from the workflows' `env` steps that set a fixed value"],
+  ["Custom steps", "`workflows`, `projects[].workflow`", "`workflows`", "none: the jobs are generated; `env` sets variables every job gets, which an import writes from the workflows' `env` steps that set a fixed value"],
   ["Cloud credentials", "the server's environment", "`aws-role-to-assume` in your workflow, or a project's `aws_role_to_assume`, over OIDC", "`oidc`: a plan role and an apply role per cloud, from the forge's identity token"],
   ["Many repos", "the server's repo config", "", "a [control repo](/terragucci/concepts/control-repo/)'s `defaults` and `projects` ([Govern many repos](/terragucci/guides/govern-many-repos/))"],
   ["Terragrunt", "a custom workflow, or terragrunt-atlantis-config", "`generate_projects` with Terragrunt parsing, or a project's `terragrunt`", "detected; `terragrunt` for the version, excludes and roles ([Use Terragrunt](/terragucci/guides/use-terragrunt/))"],
