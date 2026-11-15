@@ -87,7 +87,16 @@ export interface PlanJobsInput {
    * GitLab a `plan-evidence` job of the plan notes pipeline signs them.
    */
   evidence?: PipelineEvidence;
+  /**
+   * GitHub and Forgejo: the list chant's re-plan and comment job limit `plan` and `apply` (and `lock` and `unlock`
+   * before merge) to, with the secret a team is read with (./comment-allow.ts `chantCommentAllow`). Set only when
+   * the chant terragucci is built on carries it.
+   */
+  commentAllow?: { allow: Record<string, string[]>; tokenSecret?: string };
 }
+
+/** chant's `commentAllow` option for these jobs, or nothing. */
+const commentAllowOption = (input: Pick<PlanJobsInput, "commentAllow">): Record<string, unknown> => (input.commentAllow ? { commentAllow: input.commentAllow } : {});
 
 /** The product plan's options for terragucci, on every forge. */
 export function planOptions(input: PlanJobsInput, o: { noReply?: boolean; reach?: string } = {}): ProductPlanOptions {
@@ -127,7 +136,7 @@ function planWords(atlantis: boolean): typeof TERRAGUCCI_WORDS {
 /** GitHub and Forgejo: chant's plan, plan-note, replan and replan-note jobs, as the workflow's jobs. */
 export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<string, unknown>]> {
   const forge = input.forge as "github" | "forgejo";
-  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.evidence ? { evidence: input.evidence } : {}) });
+  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.evidence ? { evidence: input.evidence } : {}), ...commentAllowOption(input) } as never);
   const jobs = doc.jobsDoc as Record<string, Record<string, unknown>>;
   const names = PLAN_NAMES.jobNames;
   const out: Array<[string, Record<string, unknown>]> = [];
@@ -152,7 +161,7 @@ export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unk
   const forge = input.forge as "github" | "forgejo";
   // Before merge (`reach`) it answers lock and unlock too (chant issue 5061).
   const words = { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply", ...(reach ? { lock: "lock", unlock: "unlock" } : {}) }, aliases: input.atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan" || a.command === "apply") : [] };
-  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true, ...(reach ? { reach } : {}) }), ...waves } as never);
+  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true, ...(reach ? { reach } : {}) }), ...commentAllowOption(input), ...waves } as never);
   const job = (doc.jobsDoc as Record<string, Record<string, unknown>>)["apply-comment"];
   if (!job) throw new Error("chant's product pipeline wrote no apply-comment job");
   const container = typeof job.container === "string" ? { image: job.container } : job.container;

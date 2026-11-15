@@ -77,7 +77,9 @@ export function chantAgentGuarded(policyDir: string): string[] {
 }
 
 /** chant's agent settings from `agent.comment` (chant `ProductAgentOptions`). terragucci's default command becomes {@link chantAgentCommand}. */
-export function chantAgentOptions(agent: AgentCommentInput): Record<string, unknown> {
+export function chantAgentOptions(agent: AgentCommentInput, allow?: { allow: Record<string, string[]>; tokenSecret?: string }): Record<string, unknown> {
+  // chant's agent checks the list for `agent`, else `default`, in its prepare step; the token is the secret a team is read with.
+  const limited = allow && (allow.allow.agent !== undefined || allow.allow.default !== undefined);
   return {
     name: CHANT_AGENT_OP,
     command: agent.command === AGENT_COMMAND ? chantAgentCommand(agent.maxCostUsd) : agent.command,
@@ -87,6 +89,7 @@ export function chantAgentOptions(agent: AgentCommentInput): Record<string, unkn
     ...(agent.maxCostUsd !== undefined ? { maxCostUsd: agent.maxCostUsd } : {}),
     tokenEnv: agent.tokenSecret,
     guarded: chantAgentGuarded(agent.policyDir),
+    ...(limited ? { commentAllow: { ...(allow.allow.agent ? { agent: allow.allow.agent } : {}), ...(allow.allow.default ? { default: allow.allow.default } : {}) }, ...(allow.tokenSecret ? { commentAllowTokenEnv: allow.tokenSecret } : {}) } : {}),
   };
 }
 
@@ -107,9 +110,9 @@ export interface ChantAgentFiles {
  * The agent's files on chant's job, or undefined when chant writes none. `image` is the pipeline's, which carries terragucci; `marker` is
  * the first line every file terragucci writes starts with.
  */
-export function chantAgentFiles(forge: ForgeName, image: string, agent: AgentCommentInput, marker: string, chant: ChantAgentJob = CHANT_AGENT_JOB): ChantAgentFiles | undefined {
+export function chantAgentFiles(forge: ForgeName, image: string, agent: AgentCommentInput, marker: string, chant: ChantAgentJob = CHANT_AGENT_JOB, allow?: { allow: Record<string, string[]>; tokenSecret?: string }): ChantAgentFiles | undefined {
   const words = agentWords();
-  const jobs = chant.productPipelineJobs(forge, "default", { words, agent: chantAgentOptions(agent) });
+  const jobs = chant.productPipelineJobs(forge, "default", { words, agent: chantAgentOptions(agent, allow) });
   if (!jobs.agent) return undefined;
   const spec: ChantScheduledOpSpec = jobs.agent.spec;
   const options = { image, ...(forge === "gitlab" ? { opsStage: COMMENTS_STAGE, opsFileName: "terragucci-agent.yml" } : {}) };

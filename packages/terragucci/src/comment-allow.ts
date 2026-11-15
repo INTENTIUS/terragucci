@@ -26,6 +26,38 @@
 import type { ForgeName } from "./config";
 import type { Fetch } from "./forge";
 
+/**
+ * The first chant release whose comment jobs limit `plan`, `apply`, `lock`, `unlock` and `agent` to
+ * `commentAllow` (`COMMENT_ALLOW_FLOOR` in `@intentius/chant/ci-product`): `commentAllow` in `productPipelineJobs`
+ * writes the list into the re-plan's decision, the `apply-comment` job and the agent's jobs.
+ */
+export const COMMENT_ALLOW_CHANT_FLOOR = "0.124.98";
+
+/**
+ * The chant release this terragucci is built on, the dependency in package.json (test/comment-allow.test.ts keeps the
+ * two equal). It is written out here because the config types are emitted from config.ts, which reaches this file,
+ * and a JSON import from outside src/ would move the emitted types.
+ */
+export const CHANT_PIN = "0.124.95";
+
+/** Whether chant release `have` is `floor` or newer. A version that does not read as `a.b.c` is older than any floor. */
+export function chantAtLeast(have: string, floor: string): boolean {
+  const parts = (v: string): number[] | undefined => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim().replace(/^[\^~=]+/, ""));
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined;
+  };
+  const a = parts(have);
+  const b = parts(floor);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i]! > b[i]!;
+  return true;
+}
+
+/** Whether chant `pin` carries `commentAllow` in the jobs it writes for GitHub and Forgejo. */
+export function chantCarriesCommentAllow(pin: string = CHANT_PIN): boolean {
+  return chantAtLeast(pin, COMMENT_ALLOW_CHANT_FLOOR);
+}
+
 /** The commands `comment_allow` names, besides `default`. `skip-soak` is the rollouts' comment. */
 export const COMMENT_ALLOW_COMMANDS = ["plan", "apply", "lock", "unlock", "agent", "action", "skip-soak"] as const;
 export type AllowCommand = (typeof COMMENT_ALLOW_COMMANDS)[number];
@@ -68,29 +100,54 @@ export function commentAllowProblems(v: unknown, where: string): string[] {
 }
 
 /**
- * The commands whose jobs read `comment_allow` on each forge. On GitLab the
- * comments job is terragucci's for every command. On GitHub and Forgejo the
- * action workflow, the rollouts' skip-soak and, with `locks: plan` and
- * `apply.when: merge`, the pr-lock job's `lock` and `unlock` are terragucci's;
- * the re-plan, the apply comment and the agent are chant's jobs, which check
- * write access alone. A list for a command no job reads would look like a
- * limit and be none, so `config check` refuses it.
+ * The commands whose jobs read `comment_allow` on each forge. On GitLab the comments job is terragucci's for every
+ * command. On GitHub and Forgejo the action workflow, the rollouts' skip-soak and, with `locks: plan` and
+ * `apply.when: merge`, the pr-lock job's `lock` and `unlock` are terragucci's. The re-plan, the apply comment and the
+ * agent are chant's jobs: from chant 0.124.98 ({@link COMMENT_ALLOW_CHANT_FLOOR}) they take the list terragucci
+ * passes (`commentAllow` in chant's product pipeline), and with `apply.when: pull-request` chant's comment job
+ * answers `lock` and `unlock` by the reach line, so those are limited too. On an older chant they check write access
+ * alone, so a list for them would look like a limit and be none, and `config check` refuses it. `chant` is the
+ * release terragucci is built on.
  */
-export function commentAllowForgeProblems(allow: CommentAllow, s: { forge?: string; locks?: unknown; apply?: { when?: unknown } }, where: string): string[] {
+export function commentAllowForgeProblems(allow: CommentAllow, s: { forge?: string; locks?: unknown; apply?: { when?: unknown } }, where: string, chant: string = CHANT_PIN): string[] {
   if (s.forge === "gitlab") return [];
-  const own = new Set<string>(["action", "skip-soak", ...(s.locks === "plan" && s.apply?.when !== "pull-request" ? ["lock", "unlock"] : [])]);
+  const carries = chantCarriesCommentAllow(chant);
+  const own = new Set<string>(["action", "skip-soak"]);
+  if (s.locks === "plan" && s.apply?.when !== "pull-request") {
+    own.add("lock");
+    own.add("unlock");
+  }
+  if (carries) for (const k of ["plan", "apply", "agent", "default", ...(s.apply?.when === "pull-request" ? ["lock", "unlock"] : [])]) own.add(k);
   const out: string[] = [];
   for (const k of Object.keys(allow)) {
     if (own.has(k)) continue;
+    const older = `chant ${chant} here checks write access alone for it, and chant ${COMMENT_ALLOW_CHANT_FLOOR} and later limit it`;
     out.push(`${where}.${k} is not read here: ${
       k === "lock" || k === "unlock"
-        ? `on GitHub and Forgejo \`${k}\` is limited under locks: plan with apply.when: merge, where the pr-lock job answers it`
+        ? carries
+          ? `on GitHub and Forgejo \`${k}\` is limited under locks: plan with apply.when: merge, where the pr-lock job answers it, or with apply.when: pull-request, where chant's comment job does`
+          : `on GitHub and Forgejo \`${k}\` is limited under locks: plan with apply.when: merge, where the pr-lock job answers it`
         : k === "default"
-          ? "default would cover commands that chant's comment jobs answer on GitHub and Forgejo, and they check write access alone, so name action, skip-soak, lock or unlock instead"
-          : `on GitHub and Forgejo chant's comment jobs answer \`${k}\` and check write access alone; on GitLab (forge: gitlab) the comments job limits it`
+          ? `default would cover commands that chant's comment jobs answer on GitHub and Forgejo, and ${older}, so name action, skip-soak, lock or unlock instead`
+          : `on GitHub and Forgejo chant's comment jobs answer \`${k}\`, and ${older}; on GitLab (forge: gitlab) the comments job limits it`
     }`);
   }
   return out;
+}
+
+/**
+ * The list chant's jobs take, from a `comment_allow`: the commands they answer, and `default`, which covers them.
+ * `lock` and `unlock` go only with `apply.when: pull-request`, where chant's comment job answers them; under
+ * `locks: plan` with `apply.when: merge` the pr-lock job is terragucci's and reads them itself. Undefined when the
+ * forge is GitLab (the comments job is terragucci's), when chant is older than the floor, or when no entry is left.
+ * `tokenSecret` is the secret a team is read with, present only when a team is named.
+ */
+export function chantCommentAllow(allow: CommentAllow | undefined, s: { forge?: string; apply?: { when?: unknown } }, chant: string = CHANT_PIN): { allow: Record<string, string[]>; tokenSecret?: string } | undefined {
+  if (!allow || s.forge === "gitlab" || !chantCarriesCommentAllow(chant)) return undefined;
+  const keys: Array<AllowCommand | "default"> = ["plan", "apply", "agent", "default", ...(s.apply?.when === "pull-request" ? (["lock", "unlock"] as const) : [])];
+  const picked = Object.fromEntries(keys.filter((k) => allow[k] !== undefined).map((k) => [k, [...allow[k]!]]));
+  if (Object.keys(picked).length === 0) return undefined;
+  return { allow: picked, ...(allowTeams(picked).length > 0 ? { tokenSecret: TEAM_TOKEN_ENV } : {}) };
 }
 
 /** The teams a `comment_allow` names. */
