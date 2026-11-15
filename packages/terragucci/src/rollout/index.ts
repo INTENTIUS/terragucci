@@ -47,6 +47,7 @@ import { binaryLocker, LOCK_FILE, lockedProvider, moveLock, readLock, type Locke
 import { loadHclParser } from "./parser";
 import { atRange, isRange, moduleCalls, movePins, pinVersion, shapePin, type ModuleCall } from "./pins";
 import { appOf, changelogLines, movesYanked, templateContext, templateTarget, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
+import { pinProviderRange, providerEntries, UNVERSIONED } from "./range";
 import { planWaves, type Wave } from "./waves";
 
 export type RolloutKind = "module" | "provider";
@@ -322,6 +323,18 @@ function classifyModule(project: string, root: string, calls: ModuleCall[], from
   return { status: { ...base, state: "elsewhere", version: others.join(", "), reason: `pinned at ${others.join(", ")}` }, calls };
 }
 
+/** Move a provider's `required_providers` entries in one root from a constraint to an exact version. */
+async function moveProviderRange(repo: string, root: string, name: string, from: string, to: string, parser: Hcl2Json): Promise<{ edits: Map<string, string> } | { refused: string }> {
+  const edits = new Map<string, string>();
+  for (const file of new Set((await providerEntries(repo, root, name, parser)).map((e) => e.file))) {
+    const result = await pinProviderRange(readFileSync(join(repo, file), "utf-8"), file, { provider: name, from, to }, parser);
+    const refused = result.calls.find((c) => c.outcome === "refused");
+    if (refused) return { refused: `${file} ${refused.call}: ${refused.reason}` };
+    if (result.calls.length > 0) edits.set(file, result.content);
+  }
+  return { edits };
+}
+
 function providerSource(address: string): string {
   return address.split("/").slice(-2).join("/").toLowerCase();
 }
@@ -343,6 +356,19 @@ function classifyProvider(dir: string, project: string, root: string, name: stri
   if (entry.version === to) return { ...base, state: "to", version: to };
   if (entry.version === from) return { ...base, state: "from", version: from };
   return { ...base, state: "elsewhere", version: entry.version, reason: `locked at ${entry.version}` };
+}
+
+/** A provider rollout from a constraint: the root's `required_providers` entries for the provider, read from its `.tf` files. The lock file is not read; it already holds the version. */
+async function classifyProviderRange(dir: string, project: string, root: string, name: string, from: string, to: string, parser: Hcl2Json): Promise<RootStatus> {
+  const base = { project, root };
+  const entries = await providerEntries(dir, root, name, parser);
+  if (entries.length === 0) return { ...base, state: "absent" };
+  const at = (v: string | undefined, want: string) => (want === UNVERSIONED ? v === undefined : v === want || v?.replace(/^=\s*/, "") === want);
+  if (entries.every((e) => at(e.version, to))) return { ...base, state: "to", version: to };
+  if (entries.every((e) => at(e.version, from) || at(e.version, to))) return { ...base, state: "from", version: from };
+  const others = [...new Set(entries.filter((e) => !at(e.version, to) && !at(e.version, from)).map((e) => e.version ?? UNVERSIONED))];
+  if (entries.some((e) => at(e.version, from))) return { ...base, state: "refused", reason: `its entries are pinned at more than one version (${[from, ...others].join(", ")})` };
+  return { ...base, state: "elsewhere", version: others.join(", "), reason: `constrained at ${others.join(", ")}` };
 }
 
 // ── tips ─────────────────────────────────────────────────────────────────────
@@ -418,7 +444,7 @@ export async function rollout(cwd: string, options: RolloutOptions): Promise<Rol
   if (options.kind === "provider" && !options.to) throw new ConfigError("a provider rollout needs the version to move to");
 
   // Load the parser before any forge is asked, so a missing one fails first.
-  const parser = options.parser ?? (options.kind === "module" ? await loadHclParser() : undefined);
+  const parser = options.parser ?? (options.kind === "module" || isRange(options.from) ? await loadHclParser() : undefined);
   const projects: Project[] = [];
   try {
     if (config.projects) {
@@ -546,7 +572,7 @@ export function describeContinue(result: ContinueResult): string {
 }
 
 async function walk(repo: string, config: TerragucciConfig, projects: Project[], options: RolloutOptions & { mode: "dry-run" | "apply" }): Promise<RolloutResult> {
-  const needsParser = options.kind === "module" || projects.some((p) => terragruntUnits(p.dir).length > 0);
+  const needsParser = options.kind === "module" || isRange(options.from) || projects.some((p) => terragruntUnits(p.dir).length > 0);
   const parser = options.parser ?? (needsParser ? await loadHclParser() : undefined);
 
   // 1. Every root's calls, and the versions they pin.
@@ -630,7 +656,12 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
     const refused = refusedOf.get(p.key);
     if (refused) statuses.push({ project: p.key, root: ".", state: "refused", reason: refused });
     for (const r of roots.get(p.key)!) {
-      const s = options.kind === "module" ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion, tmpl).status : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
+      const s =
+        options.kind === "module"
+          ? classifyModule(p.key, r, calls.get(`${p.key}\0${r}`)!, from, toVersion, tmpl).status
+          : isRange(from)
+            ? await classifyProviderRange(p.dir, p.key, r, options.name, from, toVersion, parser!)
+            : classifyProvider(p.dir, p.key, r, options.name, from, toVersion);
       if (s.state !== "absent") statuses.push(s);
       if (s.state === "from" || s.state === "to") list.push(r);
     }
@@ -742,7 +773,7 @@ async function openPart(
 ): Promise<void> {
   const statusOf = (r: string) => result.roots.find((s) => s.project === part.project && s.root === r);
   const moving = part.roots.filter((r) => statusOf(r)?.state === "from");
-  if (options.mode === "dry-run" && options.kind === "provider") {
+  if (options.mode === "dry-run" && options.kind === "provider" && !isRange(result.from)) {
     // The binary writes the lock file; a dry run names the files without running it.
     part.files = moving.map((r) => (r === "." ? LOCK_FILE : posix.join(r, LOCK_FILE))).sort();
     part.state = "would-open";
@@ -753,7 +784,9 @@ async function openPart(
     const moved =
       options.kind === "module"
         ? await movePins(project.dir, await moduleCalls(project.dir, root, options.name, parser!, options.aliases), statusOf(root)?.yanked ? statusOf(root)!.version! : result.from!, result.to, parser!)
-        : moveLock(project.dir, root, options.name, result.from!, result.to, lockerFor(project));
+        : isRange(result.from)
+          ? await moveProviderRange(project.dir, root, options.name, result.from, result.to, parser!)
+          : moveLock(project.dir, root, options.name, result.from!, result.to, lockerFor(project));
     if ("refused" in moved) {
       part.state = "failed";
       part.reason = moved.refused;
@@ -792,10 +825,12 @@ async function openPart(
     : [
         `Wave ${wave.wave} of ${total}${wave.canary ? " (canaries)" : ""}: ${what}.`,
         "",
-        `This pull request moves ${options.kind === "module" ? "the pin" : `\`${LOCK_FILE}\``} for these roots and changes no other file:`,
+        `This pull request moves ${options.kind === "module" ? "the pin" : isRange(result.from) ? "the provider's version constraint" : `\`${LOCK_FILE}\``} for these roots and changes no other file:`,
         "",
         ...moving.map((r) => `- \`${r}\``),
-        ...(isRange(result.from) ? ["", `Each root's \`version = "${result.from}"\` becomes the version init resolved for it, ${result.to}. Its plan should show no changes: that is the proof the pin is the version the root already runs.`] : []),
+        ...(isRange(result.from)
+          ? ["", `${result.from === UNVERSIONED ? "Each root declares no `version` here; it gains" : `Each root's \`version = "${result.from}"\` becomes`} the version init resolved for it, ${result.to}. Its plan should show no changes: that is the proof the pin is the version the root already runs.`]
+          : []),
       ];
   const body = [
     `<!-- ${MARKER} ${JSON.stringify({ kind: options.kind, name: options.name, from: result.from, to: result.to, wave: wave.wave, waves: total, roots: moving, ...(options.only ? { scope: options.only } : {}) })} -->`,

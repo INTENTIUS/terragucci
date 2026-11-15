@@ -22,7 +22,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { editPins, exactVersion, isTerragruntFile, readModulePin, type ModuleCallPin } from "@intentius/chant-lexicon-terraform/pin";
-import { pinRange } from "./range";
+import { isUnversionedRegistry, pinRange, UNVERSIONED } from "./range";
 
 /** One module call that names the module. */
 export interface ModuleCall {
@@ -40,8 +40,9 @@ export interface ModuleCall {
 /** Whether `from` is a constraint (`~> 5.0`) rather than one exact version: a rollout from it is a pin of what the constraint resolved to. */
 export const isRange = (from: string | undefined): from is string => from !== undefined && exactVersion(from) === null;
 
-/** Whether a call's `version` argument is the constraint `from`, written as it is. */
-export const atRange = (c: ModuleCall, from: string | undefined): boolean => isRange(from) && c.pin.pin === null && c.pin.at === "version" && c.written === from;
+/** Whether a call's `version` argument is the constraint `from` as written, or, for `UNVERSIONED`, absent from a call a registry resolves. */
+export const atRange = (c: ModuleCall, from: string | undefined): boolean =>
+  isRange(from) && c.pin.pin === null && (from === UNVERSIONED ? c.written === undefined && isUnversionedRegistry(c.pin.module, undefined) : c.pin.at === "version" && c.written === from);
 
 const VERSION_TAIL = /^(.*?)(v?)(\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
 

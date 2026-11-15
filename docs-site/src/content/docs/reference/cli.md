@@ -27,7 +27,7 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `templates` | lists the templates in the release catalog: each with the versions a request may name, their attestation, kind and form fields; with `apps`, the apps made from them; read only |
 | `request` | opens a pull request that adds an app's root from a template (the module call, and the files `generate` writes for it), or with `--app` one add-on's module call in an app's root |
 | `rollout` | moves a module's or provider's pin one wave at a time |
-| `pin` | with `modules`, rewrites each module call's version constraint to the exact version its root runs, as a rollout |
+| `pin` | rewrites each module call's (`modules`) or provider entry's (`providers`) version constraint to the exact version its root runs, as a rollout |
 | `respond` | runs the response to a pipeline event |
 | `comment` | reads a `/terragucci plan [root]` or `/terragucci agent <ask>` pull request comment, polls GitLab merge request notes, and pushes an agent's change; the generated pipeline runs it |
 | `pr-lock` | takes or releases a pull request's plan locks under `locks: plan`; the generated pipeline runs it |
@@ -373,14 +373,17 @@ A template is named by its address without the host, such as `acme/bucket/aws`. 
 ## pin
 
 ```bash
-terragucci pin modules [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]
+terragucci pin modules [--providers] [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]
+terragucci pin providers [--root <dir>] [--dry-run] [--mode dry-run|apply] [--no-init] [--lookup] [--config <file>]
 ```
 
-A rollout moves an exact pin and refuses a constraint such as `version = "~> 5.0"`. `pin modules` is the step before it: it reads each root's module calls whose `version` is a constraint, finds the version the root runs, and opens the change as a rollout whose `from` is the constraint and whose `to` is that version. A pin that equals the version already in use changes nothing, so each wave's plan shows no changes.
+A rollout moves an exact pin and refuses a constraint such as `version = "~> 5.0"`. `pin` is the step before it: it reads each root's module calls (`modules`) and `required_providers` entries (`providers`, or `modules --providers` for both) whose `version` is a constraint or is missing, finds the version the root runs, and opens the change as a rollout whose `from` is the constraint (`(none)` when there is no `version`) and whose `to` is that version. A pin that equals the version already in use changes nothing, so each wave's plan shows no changes.
 
-The version comes from the root's `.terraform/modules/modules.json` (what `init` wrote), else from `init -backend=false` in the root (`--no-init` skips it), else, with `--lookup`, from the newest release the constraint allows in the module's registry. It has to satisfy the constraint it replaces, or the call is listed as unresolved. Roots that run different versions under one constraint become separate rollouts, each limited to its own roots, and `terragucci respond rollout` continues each one.
+The version comes from what `init` left in the root: `.terraform/modules/modules.json` for a module call, `.terraform.lock.hcl` for a provider. Without it, `init -backend=false` runs in the root (`--no-init` skips it), and then, with `--lookup`, the newest release the constraint allows in the module or provider registry. The version has to satisfy the constraint it replaces, or the entry is listed as unresolved. Roots that run different versions under one constraint become separate rollouts, each limited to its own roots, and `terragucci respond rollout` continues each one.
 
-`--dry-run` prints the table (root, call, module, constraint, resolved version) and plans no waves. Without it the command also plans the waves, as `rollout` does in `--mode dry-run`, and `--mode apply` opens the next wave's pull requests. Calls with no `version` argument are listed and left alone. Only roots are read, so a constraint in a reusable module stays as written, and a control repository is refused, since the versions come from one checkout's init state.
+The edit rewrites only the `version` literal, or adds a `version = "..."` line after the `source` line, and re-reads the file to confirm nothing else changed. An entry it cannot edit that way is listed as `unpinned` with the reason: a version written as an expression, or a `source` that shares its line with other text such as `tls = { source = "hashicorp/tls" }`. A root with any such call of a module or provider is left out of that module's or provider's rollout.
+
+`--dry-run` prints the table (root, call, module or provider, constraint, resolved version) and plans no waves. Without it the command also plans the waves, as `rollout` does in `--mode dry-run`, and `--mode apply` opens the next wave's pull requests. Only roots are read, so a constraint in a reusable module stays as written, and a control repository is refused, since the versions come from one checkout's init state.
 
 The rollout workflow that `init` writes for `rollouts` is `.github/workflows/terragucci-rollout.yml`, or the same name under `.forgejo/workflows/`. Its `workflow_dispatch` takes the optional inputs `module` and `version`. Dispatched with `module`, it runs `terragucci rollout <module> [<version>] --mode apply`, where exit 3 does not fail the job. On its schedule it runs `terragucci respond rollout --mode apply`.
 
