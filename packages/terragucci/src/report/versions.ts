@@ -161,6 +161,8 @@ export interface EstateVersionRow {
   roots: EstateVersionRoot[];
   /** For a module version a choudoufu root runs, when the installed chant has the catalog. */
   compat?: EstateModuleCompat;
+  /** For a module or provider version older than the newest release the registry lists: the newest, and how far behind this is. */
+  behind?: { latest: string; releases: number; bump: "major" | "minor" | "patch" };
 }
 
 /** The estate's versions: per binary, provider and module source, each version in use, newest first, and the roots on it. */
@@ -168,6 +170,8 @@ export interface EstateVersions {
   binaries: { binary: string; versions: EstateVersionRow[] }[];
   providers: { provider: string; versions: EstateVersionRow[] }[];
   modules: { source: string; versions: EstateVersionRow[] }[];
+  /** Modules and providers whose releases could not be listed, each with why: no `behind` is given for them. */
+  unread?: { name: string; reason: string }[];
 }
 
 /** Newest first, comparing the numbers in a version as numbers; an absent version last. */

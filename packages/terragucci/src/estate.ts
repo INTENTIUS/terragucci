@@ -57,6 +57,8 @@ import { buildDora, DORA_FILE, doraGauges, duration, spanLabel, type Dora } from
 import { buildPolicyMetrics, POLICY_METRICS_FILE, type PolicyMetrics } from "./report/policy-metrics";
 import { metricsBody, send, telemetryFromEnv, type OtlpFetch } from "./telemetry";
 import { EPHEMERAL_SCHEMA, ephemeralKey, type EphemeralList } from "./ephemeral";
+import { addBehind } from "./report/behind";
+import type { ReleaseSources } from "./rollout/releases";
 import { version as VERSION } from "../package.json";
 
 type Reports = NonNullable<TerragucciConfig["reports"]>;
@@ -73,6 +75,8 @@ export interface EstateOptions {
   otlpFetch?: OtlpFetch;
   env?: NodeJS.ProcessEnv;
   now?: Date;
+  /** The releases each module and provider in use has published, so the versions section says how far behind each is. Without it the section shows only what runs. */
+  releases?: ReleaseSources;
 }
 
 export interface EstateResult {
@@ -377,6 +381,7 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
   for (const p of projects) indexes.push(await readProject(p.project, p.reports, out, client));
   // The known-module catalog beside each module version a choudoufu root runs (chant#4560).
   const page = buildEstate(indexes, now, moduleCatalogLib as unknown as ChantModuleCatalog);
+  if (options.releases && page.versions) await addBehind(page.versions, options.releases);
   if (out?.bucket) {
     const trail = await auditTrail(client(out), out.prefix ?? "");
     if (trail) page.audit = trail;
@@ -440,6 +445,8 @@ export function describeEstate(r: EstateResult, cwd: string): string {
     if (p.drifted > 0) lines.push(`  ${p.project}: ${plural(p.drifted, "root", "roots")} drifted`);
     if (p.status === "error") lines.push(`  ${p.project}: the index could not be read: ${p.error}`);
   }
+  const behind = [...(r.estate.versions?.modules ?? []), ...(r.estate.versions?.providers ?? [])].flatMap((g) => g.versions.filter((v) => v.behind)).length;
+  if (behind > 0) lines.push(`versions: ${plural(behind, "module or provider version", "module and provider versions")} behind the newest release`);
   const d = r.dora;
   const c = d.estate.change_failure.rate;
   lines.push(`dora: ${d.estate.per_week} deployments per week (${d.estate.deployments} in ${spanLabel(d.estate.span_seconds)}), lead time ${duration(d.estate.lead_time.median_seconds)}, change failure rate ${c === null ? "none" : `${Math.round(c * 1000) / 10}%`}, time to restore ${duration(d.estate.restore.median_seconds)}`);

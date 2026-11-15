@@ -462,9 +462,69 @@
         },
         {
           "const": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "schedule": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "watch": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "module": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "pattern": "\\S"
+                  },
+                  "follow": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "patch",
+                        "minor",
+                        "major"
+                      ]
+                    }
+                  },
+                  "min_age": {
+                    "type": "string",
+                    "pattern": "^[1-9]\\d*[mhd]$"
+                  }
+                },
+                "additionalProperties": false,
+                "oneOf": [
+                  {
+                    "required": [
+                      "module"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "provider"
+                    ]
+                  }
+                ]
+              },
+              "description": "Module and provider globs whose newer releases start a rollout, with the bumps to follow and the age a release reaches first."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "schedule"
+          ]
         }
       ],
-      "description": "A cron schedule for the job that opens each rollout's next wave, or false."
+      "description": "A cron schedule for the job that opens each rollout's next wave, or false; or a map of that schedule and the watch rules."
     },
     "control": {
       "type": "object",

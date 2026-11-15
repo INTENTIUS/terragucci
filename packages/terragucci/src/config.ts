@@ -524,6 +524,65 @@ export interface ControlSettings {
 export const TEMPLATES_KEYS = ["registry", "apps", "require"] as const;
 /** `templates.require`: `signed` takes a signed or verified version, `any` an unsigned one too. */
 export const TEMPLATES_REQUIRE = ["signed", "any"] as const;
+export const WATCH_KEYS = ["module", "provider", "follow", "min_age"] as const;
+export const ROLLOUTS_KEYS = ["schedule", "watch"] as const;
+export const FOLLOW_BUMPS = ["patch", "minor", "major"] as const;
+export type FollowBump = (typeof FOLLOW_BUMPS)[number];
+/** The bumps a watch rule follows when it names none: a major release changes an interface, so it is a person's to start. */
+export const FOLLOW_DEFAULT: readonly FollowBump[] = ["patch", "minor"];
+
+/**
+ * One `rollouts.watch` rule: a module glob or a provider glob, which bumps of
+ * it to follow, and how old a release is before it is picked up.
+ */
+export interface WatchRule {
+  /** A glob over the module's source, with or without its registry host: `terraform-aws-modules/vpc/aws`, or `terraform-aws-modules/*` for each of the namespace's. */
+  module?: string;
+  /** A glob over the provider's address, with or without its registry host: `hashicorp/*`. */
+  provider?: string;
+  /** Default patch and minor. */
+  follow?: FollowBump[];
+  /** A duration in minutes, hours or days (`3d`): a release younger than it waits. */
+  min_age?: string;
+}
+
+export interface RolloutsSettings {
+  /** The cron of the job that continues each rollout, and starts one for a watched release. */
+  schedule: string;
+  watch?: WatchRule[];
+}
+
+/** The cron `rollouts` names, in either of its forms. */
+export const rolloutsSchedule = (r: ResolvedSettings["rollouts"]): string | undefined => (typeof r === "string" ? r : r && typeof r === "object" ? r.schedule : undefined);
+
+/** The rules `rollouts.watch` names; none when `rollouts` is the cron alone. */
+export const rolloutsWatch = (r: ResolvedSettings["rollouts"]): WatchRule[] => (r && typeof r === "object" ? (r.watch ?? []) : []);
+
+/** The problems in a `rollouts` value: a cron, false, or a map of the cron and the watch rules. */
+export function rolloutsProblems(v: unknown, where: string): string[] {
+  if (v === false || (typeof v === "string" && v.trim() !== "")) return [];
+  if (!isObject(v)) return [`${where} must be a cron schedule, false, or a map (settings: ${ROLLOUTS_KEYS.join(", ")})`];
+  const out: string[] = [];
+  for (const k of Object.keys(v)) if (!(ROLLOUTS_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${ROLLOUTS_KEYS.join(", ")})`);
+  if (!(typeof v.schedule === "string" && v.schedule.trim() !== "")) out.push(`${where}.schedule must be a cron schedule`);
+  if (v.watch !== undefined) {
+    if (!Array.isArray(v.watch) || v.watch.length === 0) out.push(`${where}.watch must be a list of rules`);
+    else {
+      v.watch.forEach((rule, i) => {
+        const at = `${where}.watch[${i}]`;
+        if (!isObject(rule)) return void out.push(`${at} must be a map (settings: ${WATCH_KEYS.join(", ")})`);
+        for (const k of Object.keys(rule)) if (!(WATCH_KEYS as readonly string[]).includes(k)) out.push(`${at}.${k} is not a setting (settings: ${WATCH_KEYS.join(", ")})`);
+        const named = (["module", "provider"] as const).filter((k) => rule[k] !== undefined);
+        if (named.length !== 1) out.push(`${at} names a module or a provider glob, and one of them`);
+        for (const k of named) if (!(typeof rule[k] === "string" && (rule[k] as string).trim() !== "")) out.push(`${at}.${k} must be a glob such as terraform-aws-modules/*/aws`);
+        if (rule.follow !== undefined && !(Array.isArray(rule.follow) && rule.follow.length > 0 && rule.follow.every((b) => (FOLLOW_BUMPS as readonly unknown[]).includes(b)))) out.push(`${at}.follow must be a list of ${FOLLOW_BUMPS.join(", ")}`);
+        if (rule.min_age !== undefined && !(typeof rule.min_age === "string" && ttlMs(rule.min_age) !== undefined)) out.push(`${at}.min_age must be a duration in minutes, hours or days, such as 3d`);
+      });
+    }
+  }
+  return out;
+}
+
 /** Where a requested app's root goes by default. */
 export const TEMPLATES_APPS = "apps/{name}";
 
@@ -751,7 +810,7 @@ export interface ProjectSettings {
    * control repo's rollout spans its projects, so it is continued from the
    * control repo. `respond.rollout: off` leaves the job out.
    */
-  rollouts?: string | false;
+  rollouts?: string | false | RolloutsSettings;
   /**
    * Apps from templates (`terragucci templates`, `terragucci request`): the
    * registry whose catalog lists the templates, where a requested app's root
@@ -1400,9 +1459,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     problems.push(`${where}.comments must be a cron schedule or false`);
   }
   if (s.comments && s.forge !== undefined && s.forge !== "gitlab") problems.push(`${where}.comments: ${COMMENTS_GITLAB_ONLY}`);
-  if (s.rollouts !== undefined && s.rollouts !== false && !(typeof s.rollouts === "string" && s.rollouts.trim() !== "")) {
-    problems.push(`${where}.rollouts must be a cron schedule or false`);
-  }
+  if (s.rollouts !== undefined) problems.push(...rolloutsProblems(s.rollouts, `${where}.rollouts`));
   if (s.control !== undefined) problems.push(...controlProblems(s.control, `${where}.control`));
   if (s.templates !== undefined) problems.push(...templatesProblems(s.templates, `${where}.templates`));
   if (s.gitlab !== undefined) {

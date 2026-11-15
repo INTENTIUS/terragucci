@@ -232,7 +232,7 @@ The same waves record the versions each root ran at the applied commit: its bina
 | per provider | each locked version and the roots on it |
 | per binary | each version and the roots that ran it |
 
-Each module or provider's heading counts its versions live. When a [rollout](/terragucci/guides/roll-out-a-module-version/) has applied every wave, its module shows one version. Local module calls are left out, and a root keeps its last entry after you remove it from the repo. A Terragrunt unit lists the providers of the lock file Terragrunt copies back beside its `terragrunt.hcl`; its modules sit in Terragrunt's cache and are not listed.
+Each module or provider's heading counts its versions live. When `terragucci estate` can reach the registries, a version older than the newest release carries a Behind column: how many releases are newer, the bump to the newest (`major`, `minor` or `patch`), and that release. It does not depend on `rollouts.watch`. A module or provider whose releases cannot be listed, such as a git module, is named above the tables with why, and its versions carry no figure. When a [rollout](/terragucci/guides/roll-out-a-module-version/) has applied every wave, its module shows one version. Local module calls are left out, and a root keeps its last entry after you remove it from the repo. A Terragrunt unit lists the providers of the lock file Terragrunt copies back beside its `terragrunt.hcl`; its modules sit in Terragrunt's cache and are not listed.
 
 ## Change history
 

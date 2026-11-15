@@ -656,18 +656,22 @@ function versionsSection(estate: Estate): string {
   const where = (r: EstateVersionRow["roots"][number]): string => `${esc(r.project)}: <code>${esc(r.root)}</code>${r.call ? ` <small>${esc(r.call)}</small>` : ""}`;
   const table = (title: string, kind: string, none: string, groups: { name: string; versions: EstateVersionRow[] }[]): string => {
     if (groups.length === 0) return "";
-    // The catalog column shows only when some version carries the catalog's answer.
+    // The catalog column shows only when some version carries the catalog's answer, and the behind column when a registry was asked.
     const compat = groups.some((g) => g.versions.some((x) => x.compat));
+    const behind = groups.some((g) => g.versions.some((x) => x.behind));
+    const cols = 2 + (compat ? 1 : 0) + (behind ? 1 : 0);
     const bodies = groups.map((g) => {
       const live = g.versions.length;
-      const head = `<tr class="head"><th colspan="${compat ? 3 : 2}"><code>${esc(g.name)}</code>: ${live === 1 ? "1 version" : `<span class="warn">${live} versions</span>`} live</th></tr>`;
-      const rows = g.versions.map((x) => `<tr data-version="${esc(x.version ?? "")}"${x.compat ? ` data-compat="${esc(x.compat.status)}"` : ""}><td>${x.version !== undefined ? `<code>${esc(x.version)}</code>` : `<span class="none">${none}</span>`}</td><td>${x.roots.map(where).join("<br>")}</td>${compat ? `<td>${x.compat ? compatCell(x.compat) : ""}</td>` : ""}</tr>`);
+      const head = `<tr class="head"><th colspan="${cols}"><code>${esc(g.name)}</code>: ${live === 1 ? "1 version" : `<span class="warn">${live} versions</span>`} live</th></tr>`;
+      const rows = g.versions.map((x) => `<tr data-version="${esc(x.version ?? "")}"${x.compat ? ` data-compat="${esc(x.compat.status)}"` : ""}${x.behind ? ` data-behind="${esc(x.behind.bump)}"` : ""}><td>${x.version !== undefined ? `<code>${esc(x.version)}</code>` : `<span class="none">${none}</span>`}</td>${behind ? `<td>${x.behind ? `<span class="warn">${esc(`${x.behind.releases} ${x.behind.releases === 1 ? "release" : "releases"} behind, ${x.behind.bump}`)}</span> <small>newest <code>${esc(x.behind.latest)}</code></small>` : ""}</td>` : ""}<td>${x.roots.map(where).join("<br>")}</td>${compat ? `<td>${x.compat ? compatCell(x.compat) : ""}</td>` : ""}</tr>`);
       return `<tbody class="ver" data-${kind}="${esc(g.name)}" data-live="${live}">${head}${rows.join("")}</tbody>`;
     });
     return `<h3>${title}</h3>
-<div class="scroll"><table id="versions-${title.toLowerCase()}"><thead><tr><th>Version</th><th>Roots</th>${compat ? "<th>On choudoufu</th>" : ""}</tr></thead>${bodies.join("\n")}</table></div>`;
+<div class="scroll"><table id="versions-${title.toLowerCase()}"><thead><tr><th>Version</th>${behind ? "<th>Behind</th>" : ""}<th>Roots</th>${compat ? "<th>On choudoufu</th>" : ""}</tr></thead>${bodies.join("\n")}</table></div>`;
   };
+  const unread = v.unread?.length ? `<p class="none">No newest release was read for ${v.unread.map((u) => `<code>${esc(u.name)}</code> (${esc(u.reason)})`).join(", ")}.</p>` : "";
   return [
+    unread,
     table("Modules", "module", "no version in its source", v.modules.map((m) => ({ name: m.source, versions: m.versions }))),
     table("Providers", "provider", "not locked", v.providers.map((p) => ({ name: p.provider, versions: p.versions }))),
     table("Binaries", "binary", "version not reported", v.binaries.map((b) => ({ name: b.binary, versions: b.versions }))),

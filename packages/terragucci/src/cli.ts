@@ -157,6 +157,7 @@ import { configFromEntries, hasControlEntries, importControlConfigAt, LEDGER_PAT
 import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { MARKER } from "./render";
 import { describeEstate, estate } from "./estate";
+import { registrySources } from "./rollout/releases";
 import { audit, describeAudit } from "./audit";
 import { RenderError } from "./render";
 import { applyWave, branchRootProblems, parseBranches, parseGroups } from "./apply";
@@ -561,6 +562,7 @@ export async function main(argv: string[]): Promise<number> {
         const result = await estate(cwd, (await controlConfig(cwd, str(flags, "config"))) ?? {}, {
           ...(str(flags, "out") ? { out: str(flags, "out") } : {}),
           ...(linkSeconds !== undefined ? { linkSeconds } : {}),
+          releases: registrySources(),
           ...(bucket ? { reports: { bucket, ...(str(flags, "bucket-endpoint") ? { endpoint: str(flags, "bucket-endpoint") } : {}), ...(str(flags, "bucket-prefix") ? { prefix: str(flags, "bucket-prefix") } : {}) } } : {}),
         });
         console.log(describeEstate(result, cwd));

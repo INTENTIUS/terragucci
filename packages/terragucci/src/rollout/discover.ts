@@ -47,11 +47,12 @@ function remoteTags(repo: string, prefix: string): string[] {
   return [];
 }
 
-export async function newestPublished(input: DiscoverInput): Promise<Discovered | undefined> {
-  let best: { v: Semver; from: string } | undefined;
+/** Every version published, each with where it was found; the same version found in two places is listed twice. */
+export async function publishedVersions(input: DiscoverInput): Promise<Array<{ version: string; from: string }>> {
+  const found: Array<{ version: string; from: string }> = [];
   const offer = (text: string, from: string) => {
     const v = parseSemver(text);
-    if (v && (!best || compareSemver(v, best.v) > 0)) best = { v, from };
+    if (v) found.push({ version: formatSemver(v), from });
   };
   const path = input.module.replace(/^\.\//, "").replace(/\/+$/, "");
   if (!/^[a-z]+:\/\/|::/.test(path)) {
@@ -71,6 +72,15 @@ export async function newestPublished(input: DiscoverInput): Promise<Discovered 
   }
   for (const source of new Set(input.registries ?? [])) {
     for (const v of await registryVersions(source, input.fetch)) offer(v, `${source} ${v}`);
+  }
+  return found;
+}
+
+export async function newestPublished(input: DiscoverInput): Promise<Discovered | undefined> {
+  let best: { v: Semver; from: string } | undefined;
+  for (const f of await publishedVersions(input)) {
+    const v = parseSemver(f.version)!;
+    if (!best || compareSemver(v, best.v) > 0) best = { v, from: f.from };
   }
   return best ? { version: formatSemver(best.v), from: best.from } : undefined;
 }

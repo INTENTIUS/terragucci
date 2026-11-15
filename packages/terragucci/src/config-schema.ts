@@ -16,6 +16,9 @@ import {
   CONTROL_KEYS,
   EVIDENCE_KEYS,
   TEMPLATES_KEYS,
+  ROLLOUTS_KEYS,
+  WATCH_KEYS,
+  FOLLOW_BUMPS,
   TEMPLATES_REQUIRE,
   CONTROL_NAME,
   CONTROL_REF,
@@ -475,7 +478,30 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     comments: { ...cron, description: "GitLab only: the cron of the comments schedule, or false." },
     rollouts: top
-      ? { anyOf: [nonBlank, { const: false }], description: "A cron schedule for the job that opens each rollout's next wave, or false." }
+      ? {
+          anyOf: [
+            nonBlank,
+            { const: false },
+            map(ROLLOUTS_KEYS, {
+              schedule: nonBlank,
+              watch: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  ...map(WATCH_KEYS, {
+                    module: nonBlank,
+                    provider: nonBlank,
+                    follow: { type: "array", minItems: 1, uniqueItems: true, items: enumOf(FOLLOW_BUMPS) },
+                    min_age: { type: "string", pattern: "^[1-9]\\d*[mhd]$" },
+                  }),
+                  oneOf: [{ required: ["module"] }, { required: ["provider"] }],
+                },
+                description: "Module and provider globs whose newer releases start a rollout, with the bumps to follow and the age a release reaches first.",
+              },
+            }, { required: ["schedule"] }),
+          ],
+          description: "A cron schedule for the job that opens each rollout's next wave, or false; or a map of that schedule and the watch rules.",
+        }
       : { const: false, description: "A single repo's key; a control repo runs terragucci respond rollout itself." },
     control: {
       ...map(CONTROL_KEYS, {

@@ -102,6 +102,11 @@
         "modules": {
           "type": "array",
           "items": { "type": "object", "required": ["source", "versions"], "properties": { "source": { "type": "string" }, "versions": { "type": "array", "items": { "$ref": "#/$defs/versionRow" } } } }
+        },
+        "unread": {
+          "type": "array",
+          "description": "Modules and providers whose releases could not be listed, each with why. Their versions carry no behind.",
+          "items": { "type": "object", "required": ["name", "reason"], "properties": { "name": { "type": "string" }, "reason": { "type": "string" } } }
         }
       }
     }
@@ -123,6 +128,16 @@
               "root": { "type": "string" },
               "call": { "type": "string", "description": "For a module, the call's address in the root." }
             }
+          }
+        },
+        "behind": {
+          "type": "object",
+          "description": "For a module or provider version older than the newest release its registry lists: that release, how many releases are newer, and the bump to it. Absent when the version is current or no registry was asked.",
+          "required": ["latest", "releases", "bump"],
+          "properties": {
+            "latest": { "type": "string" },
+            "releases": { "type": "integer", "minimum": 1 },
+            "bump": { "enum": ["major", "minor", "patch"] }
           }
         },
         "compat": {

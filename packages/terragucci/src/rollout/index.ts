@@ -159,7 +159,10 @@ export function rolloutExit(result: RolloutResult): number {
 
 // ── projects ─────────────────────────────────────────────────────────────────
 
-interface Project {
+/** What opening a project reads from the caller's options: the forge, its token and the mode. */
+export type ProjectOptions = Pick<RolloutOptions, "env" | "forge" | "fetch"> & { mode: "dry-run" | "apply" };
+
+export interface Project {
   key: string;
   settings: ResolvedSettings;
   /** A checkout of the default branch, which the rollout may write. */
@@ -243,7 +246,7 @@ function controlTarget(config: TerragucciConfig, key: string, options: Pick<Roll
   return { key, forge, forgeName, token, settings, cloneUrl };
 }
 
-async function singleProject(repo: string, settings: ResolvedSettings, options: RolloutOptions): Promise<Project> {
+async function singleProject(repo: string, settings: ResolvedSettings, options: ProjectOptions): Promise<Project> {
   const { key, forge } = singleTarget(repo, settings, options);
   git(repo, ["fetch", "-q", "origin"]);
   const base = await forge.defaultBranch();
@@ -266,7 +269,7 @@ async function singleProject(repo: string, settings: ResolvedSettings, options: 
   };
 }
 
-async function controlProject(config: TerragucciConfig, key: string, options: RolloutOptions): Promise<Project> {
+async function controlProject(config: TerragucciConfig, key: string, options: ProjectOptions): Promise<Project> {
   const { settings, forge, token, cloneUrl } = controlTarget(config, key, options);
   const base = await forge.defaultBranch();
   const work = mkdtempSync(join(tmpdir(), "terragucci-rollout-"));
@@ -295,7 +298,7 @@ function terragruntUnits(repo: string): string[] {
   return out;
 }
 
-function rootsOf(project: Project): string[] {
+export function rootsOf(project: Project): string[] {
   return [...new Set([...findRoots(project.dir, project.settings.roots), ...terragruntUnits(project.dir)])].sort();
 }
 
@@ -447,18 +450,29 @@ export async function rollout(cwd: string, options: RolloutOptions): Promise<Rol
   const parser = options.parser ?? (options.kind === "module" || isRange(options.from) ? await loadHclParser() : undefined);
   const projects: Project[] = [];
   try {
-    if (config.projects) {
-      for (const key of Object.keys(config.projects)) projects.push(await controlProject(config, key, { ...options, mode }));
-    } else {
-      const settings = resolveRepo(config);
-      const refused = detectShape(repo, settings).refuses("rollouts");
-      if (refused) throw new ConfigError(`terragucci rollout: ${refused}`);
-      projects.push(await singleProject(repo, settings, { ...options, mode }));
-    }
+    await openProjects(repo, config, { ...options, mode }, projects);
     return await walk(repo, config, projects, { ...options, mode, parser });
   } finally {
     for (const p of projects) p.cleanup();
   }
+}
+
+/**
+ * The checkout of each project's default branch a rollout reads and writes:
+ * every project of a control repo, or the one repository. `opened` receives
+ * each as it opens, so a caller that fails midway still cleans up the ones
+ * made; the caller cleans up the returned list.
+ */
+export async function openProjects(repo: string, config: TerragucciConfig, options: ProjectOptions, opened: Project[] = []): Promise<Project[]> {
+  if (config.projects) {
+    for (const key of Object.keys(config.projects)) opened.push(await controlProject(config, key, options));
+  } else {
+    const settings = resolveRepo(config);
+    const refused = detectShape(repo, settings).refuses("rollouts");
+    if (refused) throw new ConfigError(`terragucci rollout: ${refused}`);
+    opened.push(await singleProject(repo, settings, options));
+  }
+  return opened;
 }
 
 // ── continuing every rollout in flight ───────────────────────────────────────

@@ -106,6 +106,64 @@ npx terragucci rollout --provider hashicorp/aws 6.68.0 --mode apply
 
 Each lock file is rewritten for that provider alone, and an exact `version` constraint moves too. The wave stops unless every other provider stays where it was.
 
+## Start a rollout when a release comes out
+
+A rollout starts when a person names a version. With `rollouts.watch` it also starts when a module or provider the roots use has a newer release. `rollouts` takes a map in place of the cron:
+
+```yaml
+rollouts:
+  schedule: "*/15 * * * *"
+  watch:
+    - module: "terraform-aws-modules/*/aws"
+      follow: [patch, minor]
+      min_age: 3d
+    - provider: "hashicorp/*"
+      follow: [patch]
+```
+
+Each run of the rollout job continues the rollouts in flight, then reads the default branch for module calls that pin an exact version and the providers each lock file holds, and keeps the ones a rule names. A glob matches the address with or without its registry host, and `*` stays within one segment, so `terraform-aws-modules/*/aws` is every module of that namespace on the `aws` system and `terraform-aws-modules/**` is every one of them. The first rule that matches decides.
+
+For each one, the watch asks the registry for its releases and takes the newest one the rule lets through: a bump in `follow` (patch and minor when unset, since a major release changes an interface), at least `min_age` old. A newer release that is held back does not stop an older one that qualifies. That release becomes the `to` of an ordinary rollout from the highest version a root pins, and the rest follows as above: one pull request per wave, the next only after the last applied.
+
+- A release with no date cannot meet `min_age`. The dates come from the registry's version document (`published_at`), which the public registries serve; a static registry or an OCI repository gives none.
+- Registry modules, `oci://` modules and providers are read. A git module is not, and the run lists it as skipped.
+- A module call whose `version` is a constraint such as `~> 5.0` is not followed. The constraint already floats, and a release outside it needs the constraint changed. `terragucci pin modules` turns constraints into exact pins, and the watch follows them from then on.
+- A module with a rollout in flight is left alone until it finishes, and a release whose rollout already ran is not started again. Roots still on an older version are named, with the command that moves them.
+- A dry run (`terragucci respond rollout`, without `--mode apply`) lists what each rule would start and why anything is held.
+
+### With Renovate or Dependabot
+
+When a bot already opens the pull request for the same bump, that pull request is the canary wave. The watch looks at pull requests from `renovate/` and `dependabot/` branches whose title, branch or body names the module or provider and the new version:
+
+| The bot's pull request | The watch |
+|---|---|
+| open | waits, and names it |
+| merged, apply not reported | waits |
+| merged, apply failed | stops, and starts nothing |
+| merged and applied | starts the rollout for the roots the bot did not move |
+| closed without merging | starts nothing for that release |
+
+The apply it reads is the one a rollout's own waves read: `apply/<path>` checks per directory, else `terragucci/apply`, else the apply jobs. For the bot's pull request to be a canary rather than the whole change, point it at the roots that go first:
+
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: terraform
+    directories: ["/envs/dev/*"]
+    schedule: { interval: daily }
+```
+
+```json
+{
+  "packageRules": [
+    { "matchManagers": ["terraform"], "matchFileNames": ["envs/dev/**"] }
+  ]
+}
+```
+
+Dependabot opens one pull request for each directory it is given, and Renovate's `matchFileNames` limits a rule to the files it lists. Match them to `waves.canary`. A bot that bumps every root in one pull request leaves nothing for the rollout to stage, and the watch finds every root at the new version.
+
 ## Upgrade the apps built from a template
 
 An app made from a template pins it exactly in its `module "app"` call, so the same flow moves it. Name the template by its address:

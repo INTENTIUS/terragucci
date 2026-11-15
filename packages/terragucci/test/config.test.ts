@@ -111,7 +111,7 @@ describe("validation", () => {
     [{ roots: "envs/*" }, /config\.roots must be a list of strings/],
     [{ drift: 5 }, /config\.drift must be a cron schedule or false/],
     [{ comments: 5 }, /config\.comments must be a cron schedule or false/],
-    [{ rollouts: 5 }, /config\.rollouts must be a cron schedule or false/],
+    [{ rollouts: 5 }, /config\.rollouts must be a cron schedule, false, or a map/],
     [{ projects: { "github.com/acme/a": { rollouts: "*/15 * * * *" } } }, /projects\["github.com\/acme\/a"\]\.rollouts: a control repo's rollout plans its waves across every project/],
     [{ defaults: { rollouts: "*/15 * * * *" }, projects: { "github.com/acme/a": {} } }, /defaults\.rollouts: a control repo's rollout/],
     [{ forge: "github", comments: "*/5 * * * *" }, /config\.comments: comments is for GitLab/],
