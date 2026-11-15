@@ -45,6 +45,7 @@ import { stateOps } from "./gated-request";
 import { type ChantStateOps, type ChantGatedRequestRead, type ChantInvokeActionResult, type ChantRootRun } from "./chant-next";
 import { ACTION_ADDRESS } from "./comment";
 import { ConfigError, findConfig, loadConfig, resolveRepo, type Approval, type Binary } from "./config";
+import { rootDir as rootDirOf } from "./root-config";
 import { requestRules, syncLocalLedger } from "./gated-request";
 import { TOOL_VERSIONS } from "./images";
 import { detectShape } from "./shape";
@@ -194,20 +195,22 @@ export async function runAction(repo: string, o: ActionOptions): Promise<ActionR
   const exec = o.exec ?? runBinary;
   const address = o.address;
   const refuse = (root: string, reason: string): ActionResult => ({ code: ACTION_EXIT.refused, json: { status: "refused", root, address, reason } });
-  const { rel, dir } = rootDir(repo, o.root);
+  const { rel } = rootDir(repo, o.root);
   if (!ACTION_ADDRESS.test(address)) return refuse(rel, `${rel}: "${address}" is not an action address; give action.<type>.<label>, after module.<name>. for an action in a module`);
   const configPath = o.config ?? findConfig(repo);
   const config = configPath ? await loadConfig(resolve(configPath)) : {};
   if (config.projects) throw new ConfigError("action runs in a project's own checkout, not a control repo");
   const settings = resolveRepo(config);
   const shape = detectShape(repo, settings);
+  // An instance (`<directory>@<name>`) runs in its directory.
+  const dir = resolve(repo, rootDirOf(repo, rel));
   const binary: Binary | string = o.binary ?? settings.binary ?? shape.binary([rel]).value;
   // Ruling E: OpenTofu and choudoufu have no action invocation; refused by name, before any binary runs.
   const engine = engineRefusal(rel, binaryName(binary));
   if (engine) return refuse(rel, engine);
   const chant = await actionOps();
 
-  const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(rel, env)?.init ?? env);
+  const init = exec(binary, ["init", "-input=false", "-no-color"], dir, shape.initEnv(rel, env));
   if (init.status !== 0) return refuse(rel, `${rel}: ${binary} init failed:\n${tail(init.out)}`);
   const rule = await approvalRule(repo, { at: "HEAD", ...(configPath ? { config: configPath } : {}) });
   const sealed = rule.mode === "sealed";

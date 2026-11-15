@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { runBinary, terragruntExec } from "./binary-env";
 import { ConfigError, findConfig, loadConfig, resolveProject, resolveRepo, type Binary } from "./config";
 import { globMatch } from "./detect";
+import { rootDir, rootPath } from "./root-config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 
 export interface PlanOptions {
@@ -38,7 +39,7 @@ export async function planTargets(repo: string, options: PlanOptions): Promise<{
   const roots = options.root ? ordered.filter((r) => globMatch(options.root!, r)) : ordered;
   if (roots.length === 0) throw new ConfigError(options.root ? `no root matches ${options.root}` : "found no roots");
   // The roots the shape's prepare writes are on disk only once it has run, as every job runs it.
-  const unwritten = shape.prepare ? roots.filter((r) => !existsSync(join(repo, r))) : [];
+  const unwritten = shape.prepare ? roots.filter((r) => !existsSync(rootPath(repo, r))) : [];
   if (unwritten.length > 0) throw new ConfigError(`${unwritten.join(", ")} ${unwritten.length === 1 ? "is" : "are"} not on disk: ${shape.prepare} writes ${unwritten.length === 1 ? "it" : "them"}, so run it first`);
   return { binary: terragrunt ? binary : settings.binary ?? shape.binary(found.roots.map((r) => r.root)).value, roots, ...(terragrunt ? { terragrunt } : {}), shape };
 }
@@ -60,8 +61,8 @@ async function run(binary: string, dir: string, terragrunt: boolean, env: NodeJS
  * Init a root: in default, then its own workspace selected, when it names one
  * (an Atmos instance), so the plan reads that workspace's state.
  */
-async function initRoot(binary: string, dir: string, ws: RootInit): Promise<Run> {
-  const init = await run(binary, dir, false, ws?.init ?? process.env, "init", "-input=false", "-no-color");
+async function initRoot(binary: string, dir: string, ws: RootInit, env: NodeJS.ProcessEnv): Promise<Run> {
+  const init = await run(binary, dir, false, ws?.init ?? env, "init", "-input=false", "-no-color");
   if (init.code !== 0 || !ws) return init;
   return run(binary, dir, false, ws.selectEnv, ...ws.select);
 }
@@ -70,9 +71,9 @@ export async function plan(repo: string, options: PlanOptions, out: (line: strin
   const { binary, roots, terragrunt = false, shape } = await planTargets(repo, options);
   const results: RootPlan[] = [];
   for (const root of roots) {
-    const dir = join(repo, root);
+    const dir = join(repo, rootDir(repo, root));
     // Terragrunt runs init itself, with mock outputs where a unit allows them for plan.
-    const init = terragrunt ? { code: 0, stderr: "", stdout: "" } : await initRoot(binary, dir, shape.rootInit(root, process.env));
+    const init = terragrunt ? { code: 0, stderr: "", stdout: "" } : await initRoot(binary, dir, shape.rootInit(root, process.env), shape.initEnv(root, process.env));
     if (init.code !== 0) {
       results.push({ root, ok: false, summary: `init failed: ${(init.stderr || init.stdout).trim().split("\n").pop()}` });
       out(`${root}: init failed`);

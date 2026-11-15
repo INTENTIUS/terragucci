@@ -33,6 +33,7 @@ import { actorOf } from "@intentius/chant/actor";
 import type { StoreFetch } from "@intentius/chant/object-store";
 import { approvalRule } from "./approval";
 import { ConfigError, findConfig, loadConfig, resolveRepo } from "./config";
+import { rootDir as rootDirOf } from "./root-config";
 import { detectShape } from "./shape";
 import { refusal, runBinary, unitPlace, type BinaryExec, type MigrateOptions } from "./migrate";
 import { opMessage, requestRules } from "./gated-request";
@@ -114,8 +115,8 @@ export async function exportState(repo: string, options: ExportOptions): Promise
       rootEnv = place.env;
     } else {
       const benv = { ...env, TF_DATA_DIR: data };
-      dir = join(repo, root);
-      const init = await exec(binary, ["init", "-input=false", "-no-color"], dir, shape.rootInit(root, benv)?.init ?? benv);
+      dir = join(repo, rootDirOf(repo, root));
+      const init = await exec(binary, ["init", "-input=false", "-no-color"], dir, shape.initEnv(root, benv));
       if (init.code !== 0) throw new ConfigError(`init in ${root} failed: ${init.out.trim().split("\n").slice(-4).join(" ").slice(0, 400)}`);
       rootEnv = shape.rootEnv(root, benv);
     }

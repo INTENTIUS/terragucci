@@ -135,6 +135,7 @@ import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type 
 import { detectForge as detectPrForge } from "@intentius/chant/pr-forge";
 import { artifactBytes, fetchPlanReport, postReview, reviewSubject, writeReviewPrompt, REVIEW_INSTRUCTIONS } from "./review-agent";
 import { addressWarnings, detectForge, findRoots, type WavesAfter } from "./detect";
+import { rootConfigOf, rootsInputProblems } from "./root-config";
 import { atmosInstances, atmosWrite, describeStacks, detectAtmos, instanceStates } from "./atmos";
 import { terramateWrite } from "./terramate";
 import { credentialWarnings, stateAccess, type StateAccess } from "./state-access";
@@ -1547,6 +1548,10 @@ export async function main(argv: string[]): Promise<number> {
           if (shape && problems.length === 0 && config.apply?.branches) {
             const found = shape.kind === "terragrunt" ? walkUnits(repoDir, config.terragrunt?.exclude).map((u) => u.path) : shape.kind === "atmos" ? [] : findRoots(repoDir, config.roots);
             problems.push(...branchRootProblems(found, config.apply.branches));
+          }
+          // The roots backend_config, var_files and instances name, and the files they give each, read from the roots found.
+          if (shape && problems.length === 0 && (config.backend_config || config.var_files || config.instances) && shape.engine === "per-root" && shape.kind !== "atmos") {
+            problems.push(...rootsInputProblems(repoDir, rootConfigOf(repoDir), findRoots(repoDir, config.roots), shape.kind === "synth"));
           }
           // Each cloud whose identities are given by root glob: AWS roles, GCP service accounts, Azure clients, and each environment's.
           const oidc = withEnvironmentRoles(config.oidc, config.environments);

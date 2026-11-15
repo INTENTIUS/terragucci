@@ -24,6 +24,7 @@ import { MIGRATE_LOCK, MIGRATION_SCHEMA, migrationDigest, placesOf, planningErro
 import { MigrationProgress } from "./migrate-progress";
 import { rosterOf, type RosterFacts } from "./report/roster";
 import type { Shape } from "./shape";
+import { rootPath } from "./root-config";
 
 /** An estate migration's plan, each root's estate, and what its write holds while it runs: its progress, and when it began. */
 export interface EstateRun {
@@ -35,7 +36,7 @@ export interface EstateRun {
 /** A root's estate: the name choudoufu resolves (choudoufu#2293) when its live-check prints one, else the live block's own. */
 async function estateName(repo: string, root: string, place: Place, binary: string, exec: BinaryExec): Promise<string> {
   const setup = await readLiveSetup(place.dir, { binary, exec, env: place.env });
-  const e = setup?.estate ?? estateOf(join(repo, root)).estate;
+  const e = setup?.estate ?? estateOf(rootPath(repo, root)).estate;
   if (!e) throw new ConfigError(`${root} has a live block that ${setup ? "resolves no estate (several tofu-estate values, or a name outside the marker grammar)" : "names no estate"}`);
   return e;
 }

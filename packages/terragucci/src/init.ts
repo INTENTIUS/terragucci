@@ -73,6 +73,7 @@ import { CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHook, withPreCommitHook } from "./pre-commit";
 import { applyGroups } from "./cloud-identity";
 import { TRUST_FILE, trustPlan } from "./trust";
+import { rootPath } from "./root-config";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -643,7 +644,7 @@ async function liveRecords(repo: string, roots: string[], options: InitOptions):
   const env = options.env ?? process.env;
   const out: LiveRecords[] = [];
   for (const root of roots) {
-    const dir = join(repo, root);
+    const dir = rootPath(repo, root);
     const setup = await readLiveSetup(dir, { ...(options.liveExec ? { exec: options.liveExec } : {}) });
     if (!setup) {
       const estate = estateOf(dir).estate;

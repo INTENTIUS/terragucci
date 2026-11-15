@@ -53,6 +53,7 @@ import { LEDGER_READ_REF, movedMembers, readLedger, type GateLedger } from "./ap
 import { approvalRule } from "./approval";
 import { runBinary, terragruntExec } from "./binary-env";
 import { ConfigError, findConfig, resolveRepo, type Approval } from "./config";
+import { rootDir as rootDirOf, rootPath } from "./root-config";
 import { detectShape, type RootInit, type Shape } from "./shape";
 import type { S3Fetch } from "@intentius/chant/object-store";
 import type { LockOperation } from "@intentius/chant-lexicon-terraform/state";
@@ -401,7 +402,7 @@ export interface MigrateOptions {
 
 /** Why a root cannot take part in a migration, or undefined. */
 export function refusal(repo: string, root: string): string | undefined {
-  const dir = join(repo, root);
+  const dir = rootPath(repo, root);
   if (!existsSync(dir)) return `${root} is not a directory in the repo`;
   // A Terragrunt unit's code and backend are what Terragrunt makes of its terragrunt.hcl: placeOf prepares it.
   if (existsSync(join(dir, "terragrunt.hcl"))) return undefined;
@@ -468,7 +469,7 @@ export async function placesOf(repo: string, roots: readonly string[], options: 
     }
     // A root that names its workspace (an Atmos instance) runs in it, so the migration moves that workspace's state.
     const init = shape.rootInit(root, renv);
-    out.set(root, { dir: join(repo, root), env: shape.rootEnv(root, renv), ...(init ? { init } : {}) });
+    out.set(root, { dir: join(repo, rootDirOf(repo, root)), env: shape.rootEnv(root, renv), ...(init ? { init } : {}) });
   }
   return out;
 }

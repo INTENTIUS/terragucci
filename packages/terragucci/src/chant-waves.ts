@@ -128,6 +128,8 @@ export interface WavesStepInput extends WavesSpecInput {
   reads?: Record<string, { var: string; root: string; output: string[]; dir?: string; workspace?: string }[]>;
   /** The workspace each root that names one plans and applies in (an Atmos instance's), created after an init in default (chant#4855). */
   workspaces?: Record<string, string>;
+  /** The directory each instance root (`<directory>@<name>`, ./root-config.ts) plans and applies in, where its name is not a path. */
+  dirs?: Record<string, string>;
   /** Who counts at the gate (chant#4859): the pull request's review lines on terragucci's own ledger, the involved people left out, and `approval_rules`. */
   approvals?: { reviewLedger?: string; involved?: { agents?: string[]; exclude: true }; quorum?: GateQuorumRule[] };
   /** A pull request's base, for a choudoufu live root's cone plan. */
@@ -158,7 +160,7 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
   const own = wavesSpec(input) as OpWavesSpec & { planWave?: unknown; applyWave?: unknown; hooks?: { after?: { plan?: unknown; gate?: unknown } } };
   const { planWave: _p, applyWave: _a, hooks, ...rest } = own;
   const runInput = (root: string): Record<string, unknown> | undefined => {
-    const i = { ...(input.reads?.[root]?.length ? { reads: input.reads[root] } : {}), ...(input.workspaces?.[root] ? { workspace: input.workspaces[root] } : {}) };
+    const i = { ...(input.reads?.[root]?.length ? { reads: input.reads[root] } : {}), ...(input.workspaces?.[root] ? { workspace: input.workspaces[root] } : {}), ...(input.dirs?.[root] ? { dir: input.dirs[root] } : {}) };
     return Object.keys(i).length ? i : undefined;
   };
   // approval pr-review is chant's own mode on the step: it counts the review lines terragucci records on tf-apply (chant#4859).

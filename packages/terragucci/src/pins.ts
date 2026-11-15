@@ -25,6 +25,7 @@ import { binaryEnv } from "./binary-env";
 import { ConfigError } from "./config";
 import { exactRequiredVersions, globMatch } from "./detect";
 import { assertLinux, install, type Tool } from "./install";
+import { rootPath } from "./root-config";
 
 /** The binaries a root may pin a release of. */
 export type PinnedTool = "tofu" | "terraform";
@@ -79,7 +80,7 @@ export function rootPin(repo: string, root: string, binary: string, version?: un
     const glob = Object.keys(globs).find((g) => globMatch(g, root));
     if (glob !== undefined) return { version: String(globs[glob]), source: `terragucci.yml version ${glob}` };
   }
-  const dir = join(repo, root);
+  const dir = rootPath(repo, root);
   const file = join(dir, VERSION_FILES[tool]);
   if (existsSync(file)) {
     const v = versionFileRelease(readFileSync(file, "utf-8"));
