@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.60
-description: "terragucci 0.4.60, released 2026-11-15."
+title: Changes in 0.4.61
+description: "terragucci 0.4.61, released 2026-11-15."
 ---
 
-Release `0.4.60` is on npm as `@intentius/terragucci@0.4.60`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.60) lists every change.
+Release `0.4.61` is on npm as `@intentius/terragucci@0.4.61`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.61) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.60 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.61 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.61
+
+The four CI images now install the `@intentius/chant` package that the bundled `terragucci` imports when it runs. The images from `0.4.53` through `0.4.60` left it out, so the first `terragucci` command in a generated job stopped with `Cannot find package '@intentius/chant'`. Run `npx @intentius/terragucci@0.4.61 init` to move a pipeline to the fixed images.
 
 ## In 0.4.60
 
