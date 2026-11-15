@@ -525,7 +525,12 @@ export const TEMPLATES_KEYS = ["registry", "apps", "require"] as const;
 /** `templates.require`: `signed` takes a signed or verified version, `any` an unsigned one too. */
 export const TEMPLATES_REQUIRE = ["signed", "any"] as const;
 export const WATCH_KEYS = ["module", "provider", "follow", "min_age"] as const;
-export const ROLLOUTS_KEYS = ["schedule", "watch"] as const;
+export const ROLLOUTS_KEYS = ["schedule", "watch", "soak"] as const;
+export const SOAK_KEYS = ["after", "conditions", "overrides"] as const;
+export const SOAK_OVERRIDE_KEYS = ["module", "provider", "after", "conditions"] as const;
+/** What a soak checks on the wave's roots before the next wave opens: an open drift issue, a failed apply, a policy denial. */
+export const SOAK_CONDITIONS = ["drift", "apply", "policy"] as const;
+export type SoakCondition = (typeof SOAK_CONDITIONS)[number];
 export const FOLLOW_BUMPS = ["patch", "minor", "major"] as const;
 export type FollowBump = (typeof FOLLOW_BUMPS)[number];
 /** The bumps a watch rule follows when it names none: a major release changes an interface, so it is a person's to start. */
@@ -546,10 +551,31 @@ export interface WatchRule {
   min_age?: string;
 }
 
+/** `rollouts.soak` for the rollouts a module or provider glob names; the other keys fall back to the soak's own. */
+export interface SoakOverride {
+  module?: string;
+  provider?: string;
+  /** A duration in minutes, hours or days (`6h`), or `0` for no wait. */
+  after?: string;
+  conditions?: SoakCondition[];
+}
+
+/** How long a wave applied before the next one opens, and what must hold on its roots meanwhile. */
+export interface SoakSettings {
+  /** A duration in minutes, hours or days (`24h`), counted from when the wave's pull request merged. `0` waits for nothing but the conditions. */
+  after: string;
+  /** Checked on every run once `after` has passed. Default none. */
+  conditions?: SoakCondition[];
+  /** Per module or provider: the first rule that names the rollout decides. */
+  overrides?: SoakOverride[];
+}
+
 export interface RolloutsSettings {
   /** The cron of the job that continues each rollout, and starts one for a watched release. */
   schedule: string;
   watch?: WatchRule[];
+  /** A duration (`24h`) for the whole soak, or its map. */
+  soak?: string | SoakSettings;
 }
 
 /** The cron `rollouts` names, in either of its forms. */
@@ -557,6 +583,47 @@ export const rolloutsSchedule = (r: ResolvedSettings["rollouts"]): string | unde
 
 /** The rules `rollouts.watch` names; none when `rollouts` is the cron alone. */
 export const rolloutsWatch = (r: ResolvedSettings["rollouts"]): WatchRule[] => (r && typeof r === "object" ? (r.watch ?? []) : []);
+
+/** The soak `rollouts` names, in either of its forms: a duration is the soak with no conditions. */
+export const rolloutsSoak = (r: ResolvedSettings["rollouts"]): SoakSettings | undefined => {
+  const soak = r && typeof r === "object" ? r.soak : undefined;
+  return typeof soak === "string" ? { after: soak } : soak;
+};
+
+/** A soak duration: a TTL, or `0`. Milliseconds, or undefined when it is neither. */
+export const soakMs = (v: string): number | undefined => (v === "0" ? 0 : ttlMs(v));
+
+function soakProblems(v: unknown, where: string): string[] {
+  if (typeof v === "string") return soakMs(v) === undefined ? [`${where} must be a duration in minutes, hours or days, such as 24h, or a map (settings: ${SOAK_KEYS.join(", ")})`] : [];
+  if (!isObject(v)) return [`${where} must be a duration such as 24h, or a map (settings: ${SOAK_KEYS.join(", ")})`];
+  const out: string[] = [];
+  const dur = (x: unknown, at: string) => {
+    if (!(typeof x === "string" && soakMs(x) !== undefined)) out.push(`${at} must be a duration in minutes, hours or days, such as 24h, or 0`);
+  };
+  const conds = (x: unknown, at: string) => {
+    if (!(Array.isArray(x) && x.length > 0 && x.every((c) => (SOAK_CONDITIONS as readonly unknown[]).includes(c)))) out.push(`${at} must be a list of ${SOAK_CONDITIONS.join(", ")}`);
+  };
+  for (const k of Object.keys(v)) if (!(SOAK_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${SOAK_KEYS.join(", ")})`);
+  dur(v.after, `${where}.after`);
+  if (v.conditions !== undefined) conds(v.conditions, `${where}.conditions`);
+  if (v.overrides !== undefined) {
+    if (!Array.isArray(v.overrides) || v.overrides.length === 0) out.push(`${where}.overrides must be a list of rules`);
+    else {
+      v.overrides.forEach((rule, i) => {
+        const at = `${where}.overrides[${i}]`;
+        if (!isObject(rule)) return void out.push(`${at} must be a map (settings: ${SOAK_OVERRIDE_KEYS.join(", ")})`);
+        for (const k of Object.keys(rule)) if (!(SOAK_OVERRIDE_KEYS as readonly string[]).includes(k)) out.push(`${at}.${k} is not a setting (settings: ${SOAK_OVERRIDE_KEYS.join(", ")})`);
+        const named = (["module", "provider"] as const).filter((k) => rule[k] !== undefined);
+        if (named.length !== 1) out.push(`${at} names a module or a provider glob, and one of them`);
+        for (const k of named) if (!(typeof rule[k] === "string" && (rule[k] as string).trim() !== "")) out.push(`${at}.${k} must be a glob such as terraform-aws-modules/*/aws`);
+        if (rule.after === undefined && rule.conditions === undefined) out.push(`${at} sets after, conditions, or both`);
+        if (rule.after !== undefined) dur(rule.after, `${at}.after`);
+        if (rule.conditions !== undefined) conds(rule.conditions, `${at}.conditions`);
+      });
+    }
+  }
+  return out;
+}
 
 /** The problems in a `rollouts` value: a cron, false, or a map of the cron and the watch rules. */
 export function rolloutsProblems(v: unknown, where: string): string[] {
@@ -580,6 +647,7 @@ export function rolloutsProblems(v: unknown, where: string): string[] {
       });
     }
   }
+  if (v.soak !== undefined) out.push(...soakProblems(v.soak, `${where}.soak`));
   return out;
 }
 

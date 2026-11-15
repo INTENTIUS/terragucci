@@ -18,6 +18,9 @@ import {
   TEMPLATES_KEYS,
   ROLLOUTS_KEYS,
   WATCH_KEYS,
+  SOAK_KEYS,
+  SOAK_OVERRIDE_KEYS,
+  SOAK_CONDITIONS,
   FOLLOW_BUMPS,
   TEMPLATES_REQUIRE,
   CONTROL_NAME,
@@ -112,6 +115,8 @@ export const CONFIG_SCHEMA_URL = "https://intentius.io/terragucci/terragucci.sch
 const str: JsonSchema = { type: "string" };
 const bool: JsonSchema = { type: "boolean" };
 const nonBlank: JsonSchema = { type: "string", pattern: "\\S" };
+const soakAfter: JsonSchema = { type: "string", pattern: "^(0|[1-9]\\d*[mhd])$" };
+const soakConditions: JsonSchema = { type: "array", minItems: 1, uniqueItems: true, items: { enum: [...SOAK_CONDITIONS] } };
 const oneLine: JsonSchema = { type: "string", pattern: "^[^\\r\\n]*\\S[^\\r\\n]*$" };
 const pat = (re: RegExp): JsonSchema => ({ type: "string", pattern: re.source });
 const secret = pat(SECRET_NAME);
@@ -497,6 +502,28 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
                   oneOf: [{ required: ["module"] }, { required: ["provider"] }],
                 },
                 description: "Module and provider globs whose newer releases start a rollout, with the bumps to follow and the age a release reaches first.",
+              },
+              soak: {
+                anyOf: [
+                  soakAfter,
+                  {
+                    ...map(SOAK_KEYS, {
+                      after: soakAfter,
+                      conditions: soakConditions,
+                      overrides: {
+                        type: "array",
+                        minItems: 1,
+                        items: {
+                          ...map(SOAK_OVERRIDE_KEYS, { module: nonBlank, provider: nonBlank, after: soakAfter, conditions: soakConditions }),
+                          oneOf: [{ required: ["module"] }, { required: ["provider"] }],
+                          anyOf: [{ required: ["after"] }, { required: ["conditions"] }],
+                        },
+                        description: "Per module or provider glob: the first rule that names the rollout sets its wait, its conditions, or both.",
+                      },
+                    }, { required: ["after"] }),
+                  },
+                ],
+                description: "How long a wave applied before the next one opens, and what must hold on its roots meanwhile.",
               },
             }, { required: ["schedule"] }),
           ],

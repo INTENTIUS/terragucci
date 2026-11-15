@@ -7,6 +7,7 @@
 import { forgeClient, type ForgeTarget } from "@intentius/chant/pr-forge";
 import { forgeReadsFor } from "@intentius/chant/pr-forge-reads";
 import { commitStatuses, defaultBranch, openPullRequest, type Fetch } from "../forge";
+import { DRIFT_MARKER } from "../report/drift";
 
 export interface WavePullRequest {
   url: string;
@@ -14,6 +15,14 @@ export interface WavePullRequest {
   body: string;
   /** The commit the merge made on the base branch, once merged. */
   mergeCommit?: string;
+  /** Once merged: when the pull request last changed (ISO 8601), which the soak counts from. */
+  mergedAt?: string;
+}
+
+/** A person's `/terragucci skip-soak` on a wave's pull request. */
+export interface SoakSkip {
+  by: string;
+  url?: string;
 }
 
 /** A pull request from a rollout's branch, as the list of the repo's pull requests gives it. */
@@ -44,7 +53,14 @@ export interface RolloutForge {
   commitChecks(sha: string): Promise<CommitCheck[]>;
   /** Pull requests in any state whose head branch starts with `prefix`, from the newest LIST_LIMIT by last update. */
   listPullRequests(prefix: string): Promise<ListedPullRequest[]>;
+  /** The open drift issue, when there is one: its page and body, which names the roots that drifted. */
+  openDriftIssue?(): Promise<{ url: string; body: string } | undefined>;
+  /** The comments on the newest pull request from `branch` that ask to skip the soak, from people who may push to the repository, oldest first. */
+  soakSkips?(branch: string): Promise<SoakSkip[]>;
 }
+
+/** Permissions that may skip a soak: the same as may push to the repository. */
+const MAY_SKIP = new Set(["admin", "owner", "maintain", "write", "developer", "maintainer"]);
 
 const STATE: Record<string, CommitCheck["state"]> = {
   success: "success",
@@ -72,7 +88,25 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
     async findPullRequest(branch) {
       const pr = (await reads.pullRequestsFrom(branch, { limit: LIST_LIMIT }))[0];
       if (!pr) return null;
-      return { url: pr.url ?? "", state: pr.state, body: pr.body, ...(pr.mergeCommit ? { mergeCommit: pr.mergeCommit } : {}) };
+      return { url: pr.url ?? "", state: pr.state, body: pr.body, ...(pr.mergeCommit ? { mergeCommit: pr.mergeCommit } : {}), ...(pr.state === "merged" && pr.updated ? { mergedAt: pr.updated } : {}) };
+    },
+
+    async openDriftIssue() {
+      const issue = await forgeClient(t, fetch).findIssue(DRIFT_MARKER, { match: "anywhere" });
+      return issue ? { url: issue.url ?? "", body: issue.body } : undefined;
+    },
+
+    async soakSkips(branch) {
+      const pr = (await reads.pullRequestsFrom(branch, { limit: LIST_LIMIT }))[0];
+      if (!pr) return [];
+      const out: SoakSkip[] = [];
+      const may = new Map<string, boolean>();
+      for (const note of await reads.pullRequestNotes(pr.number)) {
+        if (note.system || !note.author || !/^\s*\/terragucci\s+skip-soak\s*$/m.test(note.body)) continue;
+        if (!may.has(note.author)) may.set(note.author, MAY_SKIP.has((await reads.permission(note.author)) ?? ""));
+        if (may.get(note.author)) out.push({ by: note.author, ...(pr.url ? { url: pr.url } : {}) });
+      }
+      return out;
     },
 
     async listPullRequests(prefix) {

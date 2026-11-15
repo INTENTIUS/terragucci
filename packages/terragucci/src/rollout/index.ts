@@ -19,6 +19,9 @@
  * - no pull request yet: open one per project (`--mode apply`), or say it
  *   would (the dry run, the default).
  *
+ * With `rollouts.soak`, a wave that applied also has to have soaked before the
+ * next opens (./soak.ts).
+ *
  * The gate is a fact read on the next run, never a wait. A pull request's
  * branch is cut from the default branch and changes only its roots' files, so
  * a path-diff selection plans exactly those roots. Nothing here writes a
@@ -33,7 +36,7 @@ import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { terragruntDependencies } from "@intentius/chant-lexicon-terraform/pin";
 import { ATMOS_ROLLOUTS } from "../refusals";
 import { detectShape } from "../shape";
-import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, SYNTH_ROLLOUTS, type ForgeName, type ResolvedSettings, type TerragucciConfig } from "../config";
+import { checkMode, ConfigError, findConfig, forgeFromHost, loadConfig, parseProjectKey, resolveProject, resolveRepo, rolloutsSoak, SYNTH_ROLLOUTS, type ForgeName, type ResolvedSettings, type SoakSettings, type TerragucciConfig } from "../config";
 import { detectBinary, detectForge, findRoots, hostOfRemote, rootDependencies } from "../detect";
 import type { ForgeTarget } from "@intentius/chant/pr-forge";
 import { DEFAULT_TOKEN_ENV, targetAt, type Fetch } from "../forge";
@@ -49,6 +52,7 @@ import { atRange, isRange, moduleCalls, movePins, pinVersion, shapePin, type Mod
 import { appOf, changelogLines, movesYanked, templateContext, templateTarget, templateTitle, type RolloutTemplate, type TemplateContext } from "./template";
 import { pinProviderRange, providerEntries, UNVERSIONED } from "./range";
 import { planWaves, type Wave } from "./waves";
+import { forgeHealth, soakNote, soakOf, soakRuleFor, type Health, type SoakRule, type SoakStatus } from "./soak";
 
 export type RolloutKind = "module" | "provider";
 
@@ -79,6 +83,12 @@ export interface RolloutOptions {
    * so `terragucci pin modules` names the roots one `to` is right for.
    */
   only?: string[];
+  /** The soak the rollout is under. Default: the config's `rollouts.soak`; `false` for none. A control repo's rollout has none from the config. */
+  soak?: SoakSettings | false;
+  /** For tests: what the soak's conditions read. Default: the forge, and the gate ledger. */
+  health?: Health;
+  /** For tests: the time now, in milliseconds. */
+  clock?: () => number;
   /** Set by the walk: the registry addresses (`host/namespace/name/system`) a module named by its path is published at. */
   aliases?: string[];
 }
@@ -98,7 +108,7 @@ export interface RootStatus {
   yanked?: true;
 }
 
-export type PartState = "applied" | "nothing-to-move" | "opened" | "would-open" | "open" | "waiting-apply" | "failed" | "closed" | "not-reached";
+export type PartState = "applied" | "soaking" | "nothing-to-move" | "opened" | "would-open" | "open" | "waiting-apply" | "failed" | "closed" | "not-reached";
 
 export interface PartStatus {
   project: string;
@@ -108,6 +118,8 @@ export interface PartStatus {
   pullRequest?: string;
   pending?: string[];
   failed?: string[];
+  /** Once merged: when (ISO 8601), as the forge says. */
+  mergedAt?: string;
   /** Files the pull request changes, when it is opened or would be. */
   files?: string[];
   /** In a template's rollout: the apps the part moves, by name (`orders`), or a root's path when it is no app. */
@@ -119,6 +131,8 @@ export interface WaveStatus {
   wave: number;
   canary: boolean;
   parts: PartStatus[];
+  /** The wave that applied before this one opened, or is waiting to: how its soak stands. Set on the wave that soaks. */
+  soak?: SoakStatus;
 }
 
 export interface Tip {
@@ -143,18 +157,19 @@ export interface RolloutResult {
   /**
    * `complete`: every wave applied. `opened`/`would-open`: the next wave's pull
    * requests were opened, or would be. `waiting`: one is open, or an apply has
-   * not reported. `stopped`: a pull request closed unmerged, or an apply failed.
+   * not reported. `soaking`: a wave applied and the next one waits out its
+   * soak. `stopped`: a pull request closed unmerged, or an apply failed.
    */
-  status: "complete" | "opened" | "would-open" | "waiting" | "stopped";
+  status: "complete" | "opened" | "would-open" | "waiting" | "soaking" | "stopped";
   stop?: string;
   waves: WaveStatus[];
   roots: RootStatus[];
   tips: Tip[];
 }
 
-/** 0 complete or a step taken, 1 stopped, 3 waiting on a merge or an apply. */
+/** 0 complete or a step taken, 1 stopped, 3 waiting on a merge, an apply or a soak. */
 export function rolloutExit(result: RolloutResult): number {
-  return result.status === "stopped" ? 1 : result.status === "waiting" ? 3 : 0;
+  return result.status === "stopped" ? 1 : result.status === "waiting" || result.status === "soaking" ? 3 : 0;
 }
 
 // ── projects ─────────────────────────────────────────────────────────────────
@@ -724,9 +739,13 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   };
   const lockerFor = (p: Project) => (options.locker ?? binaryLocker)(p.settings.binary ?? detectBinary(p.dir, roots.get(p.key)!).value);
 
-  for (const wave of result.waves) {
+  // The soak: a config of a single repo's rollouts; a control repo's rollouts are refused, so it has none unless the caller names one.
+  const soakSettings = options.soak === false ? undefined : (options.soak ?? (config.projects ? undefined : rolloutsSoak(resolveRepo(config).rollouts)));
+  const soakRule = soakRuleFor(soakSettings, options.kind, options.name, options.aliases);
+
+  for (const [index, wave] of result.waves.entries()) {
     const due: PartStatus[] = [];
-    const opening = (part: PartStatus) => openPart(byKey.get(part.project)!, part, wave, result, options, lockerFor, parser, tmpl);
+    const opening = (part: PartStatus, rule?: SoakRule) => openPart(byKey.get(part.project)!, part, wave, result, options, lockerFor, parser, tmpl, rule);
     let waiting = false;
     for (const part of wave.parts) {
       const project = byKey.get(part.project)!;
@@ -741,6 +760,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
       } else if (pr?.state === "merged") {
         const moved = markerRoots(pr.body) ?? part.roots;
         const checks = pr.mergeCommit ? await project.forge.commitChecks(pr.mergeCommit) : [];
+        if (pr.mergedAt) part.mergedAt = pr.mergedAt;
         part.failed = moved.filter((r) => appliedState(checks, r) === "failure");
         part.pending = moved.filter((r) => appliedState(checks, r) === "pending");
         if (part.failed.length > 0) {
@@ -759,7 +779,13 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
       break;
     }
     if (due.length > 0) {
-      for (const part of due) await opening(part);
+      const held = soakRule ? await soakBefore(result.waves.slice(0, index), soakRule, byKey, repo, options) : undefined;
+      if (held?.state === "soaking") {
+        for (const part of due) part.state = "soaking";
+        result.status = "soaking";
+        break;
+      }
+      for (const part of due) await opening(part, soakRule);
       if (result.stop) result.status = "stopped";
       else result.status = options.mode === "apply" ? "opened" : "would-open";
       break;
@@ -775,6 +801,20 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
   return result;
 }
 
+/**
+ * The soak of the nearest earlier wave that merged a pull request: the wave
+ * about to open waits on it. Recorded on that wave, so the report shows it.
+ * Undefined when no earlier wave merged one (a rollout whose earlier waves had
+ * nothing to move).
+ */
+async function soakBefore(earlier: WaveStatus[], rule: SoakRule, byKey: Map<string, Project>, repo: string, options: RolloutOptions): Promise<SoakStatus | undefined> {
+  const soaked = [...earlier].reverse().find((w) => w.parts.some((p) => p.pullRequest && p.state === "applied"));
+  if (!soaked) return undefined;
+  const merged = soaked.parts.filter((p) => p.state === "applied" && p.pullRequest).map((p) => ({ project: p.project, roots: p.roots, branch: p.branch, ...(p.mergedAt ? { at: p.mergedAt } : {}) }));
+  soaked.soak = await soakOf(rule, { wave: soaked.wave, merged }, { now: (options.clock ?? Date.now)(), projects: byKey, repo, health: options.health ?? forgeHealth });
+  return soaked.soak;
+}
+
 async function openPart(
   project: Project,
   part: PartStatus,
@@ -784,6 +824,7 @@ async function openPart(
   lockerFor: (p: Project) => Locker,
   parser: Hcl2Json | undefined,
   tmpl?: TemplateContext,
+  soak?: SoakRule,
 ): Promise<void> {
   const statusOf = (r: string) => result.roots.find((s) => s.project === part.project && s.root === r);
   const moving = part.roots.filter((r) => statusOf(r)?.state === "from");
@@ -852,7 +893,7 @@ async function openPart(
     ...(others.length > 0 ? ["", "Not moved by this rollout:", "", ...others.map((r) => `- \`${r.root}\`: ${r.reason}`)] : []),
     "",
     wave.wave < total
-      ? `Wave ${wave.wave + 1} opens on a later run, once every pull request of this wave has merged and its roots have applied.`
+      ? `Wave ${wave.wave + 1} opens on a later run, once every pull request of this wave has merged and its roots have applied.${soak && soakNote(soak, wave.wave + 1) ? ` ${soakNote(soak, wave.wave + 1)}` : ""}`
       : "This is the last wave.",
   ].join("\n");
   project.push(part.branch, part.files, `${title}\n\nRoots: ${moving.join(", ")}\n`);
@@ -864,6 +905,7 @@ async function openPart(
 
 const PART_TEXT: Record<PartState, string> = {
   applied: "merged and applied",
+  soaking: "next; held until the soak before it is up",
   "nothing-to-move": "nothing to move",
   opened: "pull request opened",
   "would-open": "next; would open its pull request",
@@ -873,6 +915,11 @@ const PART_TEXT: Record<PartState, string> = {
   closed: "pull request closed without merging",
   "not-reached": "not opened",
 };
+
+function soakLines(s: SoakStatus): string[] {
+  const head = s.state === "skipped" ? `soak skipped by ${s.skippedBy!.by}${s.skippedBy!.url ? ` (${s.skippedBy!.url})` : ""}` : s.state === "passed" ? `soaked ${s.after} since ${s.since}` : `soaking, ${s.after} after ${s.since ?? "its merge"}${s.due ? `; the next wave is due ${s.due}` : ""}`;
+  return [`    ${head}`, ...s.waitingFor.map((w) => `      waiting for: ${w}`)];
+}
 
 export function describeRollout(result: RolloutResult): string {
   const what = result.kind === "module" ? (result.template ? `${result.name} (template ${result.template.name})` : result.name) : `provider ${result.name}`;
@@ -888,13 +935,14 @@ export function describeRollout(result: RolloutResult): string {
       if (p.failed?.length) lines.push(`      apply failed: ${p.failed.join(", ")}`);
       if (p.files?.length) lines.push(`      files: ${p.files.join(", ")}`);
     }
+    if (w.soak) lines.push(...soakLines(w.soak));
   }
   for (const r of result.roots.filter((r) => r.state === "refused" || r.state === "elsewhere")) {
     lines.push(`  not in the rollout: ${multi ? `${r.project} ` : ""}${r.root}: ${r.reason}`);
   }
   for (const t of result.tips) lines.push(`  tip (${t.rule}): ${t.message}`);
   for (const n of result.notes ?? []) lines.push(`  note: ${n}`);
-  if (result.mode === "dry-run" && (result.status === "would-open" || result.status === "complete")) lines.push("dry run: nothing was opened");
+  if (result.mode === "dry-run" && (result.status === "would-open" || result.status === "complete" || result.status === "soaking")) lines.push("dry run: nothing was opened");
   return lines.join("\n");
 }
 

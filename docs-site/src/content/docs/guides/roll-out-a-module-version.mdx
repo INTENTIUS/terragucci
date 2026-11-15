@@ -164,6 +164,39 @@ updates:
 
 Dependabot opens one pull request for each directory it is given, and Renovate's `matchFileNames` limits a rule to the files it lists. Match them to `waves.canary`. A bot that bumps every root in one pull request leaves nothing for the rollout to stage, and the watch finds every root at the new version.
 
+## Wait between waves
+
+Without a soak, wave N+1 opens as soon as wave N applied. `rollouts.soak` holds it until the wave before it has had time to show a problem:
+
+```yaml
+rollouts:
+  schedule: "*/15 * * * *"
+  soak:
+    after: 24h
+    conditions: [drift, apply, policy]
+    overrides:
+      - module: "terraform-aws-modules/vpc/aws"
+        after: 2h
+      - provider: "hashicorp/*"
+        after: "0"
+```
+
+`soak: 24h` alone is the same as `soak: { after: 24h }`. The clock starts when the wave's last pull request merged, and a run that finds the time not up opens nothing and says when the wave is due. No timer runs between jobs: the next run of the rollout job reads the time, as it reads everything else. The soak is the same in a dry run. A rollout whose earlier waves had nothing to move has no wave to soak.
+
+Once `after` has passed, `conditions` are read on the wave's roots, and any finding holds the next wave until a later run finds none. All are off unless listed:
+
+| Condition | Holds the next wave while |
+|---|---|
+| `drift` | the project's open drift issue names one of the wave's roots |
+| `apply` | the newest apply on the default branch failed for one of them |
+| `policy` | a policy denial of one of them was recorded on the gate ledger since the wave merged |
+
+An override applies to the rollouts whose module or provider matches its glob, and the first one that matches decides. Its `after` and `conditions` replace the soak's; one it leaves out stays as the soak has it. `after: "0"` waits for the conditions only, or for nothing when there are none.
+
+Each wave's pull request says how the next one is held. The rollout's output lists, under the wave that soaks, when the next wave is due and what it waits for.
+
+A person with write access skips the soak by commenting `/terragucci skip-soak` on any pull request of the wave that soaks. The forge keeps the comment with its author and time, and the next run opens the wave and names who skipped. A comment from anyone else counts for nothing.
+
 ## Upgrade the apps built from a template
 
 An app made from a template pins it exactly in its `module "app"` call, so the same flow moves it. Name the template by its address:
