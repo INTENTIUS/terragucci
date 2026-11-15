@@ -1730,6 +1730,78 @@
       "additionalProperties": false,
       "description": "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret."
     },
+    "comment_allow": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "plan": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "apply": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "lock": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "unlock": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "agent": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "action": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "skip-soak": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        },
+        "default": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+          }
+        }
+      },
+      "description": "Who may run each comment command, beyond write access: logins and team:<org>/<team> entries per command, and default for the rest. Read from the default branch."
+    },
     "atlantis_comments": {
       "type": "boolean",
       "description": "Read atlantis plan and atlantis apply comments as terragucci's."
@@ -3971,6 +4043,78 @@
           },
           "additionalProperties": false,
           "description": "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret."
+        },
+        "comment_allow": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "plan": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "apply": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "lock": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "unlock": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "agent": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "action": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "skip-soak": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            },
+            "default": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.@-]{0,99}|team:[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}(/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99})+)$"
+              }
+            }
+          },
+          "description": "Who may run each comment command, beyond write access: logins and team:<org>/<team> entries per command, and default for the rest. Read from the default branch."
         },
         "atlantis_comments": {
           "type": "boolean",

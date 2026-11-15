@@ -147,6 +147,39 @@ No comment approves, and a re-plan cannot change what an approval binds. [When a
 | a comment that asks for nothing | ends cleanly |
 | a forge 403 or failure, or an unreadable event file | fails, with the cause in the log |
 
+## Limit comments to a team
+
+A comment command needs write access to the repository. `comment_allow` in `terragucci.yml` narrows a command to a list of logins and teams, so that moving from a setup that maps teams to commands keeps the same people:
+
+```yaml
+comment_allow:
+  unlock: ["team:acme/platform", alice]
+  skip-soak: ["team:acme/release"]
+```
+
+A key is a command (`plan`, `apply`, `lock`, `unlock`, `agent`, `action` or `skip-soak`) or `default` for every command the map does not name. An entry is a login, or `team:` and the team's path: `team:<org>/<team>` on GitHub and Forgejo, `team:<group path>` on GitLab, where it means the group's members, inherited ones included. A command with no list keeps write access alone. An empty list is refused, since it would let nobody run the command.
+
+The list is read from `terragucci.yml` in the job's checkout, which is the default branch, so a pull request cannot add its author. Someone with write access who is on no list for the command gets a reply that names the list, and nothing runs.
+
+Where it is read depends on who answers the comment.
+
+| Forge | Limited by `comment_allow` | Write access alone |
+|---|---|---|
+| GitLab | `plan`, `apply`, `lock`, `unlock`, `agent` and `skip-soak`, in the comments job | |
+| GitHub and Forgejo | `action`, `skip-soak`, and `lock` and `unlock` under `locks: plan` with `apply.when: merge` | `plan`, `apply` and `agent`, which chant's comment jobs answer |
+
+On GitHub and Forgejo `config check` refuses a list for a command in the right-hand column, and a `default`, so a list that would limit nothing is never written.
+
+Team membership is read from the forge's API with a token, and the job's own token cannot read it on GitHub. Set a token that can and name it `TG_TEAM_TOKEN`; a job falls back to `TG_TOKEN` when it is unset.
+
+| Forge | What the token needs |
+|---|---|
+| GitHub | a secret `TG_TEAM_TOKEN` holding a token that can read the organization's members: a fine-grained token or app with the organization permission Members: read, or a classic token with `read:org`; the generated workflows pass it to the jobs that check a team |
+| Forgejo | a secret `TG_TEAM_TOKEN` holding a token with `read:organization` |
+| GitLab | a CI/CD variable `TG_TEAM_TOKEN`, or the comments job's `TG_TOKEN`, belonging to a user who can see the group's members (`read_api`) |
+
+When the forge cannot answer (the token lacks the permission, or the team does not exist or is not visible to it) nothing runs, the job fails, and the reply says that membership could not be read. A pending invitation to a GitHub team is not membership.
+
 ## Apply a merged pull request
 
 On a merged pull request, `/terragucci apply` re-runs the waves' jobs of the merge commit's run that did not succeed, for the waves approved as [Approve a waiting wave](/terragucci/guides/approve-a-wave/) shows.

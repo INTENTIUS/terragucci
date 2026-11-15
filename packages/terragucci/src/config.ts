@@ -20,6 +20,7 @@ import { type BucketRef } from "@intentius/chant/object-store";
 import { parseReportsBucket } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
 import { declaredKind, shapeProblems } from "./refusals";
+import { commentAllowForgeProblems, commentAllowProblems, type CommentAllow } from "./comment-allow";
 import { noteRootConfig } from "./root-config";
 import { prowProblems, type ProwSettings } from "./prow-config";
 export { PROW_JOBS_PATH, PROW_KEYS, PROW_TOKEN_KEY, type ProwSettings } from "./prow-config";
@@ -969,6 +970,13 @@ export interface ProjectSettings {
    * only: the same checks decide (comment.ts).
    */
   atlantis_comments?: boolean;
+  /**
+   * Who may run each comment command, beyond write access: a list of logins
+   * and `team:<org>/<team>` entries per command (`plan`, `apply`, `lock`,
+   * `unlock`, `agent`, `action`, `skip-soak`) and `default` for the rest. Read
+   * from the default branch (comment-allow.ts).
+   */
+  comment_allow?: CommentAllow;
   /** The response to each pipeline event; see RESPONSES. */
   respond?: Partial<Record<RespondEvent, string>>;
   /**
@@ -1298,6 +1306,7 @@ export const BUILT_IN: ResolvedSettings = {
 export const PROJECT_FILE_KEYS = [
   "policy",
   "sources",
+  "comment_allow",
   "reports",
   "approval",
   "approval_rules",
@@ -1357,7 +1366,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1518,6 +1527,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     }
   }
   if (s.atlantis_comments !== undefined && typeof s.atlantis_comments !== "boolean") problems.push(`${where}.atlantis_comments must be true or false`);
+  if (s.comment_allow !== undefined) {
+    const own = commentAllowProblems(s.comment_allow, `${where}.comment_allow`);
+    problems.push(...own, ...(own.length === 0 ? commentAllowForgeProblems(s.comment_allow as CommentAllow, s as { forge?: string; locks?: unknown; apply?: { when?: unknown } }, `${where}.comment_allow`) : []));
+  }
   if (s.synth !== undefined && !(typeof s.synth === "string" && s.synth.trim() !== "")) {
     problems.push(`${where}.synth must be the command that writes the roots, such as npx cdktn synth`);
   }

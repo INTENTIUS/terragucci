@@ -23,6 +23,7 @@ import { rootOrder, type WavesAfter } from "./detect";
 import type { Involved } from "./involved";
 import type { OpenPullRequest } from "@intentius/chant/pr-forge";
 import { jobReads, poster, type Fetch } from "./forge";
+import { jobTeamReads, mayRun, type CommentAllow, type TeamReads } from "./comment-allow";
 import { describeHeld, releaseRootLocks, takeRootLocks } from "./root-locks";
 import { literalDependencies } from "./terragrunt";
 
@@ -63,6 +64,10 @@ export interface ApplyCommentOptions {
   after?: WavesAfter;
   /** A repo whose roots a command writes (`synth`, CDK Terrain's stacks): the locks are on every root a change can reach (reachedSynthesized). */
   synth?: boolean;
+  /** `comment_allow`, read from the default branch's terragucci.yml: who may run each command beyond write access (./comment-allow.ts). */
+  allow?: CommentAllow;
+  /** Team membership, for `allow`'s teams. Default: the forge's API with the job's token. */
+  teams?: TeamReads;
   /** The decision made again once the apply lock is held (Forgejo): it does not repeat the note on a lock of every unit. */
   again?: boolean;
 }
@@ -415,6 +420,15 @@ export async function decidePlanLock(o: ApplyCommentOptions): Promise<ApplyComme
       return broke(`could not read ${user}'s permission, so no lock moves (${(e as Error).message})`);
     }
     if (typeof permission !== "string" || !MAY_APPLY.has(permission)) return stop(`${user} has no write access, so no lock moves`);
+  }
+  // comment_allow. A plan comment takes a lock as a side effect; the re-plan job answers who may not plan, so a refusal here is silent.
+  if (o.allow) {
+    const command = parsed.kind === "plan" ? "plan" : parsed.kind;
+    const may = await mayRun(o.allow, command, user, o.teams ?? jobTeamReads(o.forge ?? "github", env, doFetch));
+    if (!may.ok) {
+      if (parsed.kind !== "plan") await reply(may.reason);
+      return may.fail ? broke(may.reason) : stop(may.reason);
+    }
   }
   if (parsed.kind === "unlock") {
     let released: string[];

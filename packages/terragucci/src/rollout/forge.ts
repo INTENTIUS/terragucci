@@ -8,6 +8,7 @@ import { forgeClient, type ForgeTarget } from "@intentius/chant/pr-forge";
 import { forgeReadsFor } from "@intentius/chant/pr-forge-reads";
 import { commitStatuses, defaultBranch, openPullRequest, type Fetch } from "../forge";
 import { DRIFT_MARKER } from "../report/drift";
+import { mayRun, teamReads, type CommentAllow, type TeamReads } from "../comment-allow";
 
 export interface WavePullRequest {
   url: string;
@@ -80,8 +81,15 @@ const STATE: Record<string, CommitCheck["state"]> = {
 
 const checkState = (s: string | undefined): CommitCheck["state"] => STATE[s ?? ""] ?? "pending";
 
-export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
+/**
+ * `allow` is the repository's `comment_allow`: its `skip-soak` (or `default`)
+ * list narrows who may skip a soak beyond write access. `teams` reads team
+ * membership; the default reads the forge with the target's token, or
+ * TG_TEAM_TOKEN when the environment has one.
+ */
+export function fetchForge(fetch: Fetch, t: ForgeTarget, o: { allow?: CommentAllow; teams?: TeamReads; env?: NodeJS.ProcessEnv } = {}): RolloutForge {
   const reads = forgeReadsFor(t, fetch);
+  const teams = o.teams ?? teamReads({ kind: t.kind, apiBase: t.apiBase, token: (o.env ?? process.env).TG_TEAM_TOKEN || t.token, ...(t.tokenHeader ? { tokenHeader: t.tokenHeader } : {}) }, fetch);
   return {
     defaultBranch: () => defaultBranch(fetch, t),
 
@@ -103,7 +111,16 @@ export function fetchForge(fetch: Fetch, t: ForgeTarget): RolloutForge {
       const may = new Map<string, boolean>();
       for (const note of await reads.pullRequestNotes(pr.number)) {
         if (note.system || !note.author || !/^\s*\/terragucci\s+skip-soak\s*$/m.test(note.body)) continue;
-        if (!may.has(note.author)) may.set(note.author, MAY_SKIP.has((await reads.permission(note.author)) ?? ""));
+        if (!may.has(note.author)) {
+          let ok = MAY_SKIP.has((await reads.permission(note.author)) ?? "");
+          if (ok && o.allow) {
+            const listed = await mayRun(o.allow, "skip-soak", note.author, teams, "TG_TEAM_TOKEN");
+            // The soak stays when the forge cannot say who is on the team: the log names why.
+            if (!listed.ok && listed.fail) console.error(`terragucci: skip-soak by ${note.author} not counted: ${listed.reason}`);
+            ok = listed.ok;
+          }
+          may.set(note.author, ok);
+        }
         if (may.get(note.author)) out.push({ by: note.author, ...(pr.url ? { url: pr.url } : {}) });
       }
       return out;

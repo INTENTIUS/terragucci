@@ -239,7 +239,7 @@ function singleTarget(repo: string, settings: ResolvedSettings, options: Pick<Ro
   const key = at ? `${at.host}/${at.path}` : ".";
   let forge: RolloutForge;
   if (options.forge) forge = options.forge({ key, target });
-  else if (target) forge = fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target);
+  else if (target) forge = fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target, { ...(settings.comment_allow ? { allow: settings.comment_allow } : {}), ...(options.env ? { env: options.env } : {}) });
   else throw new ConfigError("cannot tell which forge this repository's origin is on; set forge (and url) in terragucci.yml");
   if (options.mode === "apply" && !options.forge && !token) throw new ConfigError(`${settings.token_env ?? DEFAULT_TOKEN_ENV[forgeName!]} is not set; it holds the forge token`);
   return { key, forge, forgeName, token };
@@ -257,7 +257,7 @@ function controlTarget(config: TerragucciConfig, key: string, options: Pick<Roll
   if (options.mode === "apply" && !options.forge && !token) throw new ConfigError(`${tokenEnv} is not set; it holds the token for ${pk.host}`);
   const { cloneUrl, origin } = where(key, settings.url);
   const target = targetAt(forgeName, origin, pk.path, token);
-  const forge = options.forge ? options.forge({ key, target }) : fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target);
+  const forge = options.forge ? options.forge({ key, target }) : fetchForge(options.fetch ?? (globalThis.fetch as unknown as Fetch), target, { ...(settings.comment_allow ? { allow: settings.comment_allow } : {}), ...(options.env ? { env: options.env } : {}) });
   return { key, forge, forgeName, token, settings, cloneUrl };
 }
 

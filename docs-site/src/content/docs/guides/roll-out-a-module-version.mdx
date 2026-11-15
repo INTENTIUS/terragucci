@@ -195,7 +195,7 @@ An override applies to the rollouts whose module or provider matches its glob, a
 
 Each wave's pull request says how the next one is held. The rollout's output lists, under the wave that soaks, when the next wave is due and what it waits for.
 
-A person with write access skips the soak by commenting `/terragucci skip-soak` on any pull request of the wave that soaks. The forge keeps the comment with its author and time, and the next run opens the wave and names who skipped. A comment from anyone else counts for nothing.
+A person with write access skips the soak by commenting `/terragucci skip-soak` on any pull request of the wave that soaks. The forge keeps the comment with its author and time, and the next run opens the wave and names who skipped. A comment from anyone else counts for nothing. With a `skip-soak` list under [`comment_allow`](/terragucci/guides/re-plan-from-a-comment/#limit-comments-to-a-team) in the repository that runs the rollout, the author must also be on it or in one of its teams.
 
 ## Upgrade the apps built from a template
 

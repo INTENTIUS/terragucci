@@ -182,6 +182,8 @@ projects:
     expect(note(notes, "projects[blue].workspace")).toMatchObject({ kind: "unmapped", row: "Workspace", text: cell("Workspace") });
     expect(note(notes, "projects[dev-app].execution_order_group")).toMatchObject({ kind: "unmapped", row: "Order" });
     expect(note(notes, "projects[blue].plan_requirements")).toMatchObject({ kind: "unmapped", row: "Plan requirements" });
+    // The team allowlist is a server flag, which no atlantis.yaml shows: the note names it and the setting that replaces it.
+    expect(note(notes, "--gh-team-allowlist")).toMatchObject({ kind: "unmapped", row: "Who may comment", text: expect.stringContaining("`comment_allow`: a list of logins") });
     expect(note(notes, "projects[dev-net].autoplan.enabled")).toMatchObject({ kind: "unmapped", row: "What triggers a plan" });
     expect(note(notes, "projects[].autoplan.when_modified")).toMatchObject({ kind: "default", row: "What triggers a plan" });
     expect(note(notes, "workflows.tf.policy_check")).toMatchObject({ kind: "unmapped", row: "Policy" });
@@ -198,7 +200,7 @@ projects:
       const left = LEFT_OUT_TABLE.find((r) => r[0] === n.row);
       expect(settings ?? left, `${n.key}: ${n.row} is a row of the guide`).toBeDefined();
       const named = words(settings ? [settings[1], settings[2]] : [left![1]]);
-      const segments = n.key.replace(/\[[^\]]*\]/g, "").replace(/:.*/, "").split(".").filter((s) => s !== "projects" && s !== "steps");
+      const segments = n.key.replace(/\[[^\]]*\]/g, "").replace(/:.*/, "").split(/[.\s-]+/).filter((s) => s !== "" && s !== "projects" && s !== "steps");
       expect(segments.some((s) => named.has(s)), `${n.key} is named in the ${n.row} row`).toBe(true);
     }
   });

@@ -66,6 +66,7 @@ import { WAVES_OP } from "./chant-waves";
 import { ConfigError, type ApplyRequire, type ApplyWhen } from "./config";
 import { PLAN_NAMES } from "./product-plan";
 import { jobReads, poster, type Fetch } from "./forge";
+import { jobTeamReads, mayRun, type CommentAllow, type TeamReads } from "./comment-allow";
 import { CHANT_AGENT_ASK_VAR, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
 import { AGENT_HEAD_VAR, AGENT_MR_VAR, AGENT_NOTE_VAR, defaultPipelines, startReview, type ReviewStart } from "./gitlab-agent";
 
@@ -108,6 +109,10 @@ export interface GitLabPollOptions {
   agent?: boolean | "chant";
   /** `review.agent`: start the review of each open merge request's head once its plan ended. */
   review?: boolean;
+  /** `comment_allow`, read from the default branch's terragucci.yml: who may run each command beyond Developer (./comment-allow.ts). */
+  allow?: CommentAllow;
+  /** Team (group) membership, for `allow`'s teams. Default: GitLab's API with the job's token. */
+  teams?: TeamReads;
   /** Where the answered notes are kept. Default: none beyond the job's replies, whose markers answer each note once. */
   log?: NoteLog;
 }
@@ -157,7 +162,7 @@ export async function pollGitLabComments(o: GitLabPollOptions): Promise<GitLabPo
     log,
     now,
     env: parseEnv,
-    runs: (c) => answer({ env, fetch: doFetch, reads, forge, layers: o.layers, ...(o.waves !== undefined ? { waves: o.waves } : {}), ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: o.agent } : {}) }, c),
+    runs: (c) => answer({ env, fetch: doFetch, reads, forge, layers: o.layers, ...(o.waves !== undefined ? { waves: o.waves } : {}), ...(o.when ? { when: o.when } : {}), ...(o.requires ? { requires: o.requires } : {}), ...(o.wait ? { wait: o.wait } : {}), ...(o.agent ? { agent: o.agent } : {}), ...(o.allow ? { allow: o.allow, teams: o.teams ?? jobTeamReads("gitlab", env, doFetch) } : {}) }, c),
   });
   return { outcomes: poll.outcomes, reviews, ...(poll.fail ? { fail: poll.fail } : {}) };
 }
@@ -204,6 +209,8 @@ interface Ask {
   wait?: (ms: number) => Promise<void>;
   /** `agent.comment` is set; `"chant"` on chant's agent job. */
   agent?: boolean | "chant";
+  allow?: CommentAllow;
+  teams?: TeamReads;
 }
 
 /**
@@ -237,6 +244,11 @@ async function answer(ask: Ask, c: NoteCommand): Promise<NoteRun> {
   const parsed = parseComment(note.body, parseOptions(ask.env));
   if (!parsed) return reply("this note is not a terragucci command");
   if (parsed.kind === "refused") return reply(parsed.reason);
+  // comment_allow: a Developer who is on no list for the command gets the reason. A day-2 action runs nowhere from a note, so it has no list to meet.
+  if (ask.allow && parsed.kind !== "action") {
+    const may = await mayRun(ask.allow, parsed.kind, note.author ?? "", ask.teams);
+    if (!may.ok) return may.fail ? broke(may.reason) : reply(may.reason);
+  }
   // A day-2 action runs from the action workflow on GitHub and Forgejo (./action.ts); a GitLab project runs it from a checkout.
   if (parsed.kind === "action") return reply(`\`/terragucci action\` does not run from a merge request note: run \`terragucci action ${parsed.root} ${parsed.address}\` from a checkout of the default branch`);
   if (parsed.kind === "agent" && !ask.agent) return reply("the agent command is off in this project; `agent.comment` in terragucci.yml turns it on");

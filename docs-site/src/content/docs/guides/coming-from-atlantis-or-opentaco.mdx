@@ -75,6 +75,7 @@ A comment naming `approve`, `merge`, `destroy`, `import`, `state` or `force-unlo
 | Checks green | `apply_requirements: [mergeable]` | `apply_requirements: [mergeable]` | with `apply.when: pull-request`, `apply.requires: [mergeable, checks]`: the forge can merge it, no status failed or running, and `terragucci/plan` passed |
 | Up to date | `apply_requirements: [undiverged]` | `apply_requirements: [undiverged]` | with `apply.when: pull-request`, `apply.requires: [undiverged]`: the head contains the default branch |
 | Plan requirements | `plan_requirements` | | none: every pull request from the repo itself plans, and a comment plans for someone with write access |
+| Who may comment | the server flag `--gh-team-allowlist`, which maps teams to commands; `atlantis.yaml` does not show it | | `comment_allow`: a list of logins and `team:<org>/<team>` entries per command, read from the default branch; see [Limit comments to a team](/terragucci/guides/re-plan-from-a-comment/#limit-comments-to-a-team) |
 | Apply on merge | | `on_commit_to_default: [digger apply]` | the default, `apply.when: merge` |
 | Merge after apply | `automerge` | `auto_merge` | `apply.merge: auto` with `apply.when: pull-request` |
 | Lock at plan time | `repo_locks.mode: on_plan` | `pr_locks` | `locks: plan` (GitHub, Forgejo); unset, a root locks when it applies before merge |

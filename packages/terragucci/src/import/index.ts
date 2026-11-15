@@ -257,6 +257,8 @@ const ATLANTIS_PROJECT_KEYS = new Set([
 ]);
 
 function readAtlantis(doc: Record<string, unknown>, g: Gathered, notes: Notes): void {
+  // The flag is the server's, so no atlantis.yaml shows it: the note is there whether or not the server sets it.
+  notes.unmapped("--gh-team-allowlist", "Who may comment", "atlantis.yaml cannot show it. If the server sets it, write the same teams under comment_allow");
   for (const k of Object.keys(doc)) {
     if (!["version", "projects", "workflows", "automerge", "parallel_plan", "parallel_apply", "autodiscover", "abort_on_execution_order_fail", "repo_locks"].includes(k)) notes.unknown(k);
   }

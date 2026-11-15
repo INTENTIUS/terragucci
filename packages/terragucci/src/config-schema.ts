@@ -12,6 +12,7 @@
  * The schema ships as dist/terragucci.schema.json and on the docs site.
  */
 import { DNS_SUBDOMAIN, PROW_KEYS } from "./prow-config";
+import { COMMENT_ALLOW_COMMANDS, COMMENT_ALLOW_PATTERN } from "./comment-allow";
 import {
   AGENT_COMMENT_KEYS,
   CONTROL_KEYS,
@@ -625,6 +626,13 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
         local: { ...bool, description: "true: a check hook proven on a person's machine is skipped in CI." },
       }),
       description: "The runner identity the jobs sign check evidence with: identity oidc, or runner_key_secret.",
+    },
+    comment_allow: {
+      type: "object",
+      additionalProperties: false,
+      minProperties: 1,
+      properties: Object.fromEntries([...COMMENT_ALLOW_COMMANDS, "default"].map((k) => [k, { type: "array", minItems: 1, items: { type: "string", pattern: COMMENT_ALLOW_PATTERN } }])),
+      description: "Who may run each comment command, beyond write access: logins and team:<org>/<team> entries per command, and default for the rest. Read from the default branch.",
     },
     atlantis_comments: { ...bool, description: "Read atlantis plan and atlantis apply comments as terragucci's." },
     respond: {
