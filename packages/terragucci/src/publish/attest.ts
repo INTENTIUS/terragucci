@@ -13,7 +13,9 @@
  * Signing is cosign with the key the publish job is given
  * (`COSIGN_PRIVATE_KEY`, `COSIGN_PASSWORD`), and never the transparency log:
  * every cosign call passes `--tlog-upload=false`, so no module name or digest
- * leaves the repo and its registry. The provenance predicate is chant's
+ * leaves the repo and its registry. With `modules.attest: { identity: oidc }`
+ * the signer is ./keyless.ts's instead: the job's OIDC identity, no key, and
+ * the same absence of a log. The provenance predicate is chant's
  * (`buildProvenanceStatement`).
  */
 import { spawnSync } from "node:child_process";
@@ -27,12 +29,13 @@ import { buildProvenanceStatement } from "@intentius/chant/components/verbs/sign
 import type { ReleaseRecord } from "@intentius/chant/lifecycle/release-ledger";
 import type { Hcl2Json } from "@intentius/chant/terraform/parse";
 import { version as TOOL_VERSION } from "../../package.json";
-import { ConfigError } from "../config";
+import { ConfigError, type KeylessAttest } from "../config";
 import { COSIGN_VERSION } from "../install";
 import { sha256 } from "./archive";
 import { ATTEST_FILES, attestDir, LEDGER_ENV, releaseRecord } from "./ledger";
 import { moduleSbom } from "./sbom";
-import { PROVENANCE_TYPE, publicKey, SPDX_TYPE, verifyAttestation, verifySignature } from "./verify";
+import { keylessSetting } from "./keyless";
+import { PROVENANCE_TYPE, publicKey, SPDX_TYPE, verifyAttestation, verifySignature, type KeylessTrust } from "./verify";
 
 /** The public key `attest: true` reads. */
 export const DEFAULT_KEY = "cosign.pub";
@@ -42,13 +45,16 @@ export const PASSWORD_ENV = "COSIGN_PASSWORD";
 /** The build type a release's provenance names. */
 export const BUILD_TYPE = "https://intentius.io/terragucci/module-release/v1";
 
-export type AttestSetting = boolean | { key?: string } | undefined;
+export type AttestSetting = boolean | { key?: string } | KeylessAttest | undefined;
 
-/** The public key's path, or undefined when attest is off. */
+/** The public key's path, or undefined when attest is off or signs keyless. */
 export function attestKey(attest: AttestSetting): string | undefined {
-  if (!attest) return undefined;
-  return (attest === true ? undefined : attest.key) ?? DEFAULT_KEY;
+  if (!attest || keylessSetting(attest)) return undefined;
+  return (attest === true ? undefined : (attest as { key?: string }).key) ?? DEFAULT_KEY;
 }
+
+/** Whether releases are attested at all, with a key or keyless. */
+export const attestOn = (attest: AttestSetting): boolean => attestKey(attest) !== undefined || keylessSetting(attest) !== undefined;
 
 /** One release to attest: what it is and the bytes its tag names. */
 export interface ReleaseInput {
@@ -119,7 +125,7 @@ export interface OciAccess {
 }
 
 /** The release's steps, bound to one release, as chant capabilities. */
-export function releaseCapabilities(r: ReleaseInput, deps: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string; work: string; env: NodeJS.ProcessEnv }): CapabilityRegistry {
+export function releaseCapabilities(r: ReleaseInput, deps: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string; keyless?: KeylessTrust; work: string; env: NodeJS.ProcessEnv }): CapabilityRegistry {
   const file = (name: string): string => join(deps.work, name);
   const caps: Capability<Record<string, string>, Record<string, unknown>>[] = [
     {
@@ -159,13 +165,14 @@ export function releaseCapabilities(r: ReleaseInput, deps: { signer: Signer; par
     {
       kind: "verify-attestations",
       async run(_ctx, input) {
-        // The bundles verify against the key the repo publishes, or nothing is written: a job given another key fails here.
-        const key = publicKey(deps.publicKey, deps.keyPath);
+        // The bundles verify against the key the repo publishes, or against the identity it names for a keyless job, or nothing is written: a job given another key, or run by another workflow, fails here.
+        const key = deps.keyless ?? publicKey(deps.publicKey, deps.keyPath);
         try {
           verifySignature(input.signature, r.bytes, key);
           verifyAttestation(input.provenance, input.digest, PROVENANCE_TYPE, key, "provenance");
           verifyAttestation(input.sbom, input.digest, SPDX_TYPE, key, "SBOM attestation");
         } catch (e) {
+          if (deps.keyless) throw new ConfigError(`${r.module} ${r.version}: what the job signed does not verify against the identity ${deps.keyless.identity.issuer} ${deps.keyless.identity.subject} and ${deps.keyPath}: ${(e as Error).message}; modules.attest.issuer and subject must name the job that publishes, and the trusted root must be the one its certificate authority uses`);
           throw new ConfigError(`${r.module} ${r.version}: what ${KEY_ENV} signed does not verify against ${deps.keyPath}: ${(e as Error).message}; the secret and the committed public key must be one key pair`);
         }
         return { verified: true };
@@ -214,7 +221,7 @@ export async function runComponent(component: Component, registry: CapabilityReg
 }
 
 /** Attest one release: run its component and gather what the ledger gets. */
-export async function attestRelease(r: ReleaseInput, deps: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string; env?: NodeJS.ProcessEnv }): Promise<Attested> {
+export async function attestRelease(r: ReleaseInput, deps: { signer: Signer; parser: Hcl2Json; publicKey: string; keyPath: string; keyless?: KeylessTrust; env?: NodeJS.ProcessEnv }): Promise<Attested> {
   const work = mkdtempSync(join(tmpdir(), "terragucci-attest-"));
   try {
     const component = releaseComponent(r, deps.keyPath);

@@ -67,6 +67,7 @@ import { githubSerializer } from "@intentius/chant-lexicon-github/serializer";
 import { applyForgejoDialect } from "@intentius/chant-lexicon-forgejo/dialect";
 import { Image, Job as GitLabJob, Rule } from "@intentius/chant-lexicon-gitlab/generated/index";
 import { gitlabSerializer } from "@intentius/chant-lexicon-gitlab/serializer";
+import { SIGNING_ID_TOKEN_VAR } from "@intentius/chant/workspace/trust/keyless";
 import { emitYAMLEntry } from "@intentius/chant/yaml";
 
 /** Forgejo is the github dialect with Forgejo's runner labels and action refs. */
@@ -369,6 +370,8 @@ export interface PipelineInput {
   publishBucket?: string;
   /** Set when `modules.attest` is: the publish job gets the signing key's two secrets (GitHub and Forgejo; GitLab's CI variables are already there). */
   attest?: boolean;
+  /** Set when `modules.attest` is `{ identity: oidc }`: the publish job signs with its OIDC token for this audience, holds no key and needs no cosign. */
+  attestKeyless?: { audience: string };
   /** Set when `modules.publish` names a `gitlab://` project: the secret the publish job passes as `GITLAB_TOKEN` (`modules.gitlab_token`, GitHub and Forgejo; GitLab's CI variables are already there). */
   publishGitlabToken?: string;
   /** A cron schedule: the pipeline gets a drift job that runs on it. */
@@ -1858,6 +1861,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
         image: jobImage,
         needs: [lastApply],
         variables: { ...jobEnv, TG_TOKEN: gitlabEnv.TG_TOKEN, TG_SHA: gitlabEnv.TG_SHA, TG_BRANCH: gitlabEnv.TG_BRANCH, GIT_DEPTH: "0" },
+        ...(input.attestKeyless ? { id_tokens: { [SIGNING_ID_TOKEN_VAR]: { aud: input.attestKeyless.audience } } } : {}),
         // A scheduled pipeline has no apply job for its needs to name.
         rules: [new Rule({ if: onDefault })],
         resource_group: "terragucci-publish",
@@ -2259,7 +2263,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
       container: { image },
       needs: lastApply,
       if: "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
-      permissions: { contents: "write" },
+      permissions: { contents: "write", ...(input.attestKeyless ? { "id-token": "write" } : {}) },
       concurrency: { group: "terragucci-publish-${{ github.repository }}", "cancel-in-progress": false },
       env: {
         TERRAGUCCI_REGISTRY_USER: "${{ secrets.TERRAGUCCI_REGISTRY_USER }}",

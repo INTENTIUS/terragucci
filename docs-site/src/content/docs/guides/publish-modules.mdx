@@ -26,6 +26,7 @@ Each level is opt-in:
 | Registry | `modules.registry` | each release as a module registry's files in a bucket or a Pages site, so roots call them by registry source and version |
 | Test | `modules.test: true` | `tofu test` or `terraform test` on each module before a release of it publishes |
 | Attest | `modules.attest: true` as well | a signature, SLSA provenance and an SBOM for each release, and a record of it in the release ledger |
+| Attest keyless | `modules.attest: { identity: oidc }` instead | the same, signed with the publish job's identity and no key; see [Sign without a key](#sign-without-a-key) |
 
 ## Prerequisites
 
@@ -593,6 +594,92 @@ terragucci runs each version through these phases from this config, with no file
 
 A tag pushed by hand has no record that matches it, and neither does one moved after its release; `verify-release` refuses both. To go back to an earlier version, [roll out](/terragucci/guides/roll-out-a-module-version/) that version again.
 
+## Sign without a key
+
+A project with no safe place for a private key, and nobody to rotate one, can sign with the publish job's own identity. Set `identity: oidc` in place of the key:
+
+```yaml
+modules:
+  publish: git-tags
+  attest: { identity: oidc }
+  require: attested
+```
+
+The publish job holds no signing secret and installs no cosign. It trades the forge's OIDC token for a certificate that lasts a few minutes, signs the release, the provenance and the SBOM with a key made for that run, and has each signature timestamped. The bundles in the release ledger carry the certificate chain and the timestamp, so a check needs no network: it verifies the chain against a trusted root file in the repo, the timestamp against the timestamp authorities in it, and the certificate's issuer and subject against the one identity you trust. A release stays valid after its certificate expires, because the timestamp says it was signed while the certificate was good.
+
+### Public records
+
+Nothing goes to Sigstore's transparency log for signatures. The certificate authority and the timestamp authority are told:
+
+| Service | Receives | Public |
+|---|---|---|
+| Fulcio, the certificate authority | the job's OIDC token: the repository, the workflow file, the ref and the commit | the certificate it issues, which names the repository, workflow and ref, goes in a public certificate transparency log |
+| The timestamp authority | a hash of each signature | no |
+
+The module's name, version and digest reach neither service, and they stay in your repository's ledger. If the repository's own path must stay private, use a key, or point `fulcio` and `timestamp` at authorities you run.
+
+### Set it up
+
+<Steps>
+
+1. Commit Sigstore's trusted root at `.chant/trusted_root.json`, or at the path `trusted_root` names. It is the `trusted_root.json` that Sigstore's TUF repository serves, and `cosign initialize` fetches it into `~/.sigstore/root/targets/`. A new copy is needed when Sigstore rotates its authorities.
+
+2. Turn it on and write the pipeline again.
+
+   ```bash
+   npx terragucci init
+   ```
+
+   The publish job now has `permissions: id-token: write` on GitHub and Forgejo, or an `id_tokens` entry named `CHANT_ID_TOKEN_SIGSTORE` on GitLab. Forgejo needs release 15 or later for a job's OIDC token.
+
+3. Name the identity, unless you use GitHub or GitLab with the generated workflow. `terragucci` works out the issuer and the subject from the `origin` remote: the generated workflow's file at the default branch, such as `https://github.com/acme/infra/.github/workflows/terragucci.yml@refs/heads/main`. For a self-hosted forge, or a workflow of your own, set both:
+
+   ```yaml
+   modules:
+     attest:
+       identity: oidc
+       issuer: https://token.actions.githubusercontent.com
+       subject: https://github.com/acme/infra/.github/workflows/terragucci.yml@refs/heads/main
+   ```
+
+4. Merge a module change. The publish job signs, then checks its own bundles against the identity before it writes the tag, so a run by another workflow or ref stops with nothing pushed.
+
+5. Check the release from any checkout.
+
+   ```bash
+   npx terragucci verify-release modules/service 0.2.0
+   ```
+
+</Steps>
+
+Sigstore's public certificate authority accepts tokens from the issuers it is configured for, which include GitHub Actions and GitLab.com. A self-hosted GitLab, a Forgejo, or any other issuer needs a Fulcio and a timestamp authority you run: set `fulcio` and `timestamp` to their URLs, `trusted_root` to a trusted root that lists them, and `audience` if yours differs from `sigstore`. The runners must reach those two URLs.
+
+| Setting | Default | Holds |
+|---|---|---|
+| `identity` | none | `oidc` |
+| `issuer`, `subject` | the generated workflow's, on GitHub and GitLab | the OIDC issuer and certificate subject of the publish job; set both or neither |
+| `trusted_root` | `.chant/trusted_root.json` | a Sigstore `trusted_root.json` in the repo |
+| `audience` | `sigstore` | the token's audience |
+| `fulcio`, `timestamp` | Sigstore's public instances | the URLs of another certificate authority and timestamp authority |
+
+### Trust a publisher by identity
+
+A repo that calls another repo's modules trusts the publisher's identity, with no key to exchange. The subject names the publisher's repository, workflow file and ref; `*` matches within one `/` part and `**` across parts.
+
+```yaml
+modules:
+  require: attested
+  trusted:
+    - source: git::https://github.com/acme/platform-modules.git
+      identity:
+        issuer: https://token.actions.githubusercontent.com
+        subject: https://github.com/acme/platform-modules/.github/workflows/terragucci.yml@refs/heads/main
+      trusted_root: .chant/trusted_root.json
+      ledger: https://github.com/acme/platform-modules.git
+```
+
+Each trusted entry takes a `key` or an `identity`, not both. A release signed with a key does not pass for an identity, nor the other way round. `tf-plan` reads the identity and the trusted root at the base branch, as it reads a key, so a pull request cannot widen who is trusted.
+
 ## Require attested releases
 
 With `modules.require: attested`, `tf-check` and `tf-plan` check each module pin a root makes before they plan it. A root pinning a release that does not verify fails. So does one pinning a release its publisher yanked, whose refusal names the version to move to. The check report and plan note name its module call and version and say why.
@@ -608,10 +695,10 @@ modules:
 
 Only these sources are checked; a module from anywhere else, such as the public registry, is left alone:
 
-| Source | Checked when | Key | Ledger |
+| Source | Checked when | Key or identity | Ledger |
 |---|---|---|---|
-| This repo's own modules | `modules.attest` is on: the repo's git URL for `git-tags`, each `oci://` target, and the host of `modules.registry` | `modules.attest.key` | `chant/lifecycle` on `origin` |
-| A publisher in another repo | `modules.trusted` lists it | its `key` | its `ledger` |
+| This repo's own modules | `modules.attest` is on: the repo's git URL for `git-tags`, each `oci://` target, and the host of `modules.registry` | `modules.attest.key`, or the identity of `modules.attest` | `chant/lifecycle` on `origin` |
+| A publisher in another repo | `modules.trusted` lists it | its `key` or `identity` | its `ledger` |
 
 ```yaml
 modules:

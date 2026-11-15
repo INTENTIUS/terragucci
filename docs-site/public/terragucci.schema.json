@@ -1000,6 +1000,51 @@
                 }
               },
               "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "identity": {
+                  "enum": [
+                    "oidc"
+                  ],
+                  "description": "oidc: sign each release with the publish job's OIDC identity and no key."
+                },
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The OIDC issuer the publish job's certificate names. With subject; both left out, the generated workflow's on GitHub and GitLab."
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The certificate's subject: the repository, the workflow file and the ref."
+                },
+                "trusted_root": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "A sigstore trusted_root.json in the repo. Default .chant/trusted_root.json."
+                },
+                "audience": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The token's audience. Default sigstore."
+                },
+                "fulcio": {
+                  "type": "string",
+                  "pattern": "^https?://.+",
+                  "description": "Another Fulcio certificate authority than sigstore's."
+                },
+                "timestamp": {
+                  "type": "string",
+                  "pattern": "^https?://.+",
+                  "description": "Another RFC 3161 timestamp authority than sigstore's."
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "identity"
+              ]
             }
           ]
         },
@@ -1023,6 +1068,30 @@
                 "type": "string",
                 "minLength": 1
               },
+              "identity": {
+                "type": "object",
+                "properties": {
+                  "issuer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "issuer",
+                  "subject"
+                ],
+                "description": "The identity the publisher signs keyless with, in place of key."
+              },
+              "trusted_root": {
+                "type": "string",
+                "minLength": 1,
+                "description": "With identity: a sigstore trusted_root.json in this repo. Default .chant/trusted_root.json."
+              },
               "ledger": {
                 "type": "string",
                 "pattern": "^(https?|ssh|file)://."
@@ -1031,9 +1100,25 @@
             "additionalProperties": false,
             "required": [
               "source",
-              "key",
               "ledger"
-            ]
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "key"
+                ]
+              },
+              {
+                "required": [
+                  "identity"
+                ]
+              }
+            ],
+            "dependentRequired": {
+              "trusted_root": [
+                "identity"
+              ]
+            }
           }
         },
         "test": {
@@ -3314,6 +3399,51 @@
                     }
                   },
                   "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "identity": {
+                      "enum": [
+                        "oidc"
+                      ],
+                      "description": "oidc: sign each release with the publish job's OIDC identity and no key."
+                    },
+                    "issuer": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The OIDC issuer the publish job's certificate names. With subject; both left out, the generated workflow's on GitHub and GitLab."
+                    },
+                    "subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The certificate's subject: the repository, the workflow file and the ref."
+                    },
+                    "trusted_root": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "A sigstore trusted_root.json in the repo. Default .chant/trusted_root.json."
+                    },
+                    "audience": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The token's audience. Default sigstore."
+                    },
+                    "fulcio": {
+                      "type": "string",
+                      "pattern": "^https?://.+",
+                      "description": "Another Fulcio certificate authority than sigstore's."
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "pattern": "^https?://.+",
+                      "description": "Another RFC 3161 timestamp authority than sigstore's."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "identity"
+                  ]
                 }
               ]
             },
@@ -3337,6 +3467,30 @@
                     "type": "string",
                     "minLength": 1
                   },
+                  "identity": {
+                    "type": "object",
+                    "properties": {
+                      "issuer": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "subject": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "issuer",
+                      "subject"
+                    ],
+                    "description": "The identity the publisher signs keyless with, in place of key."
+                  },
+                  "trusted_root": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "With identity: a sigstore trusted_root.json in this repo. Default .chant/trusted_root.json."
+                  },
                   "ledger": {
                     "type": "string",
                     "pattern": "^(https?|ssh|file)://."
@@ -3345,9 +3499,25 @@
                 "additionalProperties": false,
                 "required": [
                   "source",
-                  "key",
                   "ledger"
-                ]
+                ],
+                "oneOf": [
+                  {
+                    "required": [
+                      "key"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "identity"
+                    ]
+                  }
+                ],
+                "dependentRequired": {
+                  "trusted_root": [
+                    "identity"
+                  ]
+                }
               }
             },
             "test": {

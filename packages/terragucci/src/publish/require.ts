@@ -33,6 +33,7 @@ import { configAtBase, type TrustedOptions } from "../report/policy";
 import { pinFiles, pinVersion } from "../rollout/pins";
 import { moduleTarAt } from "./archive";
 import { attestKey } from "./attest";
+import { keylessSetting, ownKeylessTrust, trustedKeylessTrust, trustedRootPath } from "./keyless";
 import { fetchLedger, shown, type Ledger, type VersionedReleaseRecord } from "./ledger";
 import { releaseCatalog } from "../chant-catalog";
 import type { ChantReleaseCatalog } from "../chant-next";
@@ -40,14 +41,16 @@ import { Registry, installable, notInstallable, parseOci, type Fetch, type Manif
 
 const DIGEST = /^[a-z0-9]+(?:[.+_-][a-z0-9]+)*:[0-9a-fA-F]{32,}$/;
 import { fetchTarball, parseRegistrySource, registryHost, registryLocation, RegistryError } from "./registry";
-import { AttestationError, publicKey, verifyRelease } from "./verify";
+import { AttestationError, publicKey, verifyRelease, type Trust } from "./verify";
 
 /** One publisher whose releases are checked. */
 export interface CheckedSource {
   kind: "git" | "oci" | "registry";
   /** The normalised git URL of the publishing repo, the `oci://` prefix, or a registry's host. */
   match: string;
-  key: KeyObject;
+  /** The publisher's public key, or the identity they sign keyless with. */
+  key: Trust;
+  /** Where `key` was read from: the key file, or the trusted root of an identity. */
   keyPath: string;
   /** Where the release ledger is read: `origin`, or a URL. */
   ledger: string;
@@ -131,10 +134,21 @@ export function checkedSources(repo: string, governing: GoverningModules): Check
     return publicKey(pem, path);
   };
   const out: CheckedSource[] = [];
-  const own = attestKey(m.attest);
+  const ownKeyless = keylessSetting(m.attest);
+  const own = ownKeyless ? trustedRootPath(ownKeyless) : attestKey(m.attest);
   if (own) {
     const targets = m.publish === undefined ? [] : Array.isArray(m.publish) ? m.publish : [m.publish];
-    const k = key(own, "this repo's");
+    let k: Trust;
+    if (ownKeyless) {
+      const origin = spawnSync("git", ["-C", repo, "remote", "get-url", "origin"], { encoding: "utf-8" });
+      if (governing.read(own) === undefined) throw new AttestationError(`this repo's sigstore trusted root ${own} is not in the repo${governing.from === "base" ? " at the base" : ""}`);
+      try {
+        k = ownKeylessTrust(repo, ownKeyless, origin.status === 0 ? origin.stdout.trim() : undefined, governing.read);
+      } catch (e) {
+        if (e instanceof ConfigError) throw new AttestationError(e.message);
+        throw e;
+      }
+    } else k = key(own, "this repo's");
     for (const t of targets) {
       if (t === "git-tags") {
         const origin = spawnSync("git", ["-C", repo, "remote", "get-url", "origin"], { encoding: "utf-8" });
@@ -146,7 +160,9 @@ export function checkedSources(repo: string, governing: GoverningModules): Check
     if (m.registry) out.push({ kind: "registry", match: registryHost(m.registry), key: k, keyPath: own, ledger: "origin", tags: "origin" });
   }
   for (const t of m.trusted ?? []) {
-    out.push({ kind: t.source.startsWith("oci://") ? "oci" : "git", match: normalizeSource(t.source), key: key(t.key, `the trusted source ${shown(t.source)}'s`), keyPath: t.key, ledger: t.ledger });
+    const whose = `the trusted source ${shown(t.source)}'s`;
+    const trust = t.identity ? trustedKeylessTrust({ identity: t.identity, ...(t.trusted_root ? { trusted_root: t.trusted_root } : {}) }, whose, governing.read) : key(t.key!, whose);
+    out.push({ kind: t.source.startsWith("oci://") ? "oci" : "git", match: normalizeSource(t.source), key: trust, keyPath: t.identity ? trustedRootPath(t) : t.key!, ledger: t.ledger });
   }
   return out;
 }

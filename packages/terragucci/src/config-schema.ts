@@ -255,16 +255,32 @@ const publishTarget: JsonSchema = { type: "string", pattern: "^(?:git-tags$|oci:
 const modules = map([...MODULES_KEYS] as (keyof ModulesSettings)[], {
   path: str,
   publish: { anyOf: [publishTarget, { type: "array", items: publishTarget }] },
-  attest: { anyOf: [bool, map(["key"], { key: { type: "string", minLength: 1 } })] },
+  attest: {
+    anyOf: [
+      bool,
+      map(["key"], { key: { type: "string", minLength: 1 } }),
+      map(["identity", "issuer", "subject", "trusted_root", "audience", "fulcio", "timestamp"], {
+        identity: { ...enumOf(["oidc"]), description: "oidc: sign each release with the publish job's OIDC identity and no key." },
+        issuer: { type: "string", minLength: 1, description: "The OIDC issuer the publish job's certificate names. With subject; both left out, the generated workflow's on GitHub and GitLab." },
+        subject: { type: "string", minLength: 1, description: "The certificate's subject: the repository, the workflow file and the ref." },
+        trusted_root: { type: "string", minLength: 1, description: "A sigstore trusted_root.json in the repo. Default .chant/trusted_root.json." },
+        audience: { type: "string", minLength: 1, description: "The token's audience. Default sigstore." },
+        fulcio: { type: "string", pattern: "^https?://.+", description: "Another Fulcio certificate authority than sigstore's." },
+        timestamp: { type: "string", pattern: "^https?://.+", description: "Another RFC 3161 timestamp authority than sigstore's." },
+      }, { required: ["identity"] }),
+    ],
+  },
   require: { const: "attested" },
   gitlab_token: secret,
   trusted: {
     type: "array",
-    items: map(["source", "key", "ledger"], {
+    items: map(["source", "key", "identity", "trusted_root", "ledger"], {
       source: { type: "string", pattern: "^(oci://[^/]+/.+|(git::)?(https?|ssh)://.+)$" },
       key: { type: "string", minLength: 1 },
+      identity: map(["issuer", "subject"], { issuer: { type: "string", minLength: 1 }, subject: { type: "string", minLength: 1 } }, { required: ["issuer", "subject"], description: "The identity the publisher signs keyless with, in place of key." }),
+      trusted_root: { type: "string", minLength: 1, description: "With identity: a sigstore trusted_root.json in this repo. Default .chant/trusted_root.json." },
       ledger: { type: "string", pattern: "^(https?|ssh|file)://." },
-    }, { required: ["source", "key", "ledger"] }),
+    }, { required: ["source", "ledger"], oneOf: [{ required: ["key"] }, { required: ["identity"] }], dependentRequired: { trusted_root: ["identity"] } }),
   },
   test: bool,
   registry,

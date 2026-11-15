@@ -78,6 +78,7 @@ import { declarationFile, namesCheckHooks, PRE_COMMIT_CONFIG, withoutPreCommitHo
 import { applyGroups } from "./cloud-identity";
 import { TRUST_FILE, trustPlan } from "./trust";
 import { rootPath } from "./root-config";
+import { keylessSetting } from "./publish/keyless";
 
 export interface InitOptions {
   /** Choices from the command line; each overrides detection, and is saved to terragucci.yml. */
@@ -434,7 +435,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.decide?.token_env ? { decideTokenEnv: settings.decide.token_env } : {}),
     ...(settings.telemetry?.headers_secret ? { headersSecret: settings.telemetry.headers_secret } : {}),
     ...(settings.modules?.publish || settings.modules?.registry
-      ? { publish: true, ...(settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}), ...(gitlabPublishToken(settings.modules) ? { publishGitlabToken: gitlabPublishToken(settings.modules)! } : {}) }
+      ? { publish: true, ...(keylessSetting(settings.modules.attest) ? { attestKeyless: { audience: keylessSetting(settings.modules.attest)!.audience ?? "sigstore" } } : settings.modules.attest ? { attest: true } : {}), ...(settings.modules.registry?.bucket ? { publishBucket: settings.modules.registry.bucket } : {}), ...(gitlabPublishToken(settings.modules) ? { publishGitlabToken: gitlabPublishToken(settings.modules)! } : {}) }
       : {}),
     ...(settings.reports ? { reports: settings.reports } : {}),
     ...(settings.drift ? { drift: settings.drift } : {}),
