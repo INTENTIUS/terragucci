@@ -1,18 +1,12 @@
 # For agents
 
-- Run `just check` before proposing a change. ci.yml runs for each pull request and each push to main. Its `static` job runs `just check-unit` (typecheck, `bundle-check` and the provider's tests) and `just lint-docs`, and its three `test` jobs run `just test-shard <n>`. Lint, `ci-check` and `lfs-check` run only where you run them. `diff-guard` (`just diff-guard`) runs by hand: `gh workflow run diff-guard.yml --ref <branch>`.
-- A release runs the publish workflow with the version (CONTRIBUTING.md, Releasing). It cuts the newest green commit (`chant ci last-green`), never a hand-picked one.
-- Workflows are declared in `ci/` and `pages/`. Edit the TypeScript and run `just ci`. Never edit `.github/workflows/*.yml` by hand; `just ci-check` fails on it.
-- Pins shared by both workflows live in `workflows/shared.ts`.
-- Pictures and other binaries go through Git LFS; `just lfs-check` (in `just check` and `diff-guard`) enforces it.
-- The site is for customers. Notes about this repo stay out of it, and so do issue links and build details such as capture dates. Contributor material goes in CONTRIBUTING.md.
-- Docs live in `docs-site/src/content/docs/`. `just lint-docs` must pass, and `just site` must build.
-- Every page describes what works today and is true as written. Nothing a user reads (the site, `llms.txt`, a CLI message) says a feature is coming. A feature that does not work stays out of the docs and out of config validation until it does.
-- No page mentions Temporal.
-- Agents run no test bench. The recipes `claims`, `claims-affected`, `binary-claims`, `gitlab-claims`, `smoke-record`, `validate`, `validate-forge`, `validation-record`, `tutorial-capture`, `capture`, `sandbox`, `gitlab-lab up`, `example-gitlab`, `scale` and `coverage-fill` stop with exit 3 unless a person types `run` in their own terminal (`stack/human-gate.sh`). So do the `stack/` scripts behind them. Do not set `TG_HUMAN_RUN` or write the grant file; there is no other way in.
-- A person can grant runs instead with `just grant <claim>...` (an `<area>/<part>`, an area for all its parts, or `capture`). An agent then runs exactly `just claims <the granted names>` or `just tutorial-capture`. Each claim gets the runs granted, 2 by default: one run, and one more after a fix. Stop when a run fails twice or its runs are spent, and report the failing step and its log line. A granted run stops itself when the grant expires or after 5 minutes with nothing written, and it says where it went quiet. `just grant --show` lists what is left.
-- A change merges on CI and lint-docs. Claims are not part of making a change: write, run or rename none unless the person asks.
-- The scale workflow is disabled, and there is no nightly or capture workflow. Only CI's checks run on their own; no claim runs in CI.
-- For a person: `just claims-affected` runs the claims a change can affect and records their rows in `smoke.json`. `just coverage-fill` fills the gaps EVIDENCE.md lists, a source at a time. GitLab runs on its own lab: boot it with `just gitlab-lab up` only on a quiet host, and stop it with `just gitlab-lab down` when done.
-- The example lives in `example/`. An edit there needs `just example-patches`. The tutorial's captures then go stale; `just tutorial-check` lists them and passes. A person recaptures by hand with `just tutorial-capture`.
-- Commits carry no AI attribution lines.
+Working in the INTENTIUS workspace, `../agents/shared.md` applies too. This file adds what is particular to terragucci.
+
+- Local gate: `just check`. CI's `static` job runs `just check-unit` and `just lint-docs`; its three `test` jobs run `just test-shard <n>`. `diff-guard` runs by hand (`gh workflow run diff-guard.yml --ref <branch>`).
+- Workflows are declared in `ci/` and `pages/`, with shared pins in `workflows/shared.ts`. Edit the TypeScript and run `just ci`; `just ci-check` fails on a hand edit.
+- Binaries go through Git LFS; `just lfs-check` enforces it.
+- Docs live in `docs-site/src/content/docs/`. `just lint-docs` must pass and `just site` must build. No page mentions Temporal.
+- Person-started recipes (exit 3 without a person typing `run`, via `stack/human-gate.sh`): `claims`, `claims-affected`, `binary-claims`, `gitlab-claims`, `smoke-record`, `validate`, `validate-forge`, `validation-record`, `tutorial-capture`, `capture`, `sandbox`, `gitlab-lab up`, `example-gitlab`, `scale`, `coverage-fill`, and the `stack/` scripts behind them. The override variable is `TG_HUMAN_RUN`; never set it. Claims are not part of making a change.
+- The example lives in `example/`. An edit there needs `just example-patches`; `just tutorial-check` then lists the stale captures, and a person recaptures them.
+
+Merging: no merge queue yet. Open the pull request with the local gate passing and stop; the orchestrator merges.
