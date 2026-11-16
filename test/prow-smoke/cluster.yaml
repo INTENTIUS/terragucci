@@ -1,0 +1,392 @@
+# The Prow components the smoke test runs on its scratch k3d cluster
+# (test/prow-smoke/prow-smoke.sh fills the @...@ values). They are the
+# ProwJob controller (prow-controller-manager running plank) and sinker,
+# taken from the starter manifest of sigs.k8s.io/prow at the version
+# packages/terragucci/test/fixtures/prow/check/go.mod pins
+# (config/prow/cluster/starter/starter-s3-kind.yaml), with no hook, tide,
+# deck, crier or GitHub App. MinIO keeps the job artifacts, as in that
+# starter; a fake GitHub serves the repository and the REST calls.
+# The ProwJob CRD is applied from the same module.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prow
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-pods
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: smoke
+---
+# Two build clusters, as the jobs name them: "default" is the in-cluster
+# config Prow falls back to, and "trusted" is this context. Both reach the
+# same k3d API server, so the split is by service account, not by cluster.
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: prow
+  name: kubeconfig
+stringData:
+  config: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: scratch
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: prow
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: trusted
+        context: { cluster: scratch, user: prow }
+    current-context: trusted
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: prow
+  name: minio-root-creds
+stringData:
+  user: "@MINIO_USER@"
+  password: "@MINIO_PASSWORD@"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: prow
+  name: s3-credentials
+stringData:
+  service-account.json: |
+    { "region": "minio", "access_key": "@MINIO_USER@", "secret_key": "@MINIO_PASSWORD@", "endpoint": "http://minio.prow.svc.cluster.local:9000", "insecure": true, "s3_force_path_style": true }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: test-pods
+  name: s3-credentials
+stringData:
+  service-account.json: |
+    { "region": "minio", "access_key": "@MINIO_USER@", "secret_key": "@MINIO_PASSWORD@", "endpoint": "http://minio.prow.svc.cluster.local:9000", "insecure": true, "s3_force_path_style": true }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: prow
+spec:
+  selector:
+    matchLabels: { app: minio }
+  strategy: { type: Recreate }
+  template:
+    metadata:
+      labels: { app: minio }
+      # MinIO reads its credentials at start: new ones start a new pod.
+      annotations: { smoke/credentials: "@MINIO_USER@:@MINIO_PASSWORD@" }
+    spec:
+      # MinIO's image runs as 65532; the bucket's directory is made as the same user.
+      securityContext: { runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532 }
+      volumes:
+        - name: data
+          emptyDir: {}
+      initContainers:
+        - name: bucket-creator
+          image: @TG_IMAGE@
+          imagePullPolicy: IfNotPresent
+          command: ["mkdir", "-p", "/data/prow-logs"]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      containers:
+        - name: minio
+          image: @MINIO_IMAGE@
+          args: ["server", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: minio-root-creds, key: user } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: minio-root-creds, key: password } }
+            - { name: MINIO_REGION_NAME, value: minio }
+          ports:
+            - containerPort: 9000
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: prow
+spec:
+  selector: { app: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: 9000 }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: prow
+  name: prow-controller-manager
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: prow
+  name: prow-controller-manager
+rules:
+  - apiGroups: ["prow.k8s.io"]
+    resources: ["prowjobs"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["prow-controller-manager-leader-lock"]
+    verbs: ["get", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["prow-controller-manager-leader-lock"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "events"]
+    verbs: ["create"]
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: test-pods
+  name: prow-controller-manager
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "patch", "watch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: prow
+  name: prow-controller-manager
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: prow-controller-manager }
+subjects:
+  - { kind: ServiceAccount, name: prow-controller-manager }
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: test-pods
+  name: prow-controller-manager
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: prow-controller-manager }
+subjects:
+  - { kind: ServiceAccount, name: prow-controller-manager, namespace: prow }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: prow
+  name: prow-controller-manager
+  labels: { app: prow-controller-manager }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: prow-controller-manager }
+  template:
+    metadata:
+      labels: { app: prow-controller-manager }
+    spec:
+      serviceAccountName: prow-controller-manager
+      containers:
+        - name: prow-controller-manager
+          image: @PCM_IMAGE@
+          args:
+            - --dry-run=false
+            - --config-path=/etc/config/config.yaml
+            - --job-config-path=/etc/job-config
+            - --enable-controller=plank
+            - --kubeconfig=/etc/kubeconfig/config
+            # No GitHub App or token: plank needs none, and any call it makes stays inside the cluster.
+            - --github-endpoint=http://fakegh.smoke.svc.cluster.local/api/v3
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+            - { name: job-config, mountPath: /etc/job-config, readOnly: true }
+            - { name: kubeconfig, mountPath: /etc/kubeconfig, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: config }
+        - name: job-config
+          configMap: { name: job-config }
+        - name: kubeconfig
+          secret: { secretName: kubeconfig }
+---
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  namespace: prow
+  name: sinker
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: prow
+  name: sinker
+rules:
+  - apiGroups: ["prow.k8s.io"]
+    resources: ["prowjobs"]
+    verbs: ["delete", "list", "watch", "get"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["prow-sinker-leaderlock"]
+    verbs: ["get", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["prow-sinker-leaderlock"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "events"]
+    verbs: ["create"]
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: test-pods
+  name: sinker
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete", "list", "watch", "get", "patch"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: prow
+  name: sinker
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sinker }
+subjects:
+  - { kind: ServiceAccount, name: sinker }
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: test-pods
+  name: sinker
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: sinker }
+subjects:
+  - { kind: ServiceAccount, name: sinker, namespace: prow }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: prow
+  name: sinker
+  labels: { app: sinker }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: sinker }
+  template:
+    metadata:
+      labels: { app: sinker }
+    spec:
+      serviceAccountName: sinker
+      containers:
+        - name: sinker
+          image: @SINKER_IMAGE@
+          args:
+            - --config-path=/etc/config/config.yaml
+            - --job-config-path=/etc/job-config
+            - --dry-run=false
+            - --kubeconfig=/etc/kubeconfig/config
+          volumeMounts:
+            - { name: config, mountPath: /etc/config, readOnly: true }
+            - { name: job-config, mountPath: /etc/job-config, readOnly: true }
+            - { name: kubeconfig, mountPath: /etc/kubeconfig, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: config }
+        - name: job-config
+          configMap: { name: job-config }
+        - name: kubeconfig
+          secret: { secretName: kubeconfig }
+---
+# The jobs' pods: the plan and apply service accounts the job config names,
+# each bound to nothing (a real installation binds them to cloud identities),
+# and the Secret with the token the trusted jobs post to the fake GitHub with.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: test-pods
+  name: tf-plan
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: test-pods
+  name: tf-apply
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  namespace: test-pods
+  name: terragucci-github-token
+stringData:
+  token: "@FAKE_TOKEN@"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: smoke
+  name: fakegh
+spec:
+  selector:
+    matchLabels: { app: fakegh }
+  strategy: { type: Recreate }
+  template:
+    metadata:
+      labels: { app: fakegh }
+      # The script's digest: a new fakegithub.mjs starts a new pod (the ConfigMap fakegh holds the file).
+      annotations: { smoke/source: "@FAKEGH_DIGEST@" }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: fakegh
+          image: @TG_IMAGE@
+          imagePullPolicy: IfNotPresent
+          command: ["node", "/app/fakegithub.mjs"]
+          env:
+            - { name: S3_ACCESS_KEY, value: "@MINIO_USER@" }
+            - { name: S3_SECRET_KEY, value: "@MINIO_PASSWORD@" }
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 2
+          volumeMounts:
+            - { name: app, mountPath: /app }
+            - { name: git, mountPath: /srv/git }
+      volumes:
+        - name: app
+          configMap: { name: fakegh }
+        - name: git
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: smoke
+  name: fakegh
+spec:
+  type: NodePort
+  selector: { app: fakegh }
+  ports:
+    - { name: http, port: 80, targetPort: 8080, nodePort: 30080 }
