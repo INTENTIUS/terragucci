@@ -3503,7 +3503,7 @@ claim_oidc/atmos_roles() {
   export TERRAGUCCI_ATMOS
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
-    break_bundle "$bundle" cloud-identity.ts '  const ids = rootIdentities(env, root);' '  const ids = rootIdentities(env, "");' \
+    break_bundle "$bundle" cloud-identity.ts '  const out = targetCloudEnv(env, root) as NodeJS.ProcessEnv;' '  const out = targetCloudEnv(env, "") as NodeJS.ProcessEnv;' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   atmos_bucket "$bucket"
@@ -5756,7 +5756,7 @@ claim_choudoufu/killed() {
     log "while second applied, the run view, its page and progress.json showed first done and second in flight; the killed wave left a record for first alone; and the wave run again applied second alone under the same approval, first's record untouched"
     return 0
   fi
-  if break_bundle "$work/break.mjs" apply-progress.ts 'this.every();' '' apply.ts 'if (at.resume && decision.spent) {' 'if (false) {'; then
+  if break_bundle "$work/break.mjs" apply-progress.ts 'this.every();' '' chant-waves.ts 'export const WAVES_APPROVALS = { spend: true, remainder: true, spendStanding: true } as const;' 'export const WAVES_APPROVALS = { spend: true, spendStanding: true } as const;'; then
     cdf_killed_pass "$work/bundle" "$work/break.mjs" "" ""
     for check in progress resume; do
       case " $CDF_FAILED " in *" $check "*) caught+=" $check" ;; *) missed+=" $check" ;; esac

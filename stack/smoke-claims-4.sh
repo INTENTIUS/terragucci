@@ -70,7 +70,7 @@ claim_choudoufu/migrate() {
   # fail under their breaks:
   #   carve: the retag's write is skipped, so the queue keeps mono's markers,
   #     wave 1 fails, and the next plan of team creates a second jobs queue.
-  #   adopt: live-import runs without -approve, so no marker is stamped, wave
+  #   adopt: the adoption's write is skipped, so no marker is stamped, wave
   #     1 fails, and the next plan of app creates both queues again.
   log() { echo "[smoke cdf-migrate] $*" >&2; }
   # shellcheck source=lib.sh
@@ -86,13 +86,13 @@ claim_choudoufu/migrate() {
     [ $rc = 0 ] && log "one change carried both migrations: the jobs queue moved estates by a retag, app's state became an estate with its state left as it was, each approved by its digest, and the next plan of every root shows no change"
     return $rc
   fi
-  if break_bundle "$work/carve.mjs" migrate-estate.ts 'await writeRetag(exec, options.binary, plan.places.get(t.to)!, t, log, progress);' 'void 0;'; then
+  if break_bundle "$work/carve.mjs" migrate-estate.ts '      await inner.write();' '      if (run.plan.change !== "retag") await inner.write();'; then
     if cdf_migrations "$work/carve" "$work/carve.mjs" carve; then missed+=" carve"; else caught+=" carve"; fi
   else
     log "the carve BREAK bundle did not build"; caught+=" carve"
   fi
   cdf_proxy_down
-  if break_bundle "$work/adopt.mjs" migrate-estate.ts 'const STAMP = "-approve";' 'const STAMP = "-no-color";'; then
+  if break_bundle "$work/adopt.mjs" migrate-estate.ts '      await inner.write();' '      if (run.plan.change === "retag") await inner.write();'; then
     if cdf_migrations "$work/adopt" "$work/adopt.mjs" adopt; then missed+=" adopt"; else caught+=" adopt"; fi
   else
     log "the adopt BREAK bundle did not build"; caught+=" adopt"
@@ -2447,7 +2447,7 @@ claim_estate/mcp() {
   # read-only and none is named for a write; a call to approve is refused with
   # the CLI's answer, and a token argument is refused.
   # BREAK: a bundle whose server lists an approve tool (break_bundle cuts
-  # mcp.ts: the tool goes into TOOLS and the start-up guard is skipped), and
+  # mcp.ts: the tool goes into TOOLS and the server starts without chant's --read-only, whose start-up guard refuses it), and
   # the tool list gives it away.
   log() { echo "[smoke mcp-last-apply] $*" >&2; }
   # shellcheck source=lib.sh
@@ -2460,10 +2460,7 @@ claim_estate/mcp() {
   if [ -n "${BREAK:-}" ]; then
     bundle="$work/break.mjs"
     # shellcheck disable=SC2016 # TypeScript, not shell
-    break_bundle "$bundle" mcp.ts '  const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
-  assertReadOnly(tools);
-' '  const tools = [...(o.tools ?? TOOLS), ...(o.propose ? PROPOSE_TOOLS : [])];
-' mcp.ts 'export const TOOLS: Tool[] = [
+    break_bundle "$bundle" mcp.ts '  const argv = ["serve", "mcp", "--read-only", ...(o.propose ? ["--propose"] : []), "--lexicon", "terraform"];' '  const argv = ["serve", "mcp", ...(o.propose ? ["--propose"] : []), "--lexicon", "terraform"];' mcp.ts 'export const TOOLS: Tool[] = [
 ' 'export const TOOLS: Tool[] = [
   { name: "approve", description: "Approve a waiting wave.", inputSchema: { type: "object", properties: { wave: { type: "string", description: "wave-<k>" } }, additionalProperties: false }, async run(a) { return `approved ${String(a.wave)}`; } },
 ' || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }

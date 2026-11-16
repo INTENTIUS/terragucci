@@ -2153,7 +2153,7 @@ claim_affected/outside_roots() {
       case "$name" in
         var-files) break_bundle "$bundle" affected.ts '      const m = /^--?var-file(?:=(.*))?$/.exec(words[i]);' '      const m = /^--?var-file-cut(?:=(.*))?$/.exec(words[i]);' ;;
         symlink) break_bundle "$bundle" affected.ts '      if (e.isSymbolicLink()) {' '      if (e.isSymbolicLink() && false) {' ;;
-        config-keys) break_bundle "$bundle" affected.ts '    const keys = PLAN_KEYS.filter((k) => stable(a[k]) !== stable(b[k]));' '    const keys = PLAN_KEYS.filter((k) => false && stable(a[k]) !== stable(b[k]));' ;;
+        config-keys) break_bundle "$bundle" affected.ts '    const keys: ChangedKey[] = PLAN_KEYS.filter((k) => stable(a[k]) !== stable(b[k]));' '    const keys: ChangedKey[] = PLAN_KEYS.filter((k) => false && stable(a[k]) !== stable(b[k]));' ;;
         policy-at-base) break_bundle "$bundle" affected.ts \
           'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "secrets"] as const;' 'export const PLAN_KEYS = ["version", "generate", "pass", "env", "oidc", "secrets", "policy"] as const;' \
           affected.ts '  return { version: versionPin(s.version, root)?.version,' '  return { policy: (s as Record<string, unknown>).policy, version: versionPin(s.version, root)?.version,' ;;
@@ -4448,8 +4448,10 @@ claim_apply/check_job() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
-    break_bundle "$TERRAGUCCI" \
-      render.ts '    ...(input.checkJob ? [input.checkJob] : []),' '' \
+    # The apply job's check is chant's guard step, which its lexicon writes
+    # into every wave job from the spec (@intentius/chant/ci-job-guard); no
+    # cut in terragucci's sources takes it out.
+    break_unowned "the apply jobs' check is written by chant's lexicons from the waves' spec, not by terragucci" \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   fresh_repo check-job || { drop_work "$work"; return 1; }
