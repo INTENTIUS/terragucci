@@ -1,14 +1,18 @@
 ---
-title: Changes in 0.4.61
-description: "terragucci 0.4.61, released 2026-11-15."
+title: Changes in 0.4.62
+description: "terragucci 0.4.62, released 2026-11-16."
 ---
 
-Release `0.4.61` is on npm as `@intentius/terragucci@0.4.61`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.61) lists every change.
+Release `0.4.62` is on npm as `@intentius/terragucci@0.4.62`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.62) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.61 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.62 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.62
+
+terragucci moves to chant `0.124.100` in both npm and its images. That chant publishes its compiled files only and no longer brings `tsx` with it. A repository that runs `chant build` or `chant lint` on its own `chant.config.ts` therefore installs `tsx` as a dev dependency. The generated jobs need nothing new.
 
 ## In 0.4.61
 
