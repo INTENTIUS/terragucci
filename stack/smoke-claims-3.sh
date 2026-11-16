@@ -70,7 +70,7 @@ claim_apply/per_root() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "repo";' \
+    break_bundle "$work/break.mjs" apply-rows.ts 'return terraformDefaultLockGrain(name === "choudoufu" ? "choudoufu" : undefined) === "resource" ? "resource" : "root";' 'return "repo";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     cli="$work/break.mjs"
   fi
@@ -331,7 +331,7 @@ claim_choudoufu/rows_overlap() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "repo";' \
+    break_bundle "$work/break.mjs" apply-rows.ts 'return terraformDefaultLockGrain(name === "choudoufu" ? "choudoufu" : undefined) === "resource" ? "resource" : "root";' 'return "repo";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     cli="$work/break.mjs"
   fi
@@ -411,7 +411,7 @@ claim_choudoufu/rows_wait() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/terragucci.mjs" apply-rows.ts 'return Object.hasOwn(BINARY, name) ? BINARY[name as Binary].applyScope : "root";' 'return "root";' \
+    break_bundle "$work/terragucci.mjs" apply-rows.ts 'return terraformDefaultLockGrain(name === "choudoufu" ? "choudoufu" : undefined) === "resource" ? "resource" : "root";' 'return "root";' \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
     bundle="$work/terragucci.mjs"
   fi
@@ -629,7 +629,7 @@ claim_choudoufu/rows_takeover() {
   # gone, and the apply's re-read must refuse its plan, which 411 made stale
   # ("The approved plan no longer matches the live system"), before any
   # SetQueueAttributes of its own: the queue stays at 411. No row is left held.
-  # BREAK: the waves never find a holder gone (forgeLiveness answers alive),
+  # BREAK: the waves never find a holder gone (the wave's lockLiveness answers alive),
   # so the second run waits on and the claim catches it never taking over.
   log() { echo "[smoke cdf-rows-takeover] $*" >&2; }
   # shellcheck source=lib.sh
@@ -639,7 +639,8 @@ claim_choudoufu/rows_takeover() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   build_cli || return 1
   if [ -n "${BREAK:-}" ]; then
-    break_bundle "$work/break.mjs" apply-rows.ts 'return ["success", "failure", "cancelled", "skipped", "completed"].includes(status) ? "dead" : "alive";' 'return "alive";' \
+    break_bundle "$work/break.mjs" apply.ts '    runHooks: stepRunHooks(s),' '    runHooks: stepRunHooks(s),
+    lockLiveness: async () => "alive" as const,' \
       && suffix="$(break_image "$work/break.mjs" choudoufu)" || { log "the BREAK image did not build"; drop_work "$work"; return 1; }
   fi
   estate="smoke-rows-takeover-$(date +%s)-$$"

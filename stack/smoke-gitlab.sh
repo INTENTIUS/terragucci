@@ -2057,7 +2057,7 @@ gitlab_claim_state/versions() {
   gl_state_setup gl-state-versions || return 1
   if [ -n "${BREAK:-}" ]; then
     GL_STATE_BUNDLE="$WORK/break.mjs"
-    break_bundle "$GL_STATE_BUNDLE" apply.ts 'await readStateVersion(join(repo, run.target), own.env,' 'await readStateVersion(join(repo, run.target), {},' || { drop_work "$WORK"; return 1; }
+    break_bundle "$GL_STATE_BUNDLE" apply.ts '  return readStateVersion(dir, env, { words: STORE_WORDS });' '  return readStateVersion(dir, {}, { words: STORE_WORDS });' || { drop_work "$WORK"; return 1; }
   fi
   for n in 1 2; do
     [ $rc = 0 ] || break
@@ -2099,7 +2099,7 @@ gitlab_claim_state/export() {
   gl_state_setup gl-state-export || return 1
   if [ -n "${BREAK:-}" ]; then
     GL_STATE_BUNDLE="$WORK/break.mjs"
-    break_bundle "$GL_STATE_BUNDLE" gitlab-state.ts 'const r = await fetchFn(versionUrl(s, serial), { method: "GET"' 'const r = await fetchFn(s.address, { method: "GET"' || { drop_work "$WORK"; return 1; }
+    break_bundle "$GL_STATE_BUNDLE" export.ts '      ...(options.version ? { version: options.version } : {}),' '' || { drop_work "$WORK"; return 1; }
   fi
   gl_state_apply "$WORK" 1 || rc=1
   v1="$(gl_state_get app | jq -r .serial)"
@@ -2165,7 +2165,7 @@ gitlab_claim_state/unlock() {
   gl_state_setup gl-unlock-state "" forge || return 1
   if [ -n "${BREAK:-}" ]; then
     GL_STATE_BUNDLE="$WORK/break.mjs"
-    break_bundle "$GL_STATE_BUNDLE" unlock.ts '        const text = await asked(() => probeLock(gl, fetchFn));' '        const text = undefined as string | undefined;' || { drop_work "$WORK"; return 1; }
+    break_bundle "$GL_STATE_BUNDLE" unlock.ts '      ...(options.s3Fetch ? { fetch: options.s3Fetch } : {}),' '      fetch: (async () => ({ ok: true, status: 200, text: async () => "" })) as never,' || { drop_work "$WORK"; return 1; }
   fi
   gl_state_apply "$WORK" 1 || rc=1
   gl_locked() { glapi -H 'content-type: application/json' "$GL_URL/api/graphql" -d "{\"query\":\"{ projects(ids: [\\\"gid://gitlab/Project/$GS_PID\\\"]) { nodes { terraformStates { nodes { name lockedAt } } } } }\"}" | jq -r '.data.projects.nodes[0].terraformStates.nodes[] | select(.name == "app") | .lockedAt // "free"'; }
@@ -2234,7 +2234,9 @@ gitlab_claim_ephemeral/pr() {
   gl_state_setup gl-ephemeral 'ephemeral:\n  roots: [app]\n' || return 1
   if [ -n "${BREAK:-}" ]; then
     GL_STATE_BUNDLE="$WORK/break.mjs"
-    break_bundle "$GL_STATE_BUNDLE" ephemeral.ts 'return { type, attribute, key: copy.key, location' 'return { type, attribute, key: copy.key.replace(/-pr-\d+$/, ""), location' || { drop_work "$WORK"; return 1; }
+    # The copy's state address is the terraform lexicon's (pr-env's gitlabCopy,
+    # which suffixes it); terragucci hands it nothing to cut.
+    break_unowned "the copy's suffixed state address is made by the terraform lexicon's pr-env, not by terragucci" || { drop_work "$WORK"; return 1; }
   fi
   gl_state_apply "$WORK" 1 || rc=1
   serial="$(gl_state_get app | jq -r .serial)"
@@ -2995,8 +2997,10 @@ gitlab_claim_apply/check_job() {
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
   if [ -n "${BREAK:-}" ]; then
     TERRAGUCCI="$work/break.mjs"
-    break_bundle "$TERRAGUCCI" \
-      render.ts '    ...(input.checkJob ? [input.checkJob] : []),' '' \
+    # The apply job's check is chant's guard step, which its lexicon writes
+    # into every wave job from the spec (@intentius/chant/ci-job-guard); no
+    # cut in terragucci's sources takes it out.
+    break_unowned "the apply jobs' check is written by chant's lexicons from the waves' spec, not by terragucci" \
       || { log "the BREAK bundle did not build"; drop_work "$work"; return 1; }
   fi
   project="$(gl_project check-job)" || { drop_work "$work"; return 1; }
