@@ -9,12 +9,6 @@
 // in the spec (the pod spec, decoration, cluster, labels) and replaces
 // only the name and the refs, so the job runs the generated YAML as
 // written. Prints the ProwJob as JSON.
-//
-// With PROWJOB_ORIGIN set, the job's container also gets an `origin` remote
-// at that address, through git's environment config (GIT_CONFIG_COUNT):
-// clonerefs leaves the checkout with no remote, and the apply job reads its
-// gate ledger, chant/lifecycle, from origin. The smoke test says when it
-// does this; the job's script is unchanged.
 import { readFileSync } from "node:fs";
 
 const [file, type, job, name, cloneUri, baseSha, pull, pullSha, author] = process.argv.slice(2);
@@ -38,18 +32,6 @@ const refsOf = (r) => ({
 });
 
 pj.metadata.name = name;
-const origin = process.env.PROWJOB_ORIGIN;
-if (origin) {
-  const c = pj.spec.pod_spec.containers[0];
-  c.env = [
-    ...(c.env ?? []),
-    { name: "GIT_CONFIG_COUNT", value: "2" },
-    { name: "GIT_CONFIG_KEY_0", value: "remote.origin.url" },
-    { name: "GIT_CONFIG_VALUE_0", value: origin },
-    { name: "GIT_CONFIG_KEY_1", value: "remote.origin.fetch" },
-    { name: "GIT_CONFIG_VALUE_1", value: "+refs/heads/*:refs/remotes/origin/*" },
-  ];
-}
 if (pj.spec.refs) pj.spec.refs = refsOf(pj.spec.refs);
 if (pj.spec.extra_refs) pj.spec.extra_refs = pj.spec.extra_refs.map((r, i) => (i === 0 ? refsOf(r) : r));
 const labels = pj.metadata.labels ?? {};

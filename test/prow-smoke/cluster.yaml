@@ -366,6 +366,7 @@ spec:
           env:
             - { name: S3_ACCESS_KEY, value: "@MINIO_USER@" }
             - { name: S3_SECRET_KEY, value: "@MINIO_PASSWORD@" }
+            - { name: FAKE_TOKEN, value: "@FAKE_TOKEN@" }
           ports:
             - containerPort: 8080
           readinessProbe:

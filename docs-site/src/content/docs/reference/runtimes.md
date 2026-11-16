@@ -37,7 +37,7 @@ The jobs get their cloud identity from the pod's service account, which the clus
 
 Some Prow installations keep presubmits off the clusters that hold credentials. There, leave `plan_before_merge` off: the checks run before merge, and the plan and the apply run after it. A wave the gate holds stops the apply job; approve its plans with `terragucci approve`, then rerun `terragucci-apply` from Deck. With `plan_before_merge` on, `approval: prow-labels` lets the `lgtm` and `approved` labels approve a wave when the plan note on the merged head showed the same plans and someone with no hand in the change commented `/lgtm` or `/approve`. `/terragucci plan` runs the plan presubmit again and plans every root.
 
-Plan notes, `terragucci/plan`, `terragucci/apply` and the drift issue go through the GitHub API with the token from `token_secret`. Prow runs plain Terraform and OpenTofu roots; a Terragrunt, Atmos or Terramate repository keeps `runtime: forge`. The keys whose jobs are forge workflows, such as `rollouts`, `review`, `agent`, `environments` and `apply.resume`, are refused with `runtime: prow`.
+Plan notes, `terragucci/plan`, `terragucci/apply` and the drift issue go through the GitHub API with the token from `token_secret`. Prow's checkout has no git remote, so each job adds `origin` on the GitHub it posts to; the jobs that hold the token give it to git for origin, which is how the apply job pushes its records to `chant/lifecycle`. Prow runs plain Terraform and OpenTofu roots; a Terragrunt, Atmos or Terramate repository keeps `runtime: forge`. The keys whose jobs are forge workflows, such as `rollouts`, `review`, `agent`, `environments` and `apply.resume`, are refused with `runtime: prow`.
 
 ### Run the jobs on a scratch cluster
 
@@ -55,7 +55,7 @@ The estate is a copy of `example/` whose roots keep local state and hold `terraf
 | `terragucci-apply` postsubmit | it applies only when both labels sit on the head the note planned; a missing label, an author's own approval, plans that moved and a newer head each leave the wave waiting |
 | `terragucci-drift` periodic | it plans every root and applies nothing |
 
-The pods' service accounts are compared with `terragucci config identities`. A result line reads `ok`, `FAIL`, or `GAP` where the jobs as written fall short and the script works around it so the later steps still run. The Prow parts that talk to GitHub itself (hook, Tide, crier and the `/ok-to-test` command) are not part of the run.
+The pods' service accounts are compared with `terragucci config identities`, and each result line reads `ok` or `FAIL`. The Prow parts that talk to GitHub itself (hook, Tide, crier and the `/ok-to-test` command) are not part of the run.
 
 The script deletes nothing. The cluster stays up for the next run, whose ProwJobs carry a run id of their own. The files of a run stay in the work directory it prints. `k3d cluster delete terragucci-prow-smoke` removes the cluster.
 

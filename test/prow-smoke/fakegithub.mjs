@@ -2,8 +2,8 @@
 // in the terragucci image (node and git). One HTTP server on port 8080:
 //
 //   /<owner>/<repo>.git/...  the repository over git's smart HTTP
-//                            (git-http-backend), which clonerefs clones from
-//                            and the smoke test pushes to
+//                            (git-http-backend), which clonerefs clones from;
+//                            a push needs the token (FAKE_TOKEN)
 //   /api/v3/...              the GitHub REST calls the jobs make: pull
 //                            requests, labels, comments, statuses, issues
 //   /_smoke/state            GET dumps what the jobs posted and every request;
@@ -186,8 +186,25 @@ function ensureRepo(name) {
   }
 }
 
+/** Whether a request carries the token as git sends it: basic auth, any user, the token as the password. */
+function hasToken(req) {
+  const [kind, value] = String(req.headers.authorization ?? "").split(" ");
+  if (kind !== "Basic" || !value) return false;
+  const pass = Buffer.from(value, "base64").toString().split(":").slice(1).join(":");
+  return Boolean(process.env.FAKE_TOKEN) && pass === process.env.FAKE_TOKEN;
+}
+
 function git(req, res, url) {
   const m = url.pathname.match(/^\/([^/]+\/[^/]+)\.git(\/.*)$/);
+  // Anyone may clone, as from a public repository; a push needs the token, as on GitHub.
+  const push = url.pathname.endsWith("/git-receive-pack") || url.searchParams.get("service") === "git-receive-pack";
+  if (push) {
+    requests.push({ at: now(), method: req.method, path: `git push ${m[1]}`, status: hasToken(req) ? 200 : 401, token: hasToken(req) });
+    if (!hasToken(req)) {
+      res.writeHead(401, { "www-authenticate": 'Basic realm="fake GitHub"' });
+      return res.end();
+    }
+  }
   ensureRepo(m[1]);
   const child = spawn(BACKEND, [], {
     env: {

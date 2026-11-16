@@ -32,7 +32,9 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-prow-smoke.XXXXXX")"
 export KUBECONFIG="$WORK/kubeconfig"
 HOST="http://127.0.0.1:$PORT"
 FAKEGH="http://fakegh.smoke.svc.cluster.local"
-CLONE_URI="$FAKEGH/smoke/estate.git"
+# Each run has a repository of its own on the fake GitHub, so no run reads another's chant/lifecycle.
+REPO_NAME="estate-$RUN"
+CLONE_URI="$FAKEGH/smoke/$REPO_NAME.git"
 CHECK="$REPO/packages/terragucci/test/fixtures/prow/check"
 
 # ── pins ──────────────────────────────────────────────────────────────────────
@@ -60,9 +62,6 @@ RESULTS="$WORK/results.txt"
 : >"$RESULTS"
 pass() { PASSED=$((PASSED + 1)); echo "ok    $*" | tee -a "$RESULTS"; }
 fail() { FAILED=$((FAILED + 1)); echo "FAIL  $*" | tee -a "$RESULTS"; }
-# A gap in what terragucci generates that the run works around and names; it does not fail the run.
-GAPS=0
-gap() { GAPS=$((GAPS + 1)); echo "GAP   $*" | tee -a "$RESULTS"; }
 check() { local what="$1"; shift; if "$@" >/dev/null; then pass "$what"; else fail "$what"; fi; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "prow-smoke: needs $1 on PATH" >&2; exit 2; }; }
 
@@ -109,9 +108,11 @@ if [ "$IMAGE" = "$LOCAL_IMAGE" ]; then k3d image import -c "$CLUSTER" "$IMAGE" >
 say "terragucci init with runtime: prow on a copy of example/"
 EST="$WORK/estate"
 node "$HERE/estate.mjs" "$REPO/example" "$EST" "$FAKEGH" "$IMAGE" >/dev/null
-g() { git -C "$EST" -c user.name=smoke -c user.email=smoke@example.invalid -c commit.gpgsign=false "$@"; }
+# No credential helper of this machine's sees the fake GitHub's token, and git never prompts.
+export GIT_TERMINAL_PROMPT=0
+g() { git -C "$EST" -c credential.helper= -c user.name=smoke -c user.email=smoke@example.invalid -c commit.gpgsign=false "$@"; }
 g init -q -b main
-g remote add origin https://github.com/smoke/estate.git
+g remote add origin "https://github.com/smoke/$REPO_NAME.git"
 TG=(node "$REPO/packages/terragucci/dist/terragucci.mjs")
 (cd "$EST" && "${TG[@]}" init) | tee "$WORK/init.log"
 JOBS="$EST/prow/terragucci.yaml"
@@ -183,7 +184,8 @@ until curl -fsS "$HOST/healthz" >/dev/null 2>&1; do sleep 1; done
 # ── the cases' helpers ───────────────────────────────────────────────────────
 state() { curl -fsS -X PUT -H 'content-type: application/json' --data-binary "$1" "$HOST/_smoke/state" >/dev/null; }
 dump() { curl -fsS "$HOST/_smoke/state"; }
-push() { g push -q --force "$HOST/smoke/estate.git" "$@"; }
+# The fake GitHub takes a push only with the token, as GitHub does.
+push() { g push -q --force "http://x-access-token:$FAKE_TOKEN@127.0.0.1:$PORT/smoke/$REPO_NAME.git" "$@"; }
 # edit <file> <text> <replacement>: change a root in place; the text must be there exactly once.
 edit() {
   node -e 'const fs=require("fs"),[f,a,b]=process.argv.slice(1),t=fs.readFileSync(f,"utf-8");if(t.split(a).length!==2){console.error(f+": expected "+JSON.stringify(a)+" once");process.exit(1)}fs.writeFileSync(f,t.replace(a,b))' "$1" "$2" "$3"
@@ -280,23 +282,11 @@ check "the plan postsubmit runs as tf-plan" test "$(podsa plan-main)" = tf-plan
 artifact plan-main artifacts/terragucci-report/report.json >"$WORK/plan-main.report.json" 2>/dev/null || true
 check "the plan postsubmit kept a plan report in the job's artifacts" jq -e '.roots | map(.path) | index("envs/dev/orders")' "$WORK/plan-main.report.json"
 
-say "the apply job as generated, on a checkout clonerefs made"
-pr1 '["lgtm","approved"]' "$LGTM"
-runjob postsubmit terragucci-apply apply-as-generated "$M1"
-if logs apply-as-generated "cannot read chant/lifecycle from origin"; then
-  gap "the apply job as generated: clonerefs leaves no origin remote, so the gate cannot read chant/lifecycle and wave 1 does not apply (the jobs need to set origin; the cases below give it through git's environment)"
-  ORIGIN_NOTE="the cases below run with origin set to $CLONE_URI through GIT_CONFIG_COUNT in the job's environment"
-  export PROWJOB_ORIGIN="$CLONE_URI"
-else
-  pass "the apply job as generated reads chant/lifecycle from the checkout clonerefs made"
-  ORIGIN_NOTE="the cases below run the apply job as generated"
-fi
-echo "$ORIGIN_NOTE" | tee -a "$RESULTS"
-
 say "the apply refuses what the labels do not bind"
 pr1 '["lgtm"]' "$LGTM"
 runjob postsubmit terragucci-apply apply-no-approved "$M1"
 check "no approved label: the apply does not proceed" eval '! is apply-no-approved success'
+check "the apply job reads chant/lifecycle from origin in the checkout clonerefs made" nologs apply-no-approved "cannot read chant/lifecycle"
 check "no approved label: the wave waits, naming the missing label" logs apply-no-approved "has no approved label"
 check "no approved label: nothing in the wave or after it ran" logs apply-no-approved "Nothing in wave [0-9]* or after it ran"
 
@@ -313,6 +303,10 @@ check "the labels on the planned head: the apply succeeds" is apply-pr1 success
 check "the apply names the labels' approval" logs apply-pr1 "merged with the lgtm and approved labels"
 check "the apply applied the change to dev orders, in its local state" logs apply-pr1 "Resources: 0 added, 1 changed, 0 destroyed"
 check "the apply runs as tf-apply, not tf-plan" test "$(podsa apply-pr1)" = tf-apply
+check "the apply pushed its records to chant/lifecycle on origin, with the job's token" \
+  test -n "$(g ls-remote "http://x-access-token:$FAKE_TOKEN@127.0.0.1:$PORT/smoke/$REPO_NAME.git" refs/heads/chant/lifecycle)"
+check "the fake GitHub refused a push without the token" \
+  eval '! g push -q "$HOST/smoke/$REPO_NAME.git" "$M1:refs/heads/unauthenticated" 2>/dev/null'
 
 say "pull request 2: the plans moved after the note"
 g checkout -q -b change-2
@@ -389,11 +383,9 @@ check "the drift periodic succeeds" is drift success
 check "the drift periodic runs on the trusted cluster as tf-plan" test "$(jq -r .spec.cluster "$WORK/pods/drift.status.json") $(podsa drift)" = "trusted tf-plan"
 check "the drift periodic never applies" nologs drift "Apply complete"
 check "the drift periodic planned every root and found no drift" logs drift "envs/staging/search: no drift"
-if logs drift "no forge token or no forge in the environment, so the drift issue is left alone"; then
-  gap "the drift periodic as generated: the stage reads its token from TG_TOKEN and the job sets only GITHUB_TOKEN, so it leaves the drift issue alone"
-else
-  pass "the drift periodic reads its token and keeps the drift issue"
-fi
+check "the drift periodic hands the drift stage its token" nologs drift "no forge token or no forge in the environment"
+check "the drift periodic looked for the drift issue on GitHub with the token" \
+  eval 'dump | jq -e --arg r "/repos/smoke/$REPO_NAME/issues?" "[.requests[] | select(.method == \"GET\" and (.path | startswith(\$r)) and .token)] | length > 0" >/dev/null'
 
 # ── 9. identities ────────────────────────────────────────────────────────────
 say "the pod identities, as config identities lists them"
@@ -410,7 +402,7 @@ jq -r '.requests[] | "\(.status) \(.method) \(.path)"' "$WORK/fakegh-final.json"
 say "result"
 cat "$RESULTS"
 echo
-echo "prow-smoke: run $RUN: $PASSED passed, $FAILED failed, $GAPS gaps"
+echo "prow-smoke: run $RUN: $PASSED passed, $FAILED failed"
 echo "prow-smoke: made or reused: k3d cluster $CLUSTER (fake GitHub on 127.0.0.1:$PORT), image $IMAGE, ProwJobs $RUN-* in namespace prow"
 echo "prow-smoke: kept: $WORK (estate, logs/, pods/, results.txt, github-calls.txt); KUBECONFIG=$KUBECONFIG"
 [ "$FAILED" -eq 0 ]

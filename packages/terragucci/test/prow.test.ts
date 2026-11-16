@@ -8,7 +8,7 @@ import { configIdentities } from "../src/identities";
 import { init } from "../src/init";
 import { labelApprovers, labelWave } from "../src/prow-labels";
 import { noteMarker } from "../src/report/marker";
-import { FORK_GUARD, PROW_JOBS, renderProwJobs, type ProwJobsInput } from "../src/render-prow";
+import { DRIFT_TOKEN, FORK_GUARD, ORIGIN_CREDENTIAL, ORIGIN_LINES, PROW_JOBS, renderProwJobs, type ProwJobsInput } from "../src/render-prow";
 import { git, tmp, twoRootRepo, write } from "./helpers";
 
 const FIXTURES = join(__dirname, "fixtures/prow");
@@ -163,6 +163,46 @@ describe("the Prow jobs", () => {
     expect(script(d)).toContain("terragucci stage tf-drift");
     expect(script(d)).not.toContain("GITHUB_RUN_ID");
     expect(jobsOf(renderProwJobs(input()).content).periodics).toBeUndefined();
+  });
+
+  it("gives the drift stage the periodic's token as TG_TOKEN, which it keeps the drift issue with", () => {
+    const s = script(jobsOf(renderProwJobs(input({ drift: "0 6 * * *" })).content).periodics![0]!);
+    expect(s).toContain(DRIFT_TOKEN);
+    expect(s.indexOf(DRIFT_TOKEN)).toBeLessThan(s.indexOf("terragucci stage tf-drift"));
+  });
+
+  it("names origin in clonerefs' checkout, and lets git use the token with it only in the jobs that hold one", () => {
+    const doc = jobsOf(renderProwJobs(input({ drift: "0 6 * * *", prow: { ...PROW, plan_before_merge: true } })).content);
+    const jobs = [...doc.presubmits["acme/infra"]!, ...doc.postsubmits["acme/infra"]!, ...doc.periodics!];
+    for (const j of jobs) {
+      const s = script(j);
+      expect(s).toContain(ORIGIN_LINES[0]!);
+      // Before any stage runs, so the gate's read of chant/lifecycle and the waves' record push find origin.
+      expect(s.indexOf(ORIGIN_LINES[0]!)).toBeLessThan(s.indexOf("terragucci "));
+      const holdsToken = (j.spec.containers[0]!.env ?? []).some((e) => e.name === "GITHUB_TOKEN");
+      expect(s.includes(ORIGIN_CREDENTIAL)).toBe(holdsToken);
+    }
+    expect(script(doc.presubmits["acme/infra"]!.find((j) => j.name === PROW_JOBS.check)!)).not.toContain("credential.");
+  });
+
+  it("adds origin in a checkout with no remote, keeps one that is there, and answers git with the token only while the shell holds it", () => {
+    const home = tmp("terragucci-prow-home-");
+    const { GITHUB_TOKEN: _token, ...parent } = process.env;
+    const env = { ...parent, HOME: home, GIT_CONFIG_NOSYSTEM: "1", GITHUB_SERVER_URL: "https://github.example", GITHUB_REPOSITORY: "acme/infra" };
+    const run = (dir: string, extra: Record<string, string> = {}, then = "") =>
+      execFileSync("bash", ["-c", [...ORIGIN_LINES, ORIGIN_CREDENTIAL, then].join("\n")], { cwd: dir, env: { ...env, ...extra }, encoding: "utf-8" });
+    const bare = tmp("terragucci-prow-clone-");
+    git(bare, "init", "-q");
+    run(bare);
+    expect(git(bare, "remote", "get-url", "origin").trim()).toBe("https://github.example/acme/infra.git");
+    const fill = "printf 'protocol=https\\nhost=github.example\\npath=acme/infra.git\\n\\n' | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null || true";
+    expect(run(bare, { GITHUB_TOKEN: "t0ken" }, fill)).toContain("password=t0ken");
+    expect(run(bare, {}, fill)).not.toContain("password=");
+    const cloned = tmp("terragucci-prow-clone-");
+    git(cloned, "init", "-q");
+    git(cloned, "remote", "add", "origin", "https://elsewhere.example/acme/infra.git");
+    run(cloned);
+    expect(git(cloned, "remote", "get-url", "origin").trim()).toBe("https://elsewhere.example/acme/infra.git");
   });
 
   it("names where the file goes when Prow reads its job config from another repository", () => {
