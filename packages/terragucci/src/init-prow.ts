@@ -2,10 +2,14 @@
  * What `terragucci init` needs for `runtime: prow` beyond the settings: the
  * repository's owner/name, which keys its jobs in Prow's config, and its
  * default branch, which the postsubmits and the drift periodic run on.
+ * `runtime: prow` reads as chant's CI system `prow` for the repository's
+ * forge, which chant pairs with GitHub only.
  */
 import { execFileSync } from "node:child_process";
+import { ForgeCiError, resolveForgeCi } from "@intentius/chant/ci-system";
 import { ConfigError, type ForgeName, type ResolvedSettings } from "./config";
 import { pathOfRemote } from "./identities";
+import { PROW_CI } from "./prow-config";
 import { renderProwJobs, type ProwJobsInput, type RenderedProwJobs } from "./render-prow";
 
 const git = (repo: string, ...args: string[]): string => {
@@ -34,7 +38,12 @@ export function prowPipeline(
   settings: ResolvedSettings,
   o: Omit<ProwJobsInput, "repo" | "defaultBranch" | "prow" | "env" | "drift"> & { forge: ForgeName; plain: boolean },
 ): RenderedProwJobs {
-  if (o.forge !== "github") throw new ConfigError(`runtime: prow serves GitHub repositories, and this one is on ${o.forge}`);
+  try {
+    resolveForgeCi({ forge: o.forge, ci: PROW_CI });
+  } catch (e) {
+    if (e instanceof ForgeCiError) throw new ConfigError(`runtime: prow serves GitHub repositories, and this one is on ${o.forge}`);
+    throw e;
+  }
   if (!o.plain) throw new ConfigError("runtime: prow runs plain Terraform and OpenTofu roots; a Terragrunt, Atmos or Terramate repository keeps runtime: forge");
   if (!settings.prow) throw new ConfigError("runtime: prow needs the prow key: trusted_cluster, service_accounts and token_secret");
   const path = prowRepository(repo, settings);
