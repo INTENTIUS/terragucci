@@ -23,38 +23,52 @@ export const RELEASE_LABEL_ARG = CI_IMAGE_LABEL_ARG;
 /** Python by index digest, for the decide image, so a rebuild cannot change underneath a tag. */
 const PYTHON = "python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3";
 
-const engine = (tool: keyof typeof TOOL_VERSIONS): CiImageTool => ({ tool, version: TOOL_VERSIONS[tool] });
+/** Each engine with its pinned version, written out so no lookup computes a key. */
+const ENGINES = {
+  tofu: { tool: "tofu", version: TOOL_VERSIONS.tofu },
+  terraform: { tool: "terraform", version: TOOL_VERSIONS.terraform },
+  terragrunt: { tool: "terragrunt", version: TOOL_VERSIONS.terragrunt },
+  choudoufu: { tool: "choudoufu", version: TOOL_VERSIONS.choudoufu },
+} satisfies Record<string, CiImageTool>;
 
-const ciImage = (name: string, description: string, tools: CiImageTool[]): Dockerfile =>
-  new Dockerfile({
-    stages: productImageStages({
-      name: `terragucci-${name}`,
-      product: "terragucci",
-      description,
-      source: "https://github.com/INTENTIUS/terragucci",
-      tools,
-      // What the bundle imports at run time from /usr/local/node_modules, which is on its module
-      // path: the installed chant it is built against (the release the package pins, whose core
-      // subpaths the bundle leaves external) and the HCL parser the tips and rollouts read with.
-      npm: [`@intentius/chant@${pkg.dependencies["@intentius/chant"]}`, `@cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]}`],
-      // chant's bin, which a wave job runs (`chant run wave`) and approve and the relay record
-      // through, as the release the package pins.
-      chant: pkg.dependencies["@intentius/chant"],
-      bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
-    }),
+/**
+ * The stages of one CI image. Each image binds them to a constant before its
+ * Dockerfile, because a resource's properties are read statically (EVL001):
+ * the call that computes the stages runs here, and the declaration names the result.
+ */
+const ciStages = (name: string, description: string, tools: CiImageTool[]) =>
+  productImageStages({
+    name: `terragucci-${name}`,
+    product: "terragucci",
+    description,
+    source: "https://github.com/INTENTIUS/terragucci",
+    tools,
+    // What the bundle imports at run time from /usr/local/node_modules, which is on its module
+    // path: the installed chant it is built against (the release the package pins, whose core
+    // subpaths the bundle leaves external) and the HCL parser the tips and rollouts read with.
+    npm: [`@intentius/chant@${pkg.dependencies["@intentius/chant"]}`, `@cdktn/hcl2json@${pkg.devDependencies["@cdktn/hcl2json"]}`],
+    // chant's bin, which a wave job runs (`chant run wave`) and approve and the relay record
+    // through, as the release the package pins.
+    chant: pkg.dependencies["@intentius/chant"],
+    bundle: { file: "packages/terragucci/dist/terragucci.mjs", bin: "terragucci" },
   });
 
-export const tofu = ciImage("tofu", `OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`, [engine("tofu")]);
-
-export const terraform = ciImage("terraform", `Terraform ${TOOL_VERSIONS.terraform} and the terragucci engine`, [engine("terraform")]);
-
-export const terragrunt = ciImage(
+const tofuStages = ciStages("tofu", `OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`, [ENGINES.tofu]);
+const terraformStages = ciStages("terraform", `Terraform ${TOOL_VERSIONS.terraform} and the terragucci engine`, [ENGINES.terraform]);
+const terragruntStages = ciStages(
   "terragrunt",
   `Terragrunt ${TOOL_VERSIONS.terragrunt}, OpenTofu ${TOOL_VERSIONS.tofu} and the terragucci engine`,
-  [engine("tofu"), engine("terragrunt")],
+  [ENGINES.tofu, ENGINES.terragrunt],
 );
+const choudoufuStages = ciStages("choudoufu", `choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`, [ENGINES.choudoufu]);
 
-export const choudoufu = ciImage("choudoufu", `choudoufu ${TOOL_VERSIONS.choudoufu} and the terragucci engine`, [engine("choudoufu")]);
+export const tofu = new Dockerfile({ stages: tofuStages });
+
+export const terraform = new Dockerfile({ stages: terraformStages });
+
+export const terragrunt = new Dockerfile({ stages: terragruntStages });
+
+export const choudoufu = new Dockerfile({ stages: choudoufuStages });
 
 /**
  * terragucci-decide (terragucci#29): the opt-in decision service. Not a CI
@@ -92,6 +106,7 @@ export const decide = new Dockerfile({
     },
     {
       from: PYTHON,
+      arg: [RELEASE_LABEL_ARG],
       env: [
         'PATH="/opt/venv/bin:$PATH"',
         "HOME=/tmp",
@@ -113,7 +128,6 @@ export const decide = new Dockerfile({
         `DECIDE_CHECKPOINT=${ckpt.name}`,
         `DECIDE_PORT=${DECIDE_IMAGE.port}`,
       ],
-      arg: [RELEASE_LABEL_ARG],
       user: "10001:10001",
       copy: [
         "--from=build /opt/venv /opt/venv",
