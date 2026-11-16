@@ -17,7 +17,20 @@
  * Installations that keep presubmits off the clusters that hold
  * credentials leave it off: there the checks run before merge, and the
  * plan and the apply after it.
+ *
+ * `runtime: prow` is chant's CI system `prow` (`@intentius/chant/ci-system`)
+ * for the repository's forge, which is GitHub: Prow runs the jobs, and
+ * GitHub keeps the pull requests, comments and statuses.
  */
+import { forgeCiProblem, type CiSystem } from "@intentius/chant/ci-system";
+import type { ForgeKind } from "@intentius/chant/pr-forge";
+
+/** The CI system `runtime: prow` names in chant. */
+export const PROW_CI: CiSystem = "prow";
+
+/** Whether chant's `prow` CI system runs jobs for a repository on `forge`. */
+export const prowServes = (forge: unknown): boolean => typeof forge === "string" && forgeCiProblem(forge as ForgeKind, PROW_CI) === undefined;
+
 /** A Kubernetes object name: a DNS-1123 subdomain. */
 export const DNS_SUBDOMAIN = /^(?=.{1,253}$)[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/;
 
@@ -109,7 +122,7 @@ export function prowProblems(s: Record<string, unknown>, where: string): string[
     if (mode === "prow-labels") out.push(`${where}.approval: prow-labels reads Prow's lgtm and approved labels, which only runtime: prow has`);
     return out;
   }
-  if (s.forge !== undefined && s.forge !== "github") out.push(`${where}.runtime: prow serves GitHub repositories; forge is ${JSON.stringify(s.forge)}`);
+  if (s.forge !== undefined && !prowServes(s.forge)) out.push(`${where}.runtime: prow serves GitHub repositories; forge is ${JSON.stringify(s.forge)}`);
   for (const [k, why] of Object.entries(PROW_REFUSED)) if (s[k] !== undefined) out.push(`${where}.${k} does not go with runtime: prow: ${why}`);
   if (isObject(s.apply)) for (const [k, why] of Object.entries(PROW_REFUSED_APPLY)) if (s.apply[k] !== undefined) out.push(`${where}.apply.${k} does not go with runtime: prow: ${why}`);
   if (s.locks === "plan") out.push(`${where}.locks: plan does not go with runtime: prow: the pr-lock job is a forge workflow`);

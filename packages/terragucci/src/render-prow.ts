@@ -38,11 +38,16 @@
  * its report. Its checkout has no remote, so each job adds `origin`
  * (ORIGIN_LINES), and the jobs that hold the token let git use it there
  * (ORIGIN_CREDENTIAL): the apply job reads and pushes chant/lifecycle.
+ *
+ * The jobs are plain Prow job data, and chant's prow lexicon writes the file:
+ * `forgeJobConfig` keys the presubmits and postsubmits by the repository's
+ * owner/name on GitHub and puts the header above them as comment lines.
  */
-import { emitYAML } from "@intentius/chant/yaml";
+import { defaultForgeOf } from "@intentius/chant/ci-system";
+import { forgeJobConfig } from "@intentius/chant-lexicon-prow/forge-jobs";
 import { WAVES_SPEC } from "./chant-waves";
 import type { Binary } from "./config";
-import { PROW_JOBS_PATH, PROW_TOKEN_KEY, type ProwSettings } from "./prow-config";
+import { PROW_CI, PROW_JOBS_PATH, PROW_TOKEN_KEY, type ProwSettings } from "./prow-config";
 import { checkScript, driftScript, installScript, MARKER, planVerbScript, REPORT_DIR, type PipelineApplyJob, type PlanReportInput } from "./render";
 // After ./render, which ./product-plan imports in turn.
 import { PLAN_ENV, PLAN_NAMES, githubPlanJobs } from "./product-plan";
@@ -320,11 +325,6 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
     `# The plan, apply and drift jobs run on ${prow.trusted_cluster} as the service accounts ${prow.service_accounts.plan} (plan, drift)`,
     `# and ${prow.service_accounts.apply} (apply), and read the GitHub token from the Secret ${token.name}.`,
   ].join("\n");
-  const doc: Record<string, unknown> = {
-    presubmits: { [repo]: presubmits },
-    postsubmits: { [repo]: postsubmits },
-    ...(periodics.length ? { periodics } : {}),
-  };
   const path = prow.path ?? PROW_JOBS_PATH;
   const notes = [
     prow.config_repo && prow.config_repo !== repo
@@ -337,7 +337,7 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
   ];
   return {
     path,
-    content: `${header}\n${emitYAML(doc, 0).trimEnd()}\n`,
+    content: forgeJobConfig({ forge: defaultForgeOf(PROW_CI), repo }, { presubmits, postsubmits, periodics }, { header }),
     extra: input.wavesSpec ? [{ path: WAVES_SPEC, content: input.wavesSpec }] : [],
     applyJobs: [{ name: PROW_JOBS.apply, needs: [], applies: roots }],
     notes,
