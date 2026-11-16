@@ -82,7 +82,7 @@ describe("the release component", () => {
 
   it("is a chant component the contract schema accepts", async () => {
     const Ajv = (await import("ajv/dist/2020.js")).default;
-    const schema = JSON.parse(readFileSync(join(import.meta.dirname, "../../../node_modules/@intentius/chant/src/components/component.schema.json"), "utf-8"));
+    const schema = JSON.parse(readFileSync(join(import.meta.dirname, "../../../node_modules/@intentius/chant/dist/components/component.schema.json"), "utf-8"));
     const ajv = new Ajv({ strict: false });
     const valid = ajv.validate(schema, JSON.parse(JSON.stringify(component)));
     expect(ajv.errors ?? []).toEqual([]);

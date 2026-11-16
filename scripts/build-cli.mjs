@@ -106,7 +106,7 @@ for (const f of ["report.schema.json", "report-index.schema.json", "estate.schem
   copyFileSync(join(pkg, "src/report", f), join(stage, f));
 }
 // The generic webhook's event, chant's chant.notify/v1, for a receiver to validate.
-copyFileSync(join(root, "node_modules/@intentius/chant/src/notify.schema.json"), join(stage, "notify.schema.json"));
+copyFileSync(join(root, "node_modules/@intentius/chant/dist/notify.schema.json"), join(stage, "notify.schema.json"));
 // terragucci.yml's own schema, for editors and the provider (src/config-schema.ts builds it).
 copyFileSync(join(pkg, "src/terragucci.schema.json"), join(stage, "terragucci.schema.json"));
 
