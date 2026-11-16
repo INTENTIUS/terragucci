@@ -44,7 +44,7 @@ exit 0
 
 const KEY = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 const SIGNERS = `alice@acme.com,slack:T1/U1 ssh-ed25519 ${KEY}\nbot@acme.com,slack:T1/B1 ssh-ed25519 ${KEY}\n`;
-const SCHEMA = join(import.meta.dirname, "../../../node_modules/@intentius/chant/src/workspace/point-answer.schema.json");
+const SCHEMA = join(import.meta.dirname, "../../../node_modules/@intentius/chant/dist/workspace/point-answer.schema.json");
 
 const POINTS = {
   points: {
