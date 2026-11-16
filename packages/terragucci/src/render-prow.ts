@@ -35,7 +35,9 @@
  * PULL_NUMBER), so the stages, chant's wave runner and the GitHub API calls
  * read the job as they read a GitHub one. Prow's decoration clones the
  * repository with its history and keeps `$ARTIFACTS`, where each job copies
- * its report.
+ * its report. Its checkout has no remote, so each job adds `origin`
+ * (ORIGIN_LINES), and the jobs that hold the token let git use it there
+ * (ORIGIN_CREDENTIAL): the apply job reads and pushes chant/lifecycle.
  */
 import { emitYAML } from "@intentius/chant/yaml";
 import { WAVES_SPEC } from "./chant-waves";
@@ -92,14 +94,32 @@ export interface RenderedProwJobs {
 
 const sq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The pod's first lines: GitHub's variables from Prow's, for a job of `type`. */
-export function prowPrelude(type: "presubmit" | "postsubmit" | "periodic", repo: string, prow: ProwSettings, defaultBranch: string): string[] {
+/**
+ * clonerefs makes the checkout with `git init` and fetches by URL, so it has
+ * no remote. The wave gate reads chant/lifecycle from origin and the waves
+ * push their records there, as in a forge's checkout, so the job names
+ * origin itself: the repository on the GitHub the jobs talk to.
+ */
+export const ORIGIN_LINES = ['git remote get-url origin >/dev/null 2>&1 || git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"'];
+
+/**
+ * How git authenticates to origin in a job that holds the token: a
+ * credential helper that answers with GITHUB_TOKEN as it is when git asks.
+ * Nothing is written to the checkout or the disk, and a shell that has
+ * dropped the token (the plan, which runs the change's code) gives git none.
+ */
+export const ORIGIN_CREDENTIAL = `git config --global "credential.$GITHUB_SERVER_URL.helper" '!f() { test "$1" = get && test -n "\${${TOKEN_VAR}:-}" && printf "username=x-access-token\\npassword=%s\\n" "$${TOKEN_VAR}"; }; f'`;
+
+/** The pod's first lines: GitHub's variables from Prow's, for a job of `type`. `token`: the job holds the GitHub token, which git may use with origin. */
+export function prowPrelude(type: "presubmit" | "postsubmit" | "periodic", repo: string, prow: ProwSettings, defaultBranch: string, token = true): string[] {
   const lines = [
     "set -eu",
     'git config --global --add safe.directory "$PWD" 2>/dev/null || true',
     // The stages and chant read a GitHub job's variables; a ProwJob's pod gets the same from Prow's.
     `export GITHUB_ACTIONS=true GITHUB_SERVER_URL="\${GITHUB_SERVER_URL:-https://github.com}" GITHUB_API_URL="\${GITHUB_API_URL:-https://api.github.com}" GITHUB_REPOSITORY=${sq(repo)}`,
     'export GITHUB_SHA="$(git rev-parse HEAD)" TF_IN_AUTOMATION=1 TF_INPUT=0',
+    ...ORIGIN_LINES,
+    ...(token ? [ORIGIN_CREDENTIAL] : []),
   ];
   if (type === "presubmit") {
     lines.push(
@@ -130,6 +150,9 @@ export const FORK_GUARD = [
   'if [ "${tg_fork:-0}" -eq 3 ]; then echo "terragucci: pull request $PULL_NUMBER is from a fork, so it is not planned before merge; terragucci-check covers it, and it plans and applies after it merges"; exit 0; fi',
   '[ "${tg_fork:-0}" -eq 0 ] || exit 1',
 ];
+
+/** The drift stage keeps the drift issue with TG_TOKEN, as the forge pipelines' drift jobs set it; the periodic's token is GITHUB_TOKEN. */
+export const DRIFT_TOKEN = `export TG_TOKEN="\${TG_TOKEN:-\${${TOKEN_VAR}:-}}"`;
 
 /** A forge job's report link, which the stages' scripts carry; a ProwJob's is Deck's, or none. */
 const forgeRunLink = '"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"';
@@ -170,7 +193,7 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
   // ── checks, before merge, no credential ───────────────────────────────────
   const c = input.check;
   const check = [
-    ...prowPrelude("presubmit", repo, prow, input.defaultBranch),
+    ...prowPrelude("presubmit", repo, prow, input.defaultBranch, false),
     ...install,
     "(",
     checkScript(binary, roots, c.synth, c.rootPins === true, c.generate === true, false, c.sources === true, c.mirror === true, c.parallelism),
@@ -280,7 +303,7 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
           annotations: { description: "terragucci: plans every root with -refresh-only and keeps the drift issue. It never applies." },
           spec: {
             serviceAccountName: prow.service_accounts.plan,
-            containers: [container(image, [...prowPrelude("periodic", repo, prow, input.defaultBranch), ...install, onProw(driftScript(binary, layers, "github", undefined, input.report))].join("\n"), input.env, token)],
+            containers: [container(image, [...prowPrelude("periodic", repo, prow, input.defaultBranch), ...install, DRIFT_TOKEN, onProw(driftScript(binary, layers, "github", undefined, input.report))].join("\n"), input.env, token)],
           },
         },
       ]

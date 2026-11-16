@@ -57,6 +57,10 @@ bundle-check: build-cli
 provider-test:
     cd terraform-provider-terragucci && test -z "$(gofmt -l .)" && go vet ./... && go test ./...
 
+[doc("runtime: prow on a scratch k3d cluster (terragucci-prow-smoke): Prow's plank and sinker run the generated ProwJobs against a fake GitHub inside the cluster, with local state. Needs Docker, k3d, kubectl, Go with sigs.k8s.io/prow in its module cache, jq and curl. Deletes nothing; TG_PROW_SMOKE_IMAGE=published uses the published image.")]
+prow-smoke:
+    test/prow-smoke/prow-smoke.sh
+
 [doc("Fail when a chant example's committed pipeline is not what chant's generator writes at the chant the tree pins. --write writes the generator's output.")]
 chant-pipelines *args:
     node scripts/chant-pipelines.mjs {{args}}
