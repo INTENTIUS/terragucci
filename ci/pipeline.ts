@@ -24,6 +24,7 @@ export const workflow = new Workflow({
   on: {
     push: { branches: ["main"] },
     pull_request: {},
+    merge_group: {},
     workflow_dispatch: {},
   },
   permissions: { contents: "read" },
