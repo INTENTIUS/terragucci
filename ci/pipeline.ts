@@ -29,7 +29,7 @@ export const workflow = new Workflow({
   },
   permissions: { contents: "read" },
   // chant-ci-green.yml tags the main commits that pass ci/green/<sha>
-  // (chant.workspace.json's ci.green); it reads main's runs alone, so a pull
+  // (chant.workspace.json's ci.green) for scripts/ci-red; it reads main's runs alone, so a pull
   // request's runs tag nothing. A pull request's newer push cancels its run
   // in progress, and so does a branch run by hand (`gh workflow run ci.yml
   // --ref BRANCH`). main's runs all finish. GitHub keeps one run going and one

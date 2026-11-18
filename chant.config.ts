@@ -15,8 +15,8 @@ export default {
   lexicons: ["github", "docker", "otel", "prometheus", "aws"],
 
   // chant.workspace.json declares no members; it is there for ci.green (the
-  // ci/green tags chant-ci-green.yml writes), so chant build and lint keep
-  // building this root project alone.
+  // ci/green tags chant-ci-green.yml writes, which scripts/ci-red reads), so
+  // chant build and lint keep building this root project alone.
   rootOnly: true,
 
   // The declarations chant builds from this root when no directory is named: the release cut's compile (chant release
@@ -35,13 +35,18 @@ export default {
     // The release's label is the package's version for the cut's build and the publish (chant issue 4840). The images
     // take it as the CHANT_RELEASE_LABEL build argument for their version label.
     version: { packages: ["packages/terragucci"] },
+    // The cut tags v<version>. Releases 0.4.50 to 0.4.62 were tagged release/<version>, and chant still reads those.
+    tag: "v{version}",
+    legacyTags: ["release/"],
+    // The cut releases a commit whose GitHub checks passed, the ruleset's required `static` and `test (n/3)` among
+    // them. The ci/green tags stay for scripts/ci-red alone; the release does not read them.
+    green: "forge-checks",
     // .github/workflows/publish.yml, from `chant release workflow` (chant issues 4656 and 4751): one run, started by
-    // hand with the version. The gate names the newest green commit at or below the dispatched one, the cut builds the
-    // images and the bundle that pins them and pushes the release/<version> tag, and the publish job takes the cut's
+    // hand with the version. The gate hands on the dispatched commit, the cut checks its checks, builds the
+    // images and the bundle that pins them and pushes the v<version> tag, and the publish job takes the cut's
     // image archives, checks them against its digests and publishes. npm's trusted publisher is configured for publish.yml.
     workflow: {
       trigger: "dispatch",
-      gate: "last-green",
       install: "npm ci",
       build: "node scripts/build-cli.mjs",
       chant: "npx chant",
