@@ -1,14 +1,22 @@
 ---
-title: Changes in 0.4.62
-description: "terragucci 0.4.62, released 2026-11-16."
+title: Changes in 0.4.63
+description: "terragucci 0.4.63, released 2026-11-18."
 ---
 
-Release `0.4.62` is on npm as `@intentius/terragucci@0.4.62`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/release/0.4.62) lists every change.
+Release `0.4.63` is on npm as `@intentius/terragucci@0.4.63`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.63) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.62 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.63 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.63
+
+terragucci is on chant `0.124.106`, in npm and in its images. Lexicons version apart from chant, so each bundled lexicon is pinned at its own latest release; prow and terraform are at `0.124.102`.
+
+Prow's checkout has no `origin` remote. With `runtime: prow` each generated job now adds one that points at the GitHub the jobs post to, and the jobs that hold the token let git use it there. The apply job needs this to push its records to `chant/lifecycle`. The drift job now gets `TG_TOKEN`, which it keeps the drift issue with. chant's prow lexicon now writes the job config, and that move alone changes none of it. Run `npx @intentius/terragucci@0.4.63 init` to write the fixed jobs.
+
+This is the first release tagged `v<version>`. Releases `0.4.50` to `0.4.62` were tagged `release/<version>`.
 
 ## In 0.4.62
 
