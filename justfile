@@ -69,6 +69,18 @@ chant-pipelines *args:
 evidence:
     npx tsx scripts/evidence.ts
 
+[doc("Fail when npm does not serve the three packages BEHOLD_PIN names. Run it before a release; it reads the registry, so check does not.")]
+behold-pin-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    specs=$(sed -n '/^export const BEHOLD_PIN/,/^} as const/p' packages/terragucci/src/view.ts | grep -o '"[^"]*@[^"]*"' | tr -d '"')
+    test -n "$specs"
+    for spec in $specs; do
+      got=$(npm view "$spec" version | tail -n 1)
+      test -n "$got" || { echo "npm serves nothing for $spec" >&2; exit 1; }
+      echo "$spec -> $got"
+    done
+
 [doc("Fail when EVIDENCE.md is not what `just evidence` writes.")]
 evidence-check:
     npx tsx scripts/evidence.ts --check
