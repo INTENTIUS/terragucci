@@ -20,7 +20,7 @@
  *   would (the dry run, the default).
  *
  * With `rollouts.soak`, a wave that applied also has to have soaked before the
- * next opens (./soak.ts).
+ * next opens (./wave-soak.ts).
  *
  * The gate is a fact read on the next run, never a wait. A pull request's
  * branch is cut from the default branch and changes only its roots' files, so
@@ -53,7 +53,9 @@ import { appOf, changelogLines, movesYanked, templateContext, templateTarget, te
 import { adoptCalls, LOCAL_FROM, moveAdopted, pinnedSource, type AdoptTarget } from "./adopt";
 import { pinProviderRange, providerEntries, UNVERSIONED } from "./range";
 import { planWaves, type Wave } from "./waves";
-import { forgeHealth, soakNote, soakOf, soakRuleFor, type Health, type SoakRule, type SoakStatus } from "./soak";
+import { gitGateLedgerPort, type GateLedgerPort } from "@intentius/chant/op/gate";
+import type { SoakCheckReader } from "@intentius/chant/pipeline/soak";
+import { soakNote, soakOf, soakRuleFor, type SoakRule, type SoakStatus } from "./wave-soak";
 
 export type RolloutKind = "module" | "provider";
 
@@ -86,8 +88,10 @@ export interface RolloutOptions {
   only?: string[];
   /** The soak the rollout is under. Default: the config's `rollouts.soak`; `false` for none. A control repo's rollout has none from the config. */
   soak?: SoakSettings | false;
-  /** For tests: what the soak's conditions read. Default: the forge, and the gate ledger. */
-  health?: Health;
+  /** For tests: what the soak's checks read. Default: the forge, and the gate ledger. */
+  soakRead?: SoakCheckReader;
+  /** For tests: where a `/terragucci skip-soak` is recorded. Default: the repository's gate ledger, in `apply` mode. */
+  gates?: GateLedgerPort;
   /** For tests: the time now, in milliseconds. */
   clock?: () => number;
   /**
@@ -815,7 +819,7 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
       break;
     }
     if (due.length > 0) {
-      const held = soakRule ? await soakBefore(result.waves.slice(0, index), soakRule, byKey, repo, options) : undefined;
+      const held = soakRule ? await soakBefore(result.waves.slice(0, index), soakRule, soakSettings!, byKey, repo, options) : undefined;
       if (held?.state === "soaking") {
         for (const part of due) part.state = "soaking";
         result.status = "soaking";
@@ -843,11 +847,12 @@ async function walk(repo: string, config: TerragucciConfig, projects: Project[],
  * Undefined when no earlier wave merged one (a rollout whose earlier waves had
  * nothing to move).
  */
-async function soakBefore(earlier: WaveStatus[], rule: SoakRule, byKey: Map<string, Project>, repo: string, options: RolloutOptions): Promise<SoakStatus | undefined> {
+async function soakBefore(earlier: WaveStatus[], rule: SoakRule, settings: SoakSettings, byKey: Map<string, Project>, repo: string, options: RolloutOptions): Promise<SoakStatus | undefined> {
   const soaked = [...earlier].reverse().find((w) => w.parts.some((p) => p.pullRequest && p.state === "applied"));
   if (!soaked) return undefined;
   const merged = soaked.parts.filter((p) => p.state === "applied" && p.pullRequest).map((p) => ({ project: p.project, roots: p.roots, branch: p.branch, ...(p.mergedAt ? { at: p.mergedAt } : {}) }));
-  soaked.soak = await soakOf(rule, { wave: soaked.wave, merged }, { now: (options.clock ?? Date.now)(), projects: byKey, repo, health: options.health ?? forgeHealth });
+  const gates = options.gates ?? (options.mode === "apply" ? gitGateLedgerPort({ cwd: repo }) : undefined);
+  soaked.soak = await soakOf(rule, { wave: soaked.wave, merged }, { kind: options.kind, name: options.name, ...(options.aliases ? { aliases: options.aliases } : {}), now: (options.clock ?? Date.now)(), projects: byKey, repo, ...(options.soakRead ? { read: options.soakRead } : {}), ...(gates ? { gates } : {}) }, settings);
   return soaked.soak;
 }
 
