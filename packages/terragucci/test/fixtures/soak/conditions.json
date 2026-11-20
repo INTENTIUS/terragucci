@@ -1,0 +1,1926 @@
+{
+  "cases": [
+    {
+      "name": "drift: no open drift issue",
+      "why": "The project has no open drift issue.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "drift: issue names the wave's root",
+      "why": "An open drift issue that names a root of the wave holds it.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/dev/app"
+              ]
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "drift",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "drift: issue names another wave's root",
+      "why": "A drift issue that names only roots outside the wave holds nothing.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/prod/net",
+                "envs/prod/app"
+              ]
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "drift: issue names some of the wave's roots",
+      "why": "Only the wave's roots the issue names are reported, in the wave's order.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app",
+              "envs/prod/net",
+              "envs/prod/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/prod/app",
+                "envs/dev/app"
+              ]
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "drift",
+            "project": "p",
+            "roots": [
+              "envs/dev/app",
+              "envs/prod/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "drift: root named without code span",
+      "why": "The issue body names a root when it writes it in a code span. The same text outside a code span does not count.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [],
+              "text": "2 roots drifted: envs/dev/app"
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "drift: root that is a prefix of a drifted root",
+      "why": "A code span has to equal the root: envs/prod/net is not named by `envs/prod/net2`.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/prod/net"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [],
+              "text": "drifted: `envs/prod/net2`"
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "apply: succeeded",
+      "why": "The newest apply on the default branch succeeded on the root.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "success"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "apply: failed",
+      "why": "The newest apply on the default branch failed on the root.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "apply: still pending",
+      "why": "An apply that has not finished is not a failure.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "pending"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "apply: no record for the root",
+      "why": "A root with no apply on record is not a failure.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "apply: failure on another wave's root",
+      "why": "A failed apply on a root outside the wave holds nothing.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/prod/net": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "apply: one of three roots failed",
+      "why": "Only the failed roots are reported.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app",
+              "envs/prod/net",
+              "envs/prod/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "success",
+              "envs/prod/net": "failure",
+              "envs/prod/app": "pending"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/prod/net"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "policy: no denial recorded",
+      "why": "The gate ledger holds no denial.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "policy: denial after the clock started",
+      "why": "A denial of a wave root recorded after the wave merged holds it.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T15:00:00.000Z",
+            "rules": [
+              "main.deny_data",
+              "main.deny_public"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "policy",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "policy: denial before the clock started",
+      "why": "A denial from before the wave merged is not counted.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T09:59:59.999Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "policy: denial exactly at the clock start",
+      "why": "The comparison is denial time >= clock start, so a denial at the merge instant counts.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T10:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "policy",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "policy: denial one millisecond before the clock start",
+      "why": "One millisecond earlier than the merge does not count.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T09:59:59.999Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "policy: denial of another wave's root",
+      "why": "A denial of a root outside the wave holds nothing.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/prod/net",
+            "at": "2026-03-01T15:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "policy: old denial then a newer one",
+      "why": "The ledger's newest denial per root is what counts: an old one before the clock and a newer one after it holds the wave.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T00:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          },
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T15:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "policy",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "policy: denial in the future",
+      "why": "A denial stamped after now still counts: nothing compares it with now.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-03T10:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "policy",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "policy: since is the wave's last merge",
+      "why": "Each project's roots are read against the wave's clock start, the last merge of any of its pull requests. A denial between the two merges is before the clock start.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          },
+          {
+            "project": "q",
+            "roots": [
+              "envs/prod/net"
+            ],
+            "branch": "w1q",
+            "at": "2026-03-01T16:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T16:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          },
+          "q": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T13:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T16:00:00.000Z",
+        "due": "2026-03-02T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "all three conditions hold",
+      "why": "Every condition clear releases.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "success"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "all three conditions fail on one root",
+      "why": "Each failing condition is its own hold, in the order drift, apply, policy.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/dev/app"
+              ]
+            },
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T15:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "drift",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          },
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          },
+          {
+            "reason": "condition",
+            "condition": "policy",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "conditions report in a fixed order",
+      "why": "The order of the conditions in the config does not change the order of the holds: drift, apply, policy.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply",
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/dev/app"
+              ]
+            },
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply",
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "drift",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          },
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "a condition not asked for is not read",
+      "why": "A failing apply and a denial do not hold a soak that lists only drift.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T15:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "two projects, holds in the wave's order",
+      "why": "Each project is read on its own roots and its own forge; holds follow the order of the wave's merges.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          },
+          {
+            "project": "q",
+            "roots": [
+              "envs/prod/net"
+            ],
+            "branch": "w1q",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          },
+          "q": {
+            "driftIssue": {
+              "url": "u/2",
+              "roots": [
+                "envs/prod/net"
+              ]
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          },
+          {
+            "reason": "condition",
+            "condition": "drift",
+            "project": "q",
+            "roots": [
+              "envs/prod/net"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "conditions use the wave's clock, held at the due time minus one",
+      "why": "Failing conditions never release early: before due the hold is the time.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T09:59:59.999Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "success"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "condition clears on a later run",
+      "why": "The same wave an hour later with the apply fixed is released: conditions are read each run.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "success"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "zero wait, condition holds",
+      "why": "after: 0 with conditions: the time is up at once and the conditions decide.",
+      "soak": {
+        "after": "0",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "0",
+          "afterMs": 0,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "zero wait, conditions clear",
+      "why": "after: 0 with a condition that holds clear releases at the merge.",
+      "soak": {
+        "after": "0",
+        "conditions": [
+          "apply"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "success"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "0",
+          "afterMs": 0,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T10:00:00.000Z",
+        "holds": []
+      }
+    }
+  ]
+}

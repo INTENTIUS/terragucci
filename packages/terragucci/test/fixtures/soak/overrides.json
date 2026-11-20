@@ -1,0 +1,1358 @@
+{
+  "cases": [
+    {
+      "name": "override by exact module name",
+      "why": "An override whose module glob names the rollout replaces its after; its conditions are inherited when it sets none.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "override held before its own due time",
+      "why": "The override's 6h, not the soak's 24h.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T15:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "override by namespace and system glob",
+      "why": "terraform-aws-modules/*/aws matches every module of the namespace on the aws system.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/*/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "one star stays within a segment",
+      "why": "terraform-aws-modules/* does not match the three-segment address terraform-aws-modules/vpc/aws, so the soak's own rule applies.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/*",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "two stars cross segments",
+      "why": "terraform-aws-modules/** matches every address under the namespace.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/**",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "override glob that does not match",
+      "why": "A glob for another namespace leaves the soak's own rule.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "other/*",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "override with a registry host in the glob",
+      "why": "A glob that includes the registry host matches the module's host-qualified name.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "registry.terraform.io/terraform-aws-modules/vpc/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "first matching override wins",
+      "why": "Overrides are tried in order and the first whose glob names the rollout decides; later ones are not merged in.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/**",
+            "after": "6h"
+          },
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "1h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T15:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "non-matching override before a matching one",
+      "why": "A rule that does not match is skipped.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "other/*",
+            "after": "1h"
+          },
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T16:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "override conditions replace the soak's",
+      "why": "An override's conditions replace the soak's list; they are not added to it. Here the failing apply is no longer read.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "conditions": [
+              "drift"
+            ]
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "override conditions hold",
+      "why": "The override's own condition is read.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "conditions": [
+              "drift"
+            ]
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/dev/app"
+              ]
+            },
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "drift",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "override with after only inherits conditions",
+      "why": "An override that sets after alone keeps the soak's conditions, so a failing apply still holds.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "1h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "1h",
+          "afterMs": 3600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T11:00:00.000Z",
+        "holds": [
+          {
+            "reason": "condition",
+            "condition": "apply",
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "override with an after of 0",
+      "why": "An override of 0 waits for nothing but the conditions.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "0"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "0",
+          "afterMs": 0,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "override longer than the soak",
+      "why": "An override can lengthen the wait.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "72h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T16:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "72h",
+          "afterMs": 259200000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-04T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "override with an empty rule",
+      "why": "An override that names neither after nor conditions still matches and changes nothing; it stops later overrides from applying.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws"
+          },
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "1h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "override by alias",
+      "why": "A rollout's aliases (other spellings of its source) are matched against the glob too.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "terraform-aws-modules/vpc/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "vpc-local",
+        "aliases": [
+          "terraform-aws-modules/vpc/aws"
+        ]
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "provider override by name",
+      "why": "A provider rollout takes the first override whose provider glob names it.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "provider": "hashicorp/*",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "provider",
+        "name": "hashicorp/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "module override does not apply to a provider",
+      "why": "An override with a module glob is ignored for a provider rollout, even when the glob would match its name.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "hashicorp/*",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "provider",
+        "name": "hashicorp/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "provider override does not apply to a module",
+      "why": "An override with a provider glob is ignored for a module rollout.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "provider": "terraform-aws-modules/*",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "provider override with a registry host",
+      "why": "A provider's host-qualified name matches too.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "provider": "registry.terraform.io/hashicorp/aws",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "provider",
+        "name": "hashicorp/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "git module override by source",
+      "why": "A module from a git source is matched by its source string.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "apply"
+        ],
+        "overrides": [
+          {
+            "module": "git::https://example.com/acme/infra.git//modules/network",
+            "after": "6h"
+          }
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "git::https://example.com/acme/infra.git//modules/network",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T17:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "6h",
+          "afterMs": 21600000,
+          "conditions": [
+            "apply"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T16:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "overrides on the string form",
+      "why": "A soak written as a duration has no overrides; the rule is the duration alone.",
+      "soak": "12h",
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T21:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "12h",
+          "afterMs": 43200000,
+          "conditions": []
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-01T22:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    }
+  ]
+}
