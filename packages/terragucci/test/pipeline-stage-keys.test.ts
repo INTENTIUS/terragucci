@@ -101,6 +101,42 @@ describe("environments.<name>.hooks.<when>", () => {
   });
 });
 
+// chant#5324's settled decision: the merge applies the first stage and cuts a release, and each later stage promotes it.
+describe("the release cut on the merge path", () => {
+  const layers = [["envs/dev/net", "envs/prod/net"], ["envs/dev/app", "envs/prod/app"]];
+  const settings = (release?: ProjectSettings["release"]): ProjectSettings => ({ promotion: ["dev", "prod"], environments: { dev: { roots: ["envs/dev/**"], gate: "never" }, prod: { roots: ["envs/prod/**"] } }, ...(release ? { release } : {}) });
+  const specOf = async (s: ProjectSettings | undefined, config: string) => {
+    const dir = repo({ [WAVES_SPEC]: shape(layers) });
+    if (s) pipelineCommand(dir, s, { log: () => {} });
+    commit(dir, { "terragucci.yml": config });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    return (await wavesSpecAt(dir, { at: "HEAD", env: {} }))!;
+  };
+
+  it("runs as terragucci in .chant/pipeline.ts, with the label as written", () => {
+    expect(pipelineDeclaration(settings(), LAYERS.map((l) => l.filter((r) => !r.includes("staging"))))!.release).toEqual({ bin: ["terragucci"] });
+    expect(pipelineDeclaration(settings({ label: "auto" }), LAYERS)?.release).toEqual({ label: "auto", bin: ["terragucci"] });
+  });
+
+  it("cuts a release after the last wave's apply when promotion is set, and wave 1 keeps its migration hooks", async () => {
+    const spec = await specOf(settings(), "promotion: [dev, prod]\n");
+    const last = spec.waves.at(-1)!;
+    expect(last.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["terragucci", "release", "cut", "auto", "--yes"] }]);
+    expect(spec.waves[0]!.hooks?.before?.plan?.map((h) => h.name)).toEqual(["migrations", "migration gate"]);
+    expect(spec.waves[0]!.hooks?.after?.apply).toBeUndefined();
+  });
+
+  it("cuts nothing with release.cut: false", async () => {
+    const spec = await specOf(settings({ cut: false }), "promotion: [dev, prod]\nrelease:\n  cut: false\n");
+    expect(spec.waves.some((w) => w.hooks?.after?.apply?.length)).toBe(false);
+  });
+
+  it("cuts nothing without promotion, as before", async () => {
+    const spec = await specOf(undefined, "gate: never\n");
+    expect(spec.waves.some((w) => w.hooks?.after?.apply?.length)).toBe(false);
+  });
+});
+
 describe("one holds map", () => {
   const cost = costHold(true, 100);
 

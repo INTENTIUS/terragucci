@@ -16,7 +16,10 @@
  * With `promotion`, `.chant/pipeline.ts` at that commit is folded by chant and
  * its first stage's op-waves spec (`stageWavesSpec`) gives the waves their
  * risk hold, `replanDependents`, the canary's soak, the failure tolerance and
- * the stage's hooks (`environments.<name>.hooks.<when>`).
+ * the stage's hooks (`environments.<name>.hooks.<when>`). Its last wave cuts
+ * the release after its apply, as chant's `stageWavesSpec` puts the cut on
+ * the first stage's last wave, unless `release.cut` is `false`. A commit
+ * with no pipeline file cuts nothing, as before.
  * Without a pipeline, `risk.approve_above` and `replan_dependents` at that
  * commit give the first two.
  *
@@ -218,6 +221,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
     const gate: Gate = unattended ? "never" : w.discover ? anyRootGate(config, top) : rootsGate(layers[i] ?? [], config, top);
     const runs = w.discover ? (w.runs ?? []) : (layers[i] ?? []).map((target) => { const input = runInput(target); return { target, ...(input ? { input } : {}) }; });
     const { hooks: _hooks, approval: _approval, ...rest } = w as OpWave & { approval?: unknown };
+    const last = i === shape.waves.length - 1;
     return {
       ...rest,
       runs,
@@ -225,7 +229,15 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
       approval: rule.mode === "sealed" ? "sealed" : rule.mode === "pr-review" ? "pr-review" : "ledger",
       // The composed run's roots plan and apply together (chant#4848).
       ...(together === i + 1 ? { together: true } : {}),
-      ...(i === 0 ? { hooks: { before: { plan: [hook("migrations", "migrate-check"), hook("migration gate", "migrate", "approve")] } } } : {}),
+      // Wave 1 checks the migrations; the last wave, with promotion, cuts the release each later stage promotes (chant#5324).
+      ...(i === 0 || (last && staged.releaseHooks?.length)
+        ? {
+            hooks: {
+              ...(i === 0 ? { before: { plan: [hook("migrations", "migrate-check"), hook("migration gate", "migrate", "approve")] } } : {}),
+              ...(last && staged.releaseHooks?.length ? { after: { apply: structuredClone(staged.releaseHooks) } } : {}),
+            },
+          }
+        : {}),
       // waves.canary (chant#5327): the first wave is the canary when the pipeline's first stage marks it, and its soak holds every wave after it.
       ...(i === 0 && staged.canarySoak ? { canary: true, soak: structuredClone(staged.canarySoak) } : {}),
       ...(staged.failureTolerance !== undefined && staged.failureTolerance !== 0 ? { failureTolerance: staged.failureTolerance } : {}),

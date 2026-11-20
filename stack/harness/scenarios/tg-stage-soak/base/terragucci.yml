@@ -21,3 +21,6 @@ environments:
           command: ["sh", "-c", "test -f soak-ok"]
   prod: { roots: ["envs/prod/**"], gate: never }
 promotion: [dev, prod]
+# The scenario cuts its releases by label (check.sh release cut), so the merge cuts none.
+release:
+  cut: false

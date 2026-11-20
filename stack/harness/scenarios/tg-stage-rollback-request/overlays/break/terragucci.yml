@@ -20,3 +20,5 @@ environments:
           command: ["sh", "-c", "test ! -f soak-broken"]
   prod: { roots: ["envs/prod/**"], gate: always }
 promotion: [dev, staging, prod]
+release:
+  cut: false

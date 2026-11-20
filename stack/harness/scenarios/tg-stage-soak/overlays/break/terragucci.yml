@@ -13,3 +13,5 @@ environments:
     gate: never
   prod: { roots: ["envs/prod/**"], gate: never }
 promotion: [dev, prod]
+release:
+  cut: false

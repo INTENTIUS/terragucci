@@ -212,7 +212,7 @@ dashboards: true
 | `risk` | none (off) | `approve_above`, a change risk score from 0 to 1 above which a wave needs an approval of its own, whatever its gate says; see [Change risk](#change-risk) |
 | `replan_dependents` | none (off) | root names or globs whose dependents are planned again when an output they read comes out changed after an apply; see [Planning dependents again](#planning-dependents-again) |
 | `config_sets` | none | shared sets of `config`, `secrets` and `imports` that environments import; see [Config and secret sets](#config-and-secret-sets) |
-| `release` | none | `cut` (`true` or `false`) and `label` (a label, or `auto`): the release a merge cuts once the first stage applied |
+| `release` | `cut: true` with `promotion` | `cut` (`true` or `false`) and `label` (a label, or `auto`, the default): with `promotion`, a merge applies the first stage and then cuts a release, which each later stage promotes; `cut: false` turns the cut off. A repo without `promotion` cuts no release; see [Stages](#stages) |
 | `recheck` | none | `schedule`, a five-field cron line on which a promotion a soak holds is tried again |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
@@ -530,6 +530,8 @@ The keys under `environments.<name>` that set the stage are the keys of chant's 
 | `config`, `secrets`, `imports` | the stage's config and secret set; see [Config and secret sets](#config-and-secret-sets) |
 
 `config check` asks chant about each of these: their words, and with `promotion` the declaration they make, folded as chant folds it. A merge applies the waves as before, and the merge path's waves take the first stage's risk hold, `replan_dependents`, canary soak and `failure_tolerance` from `.chant/pipeline.ts` at base.
+
+With `promotion`, the merge applies the first stage, and its last wave then cuts a release with `terragucci release cut`, labelled `release.label` or the next version. When the first stage sets `publish`, the same wave publishes its artifacts for that release. Each later stage takes the release through [`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback). `release: { cut: false }` leaves the cut to a person, who runs `chant release cut` as [Promote a release through environments](/terragucci/guides/promote-a-release/) shows.
 
 A comment `/terragucci reject [--stage <stage>] <reason>` on a pull request turns down the release a stage's gate waits on, under the commenter's forge identity where the stage's approval mode takes one; a `sealed` stage answers with the `terragucci reject` line to run with `--sign`. `terragucci pause <env> --reason <text>` stops releases entering a stage, and `terragucci resume <env> --reason <text>` lets them in again.
 

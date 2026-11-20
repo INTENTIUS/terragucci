@@ -20,7 +20,10 @@
  *   `approval_rules` as the rules an over score adds;
  * - `replan_dependents`: the pipeline's `defaults.replanDependents`, and an
  *   environment's own on its stage;
- * - `release` and `recheck`, as they are.
+ * - `release` as written, with terragucci as the bin its cut runs as, and
+ *   `recheck` as it is. With `promotion`, the merge path's last wave runs
+ *   chant's release cut after its apply (firstStageRules), so each later
+ *   stage promotes that release; `release.cut: false` turns the cut off.
  *
  * `environments.<name>.hooks.<when>` (chant#5421) reaches `pipelineFromConfig`
  * as written, which maps each `<when>` onto the stage's `hooks`; the merge
@@ -62,6 +65,9 @@ import { globMatch } from "./detect";
 import { WAVES_OP, WAVES_SPEC, waveName } from "./chant-waves";
 import { approvalModeOf, ConfigError, ENVIRONMENT_STAGE_KEYS, normalizeGate, type ApprovalRuleSettings, type EnvironmentSetSettings, type ProjectSettings, type RiskSettings, type StageApprovalRule } from "./config";
 import { environmentOf, topGate } from "./environments";
+
+/** The bin the release cut and the artifacts publish run as on the merge path: `terragucci release cut`, `terragucci pipeline artifacts publish`. */
+export const RELEASE_BIN = ["terragucci"] as const;
 
 /** The command that writes the file, as its header and `--check` name it. */
 export const PIPELINE_COMMAND = "terragucci ci";
@@ -145,7 +151,9 @@ export function pipelineDeclaration(settings: ProjectSettings, layers: readonly 
       ...(riskHold(settings.risk) ? { holds: { risk: riskHold(settings.risk)! } } : {}),
       ...(settings.replan_dependents?.length ? { replanDependents: [...settings.replan_dependents] } : {}),
     },
-    ...(settings.release ? { release: { ...settings.release } } : {}),
+    // The merge applies the first stage and cuts a release (chant#5324): `release.cut: false` turns it off. The cut
+    // and the artifacts publish run as terragucci, which the wave jobs have, and terragucci hands them to chant.
+    release: { ...(settings.release ?? {}), bin: [...RELEASE_BIN] },
     ...(settings.recheck ? { recheck: { schedule: settings.recheck.schedule } } : {}),
   });
   // What pipelineFromConfig leaves to the product: a stage's risk hold and its replanDependents.
@@ -257,6 +265,12 @@ export interface FirstStageRules {
   failureTolerance?: PipelineFailureTolerance;
   /** The stage's `hooks` (`environments.<name>.hooks.<when>`, chant#5421), which the merge path's waves run beside terragucci's own. */
   hooks?: OpWaveHooks;
+  /**
+   * The hooks chant puts after the apply of the first stage's last wave
+   * (`stageWavesSpec`): the release cut and, when the stage publishes, the
+   * artifacts publish. Empty with `release.cut: false`.
+   */
+  releaseHooks?: OpWaveHook[];
 }
 
 /**
@@ -294,12 +308,15 @@ export function firstStageRules(repo: string, sha: string): FirstStageRules | un
   if (!first) return undefined;
   const stage = stageWavesSpec(read.spec, first.name);
   const canary = stage.waves[0]?.canary === true ? stage.waves[0].soak : undefined;
+  // chant#5324: the merge applies the first stage and cuts a release, which each later stage promotes.
+  const releaseHooks = structuredClone(stage.waves.at(-1)?.hooks?.after?.apply ?? []);
   return {
     ...(stage.holds ? { holds: stage.holds } : {}),
     ...(stage.replanDependents?.length ? { replanDependents: [...stage.replanDependents] } : {}),
     ...(canary ? { canarySoak: canary } : {}),
     ...(first.failureTolerance !== undefined ? { failureTolerance: first.failureTolerance } : {}),
     ...(stage.hooks ? { hooks: structuredClone(stage.hooks) } : {}),
+    ...(releaseHooks.length ? { releaseHooks } : {}),
   };
 }
 

@@ -15,3 +15,6 @@ environments:
   staging: { roots: ["envs/staging/**"], gate: always }
   prod: { roots: ["envs/prod/**"], gate: always }
 promotion: [dev, staging, prod]
+# The scenario cuts its releases by label (check.sh release cut), so the merge cuts none.
+release:
+  cut: false

@@ -36,6 +36,7 @@
  *   terragucci ci [--check]   (write .chant/pipeline.ts from promotion, environments and waves in terragucci.yml; --check fails when the committed file is stale)
  *   terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   (turn down the release a stage's gate waits on: chant's reject)
  *   terragucci pause <env> --reason <text> | terragucci resume <env> --reason <text>   (stop or let in releases entering a stage: chant's stage pause and resume)
+ *   terragucci release ... | terragucci pipeline ...   (chant's release and pipeline commands; the merge's last wave runs release cut and pipeline artifacts publish with promotion)
  *   terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]   (tf-check's last step: chant's `ci check`, the ci.hooks.check hooks chant.workspace.json names at base)
  *   terragucci ci evidence sign ...   (chant's `ci evidence sign`, which the jobs run with `evidence` set)
  *   terragucci workspace ref-gate ...   (chant's ref gate, which the pre-push hook init writes runs)
@@ -280,6 +281,7 @@ const USAGE = `usage:
   terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
   terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
   terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
+  terragucci release cut <label|auto> --yes | terragucci pipeline artifacts publish --stage <env>   (run by the merge's last wave with promotion: chant's release cut and artifacts publish)
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   run one Terraform action block under a gated request (exit 3 while it waits)
@@ -1428,6 +1430,12 @@ export async function main(argv: string[]): Promise<number> {
       case "reject": {
         // chant's reject (#5354): turn down the release a stage's gate waits on, in terragucci's words.
         return runChantInProcess(["reject", ...argv.slice(argv.indexOf("reject") + 1)], TERRAGUCCI_WORDS);
+      }
+      case "release":
+      case "pipeline": {
+        // chant's release cut and pipeline artifacts (chant#5324, #5356): the merge path's last wave cuts the release
+        // each later stage promotes, and publishes the first stage's artifacts, as `release.bin` names terragucci.
+        return runChantInProcess([cmd, ...argv.slice(argv.indexOf(cmd) + 1)], TERRAGUCCI_WORDS);
       }
       case "pause":
       case "resume": {
