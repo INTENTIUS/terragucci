@@ -5,7 +5,7 @@ import { changeSetDigest } from "@intentius/chant/change-set";
 import { costEnv } from "@intentius/chant/ci-product";
 import { opWaveCostVerdict, OP_WAVE_COST_MEMBER } from "@intentius/chant/op";
 import { parseYAML } from "@intentius/chant/yaml";
-import { validateConfig } from "../src/config";
+import { validateConfig, type ProjectSettings } from "../src/config";
 import { INFRACOST_VERSION } from "../src/install";
 import { buildReport } from "../src/report/build";
 import { costArgv, costCommand, costExec, costHold, costHoldEnv, costReason, costRule, estimateRoots, INFRACOST_COMMAND, noteCostOf, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, type CostRunner } from "../src/cost";
@@ -83,7 +83,7 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
   // chant#5418: the hold names what its command loses, by name, so no secret's value sits in the spec.
   it("names terragucci's secrets: variables in the hold's redactEnv and its tokens in dropEnv", () => {
     // Two entries naming one variable for other roots: the name goes in once.
-    const settings = {
+    const settings: Pick<ProjectSettings, "secrets"> = {
       secrets: [
         { roots: ["envs/prod/**"], from: "aws" as const, values: { TF_VAR_db_password: "prod/db#password" } },
         { roots: ["envs/dev/**"], from: "aws" as const, values: { TF_VAR_api_key: "shared/api", TF_VAR_db_password: "dev/db#password" } },
@@ -98,7 +98,7 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
   });
 
   it("has chant run the hold's command without the named variables or their values", () => {
-    const hold = costHold(true, 10, { redactEnv: ["TF_VAR_db_password"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] }) as { redactEnv: string[]; dropEnv: string[] };
+    const hold = costHold(true, 10, { redactEnv: ["TF_VAR_db_password"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] }) as unknown as { redactEnv: string[]; dropEnv: string[] };
     const env = costEnv({ PATH: "/bin", TG_TOKEN: "tg-secret", TG_MERGE_TOKEN: "merge-secret", TF_VAR_db_password: "hunter2-store", COPY: "hunter2-store", KEEP: "x" }, { redactEnv: hold.redactEnv, dropEnv: hold.dropEnv });
     expect(env).toEqual({ PATH: "/bin", KEEP: "x" });
   });
