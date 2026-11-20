@@ -69,7 +69,7 @@ describe("terragucci waves-spec", () => {
   it("names a secrets: variable in the cost hold's redactEnv, by name only", async () => {
     const dir = repo({
       [WAVES_SPEC]: shape([["net"]]),
-      "terragucci.yml": 'cost:\n  approve_above: 100\nsecrets:\n  - roots: ["net"]\n    from: aws\n    values:\n      TF_VAR_db_password: "prod/db#password"\n',
+      "terragucci.yml": 'cost:\n  approve_above: 100\noidc:\n  plan_role: arn:aws:iam::111111111111:role/plan\n  apply_role: arn:aws:iam::111111111111:role/apply\nsecrets:\n  - roots: ["net"]\n    from: aws\n    values:\n      TF_VAR_db_password: "prod/db#password"\n',
     });
     quiet();
     const spec = (await wavesSpecAt(dir, { at: "HEAD", env: { TF_VAR_db_password: "hunter2-store" } }))!;
