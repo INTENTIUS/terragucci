@@ -1,5 +1,7 @@
 /**
- * `terragucci.report/v1`: one JSON document per run. Every view (the
+ * A stage's report: one JSON document per run, written under chant's
+ * `chant.run/v1` with `product: "terragucci"` (./store-format.ts); older
+ * releases wrote the same body as `terragucci.report/v1`. Every view (the
  * pull-request note, the HTML report, GitLab's `reports:terraform` and the
  * job-log text) is rendered from this document and from nothing else.
  *
@@ -8,7 +10,9 @@
  */
 import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@intentius/chant/change-set";
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
+import type { StoreHead } from "./store-format";
 
+/** The id older releases wrote a stage's report under, still read. */
 export const REPORT_SCHEMA = "terragucci.report/v1";
 export const REPORT_MINOR = 51;
 
@@ -901,8 +905,7 @@ export interface ReportOverdue {
   message: string;
 }
 
-export interface Report {
-  schema: typeof REPORT_SCHEMA;
+export interface Report extends StoreHead<"run"> {
   minor: number;
   run: ReportRun;
   /** The change-set document's digest: the set digest over every root's plan digest. */

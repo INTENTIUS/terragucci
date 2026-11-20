@@ -13,15 +13,14 @@ import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
 
 ## Result
 
-A cost table in each pull request's plan note, with a row per root the change reaches (a unit, in a Terragrunt repo) and a total row. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
+A cost section in each pull request's plan note: the monthly change over the change, and a row for each root whose plan changes something (a unit, in a Terragrunt repo). [chant](/terragucci/concepts/glossary/#chant) prices the plans and writes the section, in the same words its own plan note uses. Infracost runs in your plan job on your key; terragucci holds no account and sends nothing anywhere else.
 
 ```text
-Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
+Cost (infracost): +20.00 USD a month, 20.00 USD a month once it applies.
 
-| Root     | Before | After | Change |
-|----------|--------|-------|--------|
-| envs/app | 0.00   | 20.00 | +20.00 |
-| Total    | 0.00   | 20.00 | +20.00 |
+| Root     | Monthly change | Monthly total |
+|----------|---------------:|--------------:|
+| envs/app |     +20.00 USD |     20.00 USD |
 ```
 
 ## Prerequisites
@@ -77,11 +76,10 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
    | confirm (`apply.when: pull-request`) | nothing: it runs `tf-plan --no-cost` |
    | drift, check | nothing |
 
-4. Open a pull request. After each root plans, the job runs Infracost over its stored plan:
+4. Open a pull request. Once the roots have planned, the job runs Infracost over the stored plan of each root whose plan changes something:
 
    ```text
    cost: envs/app: +20.00 USD a month
-   cost: +20.00 USD a month over 1 of 1 roots
    ```
 
 </Steps>
@@ -90,8 +88,8 @@ Monthly cost: +20.00 USD over 1 of 1 root, from infracost.
 
 | Where | What |
 |---|---|
-| the plan note | the line and the table above; a root Infracost could not price says why |
-| `report.json`, `cost` | the estimator, the currency, the change and the totals, and each root's figures; see [Report JSON schema](/terragucci/reference/report-schema/) |
+| the plan note | the section above; a root Infracost could not price is listed with the reason |
+| `report.json`, `cost` | the estimator, the currency, the change and the totals, and each priced root's figures; see [Report JSON schema](/terragucci/reference/report-schema/) |
 | `roots/<root>/cost.json` | Infracost's own output for the root, beside its `plan.json` |
 
 An estimate that fails never fails the plan. A wave's report keeps its own estimate, and the wave's change sits under `waves[].cost`.
@@ -118,7 +116,7 @@ cost:
 
 The amount is read from the config at base: the commit before the one applied, or the pull request's base with `apply.when: pull-request`. A change that raises or drops the amount waits under the old one, and its log says which amount counts.
 
-The amount, the currency and the wave's change join the wave's set digest. A wave priced differently after its approval applies nothing, exits 4 and names `(monthly cost)` as what moved, as it names a root whose plan moved. [Approve a wave](/terragucci/guides/approve-a-wave/) has the commands.
+chant decides the hold: it sums the wave's estimates against the amount, and its log line names the change and the amount. The amount, the currency and the wave's change join the wave's set digest as chant's `(monthly cost)` member. A wave priced differently after its approval applies nothing, exits 4 and names `(monthly cost)` as what moved, as it names a root whose plan moved. [Approve a wave](/terragucci/guides/approve-a-wave/) has the commands.
 
 The plan note sets each wave's change against the amount at base:
 
@@ -130,7 +128,7 @@ A wave the amount holds says "waits for an approval" in the note's wave table, w
 
 ## Cost in the policy
 
-With `cost` set, `tf-plan` and each `tf-apply` wave give the policy the figures as `input.cost`. [Policy](/terragucci/reference/policy/#cost) lists the fields; this one denies a root that adds more than 50 a month:
+With `cost` set, `tf-plan` and each `tf-apply` wave give the policy chant's estimate as `input.cost`: the sums over the plan (in a wave, over the wave), each root priced under `members`, and the root the policy runs on as `member`. [Policy](/terragucci/reference/policy/#cost) lists the fields; this one denies a root that adds more than 50 a month:
 
 ```rego
 package main
@@ -138,10 +136,12 @@ package main
 import rego.v1
 
 deny contains msg if {
-  input.cost.root.monthly_delta > 50
-  msg := sprintf("this root adds %v %s a month; the most is 50", [input.cost.root.monthly_delta, input.cost.currency])
+  input.cost.member.monthlyDelta > 50
+  msg := sprintf("this root adds %v %s a month; the most is 50", [input.cost.member.monthlyDelta, input.cost.currency])
 }
 ```
+
+The snake_case fields terragucci gave before, `input.cost.root`, `input.cost.wave` and `input.cost.approve_above`, are there beside chant's, so a policy written against them keeps working. Move it to chant's fields: [Policy](/terragucci/reference/policy/#cost) pairs each one with its chant field.
 
 ## Another estimator
 
@@ -160,7 +160,7 @@ cost:
 | `INFRACOST_API_KEY` | the key from `key_secret` |
 | its working directory | the repo's root |
 
-It gets the job's environment less its forge tokens, as the binary does. Each root's estimate may take two minutes.
+chant runs the command once for each root whose plan changes something, as `sh -c '<command>'` with the plan and the root as its arguments, and terragucci sets `TG_PLAN_JSON` and `TG_ROOT` from them. The command gets the job's environment less its forge tokens, as the binary does. Each root's estimate may take two minutes.
 
 ## Next
 

@@ -14,6 +14,7 @@ import { CHANT_AGENT_PATHS } from "../src/render-chant-agent";
 import { cloudLoginSpec, LOGIN_SPEC_ENV } from "@intentius/chant/ci-login";
 import { AWS_CLI, forgejoSkipLevels, cloudLoginLines, needsDepths, runnerEvaluatedIf, loginSpec, confirmScript, driftScript, forgeApi, planVerbScript, dropForgeTokens, publishScript, READS_EXIT, renderPipeline } from "../src/render";
 import { NOTE_WORDS } from "../src/report/views";
+import { waveSummaryOf } from "../src/init";
 import type { ForgeName } from "../src/config";
 import { driftOp, git, tmp } from "./helpers";
 
@@ -1127,8 +1128,8 @@ describe("a Terragrunt wave", () => {
 });
 
 describe("own_jobs", () => {
-  // The explain-refusal job of each tab of the agent-refused-wave guide, as its own-jobs file.
-  const guide = readFileSync(join(__dirname, "../../../docs-site/src/content/docs/guides/agent-refused-wave.mdx"), "utf-8");
+  // The explain-refusal job the agent-refused-wave guide gave each forge before chant's summary replaced it, as an own-jobs file.
+  const guide = readFileSync(join(__dirname, "fixtures/own-jobs/explain-refusal.tabs"), "utf-8");
   const tab = (label: string): string => {
     const from = guide.indexOf(`<TabItem label="${label}">`);
     const block = guide.slice(guide.indexOf("```yaml", from) + "```yaml".length, guide.indexOf("```\n", guide.indexOf("```yaml", from) + 7));
@@ -1137,7 +1138,7 @@ describe("own_jobs", () => {
     return lines.map((l) => l.slice(cut)).join("\n") + "\n";
   };
 
-  it.each([["github", "GitHub"], ["forgejo", "Forgejo"], ["gitlab", "GitLab"]] as const)("%s: the guide's explain-refusal job goes into the pipeline with every key and value it has, after terragucci's jobs", (forge, label) => {
+  it.each([["github", "GitHub"], ["forgejo", "Forgejo"], ["gitlab", "GitLab"]] as const)("%s: an explain-refusal job goes into the pipeline with every key and value it has, after terragucci's jobs", (forge, label) => {
     const own = parseYAML(tab(label)) as Record<string, Record<string, unknown>>;
     expect(Object.keys(own)).toEqual(["explain-refusal"]);
     const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, ownJobs: own }).content;
@@ -1563,6 +1564,24 @@ describe("respond steps", () => {
     // fmt is chant's commit job (chant#4749): it runs terragucci fmt after a check that found formatting.
     expect(text).toContain("terragucci commit prepare");
     expect(text).toContain('"terragucci","fmt","--binary","tofu"');
+  });
+
+  // respond.wave-refused: summary is chant's refused-wave summary (chant#5335): agent.wave-refused maps onto the spec's waveSummary.
+  it.each(FORGES)("%s: wave-refused: summary puts chant's summary settings and the model's key on the wave jobs, and diff puts none", (forge) => {
+    const settings = validateConfig({ respond: { "wave-refused": "summary" }, agent: { "wave-refused": { key_secret: "MODEL_KEY", max_runs: 3, max_cost_usd: 2, timeout: 5 } } }, "t");
+    const summary = waveSummaryOf(settings);
+    expect(summary).toEqual({ keyEnv: "MODEL_KEY", timeout: 5, maxRuns: 3, maxCostUsd: 2 });
+    const text = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: settings.respond, waveSummary: summary }).content;
+    expect(text).toContain("CHANT_WAVE_SUMMARY_KEY_ENV");
+    expect(text).toContain("MODEL_KEY");
+    expect(text).toContain("CHANT_WAVE_SUMMARY_MAX_RUNS");
+    const diff = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers, env: {}, respond: { "wave-refused": "diff" }, waveSummary: summary }).content;
+    expect(diff).not.toContain("CHANT_WAVE_SUMMARY");
+    expect(waveSummaryOf({ respond: { "wave-refused": "diff" }, agent: settings.agent })).toBeUndefined();
+    // The keys alone are a valid agent block: no via or token_env, since chant's note goes out with the wave job's token.
+    expect(() => validateConfig({ agent: { "wave-refused": { command: "claude -p" } } }, "t")).not.toThrow();
+    expect(() => validateConfig({ agent: { "wave-refused": { max_runs: 0 } } }, "t")).toThrow(/max_runs must be a whole number/);
+    expect(() => validateConfig({ agent: { "wave-refused": {}, comment: true } }, "t")).toThrow(/agent.via is missing/);
   });
 
   it.each(FORGES)("%s: a response set to off is not in the pipeline", (forge) => {

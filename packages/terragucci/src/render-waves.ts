@@ -25,6 +25,7 @@ import { generateGitlabOpWavesPipeline } from "@intentius/chant-lexicon-gitlab/c
 import { cloudLogin, type CloudLoginSpec } from "@intentius/chant/ci-login";
 import type { CloudTradeSpec } from "@intentius/chant/ci-identity";
 import type { PipelineEvidence } from "@intentius/chant/ci-evidence-jobs";
+import type { WaveSummarySpec } from "@intentius/chant/ci-product";
 import { parseYAML } from "@intentius/chant/yaml";
 import { WAVES_OP, WAVES_SPEC } from "./chant-waves";
 import { TERRAGUCCI_WORDS } from "./ci-words";
@@ -149,6 +150,8 @@ export interface WavesInput {
   notify?: { slack?: string; teams?: string; webhook?: string; webhook_key?: string; relay?: string; relay_key?: string };
   /** `respond`'s apply-failed and wave-refused, as chant posts them. */
   respond?: Record<string, string>;
+  /** `agent.wave-refused` under `respond.wave-refused: summary`: the spec's `waveSummary`, which chant's wave jobs carry. */
+  waveSummary?: WaveSummarySpec;
   control?: ResolvedControl;
   /** Terragrunt: GitLab's `cache:` of each wave job. */
   cache?: unknown;
@@ -232,6 +235,7 @@ export function wavesShape(input: WavesInput): Record<string, unknown> {
     ...(input.resume ? { resume: { schedule: input.resume } } : {}),
     ...(notify && Object.keys(notify).length ? { notify } : {}),
     ...(respond ? { respond } : {}),
+    ...(respond?.["wave-refused"] === "summary" && input.waveSummary ? { waveSummary: input.waveSummary } : {}),
     ...(c
       ? {
           control: {

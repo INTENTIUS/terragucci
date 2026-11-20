@@ -38,7 +38,7 @@ respond:
 | Key | Takes | Default |
 |---|---|---|
 | `plan` | `summary` | `summary` |
-| `wave-refused` | `diff`, `off` | `diff` |
+| `wave-refused` | `diff`, `summary`, `off` | `diff` |
 | `apply-failed` | `triage`, `off` | `triage` |
 | `drift` | `pull-request`, `attribute`, `off` | `pull-request` |
 | `tips` | `pull-request`, `off` | `pull-request` |
@@ -194,4 +194,4 @@ The bump comes from the [version bump rules](/terragucci/reference/stages/#versi
 
 ## Runtime
 
-Responses run in CI with no model. To hand a result to your own agent, run the command with `--json` in a job whose token can only comment, as in [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/). The agent never holds an apply role or a gate's signing key.
+Responses run in CI with no model, except `wave-refused: summary`, where chant's wave job runs the model that [`agent.wave-refused`](/terragucci/reference/config/#the-refused-wave-summary) names over the diff. To hand a result to your own agent, run the command with `--json` in a job whose token can only comment. The agent never holds an apply role or a gate's signing key.

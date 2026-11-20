@@ -18,8 +18,13 @@ import type { ObjectStore } from "@intentius/chant/object-store";
 import type { ReportComposedMember, ReportWave, WaveState } from "./schema";
 import { updateJson, type Wait } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
+import { isOwn, storeHead, type StoreHead } from "./store-format";
 
+/** The id older releases wrote run.json under, still read. The view is written as chant's `chant.run/v1` with `product: "terragucci"` (./store-format.ts). */
 export const RUN_SCHEMA = "terragucci.run/v1";
+
+/** Whether a parsed run.json is terragucci's run view: chant's `chant.run/v1` naming terragucci, or the older id. */
+export const isRunView = (v: unknown): v is RunView => isOwn(v, "run", RUN_SCHEMA) && Array.isArray((v as RunView).waves);
 
 /** A wave in the run view: its state, or `not-started` when no job of it ran on this commit yet. */
 export interface RunWave {
@@ -92,8 +97,7 @@ export interface RunRoot {
 /** How many spans a wave keeps, newest last. */
 export const SPANS_KEPT = 24;
 
-export interface RunView {
-  schema: typeof RUN_SCHEMA;
+export interface RunView extends StoreHead<"run"> {
   project: string;
   commit: string;
   updated: string;
@@ -117,7 +121,7 @@ export function runSkeleton(
 ): RunView {
   const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
   return {
-    schema: RUN_SCHEMA,
+    ...storeHead("run"),
     project,
     commit,
     updated: "",
@@ -150,8 +154,8 @@ export function runSkeleton(
 export function withWave(existing: string | undefined, skeleton: RunView, wave: Partial<RunWave> & { number: number }, now: string): RunView {
   let before: RunView | undefined;
   try {
-    const parsed = existing ? (JSON.parse(existing) as RunView) : undefined;
-    if (parsed?.schema === RUN_SCHEMA && Array.isArray(parsed.waves)) before = parsed;
+    const parsed: unknown = existing ? JSON.parse(existing) : undefined;
+    if (isRunView(parsed)) before = parsed;
   } catch {
     before = undefined;
   }

@@ -11,15 +11,16 @@ import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/chang
 import type { Gate } from "../config";
 import { conePlanDigest, reportCone, type PlanCone } from "../cone";
 import { changesSomething, destroysSomething } from "./changing";
-import { costMember } from "./cost";
+import type { WaveMember } from "@intentius/chant/gated-waves";
 import { changeKind, foldChange } from "./highlight";
 import { planAppliedChanges } from "./history";
 import { resolveUnknowns, stateSecrets } from "./applied-values";
 import { planResources } from "./inventory";
 import { isObject, scrubSecrets, sensitiveStrings } from "./redact";
+import { storeHead } from "./store-format";
 import { secretCounts, type StoredSecret } from "../tips/secrets";
 import {
-  REDACTED, REPORT_MINOR, REPORT_SCHEMA,
+  REDACTED, REPORT_MINOR,
   type ReportUnit,
   type ReportMockRead,
   type ReportDeferred,
@@ -139,6 +140,8 @@ export interface WaveInput {
   policyGate?: ReportWave["policy_gate"];
   /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
   cost?: ReportWaveCost;
+  /** With `cost.approve_above`: chant's digest member for the wave's cost (`opWaveCostVerdict`, ../cost.ts), the member the wave's gate takes. */
+  costMember?: WaveMember;
   /** Where the wave stands. */
   state?: WaveState;
   /** A `tf-apply` wave's blocked roots, each with the root whose failure holds it (../blocked.ts). */
@@ -444,8 +447,7 @@ export function buildReport(input: BuildInput): Report {
     const run = comp?.planDigest ? [{ member: comp.target, planDigest: comp.planDigest }] : [];
     const failed = members.some((m) => m.planDigest === null) || (comp !== undefined && !comp.planDigest);
     // With cost.approve_above the wave's cost is one more member of its digests, as the wave's gate takes it.
-    const cost = costMember(w.cost);
-    const extra = cost ? [cost] : [];
+    const extra = w.costMember ? [w.costMember] : [];
     let review: Pick<ReportWave, "review_digest" | "waits" | "policy_gate"> = {};
     if (input.gate) {
       const plans = new Map(input.roots.map((r) => [r.path, r.plan]));
@@ -497,7 +499,8 @@ export function buildReport(input: BuildInput): Report {
   });
 
   return {
-    schema: REPORT_SCHEMA,
+    // chant's run head (chant.run/v1, product terragucci); the body is terragucci.report/v1's.
+    ...storeHead("run"),
     minor: REPORT_MINOR,
     run: input.run,
     change_set: doc.digest,

@@ -1,0 +1,196 @@
+{
+  "schema": "terragucci.dora/v1",
+  "generated": "2026-11-20T12:00:00.000Z",
+  "weeks": 8,
+  "window": {
+    "from": "2026-09-28T00:00:00.000Z",
+    "to": "2026-11-20T12:00:00.000Z"
+  },
+  "drift_window_seconds": 604800,
+  "audit": true,
+  "estate": {
+    "deployments": 1,
+    "per_week": 7,
+    "span_seconds": 86400,
+    "lead_time": {
+      "changes": 0,
+      "median_seconds": null,
+      "before_gate_seconds": null,
+      "at_gate_seconds": null,
+      "after_gate_seconds": null
+    },
+    "change_failure": {
+      "applies": 1,
+      "failed": 0,
+      "drifted": 0,
+      "rate": 0
+    },
+    "restore": {
+      "restored": 0,
+      "open": 0,
+      "median_seconds": null,
+      "apply_restored": 0,
+      "drift_restored": 0
+    },
+    "trend": [
+      {
+        "week": "2026-09-28",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-10-05",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-10-12",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-10-19",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-10-26",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-11-02",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-11-09",
+        "deployments": 0,
+        "applies": 0,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      },
+      {
+        "week": "2026-11-16",
+        "deployments": 1,
+        "applies": 1,
+        "failures": 0,
+        "lead_time_seconds": null,
+        "restore_seconds": null
+      }
+    ]
+  },
+  "projects": [
+    {
+      "project": "forgejo.example/acme/infra",
+      "deployments": 1,
+      "per_week": 7,
+      "span_seconds": 86400,
+      "lead_time": {
+        "changes": 0,
+        "median_seconds": null,
+        "before_gate_seconds": null,
+        "at_gate_seconds": null,
+        "after_gate_seconds": null
+      },
+      "change_failure": {
+        "applies": 1,
+        "failed": 0,
+        "drifted": 0,
+        "rate": 0
+      },
+      "restore": {
+        "restored": 0,
+        "open": 0,
+        "median_seconds": null,
+        "apply_restored": 0,
+        "drift_restored": 0
+      },
+      "trend": [
+        {
+          "week": "2026-09-28",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-10-05",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-10-12",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-10-19",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-10-26",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-11-02",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-11-09",
+          "deployments": 0,
+          "applies": 0,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        },
+        {
+          "week": "2026-11-16",
+          "deployments": 1,
+          "applies": 1,
+          "failures": 0,
+          "lead_time_seconds": null,
+          "restore_seconds": null
+        }
+      ]
+    }
+  ]
+}

@@ -2201,6 +2201,7 @@
         "wave-refused": {
           "enum": [
             "diff",
+            "summary",
             "off"
           ]
         },
@@ -2467,14 +2468,50 @@
             "cron",
             "task"
           ]
+        },
+        "wave-refused": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+            },
+            "key_secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "timeout": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_runs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_cost_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false,
-      "required": [
-        "via",
-        "token_env"
+      "anyOf": [
+        {
+          "required": [
+            "via",
+            "token_env"
+          ]
+        },
+        {
+          "required": [
+            "wave-refused"
+          ],
+          "maxProperties": 1
+        }
       ],
-      "description": "The coding agent behind /terragucci agent, the drift agent, and the agents that start from a production alert, a failed apply or a schedule."
+      "description": "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary."
     },
     "review": {
       "type": "object",
@@ -5036,6 +5073,7 @@
             "wave-refused": {
               "enum": [
                 "diff",
+                "summary",
                 "off"
               ]
             },
@@ -5302,14 +5340,50 @@
                 "cron",
                 "task"
               ]
+            },
+            "wave-refused": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_runs": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false,
-          "required": [
-            "via",
-            "token_env"
+          "anyOf": [
+            {
+              "required": [
+                "via",
+                "token_env"
+              ]
+            },
+            {
+              "required": [
+                "wave-refused"
+              ],
+              "maxProperties": 1
+            }
           ],
-          "description": "The coding agent behind /terragucci agent, the drift agent, and the agents that start from a production alert, a failed apply or a schedule."
+          "description": "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary."
         },
         "review": {
           "type": "object",

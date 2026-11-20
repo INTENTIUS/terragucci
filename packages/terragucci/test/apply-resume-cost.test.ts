@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APPLIED_PATH, applyWave, parseApplied, parseLedger } from "../src/apply";
 import type { PolicyExec } from "../src/report/policy";
-import type { CostRunner } from "../src/report/cost";
+import type { CostRunner } from "../src/cost";
 import { git, write } from "./helpers";
 import { T, FAKE, setup, approve } from "./apply-helpers";
 
@@ -113,7 +113,7 @@ describe("a wave behind its gate", () => {
 
   describe("cost.approve_above", () => {
     const yml = (amount: number) => `gate: never\ncost:\n  command: node cost.mjs\n  approve_above: ${amount}\n`;
-    const priced = (delta: number): CostRunner => async () => ({ code: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
+    const priced = (delta: number): CostRunner => () => ({ status: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
     const opts = (bin: string, delta: number) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: {}, costRunner: priced(delta) });
     const report = (work: string) => JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
 
@@ -181,7 +181,7 @@ describe("a wave behind its gate", () => {
       const { work, bin } = setup({ "terragucci.yml": "gate: never\n" });
       vi.spyOn(console, "log").mockImplementation(() => {});
       let ran = 0;
-      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1), costRunner: async () => (ran++, { code: 1, stdout: "", stderr: "" }) })).toBe(0);
+      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1), costRunner: () => (ran++, { status: 1, stdout: "", stderr: "" }) })).toBe(0);
       expect(ran).toBe(0);
       expect(report(work).cost).toBeUndefined();
     });

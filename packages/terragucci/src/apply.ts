@@ -130,7 +130,8 @@ import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from ".
 import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { liveEstate } from "./tips/secrets";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
-import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
+import { approveAbove, costExec, costReason, costRule, estimateRoots, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, writeCostFiles, type CostRunner } from "./cost";
+import type { CostEstimate } from "@intentius/chant/ci-product";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { uploadRosters, waveRosters, type Roster, type RosterWrite } from "./report/roster";
@@ -679,6 +680,8 @@ interface PlannedRoot {
   env: NodeJS.ProcessEnv;
   member?: WaveMember;
   plan?: unknown;
+  /** The engine's plan document chant's step wrote (`artifact.planJson`), which the cost estimate reads. */
+  planJson?: string;
   changes: number;
   destroys: number;
   summary: string;
@@ -1221,6 +1224,7 @@ function stepPlannedRoot(repo: string, options: ApplyWaveOptions, w: WaveRun, ru
     ...base,
     member: { member: run.target, planDigest: run.planDigest },
     plan,
+    ...(run.planJson ? { planJson: run.planJson } : {}),
     changes: changed.length,
     destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
     summary: stepSummary(entries),
@@ -1581,7 +1585,7 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
         w.changedRoots = planned.filter((p) => changesSomething(p.plan)).map((p) => p.root).sort();
         if (planned.every((p) => p.changes === 0)) facts.nothing = true;
         if (deciding) {
-          const unpriced = await priceWave(repo, options, { label: j.label, settings, configPath: ctx.configPath, work: ctx.work }, planned, w);
+          const unpriced = await chantWaveCost(repo, options, { label: j.label, settings, configPath: ctx.configPath, work: ctx.work }, planned, w);
           if (unpriced !== undefined) {
             j.code = unpriced;
             throw new Error("cost.approve_above could not be read at base");
@@ -1653,11 +1657,12 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       // The policy's hold and allow_unattended rules, over the plans that change something (policy.outcomes at base).
       const ruled = changes > 0 ? waveRules(repo, ctx, j, changing, gate, destroys > 0) : undefined;
       if (ruled?.held) holds.push(ruled.outcome === "held" ? `the policy holds it for an approval (${w.policyGate?.rules.join(", ") ?? "hold"})` : `gate ${gate} holds it, and the policy does not let every root through`);
-      if (changes > 0 && w.waveCost?.over === true) {
+      // cost.approve_above at base: chant's verdict on the wave's estimate (opWaveCostVerdict) gives the hold and the digest member.
+      if (changes > 0 && w.costHold && w.waveCost) {
         console.log(`${label}: ${costReason(w.waveCost, w.costSource)}, so it waits for an approval`);
-        holds.push(costReason(w.waveCost, w.costSource));
+        holds.push(w.costHold);
       }
-      const priced = costMember(w.waveCost);
+      const priced = w.costMember;
       // The digest chant decides, as it takes it over the plans that change something and the cost: the stored report names it.
       const members = plans.filter((p) => p.member).map((p) => p.member!);
       const moving = new Set(changing.map((p) => p.root));
@@ -1733,7 +1738,7 @@ async function stepGateApprovals(s: StepContext, j: WaveJob, digest: string, pla
   if (rule.mode !== "pr-review" && rule.mode !== "prow-labels") return [];
   // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
   const sha = jobCommit(env, repo);
-  const priced = costMember(w.waveCost);
+  const priced = w.costMember;
   const changesDigest = reviewDigest(plans.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
   // Under prow-labels the merged pull request's lgtm and approved labels count, when the note on its head showed these plans (./prow-labels.ts).
   if (rule.mode === "prow-labels") {
@@ -2536,6 +2541,13 @@ export interface WaveRun {
   costSource?: string;
   /** The estimator's output per root, kept beside the plans in the report. */
   costOutputs?: Map<string, string>;
+  /** chant's estimate of the wave's plans, which the policy reads as `input.cost`. */
+  estimate?: CostEstimate;
+  /** `cost.approve_above` at base. */
+  approveAbove?: number;
+  /** With `cost.approve_above`: chant's digest member for the wave's cost, and its hold line when the wave waits for it (opWaveCostVerdict). */
+  costMember?: WaveMember;
+  costHold?: string;
   /** Where the wave stands once it ended, for its report and the run view. */
   state?: WaveState;
   /** A wave split across jobs that decided: how many share jobs apply it. */
@@ -3000,19 +3012,20 @@ function migrationProgress(w: WaveRun, bucket: Awaited<ReturnType<typeof migrati
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "applyError" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "planJson" | "member" | "error" | "applyError" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
 
 /**
- * Price a wave's plans, with `cost` set (at the checkout or at base): the
- * estimator over each plan, redacted as the report keeps it, as tf-plan runs
- * it. `cost.approve_above` is read at base: `--base`, else the commit before
- * the one applied, so a change cannot raise the amount its own apply is
- * judged by. Leaves the figures on the wave for the policy, the gate and the
- * report. Returns the exit code when the amount cannot be read, so whether
- * the wave waits cannot be decided; undefined to go on. An estimate that
- * fails fails nothing; under an amount the wave then waits.
+ * chant's cost estimate of a wave's plans, with `cost` set (at the checkout
+ * or at base), through ../cost.ts: chant runs the estimator over each plan
+ * that changes something and sums it, and with `cost.approve_above` at base
+ * (`--base`, else the commit before the one applied) chant's verdict gives
+ * the hold and the wave's digest member. Leaves the record on the wave for
+ * the policy, the gate and the report. Returns the exit code when the amount
+ * cannot be read, so whether the wave waits cannot be decided; undefined to
+ * go on. An estimate that fails fails nothing; under an amount the wave
+ * then waits.
  */
-async function priceWave(
+async function chantWaveCost(
   repo: string,
   options: ApplyWaveOptions,
   ctx: { label: string; settings: ResolvedSettings; configPath: string | undefined; work: string },
@@ -3042,13 +3055,23 @@ async function priceWave(
   }
   if (rule.note) console.log(`${label}: ${rule.note}`);
   if (!rule.setting) return undefined;
-  const stored = planned.filter((p) => p.plan !== undefined).map((p) => ({ root: p.root, json: JSON.stringify(redactPlan(p.plan).plan) }));
-  if (stored.length === 0) return undefined;
-  const dir = mkdtempSync(join(work, "cost-"));
-  const estimate = await estimateCosts(stored, costCommand(rule.setting), env, dir, repo, (l) => console.log(`${label}: ${l}`), options.costRunner);
-  w.cost = estimate.cost;
-  w.costOutputs = estimate.outputs;
-  w.waveCost = waveCost(estimate.cost, planned.map((p) => p.root), rule.approveAbove);
+  const roots = planned.flatMap((p) => (p.plan !== undefined && p.planJson ? [{ root: p.root, planJson: p.planJson, empty: !changesSomething(p.plan) }] : []));
+  if (!roots.some((r) => !r.empty)) return undefined;
+  // chant prices each root that changes something (priceRuns); terragucci's exec redacts the plan and strips the forge tokens.
+  const run = costExec(env, mkdtempSync(join(work, "cost-")), options.costRunner ? { run: options.costRunner } : {});
+  const estimate = estimateRoots(rule.setting, roots, repo, run.exec);
+  for (const m of estimate.members) console.log(`${label}: cost: ${m.member}: ${"error" in m ? `no estimate (${m.error})` : `${signed(m.monthlyDelta)} ${estimate.currency} a month`}`);
+  const names = planned.map((p) => p.root);
+  w.estimate = estimate;
+  w.cost = reportCostOf(estimate, run.outputs);
+  w.costOutputs = run.outputs;
+  w.waveCost = reportWaveCostOf(estimate, names, rule.approveAbove);
+  if (rule.approveAbove !== undefined) {
+    w.approveAbove = rule.approveAbove;
+    const verdict = waveCostVerdict(estimate, names, rule.approveAbove);
+    w.costMember = verdict.member;
+    if (verdict.hold) w.costHold = verdict.hold;
+  }
   if (rule.source) w.costSource = rule.source;
   return undefined;
 }
@@ -3344,7 +3367,7 @@ async function policyCheck(
   governing.policy = { ...governing.policy, outcomes: outcomes ?? ["deny"] };
   const runAt = runFacts(repo, policyEnv, settings.forge);
   // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
-  const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
+  const cost = (root: string) => (w.estimate ? { cost: policyCostOf(w.estimate, root, { number: wave, roots: planned.map((p) => p.root) }, w.approveAbove) } : {});
   // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
   const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label, settings.forge) : undefined;
   const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, actor: detectActor(repo, policyEnv, governing.policy.agents), ...(review ? { review } : {}) });

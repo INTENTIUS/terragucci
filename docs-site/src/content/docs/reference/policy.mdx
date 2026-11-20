@@ -99,17 +99,19 @@ HCP Terraform, Spacelift and Scalr policies read other paths and deny nothing as
 
 ### Cost
 
-In `tf-plan` and every `tf-apply` wave, `input.cost` holds the monthly cost of the root and of its wave when [`cost`](/terragucci/guides/estimate-cost/) is set. Under `input: plan` it sits beside the plan's keys (the plan JSON has no `cost` key of its own); with `input: hcp`, beside `plan` and `run`.
+In `tf-plan` and every `tf-apply` wave, `input.cost` is chant's cost estimate when [`cost`](/terragucci/guides/estimate-cost/) is set: the same record chant's own gate policy reads. In `tf-plan` it covers the roots the change reaches; in a wave, the wave's roots. Under `input: plan` it sits beside the plan's keys (the plan JSON has no `cost` key of its own); with `input: hcp`, beside `plan` and `run`.
 
 | Field | Value |
 |---|---|
-| `cost.estimator`, `cost.currency` | the estimator's name, such as `infracost`, and its currency |
-| `cost.root.monthly_delta` | the change this root's plan makes to its monthly cost |
-| `cost.root.monthly_total`, `cost.root.past_monthly_total` | the root's monthly cost after the plan and before it |
-| `cost.wave.number`, `cost.wave.monthly_delta`, `cost.wave.monthly_total`, `cost.wave.past_monthly_total` | the root's wave and the same figures summed over its roots estimated; in `tf-plan`, over the roots the change reaches |
-| `cost.approve_above` | `cost.approve_above` in the config at base, or `null` |
+| `cost.estimator`, `cost.currency`, `cost.format` | the estimator's name, such as `infracost`, its currency, and `infracost`, the shape it prints |
+| `cost.monthlyDelta` | the monthly change summed over the roots priced |
+| `cost.monthlyTotal`, `cost.pastMonthlyTotal` | the monthly cost after and before, when every root priced gave them |
+| `cost.members[]` | each root priced: `member` and its `monthlyDelta`, `monthlyTotal` and `pastMonthlyTotal`, or `member` and `error` |
+| `cost.member` | the root the policy runs on, as its `members` entry; absent for a root whose plan changes nothing |
+| `cost.unestimated` | the roots the estimator could not price |
+| `cost.approveAbove`, `cost.over` | in a wave, `cost.approve_above` at base (else `null`), and whether the wave's change is over it or cannot be known in full |
 
-A figure the estimator could not give is `null`. Without `cost`, `input.cost` is absent. A denial on cost blocks the plan and the wave like any other, and an [override](#overriding-a-denial) can let one plan through.
+Roots whose plan changes nothing are not priced. Without `cost`, `input.cost` is absent. A denial on cost blocks the plan and the wave like any other, and an [override](#overriding-a-denial) can let one plan through.
 
 ```rego
 package main
@@ -117,10 +119,18 @@ package main
 import rego.v1
 
 deny contains msg if {
-  input.cost.wave.monthly_delta > 500
-  msg := sprintf("wave %d adds %v %s a month", [input.cost.wave.number, input.cost.wave.monthly_delta, input.cost.currency])
+  input.cost.monthlyDelta > 500
+  msg := sprintf("the change adds %v %s a month", [input.cost.monthlyDelta, input.cost.currency])
 }
 ```
+
+terragucci's earlier fields stay beside chant's, so a policy written against them reads the same values. A figure the estimator could not give is `null` in them.
+
+| Earlier field | chant's field |
+|---|---|
+| `cost.root.monthly_delta`, `monthly_total`, `past_monthly_total` | `cost.member.monthlyDelta`, `monthlyTotal`, `pastMonthlyTotal`; a root whose plan changes nothing has `monthly_delta` 0 |
+| `cost.wave.number`, `monthly_delta`, `monthly_total`, `past_monthly_total` | in a wave, `cost.monthlyDelta`, `monthlyTotal`, `pastMonthlyTotal`; the number has no counterpart |
+| `cost.approve_above` | `cost.approveAbove` |
 
 ### Review
 

@@ -14,7 +14,7 @@ import { WAVES_MARKER } from "./marker";
 import { productWords } from "../ci-words";
 import { ruleAsks } from "../approval";
 import { notePreviews } from "../tg-preview";
-import { signed } from "./cost";
+import { noteCostOf, signed } from "../cost";
 import { actionWord, binaryText, type Report, type ReportCost, type ReportNamed, type ReportRoot, type ReportStep, type ReportWave } from "./schema";
 import { perpetualChanges } from "./perpetual";
 import { duration } from "@intentius/chant-lexicon-terraform/engine-timings";
@@ -66,16 +66,6 @@ export function renderText(report: Report): string {
   return renderPlanSummaryText(planSummaryOf(report));
 }
 
-/** The note's line on cost: the monthly change over every root estimated, in the estimator's currency. */
-export function costLine(cost: ReportCost): string {
-  const estimated = cost.roots.filter((r) => r.monthly_delta !== null).length;
-  const failed = cost.roots.filter((r) => r.error).length;
-  const tail = failed > 0 ? `; ${failed} could not be estimated` : "";
-  return cost.monthly_delta === null
-    ? `Monthly cost: no estimate from ${cost.estimator}${tail}.`
-    : `Monthly cost: **${signed(cost.monthly_delta)} ${cost.currency}** over ${estimated} of ${cost.roots.length} ${cost.roots.length === 1 ? "root" : "roots"}, from ${cost.estimator}${tail}.`;
-}
-
 /**
  * The note's line on `cost.approve_above`: each wave's monthly change against
  * the amount the config at base sets, and which waves it holds. Undefined
@@ -90,17 +80,6 @@ export function costGateLine(waves: readonly ReportWave[]): string | undefined {
     return `wave ${w.number} ${change}${w.cost!.over ? ", over it: it waits for an approval whatever the gate" : ", within it"}`;
   });
   return `Against \`cost.approve_above\` at base, ${c.approve_above!.toFixed(2)} ${c.currency} a month: ${each.join("; ")}.`;
-}
-
-/** Each root's monthly cost before and after its plan, and the change, with a total row. */
-export function costTable(cost: ReportCost, name: (root: string) => string = (r) => `\`${r}\``): string {
-  const amount = (n: number | null): string => (n === null ? "" : n.toFixed(2));
-  let t = `**Monthly cost (${cost.currency}, ${cost.estimator}):**\n\n| Root | Before | After | Change |\n|---|---|---|---|\n`;
-  for (const r of cost.roots) {
-    t += r.error ? `| ${name(r.root)} | | | not estimated: ${r.error.split(/\s+/).join(" ").replace(/\|/g, "\\|")} |\n` : `| ${name(r.root)} | ${amount(r.past_monthly_total)} | ${amount(r.monthly_total)} | ${r.monthly_delta === null ? "" : signed(r.monthly_delta)} |\n`;
-  }
-  t += `| **Total** | ${amount(cost.past_monthly_total)} | ${amount(cost.monthly_total)} | **${cost.monthly_delta === null ? "none" : signed(cost.monthly_delta)}** |\n`;
-  return t;
 }
 
 /** What a `ci.hooks` hook came to, in words. */
@@ -287,7 +266,7 @@ export function planNoteOf(report: Report, options: NoteOptions = {}): PrPlanNot
   fact(coneLine(report));
   fact(explicitStacksLine(report));
   if (report.redaction.values > 0) fact(`Sensitive values are redacted in the stored plans (${report.redaction.values}).`);
-  if (report.cost) fact(costLine(report.cost));
+  // The estimate itself is chant's section (PrPlanNote.cost); the waves cost.approve_above holds are terragucci's line.
   if (report.cost) fact(costGateLine(report.waves));
   // Only when a binary sent per-resource spans: a note on a binary without them stays as it was, and the report says why.
   const slow = report.timings?.resources.slice(0, 3) ?? [];
@@ -297,7 +276,6 @@ export function planNoteOf(report: Report, options: NoteOptions = {}): PrPlanNot
   const composed = composeBlock(report, rootLink);
   if (composed) sections.push({ at: "start", text: composed + "\n" });
   for (const text of [blastLines(report, rootLink), stepsTable(report, rootLink)]) if (text) sections.push({ at: "groups", text: text + "\n" });
-  if (report.cost && report.cost.roots.length > 0) sections.push({ at: "groups", text: costTable(report.cost, rootLink) + "\n" });
   const recurring = recurringBlock(report, rootLink);
   if (recurring) sections.push({ at: "end", text: recurring });
 
@@ -381,6 +359,8 @@ export function planNoteOf(report: Report, options: NoteOptions = {}): PrPlanNot
     ...(report.totals_roots ? { totals: { add: t.create + t.replace, change: t.update, destroy: t.delete + t.replace, forget: t.forget, members: report.totals_roots } } : {}),
     ...(report.roots.length === 0 && run.stage === "tf-plan" ? { nothing: true } : {}),
     ...(options.notices?.length ? { notices: options.notices } : {}),
+    // chant renders the estimate, root by root, as its own plan note does (chant#5334).
+    ...(report.cost ? { cost: noteCostOf(report.cost) } : {}),
     facts,
     named: report.named.map((n) => ({
       member: n.root,
