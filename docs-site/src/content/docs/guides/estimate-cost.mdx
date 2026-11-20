@@ -162,7 +162,7 @@ cost:
 
 chant runs the command once for each root whose plan changes something, as `sh -c '<command>'` with the plan and the root as its arguments, and terragucci sets `TG_PLAN_JSON` and `TG_ROOT` from them. chant hands it a copy of the plan with every value the plan marks sensitive redacted, and the job's environment less the forge's token variables. Each root's estimate may take two minutes.
 
-Where terragucci prices the plans itself, for the plan note, the report and the policy, the copy also has the values [`secrets:`](/terragucci/reference/config/#secrets-and-variables) fetched redacted, and the environment also leaves out `TG_TOKEN` and `TG_MERGE_TOKEN`. A wave's cost hold runs the command in chant with chant's redaction and chant's list of token variables. Declare each variable that takes a `secrets:` value `sensitive = true`, so the plan marks the value and chant redacts it. A command you name sees the wave job's `TG_TOKEN` there unless a forge token variable holds the same value, so give the hold a command you trust with it, such as Infracost.
+The `sh -c` line terragucci hands chant unsets `TG_TOKEN` and `TG_MERGE_TOKEN` before the command starts, in a wave's cost hold as in terragucci's own pricing. Where terragucci prices the plans itself, for the plan note, the report and the policy, the copy also has the values [`secrets:`](/terragucci/reference/config/#secrets-and-variables) fetched redacted. A wave's cost hold runs the command in chant with chant's redaction, which redacts the values the plan marks sensitive. Declare each variable that takes a `secrets:` value `sensitive = true`, so the plan marks the value and the hold's copy has it redacted too.
 
 ## Next
 

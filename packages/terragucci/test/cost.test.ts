@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -48,7 +49,7 @@ const OLD = JSON.parse(readFileSync(join(import.meta.dirname, "fixtures/cost-fro
 
 describe("cost: chant's estimate, as terragucci maps it", () => {
   it("hands chant cost.command as sh -c with {planJson} and {target}, Infracost when no command is set", () => {
-    expect(costArgv("node cost.mjs")).toEqual(["sh", "-c", 'TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; node cost.mjs', "sh", "{planJson}", "{target}"]);
+    expect(costArgv("node cost.mjs")).toEqual(["sh", "-c", 'unset TG_TOKEN TG_MERGE_TOKEN; TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; node cost.mjs', "sh", "{planJson}", "{target}"]);
     expect(costCommand(true)).toBe(INFRACOST_COMMAND);
     expect(costCommand({ command: "node cost.mjs" })).toBe("node cost.mjs");
     expect(signed(3)).toBe("+3.00");
@@ -77,6 +78,19 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
     expect(readFileSync(join(out, "db.token"), "utf-8")).toBe("none");
     expect(estimate).toMatchObject({ estimator: "cp", currency: "USD", monthlyDelta: 20, members: [{ member: "db", monthlyDelta: 20, monthlyTotal: 20, pastMonthlyTotal: 0 }] });
     expect([...run.outputs.keys()]).toEqual(["db"]);
+  });
+
+  it("runs the hold's command without TG_TOKEN or TG_MERGE_TOKEN when chant runs it with the wave job's whole environment", () => {
+    const dir = tmp();
+    const out = join(dir, "seen");
+    mkdirSync(out);
+    write(dir, { "plan.json": "{}" });
+    const command = `printf '%s %s' "\${TG_TOKEN:-none}" "\${TG_MERGE_TOKEN:-none}" > "${out}/$TG_ROOT.token"; echo '${infracost("1", "1", "0")}'`;
+    // chant's holds.cost fills the placeholders and runs the argv with its own environment, which still holds terragucci's tokens.
+    const argv = costHold({ command }, 10).command.map((a) => a.replace("{planJson}", join(dir, "plan.json")).replace("{target}", "app"));
+    const r = spawnSync(argv[0]!, argv.slice(1), { env: { PATH: process.env.PATH, TG_TOKEN: "forge-secret", TG_MERGE_TOKEN: "merge-secret" }, encoding: "utf-8" });
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(out, "app.token"), "utf-8")).toBe("none none");
   });
 
   it("gives the report, the waves, the note line and the policy the figures the release before gave, on the same estimates", () => {

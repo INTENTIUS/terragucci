@@ -9,8 +9,9 @@
  *
  * `cost.command` stays a shell line reading `$TG_PLAN_JSON` and `$TG_ROOT`.
  * chant takes argv and fills `{planJson}` and `{target}` in each element, so
- * terragucci hands it `sh -c '<sets the two variables>; <command>' sh
- * {planJson} {target}` ({@link costArgv}).
+ * terragucci hands it `sh -c '<drops TG_TOKEN and TG_MERGE_TOKEN, sets the two
+ * variables>; <command>' sh {planJson} {target}` ({@link costArgv}), so the
+ * command runs without terragucci's tokens in chant's hold as well.
  *
  * chant's hook gives no estimate to the product, so terragucci prices the
  * plans itself for the report and for its own policy's `input.cost`, through
@@ -44,8 +45,13 @@ import type { ReportCost, ReportRootCost, ReportWaveCost } from "./report/schema
 /** Infracost over the root's plan JSON. The job installs Infracost and maps the key secret to INFRACOST_API_KEY. */
 export const INFRACOST_COMMAND = 'infracost breakdown --path "$TG_PLAN_JSON" --format json --log-level error';
 
-/** What sets the command's two variables from chant's `{planJson}` and `{target}`. */
-const SCRIPT_HEAD = 'TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; ';
+/**
+ * What sets the command's two variables from chant's `{planJson}` and
+ * `{target}`, and drops terragucci's own tokens, which chant's list of forge
+ * token variables leaves in: the estimator runs without them wherever it
+ * runs, in chant's `holds.cost` as in terragucci's own pricing.
+ */
+const SCRIPT_HEAD = 'unset TG_TOKEN TG_MERGE_TOKEN; TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; ';
 
 /** How long one root's estimate may take. */
 const TIMEOUT_MS = 120_000;
