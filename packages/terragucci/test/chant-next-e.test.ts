@@ -38,7 +38,7 @@ describe("drift rows", () => {
 });
 
 describe("the op-wave step contract", () => {
-  const input = { waves: [["network"], ["app", "edge"]], gate: "always" as const, approval: "ledger" as const, call: waveCallArgv, migrations: true, reads: { app: [{ var: "vpc_id", root: "network", output: ["vpc_id"] }] }, approveAbove: 100, policy: true };
+  const input = { waves: [["network"], ["app", "edge"]], gate: "always" as const, approval: "ledger" as const, call: waveCallArgv, migrations: true, reads: { app: [{ var: "vpc_id", root: "network", output: ["vpc_id"] }] }, policy: true };
 
   it("plans and applies through terraform-apply, with migrate and the gate's report kept as hooks", () => {
     const spec = wavesStepSpec(input) as unknown as Record<string, any>;
@@ -48,7 +48,7 @@ describe("the op-wave step contract", () => {
     expect(spec.planWave).toBeUndefined();
     expect(spec.applyWave).toBeUndefined();
     expect(spec.holds.policy).toBe(true);
-    expect(spec.holds.cost.approveAbove).toBe(100);
+    expect(spec.holds.cost).toBeUndefined();
     expect(spec.hooks.after.plan).toBeUndefined();
     expect(spec.hooks.after.gate[0].command).toEqual(waveCallArgv("gate", "{runs}"));
     expect(spec.waves[0].hooks.before.plan.map((h: { name: string }) => h.name)).toEqual(["migrations", "migration gate"]);
