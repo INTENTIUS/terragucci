@@ -13,7 +13,11 @@
  * {planJson} {target}` ({@link costArgv}). The hold names what the command
  * loses besides the forge tokens (chant#5418, {@link costHoldEnv}): the
  * variables of terragucci's `secrets:` store in `redactEnv`, and `TG_TOKEN`
- * and `TG_MERGE_TOKEN` in `dropEnv`.
+ * and `TG_MERGE_TOKEN` in `dropEnv`. chant reads a `redactEnv` value from
+ * the wave job's own environment, and a `secrets:` value is set in its
+ * root's binary environment alone, so the hold finds those values only
+ * when the job has them as variables too; the plan's `sensitive` marks
+ * cover them in the hold.
  *
  * chant's hook gives no estimate to the product, so terragucci prices the
  * plans itself for the report and for its own policy's `input.cost`, through
@@ -64,7 +68,9 @@ export interface CostHoldEnv {
  * names the variables terragucci's `secrets:` store fills, whose values a
  * plan need not mark sensitive: chant reads each value from the wave job's
  * environment, replaces it in the plan copy and leaves the variable out of
- * the command's environment. `dropEnv` names `TG_TOKEN` and
+ * the command's environment. A `secrets:` value lives in its root's binary
+ * environment, so in the hold only a job variable of that name reaches
+ * chant; the plan's `sensitive` marks cover the rest. `dropEnv` names `TG_TOKEN` and
  * `TG_MERGE_TOKEN`, left out by name and by value.
  */
 export function costHoldEnv(settings: Pick<ProjectSettings, "secrets">): CostHoldEnv {
