@@ -44,7 +44,7 @@ import type { Fetch } from "./forge";
 import { AGENT_NOT_EXCLUDED, tokenUsers } from "./involved";
 import { resumeCron } from "./render";
 import { configAtBase } from "./report/policy";
-import { approveAbove, costHold } from "./cost";
+import { approveAbove, costHold, costHoldEnv } from "./cost";
 import { forgeOfEnv, rootsParallelism } from "./report/stage";
 import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
 import { rootWorkspace } from "./workspace";
@@ -235,7 +235,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
         }
       : {}),
     // cost.approve_above at this commit: chant's cost hold prices each wave's runs and holds a wave over the amount (chant#5334, #5416).
-    ...(settings.cost && approveAbove(settings.cost) !== undefined ? { holds: { ...((top as { holds?: object }).holds ?? {}), cost: costHold(settings.cost, approveAbove(settings.cost)!) } } : {}),
+    ...(settings.cost && approveAbove(settings.cost) !== undefined ? { holds: { ...((top as { holds?: object }).holds ?? {}), cost: costHold(settings.cost, approveAbove(settings.cost)!, costHoldEnv(settings)) } } : {}),
     hooks: { after: { gate: [hook("report", "gate")] } },
     waves,
   } as OpWavesSpec;

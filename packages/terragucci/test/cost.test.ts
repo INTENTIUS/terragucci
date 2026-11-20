@@ -1,14 +1,14 @@
-import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { changeSetDigest } from "@intentius/chant/change-set";
+import { costEnv } from "@intentius/chant/ci-product";
 import { opWaveCostVerdict, OP_WAVE_COST_MEMBER } from "@intentius/chant/op";
 import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { INFRACOST_VERSION } from "../src/install";
 import { buildReport } from "../src/report/build";
-import { costArgv, costCommand, costExec, costHold, costReason, costRule, estimateRoots, INFRACOST_COMMAND, noteCostOf, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, type CostRunner } from "../src/cost";
+import { costArgv, costCommand, costExec, costHold, costHoldEnv, costReason, costRule, estimateRoots, INFRACOST_COMMAND, noteCostOf, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, type CostRunner } from "../src/cost";
 import { policyInput, type PolicyExec } from "../src/report/policy";
 import { REDACTED } from "../src/report/schema";
 import { runStage } from "../src/report/stage";
@@ -49,7 +49,7 @@ const OLD = JSON.parse(readFileSync(join(import.meta.dirname, "fixtures/cost-fro
 
 describe("cost: chant's estimate, as terragucci maps it", () => {
   it("hands chant cost.command as sh -c with {planJson} and {target}, Infracost when no command is set", () => {
-    expect(costArgv("node cost.mjs")).toEqual(["sh", "-c", 'unset TG_TOKEN TG_MERGE_TOKEN; TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; node cost.mjs', "sh", "{planJson}", "{target}"]);
+    expect(costArgv("node cost.mjs")).toEqual(["sh", "-c", 'TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; node cost.mjs', "sh", "{planJson}", "{target}"]);
     expect(costCommand(true)).toBe(INFRACOST_COMMAND);
     expect(costCommand({ command: "node cost.mjs" })).toBe("node cost.mjs");
     expect(signed(3)).toBe("+3.00");
@@ -80,17 +80,27 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
     expect([...run.outputs.keys()]).toEqual(["db"]);
   });
 
-  it("runs the hold's command without TG_TOKEN or TG_MERGE_TOKEN when chant runs it with the wave job's whole environment", () => {
-    const dir = tmp();
-    const out = join(dir, "seen");
-    mkdirSync(out);
-    write(dir, { "plan.json": "{}" });
-    const command = `printf '%s %s' "\${TG_TOKEN:-none}" "\${TG_MERGE_TOKEN:-none}" > "${out}/$TG_ROOT.token"; echo '${infracost("1", "1", "0")}'`;
-    // chant's holds.cost fills the placeholders and runs the argv with its own environment, which still holds terragucci's tokens.
-    const argv = costHold({ command }, 10).command.map((a) => a.replace("{planJson}", join(dir, "plan.json")).replace("{target}", "app"));
-    const r = spawnSync(argv[0]!, argv.slice(1), { env: { PATH: process.env.PATH, TG_TOKEN: "forge-secret", TG_MERGE_TOKEN: "merge-secret" }, encoding: "utf-8" });
-    expect(r.status).toBe(0);
-    expect(readFileSync(join(out, "app.token"), "utf-8")).toBe("none none");
+  // chant#5418: the hold names what its command loses, by name, so no secret's value sits in the spec.
+  it("names terragucci's secrets: variables in the hold's redactEnv and its tokens in dropEnv", () => {
+    // Two entries naming one variable for other roots: the name goes in once.
+    const settings = {
+      secrets: [
+        { roots: ["envs/prod/**"], from: "aws" as const, values: { TF_VAR_db_password: "prod/db#password" } },
+        { roots: ["envs/dev/**"], from: "aws" as const, values: { TF_VAR_api_key: "shared/api", TF_VAR_db_password: "dev/db#password" } },
+      ],
+    };
+    expect(costHoldEnv(settings)).toEqual({ redactEnv: ["TF_VAR_api_key", "TF_VAR_db_password"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(costHoldEnv({})).toEqual({ dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    const hold = costHold({ command: "node cost.mjs" }, 10, costHoldEnv(settings)) as { redactEnv?: string[]; dropEnv?: string[]; command: string[] };
+    expect(hold).toMatchObject({ approveAbove: 10, format: "infracost", redactEnv: ["TF_VAR_api_key", "TF_VAR_db_password"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(JSON.stringify(hold)).not.toContain("prod/db");
+    expect(hold.command[2]).not.toContain("unset");
+  });
+
+  it("has chant run the hold's command without the named variables or their values", () => {
+    const hold = costHold(true, 10, { redactEnv: ["TF_VAR_db_password"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] }) as { redactEnv: string[]; dropEnv: string[] };
+    const env = costEnv({ PATH: "/bin", TG_TOKEN: "tg-secret", TG_MERGE_TOKEN: "merge-secret", TF_VAR_db_password: "hunter2-store", COPY: "hunter2-store", KEEP: "x" }, { redactEnv: hold.redactEnv, dropEnv: hold.dropEnv });
+    expect(env).toEqual({ PATH: "/bin", KEEP: "x" });
   });
 
   it("gives the report, the waves, the note line and the policy the figures the release before gave, on the same estimates", () => {

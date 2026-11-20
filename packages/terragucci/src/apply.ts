@@ -131,7 +131,7 @@ import { binaryText, type Report, type ReportCost, type ReportPolicy, type Repor
 import { liveEstate } from "./tips/secrets";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
 import { defaultGatePolicyExec, type GatePolicyExec } from "@intentius/chant/gate-policy";
-import { approveAbove, costExec, costHold, costReason, isCostArgv, costRule, estimateRoots, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, writeCostFiles, type CostRunner } from "./cost";
+import { approveAbove, costExec, costHold, costHoldEnv, costReason, isCostArgv, costRule, estimateRoots, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, writeCostFiles, type CostRunner } from "./cost";
 import type { CostEstimate } from "@intentius/chant/ci-product";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
@@ -1908,7 +1908,7 @@ async function runStepWave(
   // cost.approve_above at base: chant's holds.cost prices the wave and holds it over the amount (an unreadable base fails the wave in its after-plan hook).
   const costAt = await costRule(repo, settings.cost, at.base, ctx.configPath ? { config: ctx.configPath } : {});
   const spec = wavesStepSpec({
-    ...(costAt.setting && costAt.approveAbove !== undefined && !costAt.error ? { cost: costHold(costAt.setting, costAt.approveAbove) } : {}),
+    ...(costAt.setting && costAt.approveAbove !== undefined && !costAt.error ? { cost: costHold(costAt.setting, costAt.approveAbove, costHoldEnv(settings)) } : {}),
     ...(Object.keys(workspaces).length ? { workspaces } : {}),
     ...(Object.keys(dirs).length ? { dirs } : {}),
     ...(Object.keys(reads).length ? { reads } : {}),

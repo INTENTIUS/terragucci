@@ -9,9 +9,11 @@
  *
  * `cost.command` stays a shell line reading `$TG_PLAN_JSON` and `$TG_ROOT`.
  * chant takes argv and fills `{planJson}` and `{target}` in each element, so
- * terragucci hands it `sh -c '<drops TG_TOKEN and TG_MERGE_TOKEN, sets the two
- * variables>; <command>' sh {planJson} {target}` ({@link costArgv}), so the
- * command runs without terragucci's tokens in chant's hold as well.
+ * terragucci hands it `sh -c '<sets the two variables>; <command>' sh
+ * {planJson} {target}` ({@link costArgv}). The hold names what the command
+ * loses besides the forge tokens (chant#5418, {@link costHoldEnv}): the
+ * variables of terragucci's `secrets:` store in `redactEnv`, and `TG_TOKEN`
+ * and `TG_MERGE_TOKEN` in `dropEnv`.
  *
  * chant's hook gives no estimate to the product, so terragucci prices the
  * plans itself for the report and for its own policy's `input.cost`, through
@@ -37,7 +39,7 @@ import { costEstimateOf, policyCost as chantPolicyCost, priceRuns, type CostEsti
 import { opWaveCostVerdict, type OpWaveCostHold, type OpWaveRunCost } from "@intentius/chant/op";
 import type { WaveMember } from "@intentius/chant/gated-waves";
 import { binaryEnv } from "./binary-env";
-import { resolveProject, resolveRepo, type CostSettings } from "./config";
+import { resolveProject, resolveRepo, type CostSettings, type ProjectSettings } from "./config";
 import { configAtBase, type PolicyCost, type TrustedOptions } from "./report/policy";
 import { scrubText, secretValues } from "./secret-values";
 import type { ReportCost, ReportRootCost, ReportWaveCost } from "./report/schema";
@@ -45,13 +47,30 @@ import type { ReportCost, ReportRootCost, ReportWaveCost } from "./report/schema
 /** Infracost over the root's plan JSON. The job installs Infracost and maps the key secret to INFRACOST_API_KEY. */
 export const INFRACOST_COMMAND = 'infracost breakdown --path "$TG_PLAN_JSON" --format json --log-level error';
 
+/** What sets the command's two variables from chant's `{planJson}` and `{target}`. */
+const SCRIPT_HEAD = 'TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; ';
+
+/** terragucci's own token variables, which chant's list of forge token variables leaves in: the hold's `dropEnv`. */
+export const COST_DROP_ENV = ["TG_TOKEN", "TG_MERGE_TOKEN"] as const;
+
+/** What the hold's command loses besides chant's forge tokens (chant#5418): `redactEnv` and `dropEnv`, names only. */
+export interface CostHoldEnv {
+  redactEnv?: string[];
+  dropEnv?: string[];
+}
+
 /**
- * What sets the command's two variables from chant's `{planJson}` and
- * `{target}`, and drops terragucci's own tokens, which chant's list of forge
- * token variables leaves in: the estimator runs without them wherever it
- * runs, in chant's `holds.cost` as in terragucci's own pricing.
+ * The hold's `redactEnv` and `dropEnv` for `settings` (chant#5418). `redactEnv`
+ * names the variables terragucci's `secrets:` store fills, whose values a
+ * plan need not mark sensitive: chant reads each value from the wave job's
+ * environment, replaces it in the plan copy and leaves the variable out of
+ * the command's environment. `dropEnv` names `TG_TOKEN` and
+ * `TG_MERGE_TOKEN`, left out by name and by value.
  */
-const SCRIPT_HEAD = 'unset TG_TOKEN TG_MERGE_TOKEN; TG_PLAN_JSON="$1" TG_ROOT="$2"; export TG_PLAN_JSON TG_ROOT; ';
+export function costHoldEnv(settings: Pick<ProjectSettings, "secrets">): CostHoldEnv {
+  const names = [...new Set((settings.secrets ?? []).flatMap((s) => Object.keys(s.values)))].sort();
+  return { ...(names.length ? { redactEnv: names } : {}), dropEnv: [...COST_DROP_ENV] };
+}
 
 /** How long one root's estimate may take. */
 const TIMEOUT_MS = 120_000;
@@ -81,9 +100,15 @@ export function chantCostSettings(setting: CostSettings, approveAbove?: number):
   return { command: costArgv(costCommand(setting)), format: "infracost", ...(approveAbove !== undefined ? { approveAbove } : {}) };
 }
 
-/** chant's `holds.cost` for the waves' spec: the estimator and the amount at base. */
-export function costHold(setting: CostSettings, approveAbove: number): OpWaveCostHold {
-  return { command: costArgv(costCommand(setting)), format: "infracost", approveAbove };
+/** chant's `holds.cost` for the waves' spec: the estimator, the amount at base, and what the command loses ({@link costHoldEnv}). */
+export function costHold(setting: CostSettings, approveAbove: number, env: CostHoldEnv = { dropEnv: [...COST_DROP_ENV] }): OpWaveCostHold {
+  return {
+    command: costArgv(costCommand(setting)),
+    format: "infracost",
+    approveAbove,
+    ...(env.redactEnv?.length ? { redactEnv: [...env.redactEnv] } : {}),
+    ...(env.dropEnv?.length ? { dropEnv: [...env.dropEnv] } : {}),
+  } as OpWaveCostHold;
 }
 
 /** How the estimator runs: its argv, the environment and the directory. Tests pass one. */
