@@ -10,8 +10,8 @@
  * `terragucci init` writes beside the pipeline), and the rules are
  * terragucci.yml there: each wave's gate (the top-level gate and, with
  * `environments`, the strictest of its roots'), the approval mode, who
- * counts at the gate, `apply.point`, `apply.branches`, `apply.resume` and
- * `notify`. A commit with no committed spec prints nothing.
+ * counts at the gate, `apply.point`, `apply.branches`, `apply.resume`,
+ * `notify` and `cost.approve_above` (chant's `holds.cost`). A commit with no committed spec prints nothing.
  *
  * Two things are not rules and come from the job's checkout, as they did in
  * `stage tf-apply`: each root's workspace and its Atmos reads (the run's
@@ -44,6 +44,7 @@ import type { Fetch } from "./forge";
 import { AGENT_NOT_EXCLUDED, tokenUsers } from "./involved";
 import { resumeCron } from "./render";
 import { configAtBase } from "./report/policy";
+import { approveAbove, costHold } from "./cost";
 import { forgeOfEnv, rootsParallelism } from "./report/stage";
 import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
 import { rootWorkspace } from "./workspace";
@@ -233,6 +234,8 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
           },
         }
       : {}),
+    // cost.approve_above at this commit: chant's cost hold prices each wave's runs and holds a wave over the amount (chant#5334, #5416).
+    ...(settings.cost && approveAbove(settings.cost) !== undefined ? { holds: { ...((top as { holds?: object }).holds ?? {}), cost: costHold(settings.cost, approveAbove(settings.cost)!) } } : {}),
     hooks: { after: { gate: [hook("report", "gate")] } },
     waves,
   } as OpWavesSpec;

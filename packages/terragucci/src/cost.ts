@@ -1,22 +1,24 @@
 /**
  * `cost:` in terragucci.yml, mapped onto chant's cost estimate (chant#5334):
- * chant runs the estimator once per root whose plan changes something,
- * reads Infracost's JSON and sums the figures, and with `cost.approve_above`
- * its verdict (`opWaveCostVerdict`) holds a wave over the amount, with the
- * wave's cost as a member of its set digest. The wave hands the verdict to
- * chant's gate from its after-plan hook: a `holds.cost` in the spec would
- * have chant spawn the estimator itself, and a `terragucci run wave` job
- * (chant's `ProductWaveHook`) cannot give it the exec below. terragucci
- * keeps only the mapping and two things around the run:
+ * chant runs the estimator once per root whose plan changes something, on
+ * a copy of the plan with what it marks sensitive redacted and without the
+ * forge tokens (chant#5416), reads Infracost's JSON and sums the figures.
+ * With `cost.approve_above`, the waves' spec carries chant's `holds.cost`
+ * ({@link costHold}): chant prices the wave, holds it over the amount and
+ * puts the wave's cost into its set digest.
  *
- * - `cost.command` stays a shell line reading `$TG_PLAN_JSON` and `$TG_ROOT`.
- *   chant takes argv and fills `{planJson}` and `{target}` in each element,
- *   so terragucci hands it `sh -c '<sets the two variables>; <command>' sh
- *   {planJson} {target}` ({@link costArgv}).
- * - The command reads the plan with its sensitive values redacted, and runs
- *   with the job's environment less its forge tokens, as before: chant runs
- *   it through terragucci's exec ({@link costExec}), which writes the
- *   redacted copy and strips the tokens.
+ * `cost.command` stays a shell line reading `$TG_PLAN_JSON` and `$TG_ROOT`.
+ * chant takes argv and fills `{planJson}` and `{target}` in each element, so
+ * terragucci hands it `sh -c '<sets the two variables>; <command>' sh
+ * {planJson} {target}` ({@link costArgv}).
+ *
+ * chant's hook gives no estimate to the product, so terragucci prices the
+ * plans itself for the report and for its own policy's `input.cost`, through
+ * chant's `priceRuns` too. There its exec ({@link costExec}) adds what chant
+ * leaves to the product: the values terragucci's `secrets:` fetched, which a
+ * plan need not mark, are scrubbed from chant's redacted copy, and the
+ * command also runs without `TG_TOKEN`, `TG_MERGE_TOKEN` and whatever holds
+ * their values. It keeps each root's output for `roots/<root>/cost.json`.
  *
  * `cost.approve_above` is read at base (`--base`, else the commit before
  * the one applied), so a change cannot raise the amount its own apply is
@@ -31,12 +33,12 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { costEstimateOf, policyCost as chantPolicyCost, priceRuns, type CostEstimate, type CostEstimateExec, type CostEstimateSettings, type CostRun, type MemberCost } from "@intentius/chant/ci-product";
-import { opWaveCostVerdict, type OpWaveRunCost } from "@intentius/chant/op";
+import { opWaveCostVerdict, type OpWaveCostHold, type OpWaveRunCost } from "@intentius/chant/op";
 import type { WaveMember } from "@intentius/chant/gated-waves";
 import { binaryEnv } from "./binary-env";
 import { resolveProject, resolveRepo, type CostSettings } from "./config";
 import { configAtBase, type PolicyCost, type TrustedOptions } from "./report/policy";
-import { redactPlan } from "./report/redact";
+import { scrubText, secretValues } from "./secret-values";
 import type { ReportCost, ReportRootCost, ReportWaveCost } from "./report/schema";
 
 /** Infracost over the root's plan JSON. The job installs Infracost and maps the key secret to INFRACOST_API_KEY. */
@@ -73,6 +75,11 @@ export function chantCostSettings(setting: CostSettings, approveAbove?: number):
   return { command: costArgv(costCommand(setting)), format: "infracost", ...(approveAbove !== undefined ? { approveAbove } : {}) };
 }
 
+/** chant's `holds.cost` for the waves' spec: the estimator and the amount at base. */
+export function costHold(setting: CostSettings, approveAbove: number): OpWaveCostHold {
+  return { command: costArgv(costCommand(setting)), format: "infracost", approveAbove };
+}
+
 /** How the estimator runs: its argv, the environment and the directory. Tests pass one. */
 export type CostRunner = (argv: string[], env: NodeJS.ProcessEnv, cwd: string) => { status: number | null; stdout: string; stderr: string };
 
@@ -81,51 +88,40 @@ const spawnRunner: CostRunner = (argv, env, cwd) => {
   return { status: r.error ? null : r.status, stdout: r.stdout ?? "", stderr: `${r.stderr ?? ""}${r.error ? r.error.message : ""}` };
 };
 
-/** One job's exec for chant's estimate: each root's output, and every run it made, by argv. */
+/** One job's exec for chant's `priceRuns` when terragucci prices: the exec, and each root's output. */
 export interface CostExec {
-  /** chant's `CostEstimateExec`: terragucci's cost argv run over the redacted plan without the forge tokens; any other argv through `other`. */
   exec: CostEstimateExec;
   /** The estimator's output for each root it priced, kept beside the root's plan. */
   outputs: Map<string, string>;
 }
 
 /**
- * The exec chant runs the estimator through. The plan document chant names
- * (`{planJson}`, the argv's fifth element) is copied with its sensitive
- * values redacted into `work`, and the command runs on that copy with the
- * job's environment less its forge tokens. The same argv runs once a job:
- * the wave's hold and the policy's `input.cost` read the same run.
+ * The exec terragucci hands chant's `priceRuns` when it prices for its
+ * report and its policy. chant has already written its redacted copy of
+ * the plan (`{planJson}`, the argv's fifth element); this scrubs from it the
+ * values terragucci's `secrets:` fetched, which chant does not know, and
+ * runs the command with the job's environment less terragucci's tokens and
+ * the forge's (`binaryEnv`).
  */
-export function costExec(env: NodeJS.ProcessEnv, work: string, o: { run?: CostRunner; other?: CostEstimateExec } = {}): CostExec {
+export function costExec(env: NodeJS.ProcessEnv, o: { run?: CostRunner } = {}): CostExec {
   const run = o.run ?? spawnRunner;
   const clean = binaryEnv(env);
   const outputs = new Map<string, string>();
-  const ran = new Map<string, ReturnType<CostEstimateExec>>();
-  let n = 0;
   const exec: CostEstimateExec = (argv, cwd) => {
-    if (!isCostArgv(argv)) return o.other ? o.other(argv, cwd) : spawnRunner(argv, process.env, cwd);
-    const key = argv.join("\0");
-    const seen = ran.get(key);
-    if (seen) return seen;
-    const target = argv[5]!;
-    let redacted: string;
-    try {
+    if (!isCostArgv(argv)) return run(argv, clean, cwd);
+    const held = secretValues();
+    if (held.length > 0) {
       const path = argv[4]!.startsWith("/") ? argv[4]! : join(cwd, argv[4]!);
-      redacted = JSON.stringify(redactPlan(JSON.parse(readFileSync(path, "utf-8"))).plan);
-    } catch (e) {
-      const r = { status: 1, stdout: "", stderr: `the plan document could not be read to redact it: ${(e as Error).message}` };
-      ran.set(key, r);
-      return r;
+      try {
+        writeFileSync(path, scrubText(readFileSync(path, "utf-8"), held));
+      } catch (e) {
+        return { status: 1, stdout: "", stderr: `the plan document could not be read to scrub its secret values: ${(e as Error).message}` };
+      }
     }
-    mkdirSync(work, { recursive: true });
-    const file = join(work, `cost-${n++}.json`);
-    writeFileSync(file, redacted);
-    const r = run([...argv.slice(0, 4), file, target], clean, cwd);
+    const r = run(argv, clean, cwd);
+    if (r.status === 0) outputs.set(argv[5]!, r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
     // Node ends a crash with its own version line; the line before it says why.
-    const result = { status: r.status, stdout: r.stdout, stderr: r.stderr.split("\n").filter((l) => !/^Node\.js v\d/.test(l)).join("\n") };
-    ran.set(key, result);
-    if (r.status === 0) outputs.set(target, r.stdout.endsWith("\n") ? r.stdout : `${r.stdout}\n`);
-    return result;
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr.split("\n").filter((l) => !/^Node\.js v\d/.test(l)).join("\n") };
   };
   return { exec, outputs };
 }

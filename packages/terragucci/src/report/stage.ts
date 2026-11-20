@@ -2084,7 +2084,8 @@ async function finish(
   const drift = stage === "tf-drift";
   // cost: the estimator over each root's stored plan, before the policy, which reads the figures; a failed estimate is named and fails nothing.
   // cost.approve_above is read at base, so the note says which waves the amount will hold as the base's config has it.
-  // chant prices the plans (chant#5334): each root whose plan changes something, through terragucci's exec, which redacts the plan and strips the forge tokens.
+  // chant prices the plans (chant#5334): each root whose plan changes something, on its redacted copy without the forge tokens (chant#5416).
+  // The stored plans are terragucci's redacted ones already, its secrets: values among them, and terragucci's exec drops its own tokens.
   let costOutputs: Map<string, string> | undefined;
   let cost: ReportCost | undefined;
   let estimate: CostEstimate | undefined;
@@ -2106,7 +2107,7 @@ async function finish(
     if (work && rule.setting) {
       try {
         if (stored.some((s) => !s.empty)) {
-          const run = costExec(env, join(work, "redacted"), options.costRunner ? { run: options.costRunner } : {});
+          const run = costExec(env, options.costRunner ? { run: options.costRunner } : {});
           estimate = estimateRoots(rule.setting, stored, repo, run.exec);
           cost = reportCostOf(estimate, run.outputs);
           costOutputs = run.outputs;

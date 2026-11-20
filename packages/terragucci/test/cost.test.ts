@@ -7,13 +7,15 @@ import { parseYAML } from "@intentius/chant/yaml";
 import { validateConfig } from "../src/config";
 import { INFRACOST_VERSION } from "../src/install";
 import { buildReport } from "../src/report/build";
-import { costArgv, costCommand, costExec, costReason, costRule, estimateRoots, INFRACOST_COMMAND, noteCostOf, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, type CostRunner } from "../src/cost";
+import { costArgv, costCommand, costExec, costHold, costReason, costRule, estimateRoots, INFRACOST_COMMAND, noteCostOf, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, type CostRunner } from "../src/cost";
 import { policyInput, type PolicyExec } from "../src/report/policy";
 import { REDACTED } from "../src/report/schema";
 import { runStage } from "../src/report/stage";
 import { costGateLine, renderNote } from "../src/report/views";
 import { confirmScript, renderPipeline } from "../src/render";
 import { git, tmp, write } from "./helpers";
+import { holdSecretValue } from "../src/secret-values";
+import { waveCallArgv, wavesStepSpec } from "../src/chant-waves";
 import { plan as planJson, rc, RUN } from "./report-fixtures";
 
 const infracost = (diff: string, total: string, past: string): string => JSON.stringify({ version: "0.2", currency: "USD", totalMonthlyCost: total, pastTotalMonthlyCost: past, diffTotalMonthlyCost: diff, projects: [] });
@@ -53,19 +55,25 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
     expect(signed(-0.5)).toBe("-0.50");
   });
 
-  it("runs the command on the plan with its sensitive values redacted, without the forge tokens, once per root that changes something", () => {
+  it("runs the command on chant's redacted plan with terragucci's secrets: values scrubbed and without TG_TOKEN, once per root that changes something", () => {
     const dir = tmp();
-    write(dir, { "secret.json": JSON.stringify({ ...planJson([rc("aws_db_instance.db", ["create"], null, { password: "hunter2" }, { after_sensitive: { password: true } })]) }) });
+    // A value terragucci's secrets: fetched, in an attribute the plan does not mark: chant cannot know it, so terragucci scrubs it.
+    holdSecretValue("held-store-value-6f2c", {}, { logs: false });
+    write(dir, { "secret.json": JSON.stringify({ ...planJson([rc("aws_db_instance.db", ["create"], null, { password: "hunter2", tag: "held-store-value-6f2c" }, { after_sensitive: { password: true } })]) }) });
     const out = join(dir, "seen");
     mkdirSync(out);
     // A real shell: the command sees $TG_PLAN_JSON and $TG_ROOT as before.
     const command = `cp "$TG_PLAN_JSON" "${out}/$TG_ROOT.plan"; printf '%s' "\${TG_TOKEN:-none}" > "${out}/$TG_ROOT.token"; echo '${infracost("20", "20", "0")}'`;
-    const run = costExec({ PATH: process.env.PATH, TG_TOKEN: "forge-secret" }, join(dir, "work"));
+    const run = costExec({ PATH: process.env.PATH, TG_TOKEN: "forge-secret" });
     const estimate = estimateRoots({ command }, [{ root: "db", planJson: join(dir, "secret.json"), empty: false }, { root: "same", planJson: join(dir, "secret.json"), empty: true }], dir, run.exec);
     expect(estimate.members.map((m) => m.member)).toEqual(["db"]);
     const seen = readFileSync(join(out, "db.plan"), "utf-8");
+    // chant redacts what the plan marks (chant#5416); terragucci scrubs the held value.
     expect(seen).not.toContain("hunter2");
+    expect(seen).not.toContain("held-store-value-6f2c");
     expect(seen).toContain(REDACTED);
+    // The original plan document is left as it was.
+    expect(readFileSync(join(dir, "secret.json"), "utf-8")).toContain("hunter2");
     expect(readFileSync(join(out, "db.token"), "utf-8")).toBe("none");
     expect(estimate).toMatchObject({ estimator: "cp", currency: "USD", monthlyDelta: 20, members: [{ member: "db", monthlyDelta: 20, monthlyTotal: 20, pastMonthlyTotal: 0 }] });
     expect([...run.outputs.keys()]).toEqual(["db"]);
@@ -73,7 +81,7 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
 
   it("gives the report, the waves, the note line and the policy the figures the release before gave, on the same estimates", () => {
     const seen: string[][] = [];
-    const run = costExec({}, join(tmp(), "work"), { run: byRoot({ app: infracost("20", "20", "0"), old: infracost("-5", "0", "5") }, seen) });
+    const run = costExec({}, { run: byRoot({ app: infracost("20", "20", "0"), old: infracost("-5", "0", "5") }, seen) });
     const estimate = estimateRoots(true, plans(["app", "old", "broken"]), tmp(), run.exec, 15);
     expect(seen.map((a) => a[5])).toEqual(["app", "old", "broken"]);
     const cost = reportCostOf(estimate, run.outputs);
@@ -94,7 +102,7 @@ describe("cost: chant's estimate, as terragucci maps it", () => {
   });
 
   it("the note's estimate is chant's section, the wave's holds terragucci's line", () => {
-    const run = costExec({}, join(tmp(), "work"), { run: byRoot({ app: infracost("20", "20", "0") }) });
+    const run = costExec({}, { run: byRoot({ app: infracost("20", "20", "0") }) });
     const estimate = estimateRoots(true, plans(["app", "net"]), tmp(), run.exec);
     const roots = [{ path: "app", plan: planJson([rc("terraform_data.x", ["create"], null, { input: 1 })]) }];
     const report = buildReport({ run: RUN, roots, waves: [{ number: 1, roots: ["app"], cost: reportWaveCostOf(estimate, ["app"], 15) }], gate: "never" });
@@ -152,7 +160,7 @@ function based(main: Record<string, string>, head: Record<string, string>): stri
 /** chant's estimate of roots with these monthly changes (null: the estimator failed). */
 function priced(changes: Record<string, number | null>, approveAbove?: number) {
   const figures = Object.fromEntries(Object.entries(changes).flatMap(([r, d]) => (d === null ? [] : [[r, infracost(String(d), String(d + 5), "5")]])));
-  const run = costExec({}, join(tmp(), "work"), { run: byRoot(figures) });
+  const run = costExec({}, { run: byRoot(figures) });
   return estimateRoots({ command: "cost.mjs" }, plans(Object.keys(changes)), tmp(), run.exec, approveAbove);
 }
 
@@ -182,6 +190,14 @@ describe("cost.approve_above: a wave over the amount waits", () => {
     expect(unknown).toMatchObject({ monthly_delta: 1, unestimated: ["b"], over: true });
     expect(costReason(unknown, "the config at main")).toBe("the monthly cost of b could not be estimated, and cost.approve_above is 15.00 USD in the config at main");
     expect(costReason(reportWaveCostOf(cost, ["a", "b"], 15), "the config at main")).toBe("the monthly cost changes by +20.00 USD, over cost.approve_above 15.00 USD in the config at main");
+  });
+
+  it("puts chant's holds.cost in the waves' spec with the amount at base, beside holds.policy, and nothing without an amount", () => {
+    const base = { waves: [["a"]], gate: "never" as const, approval: "ledger" as const, call: waveCallArgv, migrations: false };
+    const spec = wavesStepSpec({ ...base, policy: true, cost: costHold({ command: "node cost.mjs" }, 15) }) as { holds?: Record<string, unknown> };
+    expect(spec.holds).toEqual({ policy: true, cost: { command: costArgv("node cost.mjs"), format: "infracost", approveAbove: 15 } });
+    expect((wavesStepSpec({ ...base, cost: costHold(true, 0) }) as { holds?: { cost?: { command: string[] } } }).holds?.cost?.command).toEqual(costArgv(INFRACOST_COMMAND));
+    expect((wavesStepSpec(base) as { holds?: unknown }).holds).toBeUndefined();
   });
 
   it("the wave's hold and digest member are chant's verdict on the wave's estimate", () => {
