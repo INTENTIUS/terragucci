@@ -219,7 +219,7 @@ describe("cost.approve_above: a wave over the amount waits", () => {
   it("puts chant's holds.cost in the waves' spec with the amount at base, beside holds.policy, and nothing without an amount", () => {
     const base = { waves: [["a"]], gate: "never" as const, approval: "ledger" as const, call: waveCallArgv, migrations: false };
     const spec = wavesStepSpec({ ...base, policy: true, cost: costHold({ command: "node cost.mjs" }, 15) }) as { holds?: Record<string, unknown> };
-    expect(spec.holds).toEqual({ policy: true, cost: { command: costArgv("node cost.mjs"), format: "infracost", approveAbove: 15 } });
+    expect(spec.holds).toEqual({ policy: true, cost: { command: costArgv("node cost.mjs"), format: "infracost", approveAbove: 15, dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] } });
     expect((wavesStepSpec({ ...base, cost: costHold(true, 0) }) as { holds?: { cost?: { command: string[] } } }).holds?.cost?.command).toEqual(costArgv(INFRACOST_COMMAND));
     expect((wavesStepSpec(base) as { holds?: unknown }).holds).toBeUndefined();
   });
