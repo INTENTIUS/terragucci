@@ -87,7 +87,7 @@ describe("rollouts.soak in the config", () => {
     expect(ok({ after: "1h", conditions: ["health"] })).toEqual([expect.stringContaining("rollouts.soak.conditions must be a list of drift, apply, policy")]);
     expect(ok({ after: "1h", wait: 1 })).toEqual([expect.stringContaining("rollouts.soak.wait is not a setting")]);
     expect(ok({ after: "1h", overrides: [{ after: "1h" }] })).toEqual([expect.stringContaining("names a module or a provider glob")]);
-    expect(ok({ after: "1h", overrides: [{ module: "acme/*" }] })).toEqual([expect.stringContaining("sets after, conditions, or both")]);
+    expect(ok({ after: "1h", overrides: [{ module: "acme/*" }] })).toEqual([expect.stringContaining("sets duration, checks, or both")]);
     expect(rolloutsProblems("0 * * * *", "rollouts")).toEqual([]);
   });
 

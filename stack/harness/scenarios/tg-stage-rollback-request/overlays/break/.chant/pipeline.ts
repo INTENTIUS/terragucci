@@ -68,7 +68,12 @@ export default pipeline({
     }
   ],
   "defaults": {
-    "op": "tf-apply"
+    "op": "tf-apply",
+    "step": {
+      "kind": "terraform-apply",
+      "root": "{target}",
+      "dir": "{target}"
+    }
   },
   "release": {
     "cut": false,

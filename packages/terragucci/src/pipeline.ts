@@ -128,9 +128,12 @@ function stageConfig(e: NonNullable<ProjectSettings["environments"]>[string]): P
 /**
  * The declaration terragucci.yml makes, or undefined with no `promotion`.
  * `layers` are the merge path's waves, as the committed waves spec lists
- * their roots. Throws when chant refuses it.
+ * their roots. `step` is that spec's `step`, which each stage's waves plan
+ * and apply through: chant's `stageWavesSpec` refuses a stage with no step,
+ * so the merge path could not take its first stage's rules without it.
+ * Throws when chant refuses it.
  */
-export function pipelineDeclaration(settings: ProjectSettings, layers: readonly string[][]): PipelineDeclaration | undefined {
+export function pipelineDeclaration(settings: ProjectSettings, layers: readonly string[][], step?: Record<string, unknown>): PipelineDeclaration | undefined {
   const promotion = settings.promotion;
   if (!promotion?.length) return undefined;
   const environments = settings.environments ?? {};
@@ -148,6 +151,7 @@ export function pipelineDeclaration(settings: ProjectSettings, layers: readonly 
     waves,
     defaults: {
       op: WAVES_OP,
+      ...(step ? { step: structuredClone(step) as never } : {}),
       ...(riskHold(settings.risk) ? { holds: { risk: riskHold(settings.risk)! } } : {}),
       ...(settings.replan_dependents?.length ? { replanDependents: [...settings.replan_dependents] } : {}),
     },
@@ -171,7 +175,24 @@ export function pipelineDeclaration(settings: ProjectSettings, layers: readonly 
 function pipeline(declaration: PipelineDeclaration): PipelineDeclaration {
   const folded = foldPipelineSource(pipelineSource(declaration, SOURCE_OPTIONS), PIPELINE_FILE);
   if ("finding" in folded) throw new ConfigError(`promotion: chant refuses the pipeline terragucci.yml makes: ${folded.finding.message}`);
+  // The merge path takes its rules from the first stage's op-waves spec: with the step known, that spec must build.
+  const first = folded.spec.stages[0];
+  if (declaration.defaults?.step && first) {
+    try {
+      stageWavesSpec(folded.spec, first.name);
+    } catch (e) {
+      throw new ConfigError(`promotion: chant refuses the merge path's spec for ${first.name}: ${(e as Error).message}`);
+    }
+  }
   return declaration;
+}
+
+/** The step the committed waves spec plans and applies through, which each stage's waves take (`defaults.step`). */
+export function committedStep(repo: string): Record<string, unknown> | undefined {
+  const path = join(repo, WAVES_SPEC);
+  if (!existsSync(path)) return undefined;
+  const step = (JSON.parse(readFileSync(path, "utf-8")) as { step?: unknown }).step;
+  return step && typeof step === "object" ? (step as Record<string, unknown>) : undefined;
 }
 
 /** The merge path's waves as the committed waves spec lists their roots, or why it cannot be read. */
@@ -186,7 +207,7 @@ export function committedLayers(repo: string): string[][] {
 /** The text of `.chant/pipeline.ts` for `settings`, or undefined with no `promotion`. */
 export function pipelineText(repo: string, settings: ProjectSettings): string | undefined {
   if (!settings.promotion?.length) return undefined;
-  const declaration = pipelineDeclaration(settings, committedLayers(repo));
+  const declaration = pipelineDeclaration(settings, committedLayers(repo), committedStep(repo));
   return declaration ? pipelineSource(declaration, SOURCE_OPTIONS) : undefined;
 }
 
