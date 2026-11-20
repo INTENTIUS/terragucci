@@ -99,7 +99,7 @@ import type { DriverComponent } from "@intentius/chant/components";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
-import { CI_AGENT_FLOOR, productDriftAgent, productPipelineJobs } from "@intentius/chant/ci-product";
+import { AGENT_ALERT_FLOOR, AGENT_FACT_TRIGGERS_FLOOR, CI_AGENT_FLOOR, productAlertAgent, productApplyFailedAgent, productDriftAgent, productPipelineJobs, productScheduleAgent } from "@intentius/chant/ci-product";
 import { setActiveProductWords } from "@intentius/chant/ci-product-words";
 import { generateGithubOpPipeline } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import { generateGitlabOpPipeline } from "@intentius/chant-lexicon-gitlab/components/generate-op-pipeline";
@@ -908,6 +908,15 @@ export interface ChantAgentJob {
     options: { words: object; agent?: boolean | Record<string, unknown>; [k: string]: unknown },
   ): { agent?: { comment: string; name: string; spec: ChantScheduledOpSpec } };
   productDriftAgent(words: object, op: string, options?: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * The agents that start from a production alert (chant#5329, `AGENT_ALERT_FLOOR`), a failed apply and a schedule
+   * (chant#5357, `AGENT_FACT_TRIGGERS_FLOOR`): each gives the agent's Op spec, a workflow of its own.
+   */
+  AGENT_ALERT_FLOOR?: string;
+  AGENT_FACT_TRIGGERS_FLOOR?: string;
+  productAlertAgent?(words: object, options?: Record<string, unknown>): ChantScheduledOpSpec;
+  productApplyFailedAgent?(words: object, options?: Record<string, unknown>): ChantScheduledOpSpec;
+  productScheduleAgent?(words: object, options: Record<string, unknown>): ChantScheduledOpSpec;
   setActiveProductWords(words: object | undefined): unknown;
   generate: Record<"github" | "gitlab" | "forgejo", ChantOpGenerator>;
 }
@@ -1008,6 +1017,11 @@ export const CHANT_AGENT_JOB: ChantAgentJob = {
   CI_AGENT_FLOOR,
   productPipelineJobs: productPipelineJobs as unknown as ChantAgentJob["productPipelineJobs"],
   productDriftAgent: productDriftAgent as unknown as ChantAgentJob["productDriftAgent"],
+  AGENT_ALERT_FLOOR,
+  AGENT_FACT_TRIGGERS_FLOOR,
+  productAlertAgent: productAlertAgent as unknown as ChantAgentJob["productAlertAgent"],
+  productApplyFailedAgent: productApplyFailedAgent as unknown as ChantAgentJob["productApplyFailedAgent"],
+  productScheduleAgent: productScheduleAgent as unknown as ChantAgentJob["productScheduleAgent"],
   setActiveProductWords: setActiveProductWords as unknown as ChantAgentJob["setActiveProductWords"],
   generate: {
     github: generateGithubOpPipeline as unknown as ChantOpGenerator,

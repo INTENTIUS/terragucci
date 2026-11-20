@@ -264,5 +264,22 @@
       "chant#4653 (tf-action)",
       "chant#4650 (gated outcome)"
     ]
+  },
+  "tg-agent-alert": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-agent-alert-state",
+      "bucket:terragucci-reports"
+    ],
+    "secrets": {
+      "CHANT_RELAY_KEY": "hs-tg-agent-alert-relay-key",
+      "AGENT_KEY": "stand-in"
+    },
+    "cites": [
+      "terragucci#1495 (agent.alert)",
+      "chant#5329 (alert facts and the alert agent)",
+      "chant#4650 (await-pull, pull outcome)"
+    ]
   }
 }

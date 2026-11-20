@@ -64,4 +64,4 @@ A key that `terragucci config check` refuses is not part of terragucci.
 
 ## Next
 
-After setup, see [read the estate over MCP](/terragucci/guides/agent-read-over-mcp/), [propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), [fix drift](/terragucci/guides/agent-fix-drift/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).
+After setup, see [read the estate over MCP](/terragucci/guides/agent-read-over-mcp/), [propose a change over MCP](/terragucci/guides/agent-propose-over-mcp/), [summarize a refused wave](/terragucci/guides/agent-refused-wave/) (comment-only token), [change a pull request](/terragucci/guides/agent-change-a-pull-request/), [fix drift](/terragucci/guides/agent-fix-drift/), [start an agent from an alert, a failed apply or a schedule](/terragucci/guides/agent-start-from-an-alert/), and [review a pull request](/terragucci/guides/agent-review-a-pull-request/).

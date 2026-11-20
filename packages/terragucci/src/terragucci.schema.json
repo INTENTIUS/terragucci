@@ -2040,6 +2040,134 @@
               "additionalProperties": false
             }
           ]
+        },
+        "alert": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "max_turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "window": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1440
+                },
+                "relay_key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "apply-failed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "max_turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "window": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1440
+                },
+                "relay_key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "schedule": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+            },
+            "key_secret": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "max_turns": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_cost_usd": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "timeout": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "window": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1440
+            },
+            "cron": {
+              "type": "string",
+              "pattern": "^\\S+(\\s+\\S+){4}$"
+            },
+            "task": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "cron",
+            "task"
+          ]
         }
       },
       "additionalProperties": false,
@@ -2047,7 +2175,7 @@
         "via",
         "token_env"
       ],
-      "description": "The coding agent behind /terragucci agent and the drift agent."
+      "description": "The coding agent behind /terragucci agent, the drift agent, and the agents that start from a production alert, a failed apply or a schedule."
     },
     "review": {
       "type": "object",
@@ -4439,6 +4567,134 @@
                   "additionalProperties": false
                 }
               ]
+            },
+            "alert": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                    },
+                    "key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "max_turns": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "window": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1440
+                    },
+                    "relay_key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "apply-failed": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                    },
+                    "key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "max_turns": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "window": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1440
+                    },
+                    "relay_key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "schedule": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "max_turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "window": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1440
+                },
+                "cron": {
+                  "type": "string",
+                  "pattern": "^\\S+(\\s+\\S+){4}$"
+                },
+                "task": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "cron",
+                "task"
+              ]
             }
           },
           "additionalProperties": false,
@@ -4446,7 +4702,7 @@
             "via",
             "token_env"
           ],
-          "description": "The coding agent behind /terragucci agent and the drift agent."
+          "description": "The coding agent behind /terragucci agent, the drift agent, and the agents that start from a production alert, a failed apply or a schedule."
         },
         "review": {
           "type": "object",

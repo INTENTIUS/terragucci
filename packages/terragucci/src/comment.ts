@@ -132,7 +132,9 @@ export function parseComment(body: unknown, o: ParseOptions = {}): ParsedComment
     if (flags.targets?.length || flags.refresh || flags.targetDependents) return { kind: "refused", reason: "`/terragucci plan` re-plans whole roots: it takes no `--target`, `--refresh` or `--target-dependents`" };
     return parsed.member !== undefined ? { kind: "plan", root: parsed.member } : { kind: "plan" };
   }
-  return parsed;
+  // Later chants read a reject comment (chant#5354); terragucci's words map no command onto it, so it only narrows the type.
+  if ((parsed.kind as string) === "reject") return { kind: "refused", reason: "terragucci has no reject comment" };
+  return parsed as ParsedComment;
 }
 
 /** The variable the generated pipeline sets to 1 on every job when `atlantis_comments` is on. */

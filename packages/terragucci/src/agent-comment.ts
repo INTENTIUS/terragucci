@@ -91,6 +91,43 @@ export function agentDriftInput(settings: ProjectSettings): AgentCommentInput | 
   return agentCommentInput({ ...settings, agent: { ...settings.agent, comment: d } });
 }
 
+/** The settings of an agent chant starts from facts (`agent.alert`, `agent.apply-failed`) or a schedule (`agent.schedule`): the comment's, with the join window. */
+export interface AgentTriggerInput extends AgentCommentInput {
+  /** Minutes in which one member's facts join one run. Unset: chant's 15. */
+  window?: number;
+  /** The secret holding the relay key the facts are signed with. Unset: chant's `CHANT_RELAY_KEY`. */
+  relayKeySecret?: string;
+}
+
+/** `agent.schedule`'s settings: a cron and the task each run does. */
+export interface AgentScheduleInput extends AgentTriggerInput {
+  cron: string;
+  task: string;
+}
+
+/** The facts' agents beyond the comment's and the drift's. */
+export type AgentFactsKind = "alert" | "apply-failed" | "schedule";
+
+/**
+ * One of `agent.alert`, `agent.apply-failed` and `agent.schedule` with its defaults, or undefined when it is not
+ * set: the comment's defaults, plus `window`, `relay_key_secret` and, for the schedule, `cron` and `task`.
+ */
+export function agentTriggerInput(settings: ProjectSettings, kind: "alert" | "apply-failed"): AgentTriggerInput | undefined;
+export function agentTriggerInput(settings: ProjectSettings, kind: "schedule"): AgentScheduleInput | undefined;
+export function agentTriggerInput(settings: ProjectSettings, kind: AgentFactsKind): AgentTriggerInput | AgentScheduleInput | undefined {
+  const raw = settings.agent?.[kind];
+  if (raw === undefined || raw === false || !settings.agent?.token_env) return undefined;
+  const o = raw === true ? {} : raw;
+  const base = agentCommentInput({ ...settings, agent: { ...settings.agent, comment: raw === true ? true : o } });
+  if (!base) return undefined;
+  const window = (o as { window?: number }).window;
+  const relay = (o as { relay_key_secret?: string }).relay_key_secret;
+  const out: AgentTriggerInput = { ...base, ...(window !== undefined ? { window } : {}), ...(relay !== undefined ? { relayKeySecret: relay } : {}) };
+  if (kind !== "schedule") return out;
+  const sched = o as { cron: string; task: string };
+  return { ...out, cron: sched.cron.trim(), task: sched.task.trim() };
+}
+
 /** Where the agent job keeps the decision, the prompt and the change: outside the checkout, so none of it is in the diff. */
 export const AGENT_DIR = "/tmp/terragucci-agent";
 export const AGENT_CHANGE_DIR = `${AGENT_DIR}/change`;

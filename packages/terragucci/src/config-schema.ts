@@ -15,6 +15,9 @@ import { DNS_SUBDOMAIN, PROW_KEYS } from "./prow-config";
 import { COMMENT_ALLOW_COMMANDS, COMMENT_ALLOW_PATTERN } from "./comment-allow";
 import {
   AGENT_COMMENT_KEYS,
+  AGENT_FACTS_KEYS,
+  AGENT_SCHEDULE_KEYS,
+  AGENT_TASK_MAX,
   CONTROL_KEYS,
   EVIDENCE_KEYS,
   TEMPLATES_KEYS,
@@ -192,6 +195,17 @@ const agentRun: JsonSchema = {
     map(AGENT_COMMENT_KEYS, { command: oneLine, key_secret: secret, max_turns: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 }, timeout: whole(1) }),
   ],
 };
+
+const agentRunProps = { command: oneLine, key_secret: secret, max_turns: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 }, timeout: whole(1) };
+
+const agentFactsRun: JsonSchema = {
+  anyOf: [
+    bool,
+    map(AGENT_FACTS_KEYS, { ...agentRunProps, window: { type: "integer", minimum: 1, maximum: 1440 }, relay_key_secret: secret }),
+  ],
+};
+
+const agentScheduleRun: JsonSchema = map(AGENT_SCHEDULE_KEYS, { ...agentRunProps, window: { type: "integer", minimum: 1, maximum: 1440 }, cron: { type: "string", pattern: "^\\S+(\\s+\\S+){4}$" }, task: { type: "string", minLength: 1, maxLength: AGENT_TASK_MAX } }, { required: ["cron", "task"] });
 
 const hclArgs: JsonSchema = { type: "object", propertyNames: pat(IDENT), additionalProperties: nullable(ref("hcl_value")) };
 
@@ -662,8 +676,11 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
         login: { type: "string", pattern: AGENT_LOGIN.source, description: "The forge login agent.token_env's token acts as. No approval by it counts." },
         comment: agentRun,
         drift: agentRun,
+        alert: agentFactsRun,
+        "apply-failed": agentFactsRun,
+        schedule: agentScheduleRun,
       }, { required: ["via", "token_env"] }),
-      description: "The coding agent behind /terragucci agent and the drift agent.",
+      description: "The coding agent behind /terragucci agent, the drift agent, and the agents that start from a production alert, a failed apply or a schedule.",
     },
     review: {
       ...map(REVIEW_KEYS, {

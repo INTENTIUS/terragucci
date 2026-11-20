@@ -188,7 +188,7 @@ dashboards: true
 | `modules.gitlab_token` | `GITLAB_TOKEN` | the secret a GitHub or Forgejo publish job passes as `GITLAB_TOKEN` when `modules.publish` names a `gitlab://` project; the token needs the `api` scope. On GitLab the job's own CI variables are used |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
-| `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment) and [`drift`](#the-drift-agent) |
+| `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment), [`drift`](#the-drift-agent), and [`alert`, `apply-failed` and `schedule`](#agents-from-alerts-failed-applies-and-schedules) |
 | `evidence.identity` | none (nothing signed) | `oidc`: the jobs sign check evidence keyless, from each job's OIDC token. The plan note job signs `plan` and `policy`. Each wave signs `plan:wave-<k>`. A wave that trades cloud credentials signs in its own `apply-wave-<k>-evidence` job. On GitLab the `plan-evidence` job signs in the plan notes pipeline. `init` writes `.chant/trust.json` with the workflow's identity, the ref gate's rule for the default branch and a `pre-push` hook. See [Signed checks](/terragucci/reference/pipeline/#signed-checks) |
 | `evidence.audience` | `sigstore` | with `identity`: the OIDC token's audience |
 | `evidence.runner_key_secret` | none | the secret (GitHub, Forgejo) or CI/CD variable (GitLab) that holds the runner key, in place of `identity`. `.chant/trust.json` lists its public half under `runners` |
@@ -644,6 +644,34 @@ agent:
 Its keys and defaults are `agent.comment`'s, and `drift: true` takes them all; `agent.token_env` is the secret of the token that pushes the branch and opens the pull request. It needs a `drift` schedule and `respond.drift` set to `attribute` or `off`, since the agent's pull request takes the place of the codified one. Neither drift agent job gets cloud credentials, and `init` refuses `agent.drift` on GitLab. [The jobs](/terragucci/reference/pipeline/#the-drift-agent).
 
 The drift agent's commit carries a `Requested-by: <login>` trailer when a person started the drift run by hand, and a `Pushed-by: <login>` trailer naming the token's user. A review by either doesn't count; on a drift pull request a schedule opened, a review by any other writer does.
+
+## Agents from alerts, failed applies and schedules
+
+`agent.alert`, `agent.apply-failed` and `agent.schedule` each write a workflow of chant's agent job that opens a pull request; GitHub and Forgejo only. [Start an agent from an alert, a failed apply or a schedule](/terragucci/guides/agent-start-from-an-alert/) sets them up.
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  alert:
+    max_cost_usd: 20
+    window: 15
+  apply-failed: true
+  schedule:
+    cron: "0 7 * * 1"
+    task: Raise each provider and module version pin to the newest release that keeps the plan clean.
+```
+
+Each takes the keys of [the agent comment](#the-agent-comment) (`command`, `key_secret`, `max_turns`, `max_cost_usd`, `timeout`) and:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `window` | 15 | the minutes, from 1 to 1440, in which one member's alerts, failed applies or scheduled runs join one run |
+| `relay_key_secret` | `CHANT_RELAY_KEY` | `alert` and `apply-failed`: the secret holding the relay key the facts are signed and checked with |
+| `cron` | required | `schedule`: when the agent runs, a five-field cron |
+| `task` | required | `schedule`: what the agent does on each run, at most 4000 characters |
+
+`alert: true` and `apply-failed: true` take every default. `max_cost_usd` is the most the agent's runs may cost per day. `agent.apply-failed` turns on the apply waves' failed-apply facts and leaves the triage comment as it is; it cannot go with `apply.when: pull-request`. [The jobs](/terragucci/reference/pipeline/#agents-from-alerts-failed-applies-and-schedules).
 
 ## The review
 

@@ -1,0 +1,140 @@
+---
+title: Start an agent from an alert, a failed apply or a schedule
+description: Turn on agent.alert, agent.apply-failed or agent.schedule, and a coding agent opens a pull request when a production alert fires, an apply fails, or a cron says it is time, on GitHub and Forgejo.
+prompt: |
+  Read https://intentius.io/terragucci/guides/agent-start-from-an-alert/.
+  Add the `agent.alert`, `agent.apply-failed` or `agent.schedule` block I name to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
+  List the secrets I must set and the relay settings; do not create tokens or secrets yourself.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+Three of the features that run a model ([what needs an agent](/terragucci/#opt-in-coding-agent)). Each is off until its key is set.
+
+## Result
+
+Each agent is a workflow of its own, written by `init` from [chant](/terragucci/concepts/glossary/#chant)'s agent job. It reads what happened, changes the code, and opens a pull request into the default branch. The pull request plans like any other and waits for a person. Nothing the agent does applies, approves or merges.
+
+| Key | Starts when | Branch |
+|---|---|---|
+| `agent.alert` | the relay verified a production alert and recorded it | `terragucci/agent/terragucci-alert-agent` |
+| `agent.apply-failed` | an apply job recorded a member that did not apply | `terragucci/agent/terragucci-apply-failed-agent-<member>` |
+| `agent.schedule` | the cron in `cron` fires | `terragucci/agent/terragucci-schedule-agent` |
+
+Every run leaves a run record on the ledger under the agent's op name. The record's `trigger` is `alert`, `apply-failed` or `schedule`, and it names the facts the run took, the member, the join window, and each alert's source and id.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| A repo on GitHub or Forgejo | `init` writes these agents for those two forges |
+| An Anthropic API key in your forge's secrets | the default command runs Claude Code |
+| The agent's token in your forge's secrets, set up as for [the agent comment](/terragucci/guides/agent-change-a-pull-request/) | it pushes the branch and opens the pull request |
+| A relay key in your forge's secrets (`CHANT_RELAY_KEY`, or the name `relay_key_secret` gives), for `agent.alert` and `agent.apply-failed` | the facts are signed with it and checked with it |
+
+## An agent for production alerts
+
+1. Turn it on in `terragucci.yml`:
+
+   ```yaml
+   agent:
+     via: forge
+     token_env: AGENT_FORGE_TOKEN
+     alert:
+       key_secret: ANTHROPIC_API_KEY
+       relay_key_secret: CHANT_RELAY_KEY
+       max_turns: 30
+       max_cost_usd: 20
+       window: 15
+   ```
+
+   `alert: true` takes every default. The keys are the [agent comment's](/terragucci/reference/config/#the-agent-comment), with `window` (the minutes in which one member's alerts join one run, 15 by default) and `relay_key_secret`.
+
+2. Check the file, write the workflow and merge the result to the default branch:
+
+   ```bash
+   npx terragucci config check
+   npx terragucci init
+   ```
+
+   `init` writes `.github/workflows/terragucci-alert-agent.yml` (or `.forgejo/workflows/`) and the spec it comes from, `.chant/ops/terragucci-alert-agent.spec.json`.
+
+3. Run chant's relay where your alert sources can reach it, and point each source at it. The relay checks every delivery, records each firing alert as a fact under `_alerts/` on [`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle), signed with the relay key, and starts the workflow:
+
+   ```bash
+   CHANT_RELAY_KEY=... CHANT_ALERT_SECRET=... \
+   CHANT_ALERT_DISPATCH_TOKEN=... CHANT_ALERT_WORKFLOW=terragucci-alert-agent.yml \
+   npx chant notify relay --repo https://github.com/acme/infra.git --token-env RELAY_TOKEN --host 0.0.0.0
+   ```
+
+   | Source | Point it at |
+   |---|---|
+   | Alertmanager | `/alert/alertmanager`, a webhook receiver with the secret as its bearer token |
+   | PagerDuty | `/alert/pagerduty?member=<name>`, a v3 webhook subscription signed with the secret |
+   | Datadog | `/alert/datadog`, a webhook with the header `X-Chant-Alert-Token` set to the secret |
+   | Honeycomb | `/alert/honeycomb?member=<name>`, a webhook recipient whose shared secret is the secret |
+   | Sentry | `/alert/sentry?member=<name>`, an integration webhook |
+   | Anything else | `/alert/generic`, with `X-Chant-Timestamp` and `X-Chant-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<body>` |
+
+   `CHANT_ALERT_DISPATCH_TOKEN` is a fine-grained token for the one repository with Actions read and write. The relay refuses a token that can do more. [Take production alerts](/chant/guide/notify/#take-production-alerts) lists each source's payload and what the relay checks.
+
+   The workflow also runs every 15 minutes and picks up any alert whose start did not arrive, so a relay with no dispatch token still delivers.
+
+4. Fire a test alert, or wait for one. The workflow's run holds the agent job and the push job, and the pull request appears on the branch above.
+
+An alert older than a day starts nothing, and a fact the relay key did not sign starts nothing. One run answers one member's alerts: it takes the oldest new alert and every alert for the same member received inside `window` minutes after it.
+
+## An agent for a failed apply
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  apply-failed:
+    max_cost_usd: 10
+```
+
+`init` writes `terragucci-apply-failed-agent.yml` and gives each apply wave job `CHANT_AGENT_FACTS=apply-failed` and the relay key in its command step. A wave that fails records one fact per member that did not apply, with the exit code, the failed resources and the last 8,000 characters of the engine's output. The same member failing again at the same commit is the same fact.
+
+The failed-apply triage comment on the pull request is unchanged; `respond.apply-failed` keeps its setting. The agent's workflow runs every 15 minutes and when started by hand on the default branch.
+
+`apply.when: pull-request` splits the waves into jobs that hold no relay key, so `config check` refuses `agent.apply-failed` with it.
+
+## An agent on a schedule
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  schedule:
+    cron: "0 7 * * 1"
+    task: Raise each provider and module version pin to the newest release that keeps the plan clean.
+    max_cost_usd: 5
+```
+
+`cron` and `task` are both required. The task is read from the workflow file on the default branch and reaches the prompt as your instruction. A run started again inside `window` minutes joins the run already made. A scheduled agent holds no relay key.
+
+## Limits and who decides
+
+| Key | Meaning |
+|---|---|
+| `max_turns` | the turn limit of one run |
+| `max_cost_usd` | the most US dollars the agent's runs may cost per day, summed from the run records; the run that crosses it finishes and the next one is recorded as `stopped` |
+| `timeout` | minutes the model command may run |
+
+Chant reads each agent's settings from the default branch. The generated command lines carry a digest of them, and a job whose settings differ refuses to run, so a pull request that raises a limit changes nothing until it merges. Both jobs also refuse a commit that is not on the default branch.
+
+## Permissions
+
+| Job | Does | Holds |
+|---|---|---|
+| the agent job | reads the facts from the ledger and checks each signature, runs the agent on the default branch, and keeps its change as a patch | a read-only job token and the relay key for the decision step; the model's key in the agent's step alone |
+| the push job | checks that every fact the decision names is on the ledger and taken by no other run, applies the patch, refuses a [guarded path](/terragucci/reference/pipeline/#paths-an-agent-cannot-change), pushes without force and opens or updates the pull request | the secret `agent.token_env` names |
+
+Neither job has a cloud role. An agent's change goes through the plan and the gate like any other, and the next fact for the same member replaces the branch and updates the pull request while every commit on it is the agent's.
+
+## Next
+
+- [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) covers the agent that follows a drift check.
+- [The agent keys](/terragucci/reference/config/#agents-from-alerts-failed-applies-and-schedules) list each setting.

@@ -189,7 +189,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
+import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, AGENT_APPLY_FAILED_SPLIT, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { ResolvedControl } from "./control-repo";
 import { rootRoles } from "./cloud-identity";
@@ -199,8 +199,9 @@ import type { PipelineEvidence } from "@intentius/chant/ci-evidence-jobs";
 import { applyTrade, githubCommentJob, githubPlanJobs, gitlabPlanJobs, PLAN_ENV, PLAN_EVIDENCE_JOB, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR, planOptions, planTrade, type PlanJobsInput } from "./product-plan";
 import { githubWaves, gitlabWaves, wavesBeforeMerge, wavesJobNames, wavesShape, type WavesInput } from "./render-waves";
 import { driftWatch } from "./report/overdue";
-import type { AgentCommentInput } from "./agent-comment";
+import type { AgentCommentInput, AgentScheduleInput, AgentTriggerInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
+import { applyFailedRelayKey, chantFactsFiles } from "./render-chant-agent-triggers";
 import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
@@ -412,6 +413,12 @@ export interface PipelineInput {
   agentComment?: AgentCommentInput;
   /** `agent.drift` is set: when the drift job opens the drift issue, the drift-agent and drift-agent-push jobs open a pull request with an agent's change (render-agent.ts). GitHub and Forgejo only. */
   agentDrift?: AgentCommentInput;
+  /** `agent.alert` is set: a workflow of chant's alert agent, which the relay starts after it records a production alert (render-chant-agent-triggers.ts). GitHub and Forgejo only. */
+  agentAlert?: AgentTriggerInput;
+  /** `agent.apply-failed` is set: a workflow of chant's failed-apply agent, and the wave jobs record their failed applies as facts. GitHub and Forgejo only. */
+  agentApplyFailed?: AgentTriggerInput;
+  /** `agent.schedule` is set: a workflow of chant's scheduled agent. GitHub and Forgejo only. */
+  agentSchedule?: AgentScheduleInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
   atlantisComments?: boolean;
   /** `comment_allow` names a team: the jobs that check it on GitHub and Forgejo get the secret TG_TEAM_TOKEN as `TG_TEAM_TOKEN`, since the workflow's own token cannot read a team's members (comment-allow.ts). GitLab jobs read a CI/CD variable of that name. */
@@ -1620,6 +1627,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(forge === "gitlab" && tokenEnv && tokenEnv !== "GITLAB_TOKEN" ? { pipelineVariables: { CHANT_FORGE_TOKEN: `$${tokenEnv}` } } : {}),
     ...(responseTo({ respond: input.respond }, "apply-failed") === "agent" ? { agentInput: true } : {}),
     ...(input.review ? { review: true } : {}),
+    ...(input.agentApplyFailed && forge !== "gitlab" ? { agentFacts: { relayKeyEnv: applyFailedRelayKey(input.agentApplyFailed) } } : {}),
     branches: branchNames,
     ...(prApply ? { beforeMerge: { merge: input.applyMerge ?? "manual", ...(input.applyMergeTokenEnv ? { tokenSecret: input.applyMergeTokenEnv } : {}) } } : {}),
     ...(input.resume ? { resume: resumeCron(input.resume) } : {}),
@@ -1639,6 +1647,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${input.atmos ? ATMOS_DRIFT_PR : SYNTH_DRIFT_PR}`);
   if (input.synth && rollouts) throw new RenderError(`rollouts: ${input.atmos ? ATMOS_ROLLOUTS : SYNTH_ROLLOUTS}`);
   const driftPr = !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
+  if (input.agentApplyFailed && input.applyWhen === "pull-request") throw new RenderError(`agent.apply-failed: ${AGENT_APPLY_FAILED_SPLIT}`);
   if (input.agentDrift && !drift) throw new RenderError("agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule");
   if (input.agentDrift && driftPr) throw new RenderError(`respond.drift: ${AGENT_DRIFT_RESPOND}`);
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.
@@ -1711,6 +1720,9 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (forge === "gitlab") {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
+    for (const [key, on] of [["alert", input.agentAlert], ["apply-failed", input.agentApplyFailed], ["schedule", input.agentSchedule]] as const) {
+      if (on) throw new RenderError(`agent.${key} runs on GitHub and Forgejo; leave agent.${key} unset on GitLab`);
+    }
     if (input.review && !input.comments) throw new RenderError(`review: ${NEEDS_COMMENTS_ON_GITLAB.review}`);
     // With gitlab.token: protected no branch pipeline holds the token, so nothing commits formatting.
     const protectedToken = input.gitlabToken === "protected";
@@ -2299,6 +2311,13 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.wavesSpec) extra.push({ path: WAVES_SPEC, content: input.wavesSpec });
   if (chantAgent) extra.push(...chantAgent.files);
   if (chantDrift) extra.push(...chantDrift);
+  // agent.alert, agent.apply-failed and agent.schedule: chant's agent jobs, each in a workflow of its own.
+  for (const [kind, on] of [["alert", input.agentAlert], ["apply-failed", input.agentApplyFailed], ["schedule", input.agentSchedule]] as const) {
+    if (!on) continue;
+    const files = chantFactsFiles(kind, forge, image, on, MARKER);
+    if (!files) throw new RenderError(`agent.${kind}: the installed chant has no ${kind} agent`);
+    extra.push(...files.files);
+  }
   if (input.resume) {
     // apply.resume: chant's resume, a schedule of its own that starts a waiting wave's job again once its approval stands.
     const resume = new Map<string, never>([
