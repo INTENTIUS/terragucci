@@ -67,8 +67,9 @@ describe("promotion in terragucci.yml", () => {
       { name: "envs-net", byEnv: { dev: { root: "envs/dev/net", dependsOn: [] }, staging: { root: "envs/staging/net", dependsOn: [] } } },
     ]);
     const text = promotionComponentsText(plan, ["dev", "staging"]);
-    expect(text).toContain('env === "staging"\n    ? { name: "envs-net", dependsOn: [], deploy: [{ phase: "Apply", steps: [{ kind: "gate", gate: "staging"');
-    expect(text).toContain('root: "envs/dev/net"');
+    expect(text).toContain('{ kind: "gate", gate: "release", environments: { "staging": { gate: "staging", description: "approve with terragucci approve release staging" } } }');
+    expect(text).toContain('environments: { "dev": { root: "envs/dev/net" }, "staging": { root: "envs/staging/net" } }');
+    expect(text).not.toContain("CHANT_ENV");
     expect(text).not.toContain("shared/dns");
     expect(text).toContain("chant-disable COMP004");
   });

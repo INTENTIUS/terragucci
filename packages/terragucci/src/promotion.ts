@@ -5,9 +5,9 @@
  *
  * chant deploys a release by component, and a component's deploy names the
  * root it applies. `init` writes each root of an environment of `promotion`
- * as a component in `terragucci.component.ts`, which chant imports with
- * `CHANT_ENV` set to the environment it compiles or deploys. The file gives
- * each component the root of that environment, so a release cut from one
+ * as a component in `terragucci.component.ts`. Each component's step carries its
+ * root per environment as `environments` (a step's inputs per environment),
+ * which chant resolves for the run's environment, so a release cut from one
  * commit records each environment's own roots, and a promote to staging
  * deploys the staging roots' files only.
  *
@@ -113,28 +113,27 @@ export function promotionPlan(input: {
 /** A component's export name: its name with `-` as `_`, after `root_`, so no name is a keyword and no two collide. */
 const exportName = (name: string): string => `root_${name.replace(/-/g, "_")}`;
 
-/** The text of terragucci.component.ts: one export per component, its value chosen by CHANT_ENV, every value a literal. */
+/** The text of terragucci.component.ts: one export per component, each step carrying its root and gate per environment as `environments`. */
 export function promotionComponentsText(plan: Pick<PromotionPlan, "components" | "gated">, promotion: readonly string[]): string {
   const lines: string[] = [
     PROMOTION_MARKER,
-    "// chant imports it with CHANT_ENV set to the environment it compiles or deploys, and each component applies that environment's root.",
+    "// Each step names its root, and its gate, in the environments it applies in; chant picks the entry of the environment it compiles or deploys.",
     "// Run terragucci init again after adding or moving a root, or changing promotion or an environment's gate.",
     ...(plan.gated.length > 0 ? [`// chant-disable COMP004 -- each gate waits for a person: ${releaseApproveLine("<env>")}`] : []),
     'import type { Component } from "@intentius/chant/components";',
     "",
-    "const env = process.env.CHANT_ENV;",
     `const NO_ROLLBACK = ${JSON.stringify(PROMOTION_NO_ROLLBACK)};`,
   ];
   for (const c of plan.components) {
-    const branches = promotion.flatMap((env) => {
-      const at = c.byEnv[env];
-      if (!at) return [];
-      const gate = plan.gated.includes(env) ? `{ kind: "gate", gate: ${JSON.stringify(env)}, description: ${JSON.stringify(`approve with ${releaseApproveLine(env)}`)} }, ` : "";
-      return [[`env === ${JSON.stringify(env)}`, `? { name: ${JSON.stringify(c.name)}, dependsOn: ${JSON.stringify(at.dependsOn)}, deploy: [{ phase: "Apply", steps: [${gate}{ kind: "terraform-apply", root: ${JSON.stringify(at.root)}, noRollback: NO_ROLLBACK }] }] }`]];
-    });
-    lines.push("", `export const ${exportName(c.name)}: Component | undefined =`);
-    branches.forEach(([test, value], i) => lines.push(`  ${i === 0 ? "" : ": "}${test}`, `    ${value}`));
-    lines.push("  : undefined;");
+    const envs = promotion.filter((env) => c.byEnv[env]);
+    const dependsOn = [...new Set(envs.flatMap((env) => c.byEnv[env]!.dependsOn))].sort();
+    const gatedEnvs = envs.filter((env) => plan.gated.includes(env));
+    const gate =
+      gatedEnvs.length > 0
+        ? `{ kind: "gate", gate: "release", environments: { ${gatedEnvs.map((env) => `${JSON.stringify(env)}: { gate: ${JSON.stringify(env)}, description: ${JSON.stringify(`approve with ${releaseApproveLine(env)}`)} }`).join(", ")} } }, `
+        : "";
+    const apply = `{ kind: "terraform-apply", noRollback: NO_ROLLBACK, environments: { ${envs.map((env) => `${JSON.stringify(env)}: { root: ${JSON.stringify(c.byEnv[env]!.root)} }`).join(", ")} } }`;
+    lines.push("", `export const ${exportName(c.name)}: Component = { name: ${JSON.stringify(c.name)}, dependsOn: ${JSON.stringify(dependsOn)}, deploy: [{ phase: "Apply", steps: [${gate}${apply}] }] };`);
   }
   return `${lines.join("\n")}\n`;
 }
