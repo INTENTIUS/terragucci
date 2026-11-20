@@ -99,7 +99,7 @@ agent:
 
 The failed-apply triage comment on the pull request is unchanged; `respond.apply-failed` keeps its setting. The agent's workflow runs every 15 minutes and when started by hand on the default branch.
 
-`apply.when: pull-request` splits the waves into jobs that hold no relay key, so `config check` refuses `agent.apply-failed` with it.
+With `apply.when: pull-request` the waves run as split jobs. The gate and record jobs, which respond for a wave, hold `CHANT_AGENT_FACTS` and the relay key, so a failed apply records its fact there. The plan and apply jobs hold neither.
 
 ## An agent on a schedule
 

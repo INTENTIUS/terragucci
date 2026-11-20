@@ -1,4 +1,5 @@
 // terragucci#1495: agent.alert, agent.apply-failed and agent.schedule on chant's agent jobs (chant#5329, #5357).
+import { parseYAML } from "@intentius/chant/yaml";
 import { describe, expect, it } from "vitest";
 import { agentTriggerInput } from "../src/agent-comment";
 import { ConfigError, validateConfig } from "../src/config";
@@ -77,9 +78,19 @@ describe("the agents' workflows on chant's agent jobs", () => {
     expect(renderPipeline({ ...input, forge: "github", agentApplyFailed: agentTriggerInput(settings({ "apply-failed": true }), "apply-failed") }).content).toContain("secrets.CHANT_RELAY_KEY");
   });
 
-  it("refuse agent.apply-failed with apply.when: pull-request, whose split jobs record no facts", () => {
-    expect(() => renderPipeline({ ...input, forge: "github", applyWhen: "pull-request", agentApplyFailed: agentTriggerInput(settings({ "apply-failed": true }), "apply-failed") } as never)).toThrow("agent.apply-failed");
-    expect(() => validateConfig({ apply: { when: "pull-request" }, agent: { ...base, "apply-failed": true } }, "t")).toThrow(/agent.apply-failed/);
+  it("records a failed apply's facts on the gate and record jobs of the split waves of apply.when: pull-request, and on neither the plan nor the apply job", () => {
+    expect(() => validateConfig({ apply: { when: "pull-request" }, agent: { ...base, "apply-failed": { relay_key_secret: "OPS_RELAY" } } }, "t")).not.toThrow();
+    const on = renderPipeline({ ...input, forge: "github", applyWhen: "pull-request", agentApplyFailed: agentTriggerInput(settings({ "apply-failed": { relay_key_secret: "OPS_RELAY" } }), "apply-failed") } as never);
+    const jobs = (parseYAML(on.content) as { jobs: Record<string, unknown> }).jobs;
+    const holds = (name: string): boolean => JSON.stringify(jobs[name]).includes("CHANT_AGENT_FACTS");
+    for (const name of ["apply-wave-1-plan", "apply-wave-1-gate", "apply-wave-1", "apply-wave-1-record"]) expect(jobs[name], name).toBeDefined();
+    expect(holds("apply-wave-1-gate")).toBe(true);
+    expect(holds("apply-wave-1-record")).toBe(true);
+    expect(JSON.stringify(jobs["apply-wave-1-record"])).toContain("secrets.OPS_RELAY");
+    expect(holds("apply-wave-1-plan")).toBe(false);
+    expect(holds("apply-wave-1")).toBe(false);
+    const off = renderPipeline({ ...input, forge: "github", applyWhen: "pull-request" } as never);
+    expect(off.content).not.toContain("CHANT_AGENT_FACTS");
   });
 
   it("keep the failed-apply triage comment", () => {

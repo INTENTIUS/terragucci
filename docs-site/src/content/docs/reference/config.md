@@ -671,7 +671,7 @@ Each takes the keys of [the agent comment](#the-agent-comment) (`command`, `key_
 | `cron` | required | `schedule`: when the agent runs, a five-field cron |
 | `task` | required | `schedule`: what the agent does on each run, at most 4000 characters |
 
-`alert: true` and `apply-failed: true` take every default. `max_cost_usd` is the most the agent's runs may cost per day. `agent.apply-failed` turns on the apply waves' failed-apply facts and leaves the triage comment as it is; it cannot go with `apply.when: pull-request`. [The jobs](/terragucci/reference/pipeline/#agents-from-alerts-failed-applies-and-schedules).
+`alert: true` and `apply-failed: true` take every default. `max_cost_usd` is the most the agent's runs may cost per day. `agent.apply-failed` turns on the apply waves' failed-apply facts and leaves the triage comment as it is. With `apply.when: pull-request` the gate and record jobs of the split waves record the facts. [The jobs](/terragucci/reference/pipeline/#agents-from-alerts-failed-applies-and-schedules).
 
 ## The review
 

@@ -781,9 +781,6 @@ export interface AgentScheduleSettings extends AgentCommentSettings {
   window?: number;
 }
 
-/** Why `agent.apply-failed` and `apply.when: pull-request` do not go together. */
-export const AGENT_APPLY_FAILED_SPLIT = "the waves of apply.when: pull-request run in split jobs that hold no relay key, so a failed apply records nothing for the agent; leave apply.when unset";
-
 export const AGENT_FACTS_KEYS = [...AGENT_COMMENT_KEYS, "window", "relay_key_secret"] as const;
 export const AGENT_SCHEDULE_KEYS = [...AGENT_COMMENT_KEYS, "window", "cron", "task"] as const;
 /** The most characters of a scheduled agent's task (chant's AGENT_TASK_MAX). */
@@ -1700,7 +1697,6 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
       if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
-      if (a["apply-failed"] !== undefined && a["apply-failed"] !== false && (s as ProjectSettings).apply?.when === "pull-request") problems.push(`${where}.agent.apply-failed: ${AGENT_APPLY_FAILED_SPLIT}`);
       if (a.alert !== undefined) checkAgentComment(a.alert, a.token_env, `${where}.agent.alert`, problems, "alert");
       if (a["apply-failed"] !== undefined) checkAgentComment(a["apply-failed"], a.token_env, `${where}.agent.apply-failed`, problems, "apply-failed");
       if (a.schedule !== undefined) checkAgentComment(a.schedule, a.token_env, `${where}.agent.schedule`, problems, "schedule");

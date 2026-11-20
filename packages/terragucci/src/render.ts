@@ -189,7 +189,7 @@ export function deferDeepSkips(entities: Map<string, unknown>): void {
 }
 import { ATMOS_WRITE } from "./atmos";
 import { ATMOS_DRIFT_PR, ATMOS_DRIFT_PR_SHORT, ATMOS_ROLLOUTS } from "./refusals";
-import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, AGENT_APPLY_FAILED_SPLIT, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
+import { AGENT_LOGIN, APPLY_REQUIRES, BRANCHES_NOT_PR_APPLY, COMMENTS_GITLAB_ONLY, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_ROLLOUTS, WAVE_JOBS_NOT_PR_APPLY, PR_APPLY_NEEDS_ON_GITLAB, NEEDS_COMMENTS_ON_GITLAB, NO_GITLAB_PLAN_LOCKS, ENVIRONMENTS_PR_APPLY, ENVIRONMENTS_RESUME, ENVIRONMENTS_EPHEMERAL, responseTo, type ApplyMerge, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GitLabToken, type OidcSettings, type RespondEvent, type RolePair, AGENT_DRIFT_RESPOND, EPHEMERAL_NOT_PROTECTED, passProblems, runnerByStage, runnerProblems, type PassSettings, type RunnerSettings, type RunnerSpec, type RunnerStage, type AudienceStage } from "./config";
 import { DEFAULT_TOKEN_ENV } from "./forge";
 import type { ResolvedControl } from "./control-repo";
 import { rootRoles } from "./cloud-identity";
@@ -1647,7 +1647,6 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.synth && drift && responseTo({ respond: input.respond }, "drift") === "pull-request") throw new RenderError(`respond.drift: ${input.atmos ? ATMOS_DRIFT_PR : SYNTH_DRIFT_PR}`);
   if (input.synth && rollouts) throw new RenderError(`rollouts: ${input.atmos ? ATMOS_ROLLOUTS : SYNTH_ROLLOUTS}`);
   const driftPr = !input.synth && responds(input.respond, "drift") ? { tokenEnv } : undefined;
-  if (input.agentApplyFailed && input.applyWhen === "pull-request") throw new RenderError(`agent.apply-failed: ${AGENT_APPLY_FAILED_SPLIT}`);
   if (input.agentDrift && !drift) throw new RenderError("agent.drift runs when the drift job opens the drift issue; set drift to a cron schedule");
   if (input.agentDrift && driftPr) throw new RenderError(`respond.drift: ${AGENT_DRIFT_RESPOND}`);
   // Tips are pull requests from the default branch, for plain roots and Terragrunt repos alike.

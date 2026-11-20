@@ -383,7 +383,7 @@ The pull request is planned like any other, and its merge applies through the ga
 | the agent job | the job's own read-only token and, for alerts and failed applies, the relay key in its decision step; the model's key in the agent's step alone | reads the facts from `chant/lifecycle`, checks each signature, runs the agent command on the default branch and keeps its change as a patch |
 | the push job | the secret `agent.token_env` names | in a fresh job, checks the decision's facts against the ledger, applies the patch, refuses a [guarded path](#paths-an-agent-cannot-change), pushes to `terragucci/agent/<workflow name>` (with `-<member>` for a member's facts) without force and opens or updates the pull request |
 
-With `agent.apply-failed`, each apply wave job's command step holds `CHANT_AGENT_FACTS=apply-failed` and the relay key, so a failed wave records a fact for each member that did not apply. The triage comment posts as before.
+With `agent.apply-failed`, each apply wave job's command step holds `CHANT_AGENT_FACTS=apply-failed` and the relay key, so a failed wave records a fact for each member that did not apply. With `apply.when: pull-request` the split waves' gate and record jobs hold them, and the plan and apply jobs hold neither. The triage comment posts as before.
 
 ### The review
 
