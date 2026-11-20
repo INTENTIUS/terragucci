@@ -208,6 +208,7 @@ dashboards: true
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 | `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
 | `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) |
+| `promotion` | none | the order a release moves through the environments, first to last: names of `environments`, each once, two or more. `init` writes the roots of those environments as components for [`terragucci promote` and `rollback`](/terragucci/reference/cli/#promote-and-rollback); see [Promotion](#promotion) |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts. [Job triggers](/terragucci/concepts/job-triggers/) lists which keys start a scheduled job and what each job starts on.
@@ -450,6 +451,20 @@ On Forgejo, `config check` gives the tip [`terragucci-shared-subject`](/terraguc
 Each environment's roots apply in jobs of their own ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)). The `apply-comment` job applies nothing itself: on a merged pull request it re-runs the waves' jobs of the merge commit's run that did not succeed.
 
 `gate` is read from `terragucci.yml` at base, as `approval` is: a pull request that edits `environments` is gated by the default branch's block, and its own edits take effect once it merges. The plan note gives each wave's environments a column of its own, and the [report](/terragucci/reference/report-schema/) names each root's `environment`; the [estate page](/terragucci/guides/see-every-project/) shows it beside each root's resources. Run `npx terragucci init` after adding or changing an environment: the pipeline has each environment's apply jobs with its roles, runner, forge environment and audience. In a [control repo](/terragucci/concepts/control-repo/), `defaults` and a project can each carry `environments`; they merge by environment name, and a project's keys for an environment replace the defaults' for that environment.
+
+## Promotion
+
+```yaml
+environments:
+  dev:     { roots: ["envs/dev/**"], gate: never }
+  staging: { roots: ["envs/staging/**"] }
+  prod:    { roots: ["envs/prod/**"], gate: always }
+promotion: [dev, staging, prod]
+```
+
+`promotion` lists environments of `environments` in the order a release moves through them. Run `npx terragucci init` after setting it: it lists the same order under `environments` in `chant.config.ts`, and writes `terragucci.component.ts` with each environment's roots, which [`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback) and `rollback` deploy. An environment's `gate` decides whether a promote into it waits for [`terragucci approve release <env>`](/terragucci/reference/cli/#approve). The pipeline a merge runs is the same with or without `promotion`.
+
+`terragucci config check` refuses a list of fewer than two names, a name listed twice, a name that is not one of `environments`, and `promotion` beside `terragrunt` or `atmos`. `init` refuses it in a Terramate repo, two roots of one environment that make the same component, and an environment whose globs match no root. [Promote a release through environments](/terragucci/guides/promote-a-release/) walks through it.
 
 ## Runners
 

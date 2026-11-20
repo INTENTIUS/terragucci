@@ -468,3 +468,31 @@ export async function approveGate(repo: string, o: GateApproveOptions): Promise<
   if (code === 0) log(`approved ${g.what} ${gate}; ${g.next(o.target)}`);
   return { code, command };
 }
+
+/**
+ * `terragucci approve release <env> [--plan <digest>]`: approve the release
+ * gate a `terragucci promote` or `rollback` stopped at (./promotion.ts). Each
+ * component of the environment waits at a gate named after it, and chant's
+ * release gate binds that gate to the release, the environment and the change
+ * set the promote planned: `chant approve release <env> --env <env>`. With
+ * `--plan` it approves that digest only. Run the same promote or rollback
+ * again afterwards.
+ */
+export async function approveRelease(repo: string, o: Omit<ApproveOptions, "wave" | "resume" | "fetch"> & { environment: string }): Promise<{ code: number; command: string }> {
+  const log = o.log ?? ((l: string) => console.log(l));
+  if (!/^[a-z0-9_-]+$/.test(o.environment)) throw new ConfigError(`approve release takes an environment's name, not ${JSON.stringify(o.environment)}: terragucci approve release <env> [--plan <digest>]`);
+  const plan = o.plan?.trim();
+  if (o.plan !== undefined && !plan) throw new ConfigError("--plan takes the digest the promote printed: terragucci approve release <env> --plan <digest>");
+  const configPath = findConfig(repo);
+  const mode: Approval = checkoutApproval(repo, configPath ? await loadConfig(configPath) : {})?.mode ?? "ledger";
+  const sign = o.sign ?? (mode === "sealed" ? true : undefined);
+  const args = ["approve", "release", o.environment, "--env", o.environment, ...(plan ? ["--plan", plan] : []), ...(o.actor ? ["--actor", o.actor] : []), ...(sign === undefined ? [] : sign === true ? ["--sign"] : ["--sign", sign])];
+  const command = `chant ${args.map(quote).join(" ")}`;
+  if (o.dryRun) {
+    log(`would run: ${command}`);
+    return { code: 0, command };
+  }
+  const code = runChant(repo, args, command, o, log);
+  if (code === 0) log(`approved the release gate of ${o.environment}; run the same terragucci promote or rollback again`);
+  return { code, command };
+}

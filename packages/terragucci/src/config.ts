@@ -1045,6 +1045,13 @@ export interface ProjectSettings {
    * and project blocks merge them per environment name.
    */
   environments?: Record<string, EnvironmentSettings>;
+  /**
+   * The order a release moves through the environments, first to last: names
+   * of `environments`, each once. `init` writes it into chant.config.ts
+   * `environments` and writes the roots as chant components
+   * (./promotion.ts), which `terragucci promote` and `rollback` deploy.
+   */
+  promotion?: string[];
 }
 
 /** An environment's name: lower-case letters, digits, `-` and `_`. */
@@ -1396,7 +1403,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "forge_url", "gate", "approval", "approval_rules", "apply", "branches", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "promotion", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1659,6 +1666,8 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   // A repo's own file holds whole environments; a control repo's defaults and projects may each hold part of one, merged by name (resolveProject).
   if (s.environments !== undefined) checkEnvironments(s.environments, `${where}.environments`, problems, s);
   if (where === "config" && isObject(s.environments)) problems.push(...environmentNeeds(s as ProjectSettings, where));
+  if (s.promotion !== undefined) checkPromotion(s.promotion, `${where}.promotion`, problems, s);
+  if (where === "config" && s.promotion !== undefined) problems.push(...promotionNeeds(s as ProjectSettings, where));
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -2873,6 +2882,31 @@ export function environmentNeeds(s: ProjectSettings, where: string): string[] {
   return out;
 }
 
+/** Why `promotion` is refused beside Terragrunt or Atmos: a release deploys roots that chant.config.ts names, and those shapes have none. */
+export const PROMOTION_PLAIN_ROOTS = "a release moves plain roots, each a terraform.roots entry of chant.config.ts, and Terragrunt units and Atmos instances are not";
+
+/** `promotion`'s own shape: a list of environment names, each once. Whether each is an environment is promotionNeeds'. */
+function checkPromotion(v: unknown, where: string, problems: string[], s: Record<string, unknown>): void {
+  if (!Array.isArray(v) || v.length < 2 || !v.every((n) => typeof n === "string" && ENVIRONMENT_NAME.test(n))) {
+    problems.push(`${where} must list two or more environment names in the order a release moves through them, such as [dev, staging, prod]`);
+    return;
+  }
+  const seen = new Set<string>();
+  for (const n of v as string[]) {
+    if (seen.has(n)) problems.push(`${where} lists ${n} twice; a release reaches each environment once`);
+    seen.add(n);
+  }
+  if (s.terragrunt !== undefined || s.atmos !== undefined) problems.push(`${where}: ${PROMOTION_PLAIN_ROOTS}`);
+}
+
+/** What `promotion` needs once the settings are whole: each name a key of `environments`. */
+export function promotionNeeds(s: ProjectSettings, where: string): string[] {
+  if (!Array.isArray(s.promotion)) return [];
+  const names = isObject(s.environments) ? Object.keys(s.environments) : [];
+  if (names.length === 0) return [`${where}.promotion needs environments: each name it lists is an environment with its own roots`];
+  return s.promotion.filter((n) => typeof n === "string" && !names.includes(n)).map((n) => `${where}.promotion lists ${n}, which is not one of environments (${names.join(", ")})`);
+}
+
 /** Check a parsed config and return it typed, or throw with every problem listed. */
 export function validateConfig(given: unknown, where: string): TerragucciConfig {
   const problems: string[] = [];
@@ -3068,6 +3102,7 @@ export function resolveProject(config: TerragucciConfig, key: string): ResolvedS
     checkEnvironments(out.environments, `projects["${key}"].environments`, needs, out as unknown as Record<string, unknown>);
     needs.push(...environmentNeeds(out, `projects["${key}"]`));
   }
+  if (out.promotion !== undefined) needs.push(...promotionNeeds(out, `projects["${key}"]`));
   if (needs.length) throw new ConfigError(`projects["${key}"] has ${needs.length} problem(s) once the defaults are merged in:\n  ${needs.join("\n  ")}`, needs);
   return out;
 }

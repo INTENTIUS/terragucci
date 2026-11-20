@@ -103,6 +103,10 @@ The approval mode decides what else `init` writes.
 
 `init` also writes `.chant/op-waves/tf-apply.spec.json` in every repo, Terragrunt, Atmos and Terramate repos too. Each wave job renders its rules with [`waves-spec`](#waves-spec) from that file and `terragucci.yml` at base, and takes the runs from the commit it applies. In a repo of plain roots, `init` also writes `chant.config.ts` at the repo's root, which names each root under `terraform.roots`, keyed by its path. Commit these with the pipeline. `init` replaces a `chant.config.ts` only when terragucci wrote it; it leaves your own and says so. Run `init` again after you add or move a root. A wave job runs the binary `terraform.binary` names there; when a root plans with another one, the wave plans and applies it through terragucci's own calls and the job says why.
 
+### The promotion components
+
+With [`promotion`](/terragucci/reference/config/#promotion) set, `init` also writes `terragucci.component.ts` at the repo's root and lists the environments in that order under `environments` in `chant.config.ts`, with `lexicons: ["terraform"]`. The file holds each root of those environments as a chant component that applies the root of the environment chant deploys, and a gate named after each environment whose gate is not `never`. `init` replaces it only when terragucci wrote it, and removes it when `promotion` is taken out. [Promote a release through environments](/terragucci/guides/promote-a-release/#the-components) says how components are named.
+
 ### The components file
 
 `init` also writes `terragucci.components.json` at the repo's root, beside the pipeline. It lists the repo's roots as chant components, with their waves and the pipeline's jobs that apply them. The pipeline does not read it, and the workflow is the same with or without it. `init` writes it again on every run and replaces it only when `generated_by` names terragucci, unless you pass `--force`.
@@ -727,7 +731,7 @@ It also adds a PreToolUse hook to `.claude/settings.local.json`, which Claude Co
 | refused from a directory that holds a root | Terragrunt's `run --all`, `run-all` and `stack run` with any of the above |
 | run | everything else, such as `init`, `validate`, `fmt`, `plan`, `show` and `state list` |
 
-Outside the roots, the wrappers run every command. The hook applies the same rule to the agent's Bash commands, following `cd` and `sh -c`, and refuses `terragucci approve`, `override`, `stage tf-apply`, `unlock-state`, `pr-merge` and `--mode apply` anywhere in the repo. A refusal exits non-zero (3 from a wrapper, 2 from the hook) with a message that names `propose` on `terragucci mcp --propose`. Run it again after the roots change. The guard does not stop an agent that runs a binary another way; [the threat model](/terragucci/reference/threat-model/#trust) says what does.
+Outside the roots, the wrappers run every command. The hook applies the same rule to the agent's Bash commands, following `cd` and `sh -c`, and refuses `terragucci approve`, `override`, `stage tf-apply`, `unlock-state`, `pr-merge`, `promote`, `rollback` and `--mode apply` anywhere in the repo. A refusal exits non-zero (3 from a wrapper, 2 from the hook) with a message that names `propose` on `terragucci mcp --propose`. Run it again after the roots change. The guard does not stop an agent that runs a binary another way; [the threat model](/terragucci/reference/threat-model/#trust) says what does.
 
 ## view
 
@@ -929,6 +933,7 @@ terragucci approve [wave-<k> | <migration>] [--plan <digest>] [--actor <name>] [
 terragucci approve export <root> --plan <digest> [--sign]
 terragucci approve unlock <root> --plan <digest> [--sign]
 terragucci approve ephemeral <pr> --plan <digest> [--sign]
+terragucci approve release <env> [--plan <digest>] [--sign]
 ```
 
 | Flag | Meaning |
@@ -942,6 +947,7 @@ terragucci approve ephemeral <pr> --plan <digest> [--sign]
 | `unlock <root>` | the release of the lock [`unlock-state`](#unlock-state) found on `<root>` |
 | `ephemeral <pr>` | the plans of pull request `<pr>`'s [ephemeral environment](#ephemeral): it approves gate `pr-env` of op `pr-<pr>` for the digest the job printed |
 | `ephemeral <pr>` | pull request `<pr>`'s [ephemeral environment](#ephemeral) |
+| `release <env>` | the release gate a [promote or rollback](#promote-and-rollback) into `<env>` waits at: it approves the change set that run planned for its release in `<env>`. With `--plan`, only that digest |
 | `--dry-run` | print what it would approve and record nothing |
 | `--no-resume` | record the approval only; by default it then starts the wave again with your forge token ([Resume after an approval](/terragucci/reference/pipeline/#resume-after-an-approval)) |
 
@@ -958,6 +964,27 @@ With a digest that no longer waits, because the plans moved after you read them,
 ```text
 not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha256:2e7a63f3.... The plans moved since that digest, or were approved and applied; read the waiting plans, then approve their digest
 ```
+
+## promote and rollback
+
+```bash
+terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]
+terragucci rollback <env> --release <label> [--dry-run] [--json]
+```
+
+Deploy a release to one environment of [`promotion`](/terragucci/reference/config/#promotion), on chant's `components promote` and `components rollback`. [Promote a release through environments](/terragucci/guides/promote-a-release/) walks through cutting a release and moving it.
+
+| Flag | Meaning |
+|---|---|
+| `--to` | the environment the release goes to |
+| `--release` | the release's label or digest; the deploy reads the files the release recorded for that environment |
+| `--from` | the environment whose record of each component is promoted; default: the one before `--to` in `promotion` |
+| `--allow-skip` | promote past an environment of `promotion` that has not run the release, which is refused otherwise |
+| `<env>` (rollback) | the environment that goes back; `--release` names the earlier release it goes back to |
+| `--dry-run` | print each component, the release and where it was deployed from, and change nothing |
+| `--json` | chant's plan and result as JSON |
+
+An environment whose gate is not `never` stops before it applies and exits 3, naming `terragucci approve release <env>`; run the same command again once it is approved. Each deploy records the release the environment runs on `chant/lifecycle`. Both commands need `terragucci.component.ts`, which [`init`](#init) writes from `promotion`, and `@intentius/chant-lexicon-terraform` installed beside terragucci; without either they exit 1 and say what to do.
 
 ## migrate
 

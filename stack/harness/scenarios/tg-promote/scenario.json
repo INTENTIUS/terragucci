@@ -1,0 +1,219 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-promote",
+  "product": "terragucci",
+  "claim": "release/promote",
+  "title": "A release cut from one commit is deployed to dev, refused to prod past staging, and promoted to staging behind staging's gate, which applies staging's own root and records the release staging runs",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-promote",
+  "limits": {
+    "out-of-band": 1800
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied dev's root",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "do": "open",
+      "branch": "notes",
+      "overlay": "notes",
+      "title": "notes: a change that touches no root"
+    },
+    {
+      "id": "merge-notes",
+      "do": "merge",
+      "pull": "notes"
+    },
+    {
+      "id": "notes-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed, so its commit can be released",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "cut-r1",
+      "do": "out-of-band",
+      "label": "a release is cut from the merge commit",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "cut",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "dev-r1",
+      "do": "out-of-band",
+      "label": "dev, the first environment, deploys it",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "first",
+        "dev",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "skip-refused",
+      "do": "out-of-band",
+      "label": "a promote to prod past staging is refused",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    },
+    {
+      "id": "staging-untouched",
+      "do": "out-of-band",
+      "label": "nothing applied staging's root before the approval",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/staging/net",
+        "id",
+        "net-staging-v1"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    },
+    {
+      "id": "staging-waits-r1",
+      "do": "out-of-band",
+      "label": "a promote of r1 to staging plans staging's root and waits at staging's gate",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "staging",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 3
+        }
+      ]
+    },
+    {
+      "id": "approve-r1",
+      "do": "out-of-band",
+      "label": "the reviewer approves staging's release gate",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "approve",
+        "staging"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-r1",
+      "do": "out-of-band",
+      "label": "the same promote deploys r1 to staging",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "staging",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-root-r1",
+      "do": "out-of-band",
+      "label": "staging's own root applied, with staging's files",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/staging/net",
+        "id",
+        "net-staging-v1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "recorded",
+      "do": "out-of-band",
+      "label": "staging's deploy record names the release",
+      "command": [
+        "stack/harness/check.sh",
+        "ledger-file",
+        "staging/releases.jsonl",
+        ".releaseDigest | startswith(\"jcs1-sha256:\")"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the merged pull request's components name dev's root for staging, so the promote applies dev's files under staging and staging's root has no output"
+  }
+}

@@ -60,6 +60,9 @@
  *   terragucci approve export|unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a state export request, or the release of a state lock)
  *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
  *   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a day-2 action's request; the requester's own approval never counts)
+ *   terragucci approve release <env> [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve the release gate a promote or rollback of <env> waits at)
+ *   terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]   (deploy a release to the next environment of promotion: chant's components promote)
+ *   terragucci rollback <env> --release <label> [--dry-run] [--json]   (deploy an earlier release to <env>: chant's components rollback)
  *   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   (run one Terraform action block of a root under a gated request: exit 3 while it waits, 0 once it ran, 1 on a refusal or a failed run; see action.ts)
  *   terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci action` comment or the action workflow's dispatch; run by the generated action workflow)
  *   terragucci action --from <file> [--forge forgejo]   (run the action the decision names and reply on its pull request; run by the generated action workflow)
@@ -132,7 +135,8 @@ import { approvalStatus, reviewForge as reviewForgeOf } from "./review";
 import { writePlanNoteNotices } from "./plan-note";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
-import { approve, approveGate, isGateKeyword, overrideDenial } from "./approve";
+import { approve, approveGate, approveRelease, isGateKeyword, overrideDenial } from "./approve";
+import { releaseArgv, releaseRefusal, releaseWords } from "./promotion";
 import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
@@ -264,6 +268,9 @@ const USAGE = `usage:
   terragucci approve unlock <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve releasing a state lock
   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a pull request's ephemeral copy
   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a day-2 action's request
+  terragucci approve release <env> [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   approve the release gate a promote or rollback of <env> waits at
+  terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]   deploy a release to the next environment of promotion
+  terragucci rollback <env> --release <label> [--dry-run] [--json]   deploy an earlier release to <env>
     (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
   terragucci migrate revert <migration>
@@ -344,7 +351,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume", "allow-skip"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -474,8 +481,8 @@ export async function main(argv: string[]): Promise<number> {
   };
   try {
     // `action --json` prints the action's own object (action.ts ActionJson), which behold and scripts read.
-    // `run wave --json` is chant's own: it prints the wave's result.
-    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action" && cmd !== "run") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
+    // `run wave --json` is chant's own: it prints the wave's result, as `promote` and `rollback` print chant's plan and run.
+    if (json && !ENVELOPE_COMMANDS.includes(cmd) && cmd !== "action" && cmd !== "run" && cmd !== "promote" && cmd !== "rollback") throw new ConfigError(`--json is not available on ${cmd || "help"}`);
     switch (cmd) {
       case "init": {
         const forge = str(flags, "forge");
@@ -1104,6 +1111,11 @@ export async function main(argv: string[]): Promise<number> {
       case "approve": {
         const sign = flags.sign === true ? true : str(flags, "sign");
         const plan = flags.plan === true ? "" : str(flags, "plan");
+        if (args[0] === "release") {
+          if (args.length !== 2 || !args[1]) throw new ConfigError("approve release takes one environment: terragucci approve release <env> [--plan <digest>]");
+          const done = await approveRelease(cwd, { environment: args[1], ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
+          return done.code;
+        }
         if (isGateKeyword(args)) {
           if (args.length > 2) throw new ConfigError(`approve ${args[0]} takes one ${args[0] === "ephemeral" ? "pull request" : "root"}, not ${args.slice(1).join(" ")}`);
           const done = await approveGate(cwd, { kind: args[0], target: args[1], ...(plan !== undefined ? { plan } : {}), ...(sign !== undefined ? { sign } : {}), ...(str(flags, "actor") ? { actor: str(flags, "actor") } : {}), dryRun: flags["dry-run"] === true });
@@ -1359,6 +1371,15 @@ export async function main(argv: string[]): Promise<number> {
         if (args[0] === "resume") return runChantInProcess(["run", "resume", ...argv.slice(argv.indexOf("resume") + 1)], TERRAGUCCI_WORDS);
         if (args[0] !== "wave") throw new ConfigError("usage: terragucci run wave --spec <file> --wave <k> [--render-spec] [--base <ref>] [--phase plan|gate|apply|record] [--decide | --share <i> | --group <name> [--share <i>]], or another line of chant's run wave");
         return runWave(cwd, argv.slice(argv.indexOf("wave") + 1));
+      }
+      case "promote":
+      case "rollback": {
+        // chant's components promote and rollback (./promotion.ts), in terragucci's words, with the release gate's approve line.
+        const verb = cmd as "promote" | "rollback";
+        const chantArgv = releaseArgv(verb, { args, flags });
+        const refused = releaseRefusal(cwd);
+        if (refused) throw new ConfigError(`${verb}: ${refused}`);
+        return runChantInProcess(chantArgv, releaseWords(TERRAGUCCI_WORDS));
       }
       case "components": {
         // chant's note job runs `pr-post` through terragucci's bin (the product plan's words), answered in terragucci's words.
