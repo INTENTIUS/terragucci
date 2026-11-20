@@ -45,19 +45,20 @@ Put `terragucci.yml` at the repo root to change only what the defaults got wrong
 binary: tofu
 waves:
   canary: [envs/dev/core]
-drift: "17 4 * * *"
+drift:
+  schedule: "17 4 * * *"
 ```
 
 ## A file for many repos
 
-[Setting levels](/terragucci/concepts/setting-levels/) shows every level together and how each glob-keyed key matches. In a [control repo](/terragucci/concepts/control-repo/), a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `url`, which names one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
+[Setting levels](/terragucci/concepts/setting-levels/) shows every level together and how each glob-keyed key matches. In a [control repo](/terragucci/concepts/control-repo/), a project's keys override `defaults`; see [Govern many repos](/terragucci/guides/govern-many-repos/). `defaults` takes every key but `forge_url` and its earlier spelling `url`, which name one project's repo, and `rollouts`, which a control repo runs with `terragucci respond rollout` instead.
 
 A key the control repo sets away from its default reaches each project one of two ways:
 
 | How it reaches the project | Keys |
 |---|---|
 | `reconcile` writes it into the project's own `terragucci.yml`, which the jobs read | `policy`, `sources`, `comment_allow`, `reports`, `approval`, `approval_rules`, `gate`, `roots`, `backend_config`, `var_files`, `instances`, `waves`, `parallelism`, `synth`, `drift`, `cost`, `tips`, `runtime`, `telemetry`, `respond`, `decide`, `audit_region`, `modules` (with `modules.attest`, `modules.require`, `modules.trusted`, `modules.test` and `modules.registry`), `terragrunt`, `token_env`, `ephemeral`, `generate` (whose files `reconcile` also writes into the same pull request), `review` (its jobs are in the pipeline too), `environments` (each environment's roles are in the pipeline too, by its root globs) |
-| in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `comments`, `gitlab`, `env`, `oidc`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
+| in the pipeline `reconcile` writes | `binary`, `version`, `forge`, `apply` (with `apply.resume`), `locks`, `branches`, `comments`, `gitlab`, `env`, `oidc`, `identity`, `agent`, `atlantis_comments`, `dashboards`, `notify` (with `notify.webhook`) |
 
 `audit_log_group` reaches no project: `terragucci audit` reads it in the control repo.
 
@@ -70,7 +71,8 @@ projects:
     roots: ["envs/*/*"]
   gitlab.example.com/platform/network:
     binary: terraform
-    drift: "17 4 * * *"
+    drift:
+      schedule: "17 4 * * *"
   codeberg.org/acme/edge: {}
 ```
 
@@ -83,13 +85,14 @@ roots: ["envs/*/*"]
 binary: tofu
 version: 1.10.6
 forge: forgejo
-url: https://git.example.com:3000/acme/infra
+forge_url: https://git.example.com:3000/acme/infra
 gate: always
 apply:
   when: merge                 # pull-request: see Apply before merge
 waves:
   canary: [envs/dev/core]
-drift: "17 4 * * *"
+drift:
+  schedule: "17 4 * * *"
 runtime: forge
 reports:
   bucket: acme-terragucci-reports
@@ -102,7 +105,7 @@ telemetry:
   headers_secret: OTLP_HEADERS
   trace_url: https://grafana.example.com/explore?trace={trace_id}
 token_env: FORGE_TOKEN
-oidc:
+identity:
   plan_role: arn:aws:iam::111122223333:role/terragucci-plan
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 parallelism: 8
@@ -149,12 +152,13 @@ dashboards: true
 | `gate` | `on-destructive` | `always`, `on-destructive` or `never`; see [Gate policy](/terragucci/reference/stages/#gate-policy). Under `always` and `on-destructive` a wave also waits when a root of it that changes something read an upstream output that was known only once the upstream applied, so nobody reviewed the plan it applies; under `never` it does not ([Linked roots](/terragucci/concepts/waves-and-approvals/#linked-roots)). `on-destroy` is accepted as an older name for `on-destructive`, the name SQL Yodeler and chant use. `init` writes it into the pipeline as `--gate`, and it is read at base too: each wave takes the stricter of the two, so a change that loosens `gate` applies its own merge under the old gate and the new one from the merge after it, and one that tightens it takes effect on its own merge ([Everything that waits for a person](/terragucci/concepts/waves-and-approvals/#everything-that-waits-for-a-person)) |
 | `approval` | `ledger`; `sealed` when [`chant.workspace.json`](/terragucci/concepts/glossary/#chantworkspacejson) lists gates and the key is unset | what counts as a waiting wave's approval: `ledger`, any approval of its digest; `pr-review`, also a review of the merged head; `sealed`, only a sealed one; `prow-labels`, with `runtime: prow` and `prow.plan_before_merge`, also the merged pull request's `lgtm` and `approved` labels when its plan note showed the same plans. Or a map: `mode`, one of the four; `require_signed`, `true` to refuse every unsigned approval on the ledger, `false` when unset. In every mode an approval counts only from someone who had no hand in the change ([Eligible approvers](/terragucci/guides/approve-a-wave/#eligible-approvers)). Read at base; see [Approval modes](/terragucci/guides/approve-a-wave/#approval-modes) |
 | `approval_rules` | none | a list of rules, each `roots` (root globs) and one or more of `count` (distinct approvers, 1 when unset), `roles` (roles in `.chant/trust.json` at base, not under `approval: ledger`) and `not_author` (`true`: an approver who is not the change's author, not under `approval: ledger`). A wave takes every rule its roots match. Not with `apply.point`. Read at base; see [More than one approver](/terragucci/guides/approve-a-wave/#more-than-one-approver) |
-| `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `branches`: roots that apply from a branch other than the default; see [Apply from other branches](#apply-from-other-branches). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset. `point`: a workspace decision point every wave gate asks instead of waiting for an approval, read at base, with `approval: ledger`; see [A gate that asks a decision point](/terragucci/guides/approve-a-wave/#a-gate-that-asks-a-decision-point) |
-| `locks` | `apply` | when a pull request locks the roots it reaches: `apply`, when `/terragucci apply` decides its head before merge; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks) |
+| `apply` | `when: merge` | `when`, `merge`, `merge_token_env` and `requires`; see [Apply before merge](#apply-before-merge). `resume`: the minutes, 5 to 60, between runs of the [resume job](/terragucci/reference/pipeline/#resume-after-an-approval), which applies a waiting wave once its approval is on `chant/lifecycle`; off when unset. `point`: a workspace decision point every wave gate asks instead of waiting for an approval, read at base, with `approval: ledger`; see [A gate that asks a decision point](/terragucci/guides/approve-a-wave/#a-gate-that-asks-a-decision-point) |
+| `branches` | none | roots that apply from a branch other than the default, by branch and root glob; see [Apply from other branches](#apply-from-other-branches). `apply.branches` is the earlier spelling, still read |
+| `locks` | `apply` | `locks.when`, when a pull request locks the roots it reaches: `apply`, when `/terragucci apply` decides its head before merge; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks). `locks: plan` and `locks: apply`, with the value alone, are the earlier spelling, still read |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1; `after`, roots that apply after others they do not read (plain roots; see [Root order](#root-order)); `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)); `compose`, `true` to plan and apply the roots a change reaches as one composed run beside the waves, `false` when unset (plain roots on `tofu` or `terraform`; see [A composed run](#a-composed-run)); `compose_max`, the most roots one composed run covers, a whole number of 2 or more, 10 when unset |
-| `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay`: the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret, with `relay_key`, the secret holding the key the buttons are signed with; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
+| `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay_name` (earlier spelling `relay`, still read): the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret, with `relay_key`, the secret holding the key the buttons are signed with; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
 | `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
-| `drift` | `false` (off) | a cron schedule for `tf-drift`; see [Drift](/terragucci/reference/stages/#drift). A choudoufu root under live resource markers plans in full ([Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots)) |
+| `drift` | `false` (off) | `drift.schedule`, a cron schedule for `tf-drift`; `drift: "<cron>"`, with the schedule alone, is the earlier spelling, still read; see [Drift](/terragucci/reference/stages/#drift). A choudoufu root under live resource markers plans in full ([Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots)) |
 | `rollouts` | `false` (off) | a cron schedule for the rollout job, which opens the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. Written as a map, `schedule` is that cron and `watch` is a list of rules that start a rollout when a module or provider has a newer release: each names a `module` or a `provider` glob, `follow` (a list of `patch`, `minor` and `major`; default `patch` and `minor`) and `min_age` (a duration such as `3d`, the age a release reaches before it is picked up). `soak` is a duration such as `24h`, or a map of `after`, `conditions` (a list of `drift`, `apply` and `policy`) and `overrides` (rules naming a `module` or `provider` glob with their own `after` or `conditions`): the next wave opens only once that long has passed since the wave before it merged, and the conditions hold. A person skips it with the comment `/terragucci skip-soak`; see [Wait between waves](/terragucci/guides/roll-out-a-module-version/#wait-between-waves). Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) for its token and the GitLab schedule, and [Start a rollout when a release comes out](/terragucci/guides/roll-out-a-module-version/#start-a-rollout-when-a-release-comes-out) for the rules |
 | `templates` | none | apps from templates: `registry`, the registry URL whose release catalog lists the templates (default `modules.registry`'s); `apps`, the path of a requested app's root, with `{name}` in it (default `apps/{name}`); `require`, `signed` (the default: a signed or verified version) or `any`. With it, `init` writes the request workflow on GitHub and Forgejo; see [`terragucci request`](/terragucci/reference/cli/#request) |
 | `comments` | `false` (off) | GitLab only: the cron of the comments schedule, whose pipelines answer `/terragucci` merge request notes; see [Re-plan from a comment](/terragucci/guides/re-plan-from-a-comment/) |
@@ -168,10 +172,12 @@ dashboards: true
 | `pass` | none | `secrets` and `vars`: names of CI secrets and variables that the jobs that plan, apply and check drift get as environment variables of the same name, such as `TF_VAR_db_password`; never their values. On GitLab every job has the CI/CD variables already, so the key changes nothing there; see [Secrets and variables](#secrets-and-variables) |
 | `secrets` | none | values a root's binary gets from a cloud's secret store, read at job time with the identity the root runs with: a list of entries, each with `roots` (root globs), `from` (`aws`, `gcp` or `azure`) and `values`, a map of variable name to where the value is. Plain roots only; not with `waves.compose` or `ephemeral`; see [From a cloud's secret store](#from-a-clouds-secret-store) |
 | `runner` | the forge's: `ubuntu-latest` on GitHub, `docker` on Forgejo, no tags on GitLab | the runner each job runs on: a label, a list of labels, or on GitHub `group` with optional `labels`; or `default`, `plan`, `apply` and `drift`, each one of those. Written as `runs-on` on GitHub and Forgejo and `tags` on GitLab; see [Runners](#runners) |
-| `url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
+| `forge_url` | `https://<host>/<path>` | where a project lives, for a forge on another scheme or port |
+| `url` | none | the earlier spelling of `forge_url`, still read |
 | `telemetry` | none | `headers_secret`, the secret holding `OTEL_EXPORTER_OTLP_HEADERS`; `trace_url`, a trace link with `{trace_id}` |
 | `token_env` | `GITHUB_TOKEN`, `GITLAB_TOKEN` or `FORGEJO_TOKEN`, by forge | the forge token `reconcile`, `rollout` and `respond --mode apply` use |
-| `oidc` | none | plan and apply identities per cloud, and with `oidc.roles` AWS roles by root glob; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
+| `oidc` | none | the earlier spelling of `identity`, still read |
+| `identity` | none | plan and apply identities per cloud, and with `oidc.roles` AWS roles by root glob; see [Cloud roles over OIDC](/terragucci/reference/environment/#cloud-roles-over-oidc) |
 | `parallelism` | 3 for GitLab-managed state, else 4 | roots planned at once, and planned and applied at once in a wave, with their inits taking turns on the provider cache; Terragrunt uses `terragrunt.parallelism`. Each root running starts its own providers: with the AWS provider, about 800 MB each, so 4 fit a 7 GB runner and 16 need about 13 GB |
 | `terragrunt` | detected | Terragrunt settings: `version`, `exclude`, `parallelism`, `dependents`, `credentials` |
 | `atmos` | detected | Atmos settings: `version`, the Atmos release every job installs (default: the one this terragucci release pins). Set only in a repo with `atmos.yaml` at its root, and never beside `terragrunt`; see [Use Atmos](/terragucci/guides/use-atmos/) |
@@ -359,10 +365,9 @@ Unmerged pull request code runs with the apply role. Forks never apply; require 
 ## Apply from other branches
 
 ```yaml
-apply:
-  branches:
-    release: ["envs/prod/*"]
-    staging: ["envs/staging/*"]
+branches:
+  release: ["envs/prod/*"]
+  staging: ["envs/staging/*"]
 ```
 
 Each key is a branch, and its list holds root globs: a push to `release` applies only the roots under `envs/prod/`. The map routes roots as chant's [`ci.branches`](https://intentius.io/chant/guide/branch-routing/) routes workspace members, with each root's path as the member name, so the globs are chant's: `envs/prod/**` also matches `envs/prod`, and a `*` matches no name that starts with a dot. Waves and their approvals work as on the default branch, and `terragucci approve wave-<n>` approves the waiting wave's plans whichever branch it waits on. `/terragucci apply` on a pull request merged into the default branch also skips every root a glob here matches.
@@ -489,7 +494,7 @@ Plan jobs run in no forge environment, so an environment secret reaches the appl
 ### From a cloud's secret store
 
 ```yaml
-oidc:
+identity:
   roles:
     "envs/prod/**": { plan: arn:aws:iam::222222222222:role/prod-plan, apply: arn:aws:iam::222222222222:role/prod-apply }
     "envs/dev/**": { plan: arn:aws:iam::111111111111:role/dev-plan, apply: arn:aws:iam::111111111111:role/dev-apply }
@@ -550,7 +555,8 @@ Each job keeps every key and value the file gives it in the forge's own syntax; 
 ## Plan locks
 
 ```yaml
-locks: plan   # default: apply
+locks:
+  when: plan   # default: apply
 ```
 
 | Setting | A pull request locks its roots | Allowed on |
@@ -629,7 +635,8 @@ The agent's commit carries a `Requested-by: <login>` trailer naming who asked, a
 `agent.drift` runs an agent when the drift job opens the drift issue, and opens a pull request with what it changed; GitHub and Forgejo only. [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) sets it up.
 
 ```yaml
-drift: "0 6 * * *"
+drift:
+  schedule: "0 6 * * *"
 respond:
   drift: off
 agent:

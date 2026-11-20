@@ -32,7 +32,8 @@ A scheduled `tf-drift` run that plans every root, and one issue that groups what
 1. Set a schedule in `terragucci.yml`. Pick an odd minute; forge schedulers are busiest on the hour.
 
    ```yaml
-   drift: "17 4 * * *"
+   drift:
+     schedule: "17 4 * * *"
    ```
 
 2. Check the file.

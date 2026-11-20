@@ -204,7 +204,7 @@ Git tags and the release ledger are pushed to `origin` with the job's checkout, 
 With `oidc`, jobs trade the forge's token for cloud roles.
 
 ```yaml
-oidc:
+identity:
   plan_role: arn:aws:iam::111122223333:role/terragucci-plan
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
   audience: sts.amazonaws.com
@@ -262,7 +262,7 @@ In a Terragrunt repo, roles can follow unit paths ([The generated pipeline](/ter
 A string `audience`, or none, gives every job's AWS token the same audience. A map gives each stage's jobs their own, so a role's trust can tell a plan job's token from an apply job's even when both carry the default branch's subject:
 
 ```yaml
-oidc:
+identity:
   plan_role: arn:aws:iam::111122223333:role/terragucci-plan
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
   audience:
@@ -288,7 +288,7 @@ On GitHub and Forgejo, a step that takes the job's cloud identity logs in first 
 With [`environments`](/terragucci/reference/config/#environments) each environment's roots apply in jobs of their own ([One apply job per identity](/terragucci/concepts/waves-and-approvals/#one-apply-job-per-identity)), which carry the environment's forge environment and its `oidc.audience`:
 
 ```yaml
-oidc:
+identity:
   plan_role: arn:aws:iam::111122223333:role/terragucci-plan
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 environments:

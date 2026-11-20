@@ -25,7 +25,8 @@ projects:
   github.com/acme/infra:
     roots: ["envs/*/*"]
   gitlab.example.com/platform/network:
-    drift: "17 4 * * *"
+    drift:
+      schedule: "17 4 * * *"
   codeberg.org/acme/edge: {}
 ```
 

@@ -104,7 +104,8 @@ When [`policy`](/terragucci/reference/policy/) is set, the last step runs `conft
 A cron schedule in `drift` adds a `drift` job that runs on it.
 
 ```yaml
-drift: "0 6 * * *"
+drift:
+  schedule: "0 6 * * *"
 ```
 
 | Drift job | What it does |

@@ -108,6 +108,7 @@ import {
   type TerragruntSettings,
 } from "./config";
 import { IDENT, LEVEL_KEYS, PROVIDER_KEY, TOP_KEYS } from "./generate-config";
+import { VOCABULARY_KEYS } from "./config-vocabulary";
 
 export type JsonSchema = { [k: string]: unknown };
 
@@ -422,7 +423,7 @@ function environment(top: boolean): JsonSchema {
 }
 
 /** Every setting, with a line for an editor to show. `top` is a repo's own file, where `version` may map root globs. */
-function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
+function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULARY_KEYS)[number], JsonSchema> {
   return {
     roots: { ...strings, description: "Globs of root directories. Detected when absent." },
     backend_config: { ...inputFiles, description: "Root glob to the -backend-config file or files the root's init takes, relative to the root's directory." },
@@ -440,7 +441,8 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       : { ...str, description: "The binary's release." },
     generate: { ...ref("generate"), description: "Backend, provider and version files terragucci generate writes for each plain root." },
     forge: { ...enumOf(FORGES), description: "The forge, for a host terragucci cannot name." },
-    url: { ...str, description: "Where the project lives, for a forge not on https or the default port." },
+    url: { ...str, description: "Where the project lives, for a forge not on https or the default port. forge_url is the vocabulary's key for it." },
+    forge_url: { ...str, description: "Where the project lives, for a forge not on https or the default port: the vocabulary's key for url, which stays accepted." },
     gate: { ...enumOf(GATE_NAMES), description: "When a wave waits for an approval. on-destroy is an older name for on-destructive." },
     approval: {
       anyOf: [
@@ -458,7 +460,11 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     approval_rules: { type: "array", minItems: 1, items: approvalRule, description: "More approvers, or approvers with a role, for the waves whose roots a glob names." },
     apply: { ...apply, description: "When a change applies." },
-    locks: { ...enumOf(LOCKS), description: "When a pull request takes its root locks." },
+    locks: {
+      anyOf: [enumOf(LOCKS), map(["when"], { when: enumOf(LOCKS) }, { required: ["when"] })],
+      description: "When a pull request takes its root locks: locks.when, or the value alone.",
+    },
+    branches: { ...(apply.properties as Record<string, JsonSchema>).branches, description: "The roots a branch applies, by glob: the vocabulary's key for apply.branches, which stays accepted." },
     waves: {
       type: "object",
       properties: {
@@ -470,7 +476,10 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       },
       description: "The canary wave, the jobs one wave spreads across, extra apply order, and whether a change's roots apply as one composed run.",
     },
-    drift: { ...cron, description: "A cron schedule for tf-drift, or false." },
+    drift: {
+      anyOf: [cron, map(["schedule"], { schedule: str }, { required: ["schedule"] })],
+      description: "A cron schedule for tf-drift, drift.schedule, or false.",
+    },
     synth: { ...nonBlank, description: "The command that writes the roots before any job reads them." },
     image: {
       anyOf: [
@@ -480,18 +489,22 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
       description: "The image every job runs in, built FROM terragucci's; as a map, its name and the provider mirror it carries.",
     },
     notify: {
-      ...map(NOTIFY_KEYS, {
+      ...map([...NOTIFY_KEYS, "relay_name"], {
         slack: secret,
         teams: secret,
         webhook: secret,
         webhook_key: secret,
         relay: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$" },
+        relay_name: { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$" },
         relay_key: secret,
       }, {
         minProperties: 1,
-        dependentRequired: { webhook: ["webhook_key"], webhook_key: ["webhook"], relay: ["relay_key"], relay_key: ["relay"] },
-        if: { required: ["relay"] },
-        then: { anyOf: [{ required: ["slack"] }, { required: ["teams"] }] },
+        dependentRequired: { webhook: ["webhook_key"], webhook_key: ["webhook"] },
+        allOf: [
+          { if: { anyOf: [{ required: ["relay"] }, { required: ["relay_name"] }] }, then: { required: ["relay_key"] } },
+          { if: { required: ["relay_key"] }, then: { anyOf: [{ required: ["relay"] }, { required: ["relay_name"] }] } },
+          { if: { anyOf: [{ required: ["relay"] }, { required: ["relay_name"] }] }, then: { anyOf: [{ required: ["slack"] }, { required: ["teams"] }] } },
+        ],
       }),
       description: "The secrets holding Slack, Teams or webhook addresses, the relay's name, and the secret holding the key its buttons are signed with.",
     },
@@ -627,7 +640,8 @@ function settings(top: boolean): Record<keyof ProjectSettings, JsonSchema> {
     },
     tips: { ...bool, description: "Tips in the plan note." },
     modules: { ...modules, description: "Module publishing, attestation and the module registry." },
-    oidc: { ...oidc, description: "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply." },
+    oidc: { ...oidc, description: "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply. identity is the vocabulary's key for it." },
+    identity: { ...oidc, description: "Cloud identities the jobs take over OIDC: the vocabulary's key for oidc, which stays accepted." },
     parallelism: { ...whole(1), description: "How many roots of one dependency layer plan at once." },
     terragrunt: { ...terragrunt, description: "Terragrunt settings." },
     atmos: { ...map(ATMOS_KEYS, { version: { type: "string", pattern: "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.]+)?$" } }), description: "Atmos settings." },
@@ -714,7 +728,7 @@ export function configSchema(): JsonSchema {
     type: ["object", "null"],
     properties: {
       ...own,
-      defaults: { ...ref("project"), not: { required: ["url"] }, description: "Settings every project takes, under its own." },
+      defaults: { ...ref("project"), not: { anyOf: [{ required: ["url"] }, { required: ["forge_url"] }] }, description: "Settings every project takes, under its own." },
       projects: {
         type: "object",
         propertyNames: { pattern: "^(?:https?://)?[^/]+(?:/[^/]+){2,}/*$" },

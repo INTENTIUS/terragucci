@@ -67,7 +67,8 @@ Merging the pull request keeps the change made outside the code, and its apply g
 2. Turn it on in `terragucci.yml`. The agent's pull request replaces the codified one, so set `respond.drift` to `off` (or `attribute`, to keep who changed what in the issue):
 
    ```yaml
-   drift: "17 4 * * *"
+   drift:
+     schedule: "17 4 * * *"
    respond:
      drift: off
    agent:

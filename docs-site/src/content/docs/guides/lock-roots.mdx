@@ -36,7 +36,8 @@ Under the defaults, `apply.when: merge` and `locks: apply`, nothing is held.
 1. Set the mode in `terragucci.yml`:
 
    ```yaml
-   locks: plan
+   locks:
+     when: plan
    ```
 
 2. Check the file and write the pipeline again:

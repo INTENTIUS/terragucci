@@ -224,7 +224,7 @@ Set `oidc` and jobs trade the forge's identity token for cloud credentials, so C
 <TabItem label="AWS">
 
 ```yaml
-oidc:
+identity:
   plan_role: arn:aws:iam::111122223333:role/terragucci-plan
   apply_role: arn:aws:iam::111122223333:role/terragucci-apply
 ```
@@ -238,7 +238,7 @@ oidc:
 Root globs give each environment its own pair of roles:
 
 ```yaml
-oidc:
+identity:
   roles:
     "envs/prod/**": { plan: arn:aws:iam::111122223333:role/prod-plan, apply: arn:aws:iam::111122223333:role/prod-apply }
     "envs/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
@@ -257,7 +257,7 @@ A root no glob matches runs with `plan_role` or `apply_role`. [Keep each environ
 <TabItem label="GCP">
 
 ```yaml
-oidc:
+identity:
   gcp:
     workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
     plan_service_account: terragucci-plan@shop.iam.gserviceaccount.com
@@ -275,7 +275,7 @@ oidc:
 <TabItem label="Azure">
 
 ```yaml
-oidc:
+identity:
   azure:
     tenant_id: 00000000-0000-0000-0000-000000000001
     subscription_id: 00000000-0000-0000-0000-000000000002

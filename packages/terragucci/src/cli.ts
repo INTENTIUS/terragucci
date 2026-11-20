@@ -119,7 +119,7 @@ import { applyGroups } from "./cloud-identity";
 import { SHARED_SUBJECT_TIP, sharedSubjectTip } from "./environment-tips";
 import { runCheckJob, type JobExpectation } from "./check-job";
 import { environmentTips, planApplyRunnerTip } from "./environment-tips";
-import { agentLoginWarning, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
+import { agentLoginWarning, configWarnings, APPLY_REQUIRES, APPLY_WHEN, APPROVALS, BINARIES, checkMode, ConfigError, FORGES, findConfig, forgeFromHost, GATES, gitlabPrApplyProblems, imageMirror, loadConfig, normalizeGate, parseProjectKey, resolveProject, resolveRepo, responseTo, type ApplyRequire, type ApplyWhen, type Approval, type Binary, type ForgeName, type Gate, type GateName, type ProjectSettings, type TerragucciConfig } from "./config";
 import { configSchemaProblems } from "./config-schema";
 import { checkoutApproval, type ApprovalMode } from "./approval";
 import { decideComment, writeDecision } from "./comment";
@@ -1630,6 +1630,8 @@ export async function main(argv: string[]): Promise<number> {
             const tip = planApplyRunnerTip(config, config.forge ?? detectForge(repoDir)?.value);
             if (tip) tips.push(tip);
           }
+          // Each earlier spelling of a key in chant's vocabulary, named with its key.
+          for (const w of configWarnings(config)) if (!warnings.includes(w)) warnings.push(w);
           // agent.token_env without agent.login: the agent's account can approve a change (./involved.ts).
           for (const agent of [config.agent, ...Object.values(config.projects ?? {}).map((p) => (p as { agent?: typeof config.agent }).agent)]) {
             const w = agentLoginWarning(agent);
