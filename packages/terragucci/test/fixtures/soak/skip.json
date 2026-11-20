@@ -1,0 +1,622 @@
+{
+  "cases": [
+    {
+      "name": "skip releases before the due time",
+      "why": "A skip comment from a person with write access releases the wave at once. The decision carries no clock.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1": [
+                {
+                  "by": "dana",
+                  "url": "https://forge/p/pull/1"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "skip",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": null,
+        "due": null,
+        "holds": [],
+        "skippedBy": {
+          "by": "dana",
+          "url": "https://forge/p/pull/1"
+        }
+      }
+    },
+    {
+      "name": "skip overrides every failing condition",
+      "why": "The skip ignores drift, a failed apply and a denial.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": {
+              "url": "u/9",
+              "roots": [
+                "envs/dev/app"
+              ]
+            },
+            "applies": {
+              "envs/dev/app": "failure"
+            },
+            "skips": {
+              "w1": [
+                {
+                  "by": "dana"
+                }
+              ]
+            }
+          }
+        },
+        "denials": [
+          {
+            "root": "envs/dev/app",
+            "at": "2026-03-01T15:00:00.000Z",
+            "rules": [
+              "main.deny"
+            ]
+          }
+        ]
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "skip",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": null,
+        "due": null,
+        "holds": [],
+        "skippedBy": {
+          "by": "dana"
+        }
+      }
+    },
+    {
+      "name": "skip overrides a missing merge time",
+      "why": "A wave the forge gave no merge time for is released by a skip.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1": [
+                {
+                  "by": "dana"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "skip",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": null,
+        "due": null,
+        "holds": [],
+        "skippedBy": {
+          "by": "dana"
+        }
+      }
+    },
+    {
+      "name": "skip on the second pull request",
+      "why": "A skip on any pull request of the wave counts.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          },
+          {
+            "project": "q",
+            "roots": [
+              "envs/prod/net"
+            ],
+            "branch": "w1q",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          },
+          "q": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1q": [
+                {
+                  "by": "erin"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "skip",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": null,
+        "due": null,
+        "holds": [],
+        "skippedBy": {
+          "by": "erin"
+        }
+      }
+    },
+    {
+      "name": "first skip comment is the one named",
+      "why": "When several people skipped, the oldest comment's author is named. The list is oldest first.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1": [
+                {
+                  "by": "dana"
+                },
+                {
+                  "by": "erin"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "skip",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": null,
+        "due": null,
+        "holds": [],
+        "skippedBy": {
+          "by": "dana"
+        }
+      }
+    },
+    {
+      "name": "skip on the first of two pull requests wins over a later one",
+      "why": "The wave's pull requests are read in order and the first with a skip names who.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          },
+          {
+            "project": "q",
+            "roots": [
+              "envs/prod/net"
+            ],
+            "branch": "w1q",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1": [
+                {
+                  "by": "dana"
+                }
+              ]
+            }
+          },
+          "q": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1q": [
+                {
+                  "by": "erin"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "skip",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": null,
+        "due": null,
+        "holds": [],
+        "skippedBy": {
+          "by": "dana"
+        }
+      }
+    },
+    {
+      "name": "a skip on another branch does not count",
+      "why": "A skip comment is on a pull request of this wave. One on a branch that is not in the wave holds nothing.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T11:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "other-branch": [
+                {
+                  "by": "dana"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "hold",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": [
+          {
+            "reason": "time"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no skip, after the due time",
+      "why": "Without a skip the wave soaks as usual.",
+      "soak": {
+        "after": "24h",
+        "conditions": [
+          "drift",
+          "apply",
+          "policy"
+        ]
+      },
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-02T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {}
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "soaked",
+        "rule": {
+          "after": "24h",
+          "afterMs": 86400000,
+          "conditions": [
+            "drift",
+            "apply",
+            "policy"
+          ]
+        },
+        "clockStart": "2026-03-01T10:00:00.000Z",
+        "due": "2026-03-02T10:00:00.000Z",
+        "holds": []
+      }
+    },
+    {
+      "name": "skip with no soak settings",
+      "why": "With no soak there is nothing to skip: the wave is released as no-soak and the comment is not read.",
+      "soak": null,
+      "rollout": {
+        "kind": "module",
+        "name": "terraform-aws-modules/vpc/aws",
+        "aliases": []
+      },
+      "wave": {
+        "number": 1,
+        "merged": [
+          {
+            "project": "p",
+            "roots": [
+              "envs/dev/app"
+            ],
+            "branch": "w1",
+            "at": "2026-03-01T10:00:00.000Z"
+          }
+        ]
+      },
+      "now": "2026-03-01T10:00:00.000Z",
+      "world": {
+        "projects": {
+          "p": {
+            "driftIssue": null,
+            "applies": {},
+            "skips": {
+              "w1": [
+                {
+                  "by": "dana"
+                }
+              ]
+            }
+          }
+        },
+        "denials": []
+      },
+      "decision": {
+        "outcome": "release",
+        "via": "no-soak",
+        "rule": null,
+        "clockStart": null,
+        "due": null,
+        "holds": []
+      }
+    }
+  ]
+}
