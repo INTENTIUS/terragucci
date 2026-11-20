@@ -136,8 +136,6 @@ export interface WavesStepInput extends WavesSpecInput {
   cone?: string;
   /** How long a plan or an apply waits for a state lock. Default: the lexicon's 5m. */
   lockTimeout?: string | false;
-  /** `cost.approve_above` at base, as chant's cost hold (the terraform lexicon's infracost preset reads the plan JSON). */
-  approveAbove?: number;
   /** `policy` at base is on: chant runs the workspace's ci.policy at base over each run's change set. */
   policy?: boolean;
   /** `--stand-down`: a wave whose roots a newer push on the branch also applies stands down with 6 (chant#4581). */
@@ -151,7 +149,7 @@ export interface WavesStepInput extends WavesSpecInput {
  * each run plans and applies through the terraform lexicon's
  * `terraform-apply` capability, with no `plan` or `apply` call back into
  * terragucci. The holds terragucci's `held` hook served become chant's
- * `holds` (policy and cost, read at base). A state migration and the gate's
+ * `holds` (policy, read at base). A state migration and the gate's
  * report stay hooks that call back into the wave's process, as #4545's
  * comment rules. The op, the gate names and the approval stay
  * `tf-apply` / `wave-<k>`, so the approvals on the ledger keep counting.
@@ -190,9 +188,7 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
           ...(input.lockTimeout !== undefined ? { lockTimeout: input.lockTimeout } : {}),
           ...(input.cone ? { cone: input.cone } : {}),
         },
-    ...(input.policy || input.approveAbove !== undefined
-      ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.approveAbove !== undefined ? { cost: { command: ["infracost", "breakdown", "--path", "{planJson}", "--format", "json"], approveAbove: input.approveAbove, format: "infracost" } } : {}) } }
-      : {}),
+    ...(input.policy ? { holds: { policy: true } } : {}),
     // chant stands the wave down before it spends the approval, when the installed chant has the stand-down (chant#4581).
     ...(input.standDown ? { standDown: true } : {}),
     // The gate's report is terragucci's; the held hook is chant's holds now.
