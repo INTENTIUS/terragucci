@@ -18,8 +18,10 @@
  * risk hold, `replanDependents`, the canary's soak, the failure tolerance and
  * the stage's hooks (`environments.<name>.hooks.<when>`). Its last wave cuts
  * the release after its apply, as chant's `stageWavesSpec` puts the cut on
- * the first stage's last wave, unless `release.cut` is `false`. A commit
- * with no pipeline file cuts nothing, as before.
+ * the first stage's last wave, unless `release.cut` is `false`. Only the
+ * default branch's merge cuts: a push to a branch `apply.branches` names
+ * applies that branch's roots and cuts nothing. A commit with no pipeline
+ * file cuts nothing, as before.
  * Without a pipeline, `risk.approve_above` and `replan_dependents` at that
  * commit give the first two.
  *
@@ -152,9 +154,11 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   // apply.branches: the runs this branch applies, cut as stage tf-apply cut its layers.
   const routes = settings.apply?.branches && Object.keys(settings.apply.branches).length > 0 ? settings.apply.branches : undefined;
   let layers = shape.waves.map((w) => (w.runs ?? []).map((r) => r.target));
+  const jobOn = jobBranch(env);
+  // A push to a branch apply.branches names applies that branch's roots; the default branch's merge is every other run.
+  const onBranchRoute = routes !== undefined && jobOn !== undefined && Object.hasOwn(routes, jobOn);
   if (routes && !shape.waves.some((w) => w.discover)) {
-    const branch = jobBranch(env);
-    const cut = branchLayers(layers, routes, branch !== undefined && Object.hasOwn(routes, branch) ? branch : undefined);
+    const cut = branchLayers(layers, routes, onBranchRoute ? jobOn : undefined);
     log(`terragucci waves-spec: ${cut.note}`);
     layers = cut.layers;
   }
@@ -213,6 +217,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
   // the stage's risk hold, its replanDependents, the canary's soak and the failure tolerance. Risk only adds approvals:
   // it sets no gate and never reads allow_unattended, so a low score lets no wave through that would wait without it.
   const staged = firstStageRules(repo, sha) ?? topLevelRules(settings);
+  const cutsRelease = !onBranchRoute && (staged.releaseHooks?.length ?? 0) > 0;
   const hook = (name: string, what: "migrate-check" | "migrate" | "gate", onFailure?: "approve"): OpWaveHook => ({ name, command: waveCallArgv(what, "{runs}"), ...(onFailure ? { onFailure } : {}) });
   const terragrunt = (shape.step as { kind?: string } | undefined)?.kind === "terragrunt-apply";
   const waves: OpWave[] = shape.waves.map((w, i) => {
@@ -230,11 +235,12 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
       // The composed run's roots plan and apply together (chant#4848).
       ...(together === i + 1 ? { together: true } : {}),
       // Wave 1 checks the migrations; the last wave, with promotion, cuts the release each later stage promotes (chant#5324).
-      ...(i === 0 || (last && staged.releaseHooks?.length)
+      // The cut is the default branch's merge: a push to a branch apply.branches names applies its own roots and cuts nothing.
+      ...(i === 0 || (last && cutsRelease)
         ? {
             hooks: {
               ...(i === 0 ? { before: { plan: [hook("migrations", "migrate-check"), hook("migration gate", "migrate", "approve")] } } : {}),
-              ...(last && staged.releaseHooks?.length ? { after: { apply: structuredClone(staged.releaseHooks) } } : {}),
+              ...(last && cutsRelease ? { after: { apply: structuredClone(staged.releaseHooks!) } } : {}),
             },
           }
         : {}),

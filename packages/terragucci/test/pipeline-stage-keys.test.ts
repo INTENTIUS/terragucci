@@ -60,6 +60,9 @@ const problems = (raw: Record<string, unknown>): string[] => {
   }
 };
 
+/** terragucci.yml at base with promotion: config check asks each name it lists to be an environment with roots. */
+const PROMOTED = 'promotion: [dev, prod]\nenvironments:\n  dev:\n    roots: ["envs/dev/**"]\n  prod:\n    roots: ["envs/prod/**"]\n';
+
 /** A risk record as chant's after-plan hook hands it (chant#5422). */
 const risk = (score: number, over: boolean): ChangeRisk => ({
   version: 1,
@@ -94,7 +97,7 @@ describe("environments.<name>.hooks.<when>", () => {
     const settings = { promotion: ["dev", "prod"], environments: { dev: { roots: ["envs/dev/**"], hooks: { "after-gate": [{ name: "page", command: ["./page.sh"] }] } }, prod: { roots: ["envs/prod/**"] } } } as ProjectSettings;
     const dir = repo({ [WAVES_SPEC]: shape([["envs/dev/net", "envs/prod/net"]]) });
     pipelineCommand(dir, settings, { log: () => {} });
-    commit(dir, { "terragucci.yml": "promotion: [dev, prod]\n" });
+    commit(dir, { "terragucci.yml": PROMOTED });
     vi.spyOn(console, "error").mockImplementation(() => {});
     const spec = (await wavesSpecAt(dir, { at: "HEAD", env: {} }))!;
     expect(spec.hooks?.after?.gate?.map((h) => h.name)).toEqual(["report", "page"]);
@@ -119,7 +122,7 @@ describe("the release cut on the merge path", () => {
   });
 
   it("cuts a release after the last wave's apply when promotion is set, and wave 1 keeps its migration hooks", async () => {
-    const spec = await specOf(settings(), "promotion: [dev, prod]\n");
+    const spec = await specOf(settings(), PROMOTED);
     const last = spec.waves.at(-1)!;
     expect(last.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["terragucci", "release", "cut", "auto", "--yes"] }]);
     expect(spec.waves[0]!.hooks?.before?.plan?.map((h) => h.name)).toEqual(["migrations", "migration gate"]);
@@ -127,8 +130,23 @@ describe("the release cut on the merge path", () => {
   });
 
   it("cuts nothing with release.cut: false", async () => {
-    const spec = await specOf(settings({ cut: false }), "promotion: [dev, prod]\nrelease:\n  cut: false\n");
+    const spec = await specOf(settings({ cut: false }), `${PROMOTED}release:\n  cut: false\n`);
     expect(spec.waves.some((w) => w.hooks?.after?.apply?.length)).toBe(false);
+  });
+
+  it("cuts on the default branch's merge alone: a push to a branch apply.branches names cuts nothing", async () => {
+    const config = `${PROMOTED}apply:\n  branches:\n    hotfix: ["envs/prod/**"]\n`;
+    const at = async (branch: string) => {
+      const dir = repo({ [WAVES_SPEC]: shape(layers) });
+      pipelineCommand(dir, settings(), { log: () => {} });
+      commit(dir, { "terragucci.yml": config });
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      return (await wavesSpecAt(dir, { at: "HEAD", env: { GITHUB_REF_NAME: branch } }))!;
+    };
+    expect((await at("main")).waves.at(-1)!.hooks?.after?.apply?.map((h) => h.name)).toEqual(["release-cut"]);
+    const hotfix = await at("hotfix");
+    expect(hotfix.waves.some((w) => w.hooks?.after?.apply?.length)).toBe(false);
+    expect(hotfix.waves.flatMap((w) => w.runs.map((r) => r.target))).toEqual(["envs/prod/net", "envs/prod/app"]);
   });
 
   it("cuts nothing without promotion, as before", async () => {
@@ -273,10 +291,14 @@ describe("control.release", () => {
   });
 
   it("puts release on the waves' control dispatch", () => {
-    const control = resolveControl({ repo: "github.com/acme/control", op: "deploy", release: true }, "infra");
-    const out = renderPipeline({ binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, forge: "github", control });
-    const text = JSON.stringify(parseYAML(out.content));
-    expect(text).toContain("CHANT_CONTROL_RELEASE");
+    // chant's control job reads the release the applied commit was cut into and puts it in the dispatch's payload,
+    // which reaches the control repo's run as CHANT_CONTROL_RELEASE.
+    const render = (release: boolean) => {
+      const control = resolveControl({ repo: "github.com/acme/control", op: "deploy", release }, "infra");
+      return JSON.stringify(parseYAML(renderPipeline({ binary: "tofu", version: "1.13.1", image: "img:1", layers: [["a"]], env: {}, forge: "github", control }).content));
+    };
+    expect(render(true)).toContain("chant pipeline release-of");
+    expect(render(false)).not.toContain("release-of");
   });
 });
 
