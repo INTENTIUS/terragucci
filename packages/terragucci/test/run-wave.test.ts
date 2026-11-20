@@ -64,6 +64,23 @@ describe("terragucci waves-spec", () => {
     expect(spec.hooks?.after?.gate?.[0]!.command).toContain(WAVE_CLIENT);
   });
 
+  // chant#5434: the cost hold reads each redactEnv value from the env the run's beforePlan returns, which holds the
+  // root's secrets: values; the spec carries the variable's name and never its value or where it is kept.
+  it("names a secrets: variable in the cost hold's redactEnv, by name only", async () => {
+    const dir = repo({
+      [WAVES_SPEC]: shape([["net"]]),
+      "terragucci.yml": 'cost:\n  approve_above: 100\nsecrets:\n  - roots: ["net"]\n    from: aws\n    values:\n      TF_VAR_db_password: "prod/db#password"\n',
+    });
+    quiet();
+    const spec = (await wavesSpecAt(dir, { at: "HEAD", env: { TF_VAR_db_password: "hunter2-store" } }))!;
+    const cost = spec.holds?.cost as { redactEnv?: string[]; dropEnv?: string[] } | undefined;
+    expect(cost?.redactEnv).toEqual(["TF_VAR_db_password"]);
+    expect(cost?.dropEnv).toEqual(["TG_TOKEN", "TG_MERGE_TOKEN"]);
+    const text = JSON.stringify(spec);
+    expect(text).not.toContain("prod/db");
+    expect(text).not.toContain("hunter2-store");
+  });
+
   it("takes each wave's gate from the environments of its roots at that commit", async () => {
     const dir = repo({
       [WAVES_SPEC]: shape([["envs/dev/app"], ["envs/prod/app"]]),
