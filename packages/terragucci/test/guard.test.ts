@@ -3,7 +3,8 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { resolveRepo } from "../src/config";
-import { CLAUDE_SETTINGS, GUARD_BINARIES, withHook, writeGuard } from "../src/guard";
+import { CLAUDE_SETTINGS_LOCAL as CLAUDE_SETTINGS, withAgentGuardHook } from "@intentius/chant/agent-guard";
+import { GUARD_BINARIES, writeGuard } from "../src/guard";
 import { backend, git, tmp, write } from "./helpers";
 
 /** A repo with two pipeline roots and a directory that is not one, and the guard written into it with stand-ins for the real binaries. */
@@ -137,7 +138,7 @@ describe("terragucci guard: the hook", () => {
   });
 
   it("refuses to rewrite a settings file that is not JSON", () => {
-    expect(() => withHook("{ nope", "x", CLAUDE_SETTINGS)).toThrow(/is not JSON/);
-    expect(JSON.parse(withHook(undefined, "x", CLAUDE_SETTINGS)).hooks.PreToolUse[0].hooks[0].command).toBe("x");
+    expect(() => withAgentGuardHook("{ nope", "x", CLAUDE_SETTINGS)).toThrow(/is not JSON/);
+    expect(JSON.parse(withAgentGuardHook(undefined, "x", CLAUDE_SETTINGS)).hooks.PreToolUse[0].hooks[0].command).toBe("x");
   });
 });
