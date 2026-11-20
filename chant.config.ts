@@ -24,6 +24,11 @@ export default {
   // load (scripts/coverage-gaps.ts --json) prints and exits in the compile's place.
   sourceDir: "ci",
 
+  // The harness scenarios' overlays hold terragucci.component.ts files written for the scenario's own repo, gated on
+  // that repo's environments. They are not this root's components, so chant's discovery here (the build's check of
+  // the environments a gate names, chant components) leaves them out.
+  exclude: ["stack/harness/scenarios"],
+
   // The release (CONTRIBUTING.md, Releasing): chant's cut builds the four CI images as OCI
   // archives and records their digests, the bundle pins them (scripts/build-cli.mjs reads
   // CHANT_RELEASE_DIGESTS), and chant's publish pushes the images, publishes the package and
