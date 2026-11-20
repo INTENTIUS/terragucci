@@ -188,7 +188,8 @@ describe("the merge path's spec", () => {
     };
     const dir = repo({ [WAVES_SPEC]: shape([["envs/dev/net", "envs/prod/net"], ["envs/dev/app", "envs/prod/app"]]) });
     pipelineCommand(dir, settings, { log: () => {} });
-    commit(dir, { "terragucci.yml": "promotion: [dev, prod]\n" });
+    // config check asks each name promotion lists to be an environment with roots.
+    commit(dir, { "terragucci.yml": 'promotion: [dev, prod]\nenvironments:\n  dev:\n    roots: ["envs/dev/**"]\n  prod:\n    roots: ["envs/prod/**"]\n' });
     vi.spyOn(console, "error").mockImplementation(() => {});
     const spec = (await wavesSpecAt(dir, { at: "HEAD", env: {} }))!;
     expect(spec.holds?.risk).toEqual({ approveAbove: 0.3 });

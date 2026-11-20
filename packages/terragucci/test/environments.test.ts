@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConfigError, mergeEnvironments, resolveProject, resolveRepo, validateConfig, type ProjectSettings, type TerragucciConfig } from "../src/config";
+import { ConfigError, ENVIRONMENT_KEYS, mergeEnvironments, resolveProject, resolveRepo, validateConfig, type ProjectSettings, type TerragucciConfig } from "../src/config";
 import { configSchemaProblems } from "../src/config-schema";
 import { anyRootGate, environmentGates, environmentOf, environmentRootProblems, settingsForRoot, strictestGate, waveGate, withEnvironmentRoles } from "../src/environments";
 import { planSettings } from "../src/affected";
@@ -40,7 +40,8 @@ describe("environments in config check", () => {
 
   it("names the environment and the key it does not take", () => {
     const p = problems({ environments: { prod: { roots: ["envs/prod/**"], drift: "0 * * * *" } } });
-    expect(p).toEqual([expect.stringMatching(/^config\.environments\.prod\.drift is not a per-environment setting \(settings: roots, gate, oidc, runner, parallelism, forge_environment\)$/)]);
+    expect(p).toEqual([`config.environments.prod.drift is not a per-environment setting (settings: ${ENVIRONMENT_KEYS.join(", ")})`]);
+    expect(ENVIRONMENT_KEYS.slice(0, 6)).toEqual(["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"]);
     expect(configSchemaProblems({ environments: { prod: { roots: ["envs/prod/**"], drift: "0 * * * *" } } }).length).toBeGreaterThan(0);
   });
 
