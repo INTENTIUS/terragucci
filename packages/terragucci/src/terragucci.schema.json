@@ -646,9 +646,40 @@
                 {
                   "type": "object",
                   "properties": {
-                    "after": {
+                    "duration": {
                       "type": "string",
                       "pattern": "^(0|[1-9]\\d*[mhd])$"
+                    },
+                    "checks": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "kind"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "drift",
+                              "apply",
+                              "policy"
+                            ]
+                          },
+                          "on_fail": {
+                            "enum": [
+                              "restart",
+                              "hold"
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "after": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d*[mhd])$",
+                      "description": "The earlier spelling of duration, still read."
                     },
                     "conditions": {
                       "type": "array",
@@ -660,7 +691,8 @@
                           "apply",
                           "policy"
                         ]
-                      }
+                      },
+                      "description": "The earlier spelling of checks, each condition a check that holds on a failure; still read."
                     },
                     "overrides": {
                       "type": "array",
@@ -675,6 +707,36 @@
                           "provider": {
                             "type": "string",
                             "pattern": "\\S"
+                          },
+                          "duration": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9]\\d*[mhd])$"
+                          },
+                          "checks": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "kind"
+                              ],
+                              "properties": {
+                                "kind": {
+                                  "enum": [
+                                    "drift",
+                                    "apply",
+                                    "policy"
+                                  ]
+                                },
+                                "on_fail": {
+                                  "enum": [
+                                    "restart",
+                                    "hold"
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false
+                            }
                           },
                           "after": {
                             "type": "string",
@@ -709,6 +771,16 @@
                         "anyOf": [
                           {
                             "required": [
+                              "duration"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "checks"
+                            ]
+                          },
+                          {
+                            "required": [
                               "after"
                             ]
                           },
@@ -723,12 +795,21 @@
                     }
                   },
                   "additionalProperties": false,
-                  "required": [
-                    "after"
+                  "anyOf": [
+                    {
+                      "required": [
+                        "duration"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "after"
+                      ]
+                    }
                   ]
                 }
               ],
-              "description": "How long a wave applied before the next one opens, and what must hold on its roots meanwhile."
+              "description": "How long a wave applied before the next one opens, and the checks that must pass on its roots meanwhile, in the words of environments.<name>.soak."
             }
           },
           "additionalProperties": false,
@@ -772,6 +853,10 @@
         "ref": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+        },
+        "release": {
+          "type": "boolean",
+          "description": "The dispatch carries the release digest the applied commit was cut into, so a downstream run reads that release's artifacts."
         }
       },
       "additionalProperties": false,
@@ -2434,6 +2519,48 @@
             }
           ]
         },
+        "verify-failed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                },
+                "key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "max_turns": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_cost_usd": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "timeout": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "window": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1440
+                },
+                "relay_key_secret": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
         "schedule": {
           "type": "object",
           "properties": {
@@ -2520,7 +2647,7 @@
           "maxProperties": 1
         }
       ],
-      "description": "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary."
+      "description": "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply, a failed verify or soak, or a schedule, and the model behind respond.wave-refused: summary."
     },
     "review": {
       "type": "object",
@@ -3242,6 +3369,259 @@
               "additionalProperties": false
             },
             "description": "Artifacts of earlier stages the stage's deploy gets in a variable."
+          },
+          "hooks": {
+            "type": "object",
+            "properties": {
+              "before-observe": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "on_failure": {
+                      "enum": [
+                        "fail",
+                        "approve"
+                      ]
+                    },
+                    "per_run": {
+                      "type": "boolean"
+                    },
+                    "targets": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "command"
+                  ]
+                }
+              },
+              "before-plan": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "on_failure": {
+                      "enum": [
+                        "fail",
+                        "approve"
+                      ]
+                    },
+                    "per_run": {
+                      "type": "boolean"
+                    },
+                    "targets": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "command"
+                  ]
+                }
+              },
+              "after-plan": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "on_failure": {
+                      "enum": [
+                        "fail",
+                        "approve"
+                      ]
+                    },
+                    "per_run": {
+                      "type": "boolean"
+                    },
+                    "targets": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "command"
+                  ]
+                }
+              },
+              "after-gate": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "on_failure": {
+                      "enum": [
+                        "fail",
+                        "approve"
+                      ]
+                    },
+                    "per_run": {
+                      "type": "boolean"
+                    },
+                    "targets": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "command"
+                  ]
+                }
+              },
+              "before-apply": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "on_failure": {
+                      "enum": [
+                        "fail",
+                        "approve"
+                      ]
+                    },
+                    "per_run": {
+                      "type": "boolean"
+                    },
+                    "targets": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "command"
+                  ]
+                }
+              },
+              "after-apply": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "on_failure": {
+                      "enum": [
+                        "fail",
+                        "approve"
+                      ]
+                    },
+                    "per_run": {
+                      "type": "boolean"
+                    },
+                    "targets": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "command"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false,
+            "description": "Commands the stage's waves run at before-observe, before-plan, after-plan, after-gate, before-apply or after-apply: each a command list with name, on_failure, per_run and targets."
           },
           "agent_steps": {
             "type": "object",
@@ -4067,6 +4447,10 @@
             "ref": {
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/-]{0,127}$"
+            },
+            "release": {
+              "type": "boolean",
+              "description": "The dispatch carries the release digest the applied commit was cut into, so a downstream run reads that release's artifacts."
             }
           },
           "additionalProperties": false,
@@ -5729,6 +6113,48 @@
                 }
               ]
             },
+            "verify-failed": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$"
+                    },
+                    "key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    },
+                    "max_turns": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "max_cost_usd": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "window": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1440
+                    },
+                    "relay_key_secret": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
             "schedule": {
               "type": "object",
               "properties": {
@@ -5815,7 +6241,7 @@
               "maxProperties": 1
             }
           ],
-          "description": "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary."
+          "description": "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply, a failed verify or soak, or a schedule, and the model behind respond.wave-refused: summary."
         },
         "review": {
           "type": "object",
@@ -6537,6 +6963,259 @@
                   "additionalProperties": false
                 },
                 "description": "Artifacts of earlier stages the stage's deploy gets in a variable."
+              },
+              "hooks": {
+                "type": "object",
+                "properties": {
+                  "before-observe": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "fail",
+                            "approve"
+                          ]
+                        },
+                        "per_run": {
+                          "type": "boolean"
+                        },
+                        "targets": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "command"
+                      ]
+                    }
+                  },
+                  "before-plan": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "fail",
+                            "approve"
+                          ]
+                        },
+                        "per_run": {
+                          "type": "boolean"
+                        },
+                        "targets": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "command"
+                      ]
+                    }
+                  },
+                  "after-plan": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "fail",
+                            "approve"
+                          ]
+                        },
+                        "per_run": {
+                          "type": "boolean"
+                        },
+                        "targets": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "command"
+                      ]
+                    }
+                  },
+                  "after-gate": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "fail",
+                            "approve"
+                          ]
+                        },
+                        "per_run": {
+                          "type": "boolean"
+                        },
+                        "targets": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "command"
+                      ]
+                    }
+                  },
+                  "before-apply": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "fail",
+                            "approve"
+                          ]
+                        },
+                        "per_run": {
+                          "type": "boolean"
+                        },
+                        "targets": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "command"
+                      ]
+                    }
+                  },
+                  "after-apply": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "on_failure": {
+                          "enum": [
+                            "fail",
+                            "approve"
+                          ]
+                        },
+                        "per_run": {
+                          "type": "boolean"
+                        },
+                        "targets": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "command"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false,
+                "description": "Commands the stage's waves run at before-observe, before-plan, after-plan, after-gate, before-apply or after-apply: each a command list with name, on_failure, per_run and targets."
               },
               "agent_steps": {
                 "type": "object",

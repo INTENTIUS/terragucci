@@ -38,6 +38,7 @@
 import { fetchGatePolicySource } from "@intentius/chant/policy-source";
 import type { WorkspaceTree } from "@intentius/chant/workspace/tree";
 import type { PolicyCost as ChantPolicyCost } from "@intentius/chant/ci-product";
+import type { ChangeRisk } from "@intentius/chant/change-risk";
 import type { PolicyReview } from "../review-agent";
 import type { Actor } from "../actor";
 import { spawn, spawnSync } from "node:child_process";
@@ -232,6 +233,12 @@ export interface PolicyRunContext {
   review?: PolicyReview;
   /** Who proposed the change, from the forge identity (../actor.ts): `input.actor`. */
   actor?: Actor;
+  /**
+   * The wave's change risk, in a `tf-apply` wave whose `holds.risk` scored it: `input.risk`, chant's record as its
+   * after-plan hook hands it (chant#5422), the one `holds.policy` reads. A policy may deny or hold on it; an
+   * `allow_unattended` rule is read from the input without it (checkPlans), so a low score lets nothing through.
+   */
+  risk?: ChangeRisk;
 }
 
 /** One set of monthly figures, in the estimator's currency. Null where the estimator gave none. */
@@ -302,15 +309,16 @@ export function policyInput(policy: PolicySettings, planJson: string, context?: 
   const cost = context?.cost;
   const review = context?.review;
   const actor = context?.actor;
+  const risk = context?.risk;
   if ((policy.input ?? "plan") !== "hcp") {
-    if (!cost && !review && !actor) return planJson;
-    // The plan JSON has no `cost`, `review` or `actor` key of its own: they sit beside the plan's keys, where a policy reads `input.cost`, `input.review` and `input.actor`.
+    if (!cost && !review && !actor && !risk) return planJson;
+    // The plan JSON has no `cost`, `review`, `actor` or `risk` key of its own: they sit beside the plan's keys, where a policy reads `input.cost`, `input.review`, `input.actor` and `input.risk`.
     const plan = JSON.parse(planJson) as Record<string, unknown>;
-    return JSON.stringify({ ...plan, ...(cost ? { cost } : {}), ...(review ? { review } : {}), ...(actor ? { actor } : {}) });
+    return JSON.stringify({ ...plan, ...(cost ? { cost } : {}), ...(review ? { review } : {}), ...(actor ? { actor } : {}), ...(risk ? { risk } : {}) });
   }
   const run = hcpRun(context ?? { root: "" });
   if (cost) run.cost_estimate = hcpCostEstimate(cost);
-  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}${review ? `,"review":${JSON.stringify(review)}` : ""}${actor ? `,"actor":${JSON.stringify(actor)}` : ""}}`;
+  return `{"plan":${planJson},"run":${JSON.stringify(run)}${cost ? `,"cost":${JSON.stringify(cost)}` : ""}${review ? `,"review":${JSON.stringify(review)}` : ""}${actor ? `,"actor":${JSON.stringify(actor)}` : ""}${risk ? `,"risk":${JSON.stringify(risk)}` : ""}}`;
 }
 
 /** The engine's arguments for one input file: chant's argv (`gatePolicyArgv`), less the command, which is the binary terragucci installed. */
@@ -949,9 +957,16 @@ export async function checkPlans(
     let denied = 0;
     for (const item of items) {
       // The engine reads the unredacted plan; what it prints back is redacted as the stored plan is.
-      const verdict: PolicyVerdict = setup !== undefined || binary === undefined
+      let verdict: PolicyVerdict = setup !== undefined || binary === undefined
         ? { violations: [], error: setup ?? "no engine" }
         : redactVerdict(await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...run, root: item.path, ...(item.cost ? { cost: item.cost } : {}) }), item.plan);
+      // Risk only adds approvals (chant#5325): allow_unattended is read from the input without input.risk, so a low score lets nothing through.
+      if (run.risk && verdict.allows?.length && binary !== undefined) {
+        const { risk: _risk, ...bare } = run;
+        const without = await checkPlan(binary, resolved.settings, repo, JSON.stringify(item.plan), options, { ...bare, root: item.path, ...(item.cost ? { cost: item.cost } : {}) });
+        const { allows: _allows, ...rest } = verdict;
+        verdict = { ...rest, ...(without.allows?.length ? { allows: without.allows } : {}) };
+      }
       roots.set(item.path, rootPolicy(verdict));
       for (const w of verdict.warnings ?? []) log(`${item.path}: policy warns: ${w}`);
       for (const h of verdict.holds ?? []) log(`${item.path}: policy holds its wave for an approval (${h.rule}): ${h.message}`);

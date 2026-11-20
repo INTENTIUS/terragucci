@@ -17,7 +17,7 @@ import { pathToFileURL } from "node:url";
 import { assertGatePolicySource, type GatePolicySource } from "@intentius/chant/policy-source";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
 import { productConfigProblems } from "@intentius/chant/ci-product";
-import { pipelineFromConfig, type PipelineEnvironmentConfig } from "@intentius/chant/pipeline";
+import { pipelineFromConfig, type PipelineEnvironmentConfig, type StageHookConfig } from "@intentius/chant/pipeline";
 import { type BucketRef } from "@intentius/chant/object-store";
 import { parseReportsBucket } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
@@ -553,6 +553,12 @@ export interface ControlSettings {
   read_token_env?: string;
   /** The branch of the control repo a GitLab pipeline or a Forgejo workflow runs on. Default `main`; GitHub's dispatch always runs the default branch. */
   ref?: string;
+  /**
+   * `control.release`: the dispatch carries the release digest the applied commit was cut into (chant's `release`
+   * of `ControlSettingsInput`, sent as `CHANT_CONTROL_RELEASE`), so a downstream run reads that release's artifacts.
+   * Off unless `true`.
+   */
+  release?: boolean;
 }
 
 /** `templates`' settings. */
@@ -561,8 +567,15 @@ export const TEMPLATES_KEYS = ["registry", "apps", "require"] as const;
 export const TEMPLATES_REQUIRE = ["signed", "any"] as const;
 export const WATCH_KEYS = ["module", "provider", "follow", "min_age"] as const;
 export const ROLLOUTS_KEYS = ["schedule", "watch", "soak"] as const;
-export const SOAK_KEYS = ["after", "conditions", "overrides"] as const;
-export const SOAK_OVERRIDE_KEYS = ["module", "provider", "after", "conditions"] as const;
+/**
+ * `rollouts.soak` takes the stage soak's words (`environments.<name>.soak`,
+ * chant's soak): `duration` and `checks`, each check a `kind` and `on_fail`.
+ * `after` and `conditions` are the earlier spelling, still read.
+ */
+export const SOAK_KEYS = ["duration", "checks", "overrides", "after", "conditions"] as const;
+export const SOAK_OVERRIDE_KEYS = ["module", "provider", "duration", "checks", "after", "conditions"] as const;
+/** A soak check's `on_fail`, as chant's soak takes it: `restart` (chant's default) or `hold`. */
+export const SOAK_ON_FAIL = ["restart", "hold"] as const;
 /** What a soak checks on the wave's roots before the next wave opens: an open drift issue, a failed apply, a policy denial. */
 export const SOAK_CONDITIONS = ["drift", "apply", "policy"] as const;
 export type SoakCondition = (typeof SOAK_CONDITIONS)[number];
@@ -586,31 +599,53 @@ export interface WatchRule {
   min_age?: string;
 }
 
+/** One check of a rollout's soak, in chant's soak words: a kind a rollout reads, and what a failing one does. */
+export interface RolloutSoakCheck {
+  kind: SoakCondition;
+  on_fail?: (typeof SOAK_ON_FAIL)[number];
+}
+
 /** `rollouts.soak` for the rollouts a module or provider glob names; the other keys fall back to the soak's own. */
 export interface SoakOverride {
   module?: string;
   provider?: string;
-  /** A duration in minutes, hours or days (`6h`), or `0` for no wait. */
+  /** A duration in minutes, hours or days (`6h`), or `0` for no wait. `duration` as written; `after` is its earlier spelling. */
   after?: string;
+  /** The kinds of `checks`; `conditions` as written is the earlier spelling, each a check with `on_fail: hold`. */
   conditions?: SoakCondition[];
+  /** `checks` as written, in chant's soak words. */
+  checks?: RolloutSoakCheck[];
 }
 
-/** How long a wave applied before the next one opens, and what must hold on its roots meanwhile. */
+/** How long a wave applied before the next one opens, and what must hold on its roots meanwhile, read onto one shape by rolloutsSoak. */
 export interface SoakSettings {
-  /** A duration in minutes, hours or days (`24h`), counted from when the wave's pull request merged. `0` waits for nothing but the conditions. */
+  /** A duration in minutes, hours or days (`24h`), counted from when the wave's pull request merged. `0` waits for the checks alone. `duration` as written; `after` is its earlier spelling. */
   after: string;
-  /** Checked on every run once `after` has passed. Default none. */
+  /** The kinds of `checks`, checked on every run once `after` has passed. Default none. */
   conditions?: SoakCondition[];
+  /** `checks` as written, in chant's soak words; absent with the earlier `conditions`, whose checks hold on a failure. */
+  checks?: RolloutSoakCheck[];
   /** Per module or provider: the first rule that names the rollout decides. */
   overrides?: SoakOverride[];
+}
+
+/** The soak as terragucci.yml writes it, in either spelling. */
+type SoakWritten = { duration?: string; after?: string; checks?: RolloutSoakCheck[]; conditions?: SoakCondition[] };
+
+/** One soak map, either spelling, on the shape the rollout reads: `after`, `conditions`, and `checks` when they were written. */
+function soakRead<T extends SoakWritten>(s: T): Omit<T, "duration"> {
+  const { duration, ...rest } = s;
+  const after = s.after ?? duration;
+  const conditions = s.conditions ?? s.checks?.map((c) => c.kind);
+  return { ...rest, ...(after !== undefined ? { after } : {}), ...(conditions !== undefined ? { conditions } : {}) };
 }
 
 export interface RolloutsSettings {
   /** The cron of the job that continues each rollout, and starts one for a watched release. */
   schedule: string;
   watch?: WatchRule[];
-  /** A duration (`24h`) for the whole soak, or its map. */
-  soak?: string | SoakSettings;
+  /** A duration (`24h`) for the whole soak, or its map in either spelling (rolloutsSoak reads it). */
+  soak?: string | (Partial<SoakSettings> & SoakWritten);
 }
 
 /** The cron `rollouts` names, in either of its forms. */
@@ -622,7 +657,10 @@ export const rolloutsWatch = (r: ResolvedSettings["rollouts"]): WatchRule[] => (
 /** The soak `rollouts` names, in either of its forms: a duration is the soak with no conditions. */
 export const rolloutsSoak = (r: ResolvedSettings["rollouts"]): SoakSettings | undefined => {
   const soak = r && typeof r === "object" ? r.soak : undefined;
-  return typeof soak === "string" ? { after: soak } : soak;
+  if (soak === undefined) return undefined;
+  if (typeof soak === "string") return { after: soak };
+  const read = soakRead(soak as SoakSettings & SoakWritten) as SoakSettings;
+  return { ...read, ...(soak.overrides ? { overrides: soak.overrides.map((o) => soakRead(o as SoakOverride & SoakWritten)) } : {}) };
 };
 
 /** A soak duration: a TTL, or `0`. Milliseconds, or undefined when it is neither. */
@@ -638,8 +676,27 @@ function soakProblems(v: unknown, where: string): string[] {
   const conds = (x: unknown, at: string) => {
     if (!(Array.isArray(x) && x.length > 0 && x.every((c) => (SOAK_CONDITIONS as readonly unknown[]).includes(c)))) out.push(`${at} must be a list of ${SOAK_CONDITIONS.join(", ")}`);
   };
+  // chant's soak words, as environments.<name>.soak takes them: each check a kind a rollout reads, and on_fail.
+  const checks = (x: unknown, at: string) => {
+    if (!Array.isArray(x) || x.length === 0) return void out.push(`${at} must be a list of checks, each a map with kind (${SOAK_CONDITIONS.join(", ")}) and on_fail (${SOAK_ON_FAIL.join(", ")})`);
+    x.forEach((c, i) => {
+      const ci = `${at}[${i}]`;
+      if (!isObject(c)) return void out.push(`${ci} must be a map with kind and on_fail`);
+      for (const k of Object.keys(c)) if (k !== "kind" && k !== "on_fail") out.push(`${ci}.${k} is not a setting of a rollout's soak check (settings: kind, on_fail)`);
+      if (!(SOAK_CONDITIONS as readonly unknown[]).includes(c.kind)) out.push(`${ci}.kind must be one of ${SOAK_CONDITIONS.join(", ")}, the checks a rollout reads on its projects; environments.<name>.soak takes the other kinds of chant's soak`);
+      if (c.on_fail !== undefined && !(SOAK_ON_FAIL as readonly unknown[]).includes(c.on_fail)) out.push(`${ci}.on_fail must be one of ${SOAK_ON_FAIL.join(", ")}`);
+    });
+  };
+  // One map takes one spelling of each: the key, or its earlier spelling.
+  const spelling = (m: Record<string, unknown>, at: string) => {
+    if (m.duration !== undefined && m.after !== undefined) out.push(`${at} sets duration and after; after is the earlier spelling of duration, so keep duration`);
+    if (m.checks !== undefined && m.conditions !== undefined) out.push(`${at} sets checks and conditions; conditions is the earlier spelling of checks, so keep checks`);
+  };
   for (const k of Object.keys(v)) if (!(SOAK_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${SOAK_KEYS.join(", ")})`);
-  dur(v.after, `${where}.after`);
+  spelling(v, where);
+  if (v.duration !== undefined) dur(v.duration, `${where}.duration`);
+  else dur(v.after, `${where}.duration`);
+  if (v.checks !== undefined) checks(v.checks, `${where}.checks`);
   if (v.conditions !== undefined) conds(v.conditions, `${where}.conditions`);
   if (v.overrides !== undefined) {
     if (!Array.isArray(v.overrides) || v.overrides.length === 0) out.push(`${where}.overrides must be a list of rules`);
@@ -651,8 +708,11 @@ function soakProblems(v: unknown, where: string): string[] {
         const named = (["module", "provider"] as const).filter((k) => rule[k] !== undefined);
         if (named.length !== 1) out.push(`${at} names a module or a provider glob, and one of them`);
         for (const k of named) if (!(typeof rule[k] === "string" && (rule[k] as string).trim() !== "")) out.push(`${at}.${k} must be a glob such as terraform-aws-modules/*/aws`);
-        if (rule.after === undefined && rule.conditions === undefined) out.push(`${at} sets after, conditions, or both`);
+        spelling(rule, at);
+        if (rule.after === undefined && rule.duration === undefined && rule.conditions === undefined && rule.checks === undefined) out.push(`${at} sets duration, checks, or both`);
+        if (rule.duration !== undefined) dur(rule.duration, `${at}.duration`);
         if (rule.after !== undefined) dur(rule.after, `${at}.after`);
+        if (rule.checks !== undefined) checks(rule.checks, `${at}.checks`);
         if (rule.conditions !== undefined) conds(rule.conditions, `${at}.conditions`);
       });
     }
@@ -712,7 +772,7 @@ export function templatesProblems(v: unknown, where: string): string[] {
   return out;
 }
 
-export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref"] as const;
+export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref", "release"] as const;
 /** The token a member holds for the dispatch when `control.token_env` is unset. */
 export const CONTROL_TOKEN_ENV = "TERRAGUCCI_CONTROL_TOKEN";
 /** The secret the plan job reads the control repo with when `control.read_token_env` is unset: read-only, and not the dispatch token. */
@@ -751,6 +811,7 @@ export function controlProblems(v: unknown, where: string): string[] {
   if (v.read_token_env !== undefined && !(typeof v.read_token_env === "string" && SECRET_NAME.test(v.read_token_env))) out.push(`${where}.read_token_env must name the secret holding a read-only token for the control repo, such as ${CONTROL_READ_TOKEN_ENV}`);
   else if (typeof v.read_token_env === "string" && v.read_token_env === (v.token_env ?? CONTROL_TOKEN_ENV)) out.push(`${where}.read_token_env must not be the dispatch token's secret (${v.read_token_env}): the plan job runs the change's code`);
   if (v.ref !== undefined && !(typeof v.ref === "string" && CONTROL_REF.test(v.ref))) out.push(`${where}.ref must be a branch name`);
+  if (v.release !== undefined && typeof v.release !== "boolean") out.push(`${where}.release must be true or false`);
   return out;
 }
 
@@ -1042,7 +1103,7 @@ export interface ProjectSettings {
    * can comment, push a branch and open a pull request; the agent itself never
    * holds it.
    */
-  agent?: { via?: (typeof AGENT_VIA)[number]; token_env?: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings; alert?: boolean | AgentFactsSettings; "apply-failed"?: boolean | AgentFactsSettings; schedule?: AgentScheduleSettings; "wave-refused"?: WaveRefusedAgentSettings };
+  agent?: { via?: (typeof AGENT_VIA)[number]; token_env?: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings; alert?: boolean | AgentFactsSettings; "apply-failed"?: boolean | AgentFactsSettings; "verify-failed"?: boolean | AgentFactsSettings; schedule?: AgentScheduleSettings; "wave-refused"?: WaveRefusedAgentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -1154,12 +1215,18 @@ export const ENVIRONMENT_STAGE_KEYS = [
   "publish",
   "reads",
   "agent_steps",
+  "hooks",
   "risk",
   "replan_dependents",
   "config",
   "secrets",
   "imports",
 ] as const;
+/** The moments of `environments.<name>.hooks.<when>`, chant's wave hook moments as its vocabulary spells them. */
+export const STAGE_HOOK_MOMENTS = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"] as const;
+/** The keys of one stage hook. */
+export const STAGE_HOOK_KEYS = ["command", "name", "on_failure", "per_run", "targets"] as const;
+
 /** The keys an environment takes. */
 export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment", ...ENVIRONMENT_STAGE_KEYS] as const;
 /** The keys of an environment's `oidc`. */
@@ -1212,6 +1279,11 @@ export interface EnvironmentSettings {
   reads?: Record<string, { stage: string; artifact: string }>;
   /** Agent steps of the stage: `prompt`, `schema`, `reads`, `command`, `key_secret`, `timeout`, `max_runs`, `max_cost_usd`. */
   agent_steps?: Record<string, { prompt: string; schema: Record<string, unknown>; reads?: Record<string, { stage: string; artifact: string } | { step: string }>; command?: string; key_secret?: string; timeout?: number; max_runs?: number; max_cost_usd?: number }>;
+  /**
+   * `hooks.<when>` (chant#5421): commands the stage's waves run at a moment, `<when>` one of STAGE_HOOK_MOMENTS. Each
+   * takes `command` (a list), `name`, `on_failure`, `per_run` and `targets`, as chant's wave hooks do.
+   */
+  hooks?: Partial<Record<(typeof STAGE_HOOK_MOMENTS)[number], StageHookConfig[]>>;
   /** The stage's risk threshold and the rules an over score adds. */
   risk?: RiskSettings;
   /** The stage's `replanDependents`, in place of the top-level `replan_dependents`. */
@@ -1859,6 +1931,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
       if (a.alert !== undefined) checkAgentComment(a.alert, a.token_env, `${where}.agent.alert`, problems, "alert");
       if (a["apply-failed"] !== undefined) checkAgentComment(a["apply-failed"], a.token_env, `${where}.agent.apply-failed`, problems, "apply-failed");
+      if (a["verify-failed"] !== undefined) checkAgentComment(a["verify-failed"], a.token_env, `${where}.agent.verify-failed`, problems, "verify-failed");
+      // One relay key signs every fact a wave job records, so the two fact agents the wave jobs feed name the same secret.
+      const relayOf = (v: unknown): string => (isObject(v) && typeof v.relay_key_secret === "string" ? v.relay_key_secret : "CHANT_RELAY_KEY");
+      if (a["apply-failed"] && a["verify-failed"] && relayOf(a["apply-failed"]) !== relayOf(a["verify-failed"])) problems.push(`${where}.agent.verify-failed.relay_key_secret must be agent.apply-failed's (${relayOf(a["apply-failed"])}): the wave jobs sign both kinds of fact with one relay key`);
       if (a.schedule !== undefined) checkAgentComment(a.schedule, a.token_env, `${where}.agent.schedule`, problems, "schedule");
       if (a.drift !== undefined) {
         checkAgentComment(a.drift, a.token_env, `${where}.agent.drift`, problems);
@@ -1898,7 +1974,7 @@ export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
 export const COST_KEYS = ["key_secret", "command", "approve_above"];
 export const PASS_KEYS = ["secrets", "vars"];
-export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift", "alert", "apply-failed", "schedule", "wave-refused"];
+export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift", "alert", "apply-failed", "verify-failed", "schedule", "wave-refused"];
 
 /** A forge login, as `agent.login` takes it. */
 export const AGENT_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$/;
@@ -2637,8 +2713,8 @@ function checkWaveRefusedAgent(c: unknown, where: string, problems: string[]): v
   if (c.max_cost_usd !== undefined && !(typeof c.max_cost_usd === "number" && Number.isFinite(c.max_cost_usd) && c.max_cost_usd > 0)) problems.push(`${where}.max_cost_usd must be a number of US dollars above 0`);
 }
 
-/** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. `agent.alert`, `agent.apply-failed` and `agent.schedule` add keys (AGENT_FACTS_KEYS, AGENT_SCHEDULE_KEYS). */
-function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[], kind: "comment" | "alert" | "apply-failed" | "schedule" = "comment"): void {
+/** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. `agent.alert`, `agent.apply-failed`, `agent.verify-failed` and `agent.schedule` add keys (AGENT_FACTS_KEYS, AGENT_SCHEDULE_KEYS). */
+function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[], kind: "comment" | "alert" | "apply-failed" | "verify-failed" | "schedule" = "comment"): void {
   const keys: readonly string[] = kind === "schedule" ? AGENT_SCHEDULE_KEYS : kind === "comment" ? AGENT_COMMENT_KEYS : AGENT_FACTS_KEYS;
   if (typeof c === "boolean") {
     if (kind === "schedule") {
@@ -2666,7 +2742,7 @@ function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problem
     if (kind !== "comment") {
       if (c.window !== undefined && !(Number.isInteger(c.window) && (c.window as number) >= 1 && (c.window as number) <= 1440)) problems.push(`${where}.window must be a whole number of minutes from 1 to 1440`);
     }
-    if (kind === "alert" || kind === "apply-failed") {
+    if (kind === "alert" || kind === "apply-failed" || kind === "verify-failed") {
       if (c.relay_key_secret !== undefined && !(typeof c.relay_key_secret === "string" && SECRET_NAME.test(c.relay_key_secret))) problems.push(`${where}.relay_key_secret must name the secret holding the relay key, such as CHANT_RELAY_KEY`);
       else if (typeof c.relay_key_secret === "string" && c.relay_key_secret === (c.key_secret ?? "ANTHROPIC_API_KEY")) problems.push(`${where}.relay_key_secret must not be the model's key (${c.relay_key_secret}): the model never holds the relay key`);
     }
@@ -3091,8 +3167,9 @@ export function stageKeyProblems(s: Record<string, unknown>): string[] {
   const stageEnvs = Object.fromEntries(
     Object.entries(envs).flatMap(([name, e]) => {
       if (!isObject(e)) return [];
+      // Every environment, its stage keys or none: chant checks promotion's names against environments.
       const keys = (ENVIRONMENT_STAGE_KEYS as readonly string[]).filter((k) => e[k] !== undefined);
-      return keys.length ? [[name, Object.fromEntries(keys.map((k) => [k, e[k]]))]] : [];
+      return [[name, Object.fromEntries(keys.map((k) => [k, e[k]]))]];
     }),
   );
   const top = Object.fromEntries(STAGE_TOP_KEYS.filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));

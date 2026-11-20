@@ -64,7 +64,7 @@
  *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
  *   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a day-2 action's request; the requester's own approval never counts)
  *   terragucci approve release <env> [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve the release gate a promote or rollback of <env> waits at)
- *   terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]   (deploy a release to the next environment of promotion: chant's components promote)
+ *   terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--urgent --reason <text>] [--dry-run] [--json]   (deploy a release to the next environment of promotion: chant's components promote)
  *   terragucci rollback <env> --release <label> [--dry-run] [--json]   (deploy an earlier release to <env>: chant's components rollback)
  *   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   (run one Terraform action block of a root under a gated request: exit 3 while it waits, 0 once it ran, 1 on a refusal or a failed run; see action.ts)
  *   terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci action` comment or the action workflow's dispatch; run by the generated action workflow)
@@ -74,10 +74,7 @@
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
  *   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]   (ask for one version of a root's state, and once someone else approved it, download it to this machine)
- *   terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
-  terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
-  terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
-  terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
+ *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--waves <n>] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
@@ -143,7 +140,7 @@ import { pipelineCommand } from "./pipeline";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, approveRelease, isGateKeyword, overrideDenial } from "./approve";
-import { releaseArgv, releaseRefusal, releaseWords } from "./promotion";
+import { promoteAgentFactsEnv, releaseArgv, releaseRefusal, releaseWords } from "./promotion";
 import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
@@ -276,10 +273,13 @@ const USAGE = `usage:
   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a pull request's ephemeral copy
   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a day-2 action's request
   terragucci approve release <env> [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   approve the release gate a promote or rollback of <env> waits at
-  terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]   deploy a release to the next environment of promotion
+  terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--urgent --reason <text>] [--dry-run] [--json]   deploy a release to the next environment of promotion; --urgent passes the stage's gate on its urgent rule
   terragucci rollback <env> --release <label> [--dry-run] [--json]   deploy an earlier release to <env>
     (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
+  terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
+  terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   run one Terraform action block under a gated request (exit 3 while it waits)
@@ -358,7 +358,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume", "allow-skip"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume", "allow-skip", "urgent"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -1386,6 +1386,11 @@ export async function main(argv: string[]): Promise<number> {
         const chantArgv = releaseArgv(verb, { args, flags });
         const refused = releaseRefusal(cwd);
         if (refused) throw new ConfigError(`${verb}: ${refused}`);
+        // agent.verify-failed (chant#5339): the promote records a failed verify or soak as a fact for the agent.
+        if (verb === "promote") {
+          const path = findConfig(cwd);
+          if (path) Object.assign(process.env, promoteAgentFactsEnv(resolveRepo(await loadConfig(resolve(path))), process.env));
+        }
         return runChantInProcess(chantArgv, releaseWords(TERRAGUCCI_WORDS));
       }
       case "components": {

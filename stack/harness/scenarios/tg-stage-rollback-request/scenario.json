@@ -1,0 +1,304 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-stage-rollback-request",
+  "product": "terragucci",
+  "claim": "pipeline/rollback-request",
+  "title": "With `on_verify_fail: rollback`, a failed soak check after a promote requests the rollback to the stage's previous release, which waits for an approval",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-stage-rollback-request",
+  "limits": {
+    "out-of-band": 2400
+  },
+  "steps": [
+    {
+      "id": "mark",
+      "do": "out-of-band",
+      "label": "the arm's start, which the ledger checks read lines after",
+      "command": [
+        "stack/harness/check.sh",
+        "mark"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied dev's root",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "do": "open",
+      "branch": "notes",
+      "overlay": "notes",
+      "title": "notes: a change that touches no root"
+    },
+    {
+      "id": "merge-notes",
+      "do": "merge",
+      "pull": "notes"
+    },
+    {
+      "id": "notes-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "cut-r1",
+      "do": "out-of-band",
+      "label": "a release is cut from the merge commit",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "cut",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "dev-r1",
+      "do": "out-of-band",
+      "label": "dev deploys r1",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "first",
+        "dev",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-r1",
+      "do": "out-of-band",
+      "label": "r1 is promoted to staging",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "staging",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "v2",
+      "do": "open",
+      "branch": "v2",
+      "overlay": "v2",
+      "title": "v2: every environment's net to v2"
+    },
+    {
+      "id": "merge-v2",
+      "do": "merge",
+      "pull": "v2"
+    },
+    {
+      "id": "v2-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "cut-r2",
+      "do": "out-of-band",
+      "label": "a second release is cut",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "cut",
+        "r2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "dev-r2",
+      "do": "out-of-band",
+      "label": "dev deploys r2",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "first",
+        "dev",
+        "r2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-r2",
+      "do": "out-of-band",
+      "label": "r2 is promoted to staging",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "staging",
+        "r2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-root-r2",
+      "do": "out-of-band",
+      "label": "staging's root holds r2's value",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/staging/net",
+        "id",
+        "net-staging-v2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "broken",
+      "do": "open",
+      "branch": "broken",
+      "overlay": "broken",
+      "title": "broken: staging's soak check fails"
+    },
+    {
+      "id": "merge-broken",
+      "do": "merge",
+      "pull": "broken"
+    },
+    {
+      "id": "broken-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-held",
+      "do": "out-of-band",
+      "label": "a promote into prod reads staging's soak, whose check fails, and exits 3",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r2"
+      ],
+      "expect": [
+        {
+          "exit": 3
+        }
+      ]
+    },
+    {
+      "id": "requested",
+      "do": "out-of-band",
+      "label": "staging's ledger has a failed soak and a rollback request to r1 behind the gate staging-rollback",
+      "command": [
+        "stack/harness/check.sh",
+        "ledger-since",
+        "staging/stage.jsonl",
+        "any(.[]; .kind == \"failed\" and .failure == \"soak\") and any(.[]; .kind == \"rollback-requested\" and .gate == \"staging-rollback\" and (.release.label // \"\") == \"r1\")"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-kept",
+      "do": "out-of-band",
+      "label": "the request applied nothing: staging still holds r2's value while it waits for an approval",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/staging/net",
+        "id",
+        "net-staging-v2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the pull requests and the promote's checkout set staging's on_verify_fail to hold, so the failed soak holds the promote and no rollback is requested after the arm's start"
+  }
+}

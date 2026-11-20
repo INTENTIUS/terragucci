@@ -1,0 +1,15 @@
+# tg-stage-risk (terragucci#1493): one root with two resources, on floci, under
+# gate never. risk.approve_above is 0.3, so a change that deletes a resource
+# (chant scores one delete 0.35) waits for an approval of its own.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-risk
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["app"]
+gate: never
+reports:
+  bucket: s3://terragucci-reports
+  endpoint: http://floci:4566
+  prefix: hs-tg-stage-risk
+risk:
+  approve_above: 0.3

@@ -1,0 +1,15 @@
+# BREAK: dev has no soak, so nothing holds the promote into prod.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-soak
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["envs/*/net"]
+apply:
+  branches:
+    release: ["envs/prod/**"]
+environments:
+  dev:
+    roots: ["envs/dev/**"]
+    gate: never
+  prod: { roots: ["envs/prod/**"], gate: never }
+promotion: [dev, prod]

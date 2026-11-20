@@ -487,6 +487,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(agentDriftInput(settings) ? { agentDrift: agentDriftInput(settings) } : {}),
     ...(agentTriggerInput(settings, "alert") ? { agentAlert: agentTriggerInput(settings, "alert") } : {}),
     ...(agentTriggerInput(settings, "apply-failed") ? { agentApplyFailed: agentTriggerInput(settings, "apply-failed") } : {}),
+    ...(agentTriggerInput(settings, "verify-failed") ? { agentVerifyFailed: agentTriggerInput(settings, "verify-failed") } : {}),
     ...(agentTriggerInput(settings, "schedule") ? { agentSchedule: agentTriggerInput(settings, "schedule") } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(allowTeams(settings.comment_allow).length > 0 ? { teamToken: true } : {}),

@@ -25,6 +25,8 @@ import {
   ROLLOUTS_KEYS,
   WATCH_KEYS,
   SOAK_KEYS,
+  STAGE_HOOK_KEYS,
+  STAGE_HOOK_MOMENTS,
   SOAK_OVERRIDE_KEYS,
   SOAK_CONDITIONS,
   FOLLOW_BUMPS,
@@ -99,7 +101,6 @@ import {
   TERRAGRUNT_KEYS,
   TRUST_ROLE,
   RULE_NAME,
-  APPROVALS,
   ENVIRONMENT_KEYS,
   TOKEN_PROTECTIONS,
   WIF_PROVIDER,
@@ -127,6 +128,8 @@ const bool: JsonSchema = { type: "boolean" };
 const nonBlank: JsonSchema = { type: "string", pattern: "\\S" };
 const soakAfter: JsonSchema = { type: "string", pattern: "^(0|[1-9]\\d*[mhd])$" };
 const soakConditions: JsonSchema = { type: "array", minItems: 1, uniqueItems: true, items: { enum: [...SOAK_CONDITIONS] } };
+/** A rollout's soak checks in chant's soak words, the kinds a rollout reads (environments.<name>.soak takes chant's other kinds too). */
+const rolloutSoakChecks: JsonSchema = { type: "array", minItems: 1, items: { type: "object", required: ["kind"], properties: { kind: { enum: [...SOAK_CONDITIONS] }, on_fail: { enum: ["restart", "hold"] } }, additionalProperties: false } };
 const oneLine: JsonSchema = { type: "string", pattern: "^[^\\r\\n]*\\S[^\\r\\n]*$" };
 const pat = (re: RegExp): JsonSchema => ({ type: "string", pattern: re.source });
 const secret = pat(SECRET_NAME);
@@ -441,6 +444,17 @@ const risk = (stage: boolean): JsonSchema => ({
 const setSecrets: JsonSchema = { type: "object", additionalProperties: { anyOf: [str, { type: "object", additionalProperties: str }] } };
 const setConfig: JsonSchema = { type: "object", additionalProperties: str };
 const environmentSet: JsonSchema = { type: "object", properties: { imports: strings, config: setConfig, secrets: setSecrets }, additionalProperties: false };
+/** One stage hook, chant's wave hook in its vocabulary's words. */
+const stageHook: JsonSchema = {
+  ...map(STAGE_HOOK_KEYS, {
+    command: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    name: { type: "string", minLength: 1 },
+    on_failure: { enum: ["fail", "approve"] },
+    per_run: bool,
+    targets: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+  }, { required: ["command"] }),
+};
+const stageHooks: JsonSchema = { ...map(STAGE_HOOK_MOMENTS, Object.fromEntries(STAGE_HOOK_MOMENTS.map((m) => [m, { type: "array", items: stageHook }])) as unknown as Record<(typeof STAGE_HOOK_MOMENTS)[number], JsonSchema>) };
 const soakChecks: JsonSchema = { type: "array", minItems: 1, items: { type: "object", required: ["kind"], properties: { kind: { enum: ["http", "prometheus", "cloudwatch-alarm", "command", "health", "drift", "apply", "policy"] }, on_fail: { enum: ["restart", "hold"] } } } };
 
 const ephemeral = map(EPHEMERAL_KEYS as (keyof EphemeralSettings)[], {
@@ -488,6 +502,7 @@ function environment(top: boolean): JsonSchema {
     },
     publish: { type: "object", additionalProperties: { type: "object" }, description: "Release artifacts the stage publishes once it applied: { member, output } or { secret }." },
     reads: { type: "object", additionalProperties: { type: "object", required: ["stage", "artifact"], properties: { stage: pat(ENVIRONMENT_NAME), artifact: str }, additionalProperties: false }, description: "Artifacts of earlier stages the stage's deploy gets in a variable." },
+    hooks: { ...stageHooks, description: "Commands the stage's waves run at before-observe, before-plan, after-plan, after-gate, before-apply or after-apply: each a command list with name, on_failure, per_run and targets." },
     agent_steps: { type: "object", additionalProperties: { type: "object", required: ["prompt", "schema"] }, description: "Agent steps of the stage: prompt, schema, reads, command, key_secret, timeout, max_runs and max_cost_usd." },
     risk: { ...risk(true), description: "The stage's risk threshold, and the approval rules an over score adds to its gate." },
     replan_dependents: { type: "array", minItems: 1, items: glob, description: "The roots whose dependents are planned again when an output they read changes, in this stage." },
@@ -614,22 +629,24 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
                   soakAfter,
                   {
                     ...map(SOAK_KEYS, {
-                      after: soakAfter,
-                      conditions: soakConditions,
+                      duration: soakAfter,
+                      checks: rolloutSoakChecks,
+                      after: { ...soakAfter, description: "The earlier spelling of duration, still read." },
+                      conditions: { ...soakConditions, description: "The earlier spelling of checks, each condition a check that holds on a failure; still read." },
                       overrides: {
                         type: "array",
                         minItems: 1,
                         items: {
-                          ...map(SOAK_OVERRIDE_KEYS, { module: nonBlank, provider: nonBlank, after: soakAfter, conditions: soakConditions }),
+                          ...map(SOAK_OVERRIDE_KEYS, { module: nonBlank, provider: nonBlank, duration: soakAfter, checks: rolloutSoakChecks, after: soakAfter, conditions: soakConditions }),
                           oneOf: [{ required: ["module"] }, { required: ["provider"] }],
-                          anyOf: [{ required: ["after"] }, { required: ["conditions"] }],
+                          anyOf: [{ required: ["duration"] }, { required: ["checks"] }, { required: ["after"] }, { required: ["conditions"] }],
                         },
                         description: "Per module or provider glob: the first rule that names the rollout sets its wait, its conditions, or both.",
                       },
-                    }, { required: ["after"] }),
+                    }, { anyOf: [{ required: ["duration"] }, { required: ["after"] }] }),
                   },
                 ],
-                description: "How long a wave applied before the next one opens, and what must hold on its roots meanwhile.",
+                description: "How long a wave applied before the next one opens, and the checks that must pass on its roots meanwhile, in the words of environments.<name>.soak.",
               },
             }, { required: ["schedule"] }),
           ],
@@ -645,6 +662,7 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
         token_env: secret,
         read_token_env: secret,
         ref: pat(CONTROL_REF),
+        release: { ...bool, description: "The dispatch carries the release digest the applied commit was cut into, so a downstream run reads that release's artifacts." },
       }, { required: ["repo", "op"] }),
       description: "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents.",
     },
@@ -753,10 +771,11 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
         drift: agentRun,
         alert: agentFactsRun,
         "apply-failed": agentFactsRun,
+        "verify-failed": agentFactsRun,
         schedule: agentScheduleRun,
         "wave-refused": map(AGENT_WAVE_REFUSED_KEYS, { command: oneLine, key_secret: secret, timeout: whole(1), max_runs: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 } }),
       }, { anyOf: [{ required: ["via", "token_env"] }, { required: ["wave-refused"], maxProperties: 1 }] }),
-      description: "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary.",
+      description: "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply, a failed verify or soak, or a schedule, and the model behind respond.wave-refused: summary.",
     },
     review: {
       ...map(REVIEW_KEYS, {

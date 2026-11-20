@@ -1,0 +1,197 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-stage-soak",
+  "product": "terragucci",
+  "claim": "pipeline/soak-hold",
+  "title": "A stage's failing soak check holds the promotion into the next stage until it passes for the soak's duration",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-stage-soak",
+  "limits": {
+    "out-of-band": 1800
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied dev's root",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "do": "open",
+      "branch": "notes",
+      "overlay": "notes",
+      "title": "notes: a change that touches no root"
+    },
+    {
+      "id": "merge-notes",
+      "do": "merge",
+      "pull": "notes"
+    },
+    {
+      "id": "notes-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed, so its commit can be released",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "cut-r1",
+      "do": "out-of-band",
+      "label": "a release is cut from the merge commit",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "cut",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "dev-r1",
+      "do": "out-of-band",
+      "label": "dev deploys it",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "first",
+        "dev",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-held",
+      "do": "out-of-band",
+      "label": "a promote into prod waits while dev's soak check fails",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 3
+        }
+      ]
+    },
+    {
+      "id": "prod-untouched",
+      "do": "out-of-band",
+      "label": "nothing applied prod's root while the soak held it",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/prod/net",
+        "id",
+        "net-prod-v1"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    },
+    {
+      "id": "healthy",
+      "do": "open",
+      "branch": "healthy",
+      "overlay": "healthy",
+      "title": "healthy: dev's soak check passes"
+    },
+    {
+      "id": "merge-healthy",
+      "do": "merge",
+      "pull": "healthy"
+    },
+    {
+      "id": "healthy-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-r1",
+      "do": "out-of-band",
+      "label": "the same promote deploys r1 to prod once the check passes",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-root",
+      "do": "out-of-band",
+      "label": "prod's root applied",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/prod/net",
+        "id",
+        "net-prod-v1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the promote's checkout takes dev's soak out of terragucci.yml and .chant/pipeline.ts, so the first promote into prod deploys while the check would fail"
+  }
+}

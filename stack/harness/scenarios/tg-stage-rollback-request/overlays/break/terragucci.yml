@@ -1,0 +1,22 @@
+# BREAK: staging holds on a failed check, so no rollback is requested.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-rollback-request
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["envs/*/net"]
+apply:
+  branches:
+    release: ["envs/staging/**", "envs/prod/**"]
+environments:
+  dev: { roots: ["envs/dev/**"], gate: never }
+  staging:
+    roots: ["envs/staging/**"]
+    gate: never
+    on_verify_fail: hold
+    soak:
+      duration: "0"
+      checks:
+        - kind: command
+          command: ["sh", "-c", "test ! -f soak-broken"]
+  prod: { roots: ["envs/prod/**"], gate: always }
+promotion: [dev, staging, prod]

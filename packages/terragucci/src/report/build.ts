@@ -5,6 +5,7 @@
  * plan summary. The report adds what a reader needs on top: links to every
  * root's full plan, every destroy by name, and what is open or folded.
  */
+import type { ChangeRisk } from "@intentius/chant/change-risk";
 import { changeSetDigest, composeChangeSet, type ChangeSetAction, type ChangeSetEntry, type ChangeSetPart, type ChangeSetPlanner } from "@intentius/chant/change-set";
 import { groupChangeSet } from "@intentius/chant/plan-summary";
 import { terraformChangeSetPart } from "@intentius/chant-lexicon-terraform/change-set";
@@ -139,6 +140,8 @@ export interface WaveInput {
   policyGate?: ReportWave["policy_gate"];
   /** The wave's monthly cost. With `approve_above` it joins the wave's digests, and a change over it makes the wave wait. */
   cost?: ReportWaveCost;
+  /** The wave's change risk, chant's record from the after-plan hook (chant#5422). */
+  risk?: ChangeRisk;
   /** With `cost.approve_above`: chant's digest member for the wave's cost (`opWaveCostVerdict`, ../cost.ts), the member the wave's gate takes. */
   costMember?: WaveMember;
   /** Where the wave stands. */
@@ -484,6 +487,7 @@ export function buildReport(input: BuildInput): Report {
       ...(w.heldBySteps?.length ? { held_by_steps: [...w.heldBySteps].sort() } : {}),
       ...(w.covered ? { covered: { digest: w.covered.digest, filled_inputs: [...w.covered.filledInputs] } } : {}),
       ...(w.cost ? { cost: w.cost } : {}),
+      ...(w.risk ? { risk: w.risk } : {}),
       ...(w.state ? { state: w.state } : {}),
       ...(w.blocked?.size ? { blocked: [...w.blocked].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([root, by]) => ({ root, blocked_by: by })) } : {}),
       ...(w.outcomes?.length ? { outcomes: w.outcomes.map((o) => ({ root: o.root, outcome: o.outcome, ...(o.error ? { error: o.error } : {}), ...(o.blockedBy ? { blocked_by: o.blockedBy } : {}) })) } : {}),

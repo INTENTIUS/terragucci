@@ -991,7 +991,7 @@ not approved: wave-2 waits for jcs1-sha256:9f2c...; waiting: wave-2 for jcs1-sha
 ## promote and rollback
 
 ```bash
-terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]
+terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--urgent --reason <text>] [--dry-run] [--json]
 terragucci rollback <env> --release <label> [--dry-run] [--json]
 ```
 
@@ -1003,6 +1003,7 @@ Deploy a release to one environment of [`promotion`](/terragucci/reference/confi
 | `--release` | the release's label or digest; the deploy reads the files the release recorded for that environment |
 | `--from` | the environment whose record of each component is promoted; default: the one before `--to` in `promotion` |
 | `--allow-skip` | promote past an environment of `promotion` that has not run the release, which is refused otherwise |
+| `--urgent` | pass the stage's gate on its [urgent rule](/terragucci/reference/config/#stages): one proven approval from `environments.<env>.urgent.role` lets the named release in. Takes `--release` and `--reason`, a line the stage's ledger keeps with the promote |
 | `<env>` (rollback) | the environment that goes back; `--release` names the earlier release it goes back to |
 | `--dry-run` | print each component, the release and where it was deployed from, and change nothing |
 | `--json` | chant's plan and result as JSON |

@@ -1,9 +1,9 @@
 ---
 title: Start an agent from an alert, a failed apply or a schedule
-description: Turn on agent.alert, agent.apply-failed or agent.schedule, and a coding agent opens a pull request when a production alert fires, an apply fails, or a cron says it is time, on GitHub and Forgejo.
+description: Turn on agent.alert, agent.apply-failed, agent.verify-failed or agent.schedule, and a coding agent opens a pull request when a production alert fires, an apply fails, a soak or verify fails, or a cron says it is time, on GitHub and Forgejo.
 prompt: |
   Read https://intentius.io/terragucci/guides/agent-start-from-an-alert/.
-  Add the `agent.alert`, `agent.apply-failed` or `agent.schedule` block I name to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
+  Add the `agent.alert`, `agent.apply-failed`, `agent.verify-failed` or `agent.schedule` block I name to terragucci.yml, run `npx terragucci config check` and `npx terragucci init`, and open a pull request with the result.
   List the secrets I must set and the relay settings; do not create tokens or secrets yourself.
   Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
 ---
@@ -20,9 +20,10 @@ Each agent is a workflow of its own, written by `init` from [chant](/terragucci/
 |---|---|---|
 | `agent.alert` | the relay verified a production alert and recorded it | `terragucci/agent/terragucci-alert-agent` |
 | `agent.apply-failed` | an apply job recorded a member that did not apply | `terragucci/agent/terragucci-apply-failed-agent-<member>` |
+| `agent.verify-failed` | a soak check started failing, or a promote's verify step failed | `terragucci/agent/terragucci-verify-failed-agent-<member>` |
 | `agent.schedule` | the cron in `cron` fires | `terragucci/agent/terragucci-schedule-agent` |
 
-Every run leaves a run record on the ledger under the agent's op name. The record's `trigger` is `alert`, `apply-failed` or `schedule`, and it names the facts the run took, the member, the join window, and each alert's source and id.
+Every run leaves a run record on the ledger under the agent's op name. The record's `trigger` is `alert`, `apply-failed`, `verify-failed` or `schedule`, and it names the facts the run took, the member, the join window, and each alert's source and id.
 
 ## Prerequisites
 
@@ -31,7 +32,7 @@ Every run leaves a run record on the ledger under the agent's op name. The recor
 | A repo on GitHub or Forgejo | `init` writes these agents for those two forges |
 | An Anthropic API key in your forge's secrets | the default command runs Claude Code |
 | The agent's token in your forge's secrets, set up as for [the agent comment](/terragucci/guides/agent-change-a-pull-request/) | it pushes the branch and opens the pull request |
-| A relay key in your forge's secrets (`CHANT_RELAY_KEY`, or the name `relay_key_secret` gives), for `agent.alert` and `agent.apply-failed` | the facts are signed with it and checked with it |
+| A relay key in your forge's secrets (`CHANT_RELAY_KEY`, or the name `relay_key_secret` gives), for `agent.alert`, `agent.apply-failed` and `agent.verify-failed` | the facts are signed with it and checked with it |
 
 ## An agent for production alerts
 
@@ -100,6 +101,20 @@ agent:
 The failed-apply triage comment on the pull request is unchanged; `respond.apply-failed` keeps its setting. The agent's workflow runs every 15 minutes and when started by hand on the default branch.
 
 With `apply.when: pull-request` the waves run as split jobs. The gate and record jobs, which respond for a wave, hold `CHANT_AGENT_FACTS` and the relay key, so a failed apply records its fact there. The plan and apply jobs hold neither.
+
+## An agent for a failed verify or soak
+
+```yaml
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  verify-failed:
+    max_cost_usd: 10
+```
+
+`init` writes `terragucci-verify-failed-agent.yml`, and the apply wave jobs record a soak check that starts failing. [`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback) records a failing soak of the stage it promotes from, and a failed verify step, when its shell holds the relay key in `CHANT_RELAY_KEY` or in the variable `relay_key_secret` names. Each fact names the check, the stage and the release.
+
+The failure keeps its outcome: the soak holds, and a rollback that `on_verify_fail: rollback` requests waits at its gate. `agent.apply-failed` and `agent.verify-failed` sign with one relay key.
 
 ## An agent on a schedule
 

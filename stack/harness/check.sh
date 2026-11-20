@@ -20,6 +20,17 @@
 #   check.sh ledger-file <path> <jq>      the file at path on the repo's
 #                                         chant/lifecycle ({} when there is
 #                                         none) passes jq -e
+#   check.sh mark                         the arm's start, kept under the
+#                                         state directory for ledger-since
+#   check.sh ledger-since <path> <jq>     the JSON lines of the file at path on
+#                                         chant/lifecycle whose timestamp is at
+#                                         or after the arm's mark, as one array,
+#                                         pass jq -e (terragucci#1493: the
+#                                         ledger outlives the reset to base, so
+#                                         an arm reads its own lines)
+#   check.sh reports <prefix> <jq>        the report.json objects under prefix
+#                                         in floci's terragucci-reports bucket,
+#                                         as one array, pass jq -e
 #   check.sh branch-run <branch> <status> the newest push run of branch ended
 #                                         status, waiting for it first
 #   check.sh job-running [match]          a job container whose name holds
@@ -300,6 +311,28 @@ case "${1:-}" in
   ledger-file)
     path="${2:?ledger-file <path> <jq>}"; filter="${3:?ledger-file <path> <jq>}"
     { file_at "$REPO" chant/lifecycle chant/lifecycle "$path" 2>/dev/null || echo '{}'; } | jq -e "$filter" >&2
+    ;;
+  mark)
+    arm=plain; [ -z "${BREAK:-}" ] || arm=break
+    dir="$TG_STATE/scenarios/${TG_SCENARIO:?}"
+    mkdir -p "$dir"
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$dir/mark-$arm"
+    log "the $arm arm starts at $(cat "$dir/mark-$arm")"
+    ;;
+  ledger-since)
+    path="${2:?ledger-since <path> <jq>}"; filter="${3:?ledger-since <path> <jq>}"
+    arm=plain; [ -z "${BREAK:-}" ] || arm=break
+    mark_file="$TG_STATE/scenarios/${TG_SCENARIO:?}/mark-$arm"
+    [ -f "$mark_file" ] || { log "no mark for this arm: run check.sh mark as the arm's first step"; exit 1; }
+    since="$(cat "$mark_file")"
+    { file_at "$REPO" chant/lifecycle chant/lifecycle "$path" 2>/dev/null || true; } \
+      | jq -s --arg since "$since" '[.[] | select((.timestamp // "") >= $since)]' | tee /dev/stderr | jq -e "$filter" >&2
+    ;;
+  reports)
+    prefix="${2:?reports <prefix> <jq>}"; filter="${3:?reports <prefix> <jq>}"
+    keys="$(curl -fsS "$FLOCI/terragucci-reports?list-type=2&prefix=$prefix" | grep -o '<Key>[^<]*</Key>' | sed -E 's#</?Key>##g' | grep '/report\.json$' || true)"
+    [ -n "$keys" ] || { log "no report.json under s3://terragucci-reports/$prefix"; exit 1; }
+    for k in $keys; do curl -fsS "$FLOCI/terragucci-reports/$k"; echo; done | jq -s -e "$filter" >&2
     ;;
   branch-run)
     branch="${2:?branch-run <branch> <status>}"; want="${3:?branch-run <branch> <status>}"

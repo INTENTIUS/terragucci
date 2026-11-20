@@ -1,0 +1,163 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-stage-canary",
+  "product": "terragucci",
+  "claim": "pipeline/canary",
+  "title": "With `waves.canary` and a dev soak, the canary wave applies first and every wave after it waits for its soak",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-stage-canary",
+  "limits": {
+    "out-of-band": 1800
+  },
+  "steps": [
+    {
+      "id": "base-settled",
+      "do": "out-of-band",
+      "label": "the base push's runs ended",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "base-canary",
+      "do": "out-of-band",
+      "label": "the base push applied dev's net, the canary",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/dev/net",
+        "id",
+        "net-dev-v1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "base-app-waits",
+      "do": "out-of-band",
+      "label": "dev's app, in the wave after the canary, did not apply while the canary soaks",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/dev/app",
+        "id",
+        "app-dev-v1"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    },
+    {
+      "id": "prep",
+      "do": "open",
+      "branch": "prep",
+      "overlay": "prep",
+      "title": "prep: a change that touches no root"
+    },
+    {
+      "id": "merge-prep",
+      "do": "merge",
+      "pull": "prep"
+    },
+    {
+      "id": "prep-settled",
+      "do": "out-of-band",
+      "label": "the merge's runs ended",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "bump",
+      "do": "open",
+      "branch": "bump",
+      "overlay": "bump",
+      "title": "bump: dev's net and app to v2"
+    },
+    {
+      "id": "merge-bump",
+      "do": "merge",
+      "pull": "bump"
+    },
+    {
+      "id": "bump-settled",
+      "do": "out-of-band",
+      "label": "the merge's runs ended",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "canary-applied",
+      "do": "out-of-band",
+      "label": "the canary wave applied dev's net at v2",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/dev/net",
+        "id",
+        "net-dev-v2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "app-waits",
+      "do": "out-of-band",
+      "label": "dev's app waits for the canary's soak and is not at v2",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/dev/app",
+        "id",
+        "app-dev-v2"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the prep pull request takes dev's soak out of terragucci.yml and .chant/pipeline.ts, so the bump, whose rules are read at the prep commit, applies dev's app in the wave after the canary with nothing holding it"
+  }
+}

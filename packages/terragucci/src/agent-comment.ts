@@ -91,7 +91,7 @@ export function agentDriftInput(settings: ProjectSettings): AgentCommentInput | 
   return agentCommentInput({ ...settings, agent: { ...settings.agent, comment: d } });
 }
 
-/** The settings of an agent chant starts from facts (`agent.alert`, `agent.apply-failed`) or a schedule (`agent.schedule`): the comment's, with the join window. */
+/** The settings of an agent chant starts from facts (`agent.alert`, `agent.apply-failed`, `agent.verify-failed`) or a schedule (`agent.schedule`): the comment's, with the join window. */
 export interface AgentTriggerInput extends AgentCommentInput {
   /** Minutes in which one member's facts join one run. Unset: chant's 15. */
   window?: number;
@@ -106,13 +106,13 @@ export interface AgentScheduleInput extends AgentTriggerInput {
 }
 
 /** The facts' agents beyond the comment's and the drift's. */
-export type AgentFactsKind = "alert" | "apply-failed" | "schedule";
+export type AgentFactsKind = "alert" | "apply-failed" | "verify-failed" | "schedule";
 
 /**
  * One of `agent.alert`, `agent.apply-failed` and `agent.schedule` with its defaults, or undefined when it is not
  * set: the comment's defaults, plus `window`, `relay_key_secret` and, for the schedule, `cron` and `task`.
  */
-export function agentTriggerInput(settings: ProjectSettings, kind: "alert" | "apply-failed"): AgentTriggerInput | undefined;
+export function agentTriggerInput(settings: ProjectSettings, kind: "alert" | "apply-failed" | "verify-failed"): AgentTriggerInput | undefined;
 export function agentTriggerInput(settings: ProjectSettings, kind: "schedule"): AgentScheduleInput | undefined;
 export function agentTriggerInput(settings: ProjectSettings, kind: AgentFactsKind): AgentTriggerInput | AgentScheduleInput | undefined {
   const raw = settings.agent?.[kind];

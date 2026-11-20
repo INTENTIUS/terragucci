@@ -307,5 +307,69 @@
       "chant#4045 (release gate)",
       "chant#4035 (rollback --release)"
     ]
+  },
+  "tg-stage-canary": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-stage-canary-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1493 (waves.canary on a stage's soak)",
+      "chant#5327 (canary wave)",
+      "chant#5326 (soak)"
+    ]
+  },
+  "tg-stage-promote": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-stage-promote-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1493 (promotion as chant's pipeline)",
+      "chant#5324 (pipeline declaration)",
+      "chant#4045 (release gate)"
+    ]
+  },
+  "tg-stage-risk": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-stage-risk-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1493 (risk.approve_above)",
+      "chant#5325 (change risk)",
+      "chant#5422 (risk on the after-plan hook)"
+    ]
+  },
+  "tg-stage-soak": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-stage-soak-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1493 (environments.<name>.soak)",
+      "chant#5326 (stage soak)"
+    ]
+  },
+  "tg-stage-rollback-request": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-stage-rollback-request-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1493 (on_verify_fail)",
+      "chant#5328 (requested rollback)",
+      "chant#5326 (stage soak)"
+    ]
   }
 }

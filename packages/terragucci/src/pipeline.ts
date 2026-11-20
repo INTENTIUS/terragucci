@@ -12,14 +12,20 @@
  * - each stage's waves: the waves of the committed waves spec
  *   (`.chant/op-waves/tf-apply.spec.json`, which `terragucci init` writes)
  *   cut to the roots of that environment, in the same order. A stage's first
- *   wave is its canary when every root in it matches `waves.canary`, so the
- *   canary maps the existing key and has none of its own;
+ *   wave is its canary when every root in it matches `waves.canary` and the
+ *   stage's soak has a check, so the canary maps the existing key and has
+ *   none of its own;
  * - `risk`: `risk.approve_above` as the pipeline's `defaults.holds.risk`, and
  *   `environments.<name>.risk` as that stage gate's `holds.risk`, with its
  *   `approval_rules` as the rules an over score adds;
  * - `replan_dependents`: the pipeline's `defaults.replanDependents`, and an
  *   environment's own on its stage;
  * - `release` and `recheck`, as they are.
+ *
+ * `environments.<name>.hooks.<when>` (chant#5421) reaches `pipelineFromConfig`
+ * as written, which maps each `<when>` onto the stage's `hooks`; the merge
+ * path's waves, the first stage's, run its hooks beside terragucci's own
+ * (firstStageRules).
  *
  * A rule's `roots` is chant's `targets`, as in the top-level `approval_rules`.
  *
@@ -50,7 +56,7 @@ import {
   type PipelineSpec,
   type PipelineWave,
 } from "@intentius/chant/pipeline";
-import type { OpWaveHolds } from "@intentius/chant/op";
+import type { OpWaveHolds, OpWaveHook, OpWaveHooks } from "@intentius/chant/op";
 import { environmentSetsProblems, type EnvironmentSet, type EnvironmentSets } from "@intentius/chant/components";
 import { globMatch } from "./detect";
 import { WAVES_OP, WAVES_SPEC, waveName } from "./chant-waves";
@@ -82,9 +88,16 @@ function riskHold(risk: RiskSettings | undefined, fallback?: number): { approveA
   return { ...(approveAbove !== undefined ? { approveAbove } : {}), ...(quorum.length ? { quorum: quorum as GateQuorumRule[] } : {}) };
 }
 
-/** Each stage's waves: `layers` (the merge path's waves, canary first) cut to the stage's roots, renumbered from 1. */
+/**
+ * Each stage's waves: `layers` (the merge path's waves, canary first) cut to
+ * the stage's roots, renumbered from 1. The first wave is the canary when
+ * `waves.canary` names every root in it and the stage's soak has a check,
+ * since chant holds the waves after a canary on its soak and refuses a canary
+ * with none.
+ */
 export function stageWaves(layers: readonly string[][], stage: string, settings: Pick<ProjectSettings, "environments" | "waves">): PipelineWave[] {
-  const canary = settings.waves?.canary ?? [];
+  const soaks = (settings.environments?.[stage]?.soak?.checks?.length ?? 0) > 0;
+  const canary = soaks ? (settings.waves?.canary ?? []) : [];
   const cut = layers.map((roots) => roots.filter((r) => environmentOf(r, settings) === stage)).filter((roots) => roots.length > 0);
   return cut.map((roots, i) => ({
     name: waveName(i + 1),
@@ -95,7 +108,7 @@ export function stageWaves(layers: readonly string[][], stage: string, settings:
 
 /** The stage keys of one environment, as `pipelineFromConfig` reads them, with its rules in chant's words. */
 function stageConfig(e: NonNullable<ProjectSettings["environments"]>[string]): PipelineEnvironmentConfig {
-  const picked = Object.fromEntries((ENVIRONMENT_STAGE_KEYS as readonly string[]).filter((k) => (e as Record<string, unknown>)[k] !== undefined).map((k) => [k, (e as Record<string, unknown>)[k]]));
+  const picked = Object.fromEntries((ENVIRONMENT_STAGE_KEYS as readonly string[]).filter((k) => (e as unknown as Record<string, unknown>)[k] !== undefined).map((k) => [k, (e as unknown as Record<string, unknown>)[k]]));
   // Read by the mapping below or by chant elsewhere: not keys of pipelineFromConfig.
   for (const k of ["risk", "replan_dependents", "config", "secrets", "imports"]) delete picked[k];
   return {
@@ -242,6 +255,27 @@ export interface FirstStageRules {
   canarySoak?: Soak;
   /** The stage's `failureTolerance`, for each wave. */
   failureTolerance?: PipelineFailureTolerance;
+  /** The stage's `hooks` (`environments.<name>.hooks.<when>`, chant#5421), which the merge path's waves run beside terragucci's own. */
+  hooks?: OpWaveHooks;
+}
+
+/**
+ * Two hook sets as one: each moment's hooks of `first`, then those of
+ * `then`, as chant joins a stage's hooks onto the pipeline's defaults.
+ */
+export function joinHooks(first: OpWaveHooks | undefined, then: OpWaveHooks | undefined): OpWaveHooks | undefined {
+  if (!first) return then;
+  if (!then) return first;
+  const both = (k: "before" | "after"): Record<string, OpWaveHook[]> | undefined => {
+    const a = (first[k] ?? {}) as Record<string, OpWaveHook[]>;
+    const b = (then[k] ?? {}) as Record<string, OpWaveHook[]>;
+    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])];
+    return keys.length === 0 ? undefined : Object.fromEntries(keys.map((m) => [m, [...(a[m] ?? []), ...(b[m] ?? [])]]));
+  };
+  const before = both("before");
+  const after = both("after");
+  const apply = then.apply ?? first.apply;
+  return { ...(before ? { before } : {}), ...(after ? { after } : {}), ...(apply ? { apply } : {}) } as OpWaveHooks;
 }
 
 /**
@@ -265,6 +299,7 @@ export function firstStageRules(repo: string, sha: string): FirstStageRules | un
     ...(stage.replanDependents?.length ? { replanDependents: [...stage.replanDependents] } : {}),
     ...(canary ? { canarySoak: canary } : {}),
     ...(first.failureTolerance !== undefined ? { failureTolerance: first.failureTolerance } : {}),
+    ...(stage.hooks ? { hooks: structuredClone(stage.hooks) } : {}),
   };
 }
 

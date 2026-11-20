@@ -55,10 +55,13 @@ describe("the pipeline declaration", () => {
     expect(pipelineDeclaration({ environments: base.environments }, LAYERS)).toBeUndefined();
   });
 
-  it("marks a stage's first wave the canary when waves.canary names every root in it, with no canary key of its own", () => {
-    const waves = stageWaves([["envs/dev/net"], ["envs/dev/app"]], "dev", { ...base, waves: { canary: ["envs/*/net"] } });
+  it("marks a stage's first wave the canary when waves.canary names every root in it and the stage soaks, with no canary key of its own", () => {
+    const soaking = { ...base, environments: { ...base.environments, dev: { roots: ["envs/dev/**"], soak: { duration: "1h", checks: [{ kind: "drift" }] } } }, waves: { canary: ["envs/*/net"] } };
+    const waves = stageWaves([["envs/dev/net"], ["envs/dev/app"]], "dev", soaking);
     expect(waves.map((w) => w.canary === true)).toEqual([true, false]);
-    expect(stageWaves([["envs/dev/net", "envs/dev/app"]], "dev", { ...base, waves: { canary: ["envs/*/net"] } })[0]!.canary).toBeUndefined();
+    expect(stageWaves([["envs/dev/net", "envs/dev/app"]], "dev", soaking)[0]!.canary).toBeUndefined();
+    // chant refuses a canary with no soak check, so a stage with none has no canary.
+    expect(stageWaves([["envs/dev/net"], ["envs/dev/app"]], "dev", { ...base, waves: { canary: ["envs/*/net"] } })[0]!.canary).toBeUndefined();
   });
 
   it("passes the stage keys to chant unchanged, in the vocabulary's words", () => {

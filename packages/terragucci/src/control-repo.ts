@@ -42,6 +42,8 @@ export interface ResolvedControl {
   tokenEnv: string;
   readTokenEnv: string;
   ref: string;
+  /** `control.release`: the dispatch carries the applied commit's release digest. Absent when off. */
+  release?: true;
 }
 
 /** `control` with its defaults filled in; `fallbackMember` is the repo's name, used when `control.member` is unset. */
@@ -51,7 +53,7 @@ export function resolveControl(control: ControlSettings, fallbackMember: string)
   if (!forge) throw new ConfigError(`control.forge is needed: ${control.repo}'s host does not say which forge it is`);
   const member = control.member ?? fallbackMember;
   if (!CONTROL_NAME.test(member)) throw new ConfigError(`control.member: "${member}" is not a name the control repo's workspace can hold; set control.member`);
-  return { repo: control.repo, host: pk.host, path: pk.path, forge, op: control.op, member, tokenEnv: control.token_env ?? CONTROL_TOKEN_ENV, readTokenEnv: control.read_token_env ?? CONTROL_READ_TOKEN_ENV, ref: control.ref ?? CONTROL_REF_DEFAULT };
+  return { repo: control.repo, host: pk.host, path: pk.path, forge, op: control.op, member, tokenEnv: control.token_env ?? CONTROL_TOKEN_ENV, readTokenEnv: control.read_token_env ?? CONTROL_READ_TOKEN_ENV, ref: control.ref ?? CONTROL_REF_DEFAULT, ...(control.release === true ? { release: true as const } : {}) };
 }
 
 /** terragucci's `control` settings as chant's control target (chant#4568): `token_env` is chant's `tokenSecret`, `read_token_env` its `readTokenSecret`. */

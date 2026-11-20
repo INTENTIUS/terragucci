@@ -1,0 +1,289 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-stage-promote",
+  "product": "terragucci",
+  "claim": "pipeline/dev-staging-prod",
+  "title": "One change applies in dev on merge, then is promoted to staging and prod in `promotion` order, each behind its own gate in `.chant/pipeline.ts`",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-stage-promote",
+  "limits": {
+    "out-of-band": 2400
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied dev's root",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "change",
+      "do": "open",
+      "branch": "change",
+      "overlay": "change",
+      "title": "change: every environment's net to v2"
+    },
+    {
+      "id": "merge-change",
+      "do": "merge",
+      "pull": "change"
+    },
+    {
+      "id": "change-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "dev-on-merge",
+      "do": "out-of-band",
+      "label": "the merge applied dev's root at v2",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/dev/net",
+        "id",
+        "net-dev-v2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "cut-r1",
+      "do": "out-of-band",
+      "label": "a release is cut from the merge commit",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "cut",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "dev-r1",
+      "do": "out-of-band",
+      "label": "dev, the first stage, deploys it",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "first",
+        "dev",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "skip-refused",
+      "do": "out-of-band",
+      "label": "a promote to prod before staging ran the release is refused",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    },
+    {
+      "id": "staging-waits",
+      "do": "out-of-band",
+      "label": "a promote to staging waits at staging's gate",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "staging",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 3
+        }
+      ]
+    },
+    {
+      "id": "staging-untouched",
+      "do": "out-of-band",
+      "label": "nothing applied staging's root before the approval",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/staging/net",
+        "id",
+        "net-staging-v2"
+      ],
+      "expect": [
+        {
+          "exit": 1
+        }
+      ]
+    },
+    {
+      "id": "approve-staging",
+      "do": "out-of-band",
+      "label": "the reviewer approves staging's gate",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "approve",
+        "staging"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-r1",
+      "do": "out-of-band",
+      "label": "the same promote deploys r1 to staging",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "staging",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "staging-root",
+      "do": "out-of-band",
+      "label": "staging's own root applied, with staging's files",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/staging/net",
+        "id",
+        "net-staging-v2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-waits",
+      "do": "out-of-band",
+      "label": "a promote to prod waits at prod's gate",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 3
+        }
+      ]
+    },
+    {
+      "id": "approve-prod",
+      "do": "out-of-band",
+      "label": "the reviewer approves prod's gate",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "approve",
+        "prod"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-r1",
+      "do": "out-of-band",
+      "label": "the same promote deploys r1 to prod",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "promote",
+        "prod",
+        "r1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prod-root",
+      "do": "out-of-band",
+      "label": "prod's own root applied, with prod's files",
+      "command": [
+        "stack/harness/check.sh",
+        "release",
+        "output",
+        "envs/prod/net",
+        "id",
+        "net-prod-v2"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the merged pull request's components name dev's root for staging, so the promote to staging applies dev's files under staging and staging's root never holds staging's value"
+  }
+}

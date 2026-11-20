@@ -1,0 +1,11 @@
+# BREAK: no risk.approve_above, so gate never applies a delete with no approval.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-risk
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["app"]
+gate: never
+reports:
+  bucket: s3://terragucci-reports
+  endpoint: http://floci:4566
+  prefix: hs-tg-stage-risk

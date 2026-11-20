@@ -15,7 +15,8 @@
  *
  * With `promotion`, `.chant/pipeline.ts` at that commit is folded by chant and
  * its first stage's op-waves spec (`stageWavesSpec`) gives the waves their
- * risk hold, `replanDependents`, the canary's soak and the failure tolerance.
+ * risk hold, `replanDependents`, the canary's soak, the failure tolerance and
+ * the stage's hooks (`environments.<name>.hooks.<when>`).
  * Without a pipeline, `risk.approve_above` and `replan_dependents` at that
  * commit give the first two.
  *
@@ -36,7 +37,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import type { OpWave, OpWaveHook, OpWavesSpec } from "@intentius/chant/op";
+import type { OpWave, OpWaveCostHold, OpWaveHook, OpWaveHolds, OpWavesSpec } from "@intentius/chant/op";
 import type { GateQuorumRule } from "@intentius/chant/gate-decision";
 import { atmosStateReads as terraformAtmosReads } from "@intentius/chant-lexicon-terraform/state-reads";
 import { approvalRule } from "./approval";
@@ -55,7 +56,17 @@ import { forgeOfEnv, rootsParallelism } from "./report/stage";
 import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
 import { rootWorkspace } from "./workspace";
 import { rootDir, rootPath } from "./root-config";
-import { firstStageRules, topLevelRules } from "./pipeline";
+import { firstStageRules, joinHooks, topLevelRules } from "./pipeline";
+
+/**
+ * The spec's one `holds` map: what the committed shape holds (`policy`), the
+ * pipeline's risk hold (`risk`, ./pipeline.ts), and `cost.approve_above`'s
+ * cost hold, each kept beside the others. Undefined when none holds.
+ */
+export function specHolds(shape: OpWaveHolds | undefined, staged: OpWaveHolds | undefined, cost: OpWaveCostHold | undefined): OpWaveHolds | undefined {
+  const out: OpWaveHolds = { ...(shape ? structuredClone(shape) : {}), ...(staged ? structuredClone(staged) : {}), ...(cost ? { cost } : {}) };
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** The variables chant hands the command (chant's `OP_WAVES_SPEC_AT_ENV` and `OP_WAVES_SPEC_FILE_ENV`). */
 export const SPEC_AT_ENV = "CHANT_WAVES_SPEC_AT";
@@ -221,6 +232,7 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
     } as OpWave;
   });
   const parallel = terragrunt ? undefined : rootsParallelism(repo, all, settings, env);
+  const holds = specHolds((shape as { holds?: OpWaveHolds }).holds, staged.holds, settings.cost && approveAbove(settings.cost) !== undefined ? costHold(settings.cost, approveAbove(settings.cost)!, costHoldEnv(settings)) : undefined);
   const notify = settings.notify;
   const { point: _point, parallelism: _parallelism, branches: _branches, resume: _resume, notify: _notify, ...top } = shape as OpWavesSpec & { parallelism?: number };
   const spec = {
@@ -248,10 +260,11 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
           },
         }
       : {}),
-    // cost.approve_above at this commit: chant's cost hold prices each wave's runs and holds a wave over the amount (chant#5334, #5416).
-    ...(settings.cost && approveAbove(settings.cost) !== undefined ? { holds: { ...((top as { holds?: object }).holds ?? {}), cost: costHold(settings.cost, approveAbove(settings.cost)!, costHoldEnv(settings)) } } : {}),
-    hooks: { after: { gate: [hook("report", "gate")] } },
-    ...(staged.holds ? { holds: structuredClone(staged.holds) } : {}),
+    // One holds map: the committed shape's (policy), the first stage's risk hold, and cost.approve_above at this commit,
+    // chant's cost hold, which prices each wave's runs and holds a wave over the amount (chant#5334, #5416).
+    ...(holds ? { holds } : {}),
+    // terragucci's report after the gate, then the first stage's hooks (environments.<name>.hooks.<when>, chant#5421).
+    hooks: joinHooks({ after: { gate: [hook("report", "gate")] } }, staged.hooks),
     ...(staged.replanDependents?.length ? { replanDependents: [...staged.replanDependents] } : {}),
     waves,
   } as OpWavesSpec;

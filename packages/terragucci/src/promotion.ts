@@ -147,7 +147,7 @@ export const promotionComponentsWrittenByTerragucci = (text: string): boolean =>
 export const TERRAFORM_LEXICON = `@intentius/chant-lexicon-terraform@${devDependencies["@intentius/chant-lexicon-terraform"]}`;
 
 /** The usage lines, as the CLI and its reference print them. */
-export const PROMOTE_USAGE = "terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]";
+export const PROMOTE_USAGE = "terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--urgent --reason <text>] [--dry-run] [--json]";
 export const ROLLBACK_USAGE = "terragucci rollback <env> --release <label> [--dry-run] [--json]";
 
 /** What a parsed `promote` or `rollback` line holds: its positionals and flags, as cli.ts parses them. */
@@ -164,12 +164,15 @@ const flagValue = (flags: ReleaseLine["flags"], name: string, usage: string): st
 
 /**
  * chant's command line for `terragucci promote` or `rollback`: `components
- * promote --to <env>` with `--release`, `--from`, `--allow-skip` and
- * `--dry-run` as given, or `components rollback <env> --release <label>`.
+ * promote --to <env>` with `--release`, `--from`, `--allow-skip`, `--urgent`
+ * with its `--reason`, and `--dry-run` as given, or `components rollback <env>
+ * --release <label>`. `--urgent` is chant's (#5355): one proven approval from
+ * the stage's `urgent.role` passes its gate for one named release, and the
+ * reason goes on the stage's ledger, so it takes `--release` and `--reason`.
  */
 export function releaseArgv(verb: "promote" | "rollback", line: ReleaseLine): string[] {
   const usage = verb === "promote" ? PROMOTE_USAGE : ROLLBACK_USAGE;
-  const allowed = verb === "promote" ? ["to", "release", "from", "allow-skip", "dry-run", "json"] : ["release", "dry-run", "json"];
+  const allowed = verb === "promote" ? ["to", "release", "from", "allow-skip", "urgent", "reason", "dry-run", "json"] : ["release", "dry-run", "json"];
   const extra = Object.keys(line.flags).filter((k) => line.flags[k] !== undefined && !allowed.includes(k));
   if (extra.length) throw new ConfigError(`${verb} does not take ${extra.map((k) => `--${k}`).join(", ")}: ${usage}`);
   const release = flagValue(line.flags, "release", usage);
@@ -179,7 +182,12 @@ export function releaseArgv(verb: "promote" | "rollback", line: ReleaseLine): st
     const to = flagValue(line.flags, "to", usage);
     if (!to) throw new ConfigError(`promote needs --to <env>, the environment the release goes to: ${usage}`);
     const from = flagValue(line.flags, "from", usage);
-    return ["components", "promote", "--to", to, ...(release ? ["--release", release] : []), ...(from ? ["--from", from] : []), ...(line.flags["allow-skip"] === true ? ["--allow-skip"] : []), ...switches];
+    const urgent = line.flags.urgent === true;
+    const reason = flagValue(line.flags, "reason", usage);
+    if (reason !== undefined && !urgent) throw new ConfigError(`--reason goes with --urgent, whose use the stage's ledger records: ${usage}`);
+    if (urgent && !release) throw new ConfigError(`--urgent promotes one release: it needs --release <label>: ${usage}`);
+    if (urgent && !reason) throw new ConfigError(`--urgent needs --reason <text>, which the stage's ledger records: ${usage}`);
+    return ["components", "promote", "--to", to, ...(release ? ["--release", release] : []), ...(from ? ["--from", from] : []), ...(line.flags["allow-skip"] === true ? ["--allow-skip"] : []), ...(urgent ? ["--urgent", "--reason", reason!] : []), ...switches];
   }
   if (line.args.length !== 1) throw new ConfigError(`rollback takes one environment: ${usage}`);
   if (!release) throw new ConfigError(`rollback needs --release <label>, the earlier release ${line.args[0]} goes back to: ${usage}`);
@@ -199,6 +207,25 @@ export function releaseRefusal(repo: string, resolveFrom: readonly string[] = [j
   });
   if (!found) return `chant deploys each root with the terraform lexicon's terraform-apply step, and @intentius/chant-lexicon-terraform is not installed here: npm i -D ${TERRAFORM_LEXICON}`;
   return undefined;
+}
+
+/**
+ * The variables a `terragucci promote` adds for `agent.verify-failed`
+ * (chant#5339): `CHANT_AGENT_FACTS` with `verify-failed` added to what the
+ * shell already names, and `CHANT_RELAY_KEY` from `relay_key_secret`'s
+ * variable when the shell holds that one by its own name. chant's promote
+ * then records a failed verify step or a soak check that starts failing as
+ * a fact for the agent. Empty when the key is unset or the promote is a
+ * rollback, which runs no soak.
+ */
+export function promoteAgentFactsEnv(settings: Pick<ProjectSettings, "agent">, env: NodeJS.ProcessEnv): Record<string, string> {
+  const v = settings.agent?.["verify-failed"];
+  if (v === undefined || v === false || !settings.agent?.token_env) return {};
+  const named = (env.CHANT_AGENT_FACTS ?? "").split(",").map((t) => t.trim()).filter((t) => t !== "");
+  const out: Record<string, string> = { CHANT_AGENT_FACTS: [...new Set([...named, "verify-failed"])].join(",") };
+  const relay = typeof v === "object" && v.relay_key_secret ? v.relay_key_secret : "CHANT_RELAY_KEY";
+  if (!env.CHANT_RELAY_KEY && relay !== "CHANT_RELAY_KEY" && env[relay]) out.CHANT_RELAY_KEY = env[relay]!;
+  return out;
 }
 
 /** terragucci's words for a promote or rollback: its approve line names the environment's release gate. */

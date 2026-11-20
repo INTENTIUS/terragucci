@@ -6,9 +6,12 @@
  * (`@intentius/chant/pipeline/soak`, which decides) and supplies what its
  * checks read:
  *
- * - `after` is the soak's `duration`, and each `conditions` entry is a check
- *   of that kind with `onFail: "hold"`: a finding holds the next wave and
- *   keeps the time elapsed;
+ * - `rollouts.soak` takes the stage soak's words (`duration`, and `checks`
+ *   with `kind` and `on_fail`), so one soak config serves a rollout and a
+ *   stage: `duration` is the soak's `duration` and each check goes to chant
+ *   as written. The earlier spelling still reads: `after` is the `duration`,
+ *   and each `conditions` entry is a check of that kind with `onFail:
+ *   "hold"`, so a finding holds the next wave and keeps the time elapsed;
  * - an `overrides` entry takes its `module` (or `provider`) glob as a member
  *   glob. The rollout is the member that is matched, by its name with and
  *   without the registry host and by its aliases;
@@ -31,7 +34,7 @@ import type { GateLedgerPort } from "@intentius/chant/op/gate";
 import { decideSoak, soakRuleFor as chantRuleFor, type Soak, type SoakCheckReader, type SoakCheck, type SoakDecision, type SoakOverride as ChantOverride, type SoakSubject } from "@intentius/chant/pipeline/soak";
 import { soakCheckReader, type SoakSources } from "@intentius/chant/pipeline/soak-checks";
 import { soakAtGate, waveSoakGate } from "@intentius/chant/pipeline/soak-gate";
-import { type SoakCondition, type SoakSettings } from "../config";
+import { type RolloutSoakCheck, type SoakCondition, type SoakSettings } from "../config";
 import { appliedState, type RolloutForge } from "./forge";
 import { namesOf } from "./releases";
 
@@ -51,6 +54,10 @@ export interface SoakRule {
 
 const checksOf = (conditions: SoakCondition[]): SoakCheck[] => conditions.map((kind) => ({ kind, onFail: "hold" as const }));
 
+/** A soak map's checks for chant: `checks` as written (chant's `onFail`, its default when unset), else the earlier `conditions`, each holding. */
+const chantChecks = (s: { checks?: RolloutSoakCheck[]; conditions?: SoakCondition[] }): SoakCheck[] | undefined =>
+  s.checks ? s.checks.map((c) => ({ kind: c.kind, ...(c.on_fail ? { onFail: c.on_fail } : {}) })) : s.conditions ? checksOf(s.conditions) : undefined;
+
 /**
  * `rollouts.soak` as chant's soak, for a rollout of `kind`. An override of the
  * other kind can never name the rollout and is left out.
@@ -62,9 +69,10 @@ export function chantSoakOf(soak: SoakSettings | undefined, kind: "module" | "pr
     .map((o) => ({
       members: [(kind === "module" ? o.module : o.provider)!],
       ...(o.after !== undefined ? { duration: o.after } : {}),
-      ...(o.conditions !== undefined ? { checks: checksOf(o.conditions) } : {}),
+      ...(chantChecks(o) ? { checks: chantChecks(o)! } : {}),
     }));
-  return { duration: soak.after, ...(soak.conditions ? { checks: checksOf(soak.conditions) } : {}), ...(overrides.length > 0 ? { overrides } : {}) };
+  const checks = chantChecks(soak);
+  return { duration: soak.after, ...(checks ? { checks } : {}), ...(overrides.length > 0 ? { overrides } : {}) };
 }
 
 /** The spellings of a rollout an override glob may match. */
