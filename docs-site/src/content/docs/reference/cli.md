@@ -21,6 +21,9 @@ Run `npx terragucci <command>` from a repo's root; a generated pipeline calls th
 | `stage tf-plan` | plans the roots a change reaches, groups them, and writes the report |
 | `run wave` | one job of a chant Op waves pipeline: chant's `run wave` in terragucci's words, with the root hooks, the report and the spec's hooks in the job's process |
 | `waves-spec` | prints the `tf-apply` waves spec at a commit, its rules read from `terragucci.yml` there |
+| `ci` | writes `.chant/pipeline.ts` from `promotion`, `environments` and `waves` in `terragucci.yml`, and the environments' config and secret sets into `chant.workspace.json`; `--check` exits 1 while either differs |
+| `reject` | turns down the release a stage's gate waits on: chant's `reject` |
+| `pause`, `resume` | stop releases entering a stage, and let them in again: chant's `stage pause` and `stage resume` |
 | `publish` | publishes each changed module at a new version |
 | `verify-release` | checks one published version of a module: its signature, provenance and SBOM, and its record in the release ledger |
 | `modules` | lists the modules in a registry's release catalog, and with `show` one module's versions, status and consumers; `deprecate`, `yank` and `restore` mark a version on the release ledger |
@@ -540,6 +543,26 @@ terragucci components pr-post ...
 ```
 
 chant's `components` commands in terragucci's words. chant's `plan-note` job runs `pr-post`, which posts the plan note and `terragucci/plan` from the plan job's hand-off.
+
+## ci
+
+```text
+terragucci ci [--check] [--config <file>]
+```
+
+Writes `.chant/pipeline.ts` with chant's `pipelineSource`, one stage per environment of `promotion` ([Stages](/terragucci/reference/config/#stages)). Each stage's waves are the committed waves spec's, cut to the environment's roots, so run `terragucci init` first. With `--check` it writes nothing and exits 1 when the committed file is missing or differs, printing the lines that differ. The environments' `config`, `secrets` and `imports`, and `config_sets`, go to `ci.environmentSets` in `chant.workspace.json` the same way. With no `promotion` there is no pipeline file, and the command says so and exits 0.
+
+`terragucci ci check` and `terragucci ci evidence` are the check job's and the evidence jobs' steps.
+
+## reject, pause and resume
+
+```text
+terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]
+terragucci pause <env> --reason <text>
+terragucci resume <env> --reason <text>
+```
+
+`reject` turns down the release a stage's gate waits on; `--reason` is one line, and `--sign` seals it. A `/terragucci reject [--stage <stage>] <reason>` comment does the same under the commenter's forge identity where the stage's approval mode takes one. `pause` stops releases entering the stage: a promote into it exits 3, and its release waits. `resume` lets releases in again, and the newest release that waited is the one that enters.
 
 ## run wave
 

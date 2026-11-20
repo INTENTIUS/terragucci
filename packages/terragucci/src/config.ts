@@ -16,6 +16,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertGatePolicySource, type GatePolicySource } from "@intentius/chant/policy-source";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
+import { productConfigProblems } from "@intentius/chant/ci-product";
+import { pipelineFromConfig, type PipelineEnvironmentConfig } from "@intentius/chant/pipeline";
 import { type BucketRef } from "@intentius/chant/object-store";
 import { parseReportsBucket } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
@@ -94,7 +96,7 @@ export interface OverrideEntry {
 }
 
 /** The keys of one `approval_rules` entry. */
-export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author"] as const;
+export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author", "proven", "name"] as const;
 
 /**
  * One `approval_rules` entry, judged as chant's `approvals.quorum` rule (../approval.ts quorumOf): a wave with a root a glob
@@ -108,6 +110,10 @@ export interface ApprovalRuleSettings {
   count?: number;
   roles?: string[];
   not_author?: boolean;
+  /** Only approvers a seal or a review proves count toward `count` (chant's `proven`). */
+  proven?: boolean;
+  /** The rule's name, shown in its progress line, the plan note and the pending fact. */
+  name?: string;
 }
 /** Where the stages run: the forge's CI, or ProwJobs on a Prow installation in front of a GitHub repository (./prow-config.ts). */
 export const RUNTIMES = ["forge", "prow"] as const;
@@ -1071,15 +1077,91 @@ export interface ProjectSettings {
    * The order a release moves through the environments, first to last: names
    * of `environments`, each once. `init` writes it into chant.config.ts
    * `environments` and writes the roots as chant components
-   * (./promotion.ts), which `terragucci promote` and `rollback` deploy.
+   * (./promotion.ts), which `terragucci promote` and `rollback` deploy. With
+   * it, `terragucci ci` writes `.chant/pipeline.ts`, one stage per name
+   * (./pipeline.ts).
    */
   promotion?: string[];
+  /**
+   * `risk.approve_above`: the change risk score, from 0 to 1, above which a
+   * wave needs an approval of its own, whatever its gate says. chant scores
+   * each wave's change set (`holds.risk`); the score only adds approvals.
+   */
+  risk?: RiskSettings;
+  /**
+   * `replan_dependents`: the roots whose dependents are planned again when an
+   * output they read changes after an apply. chant's wave job runs the step
+   * (`replanDependents` in the waves spec).
+   */
+  replan_dependents?: string[];
+  /** `config_sets.<set>`: shared sets of config and secrets that environments import (chant's `EnvironmentSets.configSets`). */
+  config_sets?: Record<string, EnvironmentSetSettings>;
+  /** `release.cut` and `release.label`: the release a merge cuts once the first stage applied (`.chant/pipeline.ts` `release`). */
+  release?: ReleaseSettings;
+  /** `recheck.schedule`: the cron line a promotion a soak holds is tried again on (`.chant/pipeline.ts` `recheck`). */
+  recheck?: { schedule: string };
 }
+
+/** `risk` at the top level or under an environment, in the words of chant's vocabulary. */
+export interface RiskSettings {
+  /** The score, from 0 to 1, above which a plan needs an approval of its own. */
+  approve_above?: number;
+  /** Under an environment only: the approval rules the stage's gate takes on top of its own when the risk is over its score. */
+  approval_rules?: StageApprovalRule[];
+}
+
+/** `release`: whether a merge cuts a release once the first stage applied, and its label. */
+export interface ReleaseSettings {
+  cut?: boolean;
+  /** A label, or `auto` for the next version. */
+  label?: string;
+}
+
+/** One environment's or shared set's config and secrets (chant's `EnvironmentSet`, in snake_case). */
+export interface EnvironmentSetSettings {
+  imports?: string[];
+  config?: Record<string, string>;
+  /** A forge secret's name, or a map with one of `forge_secret`, `aws_secrets_manager` (with `json_key`, `region`), `gcp_secret_manager`, `azure_key_vault`. */
+  secrets?: Record<string, string | Record<string, string>>;
+}
+
+/** A stage's approval rule (chant's quorum rule, in the vocabulary's words) or an `all`/`any` group of them. */
+export type StageApprovalRule =
+  | { name?: string; count: number; roles?: string[]; not_author?: boolean; proven?: boolean; roots?: string[] }
+  | { name?: string; all: StageApprovalRule[] }
+  | { name?: string; any: StageApprovalRule[] };
 
 /** An environment's name: lower-case letters, digits, `-` and `_`. */
 export const ENVIRONMENT_NAME = /^[a-z0-9_-]+$/;
+/**
+ * The keys of an environment that set how its stage behaves. terragucci passes
+ * each to chant unchanged (./pipeline.ts), in the words of chant's
+ * vocabulary page, and chant checks their values when it folds the pipeline.
+ */
+export const ENVIRONMENT_STAGE_KEYS = [
+  "approval",
+  "approval_rules",
+  "hold",
+  "freeze",
+  "failure_tolerance",
+  "after",
+  "queue",
+  "urgent",
+  "pause_after_rollback",
+  "on_verify_fail",
+  "canary",
+  "soak",
+  "publish",
+  "reads",
+  "agent_steps",
+  "risk",
+  "replan_dependents",
+  "config",
+  "secrets",
+  "imports",
+] as const;
 /** The keys an environment takes. */
-export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"] as const;
+export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment", ...ENVIRONMENT_STAGE_KEYS] as const;
 /** The keys of an environment's `oidc`. */
 export const ENVIRONMENT_OIDC_KEYS = ["plan_role", "apply_role", "audience", "gcp", "azure"] as const;
 
@@ -1100,6 +1182,46 @@ export interface EnvironmentSettings {
   parallelism?: number;
   /** The forge environment its apply jobs run in, on GitHub and GitLab. Default: the environment's name. Forgejo has none. */
   forge_environment?: string;
+  /** The stage's approval mode, in place of `approval`. */
+  approval?: Approval;
+  /** The stage's approval rules, in place of `approval_rules`: rules with `count`, `roles`, `not_author`, `proven` and `name`, and `all`/`any` groups. */
+  approval_rules?: StageApprovalRule[];
+  /** A manual hold: `true`, or a map with `reason`, `until` and `description`. */
+  hold?: boolean | { reason?: string; until?: string; description?: string };
+  /** Freeze windows: maps with `from`, `until` and `reason`. */
+  freeze?: { from: string; until: string; reason?: string }[];
+  /** The failed runs a wave of many roots lets through: a whole number, or a share such as `10%`. */
+  failure_tolerance?: number | `${number}%`;
+  /** The stages a release applies in before this one opens. */
+  after?: string[];
+  /** `replace`: a newer release waiting replaces an older one. */
+  queue?: "replace";
+  /** `urgent.role`: the role whose one proven approval passes the stage's gate on an urgent promote. */
+  urgent?: { role: string };
+  /** A rollback of the stage pauses it until it is resumed. */
+  pause_after_rollback?: boolean;
+  /** `hold` or `rollback`: the stage's answer to a failed verify or soak check. */
+  on_verify_fail?: "hold" | "rollback";
+  /** The canary stage, whose soak holds every stage after it. */
+  canary?: boolean;
+  /** The stage's soak: `duration`, `checks` and `overrides`, as chant's soak takes them. */
+  soak?: { duration: string; checks?: Record<string, unknown>[]; overrides?: { members: string[]; duration?: string; checks?: Record<string, unknown>[] }[] };
+  /** Release artifacts the stage publishes once it applied: `{ member, output }` or `{ secret }`. */
+  publish?: Record<string, { member?: string; output?: string; secret?: unknown }>;
+  /** Artifacts of earlier stages the stage's deploy reads: `{ stage, artifact }`. */
+  reads?: Record<string, { stage: string; artifact: string }>;
+  /** Agent steps of the stage: `prompt`, `schema`, `reads`, `command`, `key_secret`, `timeout`, `max_runs`, `max_cost_usd`. */
+  agent_steps?: Record<string, { prompt: string; schema: Record<string, unknown>; reads?: Record<string, { stage: string; artifact: string } | { step: string }>; command?: string; key_secret?: string; timeout?: number; max_runs?: number; max_cost_usd?: number }>;
+  /** The stage's risk threshold and the rules an over score adds. */
+  risk?: RiskSettings;
+  /** The stage's `replanDependents`, in place of the top-level `replan_dependents`. */
+  replan_dependents?: string[];
+  /** Plain values the stage's jobs get as variables. */
+  config?: Record<string, string>;
+  /** Secrets the stage's jobs get as variables, named by where each is kept. */
+  secrets?: Record<string, string | Record<string, string>>;
+  /** The `config_sets` the environment's set takes first, in order. */
+  imports?: string[];
 }
 
 /** An environment's identities: an AWS role pair, and a GCP service account pair or an Azure client pair under the project's `oidc.gcp` or `oidc.azure`. */
@@ -1425,7 +1547,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "forge_url", "gate", "approval", "approval_rules", "apply", "branches", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "promotion", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "promotion", "risk", "replan_dependents", "config_sets", "release", "recheck", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1690,6 +1812,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (where === "config" && isObject(s.environments)) problems.push(...environmentNeeds(s as ProjectSettings, where));
   if (s.promotion !== undefined) checkPromotion(s.promotion, `${where}.promotion`, problems, s);
   if (where === "config" && s.promotion !== undefined) problems.push(...promotionNeeds(s as ProjectSettings, where));
+  if (where === "config") problems.push(...stageKeyProblems(s));
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -2320,6 +2443,9 @@ export const TRUST_ROLE = /^[a-z][a-z0-9-]*$/;
 /** Why `roles` and `not_author` need a mode that proves who approved. */
 export const LEDGER_PROVES_NOBODY = "approval: ledger does not prove who wrote an approval, so it cannot tell a role or the author; set approval to sealed or pr-review";
 
+/** A rule's or group's name (chant's `GateQuorumNode.name`). */
+export const RULE_NAME = /^[a-z0-9_-]+$/;
+
 function checkApprovalRules(v: unknown, where: string, problems: string[], mode: unknown, point: boolean): void {
   if (!Array.isArray(v) || v.length === 0) {
     problems.push(`${where} must be a list of rules, each with roots and count, roles or not_author, such as - roots: ["envs/prod/**"]`);
@@ -2342,7 +2468,10 @@ function checkApprovalRules(v: unknown, where: string, problems: string[], mode:
       problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
     }
     if (r.not_author !== undefined && typeof r.not_author !== "boolean") problems.push(`${at}.not_author must be true or false`);
-    if (r.count === undefined && r.roles === undefined && r.not_author !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
+    if (r.proven !== undefined && typeof r.proven !== "boolean") problems.push(`${at}.proven must be true or false`);
+    if (r.name !== undefined && !(typeof r.name === "string" && RULE_NAME.test(r.name))) problems.push(`${at}.name must be lowercase letters, digits, "-" and "_"`);
+    if (r.proven === true && !proves) problems.push(`${at}.proven: ${LEDGER_PROVES_NOBODY}`);
+    if (r.count === undefined && r.roles === undefined && r.not_author !== true && r.proven !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
     if (!proves && (r.roles !== undefined || r.not_author === true)) problems.push(`${at}: ${LEDGER_PROVES_NOBODY}`);
   });
 }
@@ -2782,7 +2911,7 @@ export const DEFAULT_GROUP = "default";
 /** Names an apply group cannot take: the rest group's, and chant's own job names (decide, share-<i>). */
 export const reservedGroupName = (name: string): boolean => name === DEFAULT_GROUP || name === "decide" || /^share-\d+$/.test(name);
 /** The per-environment keys config check accepts, as its problems list them. */
-const ENVIRONMENT_ACCEPTED = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"];
+const ENVIRONMENT_ACCEPTED: readonly string[] = ENVIRONMENT_KEYS;
 /** Why an environment's `runner.plan` is refused: a plan job plans the roots of every environment. */
 export const ENVIRONMENT_PLAN_RUNNER = "a plan job plans the roots of every environment, so an environment's runner is its apply jobs' alone; set runner: { apply: <runner> }, and runner.plan at the top level";
 /** A forge environment's name, as GitHub and GitLab both take it. */
@@ -2945,6 +3074,45 @@ export function promotionNeeds(s: ProjectSettings, where: string): string[] {
   const names = isObject(s.environments) ? Object.keys(s.environments) : [];
   if (names.length === 0) return [`${where}.promotion needs environments: each name it lists is an environment with its own roots`];
   return s.promotion.filter((n) => typeof n === "string" && !names.includes(n)).map((n) => `${where}.promotion lists ${n}, which is not one of environments (${names.join(", ")})`);
+}
+
+/** The top-level keys whose values chant checks: the stage keys of its vocabulary page. */
+const STAGE_TOP_KEYS = ["promotion", "risk", "replan_dependents", "config_sets", "release", "recheck", "approval_rules"];
+
+/**
+ * The problems chant finds with the stage keys (./pipeline.ts maps them onto
+ * `.chant/pipeline.ts`): `productConfigProblems` for each key's words, and,
+ * with `promotion`, chant's own check of the declaration they make, folded
+ * with one placeholder wave per stage since the roots are not known here.
+ * terragucci checks none of these values itself.
+ */
+export function stageKeyProblems(s: Record<string, unknown>): string[] {
+  const envs = isObject(s.environments) ? s.environments : {};
+  const stageEnvs = Object.fromEntries(
+    Object.entries(envs).flatMap(([name, e]) => {
+      if (!isObject(e)) return [];
+      const keys = (ENVIRONMENT_STAGE_KEYS as readonly string[]).filter((k) => e[k] !== undefined);
+      return keys.length ? [[name, Object.fromEntries(keys.map((k) => [k, e[k]]))]] : [];
+    }),
+  );
+  const top = Object.fromEntries(STAGE_TOP_KEYS.filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
+  if (Object.keys(stageEnvs).length === 0 && Object.keys(top).length === 0) return [];
+  const words = productConfigProblems({ ...top, ...(Object.keys(stageEnvs).length ? { environments: stageEnvs } : {}) }, { product: "terragucci" });
+  const out = words.filter((p) => p.level === "error").map((p) => `config.${p.path} ${p.message}`);
+  if (Array.isArray(s.promotion) && s.promotion.every((n) => typeof n === "string")) {
+    const promotion = s.promotion as string[];
+    try {
+      pipelineFromConfig({
+        name: "tf-apply",
+        promotion,
+        environments: stageEnvs as Record<string, PipelineEnvironmentConfig>,
+        waves: Object.fromEntries(promotion.map((n) => [n, [{ name: "wave-1", runs: [{ target: n }] }]])),
+      });
+    } catch (e) {
+      out.push(`config.promotion: the pipeline it makes does not check in chant (${(e as Error).message})`);
+    }
+  }
+  return out;
 }
 
 /** Check a parsed config and return it typed, or throw with every problem listed. */

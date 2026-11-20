@@ -207,8 +207,13 @@ dashboards: true
 | `audit_log_group` | none | the CloudWatch Logs group a CloudTrail trail delivers the state buckets' S3 data events to, in `audit_region`: `terragucci audit` reads it to name who wrote a state version no wave or migration recorded ([The writer](/terragucci/reference/audit-trail/#the-writer)). Read by the audit job where it runs, in a control repo per project from its settings over `defaults`; no project's jobs read it |
 | `dashboards` | `false` (off) | `true`, or `dir`, `prometheus`, `tempo`, `folder`, `path`, `drift_age`, `wave_wait`, `schedule`; see [Dashboards](/terragucci/reference/observability/#dashboards-and-alerts) |
 | `ephemeral` | none (off) | `roots`, root globs each pull request gets a copy of under state keys of its own, `ttl` (`<n>m`, `<n>h` or `<n>d`, default `24h`) and `sweep` (minutes between the sweep's runs, 5 to 60, default 30); read at base; see [Ephemeral environments](#ephemeral-environments) |
-| `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) |
-| `promotion` | none | the order a release moves through the environments, first to last: names of `environments`, each once, two or more. `init` writes the roots of those environments as components for [`terragucci promote` and `rollback`](/terragucci/reference/cli/#promote-and-rollback); see [Promotion](#promotion) |
+| `environments` | none | named environments, each with `roots` (root globs) and the per-environment keys `gate`, `oidc`, `runner`, `parallelism` and `forge_environment`, plus the keys of its stage; a root in no environment takes the top-level values. Each environment's roots apply in jobs of their own. Read at base; see [Environments](#environments) and [Stages](#stages) |
+| `promotion` | none (off) | the order a release moves through the environments, first to last: names of `environments`, each once, two or more. `init` writes the roots of those environments as components for [`terragucci promote` and `rollback`](/terragucci/reference/cli/#promote-and-rollback), and `terragucci ci` writes `.chant/pipeline.ts` with one stage per name; see [Promotion](#promotion) and [Stages](#stages) |
+| `risk` | none (off) | `approve_above`, a change risk score from 0 to 1 above which a wave needs an approval of its own, whatever its gate says; see [Change risk](#change-risk) |
+| `replan_dependents` | none (off) | root names or globs whose dependents are planned again when an output they read comes out changed after an apply; see [Planning dependents again](#planning-dependents-again) |
+| `config_sets` | none | shared sets of `config`, `secrets` and `imports` that environments import; see [Config and secret sets](#config-and-secret-sets) |
+| `release` | none | `cut` (`true` or `false`) and `label` (a label, or `auto`): the release a merge cuts once the first stage applied |
+| `recheck` | none | `schedule`, a five-field cron line on which a promotion a soak holds is tried again |
 | `own_jobs` | none | jobs of your own that `init` and `reconcile` write into the generated pipeline after terragucci's, as they are: a map of job name to job in the forge's syntax, or the path of a YAML file in the repo that holds one; see [Jobs of your own](#jobs-of-your-own) |
 
 `terragucci config check` rejects a key this table does not list and names the keys it accepts. [Job triggers](/terragucci/concepts/job-triggers/) lists which keys start a scheduled job and what each job starts on.
@@ -465,6 +470,83 @@ promotion: [dev, staging, prod]
 `promotion` lists environments of `environments` in the order a release moves through them. Run `npx terragucci init` after setting it: it lists the same order under `environments` in `chant.config.ts`, and writes `terragucci.component.ts` with each environment's roots, which [`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback) and `rollback` deploy. An environment's `gate` decides whether a promote into it waits for [`terragucci approve release <env>`](/terragucci/reference/cli/#approve). The pipeline a merge runs is the same with or without `promotion`.
 
 `terragucci config check` refuses a list of fewer than two names, a name listed twice, a name that is not one of `environments`, and `promotion` beside `terragrunt` or `atmos`. `init` refuses it in a Terramate repo, two roots of one environment that make the same component, and an environment whose globs match no root. [Promote a release through environments](/terragucci/guides/promote-a-release/) walks through it.
+
+## Stages
+
+With `promotion`, each environment it lists is a stage of chant's pipeline, in that order. `terragucci ci` writes the declaration to `.chant/pipeline.ts` with chant's helper, and `terragucci ci --check` exits 1 while the committed file differs from what `terragucci.yml` writes. chant folds the file at each promote and reads the stage keys there, so a pull request that changes them takes effect once it merges.
+
+```yaml
+promotion: [dev, staging, prod]
+waves:
+  canary: ["envs/*/network"]
+environments:
+  dev:
+    roots: ["envs/dev/**"]
+    gate: never
+    soak:
+      duration: 30m
+      checks:
+        - { kind: http, url: "https://dev.example.com/healthz" }
+  staging:
+    roots: ["envs/staging/**"]
+    risk: { approve_above: 0.5, approval_rules: [{ count: 1, roles: [sre] }] }
+  prod:
+    roots: ["envs/prod/**"]
+    gate: always
+    approval: sealed
+    approval_rules:
+      - any:
+          - { count: 2, not_author: true, proven: true }
+          - { count: 1, roles: [platform], proven: true }
+    freeze:
+      - { from: "2026-12-20T00:00:00Z", until: "2027-01-04T00:00:00Z", reason: year-end freeze }
+    urgent: { role: oncall }
+    on_verify_fail: rollback
+```
+
+Each stage's waves are the waves of the committed waves spec (`.chant/op-waves/tf-apply.spec.json`, which `terragucci init` writes) cut to that environment's roots, in the same order. A stage's first wave is its canary when every root in it matches `waves.canary`, so the canary takes no key of its own, and its soak, the stage's unless the wave has one, holds every wave after it.
+
+The keys under `environments.<name>` that set the stage are the keys of chant's product vocabulary, passed through as they are written:
+
+| Key | Sets |
+|---|---|
+| `approval` | the stage's approval mode, in place of `approval` |
+| `approval_rules` | the stage's approval rules, in place of `approval_rules`: `count`, `roles`, `not_author`, `proven` (only approvers a seal or a review proves count) and `name`, and `all` or `any` groups of rules, nested up to three deep. `roots` is optional here |
+| `hold` | a manual hold: `true`, or a map with `reason`, `until` (an ISO 8601 time) and `description`, which the person who lifts it reads first |
+| `freeze` | windows in which no release is promoted into the stage: maps with `from`, `until` and `reason` |
+| `failure_tolerance` | the failed runs a wave of many roots lets through before the stage stops: a whole number, or a share such as `10%` |
+| `after` | the stages a release applies in before this one opens; the stage before it in `promotion` when unset |
+| `queue` | `replace`: a newer release waiting replaces an older one |
+| `urgent.role` | the role whose one proven approval passes the stage's gate on `--urgent` |
+| `pause_after_rollback` | a rollback of the stage pauses it until `terragucci resume` |
+| `on_verify_fail` | `hold` (the default) or `rollback`: a failed verify or soak check holds the stage as applied, or requests the rollback to its previous release, which waits for an approval |
+| `canary` | the canary stage, whose soak holds every stage after it |
+| `soak` | `duration`, `checks` and `overrides`, as described in [Soaks](#soaks) |
+| `publish`, `reads` | release artifacts the stage publishes once it applied (`{ member, output }` or `{ secret }`), and those of earlier stages its deploy reads (`{ stage, artifact }`) |
+| `agent_steps.<step>` | an agent step: `prompt`, `schema`, `reads`, `command`, `key_secret`, `timeout`, `max_runs` and `max_cost_usd`. It reads the release and answers in the declared shape; it approves nothing and applies nothing |
+| `risk` | `approve_above` and `approval_rules` for the stage; see [Change risk](#change-risk) |
+| `replan_dependents` | the stage's own list, in place of the top-level one |
+| `config`, `secrets`, `imports` | the stage's config and secret set; see [Config and secret sets](#config-and-secret-sets) |
+
+`config check` asks chant about each of these: their words, and with `promotion` the declaration they make, folded as chant folds it. A merge applies the waves as before, and the merge path's waves take the first stage's risk hold, `replan_dependents`, canary soak and `failure_tolerance` from `.chant/pipeline.ts` at base.
+
+A comment `/terragucci reject [--stage <stage>] <reason>` on a pull request turns down the release a stage's gate waits on, under the commenter's forge identity where the stage's approval mode takes one; a `sealed` stage answers with the `terragucci reject` line to run with `--sign`. `terragucci pause <env> --reason <text>` stops releases entering a stage, and `terragucci resume <env> --reason <text>` lets them in again.
+
+### Soaks
+
+A stage's `soak` holds the next stage until its checks keep passing for `duration` after the stage's last apply (`0` waits for the checks alone). Each check has a `kind`: `http`, `prometheus`, `cloudwatch-alarm`, `command`, `health`, `drift`, `apply` or `policy`, with that kind's settings beside it, and `on_fail`: `restart` (the default) starts the soak over once the check passes again, `hold` keeps the time already counted. `overrides` give `members` (root names or globs) a `duration` and `checks` of their own. The plan note lists the soaks a change passes through once it merges. A person ends a soak early through its gate.
+
+### Change risk
+
+chant scores each wave's change set from 0 to 1: destroys, replacements and the environment it reaches each add to the score. `risk.approve_above` at the top level applies to every wave; `environments.<name>.risk` sets a stage's own threshold and the `approval_rules` an over score adds to its gate, such as `{ count: 1, roles: [sre] }`. Above the threshold a wave waits for an approval whatever its gate says. Below it, the gate is as it would be with no `risk`. A low score never lets a wave through: `allow_unattended` from a policy is read as before, and the score has no part in it. The wave's decision records the score with each reason and its weight.
+
+### Planning dependents again
+
+`replan_dependents` names roots whose readers are planned again when an output they read comes out changed after their apply. The plan waits at the gate `pr-apply-replan` and names the upstream root and the outputs that changed; it applies once someone approves it. terragucci writes the list into the waves spec it renders, and chant's wave job runs the step.
+
+### Config and secret sets
+
+Each environment's `config` holds plain values and `secrets` names where each secret is kept: a forge secret's name, or a map with `forge_secret`, `aws_secrets_manager` (with `json_key` and `region`), `gcp_secret_manager` or `azure_key_vault`. `config_sets.<set>` holds shared sets, and `imports` lists the ones an environment takes first, in order. `terragucci ci` writes them to `ci.environmentSets` in `chant.workspace.json`, where chant reads them, and `terragucci ci --check` fails while that differs.
 
 ## Runners
 

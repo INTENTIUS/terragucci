@@ -33,6 +33,9 @@
  *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci ci [--check]   (write .chant/pipeline.ts from promotion, environments and waves in terragucci.yml; --check fails when the committed file is stale)
+ *   terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   (turn down the release a stage's gate waits on: chant's reject)
+ *   terragucci pause <env> --reason <text> | terragucci resume <env> --reason <text>   (stop or let in releases entering a stage: chant's stage pause and resume)
  *   terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]   (tf-check's last step: chant's `ci check`, the ci.hooks.check hooks chant.workspace.json names at base)
  *   terragucci ci evidence sign ...   (chant's `ci evidence sign`, which the jobs run with `evidence` set)
  *   terragucci workspace ref-gate ...   (chant's ref gate, which the pre-push hook init writes runs)
@@ -71,7 +74,10 @@
  *   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]   (release a state lock no live run holds, once its approval stands; see unlock.ts)
  *   terragucci ephemeral up|down|sweep [--pr <n>] [--head <sha>] [--reason closed|expired] [--base <ref>]   (a pull request's copy of the ephemeral roots; see ephemeral.ts)
  *   terragucci state export <root> [--version <id>] [--out <file>] [--actor <name>]   (ask for one version of a root's state, and once someone else approved it, download it to this machine)
- *   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
+ *   terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
+  terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
+  terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
+  terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]   (override a policy denial of one plan, recorded on chant/lifecycle)
  *   terragucci respond <event> [--mode dry-run|apply] [event flags]
  *   terragucci comment --layers <a,b;c> --out <file> [--forge forgejo] [--agent off|on]   (read a `/terragucci plan [root]` comment; run by the generated pipeline)
  *   terragucci comment --forge gitlab --poll --layers <a,b;c> [--when merge|pull-request] [--requires <list>|none] [--waves <n>] [--agent on] [--review]   (answer the `/terragucci` merge request notes since the last polls; run by the comments schedule's job)
@@ -133,6 +139,7 @@ import { pollGitLabComments } from "./comment-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, reviewForge as reviewForgeOf } from "./review";
 import { writePlanNoteNotices } from "./plan-note";
+import { pipelineCommand } from "./pipeline";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, approveRelease, isGateKeyword, overrideDenial } from "./approve";
@@ -1403,9 +1410,24 @@ export async function main(argv: string[]): Promise<number> {
         const rest = argv.slice(argv.indexOf("ci") + 1);
         // evidence (terragucci issue 1413): the signing lines chant's plan note, plan-evidence and wave evidence jobs run.
         if (args[0] === "evidence") return runChantInProcess(["ci", ...rest], TERRAGUCCI_WORDS);
-        if (args[0] !== "check") throw new ConfigError("usage: terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...], or terragucci ci evidence sign ...");
+        // `.chant/pipeline.ts` from terragucci.yml (./pipeline.ts): written by `terragucci ci`, checked by `terragucci ci --check`.
+        if (args.length === 0) {
+          const path = str(flags, "config") ?? findConfig(cwd);
+          if (!path) throw new ConfigError("terragucci ci writes .chant/pipeline.ts from terragucci.yml, and there is none here");
+          return pipelineCommand(cwd, resolveRepo(await loadConfig(resolve(path))), { check: flags.check === true });
+        }
+        if (args[0] !== "check") throw new ConfigError("usage: terragucci ci [--check], terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...], or terragucci ci evidence sign ...");
         const base = rest.some((a) => a === "--base" || a.startsWith("--base=")) ? [] : ["--base", ciBaseRef(process.env, { base: process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }) ?? "HEAD"];
         return runChantInProcess(["ci", ...rest, ...base], TERRAGUCCI_WORDS);
+      }
+      case "reject": {
+        // chant's reject (#5354): turn down the release a stage's gate waits on, in terragucci's words.
+        return runChantInProcess(["reject", ...argv.slice(argv.indexOf("reject") + 1)], TERRAGUCCI_WORDS);
+      }
+      case "pause":
+      case "resume": {
+        // chant's stage pause and resume (#5355): `terragucci pause <env> --reason <text>`.
+        return runChantInProcess(["stage", cmd, ...argv.slice(argv.indexOf(cmd) + 1)], TERRAGUCCI_WORDS);
       }
       case "workspace": {
         // The ref gate's pre-push hook init writes with evidence set (./trust.ts): chant's `workspace ref-gate`.

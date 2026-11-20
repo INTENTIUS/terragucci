@@ -13,6 +13,12 @@
  * counts at the gate, `apply.point`, `apply.branches`, `apply.resume`,
  * `notify` and `cost.approve_above` (chant's `holds.cost`). A commit with no committed spec prints nothing.
  *
+ * With `promotion`, `.chant/pipeline.ts` at that commit is folded by chant and
+ * its first stage's op-waves spec (`stageWavesSpec`) gives the waves their
+ * risk hold, `replanDependents`, the canary's soak and the failure tolerance.
+ * Without a pipeline, `risk.approve_above` and `replan_dependents` at that
+ * commit give the first two.
+ *
  * Two things are not rules and come from the job's checkout, as they did in
  * `stage tf-apply`: each root's workspace and its Atmos reads (the run's
  * `input`). Wave 1 always carries the state migration hooks; they look for
@@ -49,6 +55,7 @@ import { forgeOfEnv, rootsParallelism } from "./report/stage";
 import { branchLayers, changeComposition, migrationRunsOut, stepComposition } from "./apply";
 import { rootWorkspace } from "./workspace";
 import { rootDir, rootPath } from "./root-config";
+import { firstStageRules, topLevelRules } from "./pipeline";
 
 /** The variables chant hands the command (chant's `OP_WAVES_SPEC_AT_ENV` and `OP_WAVES_SPEC_FILE_ENV`). */
 export const SPEC_AT_ENV = "CHANT_WAVES_SPEC_AT";
@@ -188,6 +195,10 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
     return Object.keys(i).length ? i : undefined;
   };
 
+  // The folded pipeline's first stage at base (./pipeline.ts firstStageRules), else risk and replan_dependents at base:
+  // the stage's risk hold, its replanDependents, the canary's soak and the failure tolerance. Risk only adds approvals:
+  // it sets no gate and never reads allow_unattended, so a low score lets no wave through that would wait without it.
+  const staged = firstStageRules(repo, sha) ?? topLevelRules(settings);
   const hook = (name: string, what: "migrate-check" | "migrate" | "gate", onFailure?: "approve"): OpWaveHook => ({ name, command: waveCallArgv(what, "{runs}"), ...(onFailure ? { onFailure } : {}) });
   const terragrunt = (shape.step as { kind?: string } | undefined)?.kind === "terragrunt-apply";
   const waves: OpWave[] = shape.waves.map((w, i) => {
@@ -204,6 +215,9 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
       // The composed run's roots plan and apply together (chant#4848).
       ...(together === i + 1 ? { together: true } : {}),
       ...(i === 0 ? { hooks: { before: { plan: [hook("migrations", "migrate-check"), hook("migration gate", "migrate", "approve")] } } } : {}),
+      // waves.canary (chant#5327): the first wave is the canary when the pipeline's first stage marks it, and its soak holds every wave after it.
+      ...(i === 0 && staged.canarySoak ? { canary: true, soak: structuredClone(staged.canarySoak) } : {}),
+      ...(staged.failureTolerance !== undefined && staged.failureTolerance !== 0 ? { failureTolerance: staged.failureTolerance } : {}),
     } as OpWave;
   });
   const parallel = terragrunt ? undefined : rootsParallelism(repo, all, settings, env);
@@ -237,6 +251,8 @@ export async function wavesSpecReach(repo: string, o: WavesSpecAtOptions): Promi
     // cost.approve_above at this commit: chant's cost hold prices each wave's runs and holds a wave over the amount (chant#5334, #5416).
     ...(settings.cost && approveAbove(settings.cost) !== undefined ? { holds: { ...((top as { holds?: object }).holds ?? {}), cost: costHold(settings.cost, approveAbove(settings.cost)!, costHoldEnv(settings)) } } : {}),
     hooks: { after: { gate: [hook("report", "gate")] } },
+    ...(staged.holds ? { holds: structuredClone(staged.holds) } : {}),
+    ...(staged.replanDependents?.length ? { replanDependents: [...staged.replanDependents] } : {}),
     waves,
   } as OpWavesSpec;
   return { spec, ...(composition ? { composition } : {}), migrationMembers, nothing };

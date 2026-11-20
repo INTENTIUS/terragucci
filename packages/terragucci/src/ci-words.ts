@@ -22,7 +22,8 @@ const WAVES_OP = "tf-apply";
 export const TERRAGUCCI_WORDS = {
   product: "terragucci",
   noun: ["root", "roots"] as [string, string],
-  commands: { plan: "plan", apply: "apply", lock: "lock", unlock: "unlock", agent: "agent" } as Record<string, "plan" | "apply" | "lock" | "unlock" | "agent">,
+  // `reject` (chant#5354): `/terragucci reject [--stage <stage>] <reason>` turns down the release a stage's gate waits on.
+  commands: { plan: "plan", apply: "apply", lock: "lock", unlock: "unlock", agent: "agent", reject: "reject" } as Record<string, "plan" | "apply" | "lock" | "unlock" | "agent" | "reject">,
   // atlantis_comments: true sets TG_ATLANTIS_COMMENTS=1 on every job, and only then do these read as terragucci's.
   aliases: [
     { from: "atlantis plan", command: "plan" as const, when: ATLANTIS_COMMENTS_ENV },
@@ -31,6 +32,8 @@ export const TERRAGUCCI_WORDS = {
   approve: "terragucci approve {gate} --plan {digest} {sign}",
   // The plan note's line for a denial a listed approver may override (chant#4810), as ../override.ts overrideCommand writes it.
   override: 'terragucci override {target} --rule {rule} --reason "<why>" {sign}',
+  // The reject line a comment answers with where it cannot record the rejection itself (a sealed stage), as `terragucci reject` takes it.
+  reject: "terragucci reject {op} {gate} --plan {digest} --reason {reason} {sign}",
   op: WAVES_OP,
   gateName: "wave-{k}",
   approval: "per-wave" as const,
