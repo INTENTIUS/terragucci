@@ -36,7 +36,7 @@
     "build": "node ../../scripts/build-cli.mjs"
   },
   "dependencies": {
-    "@intentius/chant": "0.124.110"
+    "@intentius/chant": "0.124.112"
   },
   "peerDependencies": {
     "@intentius/tsad-reference": "2.x",
@@ -52,8 +52,8 @@
   },
   "devDependencies": {
     "@cdktn/hcl2json": "0.24.0",
-    "@intentius/chant-lexicon-forgejo": "0.124.102",
-    "@intentius/chant-lexicon-github": "0.124.102",
+    "@intentius/chant-lexicon-forgejo": "0.124.103",
+    "@intentius/chant-lexicon-github": "0.124.103",
     "@intentius/chant-lexicon-gitlab": "0.124.102",
     "@intentius/chant-lexicon-prow": "0.124.103",
     "@intentius/chant-lexicon-terraform": "0.124.103",

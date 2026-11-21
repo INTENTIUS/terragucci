@@ -465,6 +465,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.templates && forgeChoice.value !== "gitlab" ? { templates: true } : {}),
     // control: after the last apply, a job tells the control repo (./control-repo.ts). The member is this repo's name in the control repo's workspace.
     ...(control ? { control } : {}),
+    // promotion: the merge's last wave cuts a release under the forge-checks gate chant.config.ts sets, which reads the commit's checks.
+    ...(settings.promotion?.length && settings.release?.cut !== false ? { releaseCut: true } : {}),
     // Every job runs the shape's prepare before it reads the roots; an Atmos repo's jobs install Atmos for it.
     ...(shape.prepare ? { synth: shape.prepare } : {}),
     ...(atmos ? { atmos: { version: atmos.version } } : {}),
@@ -530,6 +532,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     if (mine) files.push(planFile(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined, settings.promotion)));
     else notes.push(`${CHANT_CONFIG} is the repo's own, so terragucci left it; a wave applies through chant's terraform-apply step once it names every root under terraform.roots`);
     if (!mine && settings.promotion?.length) notes.push(`promotion is set and ${CHANT_CONFIG} is the repo's own: list the environments there as environments: ${JSON.stringify(settings.promotion)} and add lexicons: ["terraform"], so chant promotes in that order`);
+    if (!mine && settings.promotion?.length) notes.push(`promotion is set and ${CHANT_CONFIG} is the repo's own: set release: { green: "forge-checks" } there, so the release cut on merge waits for the merge commit's checks`);
   }
   // terragucci.component.ts: with promotion, each environment's roots as chant components, which terragucci promote and rollback deploy.
   const promotionPath = join(repo, PROMOTION_COMPONENTS);

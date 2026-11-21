@@ -329,6 +329,12 @@ export interface PipelineInput {
    */
   checkHooks?: { preCommit: boolean };
   /**
+   * `promotion` with the merge's release cut on: the last wave cuts a release under the `forge-checks` gate,
+   * which reads the merge commit's checks and statuses, so GitHub's wave jobs take `checks`, `statuses` and
+   * `actions` read.
+   */
+  releaseCut?: boolean;
+  /**
    * `evidence` (terragucci issue 1413): chant's runner identity. The plan note job (GitLab: `plan-evidence`)
    * signs `plan` and `policy`, and each wave `plan:<wave>` and `policy:<wave>`, a wave that trades cloud
    * credentials and signs keyless in its `<wave job>-evidence` job.
@@ -1639,6 +1645,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(input.respond ? { respond: input.respond as Record<string, string> } : {}),
     ...(input.waveSummary ? { waveSummary: input.waveSummary } : {}),
     ...(input.control ? { control: input.control } : {}),
+    ...(input.releaseCut ? { releaseCut: true } : {}),
     ...(tg && forge === "gitlab" ? { cache: (forgeCache("gitlab") as { cache: unknown }).cache } : {}),
   };
   // The resume job is written whenever apply.resume is set, whatever the gate: a state migration waits in wave 1 under gate: never too.
