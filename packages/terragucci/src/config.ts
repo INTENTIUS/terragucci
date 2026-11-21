@@ -22,6 +22,7 @@ import { checkGenerate, combineGenerate, type GenerateSettings } from "./generat
 import { declaredKind, shapeProblems } from "./refusals";
 import { commentAllowForgeProblems, commentAllowProblems, type CommentAllow } from "./comment-allow";
 import { noteRootConfig } from "./root-config";
+import { readVocabulary, vocabularyPairErrors, vocabularyWarnings } from "./config-vocabulary";
 import { prowProblems, type ProwSettings } from "./prow-config";
 export { PROW_JOBS_PATH, PROW_KEYS, PROW_TOKEN_KEY, type ProwSettings } from "./prow-config";
 export { ROOTS_NOT_ATMOS, ROOTS_NOT_TERRAGRUNT, SYNTH_DRIFT_PR, SYNTH_DRIFT_PR_SHORT, SYNTH_GENERATE, SYNTH_ROLLOUTS } from "./refusals";
@@ -1394,8 +1395,8 @@ export function findConfig(dir: string): string | undefined {
 // ── validation ───────────────────────────────────────────────────────────────
 
 export const SETTING_KEYS = new Set([
-  "roots", "binary", "version", "forge", "url", "gate", "approval", "approval_rules", "apply", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
+  "roots", "binary", "version", "forge", "url", "forge_url", "gate", "approval", "approval_rules", "apply", "branches", "locks", "waves", "drift", "comments", "gitlab", "runtime",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -2873,13 +2874,18 @@ export function environmentNeeds(s: ProjectSettings, where: string): string[] {
 }
 
 /** Check a parsed config and return it typed, or throw with every problem listed. */
-export function validateConfig(raw: unknown, where: string): TerragucciConfig {
+export function validateConfig(given: unknown, where: string): TerragucciConfig {
   const problems: string[] = [];
-  if (raw === undefined || raw === null) return {};
-  if (!isObject(raw)) {
-    const got = Array.isArray(raw) ? "a list" : `a ${typeof raw}`;
+  if (given === undefined || given === null) return {};
+  if (!isObject(given)) {
+    const got = Array.isArray(given) ? "a list" : `a ${typeof given}`;
     throw new ConfigError(`${where}: the config must be a mapping of setting names to values (key: value at the top level), and this file holds ${got}`);
   }
+  // chant's vocabulary keys: a key set beside its earlier spelling is refused, and each key moves onto the spelling the checks below read.
+  const pairs = vocabularyPairErrors(given);
+  if (pairs.length) throw new ConfigError(`${where} has ${pairs.length} problem(s):\n  ${pairs.join("\n  ")}`, pairs);
+  const warnings = vocabularyWarnings(given);
+  const raw = readVocabulary(given);
   const { defaults, projects, ...rest } = raw;
   if (projects !== undefined) {
     if (!isObject(projects)) problems.push(`${where}: projects must map <host>/<path> to settings`);
@@ -2915,7 +2921,15 @@ export function validateConfig(raw: unknown, where: string): TerragucciConfig {
     if (isObject(s) && s.gate !== undefined) s.gate = normalizeGate(s.gate);
     if (isObject(s) && isObject(s.environments)) for (const e of Object.values(s.environments)) if (isObject(e) && e.gate !== undefined) e.gate = normalizeGate(e.gate);
   }
-  return out as TerragucciConfig;
+  const config = out as TerragucciConfig;
+  vocabularyNotes.set(config, warnings);
+  return config;
+}
+
+/** The warnings chant's vocabulary check had for a validated config's earlier spellings, each naming the key. */
+const vocabularyNotes = new WeakMap<object, string[]>();
+export function configWarnings(config: TerragucciConfig): string[] {
+  return vocabularyNotes.get(config) ?? [];
 }
 
 // ── loading ──────────────────────────────────────────────────────────────────

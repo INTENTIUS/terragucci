@@ -139,7 +139,8 @@ describe("config check: the state each role reaches", () => {
 
   it("the command prints the warning and still exits 0; --json carries warnings and state_access", async () => {
     const dir = envRepo(true);
-    write(dir, { "terragucci.yml": `oidc:\n  roles:\n    "envs/dev/**": { plan: ${DEV.plan}, apply: ${DEV.apply} }\n    "envs/prod/**": { plan: ${PROD.plan}, apply: ${PROD.apply} }\n` });
+    // identity is the vocabulary's key; oidc, the earlier spelling, would add the alias warning.
+    write(dir, { "terragucci.yml": `identity:\n  roles:\n    "envs/dev/**": { plan: ${DEV.plan}, apply: ${DEV.apply} }\n    "envs/prod/**": { plan: ${PROD.plan}, apply: ${PROD.apply} }\n` });
     const text = await check(dir);
     expect(text.code).toBe(0);
     expect(text.out).toContain(`  ${PROD.apply} (apply, envs/prod/**): s3://state/prod/app.tfstate; reads s3://state/dev/app.tfstate`);

@@ -193,7 +193,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
 3. Give the jobs cloud access. Set `oidc` in `terragucci.yml` and run `npx terragucci init` again:
 
    ```yaml
-   oidc:
+   identity:
      plan_role: arn:aws:iam::111122223333:role/terragucci-plan
      apply_role: arn:aws:iam::111122223333:role/terragucci-apply
    ```

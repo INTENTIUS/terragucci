@@ -176,7 +176,7 @@ A pull request reads the upstream's applied state, never its plan. When one chan
 An instance's root is `<stack>/<component>`, so `oidc.roles` globs give each stack its roles:
 
 ```yaml
-oidc:
+identity:
   roles:
     "dev/*": { plan: arn:aws:iam::111:role/dev-plan, apply: arn:aws:iam::111:role/dev-apply }
     "prod/*": { plan: arn:aws:iam::222:role/prod-plan, apply: arn:aws:iam::222:role/prod-apply }

@@ -37,7 +37,7 @@ Each root runs every command, steps included, with its environment's roles. In d
 1. Name a pair of roles per environment, by the roots' paths. The first glob a root matches wins; a root no glob matches takes `plan_role` and `apply_role`, which you can leave out when every root matches a glob.
 
    ```yaml
-   oidc:
+   identity:
      roles:
        "envs/dev/**": { plan: arn:aws:iam::444455556666:role/dev-plan, apply: arn:aws:iam::444455556666:role/dev-apply }
        "envs/prod/**": { plan: arn:aws:iam::111122223333:role/prod-plan, apply: arn:aws:iam::111122223333:role/prod-apply }
@@ -86,7 +86,7 @@ Each root runs every command, steps included, with its environment's roles. In d
 `oidc.gcp.roles` gives a service account pair per glob, and `oidc.azure.roles` a client pair. A root no glob matches takes the job's own pair (`plan_service_account` and `apply_service_account`, `plan_client_id` and `apply_client_id`), which stay required.
 
 ```yaml
-oidc:
+identity:
   gcp:
     workload_identity_provider: projects/123456789/locations/global/workloadIdentityPools/forge/providers/ci
     plan_service_account: tg-plan@acme.iam.gserviceaccount.com

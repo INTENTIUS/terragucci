@@ -120,7 +120,11 @@
     },
     "url": {
       "type": "string",
-      "description": "Where the project lives, for a forge not on https or the default port."
+      "description": "Where the project lives, for a forge not on https or the default port. forge_url is the vocabulary's key for it."
+    },
+    "forge_url": {
+      "type": "string",
+      "description": "Where the project lives, for a forge not on https or the default port: the vocabulary's key for url, which stays accepted."
     },
     "gate": {
       "enum": [
@@ -265,11 +269,47 @@
       "description": "When a change applies."
     },
     "locks": {
-      "enum": [
-        "apply",
-        "plan"
+      "anyOf": [
+        {
+          "enum": [
+            "apply",
+            "plan"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "when": {
+              "enum": [
+                "apply",
+                "plan"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "when"
+          ]
+        }
       ],
-      "description": "When a pull request takes its root locks."
+      "description": "When a pull request takes its root locks: locks.when, or the value alone."
+    },
+    "branches": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "pattern": "^[^\\s,;=']+$"
+        }
+      },
+      "description": "The roots a branch applies, by glob: the vocabulary's key for apply.branches, which stays accepted."
     },
     "waves": {
       "type": "object",
@@ -308,13 +348,29 @@
     "drift": {
       "anyOf": [
         {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ]
         },
         {
-          "const": false
+          "type": "object",
+          "properties": {
+            "schedule": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "schedule"
+          ]
         }
       ],
-      "description": "A cron schedule for tf-drift, or false."
+      "description": "A cron schedule for tf-drift, drift.schedule, or false."
     },
     "synth": {
       "type": "string",
@@ -377,6 +433,10 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
         },
+        "relay_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
+        },
         "relay_key": {
           "type": "string",
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
@@ -390,33 +450,82 @@
         ],
         "webhook_key": [
           "webhook"
-        ],
-        "relay": [
-          "relay_key"
-        ],
-        "relay_key": [
-          "relay"
         ]
       },
-      "if": {
-        "required": [
-          "relay"
-        ]
-      },
-      "then": {
-        "anyOf": [
-          {
-            "required": [
-              "slack"
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "relay"
+                ]
+              },
+              {
+                "required": [
+                  "relay_name"
+                ]
+              }
             ]
           },
-          {
+          "then": {
             "required": [
-              "teams"
+              "relay_key"
             ]
           }
-        ]
-      },
+        },
+        {
+          "if": {
+            "required": [
+              "relay_key"
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "relay"
+                ]
+              },
+              {
+                "required": [
+                  "relay_name"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "relay"
+                ]
+              },
+              {
+                "required": [
+                  "relay_name"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "slack"
+                ]
+              },
+              {
+                "required": [
+                  "teams"
+                ]
+              }
+            ]
+          }
+        }
+      ],
       "description": "The secrets holding Slack, Teams or webhook addresses, the relay's name, and the secret holding the key its buttons are signed with."
     },
     "cost": {
@@ -1426,7 +1535,197 @@
           "apply_role"
         ]
       },
-      "description": "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply."
+      "description": "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply. identity is the vocabulary's key for it."
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "plan_role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apply_role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audience": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "plan": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "apply": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "drift": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "roles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "plan": {
+                "type": "string",
+                "minLength": 1
+              },
+              "apply": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "plan",
+              "apply"
+            ]
+          }
+        },
+        "gcp": {
+          "type": "object",
+          "properties": {
+            "workload_identity_provider": {
+              "type": "string",
+              "pattern": "^projects\\/[0-9]+\\/locations\\/global\\/workloadIdentityPools\\/[^/\\s]+\\/providers\\/[^/\\s]+$"
+            },
+            "plan_service_account": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$"
+            },
+            "apply_service_account": {
+              "type": "string",
+              "pattern": "^[^@\\s]+@[^@\\s]+$"
+            },
+            "token_url": {
+              "type": "string",
+              "pattern": "^https://[^\\s/]+/\\S*$"
+            },
+            "roles": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "plan": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+$"
+                  },
+                  "apply": {
+                    "type": "string",
+                    "pattern": "^[^@\\s]+@[^@\\s]+$"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan",
+                  "apply"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "workload_identity_provider",
+            "plan_service_account",
+            "apply_service_account"
+          ]
+        },
+        "azure": {
+          "type": "object",
+          "properties": {
+            "tenant_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subscription_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "plan_client_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "apply_client_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1
+            },
+            "roles": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "plan": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apply": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan",
+                  "apply"
+                ]
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "tenant_id",
+            "subscription_id",
+            "plan_client_id",
+            "apply_client_id"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1,
+      "dependentRequired": {
+        "plan_role": [
+          "apply_role"
+        ],
+        "apply_role": [
+          "plan_role"
+        ]
+      },
+      "if": {
+        "required": [
+          "audience"
+        ],
+        "not": {
+          "required": [
+            "roles"
+          ]
+        }
+      },
+      "then": {
+        "required": [
+          "plan_role",
+          "apply_role"
+        ]
+      },
+      "description": "Cloud identities the jobs take over OIDC: the vocabulary's key for oidc, which stays accepted."
     },
     "parallelism": {
       "type": "integer",
@@ -2660,8 +2959,17 @@
     "defaults": {
       "$ref": "#/$defs/project",
       "not": {
-        "required": [
-          "url"
+        "anyOf": [
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "forge_url"
+            ]
+          }
         ]
       },
       "description": "Settings every project takes, under its own."
@@ -2808,7 +3116,11 @@
         },
         "url": {
           "type": "string",
-          "description": "Where the project lives, for a forge not on https or the default port."
+          "description": "Where the project lives, for a forge not on https or the default port. forge_url is the vocabulary's key for it."
+        },
+        "forge_url": {
+          "type": "string",
+          "description": "Where the project lives, for a forge not on https or the default port: the vocabulary's key for url, which stays accepted."
         },
         "gate": {
           "enum": [
@@ -2953,11 +3265,47 @@
           "description": "When a change applies."
         },
         "locks": {
-          "enum": [
-            "apply",
-            "plan"
+          "anyOf": [
+            {
+              "enum": [
+                "apply",
+                "plan"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "when": {
+                  "enum": [
+                    "apply",
+                    "plan"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "when"
+              ]
+            }
           ],
-          "description": "When a pull request takes its root locks."
+          "description": "When a pull request takes its root locks: locks.when, or the value alone."
+        },
+        "branches": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[^\\s,;=']+$"
+            }
+          },
+          "description": "The roots a branch applies, by glob: the vocabulary's key for apply.branches, which stays accepted."
         },
         "waves": {
           "type": "object",
@@ -2996,13 +3344,29 @@
         "drift": {
           "anyOf": [
             {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "const": false
+                }
+              ]
             },
             {
-              "const": false
+              "type": "object",
+              "properties": {
+                "schedule": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "schedule"
+              ]
             }
           ],
-          "description": "A cron schedule for tf-drift, or false."
+          "description": "A cron schedule for tf-drift, drift.schedule, or false."
         },
         "synth": {
           "type": "string",
@@ -3065,6 +3429,10 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
             },
+            "relay_name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$"
+            },
             "relay_key": {
               "type": "string",
               "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
@@ -3078,33 +3446,82 @@
             ],
             "webhook_key": [
               "webhook"
-            ],
-            "relay": [
-              "relay_key"
-            ],
-            "relay_key": [
-              "relay"
             ]
           },
-          "if": {
-            "required": [
-              "relay"
-            ]
-          },
-          "then": {
-            "anyOf": [
-              {
-                "required": [
-                  "slack"
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "relay"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "relay_name"
+                    ]
+                  }
                 ]
               },
-              {
+              "then": {
                 "required": [
-                  "teams"
+                  "relay_key"
                 ]
               }
-            ]
-          },
+            },
+            {
+              "if": {
+                "required": [
+                  "relay_key"
+                ]
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "relay"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "relay_name"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "relay"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "relay_name"
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "slack"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "teams"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
           "description": "The secrets holding Slack, Teams or webhook addresses, the relay's name, and the secret holding the key its buttons are signed with."
         },
         "cost": {
@@ -3953,7 +4370,197 @@
               "apply_role"
             ]
           },
-          "description": "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply."
+          "description": "Cloud identities the jobs take over OIDC: a read-only one for plan, a write one for apply. identity is the vocabulary's key for it."
+        },
+        "identity": {
+          "type": "object",
+          "properties": {
+            "plan_role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "apply_role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "audience": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "plan": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "apply": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "drift": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "roles": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "plan": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "apply": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "plan",
+                  "apply"
+                ]
+              }
+            },
+            "gcp": {
+              "type": "object",
+              "properties": {
+                "workload_identity_provider": {
+                  "type": "string",
+                  "pattern": "^projects\\/[0-9]+\\/locations\\/global\\/workloadIdentityPools\\/[^/\\s]+\\/providers\\/[^/\\s]+$"
+                },
+                "plan_service_account": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+@[^@\\s]+$"
+                },
+                "apply_service_account": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+@[^@\\s]+$"
+                },
+                "token_url": {
+                  "type": "string",
+                  "pattern": "^https://[^\\s/]+/\\S*$"
+                },
+                "roles": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "plan": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+@[^@\\s]+$"
+                      },
+                      "apply": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+@[^@\\s]+$"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "plan",
+                      "apply"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "workload_identity_provider",
+                "plan_service_account",
+                "apply_service_account"
+              ]
+            },
+            "azure": {
+              "type": "object",
+              "properties": {
+                "tenant_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subscription_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "plan_client_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "apply_client_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "audience": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "roles": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "plan": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "apply": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "plan",
+                      "apply"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tenant_id",
+                "subscription_id",
+                "plan_client_id",
+                "apply_client_id"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "dependentRequired": {
+            "plan_role": [
+              "apply_role"
+            ],
+            "apply_role": [
+              "plan_role"
+            ]
+          },
+          "if": {
+            "required": [
+              "audience"
+            ],
+            "not": {
+              "required": [
+                "roles"
+              ]
+            }
+          },
+          "then": {
+            "required": [
+              "plan_role",
+              "apply_role"
+            ]
+          },
+          "description": "Cloud identities the jobs take over OIDC: the vocabulary's key for oidc, which stays accepted."
         },
         "parallelism": {
           "type": "integer",
