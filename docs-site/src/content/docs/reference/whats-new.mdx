@@ -1,16 +1,30 @@
 ---
-title: Changes in 0.4.63
-description: "terragucci 0.4.63, released 2026-11-18."
+title: Changes in 0.4.64
+description: "terragucci 0.4.64, released 2026-11-21."
 ---
 
-Release `0.4.63` is on npm as `@intentius/terragucci@0.4.63`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.63) lists every change.
+Release `0.4.64` is on npm as `@intentius/terragucci@0.4.64`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.64) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.63 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.64 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
 ## In 0.4.64
+
+chant `0.124.112` is the pin for the package and the CI images.
+
+`promotion: [dev, staging, prod]` in `terragucci.yml` names the order a release moves through the environments. `terragucci promote` applies a release to the next environment behind that environment's gate, and `terragucci rollback` brings an earlier release back the same way. `terragucci approve release <env>` approves a waiting one. A promote that skips an environment needs `--allow-skip`, and `--urgent --reason <text>` passes the stage's gate on its urgent rule with the reason on the stage's ledger. Each promote or rollback records the release the environment runs on `chant/lifecycle`. `init` writes `terragucci.component.ts`, which holds each root as one chant component. The merge applies the first stage and cuts the release that later stages promote; `release.cut: false` turns the cut off. [Promote a release through environments](/terragucci/guides/promote-a-release/) walks through it.
+
+Under `promotion`, `init` writes `release: { green: "forge-checks" }` into `chant.config.ts`, so the cut on merge waits for the merge commit's checks on the forge. On GitHub the wave jobs get the `checks`, `statuses` and `actions` read permissions for that. A pull request's plan runs in the first stage's environment, and its plan jobs and note jobs name that environment where they named `default`.
+
+Each environment under `environments.<name>` takes chant's stage keys, such as `approval`, `approval_rules`, `hold`, `freeze`, `soak`, `canary`, `risk` and `hooks.<when>`; the [Stages](/terragucci/reference/config/#stages) section lists them all. `terragucci ci` writes `.chant/pipeline.ts` from them, and `--check` fails on a stale file. A stage's first wave is its canary when `waves.canary` names every root in it and its soak has a check. `risk.approve_above` holds a wave over the score. The wave's risk record is `input.risk` in the policy and `waves[].risk` in the report. `terragucci reject`, `terragucci pause` and `terragucci resume` run chant's commands of those names.
+
+`rollouts.soak` runs on chant's wave soak with its keys unchanged, and it also takes chant's `duration` and `checks` with `kind` and `on_fail`. A wave holds while a check finds drift, and the apply and policy checks hold it the same way. `/terragucci skip-soak` is recorded as the approval of the wave's soak gate with the commenter's name.
+
+Agents start on a trigger, and each is off until its key is set. `agent.alert` answers a production alert and `agent.apply-failed` a failed apply. `agent.verify-failed` answers a failed verify or soak, and `agent.schedule` runs on a `cron`. `init` writes one workflow per agent beside the pipeline, and run records carry the `trigger`. The [agent from an alert guide](/terragucci/guides/agent-start-from-an-alert/) points each alert source at chant's relay.
+
+`terragucci.yml` reads the keys of chant's product vocabulary and still reads each earlier spelling. `gate: on-destructive` replaces `on-destroy`, and `identity` replaces `oidc`. `branches.<branch>` takes over from `apply.branches` and `forge_url` from `url`. `locks.when`, `drift.schedule` and `notify.relay_name` replace `locks`, `drift` and `notify.relay`. `terragucci config check` warns once for each earlier spelling it reads.
 
 The cost estimate is chant's. chant runs `cost.command` (Infracost by default) over each root whose plan changes something and writes the cost section of the plan note, with a row per root. A root whose plan changes nothing is no longer priced. The command still reads the redacted plan from `TG_PLAN_JSON` and the root from `TG_ROOT`, and it still runs without the forge tokens. The `cost` keys in `terragucci.yml` are unchanged.
 
