@@ -11,10 +11,10 @@
     "lint-docs": "node scripts/lint-docs.mjs"
   },
   "devDependencies": {
-    "@intentius/chant": "0.124.106",
-    "@intentius/chant-lexicon-aws": "0.124.104",
+    "@intentius/chant": "0.124.110",
+    "@intentius/chant-lexicon-aws": "0.124.105",
     "@intentius/chant-lexicon-docker": "0.124.101",
-    "@intentius/chant-lexicon-github": "0.124.101",
+    "@intentius/chant-lexicon-github": "0.124.102",
     "@intentius/chant-lexicon-grafana": "0.124.101",
     "@intentius/chant-lexicon-otel": "0.124.102",
     "@intentius/chant-lexicon-prometheus": "0.124.101",
