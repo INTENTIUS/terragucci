@@ -45,8 +45,9 @@
 #      demo's author and reviewer as writers, and the admin's token as the
 #      TERRAGUCCI_FORGEJO_TOKEN secret the pipelines read;
 #   3. copies the base tree into a new directory under the instance's state,
-#      runs terragucci init there when the tree has no pipeline, and pushes it
-#      to main as the base commit.
+#      runs terragucci init there when the tree has no pipeline, and
+#      terragucci ci when its terragucci.yml sets promotion and it has no
+#      .chant/pipeline.ts, and pushes it to main as the base commit.
 #
 # It prints, one per line: REPO=, BASE_DIR= (a git checkout of the base),
 # BASE_SHA= and ENGINE_VERSION=: the choudoufu release the tree's own
@@ -203,6 +204,10 @@ done < <(jq -r '(.fixtures // [])[]' <<<"$entry")
 [ ! -d "$HERE/scenarios/$ID/seed" ] || cp -R "$HERE/scenarios/$ID/seed/." "$base/"
 if [ ! -d "$base/.forgejo/workflows" ]; then
   (cd "$base" && node "$ROOT/packages/terragucci/dist/terragucci.mjs" init >/dev/null) || { log "terragucci init failed in the base"; exit 1; }
+fi
+# promotion (terragucci#1493): .chant/pipeline.ts from terragucci.yml, cut from the waves init wrote.
+if grep -q '^promotion:' "$base/terragucci.yml" 2>/dev/null && [ ! -f "$base/.chant/pipeline.ts" ]; then
+  (cd "$base" && node "$ROOT/packages/terragucci/dist/terragucci.mjs" ci >/dev/null) || { log "terragucci ci failed in the base"; exit 1; }
 fi
 git -C "$base" init -q -b main
 git -C "$base" remote add origin "http://$USER:$TOKEN@forgejo:3000/$repo.git"

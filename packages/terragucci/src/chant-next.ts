@@ -99,7 +99,7 @@ import type { DriverComponent } from "@intentius/chant/components";
 import type { PostSynthCheck, PostSynthContext, PostSynthDiagnostic } from "@intentius/chant/lint/post-synth";
 import type { TerraformConfig } from "@intentius/chant-lexicon-terraform/config";
 import type { HookMoment } from "./hooks";
-import { AGENT_ALERT_FLOOR, AGENT_FACT_TRIGGERS_FLOOR, CI_AGENT_FLOOR, productAlertAgent, productApplyFailedAgent, productDriftAgent, productPipelineJobs, productScheduleAgent } from "@intentius/chant/ci-product";
+import { AGENT_ALERT_FLOOR, AGENT_FACT_TRIGGERS_FLOOR, CI_AGENT_FLOOR, productAlertAgent, productApplyFailedAgent, productDriftAgent, productPipelineJobs, productScheduleAgent, productVerifyFailedAgent } from "@intentius/chant/ci-product";
 import { setActiveProductWords } from "@intentius/chant/ci-product-words";
 import { generateGithubOpPipeline } from "@intentius/chant-lexicon-github/components/generate-op-pipeline";
 import { generateGitlabOpPipeline } from "@intentius/chant-lexicon-gitlab/components/generate-op-pipeline";
@@ -916,6 +916,8 @@ export interface ChantAgentJob {
   AGENT_FACT_TRIGGERS_FLOOR?: string;
   productAlertAgent?(words: object, options?: Record<string, unknown>): ChantScheduledOpSpec;
   productApplyFailedAgent?(words: object, options?: Record<string, unknown>): ChantScheduledOpSpec;
+  /** The agent that starts from a failed verify or soak (chant#5339, `VERIFY_FAILED_AGENT_FLOOR`). */
+  productVerifyFailedAgent?(words: object, options?: Record<string, unknown>): ChantScheduledOpSpec;
   productScheduleAgent?(words: object, options: Record<string, unknown>): ChantScheduledOpSpec;
   setActiveProductWords(words: object | undefined): unknown;
   generate: Record<"github" | "gitlab" | "forgejo", ChantOpGenerator>;
@@ -1021,6 +1023,7 @@ export const CHANT_AGENT_JOB: ChantAgentJob = {
   AGENT_FACT_TRIGGERS_FLOOR,
   productAlertAgent: productAlertAgent as unknown as ChantAgentJob["productAlertAgent"],
   productApplyFailedAgent: productApplyFailedAgent as unknown as ChantAgentJob["productApplyFailedAgent"],
+  productVerifyFailedAgent: productVerifyFailedAgent as unknown as ChantAgentJob["productVerifyFailedAgent"],
   productScheduleAgent: productScheduleAgent as unknown as ChantAgentJob["productScheduleAgent"],
   setActiveProductWords: setActiveProductWords as unknown as ChantAgentJob["setActiveProductWords"],
   generate: {

@@ -137,6 +137,8 @@ export function quorumOf(rules: readonly ApprovalRuleSettings[]): GateQuorumRule
     count: r.count ?? 1,
     ...(r.roles?.length ? { roles: [...r.roles] } : {}),
     ...(r.not_author ? { notAuthor: true } : {}),
+    ...(r.proven ? { proven: true } : {}),
+    ...(r.name ? { name: r.name } : {}),
   }));
 }
 

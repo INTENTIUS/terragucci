@@ -376,14 +376,14 @@ The pull request is planned like any other, and its merge applies through the ga
 
 ### Agents from alerts, failed applies and schedules
 
-`agent.alert`, `agent.apply-failed` and `agent.schedule` (GitHub and Forgejo) each add a workflow of chant's agent job beside the pipeline: `terragucci-alert-agent.yml`, `terragucci-apply-failed-agent.yml` and `terragucci-schedule-agent.yml`, each with its spec under `.chant/ops/`. The alert and failed-apply workflows run every 15 minutes and when started by hand; the relay starts the alert workflow after it records an alert. The schedule workflow runs on `agent.schedule.cron`. None gets a cloud role.
+`agent.alert`, `agent.apply-failed`, `agent.verify-failed` and `agent.schedule` (GitHub and Forgejo) each add a workflow of chant's agent job beside the pipeline: `terragucci-alert-agent.yml`, `terragucci-apply-failed-agent.yml`, `terragucci-verify-failed-agent.yml` and `terragucci-schedule-agent.yml`, each with its spec under `.chant/ops/`. The alert, failed-apply and failed-verify workflows run every 15 minutes and when started by hand; the relay starts the alert workflow after it records an alert. The schedule workflow runs on `agent.schedule.cron`. None gets a cloud role.
 
 | Job | Holds | Does |
 |---|---|---|
 | the agent job | the job's own read-only token and, for alerts and failed applies, the relay key in its decision step; the model's key in the agent's step alone | reads the facts from `chant/lifecycle`, checks each signature, runs the agent command on the default branch and keeps its change as a patch |
 | the push job | the secret `agent.token_env` names | in a fresh job, checks the decision's facts against the ledger, applies the patch, refuses a [guarded path](#paths-an-agent-cannot-change), pushes to `terragucci/agent/<workflow name>` (with `-<member>` for a member's facts) without force and opens or updates the pull request |
 
-With `agent.apply-failed`, each apply wave job's command step holds `CHANT_AGENT_FACTS=apply-failed` and the relay key, so a failed wave records a fact for each member that did not apply. With `apply.when: pull-request` the split waves' gate and record jobs hold them, and the plan and apply jobs hold neither. The triage comment posts as before.
+With `agent.apply-failed`, each apply wave job's command step holds `CHANT_AGENT_FACTS=apply-failed` and the relay key, so a failed wave records a fact for each member that did not apply. With `apply.when: pull-request` the split waves' gate and record jobs hold them, and the plan and apply jobs hold neither. The triage comment posts as before. With `agent.verify-failed`, the same step's `CHANT_AGENT_FACTS` names `verify-failed` too, so a wave's soak check that starts failing records a fact.
 
 ### The review
 

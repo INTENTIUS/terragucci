@@ -22,7 +22,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { OpWave, OpWaveCostHold, OpWaveDecision, OpWaveHook, OpWavesSpec } from "@intentius/chant/op";
+import type { OpWave, OpWaveCostHold, OpWaveDecision, OpWaveHook, OpWaveHolds, OpWavesSpec } from "@intentius/chant/op";
 import type { GateQuorumRule } from "@intentius/chant/gate-decision";
 import { ConfigError } from "./config";
 
@@ -140,6 +140,8 @@ export interface WavesStepInput extends WavesSpecInput {
   policy?: boolean;
   /** `cost.approve_above` at base: chant's cost hold (`holds.cost`) prices the wave's runs and holds it over the amount (chant#5334, #5416). */
   cost?: OpWaveCostHold;
+  /** The pipeline's risk hold at base (./pipeline.ts firstStageRules, else `risk.approve_above`): chant's `holds.risk`, which only adds approvals. */
+  risk?: NonNullable<OpWaveHolds["risk"]>;
   /** `--stand-down`: a wave whose roots a newer push on the branch also applies stands down with 6 (chant#4581). */
   standDown?: boolean;
   /** How many of a wave's roots chant's step plans and applies at once, their inits one at a time on the wave's provider cache (chant#4864). Over 1 only; a Terragrunt step carries its own. */
@@ -190,7 +192,8 @@ export function wavesStepSpec(input: WavesStepInput): OpWavesSpec {
           ...(input.lockTimeout !== undefined ? { lockTimeout: input.lockTimeout } : {}),
           ...(input.cone ? { cone: input.cone } : {}),
         },
-    ...(input.policy || input.cost ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.cost ? { cost: input.cost } : {}) } } : {}),
+    // One holds map: policy at base, the pipeline's risk hold and the cost hold, side by side.
+    ...(input.policy || input.cost || input.risk ? { holds: { ...(input.policy ? { policy: true } : {}), ...(input.risk ? { risk: input.risk } : {}), ...(input.cost ? { cost: input.cost } : {}) } } : {}),
     // chant stands the wave down before it spends the approval, when the installed chant has the stand-down (chant#4581).
     ...(input.standDown ? { standDown: true } : {}),
     // The gate's report is terragucci's; the held hook is chant's holds now.

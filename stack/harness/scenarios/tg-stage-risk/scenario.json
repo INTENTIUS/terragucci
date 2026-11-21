@@ -1,0 +1,143 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-stage-risk",
+  "product": "terragucci",
+  "claim": "pipeline/risk-record",
+  "title": "A wave over `risk.approve_above` waits for an approval of its own whatever its gate says, and its decision records the score and each reason",
+  "tree": {
+    "base": "base",
+    "overlays": "overlays"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-stage-risk",
+  "limits": {
+    "out-of-band": 1800
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied both resources under gate never",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "base-b",
+      "do": "out-of-band",
+      "label": "the state holds b",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "hs-tg-stage-risk-state",
+        "app.tfstate",
+        "[.[0].resources[]? | select(.name == \"b\")] | length == 1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "prep",
+      "do": "open",
+      "branch": "prep",
+      "overlay": "prep",
+      "title": "prep: a change that touches no root"
+    },
+    {
+      "id": "merge-prep",
+      "do": "merge",
+      "pull": "prep"
+    },
+    {
+      "id": "prep-applied",
+      "do": "out-of-band",
+      "label": "the merge's pipeline passed",
+      "command": [
+        "stack/harness/check.sh",
+        "main-runs",
+        "1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "destroy",
+      "do": "open",
+      "branch": "destroy",
+      "overlay": "destroy",
+      "title": "destroy: delete b"
+    },
+    {
+      "id": "merge-destroy",
+      "do": "merge",
+      "pull": "destroy"
+    },
+    {
+      "id": "destroy-settled",
+      "do": "out-of-band",
+      "label": "the merge's runs ended",
+      "command": [
+        "stack/harness/check.sh",
+        "settle"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "b-kept",
+      "do": "out-of-band",
+      "label": "the wave that deletes b waits for an approval under gate never, so b is still in the state",
+      "command": [
+        "stack/harness/check.sh",
+        "objects",
+        "hs-tg-stage-risk-state",
+        "app.tfstate",
+        "[.[0].resources[]? | select(.name == \"b\")] | length == 1"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "id": "risk-recorded",
+      "do": "out-of-band",
+      "label": "the wave's report records the score over 0.3, with the delete among its reasons, and the wave waiting",
+      "command": [
+        "stack/harness/check.sh",
+        "reports",
+        "hs-tg-stage-risk",
+        "[.[] | select(.run.stage == \"tf-apply\") | .waves[]? | select(.risk != null)] | any(.risk.score > 0.3 and .risk.over and (.risk.reasons | any(.id == \"destroys\" and .count == 1)) and .approval == \"waiting\")"
+      ],
+      "expect": [
+        {
+          "exit": 0
+        }
+      ]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "overlay": "break",
+    "note": "the prep pull request takes risk.approve_above out of terragucci.yml, so the delete, whose rules are read at the prep commit, applies under gate never and b leaves the state"
+  }
+}

@@ -139,7 +139,7 @@ export interface WavesInput {
   /** `review.agent`: the waves read the review's verdict from the pull request's run. */
   review?: boolean;
   /** `agent.apply-failed` (terragucci#1495): each wave job records its failed applies as facts, signed with the relay key in this secret. */
-  agentFacts?: { relayKeyEnv: string };
+  agentFacts?: { relayKeyEnv: string; triggers?: ("apply-failed" | "verify-failed")[] };
   /** `apply.branches`: the other branches whose pushes apply. */
   branches: string[];
   /** `apply.when: pull-request`, with `apply.merge` and the merge token's secret. */
@@ -246,6 +246,8 @@ export function wavesShape(input: WavesInput): Record<string, unknown> {
             ref: c.ref,
             tokenSecret: c.tokenEnv,
             readTokenSecret: c.readTokenEnv,
+            // control.release (chant#5356): the dispatch carries the release digest the applied commit was cut into.
+            ...(c.release ? { release: true } : {}),
             // GitLab's control job runs once per pipeline in its resource group; GitHub and Forgejo mark the commit.
             ...(forge !== "gitlab"
               ? { sentCheck: `terragucci post sent ${CONTROL_STATUS} --forge ${forge}`, markSent: `terragucci post status ${CONTROL_STATUS} success "told ${c.repo} that $member applied" --forge ${forge}` }
@@ -297,7 +299,8 @@ function commonOptions(input: WavesInput, spec: { waves: unknown[] }, pipeline: 
     applyStatus: { context: APPLY_STATUS },
     ...(input.evidence ? { evidence: input.evidence } : {}),
     // agent.apply-failed: chant's wave jobs record a failed apply as a fact for the agent, beside the triage comment.
-    ...(input.agentFacts ? { agentFacts: { relayKeyEnv: input.agentFacts.relayKeyEnv } } : {}),
+    // agent.verify-failed adds verify-failed: a wave job's soak check that starts failing records a fact too (chant#5339).
+    ...(input.agentFacts ? { agentFacts: { relayKeyEnv: input.agentFacts.relayKeyEnv, ...(input.agentFacts.triggers?.length ? { triggers: [...input.agentFacts.triggers] } : {}) } } : {}),
     waveJobs: Object.fromEntries((spec.waves as { name: string }[]).map((w) => [w.name, job])),
     jobNames: wavesJobNames(input.waves.length),
   };

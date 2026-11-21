@@ -69,8 +69,10 @@ export interface CostHoldEnv {
  * the command's environment. `dropEnv` names `TG_TOKEN` and
  * `TG_MERGE_TOKEN`, left out by name and by value.
  */
-export function costHoldEnv(settings: Pick<ProjectSettings, "secrets">): CostHoldEnv {
-  const names = [...new Set((settings.secrets ?? []).flatMap((s) => Object.keys(s.values)))].sort();
+export function costHoldEnv(settings: Pick<ProjectSettings, "secrets" | "environments" | "config_sets">): CostHoldEnv {
+  // With promotion, an environment's set (chant#5348) puts its `secrets` into the stage's jobs as variables of those names too.
+  const setSecrets = [...Object.values(settings.environments ?? {}), ...Object.values(settings.config_sets ?? {})].flatMap((e) => Object.keys(e.secrets ?? {}));
+  const names = [...new Set([...(settings.secrets ?? []).flatMap((s) => Object.keys(s.values)), ...setSecrets])].sort();
   return { ...(names.length ? { redactEnv: names } : {}), dropEnv: [...COST_DROP_ENV] };
 }
 

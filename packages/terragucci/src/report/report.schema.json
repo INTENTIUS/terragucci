@@ -460,6 +460,20 @@
             },
             "description": "A tf-apply wave that planned again after its upstreams applied, covered by the pull request's plan of the same roots (minor 49)."
           },
+          "risk": {
+            "type": "object",
+            "description": "A tf-apply wave's change risk (minor 52), when its holds.risk scored it: chant's record from its after-plan hook, with the score from 0 to 1, its level, each reason with its weight, the threshold and whether it is crossed. The plan note's risk table reads it; it only adds approvals.",
+            "required": ["version", "score", "level", "reasons", "approveAbove", "over", "overBy"],
+            "properties": {
+              "version": { "type": "integer" },
+              "score": { "type": "number", "minimum": 0, "description": "From 0 to 1." },
+              "level": { "type": "string" },
+              "reasons": { "type": "array", "items": { "type": "object", "required": ["id", "weight", "value", "contribution", "detail"] } },
+              "approveAbove": { "type": ["number", "null"] },
+              "over": { "type": "boolean" },
+              "overBy": { "type": "array", "items": { "type": "string" } }
+            }
+          },
           "cost": {
             "type": "object",
             "description": "The wave's monthly cost, when cost is on (minor 19): the sums over its roots estimated, and with cost.approve_above at base whether the change is over it, so the wave waits for an approval whatever the gate.",

@@ -25,6 +25,8 @@ import {
   ROLLOUTS_KEYS,
   WATCH_KEYS,
   SOAK_KEYS,
+  STAGE_HOOK_KEYS,
+  STAGE_HOOK_MOMENTS,
   SOAK_OVERRIDE_KEYS,
   SOAK_CONDITIONS,
   FOLLOW_BUMPS,
@@ -98,6 +100,8 @@ import {
   TELEMETRY_KEYS,
   TERRAGRUNT_KEYS,
   TRUST_ROLE,
+  RULE_NAME,
+  ENVIRONMENT_KEYS,
   TOKEN_PROTECTIONS,
   WIF_PROVIDER,
   type ApplySettings,
@@ -124,6 +128,8 @@ const bool: JsonSchema = { type: "boolean" };
 const nonBlank: JsonSchema = { type: "string", pattern: "\\S" };
 const soakAfter: JsonSchema = { type: "string", pattern: "^(0|[1-9]\\d*[mhd])$" };
 const soakConditions: JsonSchema = { type: "array", minItems: 1, uniqueItems: true, items: { enum: [...SOAK_CONDITIONS] } };
+/** A rollout's soak checks in chant's soak words, the kinds a rollout reads (environments.<name>.soak takes chant's other kinds too). */
+const rolloutSoakChecks: JsonSchema = { type: "array", minItems: 1, items: { type: "object", required: ["kind"], properties: { kind: { enum: [...SOAK_CONDITIONS] }, on_fail: { enum: ["restart", "hold"] } }, additionalProperties: false } };
 const oneLine: JsonSchema = { type: "string", pattern: "^[^\\r\\n]*\\S[^\\r\\n]*$" };
 const pat = (re: RegExp): JsonSchema => ({ type: "string", pattern: re.source });
 const secret = pat(SECRET_NAME);
@@ -408,7 +414,48 @@ const approvalRule = map(APPROVAL_RULE_KEYS, {
   count: { ...whole(1), description: "How many distinct people approve the wave's set digest. Default 1." },
   roles: { type: "array", minItems: 1, items: pat(TRUST_ROLE), description: "Each approver counted holds one of these roles in .chant/trust.json at base." },
   not_author: { ...bool, description: "At least one approver counted is not the change's author." },
+  proven: { ...bool, description: "Only approvers a seal or a review proves count toward count." },
+  name: { ...pat(RULE_NAME), description: "The rule's name, shown in its progress line, the plan note and the pending fact." },
 } satisfies Record<(typeof APPROVAL_RULE_KEYS)[number], JsonSchema>, { required: ["roots"] });
+
+/** A stage's approval rule or `all`/`any` group, in chant's vocabulary; chant checks the nesting when it folds the pipeline. */
+const stageRule: JsonSchema = {
+  type: "object",
+  properties: {
+    name: pat(RULE_NAME),
+    count: whole(1),
+    roles: { type: "array", minItems: 1, items: pat(TRUST_ROLE) },
+    not_author: bool,
+    proven: bool,
+    roots: { type: "array", minItems: 1, items: glob },
+    all: { type: "array", minItems: 1, items: { $ref: "#/$defs/stage_rule" } },
+    any: { type: "array", minItems: 1, items: { $ref: "#/$defs/stage_rule" } },
+  },
+  additionalProperties: false,
+};
+const stageRules: JsonSchema = { type: "array", minItems: 1, items: ref("stage_rule") };
+const share: JsonSchema = { anyOf: [whole(0), { type: "string", pattern: "^[0-9]+(\\.[0-9]+)?%$" }] };
+const isoTime: JsonSchema = { type: "string", minLength: 1 };
+const risk = (stage: boolean): JsonSchema => ({
+  type: "object",
+  properties: { approve_above: { type: "number", minimum: 0, maximum: 1 }, ...(stage ? { approval_rules: { type: "array", minItems: 1, items: ref("stage_rule") } } : {}) },
+  additionalProperties: false,
+});
+const setSecrets: JsonSchema = { type: "object", additionalProperties: { anyOf: [str, { type: "object", additionalProperties: str }] } };
+const setConfig: JsonSchema = { type: "object", additionalProperties: str };
+const environmentSet: JsonSchema = { type: "object", properties: { imports: strings, config: setConfig, secrets: setSecrets }, additionalProperties: false };
+/** One stage hook, chant's wave hook in its vocabulary's words. */
+const stageHook: JsonSchema = {
+  ...map(STAGE_HOOK_KEYS, {
+    command: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    name: { type: "string", minLength: 1 },
+    on_failure: { enum: ["fail", "approve"] },
+    per_run: bool,
+    targets: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+  }, { required: ["command"] }),
+};
+const stageHooks: JsonSchema = { ...map(STAGE_HOOK_MOMENTS, Object.fromEntries(STAGE_HOOK_MOMENTS.map((m) => [m, { type: "array", items: stageHook }])) as unknown as Record<(typeof STAGE_HOOK_MOMENTS)[number], JsonSchema>) };
+const soakChecks: JsonSchema = { type: "array", minItems: 1, items: { type: "object", required: ["kind"], properties: { kind: { enum: ["http", "prometheus", "cloudwatch-alarm", "command", "health", "drift", "apply", "policy"] }, on_fail: { enum: ["restart", "hold"] } } } };
 
 const ephemeral = map(EPHEMERAL_KEYS as (keyof EphemeralSettings)[], {
   roots: { type: "array", minItems: 1, items: glob },
@@ -426,7 +473,7 @@ const environmentOidc = map(["plan_role", "apply_role", "audience", "gcp", "azur
 
 /** One environment of `environments`. A repo's own file names its roots; a control repo's defaults and projects may hold part of one, merged by name. */
 function environment(top: boolean): JsonSchema {
-  return map(["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"], {
+  return map(ENVIRONMENT_KEYS, {
     roots: { type: "array", minItems: 1, items: glob },
     gate: enumOf(GATE_NAMES),
     oidc: environmentOidc,
@@ -434,6 +481,34 @@ function environment(top: boolean): JsonSchema {
     runner: { anyOf: [runnerSpec, map(["apply"], { apply: runnerSpec }, { required: ["apply"] })] },
     parallelism: whole(1),
     forge_environment: pat(FORGE_ENVIRONMENT_NAME),
+    // The stage keys of chant's vocabulary page, passed to .chant/pipeline.ts unchanged; chant checks them when it folds the pipeline.
+    approval: { ...enumOf(APPROVALS), description: "The stage's approval mode, in place of approval." },
+    approval_rules: { ...stageRules, description: "The stage's approval rules, in place of approval_rules: count, roles, not_author, proven and name, and all or any groups." },
+    hold: { anyOf: [bool, { type: "object", properties: { reason: str, until: isoTime, description: oneLine }, additionalProperties: false }], description: "A manual hold: no release is promoted into the stage." },
+    freeze: { type: "array", items: { type: "object", required: ["from", "until"], properties: { from: isoTime, until: isoTime, reason: str }, additionalProperties: false }, description: "Freeze windows in which no release is promoted into the stage." },
+    failure_tolerance: { ...share, description: "The failed runs a wave of many roots lets through before the stage stops: a number, or a share such as 10%." },
+    after: { type: "array", minItems: 1, items: pat(ENVIRONMENT_NAME), description: "The stages a release applies in before this one opens." },
+    queue: { enum: ["replace"], description: "replace: a newer release waiting replaces an older one." },
+    urgent: { type: "object", required: ["role"], properties: { role: pat(TRUST_ROLE) }, additionalProperties: false, description: "The role whose one proven approval passes the stage's gate on an urgent promote." },
+    pause_after_rollback: { ...bool, description: "A rollback of the stage pauses it until it is resumed." },
+    on_verify_fail: { enum: ["hold", "rollback"], description: "The stage's answer to a failed verify or soak check." },
+    canary: { ...bool, description: "The canary stage, whose soak holds every stage after it." },
+    soak: {
+      type: "object",
+      required: ["duration"],
+      properties: { duration: soakAfter, checks: soakChecks, overrides: { type: "array", items: { type: "object", required: ["members"], properties: { members: { type: "array", minItems: 1, items: str }, duration: soakAfter, checks: soakChecks }, additionalProperties: false } } },
+      additionalProperties: false,
+      description: "How long the stage's soak checks must keep passing after its last apply before a release is promoted into the next stage.",
+    },
+    publish: { type: "object", additionalProperties: { type: "object" }, description: "Release artifacts the stage publishes once it applied: { member, output } or { secret }." },
+    reads: { type: "object", additionalProperties: { type: "object", required: ["stage", "artifact"], properties: { stage: pat(ENVIRONMENT_NAME), artifact: str }, additionalProperties: false }, description: "Artifacts of earlier stages the stage's deploy gets in a variable." },
+    hooks: { ...stageHooks, description: "Commands the stage's waves run at before-observe, before-plan, after-plan, after-gate, before-apply or after-apply: each a command list with name, on_failure, per_run and targets." },
+    agent_steps: { type: "object", additionalProperties: { type: "object", required: ["prompt", "schema"] }, description: "Agent steps of the stage: prompt, schema, reads, command, key_secret, timeout, max_runs and max_cost_usd." },
+    risk: { ...risk(true), description: "The stage's risk threshold, and the approval rules an over score adds to its gate." },
+    replan_dependents: { type: "array", minItems: 1, items: glob, description: "The roots whose dependents are planned again when an output they read changes, in this stage." },
+    config: { ...setConfig, description: "Plain values the stage's jobs get as variables." },
+    secrets: { ...setSecrets, description: "Secrets the stage's jobs get as variables, named by where each is kept." },
+    imports: { ...strings, description: "The config_sets the environment's set takes first, in order." },
   }, top ? { required: ["roots"] } : {});
 }
 
@@ -554,22 +629,24 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
                   soakAfter,
                   {
                     ...map(SOAK_KEYS, {
-                      after: soakAfter,
-                      conditions: soakConditions,
+                      duration: soakAfter,
+                      checks: rolloutSoakChecks,
+                      after: { ...soakAfter, description: "The earlier spelling of duration, still read." },
+                      conditions: { ...soakConditions, description: "The earlier spelling of checks, each condition a check that holds on a failure; still read." },
                       overrides: {
                         type: "array",
                         minItems: 1,
                         items: {
-                          ...map(SOAK_OVERRIDE_KEYS, { module: nonBlank, provider: nonBlank, after: soakAfter, conditions: soakConditions }),
+                          ...map(SOAK_OVERRIDE_KEYS, { module: nonBlank, provider: nonBlank, duration: soakAfter, checks: rolloutSoakChecks, after: soakAfter, conditions: soakConditions }),
                           oneOf: [{ required: ["module"] }, { required: ["provider"] }],
-                          anyOf: [{ required: ["after"] }, { required: ["conditions"] }],
+                          anyOf: [{ required: ["duration"] }, { required: ["checks"] }, { required: ["after"] }, { required: ["conditions"] }],
                         },
                         description: "Per module or provider glob: the first rule that names the rollout sets its wait, its conditions, or both.",
                       },
-                    }, { required: ["after"] }),
+                    }, { anyOf: [{ required: ["duration"] }, { required: ["after"] }] }),
                   },
                 ],
-                description: "How long a wave applied before the next one opens, and what must hold on its roots meanwhile.",
+                description: "How long a wave applied before the next one opens, and the checks that must pass on its roots meanwhile, in the words of environments.<name>.soak.",
               },
             }, { required: ["schedule"] }),
           ],
@@ -585,6 +662,7 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
         token_env: secret,
         read_token_env: secret,
         ref: pat(CONTROL_REF),
+        release: { ...bool, description: "The dispatch carries the release digest the applied commit was cut into, so a downstream run reads that release's artifacts." },
       }, { required: ["repo", "op"] }),
       description: "The control repo to tell after the default branch's apply succeeds; it runs this repo's dependents.",
     },
@@ -693,10 +771,11 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
         drift: agentRun,
         alert: agentFactsRun,
         "apply-failed": agentFactsRun,
+        "verify-failed": agentFactsRun,
         schedule: agentScheduleRun,
         "wave-refused": map(AGENT_WAVE_REFUSED_KEYS, { command: oneLine, key_secret: secret, timeout: whole(1), max_runs: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 } }),
       }, { anyOf: [{ required: ["via", "token_env"] }, { required: ["wave-refused"], maxProperties: 1 }] }),
-      description: "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary.",
+      description: "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply, a failed verify or soak, or a schedule, and the model behind respond.wave-refused: summary.",
     },
     review: {
       ...map(REVIEW_KEYS, {
@@ -726,15 +805,20 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
       minProperties: 1,
       propertyNames: { ...pat(ENVIRONMENT_NAME), not: { anyOf: [{ enum: ["default", "decide"] }, { pattern: "^share-[0-9]+$" }] } },
       additionalProperties: environment(top),
-      description: "Named environments: each one's root globs, and its gate, identities, apply runner, parallelism and forge environment.",
+      description: "Named environments: each one's root globs, and its gate, identities, apply runner, parallelism and forge environment, and the keys of its stage.",
     },
     promotion: {
       type: "array",
       minItems: 2,
       uniqueItems: true,
       items: pat(ENVIRONMENT_NAME),
-      description: "The order a release moves through the environments, first to last: names of environments, each once.",
+      description: "The order a release moves through the environments, first to last: names of environments, each once. With it, terragucci ci writes .chant/pipeline.ts.",
     },
+    risk: { ...risk(false), description: "risk.approve_above: the change risk score above which a wave needs an approval of its own." },
+    replan_dependents: { type: "array", minItems: 1, items: glob, description: "The roots whose dependents are planned again when an output they read changes after an apply." },
+    config_sets: { type: "object", additionalProperties: environmentSet, description: "Shared sets of config and secrets that environments import." },
+    release: { type: "object", properties: { cut: bool, label: str }, additionalProperties: false, description: "Whether a merge cuts a release once the first stage applied, and its label." },
+    recheck: { type: "object", required: ["schedule"], properties: { schedule: str }, additionalProperties: false, description: "The cron line a promotion a soak holds is tried again on." },
   };
 }
 
@@ -771,6 +855,7 @@ export function configSchema(): JsonSchema {
       project: projectEntry(),
       generate: generateLevel(true),
       generate_level: generateLevel(false),
+      stage_rule: stageRule,
       hcl_value: {
         anyOf: [{ type: ["string", "number", "boolean"] }, { type: "array", items: ref("hcl_value") }, { type: "object", additionalProperties: ref("hcl_value") }],
       },

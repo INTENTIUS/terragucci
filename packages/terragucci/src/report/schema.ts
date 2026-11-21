@@ -6,11 +6,12 @@
  * The JSON Schema beside this file (`report.schema.json`) is published with
  * the package. A minor version only adds fields, so a reader of 1.0 reads 1.x.
  */
+import type { ChangeRisk } from "@intentius/chant/change-risk";
 import type { ChangeSetAction, ChangeSetAttribute, ChangeSetDisruption } from "@intentius/chant/change-set";
 import type { PlanSummaryChange, PlanSummaryUnit } from "@intentius/chant/plan-summary";
 
 export const REPORT_SCHEMA = "terragucci.report/v1";
-export const REPORT_MINOR = 51;
+export const REPORT_MINOR = 52;
 
 /** What replaces every sensitive value in a stored plan. */
 export const REDACTED = "(sensitive, redacted by terragucci)";
@@ -690,6 +691,12 @@ export interface ReportWave {
   covered?: { digest: string; filled_inputs: string[] };
   /** The wave's monthly cost, when `cost` is on (minor 19): the sums over its roots estimated, and with `cost.approve_above` whether it waits for it. */
   cost?: ReportWaveCost;
+  /**
+   * A `tf-apply` wave's change risk (minor 52), when its `holds.risk` scored it: chant's record as its after-plan hook
+   * hands it (chant#5422), with the score, its level, each reason with its weight and whether a threshold is crossed.
+   * The plan note's risk table reads it. It only adds approvals.
+   */
+  risk?: ChangeRisk;
   /** Where the wave stands (minor 21). */
   state?: WaveState;
   /**

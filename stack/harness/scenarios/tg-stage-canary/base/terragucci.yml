@@ -1,0 +1,24 @@
+# tg-stage-canary (terragucci#1493): dev and prod, each with a net and an app root,
+# on floci. waves.canary makes each net root the canary, and dev's soak of two
+# hours holds the waves after it, so a merge applies dev's net and leaves dev's
+# app waiting. terragucci ci writes .chant/pipeline.ts from this file.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-canary
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["envs/*/net", "envs/*/app"]
+apply:
+  branches:
+    release: ["envs/prod/**"]
+waves:
+  canary: ["envs/*/net"]
+environments:
+  dev:
+    roots: ["envs/dev/**"]
+    gate: never
+    soak:
+      duration: 2h
+      checks:
+        - { kind: command, command: ["true"] }
+  prod: { roots: ["envs/prod/**"], gate: always }
+promotion: [dev, prod]

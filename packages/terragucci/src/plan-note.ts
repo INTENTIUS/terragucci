@@ -14,6 +14,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { jobReads, type Fetch } from "./forge";
 import { pullInvolvement, sameLogin } from "./involved";
+import { committedPipeline, pipelineNoteLines } from "./pipeline";
 
 export interface PlanNoteOptions {
   forge: "github" | "forgejo";
@@ -26,6 +27,23 @@ export interface PlanNoteOptions {
   env?: NodeJS.ProcessEnv;
   fetch?: Fetch;
   log?: (line: string) => void;
+  /** Where `.chant/pipeline.ts` is read from. Default: the job's directory. */
+  pipelineDir?: string;
+}
+
+/**
+ * The change risk the plan's report carries, when a wave scored it under
+ * `holds.risk` (chant's record, as the report keeps it under a wave's
+ * `risk`): the highest score of its waves. Undefined when none did.
+ */
+export function planRiskScore(reportText: string | undefined): number | undefined {
+  try {
+    const waves = (JSON.parse(reportText ?? "null") as { waves?: { risk?: { score?: unknown } }[] } | null)?.waves ?? [];
+    const scores = waves.map((w) => w.risk?.score).filter((x): x is number => typeof x === "number");
+    return scores.length ? Math.max(...scores) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -73,6 +91,12 @@ export async function writePlanNoteNotices(o: PlanNoteOptions): Promise<string[]
   if (who && o.notices) {
     appendFileSync(o.notices, `${who}\n`);
     log(`terragucci plan-note: the note says whose review does not count`);
+  }
+  // The pipeline's soaks and each later stage's risk threshold (chant's pipelineSoakSection and laterStageRiskLines), from .chant/pipeline.ts in the job's checkout.
+  const lines = pipelineNoteLines(committedPipeline(o.pipelineDir ?? process.cwd()), planRiskScore(existsSync(file) ? readFileSync(file, "utf-8") : undefined));
+  if (lines.length && o.notices) {
+    appendFileSync(o.notices, `${lines.join("\n")}\n`);
+    log(`terragucci plan-note: the note shows the pipeline's soaks and risk`);
   }
   return said;
 }

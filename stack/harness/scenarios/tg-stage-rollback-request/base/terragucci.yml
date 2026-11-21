@@ -1,0 +1,28 @@
+# tg-stage-rollback-request (terragucci#1493): dev, staging and prod, one root
+# each, on floci. staging's soak runs a command that fails once the repo holds
+# soak-broken, and on_verify_fail: rollback turns that failure into a request to
+# roll staging back to its previous release, which waits for an approval.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-rollback-request
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["envs/*/net"]
+apply:
+  branches:
+    release: ["envs/staging/**", "envs/prod/**"]
+environments:
+  dev: { roots: ["envs/dev/**"], gate: never }
+  staging:
+    roots: ["envs/staging/**"]
+    gate: never
+    on_verify_fail: rollback
+    soak:
+      duration: "0"
+      checks:
+        - kind: command
+          command: ["sh", "-c", "test ! -f soak-broken"]
+  prod: { roots: ["envs/prod/**"], gate: always }
+promotion: [dev, staging, prod]
+# The scenario cuts its releases by label (check.sh release cut), so the merge cuts none.
+release:
+  cut: false

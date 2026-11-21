@@ -172,26 +172,31 @@ Without a soak, wave N+1 opens as soon as wave N applied. `rollouts.soak` holds 
 rollouts:
   schedule: "*/15 * * * *"
   soak:
-    after: 24h
-    conditions: [drift, apply, policy]
+    duration: 24h
+    checks:
+      - { kind: drift, on_fail: hold }
+      - { kind: apply, on_fail: hold }
+      - { kind: policy, on_fail: hold }
     overrides:
       - module: "terraform-aws-modules/vpc/aws"
-        after: 2h
+        duration: 2h
       - provider: "hashicorp/*"
-        after: "0"
+        duration: "0"
 ```
 
-`soak: 24h` alone is the same as `soak: { after: 24h }`. The clock starts when the wave's last pull request merged, and a run that finds the time not up opens nothing and says when the wave is due. No timer runs between jobs: the next run of the rollout job reads the time, as it reads everything else. The soak is the same in a dry run. A rollout whose earlier waves had nothing to move has no wave to soak.
+The soak takes the words of a stage's [`environments.<name>.soak`](/terragucci/reference/config/#soaks), [chant](/terragucci/concepts/glossary/#chant)'s soak: `duration`, and `checks`, each a `kind` and `on_fail`. `on_fail: hold` keeps the time already counted while a check fails, and `restart`, chant's default, starts the soak over once it passes again. A rollout reads the kinds `drift`, `apply` and `policy` on its projects. `after` and `conditions` are the earlier spelling and still read: `after` is the `duration`, and each condition is a check with `on_fail: hold`.
 
-Once `after` has passed, `conditions` are read on the wave's roots, and any finding holds the next wave until a later run finds none. All are off unless listed:
+`soak: 24h` alone is the same as `soak: { duration: 24h }`. The clock starts when the wave's last pull request merged, and a run that finds the time not up opens nothing and says when the wave is due. No timer runs between jobs: the next run of the rollout job reads the time, as it reads everything else. The soak is the same in a dry run. A rollout whose earlier waves had nothing to move has no wave to soak.
 
-| Condition | Holds the next wave while |
+Each check is read on the wave's roots, and a finding holds the next wave until a later run finds none. Each kind runs when `checks` lists it:
+
+| Check kind | Holds the next wave while |
 |---|---|
 | `drift` | the project's open drift issue names one of the wave's roots |
 | `apply` | the newest apply on the default branch failed for one of them |
 | `policy` | a policy denial of one of them was recorded on the gate ledger since the wave merged |
 
-An override applies to the rollouts whose module or provider matches its glob, and the first one that matches decides. Its `after` and `conditions` replace the soak's; one it leaves out stays as the soak has it. `after: "0"` waits for the conditions only, or for nothing when there are none.
+An override applies to the rollouts whose module or provider matches its glob, and the first one that matches decides. Its `duration` and `checks` replace the soak's; one it leaves out stays as the soak has it. `duration: "0"` waits for the checks alone, or for nothing when there are none.
 
 Each wave's pull request says how the next one is held. The rollout's output lists, under the wave that soaks, when the next wave is due and what it waits for.
 

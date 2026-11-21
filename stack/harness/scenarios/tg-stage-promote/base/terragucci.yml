@@ -1,0 +1,20 @@
+# tg-stage-promote (terragucci#1493): one root per environment, dev, staging and
+# prod, on floci. A merge applies dev; staging and prod apply from the release
+# branch, which no step pushes, so a change reaches them only through a promote,
+# each behind the gate .chant/pipeline.ts gives its stage.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-promote
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["envs/*/net"]
+apply:
+  branches:
+    release: ["envs/staging/**", "envs/prod/**"]
+environments:
+  dev: { roots: ["envs/dev/**"], gate: never }
+  staging: { roots: ["envs/staging/**"], gate: always }
+  prod: { roots: ["envs/prod/**"], gate: always }
+promotion: [dev, staging, prod]
+# The scenario cuts its releases by label (check.sh release cut), so the merge cuts none.
+release:
+  cut: false

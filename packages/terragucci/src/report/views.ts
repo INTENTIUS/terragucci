@@ -3,6 +3,7 @@
  * text (chant's grouped summary), the pull-request note, and GitLab's
  * `reports:terraform` counts.
  */
+import type { ChangeRisk } from "@intentius/chant/change-risk";
 import {
   GITHUB_COMMENT_LIMIT, GITLAB_NOTE_LIMIT, PLAN_SUMMARY_CONTRACT, PLAN_SUMMARY_SCHEMA_ID, renderPlanSummaryText,
   type PlanSummary,
@@ -253,6 +254,13 @@ export const NOTE_WORDS: PrPlanNoteWords = {
  * steps, the cost table, the changes on every run), the groups with their
  * diffs, and each root's whole plan.
  */
+/** The change risk a plan note shows: the record of the report's wave that scored highest, or undefined when no wave carries one. */
+export function noteRiskOf(report: Pick<Report, "waves">): ChangeRisk | undefined {
+  let top: ChangeRisk | undefined;
+  for (const w of report.waves ?? []) if (w.risk && (!top || w.risk.score > top.score)) top = w.risk;
+  return top;
+}
+
 export function planNoteOf(report: Report, options: NoteOptions = {}): PrPlanNote {
   const url = options.reportUrl ?? (options.runUrl ? undefined : "report.html");
   const artifacts = options.artifacts === true;
@@ -361,6 +369,8 @@ export function planNoteOf(report: Report, options: NoteOptions = {}): PrPlanNot
     ...(options.notices?.length ? { notices: options.notices } : {}),
     // chant renders the estimate, root by root, as its own plan note does (chant#5334).
     ...(report.cost ? { cost: noteCostOf(report.cost) } : {}),
+    // chant's risk table (chant#5325, #5422): the record of the report's wave that scored highest, as its after-plan hook handed it.
+    ...(noteRiskOf(report) ? { risk: noteRiskOf(report)! } : {}),
     facts,
     named: report.named.map((n) => ({
       member: n.root,

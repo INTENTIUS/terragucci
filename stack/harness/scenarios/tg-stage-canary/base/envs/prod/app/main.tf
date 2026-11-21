@@ -1,0 +1,17 @@
+terraform {
+  backend "s3" {
+    bucket         = "hs-tg-stage-canary-state"
+    key            = "envs/prod/app.tfstate"
+    region         = "us-east-1"
+    use_lockfile   = true
+    use_path_style = true
+  }
+}
+
+resource "terraform_data" "app" {
+  input = "app-prod-v1"
+}
+
+output "id" {
+  value = terraform_data.app.output
+}

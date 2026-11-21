@@ -1,0 +1,17 @@
+# BREAK: dev has no soak, so the canary holds nothing after it.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-stage-canary
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["envs/*/net", "envs/*/app"]
+apply:
+  branches:
+    release: ["envs/prod/**"]
+waves:
+  canary: ["envs/*/net"]
+environments:
+  dev:
+    roots: ["envs/dev/**"]
+    gate: never
+  prod: { roots: ["envs/prod/**"], gate: always }
+promotion: [dev, prod]

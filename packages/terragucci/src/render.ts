@@ -201,7 +201,7 @@ import { githubWaves, gitlabWaves, wavesBeforeMerge, wavesJobNames, wavesShape, 
 import { driftWatch } from "./report/overdue";
 import type { AgentCommentInput, AgentScheduleInput, AgentTriggerInput } from "./agent-comment";
 import { chantAgentFiles, CHANT_AGENT_PATHS, CHANT_AGENT_PR_VAR } from "./render-chant-agent";
-import { applyFailedRelayKey, chantFactsFiles } from "./render-chant-agent-triggers";
+import { chantFactsFiles, waveAgentFacts } from "./render-chant-agent-triggers";
 import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
@@ -419,6 +419,8 @@ export interface PipelineInput {
   agentAlert?: AgentTriggerInput;
   /** `agent.apply-failed` is set: a workflow of chant's failed-apply agent, and the wave jobs record their failed applies as facts. GitHub and Forgejo only. */
   agentApplyFailed?: AgentTriggerInput;
+  /** `agent.verify-failed` is set: a workflow of chant's failed-verify agent, and the wave jobs record a failing soak check as a fact. GitHub and Forgejo only. */
+  agentVerifyFailed?: AgentTriggerInput;
   /** `agent.schedule` is set: a workflow of chant's scheduled agent. GitHub and Forgejo only. */
   agentSchedule?: AgentScheduleInput;
   /** `atlantis_comments: true`: `atlantis plan` and `atlantis apply` comments start the jobs `/terragucci plan` and `/terragucci apply` do, and every job gets TG_ATLANTIS_COMMENTS=1, so the comment commands read them (comment.ts). */
@@ -1629,7 +1631,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(forge === "gitlab" && tokenEnv && tokenEnv !== "GITLAB_TOKEN" ? { pipelineVariables: { CHANT_FORGE_TOKEN: `$${tokenEnv}` } } : {}),
     ...(responseTo({ respond: input.respond }, "apply-failed") === "agent" ? { agentInput: true } : {}),
     ...(input.review ? { review: true } : {}),
-    ...(input.agentApplyFailed && forge !== "gitlab" ? { agentFacts: { relayKeyEnv: applyFailedRelayKey(input.agentApplyFailed) } } : {}),
+    ...(forge !== "gitlab" && waveAgentFacts(input.agentApplyFailed, input.agentVerifyFailed) ? { agentFacts: waveAgentFacts(input.agentApplyFailed, input.agentVerifyFailed)! } : {}),
     branches: branchNames,
     ...(prApply ? { beforeMerge: { merge: input.applyMerge ?? "manual", ...(input.applyMergeTokenEnv ? { tokenSecret: input.applyMergeTokenEnv } : {}) } } : {}),
     ...(input.resume ? { resume: resumeCron(input.resume) } : {}),
@@ -1722,7 +1724,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (forge === "gitlab") {
     if (input.agentComment && !input.comments) throw new RenderError(`agent.comment: ${NEEDS_COMMENTS_ON_GITLAB.agent}`);
     if (input.agentDrift) throw new RenderError("agent.drift runs on GitHub and Forgejo; leave agent.drift unset on GitLab");
-    for (const [key, on] of [["alert", input.agentAlert], ["apply-failed", input.agentApplyFailed], ["schedule", input.agentSchedule]] as const) {
+    for (const [key, on] of [["alert", input.agentAlert], ["apply-failed", input.agentApplyFailed], ["verify-failed", input.agentVerifyFailed], ["schedule", input.agentSchedule]] as const) {
       if (on) throw new RenderError(`agent.${key} runs on GitHub and Forgejo; leave agent.${key} unset on GitLab`);
     }
     if (input.review && !input.comments) throw new RenderError(`review: ${NEEDS_COMMENTS_ON_GITLAB.review}`);
@@ -2313,8 +2315,8 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   if (input.wavesSpec) extra.push({ path: WAVES_SPEC, content: input.wavesSpec });
   if (chantAgent) extra.push(...chantAgent.files);
   if (chantDrift) extra.push(...chantDrift);
-  // agent.alert, agent.apply-failed and agent.schedule: chant's agent jobs, each in a workflow of its own.
-  for (const [kind, on] of [["alert", input.agentAlert], ["apply-failed", input.agentApplyFailed], ["schedule", input.agentSchedule]] as const) {
+  // agent.alert, agent.apply-failed, agent.verify-failed and agent.schedule: chant's agent jobs, each in a workflow of its own.
+  for (const [kind, on] of [["alert", input.agentAlert], ["apply-failed", input.agentApplyFailed], ["verify-failed", input.agentVerifyFailed], ["schedule", input.agentSchedule]] as const) {
     if (!on) continue;
     const files = chantFactsFiles(kind, forge, image, on, MARKER);
     if (!files) throw new RenderError(`agent.${kind}: the installed chant has no ${kind} agent`);

@@ -16,6 +16,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertGatePolicySource, type GatePolicySource } from "@intentius/chant/policy-source";
 import { parseYAMLDocument } from "@intentius/chant/yaml";
+import { productConfigProblems } from "@intentius/chant/ci-product";
+import { pipelineFromConfig, type PipelineEnvironmentConfig, type StageHookConfig } from "@intentius/chant/pipeline";
 import { type BucketRef } from "@intentius/chant/object-store";
 import { parseReportsBucket } from "./report/object-store";
 import { checkGenerate, combineGenerate, type GenerateSettings } from "./generate-config";
@@ -94,7 +96,7 @@ export interface OverrideEntry {
 }
 
 /** The keys of one `approval_rules` entry. */
-export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author"] as const;
+export const APPROVAL_RULE_KEYS = ["roots", "count", "roles", "not_author", "proven", "name"] as const;
 
 /**
  * One `approval_rules` entry, judged as chant's `approvals.quorum` rule (../approval.ts quorumOf): a wave with a root a glob
@@ -108,6 +110,10 @@ export interface ApprovalRuleSettings {
   count?: number;
   roles?: string[];
   not_author?: boolean;
+  /** Only approvers a seal or a review proves count toward `count` (chant's `proven`). */
+  proven?: boolean;
+  /** The rule's name, shown in its progress line, the plan note and the pending fact. */
+  name?: string;
 }
 /** Where the stages run: the forge's CI, or ProwJobs on a Prow installation in front of a GitHub repository (./prow-config.ts). */
 export const RUNTIMES = ["forge", "prow"] as const;
@@ -547,6 +553,12 @@ export interface ControlSettings {
   read_token_env?: string;
   /** The branch of the control repo a GitLab pipeline or a Forgejo workflow runs on. Default `main`; GitHub's dispatch always runs the default branch. */
   ref?: string;
+  /**
+   * `control.release`: the dispatch carries the release digest the applied commit was cut into (chant's `release`
+   * of `ControlSettingsInput`, sent as `CHANT_CONTROL_RELEASE`), so a downstream run reads that release's artifacts.
+   * Off unless `true`.
+   */
+  release?: boolean;
 }
 
 /** `templates`' settings. */
@@ -555,8 +567,15 @@ export const TEMPLATES_KEYS = ["registry", "apps", "require"] as const;
 export const TEMPLATES_REQUIRE = ["signed", "any"] as const;
 export const WATCH_KEYS = ["module", "provider", "follow", "min_age"] as const;
 export const ROLLOUTS_KEYS = ["schedule", "watch", "soak"] as const;
-export const SOAK_KEYS = ["after", "conditions", "overrides"] as const;
-export const SOAK_OVERRIDE_KEYS = ["module", "provider", "after", "conditions"] as const;
+/**
+ * `rollouts.soak` takes the stage soak's words (`environments.<name>.soak`,
+ * chant's soak): `duration` and `checks`, each check a `kind` and `on_fail`.
+ * `after` and `conditions` are the earlier spelling, still read.
+ */
+export const SOAK_KEYS = ["duration", "checks", "overrides", "after", "conditions"] as const;
+export const SOAK_OVERRIDE_KEYS = ["module", "provider", "duration", "checks", "after", "conditions"] as const;
+/** A soak check's `on_fail`, as chant's soak takes it: `restart` (chant's default) or `hold`. */
+export const SOAK_ON_FAIL = ["restart", "hold"] as const;
 /** What a soak checks on the wave's roots before the next wave opens: an open drift issue, a failed apply, a policy denial. */
 export const SOAK_CONDITIONS = ["drift", "apply", "policy"] as const;
 export type SoakCondition = (typeof SOAK_CONDITIONS)[number];
@@ -580,31 +599,53 @@ export interface WatchRule {
   min_age?: string;
 }
 
+/** One check of a rollout's soak, in chant's soak words: a kind a rollout reads, and what a failing one does. */
+export interface RolloutSoakCheck {
+  kind: SoakCondition;
+  on_fail?: (typeof SOAK_ON_FAIL)[number];
+}
+
 /** `rollouts.soak` for the rollouts a module or provider glob names; the other keys fall back to the soak's own. */
 export interface SoakOverride {
   module?: string;
   provider?: string;
-  /** A duration in minutes, hours or days (`6h`), or `0` for no wait. */
+  /** A duration in minutes, hours or days (`6h`), or `0` for no wait. `duration` as written; `after` is its earlier spelling. */
   after?: string;
+  /** The kinds of `checks`; `conditions` as written is the earlier spelling, each a check with `on_fail: hold`. */
   conditions?: SoakCondition[];
+  /** `checks` as written, in chant's soak words. */
+  checks?: RolloutSoakCheck[];
 }
 
-/** How long a wave applied before the next one opens, and what must hold on its roots meanwhile. */
+/** How long a wave applied before the next one opens, and what must hold on its roots meanwhile, read onto one shape by rolloutsSoak. */
 export interface SoakSettings {
-  /** A duration in minutes, hours or days (`24h`), counted from when the wave's pull request merged. `0` waits for nothing but the conditions. */
+  /** A duration in minutes, hours or days (`24h`), counted from when the wave's pull request merged. `0` waits for the checks alone. `duration` as written; `after` is its earlier spelling. */
   after: string;
-  /** Checked on every run once `after` has passed. Default none. */
+  /** The kinds of `checks`, checked on every run once `after` has passed. Default none. */
   conditions?: SoakCondition[];
+  /** `checks` as written, in chant's soak words; absent with the earlier `conditions`, whose checks hold on a failure. */
+  checks?: RolloutSoakCheck[];
   /** Per module or provider: the first rule that names the rollout decides. */
   overrides?: SoakOverride[];
+}
+
+/** The soak as terragucci.yml writes it, in either spelling. */
+type SoakWritten = { duration?: string; after?: string; checks?: RolloutSoakCheck[]; conditions?: SoakCondition[] };
+
+/** One soak map, either spelling, on the shape the rollout reads: `after`, `conditions`, and `checks` when they were written. */
+function soakRead<T extends SoakWritten>(s: T): Omit<T, "duration"> {
+  const { duration, ...rest } = s;
+  const after = s.after ?? duration;
+  const conditions = s.conditions ?? s.checks?.map((c) => c.kind);
+  return { ...rest, ...(after !== undefined ? { after } : {}), ...(conditions !== undefined ? { conditions } : {}) };
 }
 
 export interface RolloutsSettings {
   /** The cron of the job that continues each rollout, and starts one for a watched release. */
   schedule: string;
   watch?: WatchRule[];
-  /** A duration (`24h`) for the whole soak, or its map. */
-  soak?: string | SoakSettings;
+  /** A duration (`24h`) for the whole soak, or its map in either spelling (rolloutsSoak reads it). */
+  soak?: string | (Partial<SoakSettings> & SoakWritten);
 }
 
 /** The cron `rollouts` names, in either of its forms. */
@@ -616,7 +657,10 @@ export const rolloutsWatch = (r: ResolvedSettings["rollouts"]): WatchRule[] => (
 /** The soak `rollouts` names, in either of its forms: a duration is the soak with no conditions. */
 export const rolloutsSoak = (r: ResolvedSettings["rollouts"]): SoakSettings | undefined => {
   const soak = r && typeof r === "object" ? r.soak : undefined;
-  return typeof soak === "string" ? { after: soak } : soak;
+  if (soak === undefined) return undefined;
+  if (typeof soak === "string") return { after: soak };
+  const read = soakRead(soak as SoakSettings & SoakWritten) as SoakSettings;
+  return { ...read, ...(soak.overrides ? { overrides: soak.overrides.map((o) => soakRead(o as SoakOverride & SoakWritten)) } : {}) };
 };
 
 /** A soak duration: a TTL, or `0`. Milliseconds, or undefined when it is neither. */
@@ -632,8 +676,27 @@ function soakProblems(v: unknown, where: string): string[] {
   const conds = (x: unknown, at: string) => {
     if (!(Array.isArray(x) && x.length > 0 && x.every((c) => (SOAK_CONDITIONS as readonly unknown[]).includes(c)))) out.push(`${at} must be a list of ${SOAK_CONDITIONS.join(", ")}`);
   };
+  // chant's soak words, as environments.<name>.soak takes them: each check a kind a rollout reads, and on_fail.
+  const checks = (x: unknown, at: string) => {
+    if (!Array.isArray(x) || x.length === 0) return void out.push(`${at} must be a list of checks, each a map with kind (${SOAK_CONDITIONS.join(", ")}) and on_fail (${SOAK_ON_FAIL.join(", ")})`);
+    x.forEach((c, i) => {
+      const ci = `${at}[${i}]`;
+      if (!isObject(c)) return void out.push(`${ci} must be a map with kind and on_fail`);
+      for (const k of Object.keys(c)) if (k !== "kind" && k !== "on_fail") out.push(`${ci}.${k} is not a setting of a rollout's soak check (settings: kind, on_fail)`);
+      if (!(SOAK_CONDITIONS as readonly unknown[]).includes(c.kind)) out.push(`${ci}.kind must be one of ${SOAK_CONDITIONS.join(", ")}, the checks a rollout reads on its projects; environments.<name>.soak takes the other kinds of chant's soak`);
+      if (c.on_fail !== undefined && !(SOAK_ON_FAIL as readonly unknown[]).includes(c.on_fail)) out.push(`${ci}.on_fail must be one of ${SOAK_ON_FAIL.join(", ")}`);
+    });
+  };
+  // One map takes one spelling of each: the key, or its earlier spelling.
+  const spelling = (m: Record<string, unknown>, at: string) => {
+    if (m.duration !== undefined && m.after !== undefined) out.push(`${at} sets duration and after; after is the earlier spelling of duration, so keep duration`);
+    if (m.checks !== undefined && m.conditions !== undefined) out.push(`${at} sets checks and conditions; conditions is the earlier spelling of checks, so keep checks`);
+  };
   for (const k of Object.keys(v)) if (!(SOAK_KEYS as readonly string[]).includes(k)) out.push(`${where}.${k} is not a setting (settings: ${SOAK_KEYS.join(", ")})`);
-  dur(v.after, `${where}.after`);
+  spelling(v, where);
+  if (v.duration !== undefined) dur(v.duration, `${where}.duration`);
+  else dur(v.after, `${where}.duration`);
+  if (v.checks !== undefined) checks(v.checks, `${where}.checks`);
   if (v.conditions !== undefined) conds(v.conditions, `${where}.conditions`);
   if (v.overrides !== undefined) {
     if (!Array.isArray(v.overrides) || v.overrides.length === 0) out.push(`${where}.overrides must be a list of rules`);
@@ -645,8 +708,11 @@ function soakProblems(v: unknown, where: string): string[] {
         const named = (["module", "provider"] as const).filter((k) => rule[k] !== undefined);
         if (named.length !== 1) out.push(`${at} names a module or a provider glob, and one of them`);
         for (const k of named) if (!(typeof rule[k] === "string" && (rule[k] as string).trim() !== "")) out.push(`${at}.${k} must be a glob such as terraform-aws-modules/*/aws`);
-        if (rule.after === undefined && rule.conditions === undefined) out.push(`${at} sets after, conditions, or both`);
+        spelling(rule, at);
+        if (rule.after === undefined && rule.duration === undefined && rule.conditions === undefined && rule.checks === undefined) out.push(`${at} sets duration, checks, or both`);
+        if (rule.duration !== undefined) dur(rule.duration, `${at}.duration`);
         if (rule.after !== undefined) dur(rule.after, `${at}.after`);
+        if (rule.checks !== undefined) checks(rule.checks, `${at}.checks`);
         if (rule.conditions !== undefined) conds(rule.conditions, `${at}.conditions`);
       });
     }
@@ -706,7 +772,7 @@ export function templatesProblems(v: unknown, where: string): string[] {
   return out;
 }
 
-export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref"] as const;
+export const CONTROL_KEYS = ["repo", "op", "forge", "member", "token_env", "read_token_env", "ref", "release"] as const;
 /** The token a member holds for the dispatch when `control.token_env` is unset. */
 export const CONTROL_TOKEN_ENV = "TERRAGUCCI_CONTROL_TOKEN";
 /** The secret the plan job reads the control repo with when `control.read_token_env` is unset: read-only, and not the dispatch token. */
@@ -745,6 +811,7 @@ export function controlProblems(v: unknown, where: string): string[] {
   if (v.read_token_env !== undefined && !(typeof v.read_token_env === "string" && SECRET_NAME.test(v.read_token_env))) out.push(`${where}.read_token_env must name the secret holding a read-only token for the control repo, such as ${CONTROL_READ_TOKEN_ENV}`);
   else if (typeof v.read_token_env === "string" && v.read_token_env === (v.token_env ?? CONTROL_TOKEN_ENV)) out.push(`${where}.read_token_env must not be the dispatch token's secret (${v.read_token_env}): the plan job runs the change's code`);
   if (v.ref !== undefined && !(typeof v.ref === "string" && CONTROL_REF.test(v.ref))) out.push(`${where}.ref must be a branch name`);
+  if (v.release !== undefined && typeof v.release !== "boolean") out.push(`${where}.release must be true or false`);
   return out;
 }
 
@@ -1036,7 +1103,7 @@ export interface ProjectSettings {
    * can comment, push a branch and open a pull request; the agent itself never
    * holds it.
    */
-  agent?: { via?: (typeof AGENT_VIA)[number]; token_env?: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings; alert?: boolean | AgentFactsSettings; "apply-failed"?: boolean | AgentFactsSettings; schedule?: AgentScheduleSettings; "wave-refused"?: WaveRefusedAgentSettings };
+  agent?: { via?: (typeof AGENT_VIA)[number]; token_env?: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings; alert?: boolean | AgentFactsSettings; "apply-failed"?: boolean | AgentFactsSettings; "verify-failed"?: boolean | AgentFactsSettings; schedule?: AgentScheduleSettings; "wave-refused"?: WaveRefusedAgentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -1071,15 +1138,97 @@ export interface ProjectSettings {
    * The order a release moves through the environments, first to last: names
    * of `environments`, each once. `init` writes it into chant.config.ts
    * `environments` and writes the roots as chant components
-   * (./promotion.ts), which `terragucci promote` and `rollback` deploy.
+   * (./promotion.ts), which `terragucci promote` and `rollback` deploy. With
+   * it, `terragucci ci` writes `.chant/pipeline.ts`, one stage per name
+   * (./pipeline.ts).
    */
   promotion?: string[];
+  /**
+   * `risk.approve_above`: the change risk score, from 0 to 1, above which a
+   * wave needs an approval of its own, whatever its gate says. chant scores
+   * each wave's change set (`holds.risk`); the score only adds approvals.
+   */
+  risk?: RiskSettings;
+  /**
+   * `replan_dependents`: the roots whose dependents are planned again when an
+   * output they read changes after an apply. chant's wave job runs the step
+   * (`replanDependents` in the waves spec).
+   */
+  replan_dependents?: string[];
+  /** `config_sets.<set>`: shared sets of config and secrets that environments import (chant's `EnvironmentSets.configSets`). */
+  config_sets?: Record<string, EnvironmentSetSettings>;
+  /** `release.cut` and `release.label`: the release a merge cuts once the first stage applied (`.chant/pipeline.ts` `release`). */
+  release?: ReleaseSettings;
+  /** `recheck.schedule`: the cron line a promotion a soak holds is tried again on (`.chant/pipeline.ts` `recheck`). */
+  recheck?: { schedule: string };
 }
+
+/** `risk` at the top level or under an environment, in the words of chant's vocabulary. */
+export interface RiskSettings {
+  /** The score, from 0 to 1, above which a plan needs an approval of its own. */
+  approve_above?: number;
+  /** Under an environment only: the approval rules the stage's gate takes on top of its own when the risk is over its score. */
+  approval_rules?: StageApprovalRule[];
+}
+
+/** `release`: whether a merge cuts a release once the first stage applied, and its label. */
+export interface ReleaseSettings {
+  cut?: boolean;
+  /** A label, or `auto` for the next version. */
+  label?: string;
+}
+
+/** One environment's or shared set's config and secrets (chant's `EnvironmentSet`, in snake_case). */
+export interface EnvironmentSetSettings {
+  imports?: string[];
+  config?: Record<string, string>;
+  /** A forge secret's name, or a map with one of `forge_secret`, `aws_secrets_manager` (with `json_key`, `region`), `gcp_secret_manager`, `azure_key_vault`. */
+  secrets?: Record<string, string | Record<string, string>>;
+}
+
+/** A stage's approval rule (chant's quorum rule, in the vocabulary's words) or an `all`/`any` group of them. */
+export type StageApprovalRule =
+  | { name?: string; count: number; roles?: string[]; not_author?: boolean; proven?: boolean; roots?: string[] }
+  | { name?: string; all: StageApprovalRule[] }
+  | { name?: string; any: StageApprovalRule[] };
 
 /** An environment's name: lower-case letters, digits, `-` and `_`. */
 export const ENVIRONMENT_NAME = /^[a-z0-9_-]+$/;
+/**
+ * The keys of an environment that set how its stage behaves. terragucci passes
+ * each to chant unchanged (./pipeline.ts), in the words of chant's
+ * vocabulary page, and chant checks their values when it folds the pipeline.
+ */
+export const ENVIRONMENT_STAGE_KEYS = [
+  "approval",
+  "approval_rules",
+  "hold",
+  "freeze",
+  "failure_tolerance",
+  "after",
+  "queue",
+  "urgent",
+  "pause_after_rollback",
+  "on_verify_fail",
+  "canary",
+  "soak",
+  "publish",
+  "reads",
+  "agent_steps",
+  "hooks",
+  "risk",
+  "replan_dependents",
+  "config",
+  "secrets",
+  "imports",
+] as const;
+/** The moments of `environments.<name>.hooks.<when>`, chant's wave hook moments as its vocabulary spells them. */
+export const STAGE_HOOK_MOMENTS = ["before-observe", "before-plan", "after-plan", "after-gate", "before-apply", "after-apply"] as const;
+/** The keys of one stage hook. */
+export const STAGE_HOOK_KEYS = ["command", "name", "on_failure", "per_run", "targets"] as const;
+
 /** The keys an environment takes. */
-export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"] as const;
+export const ENVIRONMENT_KEYS = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment", ...ENVIRONMENT_STAGE_KEYS] as const;
 /** The keys of an environment's `oidc`. */
 export const ENVIRONMENT_OIDC_KEYS = ["plan_role", "apply_role", "audience", "gcp", "azure"] as const;
 
@@ -1100,6 +1249,51 @@ export interface EnvironmentSettings {
   parallelism?: number;
   /** The forge environment its apply jobs run in, on GitHub and GitLab. Default: the environment's name. Forgejo has none. */
   forge_environment?: string;
+  /** The stage's approval mode, in place of `approval`. */
+  approval?: Approval;
+  /** The stage's approval rules, in place of `approval_rules`: rules with `count`, `roles`, `not_author`, `proven` and `name`, and `all`/`any` groups. */
+  approval_rules?: StageApprovalRule[];
+  /** A manual hold: `true`, or a map with `reason`, `until` and `description`. */
+  hold?: boolean | { reason?: string; until?: string; description?: string };
+  /** Freeze windows: maps with `from`, `until` and `reason`. */
+  freeze?: { from: string; until: string; reason?: string }[];
+  /** The failed runs a wave of many roots lets through: a whole number, or a share such as `10%`. */
+  failure_tolerance?: number | `${number}%`;
+  /** The stages a release applies in before this one opens. */
+  after?: string[];
+  /** `replace`: a newer release waiting replaces an older one. */
+  queue?: "replace";
+  /** `urgent.role`: the role whose one proven approval passes the stage's gate on an urgent promote. */
+  urgent?: { role: string };
+  /** A rollback of the stage pauses it until it is resumed. */
+  pause_after_rollback?: boolean;
+  /** `hold` or `rollback`: the stage's answer to a failed verify or soak check. */
+  on_verify_fail?: "hold" | "rollback";
+  /** The canary stage, whose soak holds every stage after it. */
+  canary?: boolean;
+  /** The stage's soak: `duration`, `checks` and `overrides`, as chant's soak takes them. */
+  soak?: { duration: string; checks?: Record<string, unknown>[]; overrides?: { members: string[]; duration?: string; checks?: Record<string, unknown>[] }[] };
+  /** Release artifacts the stage publishes once it applied: `{ member, output }` or `{ secret }`. */
+  publish?: Record<string, { member?: string; output?: string; secret?: unknown }>;
+  /** Artifacts of earlier stages the stage's deploy reads: `{ stage, artifact }`. */
+  reads?: Record<string, { stage: string; artifact: string }>;
+  /** Agent steps of the stage: `prompt`, `schema`, `reads`, `command`, `key_secret`, `timeout`, `max_runs`, `max_cost_usd`. */
+  agent_steps?: Record<string, { prompt: string; schema: Record<string, unknown>; reads?: Record<string, { stage: string; artifact: string } | { step: string }>; command?: string; key_secret?: string; timeout?: number; max_runs?: number; max_cost_usd?: number }>;
+  /**
+   * `hooks.<when>` (chant#5421): commands the stage's waves run at a moment, `<when>` one of STAGE_HOOK_MOMENTS. Each
+   * takes `command` (a list), `name`, `on_failure`, `per_run` and `targets`, as chant's wave hooks do.
+   */
+  hooks?: Partial<Record<(typeof STAGE_HOOK_MOMENTS)[number], StageHookConfig[]>>;
+  /** The stage's risk threshold and the rules an over score adds. */
+  risk?: RiskSettings;
+  /** The stage's `replanDependents`, in place of the top-level `replan_dependents`. */
+  replan_dependents?: string[];
+  /** Plain values the stage's jobs get as variables. */
+  config?: Record<string, string>;
+  /** Secrets the stage's jobs get as variables, named by where each is kept. */
+  secrets?: Record<string, string | Record<string, string>>;
+  /** The `config_sets` the environment's set takes first, in order. */
+  imports?: string[];
 }
 
 /** An environment's identities: an AWS role pair, and a GCP service account pair or an Azure client pair under the project's `oidc.gcp` or `oidc.azure`. */
@@ -1425,7 +1619,7 @@ export function findConfig(dir: string): string | undefined {
 
 export const SETTING_KEYS = new Set([
   "roots", "binary", "version", "forge", "url", "forge_url", "gate", "approval", "approval_rules", "apply", "branches", "locks", "waves", "drift", "comments", "gitlab", "runtime",
-  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "promotion", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
+  "reports", "token_env", "env", "telemetry", "tips", "modules", "oidc", "identity", "parallelism", "terragrunt", "atmos", "policy", "sources", "comment_allow", "check", "evidence", "respond", "agent", "decide", "audit_region", "audit_log_group", "dashboards", "synth", "image", "notify", "cost", "rollouts", "control", "atlantis_comments", "generate", "review", "own_jobs", "ephemeral", "runner", "pass", "environments", "promotion", "risk", "replan_dependents", "config_sets", "release", "recheck", "secrets", "templates", "backend_config", "var_files", "instances", "prow",
 ]);
 
 export const TERRAGRUNT_KEYS = ["version", "exclude", "parallelism", "dependents", "credentials"];
@@ -1690,6 +1884,7 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
   if (where === "config" && isObject(s.environments)) problems.push(...environmentNeeds(s as ProjectSettings, where));
   if (s.promotion !== undefined) checkPromotion(s.promotion, `${where}.promotion`, problems, s);
   if (where === "config" && s.promotion !== undefined) problems.push(...promotionNeeds(s as ProjectSettings, where));
+  if (where === "config") problems.push(...stageKeyProblems(s));
   if (s.parallelism !== undefined && !(Number.isInteger(s.parallelism) && (s.parallelism as number) >= 1)) {
     problems.push(`${where}.parallelism must be a whole number of 1 or more`);
   }
@@ -1736,6 +1931,10 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
       if (a.alert !== undefined) checkAgentComment(a.alert, a.token_env, `${where}.agent.alert`, problems, "alert");
       if (a["apply-failed"] !== undefined) checkAgentComment(a["apply-failed"], a.token_env, `${where}.agent.apply-failed`, problems, "apply-failed");
+      if (a["verify-failed"] !== undefined) checkAgentComment(a["verify-failed"], a.token_env, `${where}.agent.verify-failed`, problems, "verify-failed");
+      // One relay key signs every fact a wave job records, so the two fact agents the wave jobs feed name the same secret.
+      const relayOf = (v: unknown): string => (isObject(v) && typeof v.relay_key_secret === "string" ? v.relay_key_secret : "CHANT_RELAY_KEY");
+      if (a["apply-failed"] && a["verify-failed"] && relayOf(a["apply-failed"]) !== relayOf(a["verify-failed"])) problems.push(`${where}.agent.verify-failed.relay_key_secret must be agent.apply-failed's (${relayOf(a["apply-failed"])}): the wave jobs sign both kinds of fact with one relay key`);
       if (a.schedule !== undefined) checkAgentComment(a.schedule, a.token_env, `${where}.agent.schedule`, problems, "schedule");
       if (a.drift !== undefined) {
         checkAgentComment(a.drift, a.token_env, `${where}.agent.drift`, problems);
@@ -1775,7 +1974,7 @@ export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
 export const COST_KEYS = ["key_secret", "command", "approve_above"];
 export const PASS_KEYS = ["secrets", "vars"];
-export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift", "alert", "apply-failed", "schedule", "wave-refused"];
+export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift", "alert", "apply-failed", "verify-failed", "schedule", "wave-refused"];
 
 /** A forge login, as `agent.login` takes it. */
 export const AGENT_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$/;
@@ -2320,6 +2519,9 @@ export const TRUST_ROLE = /^[a-z][a-z0-9-]*$/;
 /** Why `roles` and `not_author` need a mode that proves who approved. */
 export const LEDGER_PROVES_NOBODY = "approval: ledger does not prove who wrote an approval, so it cannot tell a role or the author; set approval to sealed or pr-review";
 
+/** A rule's or group's name (chant's `GateQuorumNode.name`). */
+export const RULE_NAME = /^[a-z0-9_-]+$/;
+
 function checkApprovalRules(v: unknown, where: string, problems: string[], mode: unknown, point: boolean): void {
   if (!Array.isArray(v) || v.length === 0) {
     problems.push(`${where} must be a list of rules, each with roots and count, roles or not_author, such as - roots: ["envs/prod/**"]`);
@@ -2342,7 +2544,10 @@ function checkApprovalRules(v: unknown, where: string, problems: string[], mode:
       problems.push(`${at}.roles must be a list of role names .chant/trust.json gives under roles, such as [platform]`);
     }
     if (r.not_author !== undefined && typeof r.not_author !== "boolean") problems.push(`${at}.not_author must be true or false`);
-    if (r.count === undefined && r.roles === undefined && r.not_author !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
+    if (r.proven !== undefined && typeof r.proven !== "boolean") problems.push(`${at}.proven must be true or false`);
+    if (r.name !== undefined && !(typeof r.name === "string" && RULE_NAME.test(r.name))) problems.push(`${at}.name must be lowercase letters, digits, "-" and "_"`);
+    if (r.proven === true && !proves) problems.push(`${at}.proven: ${LEDGER_PROVES_NOBODY}`);
+    if (r.count === undefined && r.roles === undefined && r.not_author !== true && r.proven !== true) problems.push(`${at} asks for nothing more than one approval; give count, roles or not_author: true`);
     if (!proves && (r.roles !== undefined || r.not_author === true)) problems.push(`${at}: ${LEDGER_PROVES_NOBODY}`);
   });
 }
@@ -2508,8 +2713,8 @@ function checkWaveRefusedAgent(c: unknown, where: string, problems: string[]): v
   if (c.max_cost_usd !== undefined && !(typeof c.max_cost_usd === "number" && Number.isFinite(c.max_cost_usd) && c.max_cost_usd > 0)) problems.push(`${where}.max_cost_usd must be a number of US dollars above 0`);
 }
 
-/** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. `agent.alert`, `agent.apply-failed` and `agent.schedule` add keys (AGENT_FACTS_KEYS, AGENT_SCHEDULE_KEYS). */
-function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[], kind: "comment" | "alert" | "apply-failed" | "schedule" = "comment"): void {
+/** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. `agent.alert`, `agent.apply-failed`, `agent.verify-failed` and `agent.schedule` add keys (AGENT_FACTS_KEYS, AGENT_SCHEDULE_KEYS). */
+function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[], kind: "comment" | "alert" | "apply-failed" | "verify-failed" | "schedule" = "comment"): void {
   const keys: readonly string[] = kind === "schedule" ? AGENT_SCHEDULE_KEYS : kind === "comment" ? AGENT_COMMENT_KEYS : AGENT_FACTS_KEYS;
   if (typeof c === "boolean") {
     if (kind === "schedule") {
@@ -2537,7 +2742,7 @@ function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problem
     if (kind !== "comment") {
       if (c.window !== undefined && !(Number.isInteger(c.window) && (c.window as number) >= 1 && (c.window as number) <= 1440)) problems.push(`${where}.window must be a whole number of minutes from 1 to 1440`);
     }
-    if (kind === "alert" || kind === "apply-failed") {
+    if (kind === "alert" || kind === "apply-failed" || kind === "verify-failed") {
       if (c.relay_key_secret !== undefined && !(typeof c.relay_key_secret === "string" && SECRET_NAME.test(c.relay_key_secret))) problems.push(`${where}.relay_key_secret must name the secret holding the relay key, such as CHANT_RELAY_KEY`);
       else if (typeof c.relay_key_secret === "string" && c.relay_key_secret === (c.key_secret ?? "ANTHROPIC_API_KEY")) problems.push(`${where}.relay_key_secret must not be the model's key (${c.relay_key_secret}): the model never holds the relay key`);
     }
@@ -2782,7 +2987,7 @@ export const DEFAULT_GROUP = "default";
 /** Names an apply group cannot take: the rest group's, and chant's own job names (decide, share-<i>). */
 export const reservedGroupName = (name: string): boolean => name === DEFAULT_GROUP || name === "decide" || /^share-\d+$/.test(name);
 /** The per-environment keys config check accepts, as its problems list them. */
-const ENVIRONMENT_ACCEPTED = ["roots", "gate", "oidc", "runner", "parallelism", "forge_environment"];
+const ENVIRONMENT_ACCEPTED: readonly string[] = ENVIRONMENT_KEYS;
 /** Why an environment's `runner.plan` is refused: a plan job plans the roots of every environment. */
 export const ENVIRONMENT_PLAN_RUNNER = "a plan job plans the roots of every environment, so an environment's runner is its apply jobs' alone; set runner: { apply: <runner> }, and runner.plan at the top level";
 /** A forge environment's name, as GitHub and GitLab both take it. */
@@ -2945,6 +3150,46 @@ export function promotionNeeds(s: ProjectSettings, where: string): string[] {
   const names = isObject(s.environments) ? Object.keys(s.environments) : [];
   if (names.length === 0) return [`${where}.promotion needs environments: each name it lists is an environment with its own roots`];
   return s.promotion.filter((n) => typeof n === "string" && !names.includes(n)).map((n) => `${where}.promotion lists ${n}, which is not one of environments (${names.join(", ")})`);
+}
+
+/** The top-level keys whose values chant checks: the stage keys of its vocabulary page. */
+const STAGE_TOP_KEYS = ["promotion", "risk", "replan_dependents", "config_sets", "release", "recheck", "approval_rules"];
+
+/**
+ * The problems chant finds with the stage keys (./pipeline.ts maps them onto
+ * `.chant/pipeline.ts`): `productConfigProblems` for each key's words, and,
+ * with `promotion`, chant's own check of the declaration they make, folded
+ * with one placeholder wave per stage since the roots are not known here.
+ * terragucci checks none of these values itself.
+ */
+export function stageKeyProblems(s: Record<string, unknown>): string[] {
+  const envs = isObject(s.environments) ? s.environments : {};
+  const stageEnvs = Object.fromEntries(
+    Object.entries(envs).flatMap(([name, e]) => {
+      if (!isObject(e)) return [];
+      // Every environment, its stage keys or none: chant checks promotion's names against environments.
+      const keys = (ENVIRONMENT_STAGE_KEYS as readonly string[]).filter((k) => e[k] !== undefined);
+      return [[name, Object.fromEntries(keys.map((k) => [k, e[k]]))]];
+    }),
+  );
+  const top = Object.fromEntries(STAGE_TOP_KEYS.filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
+  if (Object.keys(stageEnvs).length === 0 && Object.keys(top).length === 0) return [];
+  const words = productConfigProblems({ ...top, ...(Object.keys(stageEnvs).length ? { environments: stageEnvs } : {}) }, { product: "terragucci" });
+  const out = words.filter((p) => p.level === "error").map((p) => `config.${p.path} ${p.message}`);
+  if (Array.isArray(s.promotion) && s.promotion.every((n) => typeof n === "string")) {
+    const promotion = s.promotion as string[];
+    try {
+      pipelineFromConfig({
+        name: "tf-apply",
+        promotion,
+        environments: stageEnvs as Record<string, PipelineEnvironmentConfig>,
+        waves: Object.fromEntries(promotion.map((n) => [n, [{ name: "wave-1", runs: [{ target: n }] }]])),
+      });
+    } catch (e) {
+      out.push(`config.promotion: the pipeline it makes does not check in chant (${(e as Error).message})`);
+    }
+  }
+  return out;
 }
 
 /** Check a parsed config and return it typed, or throw with every problem listed. */

@@ -33,6 +33,10 @@
  *   terragucci waves-spec [--at <rev>] [--spec <file>] [--config <file>]   (the tf-apply spec at a commit, which chant's renderSpec runs)
  *   terragucci check-root <dir> [--binary <b>] [--config <file>] [--base <ref>] [--config <file>] [--base <ref>]
  *   terragucci check-policy [--config <file>] [--base <ref>]
+ *   terragucci ci [--check]   (write .chant/pipeline.ts from promotion, environments and waves in terragucci.yml; --check fails when the committed file is stale)
+ *   terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   (turn down the release a stage's gate waits on: chant's reject)
+ *   terragucci pause <env> --reason <text> | terragucci resume <env> --reason <text>   (stop or let in releases entering a stage: chant's stage pause and resume)
+ *   terragucci release ... | terragucci pipeline ...   (chant's release and pipeline commands; the merge's last wave runs release cut and pipeline artifacts publish with promotion)
  *   terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...]   (tf-check's last step: chant's `ci check`, the ci.hooks.check hooks chant.workspace.json names at base)
  *   terragucci ci evidence sign ...   (chant's `ci evidence sign`, which the jobs run with `evidence` set)
  *   terragucci workspace ref-gate ...   (chant's ref gate, which the pre-push hook init writes runs)
@@ -61,7 +65,7 @@
  *   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a pull request's ephemeral copy)
  *   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   (approve a day-2 action's request; the requester's own approval never counts)
  *   terragucci approve release <env> [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   (approve the release gate a promote or rollback of <env> waits at)
- *   terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]   (deploy a release to the next environment of promotion: chant's components promote)
+ *   terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--urgent --reason <text>] [--dry-run] [--json]   (deploy a release to the next environment of promotion: chant's components promote)
  *   terragucci rollback <env> --release <label> [--dry-run] [--json]   (deploy an earlier release to <env>: chant's components rollback)
  *   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   (run one Terraform action block of a root under a gated request: exit 3 while it waits, 0 once it ran, 1 on a refusal or a failed run; see action.ts)
  *   terragucci action --decide --layers <a,b;c> --out <file> [--forge forgejo]   (read a `/terragucci action` comment or the action workflow's dispatch; run by the generated action workflow)
@@ -133,10 +137,11 @@ import { pollGitLabComments } from "./comment-gitlab";
 import { postGitLabReview, pushGitLabAgentChange, readGitLabAgentAsk, writeGitLabReviewPrompt } from "./gitlab-agent";
 import { approvalStatus, reviewForge as reviewForgeOf } from "./review";
 import { writePlanNoteNotices } from "./plan-note";
+import { pipelineCommand } from "./pipeline";
 import { writePlanHandoff } from "./plan-handoff";
 import { forgePost, statusSent } from "./forge-post";
 import { approve, approveGate, approveRelease, isGateKeyword, overrideDenial } from "./approve";
-import { releaseArgv, releaseRefusal, releaseWords } from "./promotion";
+import { promoteAgentFactsEnv, releaseArgv, releaseRefusal, releaseWords } from "./promotion";
 import { decidePlanLock, reached } from "./comment-apply";
 import { pushAgentChange, writePrompt } from "./agent-comment";
 import { checkCostLimit, recordOutcome, recordPushOutcome, AGENT_FEATURES, type AgentFeature, type AgentRunRecord } from "./agent-record";
@@ -269,10 +274,14 @@ const USAGE = `usage:
   terragucci approve ephemeral <pr> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a pull request's ephemeral copy
   terragucci approve action <root> --plan <digest> [--sign [<key>]] [--actor <name>] [--dry-run]   approve a day-2 action's request
   terragucci approve release <env> [--plan <digest>] [--sign [<key>]] [--actor <name>] [--dry-run]   approve the release gate a promote or rollback of <env> waits at
-  terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--dry-run] [--json]   deploy a release to the next environment of promotion
+  terragucci promote --to <env> [--release <label>] [--from <env>] [--allow-skip] [--urgent --reason <text>] [--dry-run] [--json]   deploy a release to the next environment of promotion; --urgent passes the stage's gate on its urgent rule
   terragucci rollback <env> --release <label> [--dry-run] [--json]   deploy an earlier release to <env>
     (export, unlock, action and ephemeral are keywords only with a root or pull request after them; terragucci approve <migration> alone approves a migration of that name)
   terragucci override <root> --rule <id> [--rule <id>] --reason <text> [--sign [<key>]] [--actor <name>] [--dry-run]
+  terragucci ci [--check]   write .chant/pipeline.ts from promotion in terragucci.yml; --check fails when the committed file is stale
+  terragucci reject <op> <gate> --plan <digest> --reason <text> [--sign [<key>]]   turn down the release a stage's gate waits on
+  terragucci pause <env> --reason <text>   stop releases entering a stage; terragucci resume <env> --reason <text> lets them in again
+  terragucci release cut <label|auto> --yes | terragucci pipeline artifacts publish --stage <env>   (run by the merge's last wave with promotion: chant's release cut and artifacts publish)
   terragucci migrate revert <migration>
   terragucci unlock-state <root> [--binary <b>] [--config <file>] [--actor <name>]
   terragucci action <root> <address> [--json] [--actor <name>] [--binary <b>] [--config <file>]   run one Terraform action block under a gated request (exit 3 while it waits)
@@ -351,7 +360,7 @@ function parse(argv: string[]): { cmd: string; flags: Record<string, string | tr
       const k = eq < 0 ? a.slice(2) : a.slice(2, eq);
       const v = eq < 0 ? undefined : a.slice(eq + 1);
       if (v !== undefined) flags[k] = v;
-      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume", "allow-skip"].includes(k)) flags[k] = rest[++i];
+      else if (rest[i + 1] !== undefined && !rest[i + 1].startsWith("--") && !["force", "dry-run", "json", "terragrunt", "rest", "again", "poll", "no-cost", "check", "approval-status", "review", "stand-down", "publish", "no-open", "propose", "no-hook", "units", "self-hosted", "no-roots", "require-clouds", "pre-commit", "decide", "resume", "allow-skip", "urgent"].includes(k)) flags[k] = rest[++i];
       else flags[k] = true;
       if (typeof flags[k] === "string") (repeated[k] ??= []).push(flags[k] as string);
     } else args.push(a);
@@ -1379,6 +1388,11 @@ export async function main(argv: string[]): Promise<number> {
         const chantArgv = releaseArgv(verb, { args, flags });
         const refused = releaseRefusal(cwd);
         if (refused) throw new ConfigError(`${verb}: ${refused}`);
+        // agent.verify-failed (chant#5339): the promote records a failed verify or soak as a fact for the agent.
+        if (verb === "promote") {
+          const path = findConfig(cwd);
+          if (path) Object.assign(process.env, promoteAgentFactsEnv(resolveRepo(await loadConfig(resolve(path))), process.env));
+        }
         return runChantInProcess(chantArgv, releaseWords(TERRAGUCCI_WORDS));
       }
       case "components": {
@@ -1403,9 +1417,30 @@ export async function main(argv: string[]): Promise<number> {
         const rest = argv.slice(argv.indexOf("ci") + 1);
         // evidence (terragucci issue 1413): the signing lines chant's plan note, plan-evidence and wave evidence jobs run.
         if (args[0] === "evidence") return runChantInProcess(["ci", ...rest], TERRAGUCCI_WORDS);
-        if (args[0] !== "check") throw new ConfigError("usage: terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...], or terragucci ci evidence sign ...");
+        // `.chant/pipeline.ts` from terragucci.yml (./pipeline.ts): written by `terragucci ci`, checked by `terragucci ci --check`.
+        if (args.length === 0) {
+          const path = str(flags, "config") ?? findConfig(cwd);
+          if (!path) throw new ConfigError("terragucci ci writes .chant/pipeline.ts from terragucci.yml, and there is none here");
+          return pipelineCommand(cwd, resolveRepo(await loadConfig(resolve(path))), { check: flags.check === true });
+        }
+        if (args[0] !== "check") throw new ConfigError("usage: terragucci ci [--check], terragucci ci check [--base <ref>] [--output <dir>] [--summary <file>] [<target>...], or terragucci ci evidence sign ...");
         const base = rest.some((a) => a === "--base" || a.startsWith("--base=")) ? [] : ["--base", ciBaseRef(process.env, { base: process.env.TG_BASE, defaultBranch: process.env.TG_BRANCH }) ?? "HEAD"];
         return runChantInProcess(["ci", ...rest, ...base], TERRAGUCCI_WORDS);
+      }
+      case "reject": {
+        // chant's reject (#5354): turn down the release a stage's gate waits on, in terragucci's words.
+        return runChantInProcess(["reject", ...argv.slice(argv.indexOf("reject") + 1)], TERRAGUCCI_WORDS);
+      }
+      case "release":
+      case "pipeline": {
+        // chant's release cut and pipeline artifacts (chant#5324, #5356): the merge path's last wave cuts the release
+        // each later stage promotes, and publishes the first stage's artifacts, as `release.bin` names terragucci.
+        return runChantInProcess([cmd, ...argv.slice(argv.indexOf(cmd) + 1)], TERRAGUCCI_WORDS);
+      }
+      case "pause":
+      case "resume": {
+        // chant's stage pause and resume (#5355): `terragucci pause <env> --reason <text>`.
+        return runChantInProcess(["stage", cmd, ...argv.slice(argv.indexOf(cmd) + 1)], TERRAGUCCI_WORDS);
       }
       case "workspace": {
         // The ref gate's pre-push hook init writes with evidence set (./trust.ts): chant's `workspace ref-gate`.
