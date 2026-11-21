@@ -10,7 +10,7 @@ import { agentTriggerInput } from "../src/agent-comment";
 import { waveCallArgv, WAVES_SPEC, wavesSpecText, wavesStepSpec } from "../src/chant-waves";
 import { ConfigError, rolloutsSoak, validateConfig, type ProjectSettings } from "../src/config";
 import { resolveControl } from "../src/control-repo";
-import { costHold } from "../src/cost";
+import { costHold, costHoldEnv } from "../src/cost";
 import { pipelineCommand, pipelineDeclaration } from "../src/pipeline";
 import { promoteAgentFactsEnv, promotionComponentsText, releaseArgv } from "../src/promotion";
 import { chantFactsFiles, chantFactsPath, waveAgentFacts } from "../src/render-chant-agent-triggers";
@@ -170,6 +170,16 @@ describe("one holds map", () => {
     expect(Object.keys(spec.holds ?? {}).sort()).toEqual(["cost", "risk"]);
     expect(spec.holds?.risk).toEqual({ approveAbove: 0.5 });
     expect(spec.holds?.cost).toMatchObject({ approveAbove: 100, format: "infracost" });
+  });
+
+  it("names the environment sets' secrets in the cost hold's redactEnv, beside secrets:, and terragucci's tokens in dropEnv", () => {
+    const env = costHoldEnv({
+      secrets: [{ roots: ["envs/dev/**"], from: "aws", values: { TF_VAR_api_key: "dev/api" } }],
+      environments: { dev: { roots: ["envs/dev/**"], secrets: { DB_PASSWORD: "DEV_DB_PASSWORD" } }, prod: { roots: ["envs/prod/**"] } },
+      config_sets: { common: { secrets: { SENTRY_DSN: { forge_secret: "SENTRY_DSN" } } } },
+    });
+    expect(env).toEqual({ redactEnv: ["DB_PASSWORD", "SENTRY_DSN", "TF_VAR_api_key"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
+    expect(costHold(true, 100, env)).toMatchObject({ redactEnv: ["DB_PASSWORD", "SENTRY_DSN", "TF_VAR_api_key"], dropEnv: ["TG_TOKEN", "TG_MERGE_TOKEN"] });
   });
 
   it("carries the risk hold on the step path beside policy and cost", () => {
