@@ -726,6 +726,13 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
       additionalProperties: environment(top),
       description: "Named environments: each one's root globs, and its gate, identities, apply runner, parallelism and forge environment.",
     },
+    promotion: {
+      type: "array",
+      minItems: 2,
+      uniqueItems: true,
+      items: pat(ENVIRONMENT_NAME),
+      description: "The order a release moves through the environments, first to last: names of environments, each once.",
+    },
   };
 }
 

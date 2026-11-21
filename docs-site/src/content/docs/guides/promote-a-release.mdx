@@ -1,0 +1,112 @@
+---
+title: Promote a release through environments
+description: Cut a release from one commit, deploy it to the first environment, promote it to each next one behind that environment's gate, and roll an environment back to an earlier release.
+prompt: |
+  Read https://intentius.io/terragucci/guides/promote-a-release/.
+  Read terragucci.yml, chant.config.ts and terragucci.component.ts in this repo, and tell me the promotion order, the root each component applies in each environment, and which environments wait for an approval.
+  Read only: do not run terragucci promote, terragucci rollback or chant release cut.
+  Never apply, approve (a pull request review or `terragucci approve`), override a policy denial (`terragucci override`), use `--mode apply`, or merge; never touch `.chant/allowed_signers` or `chant/lifecycle`.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+## Result
+
+A release holds the files of one commit for each environment. It moves through the environments in the order `promotion` lists. Staging gets the staging roots' files only, never dev's. An environment with a gate waits until a person approves the plan for it. `terragucci rollback` puts an earlier release back in one environment, behind the same gate.
+
+[`chant/lifecycle`](/terragucci/concepts/glossary/#chantlifecycle) records each deploy with the release, the person who ran it and the approver.
+
+## Prerequisites
+
+| You need | Why |
+|---|---|
+| A repo of plain roots, with one root per environment for each part, such as `envs/dev/network` and `envs/prod/network` | each environment applies its own roots. Terragrunt units and Atmos instances are not deployed this way |
+| [`environments`](/terragucci/reference/config/#environments) naming each environment's roots | `promotion` lists environments by name |
+| A backend that is not `local` for each root | a release deploys a recorded copy of the root's files, which reads its state from the backend |
+| `@intentius/chant-lexicon-terraform` installed beside terragucci, at the version `terragucci promote` names when it finds none | a deploy applies each root with the terraform lexicon's `terraform-apply` step |
+
+## Steps
+
+<Steps>
+
+1. Set the order in `terragucci.yml`:
+
+   ```yaml
+   environments:
+     dev:     { roots: ["envs/dev/**"], gate: never }
+     staging: { roots: ["envs/staging/**"], gate: always }
+     prod:    { roots: ["envs/prod/**"], gate: always }
+   promotion: [dev, staging, prod]
+   ```
+
+   Run `npx terragucci init` and commit what it writes. `chant.config.ts` lists the environments in that order, and `terragucci.component.ts` holds each root as a component ([The components](#the-components)).
+
+2. Cut a release from a commit of the default branch whose checks passed, in a clean checkout of that commit:
+
+   ```bash
+   GH_TOKEN=$(gh auth token) npx chant release cut v1.4.0 --yes
+   git push origin release/v1.4.0
+   ```
+
+   The cut records each environment's roots as they are at that commit. Without `--yes` it prints what it would record and records nothing.
+
+3. Deploy the release to the first environment:
+
+   ```bash
+   npx chant run --components all --env dev --release v1.4.0
+   ```
+
+4. Promote it to the next environment:
+
+   ```bash
+   npx terragucci promote --to staging --release v1.4.0 --dry-run
+   npx terragucci promote --to staging --release v1.4.0
+   ```
+
+   `--dry-run` prints the plan and changes nothing. Under a gate, the promote plans the staging roots and exits 3:
+
+   ```text
+   warning: component "envs-network" is gated on "staging" — pending approval
+   approve : terragucci approve release staging
+   then run the same promote again
+   ```
+
+5. A reviewer approves the plan. Then the same promote applies:
+
+   ```bash
+   npx terragucci approve release staging
+   npx terragucci promote --to staging --release v1.4.0
+   ```
+
+   The approval holds for the change set that promote planned, for that release in that environment. A plan that differs on the next run asks again.
+
+6. Repeat for `prod`. A promote that skips an environment, such as `--to prod` while staging has not run the release, is refused; `--allow-skip` lets it through.
+
+</Steps>
+
+## Roll an environment back
+
+```bash
+npx terragucci rollback prod --release v1.3.0 --dry-run
+npx terragucci rollback prod --release v1.3.0
+```
+
+prod gets the files `v1.3.0` recorded for it. The rollback waits at prod's gate like a promote: approve it with `terragucci approve release prod` and run the same rollback again. The deploy record then names `v1.3.0` as the version prod runs.
+
+## The components
+
+`init` names each root's component by its path with the segment that names its environment taken out: `envs/dev/network` and `envs/prod/network` are both `envs-network`. A promote to staging takes `envs-network` as dev recorded it and applies `envs/staging/network`. A root whose path has no segment named for its environment keeps its whole path as its name, and `init` says so when a later environment has a component the one before it lacks.
+
+An environment waits for an approval unless its gate is `never`. With no gate of its own, it takes the top-level `gate`. A promote plans the environment's roots as one change set, so `on-destructive` asks on any change.
+
+## Keep later environments to promotes
+
+The pipeline a merge runs is the same with or without `promotion`: it applies what a pull request changed in every environment. To have staging and prod change only through a promote, route their roots to a branch nobody pushes with [`apply.branches`](/terragucci/reference/config/#apply-from-other-branches), so a merge applies dev alone:
+
+```yaml
+apply:
+  branches:
+    release: ["envs/staging/**", "envs/prod/**"]
+```
+
+[`terragucci promote`](/terragucci/reference/cli/#promote-and-rollback) lists every flag.

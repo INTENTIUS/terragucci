@@ -17,10 +17,15 @@ export const CHANT_CONFIG = "chant.config.ts";
 /** The first line of a chant.config.ts terragucci init wrote. */
 export const CHANT_CONFIG_MARKER = "// Written by terragucci init: each root is a terraform.roots entry, so chant's terraform-apply step can plan and apply it.";
 
-/** The text of chant.config.ts for `roots`, each its own key with its path as `dir`. */
-export function chantConfigText(roots: readonly string[], binary?: string): string {
+/**
+ * The text of chant.config.ts for `roots`, each its own key with its path as
+ * `dir`. With `promotion` (terragucci.yml's, ./promotion.ts) it also lists the
+ * environments in that order, which chant's `promotionOrder` reads, and names
+ * the terraform lexicon, whose `terraform-apply` step a promote deploys with.
+ */
+export function chantConfigText(roots: readonly string[], binary?: string, promotion?: readonly string[]): string {
   const entries = Object.fromEntries([...new Set(roots)].sort().map((r) => [r, { dir: r === "" ? "." : r }]));
-  const config = { terraform: { roots: entries, ...(binary ? { binary } : {}) } };
+  const config = { ...(promotion?.length ? { lexicons: ["terraform"], environments: [...promotion] } : {}), terraform: { roots: entries, ...(binary ? { binary } : {}) } };
   return `${CHANT_CONFIG_MARKER}\n// Run terragucci init again after adding or moving a root.\nexport default ${JSON.stringify(config, null, 2)};\n`;
 }
 

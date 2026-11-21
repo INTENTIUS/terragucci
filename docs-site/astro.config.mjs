@@ -143,6 +143,7 @@ export default defineConfig({
 								{ label: 'Ephemeral environments per pull request', slug: 'guides/ephemeral-environments' },
 								{ label: 'Request an app from a template', slug: 'guides/request-an-app' },
 								{ label: 'Run a day-2 action', slug: 'guides/run-a-day-2-action' },
+								{ label: 'Promote a release through environments', slug: 'guides/promote-a-release' },
 							],
 						},
 						{

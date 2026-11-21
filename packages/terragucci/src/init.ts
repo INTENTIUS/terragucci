@@ -12,6 +12,7 @@ import { planFile, planRemoval, staleGeneratedFiles, writePlannedFiles, type Pla
 import { emitYAML, parseYAMLDocument } from "@intentius/chant/yaml";
 import { applyWaves, waveGate } from "./apply";
 import { CHANT_CONFIG, chantConfigText, chantConfigWrittenByTerragucci } from "./chant-config";
+import { PROMOTION_COMPONENTS, promotionComponentsText, promotionComponentsWrittenByTerragucci, promotionPlan } from "./promotion";
 import { waveCallArgv, wavesSpecText, wavesStepSpec } from "./chant-waves";
 import { MIGRATIONS_DIR } from "./migrate";
 import { declaredGates } from "./approval";
@@ -23,6 +24,7 @@ import {
   COST_KEY_SECRET,
   EPHEMERAL_SWEEP,
   FORGE_ENVIRONMENT_NOT_FORGEJO,
+  PROMOTION_PLAIN_ROOTS,
   normalizeGate,
   gitlabPrApplyProblems,
   gitlabPublishToken,
@@ -505,8 +507,25 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
   if (plainRoots) {
     const configFile = join(repo, CHANT_CONFIG);
     const mine = !existsSync(configFile) || chantConfigWrittenByTerragucci(readFileSync(configFile, "utf-8"));
-    if (mine) files.push(planFile(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined)));
+    if (mine) files.push(planFile(configFile, chantConfigText(roots, binary.value === "tofu" || binary.value === "terraform" ? binary.value : undefined, settings.promotion)));
     else notes.push(`${CHANT_CONFIG} is the repo's own, so terragucci left it; a wave applies through chant's terraform-apply step once it names every root under terraform.roots`);
+    if (!mine && settings.promotion?.length) notes.push(`promotion is set and ${CHANT_CONFIG} is the repo's own: list the environments there as environments: ${JSON.stringify(settings.promotion)} and add lexicons: ["terraform"], so chant promotes in that order`);
+  }
+  // terragucci.component.ts: with promotion, each environment's roots as chant components, which terragucci promote and rollback deploy.
+  const promotionPath = join(repo, PROMOTION_COMPONENTS);
+  if (settings.promotion?.length) {
+    if (!plainRoots) throw new ConfigError(`promotion: ${PROMOTION_PLAIN_ROOTS}`);
+    if (existsSync(promotionPath) && !options.force && !promotionComponentsWrittenByTerragucci(readFileSync(promotionPath, "utf-8"))) {
+      throw new ConfigError(`${PROMOTION_COMPONENTS} exists and terragucci did not write it; move it aside or pass --force`);
+    }
+    const plan = promotionPlan({ promotion: settings.promotion, roots, settings, order: found.order });
+    if (plan.problems.length) throw new ConfigError(`promotion cannot be written as components:\n  ${plan.problems.join("\n  ")}`, plan.problems);
+    notes.push(...plan.notes);
+    files.push(planFile(promotionPath, promotionComponentsText(plan, settings.promotion)));
+  } else if (existsSync(promotionPath) && promotionComponentsWrittenByTerragucci(readFileSync(promotionPath, "utf-8"))) {
+    // promotion was taken out: the components an earlier init wrote go with it.
+    const removal = planRemoval(promotionPath);
+    if (removal) files.push(removal);
   }
   // terragucci.components.json at the repo's root: the roots as chant components by wave, under the jobs that apply them, for behold.
   // Its waves are the pipeline's: a plain repo's cut by waves.canary, a Terragrunt, Atmos or Terramate repo's layers as the shape cut them.

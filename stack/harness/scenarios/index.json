@@ -281,5 +281,31 @@
       "chant#5329 (alert facts and the alert agent)",
       "chant#4650 (await-pull, pull outcome)"
     ]
+  },
+  "tg-promote": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-promote-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1492 (promote, rollback, approve release)",
+      "chant#4045 (release gate)",
+      "chant#4035 (rollback --release)"
+    ]
+  },
+  "tg-rollback": {
+    "binary": "tofu",
+    "needs": [
+      "image:tofu",
+      "bucket:hs-tg-rollback-state",
+      "bucket:terragucci-reports"
+    ],
+    "cites": [
+      "terragucci#1492 (promote, rollback, approve release)",
+      "chant#4045 (release gate)",
+      "chant#4035 (rollback --release)"
+    ]
   }
 }

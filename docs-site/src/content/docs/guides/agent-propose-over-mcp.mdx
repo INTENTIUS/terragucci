@@ -105,7 +105,7 @@ The agent's `plan_result` call on the pull request it opened:
 | `terragrunt run --all apply` or `run-all apply` from a directory that holds a root | refuses |
 | `init`, `validate`, `fmt`, `plan`, `show`, `output`, `state list` | runs the real binary |
 
-Outside the pipeline's roots, the wrappers run every command. The hook also refuses `terragucci approve`, `override`, `stage tf-apply`, `unlock-state`, `pr-merge` and `--mode apply` anywhere in the repo.
+Outside the pipeline's roots, the wrappers run every command. The hook also refuses `terragucci approve`, `override`, `stage tf-apply`, `unlock-state`, `pr-merge`, `promote`, `rollback` and `--mode apply` anywhere in the repo.
 
 The guard catches an agent that holds credentials it should not use. An agent that calls a binary by a path the hook does not see, runs it from a script, or edits the hook gets past it. The control is the credentials: a plan role that cannot write, per-environment state roles ([`oidc.roles`](/terragucci/guides/scope-state-access/)), and approvals bound to the plan digest. The [threat model](/terragucci/reference/threat-model/#trust) lists what each one stops.
 

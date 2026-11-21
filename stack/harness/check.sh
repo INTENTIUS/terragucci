@@ -73,6 +73,27 @@
 #                                         as JSON in key order with their
 #                                         timestamps left out, are the same bytes
 #
+# Releases (terragucci#1492). Each runs in a fresh clone of main with its
+# chant/lifecycle, in the tofu CI image on the stack's network, with the chant
+# the tree pins and the terraform lexicon installed beside it (the base's
+# .gitignore leaves node_modules out, so the clone stays clean for a cut).
+# Under BREAK=1 overlays/break is copied over the clone first.
+#
+#   check.sh release cut <label>          chant release cut <label> --yes, the
+#                                         release tag pushed
+#   check.sh release first <env> <label>  chant run --components all --env
+#                                         <env> --release <label>
+#   check.sh release promote <env> <label> [--allow-skip]
+#                                         terragucci promote --to <env>; exits
+#                                         as it does (0 deployed, 3 waiting)
+#   check.sh release rollback <env> <label>
+#                                         terragucci rollback <env> --release
+#   check.sh release approve <env>        terragucci approve release <env> as
+#                                         the reviewer
+#   check.sh release output <root> <name> <value>
+#                                         the root's output <name>, read from
+#                                         its state, is <value>
+#
 # Templates (terragucci#1308-#1312). The product opens the pull request, so a
 # scenario starts it here and binds it with await-pull. Each runs on a fresh
 # clone of main; under BREAK=1 the scenario's overlays/break is copied over
@@ -467,6 +488,26 @@ case "${1:-}" in
       log "the two plans of $root differ: $(diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") | head -10)"
       exit 1
     fi
+    ;;
+  release)
+    shift
+    what="${1:?release cut|first|promote|rollback|approve|output ...}"; shift
+    chant_pin="$(jq -r '.devDependencies["@intentius/chant"]' "$ROOT/package.json")"
+    lexicon_pin="$(jq -r '.devDependencies["@intentius/chant-lexicon-terraform"]' "$ROOT/packages/terragucci/package.json")"
+    deps="npm i -q --no-save --no-audit --no-fund @intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin >&2"
+    case "$what" in
+      cut) line="$deps && npx chant release cut ${1:?cut <label>} --yes && git push -q origin release/$1" ;;
+      first) line="$deps && npx chant run --components all --env ${1:?first <env> <label>} --release ${2:?first <env> <label>}" ;;
+      promote) line="$deps && terragucci promote --to ${1:?promote <env> <label>} --release ${2:?promote <env> <label>} ${3:-}" ;;
+      rollback) line="$deps && terragucci rollback ${1:?rollback <env> <label>} --release ${2:?rollback <env> <label>}" ;;
+      approve) line="$deps && terragucci approve release ${1:?approve <env>} --actor $TERRAGUCCI_FORGEJO_REVIEWER" ;;
+      output) line="cd ${1:?output <root> <name> <value>} && tofu init -input=false -no-color >/dev/null && test \"\$(tofu output -raw ${2:?output <root> <name> <value>})\" = ${3:?output <root> <name> <value>}" ;;
+      *) log "release takes cut, first, promote, rollback, approve or output"; exit 2 ;;
+    esac
+    rc=0
+    tg_net sh -c "$line" || rc=$?
+    log "release $what $* exited $rc"
+    exit "$rc"
     ;;
   tg-net)
     # tg_net for a child process, such as the MCP server stack/mcp-client.mjs starts.

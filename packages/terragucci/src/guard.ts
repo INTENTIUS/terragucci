@@ -16,9 +16,9 @@
  *   that name on PATH for everything else;
  * - a PreToolUse hook in `.claude/settings.local.json`, the file Claude Code
  *   reads, which refuses the same commands in the agent's Bash tool, and the
- *   terragucci commands that approve, apply, override or merge anywhere
- *   (`stage tf-apply`, `approve`, `override`, `unlock-state`, `pr-merge`,
- *   `--mode apply`). The file is listed in `.git/info/exclude` unless git
+ *   terragucci commands that approve, apply, deploy, override or merge
+ *   anywhere (`stage tf-apply`, `approve`, `override`, `unlock-state`,
+ *   `pr-merge`, `promote`, `rollback`, `--mode apply`). The file is listed in `.git/info/exclude` unless git
  *   already ignores it.
  *
  * Each refusal names `propose` on `terragucci mcp --propose` as the way to get
@@ -69,7 +69,7 @@ export const GUARD_SPEC: AgentGuardSpec = {
       choudoufu: engine,
     },
     product: {
-      commands: [["stage", "tf-apply"], ["approve"], ["override"], ["unlock-state"], ["pr-merge"]],
+      commands: [["stage", "tf-apply"], ["approve"], ["override"], ["unlock-state"], ["pr-merge"], ["promote"], ["rollback"]],
       flagValues: [["--mode", "apply"]],
     },
     wrapperExit: 3,
