@@ -181,6 +181,9 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
     });
     git(repo, "init", "-q", "-b", "main");
     git(repo, "remote", "add", "origin", origin);
+    // A CI runner has no git identity; the test's own commits need one.
+    git(repo, "config", "user.name", "t");
+    git(repo, "config", "user.email", "t@t");
     const init = run("node", "init", "--no-bucket-check");
     expect(init.code, init.out).toBe(0);
     expect(readFileSync(join(repo, PROMOTION_COMPONENTS), "utf-8")).toContain('root: "envs/staging/net"');
