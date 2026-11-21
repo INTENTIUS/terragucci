@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { describeRollout, rollout, rolloutExit, waveBranch, type RolloutOptions } from "../src/rollout";
 import { fetchForge, type CommitCheck, type RolloutForge, type SoakSkip, type WavePullRequest } from "../src/rollout/forge";
-import { driftRootsIn, forgeHealth, soakRuleFor, type Finding } from "../src/rollout/soak";
+import { memoryGateLedgerPort } from "@intentius/chant/op/gate";
+import type { SoakCheckReader } from "@intentius/chant/pipeline/soak";
+import { driftNamedTargets, soakCheckReader } from "@intentius/chant/pipeline/soak-checks";
+import { forgeSources, rolloutSoakGate, soakRuleFor, ROLLOUT_SOAK_OP } from "../src/rollout/wave-soak";
 import { rolloutsProblems, rolloutsSoak } from "../src/config";
 import { targetAt, type Fetch } from "../src/forge";
 import { backend, bareFrom, git, remoteState, tmp, write } from "./helpers";
@@ -132,25 +135,27 @@ describe("a rollout under rollouts.soak", () => {
     const forge = new MemoryForge(bare);
     await rollout(repo, opts(forge, T0));
     forge.mergeAndApply(b(1), T0);
-    let found: Finding[] = [{ condition: "drift", project: "p", roots: ["envs/dev/app"], detail: "the drift issue https://forge/p/issues/9 is open and names envs/dev/app" }];
+    let found = true;
     const asked: unknown[] = [];
-    const health = async (i: { roots: string[]; conditions: string[]; since: number }) => {
-      asked.push([i.roots, i.conditions, i.since]);
-      return found;
+    const soakRead: SoakCheckReader = async (check, ctx) => {
+      asked.push([ctx.targets, check.kind, check.onFail, ctx.since]);
+      return found && check.kind === "drift" ? { status: "failed", targets: ctx.targets, detail: "the drift issue https://forge/p/issues/9 is open and names envs/dev/app" } : { status: "passed", detail: "ok" };
     };
+    const health = soakRead;
 
     // Inside the hour the conditions are not read.
-    await rollout(repo, opts(forge, T0 + HOUR / 2, { health }));
+    await rollout(repo, opts(forge, T0 + HOUR / 2, { soakRead: health }));
     expect(asked).toEqual([]);
 
-    let r = await rollout(repo, opts(forge, T0 + 2 * HOUR, { health }));
+    let r = await rollout(repo, opts(forge, T0 + 2 * HOUR, { soakRead: health }));
     expect([r.status, forge.prs.has(b(2))]).toEqual(["soaking", false]);
-    expect(asked).toEqual([[["envs/dev/app"], ["drift", "apply", "policy"], T0]]);
+    expect(asked.map((a) => (a as unknown[]).slice(1))).toEqual([["drift", "hold", "2026-03-01T10:00:00.000Z"], ["apply", "hold", "2026-03-01T10:00:00.000Z"], ["policy", "hold", "2026-03-01T10:00:00.000Z"]]);
+    expect(r.waves[0]!.soak!.findings).toMatchObject([{ condition: "drift", roots: ["envs/dev/app"], detail: "the drift issue https://forge/p/issues/9 is open and names envs/dev/app" }]);
     expect(describeRollout(r)).toContain("waiting for:");
     expect(describeRollout(r)).toContain("names envs/dev/app");
 
-    found = [];
-    r = await rollout(repo, opts(forge, T0 + 3 * HOUR, { health }));
+    found = false;
+    r = await rollout(repo, opts(forge, T0 + 3 * HOUR, { soakRead: health }));
     expect([r.status, forge.prs.has(b(2))]).toEqual(["opened", true]);
   }, 30_000);
 
@@ -162,7 +167,11 @@ describe("a rollout under rollouts.soak", () => {
     expect((await rollout(repo, opts(forge, T0 + HOUR))).status).toBe("soaking");
 
     forge.skips.set(b(1), [{ by: "dana", url: "https://forge/p/pull/1" }]);
-    const r = await rollout(repo, opts(forge, T0 + 2 * HOUR));
+    const gates = memoryGateLedgerPort();
+    const r = await rollout(repo, opts(forge, T0 + 2 * HOUR, { gates }));
+    // chant's early end: the comment is the approval of the wave's soak gate, and the ledger names who.
+    expect(gates.resolved.map((x) => [x.op, x.gate, x.resolvedBy, x.url])).toEqual([[ROLLOUT_SOAK_OP, rolloutSoakGate("module", "modules/network", 1), "dana", "https://forge/p/pull/1"]]);
+    expect(gates.applied.map((x) => [x.gate, x.approvedBy])).toEqual([[rolloutSoakGate("module", "modules/network", 1), "dana"]]);
     expect([r.status, r.waves[0]!.soak?.state, r.waves[0]!.soak?.skippedBy?.by]).toEqual(["opened", "skipped", "dana"]);
     expect(describeRollout(r)).toContain("soak skipped by dana (https://forge/p/pull/1)");
   }, 30_000);
@@ -196,16 +205,16 @@ describe("a rollout under rollouts.soak", () => {
 
 describe("what the soak's conditions read", () => {
   const project = (forge: RolloutForge, dir = tmp()) => ({ key: "p", dir, forge });
-  const base = { repo: tmp(), roots: ["envs/dev/app", "envs/prod/net"], since: T0 };
+  const targets = ["envs/dev/app", "envs/prod/net"];
+  const ctx = (check: "drift" | "apply" | "policy") => ({ environment: "rollout", member: "p", targets, since: new Date(T0).toISOString(), now: new Date(T0 + HOUR) });
+  const read = (projects: ReturnType<typeof project>[], repo = tmp()) => soakCheckReader(forgeSources(new Map(projects.map((p) => [p.key, p])), repo));
 
   it("finds the wave's roots in the drift issue's code spans", async () => {
-    expect(driftRootsIn("2 of 9 roots drifted: `envs/dev/app`, `envs/dev/other`.", base.roots)).toEqual(["envs/dev/app"]);
+    expect(driftNamedTargets("2 of 9 roots drifted: `envs/dev/app`, `envs/dev/other`.", targets)).toEqual(["envs/dev/app"]);
     const forge = { openDriftIssue: async () => ({ url: "u/9", body: "`envs/prod/net` drifted" }) } as unknown as RolloutForge;
-    expect(await forgeHealth({ ...base, project: project(forge), conditions: ["drift"] })).toEqual([{ condition: "drift", project: "p", roots: ["envs/prod/net"], detail: "the drift issue u/9 is open and names envs/prod/net" }]);
+    expect(await read([project(forge)])({ kind: "drift" }, ctx("drift"))).toEqual({ status: "failed", targets: ["envs/prod/net"], detail: "the drift issue u/9 is open and names envs/prod/net" });
     const none = { openDriftIssue: async () => undefined } as unknown as RolloutForge;
-    expect(await forgeHealth({ ...base, project: project(none), conditions: ["drift"] })).toEqual([]);
-    // A condition not asked for is not read.
-    expect(await forgeHealth({ ...base, project: project(forge), conditions: ["apply"].filter(() => false) as never })).toEqual([]);
+    expect((await read([project(none)])({ kind: "drift" }, ctx("drift"))).status).toBe("passed");
   });
 
   it("finds a failed apply on the default branch's newest commit, in the project's checkout", async () => {
@@ -215,14 +224,13 @@ describe("what the soak's conditions read", () => {
     git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "c");
     const head = git(dir, "rev-parse", "HEAD").trim();
     const forge = { commitChecks: async (sha: string) => (sha === head ? [{ name: "apply/envs/prod/net", state: "failure" }, { name: "apply/envs/dev/app", state: "success" }] : []) } as unknown as RolloutForge;
-    const found = await forgeHealth({ ...base, project: project(forge, dir), conditions: ["apply"] });
-    expect(found).toEqual([{ condition: "apply", project: "p", roots: ["envs/prod/net"], detail: "the newest apply on the default branch failed for envs/prod/net" }]);
+    expect(await read([project(forge, dir)])({ kind: "apply" }, ctx("apply"))).toEqual({ status: "failed", targets: ["envs/prod/net"], detail: "the newest apply failed for envs/prod/net" });
   });
 
   it("finds no policy denial on a repository whose gate ledger holds none", async () => {
     const dir = tmp();
     git(dir, "clone", "-q", bareFrom(write(tmp(), { "a.txt": "x" })), ".");
-    expect(await forgeHealth({ ...base, repo: dir, project: project({} as RolloutForge), conditions: ["policy"] })).toEqual([]);
+    expect((await read([project({} as RolloutForge)], dir)({ kind: "policy" }, ctx("policy"))).status).toBe("passed");
   });
 });
 

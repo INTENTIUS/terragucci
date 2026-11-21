@@ -5,12 +5,15 @@ import { describe, expect, it } from "vitest";
 import { rolloutsSoak } from "../src/config";
 import { OVERRIDE_LEDGER, OVERRIDE_OP, overrideDigest } from "../src/override";
 import type { CommitCheck, RolloutForge } from "../src/rollout/forge";
-import { forgeHealth, soakOf, soakRuleFor } from "../src/rollout/soak";
+import { memoryGateLedgerPort } from "@intentius/chant/op/gate";
+import { ROLLOUT_SOAK_OP, rolloutSoakGate, soakOf, soakRuleFor } from "../src/rollout/wave-soak";
 import { git, tmp, write } from "./helpers";
 
 /**
- * Runs `rollouts.soak` as it is today over each case in fixtures/soak/ and
- * asserts the decision the case records. The fixtures are engine-neutral JSON
+ * Runs `rollouts.soak` on chant's soak over each case in fixtures/soak/ and
+ * asserts the decision the case records. The cases record what the earlier
+ * implementation (`rollout/soak.ts`, removed with this mapping) decided, so
+ * each passing case is the old hold and the new hold agreeing. The fixtures are engine-neutral JSON
  * (see fixtures/soak/README.md); this file is the one place that maps them
  * onto terragucci's forge, checkout and gate ledger.
  */
@@ -97,16 +100,21 @@ async function decide(c: Case): Promise<Decision> {
   if (!rule) return { outcome: "release", via: "no-soak", rule: null, clockStart: null, due: null, holds: [] };
   const co = checkout();
   const projects = new Map(Object.entries(c.world.projects).map(([key, p]) => [key, { key, dir: co.dir, forge: forgeOf(p, co.head) }]));
-  const status = await soakOf(rule, { wave: c.wave.number, merged: c.wave.merged }, { now: Date.parse(c.now), projects, repo: ledgerRepo(c.world.denials), health: forgeHealth });
+  const gates = memoryGateLedgerPort();
+  const status = await soakOf(rule, { wave: c.wave.number, merged: c.wave.merged }, { kind: c.rollout.kind, name: c.rollout.name, aliases: c.rollout.aliases, now: Date.parse(c.now), projects, repo: ledgerRepo(c.world.denials), gates }, settings!);
   const ruleOut = { after: rule.after, afterMs: rule.afterMs, conditions: [...rule.conditions] as string[] };
   const times = { clockStart: status.since ?? null, due: status.due ?? null };
-  if (status.state === "skipped") return { outcome: "release", via: "skip", rule: ruleOut, ...times, holds: [], skippedBy: status.skippedBy! };
+  if (status.state === "skipped") {
+    // The skip is the approval of the wave's soak gate on chant's ledger, and the ledger names who.
+    expect(gates.resolved.map((r) => [r.op, r.gate, r.resolvedBy])).toEqual([[ROLLOUT_SOAK_OP, rolloutSoakGate(c.rollout.kind, c.rollout.name, c.wave.number), status.skippedBy!.by]]);
+    expect(gates.applied.map((a) => a.approvedBy)).toEqual([status.skippedBy!.by]);
+    return { outcome: "release", via: "skip", rule: ruleOut, ...times, holds: [], skippedBy: status.skippedBy! };
+  }
+  expect(gates.resolved).toEqual([]);
   if (status.state === "passed") return { outcome: "release", via: "soaked", rule: ruleOut, ...times, holds: [] };
   if (status.findings.length > 0) return { outcome: "hold", rule: ruleOut, ...times, holds: status.findings.map((f) => ({ reason: "condition" as const, condition: f.condition, project: f.project, roots: f.roots })) };
-  if (!status.since) {
-    const named = /pull request in (.+), so its soak/.exec(status.waitingFor[0] ?? "")?.[1]?.split(", ") ?? [];
-    return { outcome: "hold", rule: ruleOut, ...times, holds: [{ reason: "merge-time-unknown", projects: named }] };
-  }
+  const unknown = status.decision.holds.find((h) => h.reason === "clock-unknown");
+  if (unknown && unknown.reason === "clock-unknown") return { outcome: "hold", rule: ruleOut, ...times, holds: [{ reason: "merge-time-unknown", projects: unknown.members }] };
   return { outcome: "hold", rule: ruleOut, ...times, holds: [{ reason: "time" }] };
 }
 
