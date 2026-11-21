@@ -168,7 +168,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
@@ -309,7 +310,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
@@ -440,7 +442,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;
@@ -500,7 +503,8 @@ jobs:
             *) target="refs/remotes/origin/chant-head" ;;
           esac
           if git rev-parse -q --verify HEAD >/dev/null; then git clean -ffdxq; fi
-          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:$target"
+          git -c protocol.version=2 fetch -q --prune --no-recurse-submodules origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' "+$want:refs/chant/want"
+          git update-ref "$target" refs/chant/want
           git -c protocol.version=2 fetch -q --no-tags origin '+refs/heads/chant/lifecycle:refs/heads/chant/lifecycle' 2>/dev/null || true
           case "$ref" in
             refs/heads/*) git checkout -q --force -B "${ref#refs/heads/}" "$target" ;;

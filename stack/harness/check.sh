@@ -90,8 +90,12 @@
 # .gitignore leaves node_modules out, so the clone stays clean for a cut).
 # Under BREAK=1 overlays/break is copied over the clone first.
 #
-#   check.sh release cut <label>          chant release cut <label> --yes, the
-#                                         release tag pushed
+#   check.sh release cut <label>          chant release cut <label> --yes
+#                                         --wait-checks, the release tag pushed.
+#                                         init writes release.green:
+#                                         forge-checks under promotion, so the
+#                                         cut reads the merge commit's checks
+#                                         on Forgejo with the author's token
 #   check.sh release first <env> <label>  chant run --components all --env
 #                                         <env> --release <label>
 #   check.sh release promote <env> <label> [--allow-skip]
@@ -529,7 +533,7 @@ case "${1:-}" in
     lexicon_pin="$(jq -r '.devDependencies["@intentius/chant-lexicon-terraform"]' "$ROOT/packages/terragucci/package.json")"
     deps="npm i -q --no-save --no-audit --no-fund @intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin >&2"
     case "$what" in
-      cut) line="$deps && npx chant release cut ${1:?cut <label>} --yes && git push -q origin release/$1" ;;
+      cut) line="$deps && FORGEJO_TOKEN=\"\$TERRAGUCCI_FORGEJO_TOKEN\" npx chant release cut ${1:?cut <label>} --yes --wait-checks && git push -q origin release/$1" ;;
       first) line="$deps && npx chant run --components all --env ${1:?first <env> <label>} --release ${2:?first <env> <label>}" ;;
       promote) line="$deps && terragucci promote --to ${1:?promote <env> <label>} --release ${2:?promote <env> <label>} ${3:-}" ;;
       rollback) line="$deps && terragucci rollback ${1:?rollback <env> <label>} --release ${2:?rollback <env> <label>}" ;;

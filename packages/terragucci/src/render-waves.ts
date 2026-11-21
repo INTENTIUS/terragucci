@@ -162,6 +162,8 @@ export interface WavesInput {
    * trades cloud credentials and signs keyless signs in chant's `<wave job>-evidence` job (chant issue 4926).
    */
   evidence?: PipelineEvidence;
+  /** `promotion` with the release cut on: the last wave's cut reads the merge commit's checks (`release.green: forge-checks`). */
+  releaseCut?: boolean;
 }
 
 /** The spec's `respond`: apply-failed's agent is chant's triage, and the agent's input terragucci's report keeps. */
@@ -343,7 +345,8 @@ export function githubWaves(input: WavesInput & { forge: "github" | "forgejo" },
     dispatchInputs: WAVES_DISPATCH_INPUTS,
     firstWaveNeeds: ["check"],
     // The responses post on the pull request, and review.agent's verdict is read from its run.
-    commandToken: { permissions: { "pull-requests": "write", ...(input.review ? { actions: "read" } : {}) } },
+    // The release cut's forge-checks gate reads the merge commit's check runs, statuses and workflow runs.
+    commandToken: { permissions: { "pull-requests": "write", ...(input.review || (input.releaseCut && input.forge === "github") ? { actions: "read" } : {}), ...(input.releaseCut && input.forge === "github" ? { checks: "read", statuses: "read" } : {}) } },
     ...(input.control ? { controlGroup: "terragucci-control-${{ github.repository }}-{commit}" } : {}),
   };
   const built = input.forge === "github" ? buildGithubOpWavesDoc(spec as never, options as never) : buildForgejoOpWavesDoc(spec as never, options as never);

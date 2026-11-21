@@ -124,7 +124,7 @@ describe("the release cut on the merge path", () => {
   it("cuts a release after the last wave's apply when promotion is set, and wave 1 keeps its migration hooks", async () => {
     const spec = await specOf(settings(), PROMOTED);
     const last = spec.waves.at(-1)!;
-    expect(last.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["terragucci", "release", "cut", "auto", "--yes"] }]);
+    expect(last.hooks?.after?.apply).toEqual([{ name: "release-cut", command: ["terragucci", "release", "cut", "auto", "--yes", "--wait-checks"] }]);
     expect(spec.waves[0]!.hooks?.before?.plan?.map((h) => h.name)).toEqual(["migrations", "migration gate"]);
     expect(spec.waves[0]!.hooks?.after?.apply).toBeUndefined();
   });

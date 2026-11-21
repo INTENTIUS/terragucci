@@ -2,7 +2,7 @@
 // the roots of each environment as chant components, and a release moved
 // through the environments on chant's components promote and rollback.
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chantConfigText } from "../src/chant-config";
@@ -17,6 +17,8 @@ import {
   releaseWords,
 } from "../src/promotion";
 import { TERRAGUCCI_WORDS } from "../src/ci-words";
+import { renderPipeline } from "../src/render";
+import { parseYAML } from "@intentius/chant/yaml";
 import { git, tmp, write } from "./helpers";
 
 /** The problems validateConfig finds in `raw`. */
@@ -86,6 +88,23 @@ describe("promotion in terragucci.yml", () => {
     expect(config.environments).toEqual(["dev", "staging", "prod"]);
     expect(config.lexicons).toEqual(["terraform"]);
     expect(chantConfigText(["envs/dev/net"], "tofu")).not.toContain("environments");
+  });
+
+  it("sets the forge-checks release gate under promotion alone, after the environments", () => {
+    const text = chantConfigText(["envs/dev/net"], "tofu", ["dev", "prod"]);
+    const config = JSON.parse(text.slice(text.indexOf("export default ") + 15).replace(/;\s*$/, ""));
+    expect(config.release).toEqual({ green: "forge-checks" });
+    expect(Object.keys(config)).toEqual(["lexicons", "environments", "release", "terraform"]);
+    expect(chantConfigText(["envs/dev/net"], "tofu")).not.toContain("release");
+    expect(chantConfigText(["envs/dev/net"], "tofu", [])).not.toContain("forge-checks");
+  });
+
+  it("gives GitHub's wave jobs read on checks, statuses and actions when the merge cuts a release, and nothing more otherwise", () => {
+    const jobs = (releaseCut: boolean): Record<string, any> =>
+      (parseYAML(renderPipeline({ forge: "github", binary: "tofu", version: "1.13.1", image: "img:1", layers: [["envs/dev/net"]], env: {}, ...(releaseCut ? { releaseCut } : {}) }).content.split("\n").filter((l) => !l.startsWith("#")).join("\n")) as Record<string, any>).jobs;
+    expect(jobs(true)["apply-wave-1"].permissions).toMatchObject({ contents: "write", checks: "read", statuses: "read", actions: "read" });
+    expect(jobs(false)["apply-wave-1"].permissions.checks).toBeUndefined();
+    expect(jobs(false)["apply-wave-1"].permissions.actions).toBeUndefined();
   });
 });
 
@@ -187,6 +206,10 @@ describe.skipIf(!hasTofu || !existsSync(DIST))("a release through dev and stagin
     const init = run("node", "init", "--no-bucket-check");
     expect(init.code, init.out).toBe(0);
     expect(readFileSync(join(repo, PROMOTION_COMPONENTS), "utf-8")).toContain('root: "envs/staging/net"');
+    // init wrote the forge-checks gate; this origin is a bare directory with no forge, so the cuts here read the ci/green tags commitGreen writes.
+    const configFile = join(repo, "chant.config.ts");
+    expect(readFileSync(configFile, "utf-8")).toContain('"green": "forge-checks"');
+    writeFileSync(configFile, readFileSync(configFile, "utf-8").replace('"green": "forge-checks"', '"green": "chant"'));
     commitGreen("init");
     cut("r1");
 
