@@ -94,7 +94,7 @@ export function chantAgentOptions(agent: AgentCommentInput, allow?: { allow: Rec
 }
 
 /** terragucci's words with the commands this spec has jobs for, the plan, which every pipeline has, and the agent, and the aliases of those alone (chant refuses an alias of a command no word names). */
-function agentWords(): object {
+export function agentWords(): object {
   const keep = (c: string): boolean => c === "plan" || c === "agent";
   const commands = Object.fromEntries(Object.entries(TERRAGUCCI_WORDS.commands).filter(([, c]) => keep(c)));
   return { ...TERRAGUCCI_WORDS, commands, aliases: TERRAGUCCI_WORDS.aliases.filter((a) => keep(a.command)) };

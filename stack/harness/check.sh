@@ -59,6 +59,15 @@
 #                                         dispatch, or an empty commit when
 #                                         Forgejo refuses one) ended status
 #                                         (default success)
+#   check.sh alert-post <title>           chant notify relay, in the author's
+#                                         clone of main with chant/lifecycle and
+#                                         the chant the tree pins, takes one
+#                                         generic alert (terragucci#1495) and
+#                                         records it as a fact signed with the
+#                                         repo's CHANT_RELAY_KEY secret, which
+#                                         the alert agent's workflow then
+#                                         reads; under BREAK=1 the relay signs
+#                                         with another key
 #   check.sh plan-twice <root>            a clone of main planned twice in the
 #                                         binary's CI image; both plans, shown
 #                                         as JSON in key order with their
@@ -400,6 +409,43 @@ case "${1:-}" in
     fi
     log "$workflow run again on main: $status"
     [ "$status" = "$want" ]
+    ;;
+  alert-post)
+    title="${2:?alert-post <title>}"
+    id="${TG_SCENARIO:?}"
+    relay_key="$(jq -r --arg id "$id" '.[$id].secrets.CHANT_RELAY_KEY // empty' "$HERE/scenarios/index.json")"
+    [ -n "$relay_key" ] || { log "scenarios/index.json gives $id no CHANT_RELAY_KEY secret"; exit 1; }
+    secret="hs-alert-source-secret"
+    [ -z "${BREAK:-}" ] || { relay_key="not-the-relay-key"; log "BREAK: the relay signs with a key the repo's secret does not hold"; }
+    port=18787
+    work="$(mktemp -d "${TMPDIR:-/tmp}/tg-check.XXXXXX")"
+    git clone -q "$(remote "$AUTHOR" "$AUTHOR_TOKEN")" "$work/repo" >&2
+    git -C "$work/repo" config user.name "$AUTHOR"
+    git -C "$work/repo" config user.email "$AUTHOR@terragucci.local"
+    if git -C "$work/repo" show-ref -q --verify refs/remotes/origin/chant/lifecycle; then
+      git -C "$work/repo" branch -q chant/lifecycle origin/chant/lifecycle
+    fi
+    # The tree's own chant, as the jobs read the ledger.
+    (cd "$work/repo" && npm ci --no-audit --no-fund >/dev/null) >&2 || { log "npm ci failed in the clone"; exit 1; }
+    (cd "$work/repo" && CHANT_RELAY_KEY="$relay_key" CHANT_ALERT_SECRET="$secret" CHANT_RELAY_PORT="$port" npx chant notify relay >"$work/relay.log" 2>&1) &
+    relay_pid=$!
+    up=""
+    for i in $(seq 1 30); do
+      curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null 2>&1 && { up=1; break; }
+      sleep 1
+    done
+    [ -n "$up" ] || { log "the relay did not come up: $(tail -5 "$work/relay.log")"; kill "$relay_pid" 2>/dev/null || true; exit 1; }
+    body="$(jq -cn --arg t "$title" '{id: "hs-alert-1", title: $t, severity: "critical", status: "firing"}')"
+    ts="$(date +%s)"
+    sig="$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$secret" -hex | sed 's/^.* //')"
+    rc=0
+    curl -fsS -X POST -H "X-Chant-Timestamp: $ts" -H "X-Chant-Signature: sha256=$sig" -H 'content-type: application/json' -d "$body" "http://127.0.0.1:$port/alert/generic" >&2 || rc=$?
+    kill "$relay_pid" 2>/dev/null || true
+    tail -5 "$work/relay.log" >&2 || true
+    [ "$rc" = 0 ] || { log "the relay refused the alert"; exit 1; }
+    git -C "$work/repo" ls-remote --exit-code origin refs/heads/chant/lifecycle >/dev/null \
+      || { log "the alert is not on chant/lifecycle of $REPO"; exit 1; }
+    log "the relay recorded the alert on chant/lifecycle"
     ;;
   plan-twice)
     root="${2:?plan-twice <root>}"

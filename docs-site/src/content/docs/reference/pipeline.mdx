@@ -374,6 +374,17 @@ The drift job is a chant drift Op in `terragucci-drift.yml` ([Turn on drift chec
 
 The pull request is planned like any other, and its merge applies through the gate. [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) covers the setup.
 
+### Agents from alerts, failed applies and schedules
+
+`agent.alert`, `agent.apply-failed` and `agent.schedule` (GitHub and Forgejo) each add a workflow of chant's agent job beside the pipeline: `terragucci-alert-agent.yml`, `terragucci-apply-failed-agent.yml` and `terragucci-schedule-agent.yml`, each with its spec under `.chant/ops/`. The alert and failed-apply workflows run every 15 minutes and when started by hand; the relay starts the alert workflow after it records an alert. The schedule workflow runs on `agent.schedule.cron`. None gets a cloud role.
+
+| Job | Holds | Does |
+|---|---|---|
+| the agent job | the job's own read-only token and, for alerts and failed applies, the relay key in its decision step; the model's key in the agent's step alone | reads the facts from `chant/lifecycle`, checks each signature, runs the agent command on the default branch and keeps its change as a patch |
+| the push job | the secret `agent.token_env` names | in a fresh job, checks the decision's facts against the ledger, applies the patch, refuses a [guarded path](#paths-an-agent-cannot-change), pushes to `terragucci/agent/<workflow name>` (with `-<member>` for a member's facts) without force and opens or updates the pull request |
+
+With `agent.apply-failed`, each apply wave job's command step holds `CHANT_AGENT_FACTS=apply-failed` and the relay key, so a failed wave records a fact for each member that did not apply. With `apply.when: pull-request` the split waves' gate and record jobs hold them, and the plan and apply jobs hold neither. The triage comment posts as before.
+
 ### The review
 
 With `review.agent` set on GitHub or Forgejo, `init` also writes the workflow `terragucci-review.yml`. The forge runs it from the default branch, so a pull request that edits it changes nothing until it merges. GitLab keeps the `review` and `review-note` jobs in the pipeline file; they run only in the default-branch pipeline that the `comments` job starts for a merge request's head once its plan job ended (`TERRAGUCCI_REVIEW_MR`, `TERRAGUCCI_REVIEW_HEAD`).

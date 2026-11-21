@@ -53,7 +53,7 @@ import { imageFor, imageReference, terragruntImage, TOOL_VERSIONS, type ImageRef
 import { dashboardFiles } from "./dashboards/files";
 import { dashboardSettings, writtenByTerragucci } from "./dashboards/settings";
 import { reportsBase } from "./report/store";
-import { agentCommentInput, agentDriftInput } from "./agent-comment";
+import { agentCommentInput, agentDriftInput, agentTriggerInput } from "./agent-comment";
 import { REVIEW_PATHS, reviewInput } from "./review-agent";
 import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { resolveControl } from "./control-repo";
@@ -464,6 +464,9 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
     ...(agentDriftInput(settings) ? { agentDrift: agentDriftInput(settings) } : {}),
+    ...(agentTriggerInput(settings, "alert") ? { agentAlert: agentTriggerInput(settings, "alert") } : {}),
+    ...(agentTriggerInput(settings, "apply-failed") ? { agentApplyFailed: agentTriggerInput(settings, "apply-failed") } : {}),
+    ...(agentTriggerInput(settings, "schedule") ? { agentSchedule: agentTriggerInput(settings, "schedule") } : {}),
     ...(settings.atlantis_comments ? { atlantisComments: true } : {}),
     ...(allowTeams(settings.comment_allow).length > 0 ? { teamToken: true } : {}),
     ...(chantAllow ? { commentAllow: chantAllow } : {}),

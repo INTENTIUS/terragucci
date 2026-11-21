@@ -137,6 +137,8 @@ export interface WavesInput {
   agentInput?: boolean;
   /** `review.agent`: the waves read the review's verdict from the pull request's run. */
   review?: boolean;
+  /** `agent.apply-failed` (terragucci#1495): each wave job records its failed applies as facts, signed with the relay key in this secret. */
+  agentFacts?: { relayKeyEnv: string };
   /** `apply.branches`: the other branches whose pushes apply. */
   branches: string[];
   /** `apply.when: pull-request`, with `apply.merge` and the merge token's secret. */
@@ -290,6 +292,8 @@ function commonOptions(input: WavesInput, spec: { waves: unknown[] }, pipeline: 
     ...pipeline,
     applyStatus: { context: APPLY_STATUS },
     ...(input.evidence ? { evidence: input.evidence } : {}),
+    // agent.apply-failed: chant's wave jobs record a failed apply as a fact for the agent, beside the triage comment.
+    ...(input.agentFacts ? { agentFacts: { relayKeyEnv: input.agentFacts.relayKeyEnv } } : {}),
     waveJobs: Object.fromEntries((spec.waves as { name: string }[]).map((w) => [w.name, job])),
     jobNames: wavesJobNames(input.waves.length),
   };

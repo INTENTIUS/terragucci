@@ -1,0 +1,23 @@
+# tg-agent-alert (terragucci#1495): a repo with one root and agent.alert on. A stand-in agent
+# (.smoke/alert-agent.sh) answers the alert the relay recorded, with no forge token in its step.
+forge: forgejo
+binary: tofu
+url: http://forgejo:3000/terragucci-admin/hs-tg-agent-alert
+token_env: TERRAGUCCI_FORGEJO_TOKEN
+roots: ["app"]
+gate: never
+generate:
+  backend:
+    s3:
+      bucket: hs-tg-agent-alert-state
+      key: "{root}/terraform.tfstate"
+      region: us-east-1
+      use_path_style: true
+agent:
+  via: forge
+  token_env: TERRAGUCCI_FORGEJO_TOKEN
+  alert:
+    command: sh .smoke/alert-agent.sh
+    key_secret: AGENT_KEY
+    relay_key_secret: CHANT_RELAY_KEY
+    timeout: 10

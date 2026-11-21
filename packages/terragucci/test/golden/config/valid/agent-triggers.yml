@@ -1,0 +1,12 @@
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  alert:
+    max_turns: 20
+    max_cost_usd: 15
+    window: 30
+    relay_key_secret: CHANT_RELAY_KEY
+  apply-failed: true
+  schedule:
+    cron: "0 7 * * 1"
+    task: Raise each provider version pin to the newest release that keeps the plan clean.

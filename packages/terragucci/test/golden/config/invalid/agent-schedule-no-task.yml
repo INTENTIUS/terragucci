@@ -1,0 +1,5 @@
+agent:
+  via: forge
+  token_env: AGENT_FORGE_TOKEN
+  schedule:
+    cron: "0 7 * * 1"

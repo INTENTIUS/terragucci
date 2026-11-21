@@ -217,6 +217,7 @@ export default defineConfig({
 								{ label: 'Have an agent request an app from a template over MCP', slug: 'guides/agent-request-from-a-template' },
 								{ label: 'Have an agent change a pull request', slug: 'guides/agent-change-a-pull-request' },
 								{ label: 'Have an agent fix drift', slug: 'guides/agent-fix-drift' },
+								{ label: 'Start an agent from an alert', slug: 'guides/agent-start-from-an-alert' },
 								{ label: 'Have a model review a pull request', slug: 'guides/agent-review-a-pull-request' },
 							],
 						},

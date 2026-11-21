@@ -491,6 +491,7 @@ Longer runs on the same stack, driven by chant's e2e harness: each is a file und
 |---|---|---|---|---|
 | `multi-region` | `estate/multi-region` | Terraform | aws-bench's ec2-multiregion estate plans and applies on floci through the generated pipeline: six instances over three regions, and a change that reaches one region | not recorded |
 | `tg-action-run` | `action/gated-invoke` | Terraform | A day-2 action asked from a pull request comment waits for an approval by someone else, and the resume job runs it once the approval stands | not recorded |
+| `tg-agent-alert` | `agent/alert` | OpenTofu | A production alert the relay verified and recorded as a signed fact starts the alert agent, whose pull request changes the code and plans like any other, and an alert signed with another key starts nothing | not recorded |
 | `tg-agent-request` | `template/agent-request` | OpenTofu | An agent asks for an app over terragucci mcp --propose and gets the same pull request a person's request gets, planned, merged and applied the same way | not recorded |
 | `tg-behold-action` | `behold/action-button` | Terraform | behold's action button asks for a day-2 action, the request waits for someone else's approval, the resume job runs it, and behold's timeline shows it | not recorded |
 | `tg-behold-addon` | `behold/addon-form` | OpenTofu | behold's Add an add-on form asks for a cache on an app; the request workflow opens the pull request, it applies, and behold's apps read lists the add-on | not recorded |

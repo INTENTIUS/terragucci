@@ -1,0 +1,64 @@
+{
+  "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-scenario/v1/e2e-scenario.schema.json",
+  "contract": 1,
+  "id": "tg-agent-alert",
+  "product": "terragucci",
+  "claim": "agent/alert",
+  "title": "A production alert the relay verified and recorded as a signed fact starts the alert agent, whose pull request changes the code and plans like any other, and an alert signed with another key starts nothing",
+  "tree": {
+    "base": "base"
+  },
+  "reportUrl": "s3://terragucci-reports/hs-tg-agent-alert",
+  "limits": {
+    "out-of-band": 1200
+  },
+  "steps": [
+    {
+      "id": "base-applied",
+      "do": "out-of-band",
+      "label": "the base push applied the root",
+      "command": ["stack/harness/check.sh", "main-runs", "1"],
+      "expect": [{ "exit": 0 }]
+    },
+    {
+      "id": "alert",
+      "do": "out-of-band",
+      "label": "the relay takes a generic alert and records it on chant/lifecycle",
+      "command": ["stack/harness/check.sh", "alert-post", "checkout 5xx"],
+      "expect": [{ "exit": 0 }]
+    },
+    {
+      "id": "agent-run",
+      "do": "out-of-band",
+      "label": "the alert agent's workflow runs on main",
+      "command": ["stack/harness/check.sh", "rerun", "terragucci-alert-agent.yml", "success"],
+      "expect": [{ "exit": 0 }]
+    },
+    {
+      "id": "pull",
+      "do": "await-pull",
+      "branch": "terragucci/agent/terragucci-alert-agent",
+      "expect": [
+        {
+          "pull": {
+            "files": ["app/main.tf"],
+            "only": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "planned",
+      "do": "out-of-band",
+      "label": "the pull request's plan job went green",
+      "command": ["stack/harness/check.sh", "pr-run", "terragucci/agent/terragucci-alert-agent", "success"],
+      "expect": [{ "exit": 0 }]
+    }
+  ],
+  "break": {
+    "env": {
+      "BREAK": "1"
+    },
+    "note": "check.sh alert-post runs the relay with a relay key the repo's CHANT_RELAY_KEY secret does not hold, so the fact it records fails the agent job's signature check, the agent starts nothing and no pull request appears"
+  }
+}
