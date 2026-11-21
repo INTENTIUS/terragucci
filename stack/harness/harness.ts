@@ -285,6 +285,7 @@ async function run(args: string[]): Promise<number> {
   safe.log(`${runnerLog.stdout ?? ""}${runnerLog.stderr ?? ""}`);
   const verdict = safe.scan();
   console.error(`[harness ${id}] plain ${result.verdicts.plain}, break ${result.verdicts.break}, scan ${verdict.verdict}`);
+  for (const r of [result.plain, result.break]) if (r.reason) console.error(`[harness ${id}] ${r.arm} ${r.outcome}: ${r.reason}`);
   if (verdict.verdict !== "CLEAN") return EXIT_REAL_CLOUD;
   if (args.includes("--record")) {
     const row = h.claimRow({

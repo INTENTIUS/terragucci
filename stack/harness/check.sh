@@ -175,7 +175,14 @@ push_runs() { # -> the repo's push runs on main, newest first, as JSON lines
 }
 
 wait_settled() {
-  local deadline=$(( $(date +%s) + TIMEOUT )) busy
+  local deadline=$(( $(date +%s) + TIMEOUT )) busy head
+  # A push (the reset's force push among them) queues its run a moment later:
+  # wait up to a minute for the newest push run on main to be main's head's.
+  head="$(remote_head "$REPO" main)"
+  for _ in $(seq 1 30); do
+    api "$URL/api/v1/repos/$REPO/actions/runs?event=push&branch=main&limit=1" | jq -e --arg s "$head" '.workflow_runs[0].commit_sha == $s' >/dev/null && break
+    sleep 2
+  done
   while :; do
     busy="$(api "$URL/api/v1/repos/$REPO/actions/runs?limit=50" | jq '[.workflow_runs[]? | select(.status as $s | ["success", "failure", "cancelled", "skipped"] | index($s) | not)] | length')"
     [ "$busy" = 0 ] && return 0
@@ -289,7 +296,7 @@ case "${1:-}" in
   main-runs)
     n="${2:?main-runs <n> [status]}"; want="${3:-success}"
     wait_settled || exit 1
-    got="$(push_runs | head -n "$n" | jq -r .status | sort | uniq -c | awk '{ printf "%s%s=%s", sep, $2, $1; sep = "," }')"
+    got="$(push_runs | sed -n "1,${n}p" | jq -r .status | sort | uniq -c | awk '{ printf "%s%s=%s", sep, $2, $1; sep = "," }')"
     log "the newest $n push runs on main: $got"
     [ "$got" = "$want=$n" ]
     ;;
@@ -483,9 +490,14 @@ case "${1:-}" in
     if git -C "$work/repo" show-ref -q --verify refs/remotes/origin/chant/lifecycle; then
       git -C "$work/repo" branch -q chant/lifecycle origin/chant/lifecycle
     fi
-    # The tree's own chant, as the jobs read the ledger.
-    (cd "$work/repo" && npm ci --no-audit --no-fund >/dev/null) >&2 || { log "npm ci failed in the clone"; exit 1; }
-    (cd "$work/repo" && CHANT_RELAY_KEY="$relay_key" CHANT_ALERT_SECRET="$secret" CHANT_RELAY_PORT="$port" npx chant notify relay >"$work/relay.log" 2>&1) &
+    # The tree's own chant, as the jobs read the ledger; a tree with no lock file runs this checkout's pin.
+    chant=(npx chant)
+    if [ -f "$work/repo/package-lock.json" ]; then
+      (cd "$work/repo" && npm ci --no-audit --no-fund >/dev/null) >&2 || { log "npm ci failed in the clone"; exit 1; }
+    else
+      chant=("$ROOT/node_modules/.bin/chant")
+    fi
+    (cd "$work/repo" && CHANT_RELAY_KEY="$relay_key" CHANT_ALERT_SECRET="$secret" CHANT_RELAY_PORT="$port" "${chant[@]}" notify relay >"$work/relay.log" 2>&1) &
     relay_pid=$!
     up=""
     for i in $(seq 1 30); do

@@ -63,6 +63,9 @@ SCENARIO="$HERE/scenarios/$ID/scenario.json"
 [ -f "$SCENARIO" ] || { echo "seed: no $SCENARIO" >&2; exit 2; }
 log() { echo "[seed $ID] $*" >&2; }
 fail() { log "FAIL: $*"; return 1; }
+# The base is the driver's git work, which chant's harness keeps outside this
+# checkout: a TG_STATE the caller set holds it, though lib.sh names the stack's.
+scenario_state="${TG_STATE:-}"
 # shellcheck source=../lib.sh
 . "$HERE/../lib.sh"
 
@@ -157,7 +160,7 @@ while IFS=$'\t' read -r k v; do
     || jq -n --arg v "$v" '{value: $v}' | api -o /dev/null -H 'content-type: application/json' -X PUT -d @- "$URL/api/v1/repos/$repo/actions/variables/$k"
 done < <(jq -r '(.vars // {}) | to_entries[] | [.key, .value] | @tsv' <<<"$entry")
 
-base="$TG_STATE/scenarios/$ID/base-$(date +%Y%m%d-%H%M%S)-$$"
+base="${scenario_state:-$TG_STATE}/scenarios/$ID/base-$(date +%Y%m%d-%H%M%S)-$$"
 into="$(jq -r '.into // empty' <<<"$entry")"
 mkdir -p "$base/$into"
 (cd "$base_src" && tar --exclude=.git --exclude=node_modules --exclude=.terraform -cf - .) | (cd "$base/$into" && tar -xf -)
@@ -211,6 +214,12 @@ if grep -q '^promotion:' "$base/terragucci.yml" 2>/dev/null && [ ! -f "$base/.ch
 fi
 git -C "$base" init -q -b main
 git -C "$base" remote add origin "http://$USER:$TOKEN@forgejo:3000/$repo.git"
+# A first commit under the base with everything but the roots' Terraform: a
+# wave reads its gate policy at HEAD^1, which a root commit lacks, and the
+# base then adds the roots on top of that policy.
+git -C "$base" add -A -- . ':!*.tf' ':!*.tofu' ':!*.hcl'
+git -C "$base" -c user.email=example@terragucci.local -c user.name=terragucci -c commit.gpgsign=false \
+  commit -q --allow-empty -m "$ID: the policy"
 sha="$(push_tree "$base" "$repo" main "$ID: the base")"
 wait_run "$repo" "$sha" >&2 || log "the base's first run did not finish green; the scenario's reset settles it again"
 

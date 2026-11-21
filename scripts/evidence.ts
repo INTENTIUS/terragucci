@@ -1,8 +1,9 @@
 // Writes EVIDENCE.md at the repo root: every claim terragucci checks, what it
 // checks, where it runs and its last recorded result, from the same records the
-// recorders write (stack/evidence/smoke.json and validation.json) and the
-// harness scenarios under stack/harness/scenarios. The docs site does not
-// show any of this; EVIDENCE.md is updated with each release.
+// recorders write (stack/evidence/smoke.json, validation.json and the
+// harness's e2e-claims.json) and the harness scenarios under
+// stack/harness/scenarios. The docs site does not show any of this;
+// EVIDENCE.md is updated with each release.
 //   npx tsx scripts/evidence.ts          write EVIDENCE.md
 //   npx tsx scripts/evidence.ts --check  exit 1 when EVIDENCE.md is out of date
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -133,6 +134,10 @@ line();
 // Harness scenarios.
 const index = readIndex();
 const recorded = new Map(smoke.claims.map((c) => [c.claim, c]));
+// The rows `harness.ts run <id> --record` renders, in chant's row schema; smoke.json's row wins where both hold one.
+const E2E = "stack/evidence/e2e-claims.json";
+const harnessRows = existsSync(join(ROOT, E2E)) ? (json(E2E) as { rows: { claim: string; plain: string; break: string }[] }).rows : [];
+for (const r of harnessRows) if (!recorded.has(r.claim)) recorded.set(r.claim, { claim: r.claim, says: "", verdict: r.plain, break: r.break });
 line("## Harness scenarios");
 line();
 line("Longer runs on the same stack, driven by chant's e2e harness: each is a file under `stack/harness/scenarios/<id>/scenario.json` that opens pull requests, merges, kills jobs and checks the forge, then runs again with its property broken. `npx tsx stack/harness/harness.ts lint` checks the files. Results are recorded as claim rows when `stack/harness/harness.ts run <id> --record` runs; a scenario with no row has not been recorded yet.");
