@@ -9,6 +9,7 @@ import { presign, S3Client, type S3Fetch } from "@intentius/chant/object-store";
 import { addToIndex, capIndex, INDEX_DESTROYS, INDEX_ROWS, indexEntry, renderIndexHtml, type IndexEntry } from "../src/report/store";
 import { plan, rc, RUN, smallFixture } from "./report-fixtures";
 import { tmp } from "./helpers";
+import { storedDoc } from "../src/report/store-format";
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 
@@ -295,9 +296,12 @@ describe("terragucci estate", () => {
     ]);
     for (const g of gets) expect(g).not.toMatch(/plan\.(txt|json)$|report\.json$/);
     expect(requests.filter((q) => q.startsWith("PUT "))).toEqual(["PUT acme-reports:reports/estate.json", "PUT acme-reports:reports/estate.html", "PUT acme-reports:reports/dora.json", "PUT acme-reports:reports/policy-metrics.json"]);
-    expect(JSON.parse(objects.get("acme-reports:reports/dora.json")!)).toEqual(r.dora);
+    // estate.json and dora.json are chant.estate/v1 and chant.dora/v1 with product terragucci, the body as terragucci built it.
+    expect(JSON.parse(objects.get("acme-reports:reports/dora.json")!)).toEqual(storedDoc(r.dora, "dora"));
     expect(r.estate.totals).toMatchObject({ projects: 3, waiting: 1, drifted_projects: 1 });
-    expect(JSON.parse(objects.get("acme-reports:reports/estate.json")!)).toEqual(r.estate);
+    const page = JSON.parse(objects.get("acme-reports:reports/estate.json")!);
+    expect(page).toEqual(storedDoc(r.estate, "estate"));
+    expect(page).toMatchObject({ schema: "chant.estate/v1", product: "terragucci" });
     expect(readInlineEstate(objects.get("acme-reports:reports/estate.html")!)).toEqual(r.estate);
     for (const f of ["estate.html", "estate.json", "dora.json", "policy-metrics.json"]) expect(existsSync(join(cwd, "terragucci-estate", f))).toBe(true);
     expect(readFileSync(join(cwd, "terragucci-estate", "estate.html"), "utf-8")).toBe(objects.get("acme-reports:reports/estate.html"));

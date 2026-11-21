@@ -6,7 +6,8 @@
   "type": "object",
   "required": ["schema", "minor", "run", "change_set", "unit", "units", "totals", "groups", "roots", "waves", "named", "holes", "redaction"],
   "properties": {
-    "schema": { "const": "terragucci.report/v1" },
+    "schema": { "enum": ["chant.run/v1", "terragucci.report/v1"], "description": "chant.run/v1, chant's run head, which terragucci writes; terragucci.report/v1 is the same body as older releases wrote it." },
+    "product": { "const": "terragucci", "description": "Under chant.run/v1: the product that wrote it." },
     "minor": { "type": "integer", "minimum": 0 },
     "run": {
       "type": "object",

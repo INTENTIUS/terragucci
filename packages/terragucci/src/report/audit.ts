@@ -28,9 +28,9 @@ import { esc } from "./html";
 import { failedRoots, type Report, type ReportRefusal } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
-/** The record's lines. A `chant.audit/v1` line naming terragucci reads as well (auditEntryOf). */
+/** terragucci's own entry, as the code builds it and older releases wrote it. The record's lines are chant's `chant.audit/v1` (entryLine). */
 export const AUDIT_SCHEMA = "terragucci.audit/v1";
-/** The product a `chant.audit/v1` line of terragucci's names. */
+/** The product a `chant.audit/v1` line terragucci writes names. */
 export const AUDIT_PRODUCT = "terragucci";
 export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 
@@ -740,10 +740,11 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
 }
 
 /**
- * One line of the record as an entry: a `terragucci.audit/v1` line as it is,
- * or a `chant.audit/v1` line naming terragucci (`product: "terragucci"`),
- * mapped back with chant's `toProductAuditLine`. Undefined for anything
- * else, a neutral line of another product among them.
+ * One line of the record as an entry: a `chant.audit/v1` line terragucci
+ * wrote (`product: "terragucci"`), mapped back with chant's
+ * `toProductAuditLine`, or a `terragucci.audit/v1` line an older release
+ * wrote, as it is. Undefined for anything else, a neutral line of another
+ * product among them.
  */
 export function auditEntryOf(raw: unknown): AuditEntry | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -779,15 +780,25 @@ export function missingEntries(record: ReturnType<typeof readRecord>, derived: A
   return out.sort(order);
 }
 
-/** An entry as `terragucci.audit/v1`, its fields in that schema's order: the line the record holds, and what `chant.audit/v1` maps from. */
+/**
+ * An entry as `terragucci.audit/v1`, its fields in that schema's order: the
+ * line older releases wrote, and what `chant.audit/v1` maps from.
+ */
 export function productLine(e: AuditEntry): AuditEntry {
   const { schema, id, kind, project, at: when, who, what, digest, result, evidence, detail } = e;
   return { schema, id, kind, project, at: when, who, what, digest, result, evidence, ...(detail && Object.keys(detail).length ? { detail } : {}) };
 }
 
-/** An entry's line: its fields in the schema's order, so every line reads the same way. */
+/**
+ * An entry's line in the record: `chant.audit/v1` with `product:
+ * "terragucci"`, through chant's `readAuditLine`. chant's kind is the
+ * vocabulary's word, terragucci's own word stays in `product_kind`, and
+ * `what` stays the gate or the root.
+ */
 export function entryLine(e: AuditEntry): string {
-  return JSON.stringify(productLine(e));
+  const line = readAuditLine(productLine(e));
+  if (!line) throw new Error(`audit entry ${e.id} does not map onto ${REPORT_SCHEMAS.audit}`);
+  return JSON.stringify(line);
 }
 
 /** The record with the missing entries appended: every line it held stays, in its place. */

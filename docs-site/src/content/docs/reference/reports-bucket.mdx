@@ -46,7 +46,7 @@ prompt: |
 
 | File | What it is |
 |---|---|
-| `report.json` | the report, `terragucci.report/v1`; see [Report JSON schema](/terragucci/reference/report-schema/) |
+| `report.json` | the report, `chant.run/v1` with `product: "terragucci"`; see [Report JSON schema](/terragucci/reference/report-schema/) |
 | `report.html` | the report as a page, with `report.json` inline |
 | `note.md` | the pull request note |
 | `summary.txt` | the grouped plan as text |
@@ -63,19 +63,21 @@ Each object a program reads names its schema in its `schema` field, except a ros
 
 | Object | `schema` | JSON Schema |
 |---|---|---|
-| `report.json` | `terragucci.report/v1` | `dist/report.schema.json`, also exported as `@intentius/terragucci/report.schema.json` |
+| `report.json` | `chant.run/v1`, `product: "terragucci"` | `dist/report.schema.json`, also exported as `@intentius/terragucci/report.schema.json` |
 | `index.json` | `terragucci.report-index/v1` | `dist/report-index.schema.json` |
-| `estate.json` | `terragucci.estate/v1` | `dist/estate.schema.json` |
-| each line of `audit.jsonl` | `terragucci.audit/v1` | `dist/audit.schema.json` |
+| `estate.json` | `chant.estate/v1`, `product: "terragucci"` | `dist/estate.schema.json` |
+| each line of `audit.jsonl` | `chant.audit/v1`, `product: "terragucci"` | [chant](/terragucci/concepts/glossary/#chant)'s `@intentius/chant/report-store/audit.schema.json`; a line an earlier release wrote, `terragucci.audit/v1`, `dist/audit.schema.json` |
 | `inventory.json` | `terragucci.inventory/v1` | `dist/inventory.schema.json` |
 | `versions.json` | `terragucci.versions/v1` | `dist/versions.schema.json` |
 | `changes.json` | `terragucci.changes/v1` | `dist/changes.schema.json` |
 | `history.json` | `terragucci.history/v1` | `dist/history.schema.json` |
 | `states.json` | `terragucci.state-versions/v1` | `dist/state-versions.schema.json` |
 | `edges.json` | `terragucci.state-edges/v1` | `dist/state-edges.schema.json` |
-| `dora.json` | `terragucci.dora/v1` | `dist/dora.schema.json` |
-| `run.json` | `terragucci.run/v1` | `dist/run.schema.json` |
+| `dora.json` | `chant.dora/v1`, `product: "terragucci"` | `dist/dora.schema.json` |
+| `run.json` | `chant.run/v1`, `product: "terragucci"` | `dist/run.schema.json` |
 | `estates.json` | `terragucci.estates/v1` | `dist/estates.schema.json` |
+
+`report.json`, `run.json`, `estate.json`, `dora.json` and the audit lines are in chant's report-store format (`@intentius/chant/report-store`), which every CI product on chant writes: the schema is chant's neutral id and `product` names terragucci. A reader such as behold validates them with chant's schemas, `@intentius/chant/report-store/<kind>.schema.json`. The body under `chant.run/v1`, `chant.estate/v1` and `chant.dora/v1` is the one terragucci's own schema describes, and terragucci reads the files earlier releases wrote under `terragucci.report/v1`, `terragucci.run/v1`, `terragucci.estate/v1`, `terragucci.dora/v1` and `terragucci.audit/v1` as well.
 
 Within `v1` a release only adds fields, and an existing field keeps its meaning. A reader checks `schema` and ignores fields it does not know. The schemas leave objects open, so a validator accepts a field a later release added.
 

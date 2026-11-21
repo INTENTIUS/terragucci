@@ -10,6 +10,7 @@ import { readInlineEstate } from "../src/report/estate";
 import { addToIndex, type IndexEntry } from "../src/report/store";
 import type { OtlpFetch } from "../src/telemetry";
 import { tmp } from "./helpers";
+import { storedDoc } from "../src/report/store-format";
 
 const NOW = new Date("2026-10-07T12:00:00.000Z");
 const P = "github.com/acme/infra";
@@ -299,7 +300,10 @@ describe("terragucci estate and the DORA metrics", () => {
     };
     const r = await estate(tmp(), { reports: { bucket: "s3://acme", endpoint: "http://minio:9000", prefix: "r" } }, { fetch: bucket(objects), otlpFetch, env: { ...ENV, OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel:4318" }, now: NOW });
     const dora = JSON.parse(objects.get("acme:r/dora.json")!);
-    expect(dora).toEqual(r.dora);
+    // dora.json is chant.dora/v1 with product terragucci; the body is the terragucci.dora/v1 document as it was.
+    expect(dora).toEqual(storedDoc(r.dora, "dora"));
+    expect(Object.keys(dora).slice(0, 2)).toEqual(["schema", "product"]);
+    expect({ ...dora, schema: r.dora.schema, product: undefined }).toEqual({ ...r.dora, product: undefined });
     expect(dora.projects[0].change_failure.rate).toBe(0.5);
     expect(r.estate.dora).toEqual({ file: "dora.json", generated: NOW.toISOString(), deployments: 3 });
     const html = objects.get("acme:r/estate.html")!;

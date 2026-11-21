@@ -16,7 +16,8 @@
     }
   },
   "properties": {
-    "schema": { "const": "terragucci.run/v1" },
+    "schema": { "enum": ["chant.run/v1", "terragucci.run/v1"], "description": "chant.run/v1, chant's run head, which terragucci writes; terragucci.run/v1 is the same body as older releases wrote it." },
+    "product": { "const": "terragucci", "description": "Under chant.run/v1: the product that wrote it." },
     "project": { "type": "string" },
     "commit": { "type": "string" },
     "updated": { "type": "string", "description": "When a wave job last wrote it." },
