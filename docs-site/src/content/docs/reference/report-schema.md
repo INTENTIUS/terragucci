@@ -17,8 +17,7 @@ sed -n '/id="terragucci-report"/,/<\/script>/p' report.html | sed '1d;$d' | jq '
 
 | Field | Holds |
 |---|---|
-| `schema` | `chant.run/v1`, chant's run head; reports earlier releases wrote say `terragucci.report/v1` over the same body. A minor version only adds fields |
-| `product` | `terragucci` |
+| `schema` | `terragucci.report/v1`; a minor version only adds fields |
 | `minor` | the minor version of the schema the report was written with |
 | `run` | project, commit, base, stage, binary, runtime, start and finish times, and the job |
 | `run.wave`, `run.terragucci` | the wave a `tf-apply` report is for, and the terragucci version that wrote the report |
@@ -150,7 +149,7 @@ Every `index.json` in the bucket is `terragucci.report-index/v1` (JSON Schema `d
 
 In the [run view](/terragucci/concepts/waves-and-approvals/#the-run-view)'s `run.json`, each wave that planned carries `waves[].totals` and `waves[].totals_roots`, counted the same way over the wave's roots, so a page can show each wave's total while it applies. The job that plans the whole wave writes them; a share's or a group's job does not.
 
-From those rows and each project's newest run view, [`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, schema `chant.estate/v1` with `product: "terragucci"` (`dist/estate.schema.json`):
+From those rows and each project's newest run view, [`terragucci estate`](/terragucci/reference/cli/#estate) builds `estate.json`, schema `terragucci.estate/v1` (`dist/estate.schema.json`):
 
 | Field | What it holds |
 |---|---|

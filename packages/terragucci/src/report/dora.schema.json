@@ -6,8 +6,7 @@
   "type": "object",
   "required": ["schema", "generated", "weeks", "window", "drift_window_seconds", "audit", "estate", "projects"],
   "properties": {
-    "schema": { "enum": ["chant.dora/v1", "terragucci.dora/v1"], "description": "chant.dora/v1, which terragucci writes; terragucci.dora/v1 is the same body as older releases wrote it." },
-    "product": { "const": "terragucci", "description": "Under chant.dora/v1: the product that wrote it." },
+    "schema": { "const": "terragucci.dora/v1" },
     "generated": { "type": "string", "description": "When the metrics were built, ISO 8601." },
     "weeks": { "type": "integer", "description": "How many weeks the metrics cover, the current one included." },
     "window": {

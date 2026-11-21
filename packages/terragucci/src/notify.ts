@@ -360,7 +360,7 @@ export function unrecordedNotice(auditDir: string, env: NodeJS.ProcessEnv = proc
   const writes: UnrecordedWrite[] = [];
   for (const l of lines.slice(-added)) {
     try {
-      // A chant.audit/v1 line keeps terragucci's word in product_kind; an older terragucci.audit/v1 line has it in kind.
+      // A terragucci.audit/v1 line has terragucci's word in kind; a chant.audit/v1 line keeps it in product_kind.
       const e = JSON.parse(l) as { kind?: string; product_kind?: string; project?: string; what?: string; at?: string; who?: string | null; detail?: { location?: string; current_version?: string } };
       if ((e.product_kind ?? e.kind) !== "unrecorded-write" || !e.project || !e.what || !e.at) continue;
       writes.push({ project: e.project, root: e.what, location: e.detail?.location ?? "", version_id: e.detail?.current_version ?? "", written_at: e.at, who: e.who ?? null });

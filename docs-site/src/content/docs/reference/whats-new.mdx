@@ -20,8 +20,6 @@ The policy's `input.cost` is chant's record, with fields such as `monthlyDelta`,
 
 `respond.wave-refused: summary` puts a model's summary above the diff in the note on a refused wave. chant's wave job runs it with the `agent.wave-refused` keys. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/#move-from-an-explain-refusal-job) shows how a repo with the `explain-refusal` job under `own_jobs` moves to it.
 
-The reports bucket's files are in chant's report-store format, which every CI product on chant writes. `report.json` and `run.json` are `chant.run/v1`. `estate.json` is `chant.estate/v1` and `dora.json` is `chant.dora/v1`. Each names `product: "terragucci"` and keeps its body. Each new line of `audit.jsonl` is `chant.audit/v1`: chant's word for the event is in `kind` and terragucci's in `product_kind`. Lines already in the record stay as they are, and terragucci reads both forms. `index.json` stays `terragucci.report-index/v1`. [Reports bucket](/terragucci/reference/reports-bucket/#json-schemas) lists the new ids, and the [audit trail](/terragucci/reference/audit-trail/#query-the-record) has queries for the new lines.
-
 ## In 0.4.63
 
 terragucci is on chant `0.124.106`, in npm and in its images. Lexicons version apart from chant, so each bundled lexicon is pinned at its own latest release; prow and terraform are at `0.124.102`.

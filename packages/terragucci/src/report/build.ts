@@ -17,10 +17,9 @@ import { planAppliedChanges } from "./history";
 import { resolveUnknowns, stateSecrets } from "./applied-values";
 import { planResources } from "./inventory";
 import { isObject, scrubSecrets, sensitiveStrings } from "./redact";
-import { storeHead } from "./store-format";
 import { secretCounts, type StoredSecret } from "../tips/secrets";
 import {
-  REDACTED, REPORT_MINOR,
+  REDACTED, REPORT_MINOR, REPORT_SCHEMA,
   type ReportUnit,
   type ReportMockRead,
   type ReportDeferred,
@@ -499,8 +498,7 @@ export function buildReport(input: BuildInput): Report {
   });
 
   return {
-    // chant's run head (chant.run/v1, product terragucci); the body is terragucci.report/v1's.
-    ...storeHead("run"),
+    schema: REPORT_SCHEMA,
     minor: REPORT_MINOR,
     run: input.run,
     change_set: doc.digest,

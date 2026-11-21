@@ -130,10 +130,7 @@ describe("the record", () => {
     const next = appendEntries(record, missing);
     expect(next.startsWith(kept)).toBe(true);
     expect(missingEntries(readRecord(next), entries)).toEqual([]);
-    // The appended line is chant's chant.audit/v1, terragucci's word kept in product_kind.
-    const written = JSON.parse(next.split("\n")[2]);
-    expect(Object.keys(written)).toEqual(["schema", "product", "id", "kind", "product_kind", "project", "at", "who", "what", "digest", "result", "evidence", "detail"]);
-    expect(written).toMatchObject({ schema: "chant.audit/v1", product: "terragucci", kind: "approved", product_kind: "approval" });
+    expect(Object.keys(JSON.parse(next.split("\n")[2]))).toEqual(["schema", "id", "kind", "project", "at", "who", "what", "digest", "result", "evidence", "detail"]);
   });
 
   it("renders a page with the counts and the entries", () => {

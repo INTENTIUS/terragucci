@@ -11,8 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { estate } from "../src/estate";
 import { updateList } from "../src/ephemeral";
-import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDGER_FILE, productLine, readRecord, reportEntry } from "../src/report/audit";
-import { readAuditLine, toProductAuditLine, type AuditLine } from "@intentius/chant/report-store";
+import { appendEntries, APPLY_LEDGER, AUDIT_SCHEMA, ledgerEntries, OVERRIDE_LEDGER_FILE, readRecord, reportEntry } from "../src/report/audit";
 import type { GateLedgerLine } from "@intentius/chant/lifecycle/gate-audit";
 import { buildReport } from "../src/report/build";
 import { ESTATE_SCHEMA } from "../src/report/estate";
@@ -37,8 +36,6 @@ const schema = (name: string): Json => JSON.parse(readFileSync(join(SRC, name), 
 const INDEX = schema("report-index.schema.json");
 const ESTATE = schema("estate.schema.json");
 const AUDIT = schema("audit.schema.json");
-/** chant's published audit line, which the record's lines are. */
-const CHANT_AUDIT = JSON.parse(readFileSync(join(import.meta.dirname, "../../../node_modules/@intentius/chant/dist/report-store/audit.schema.json"), "utf-8")) as Json;
 const INVENTORY = schema("inventory.schema.json");
 const STATES = schema("state-versions.schema.json");
 const EDGES = schema("state-edges.schema.json");
@@ -145,8 +142,7 @@ describe("the reader contracts' schemas", () => {
     for (const [s, id] of [[INDEX, INDEX_SCHEMA], [ESTATE, ESTATE_SCHEMA], [AUDIT, AUDIT_SCHEMA], [INVENTORY, INVENTORY_SCHEMA], [CHANGES, CHANGES_SCHEMA], [HISTORY, HISTORY_SCHEMA], [DORA, DORA_SCHEMA], [STATES, STATES_SCHEMA], [RUN_VIEW, RUN_SCHEMA], [EDGES, EDGES_SCHEMA], [ESTATES, ESTATES_SCHEMA], [VERSIONS, VERSIONS_SCHEMA]] as const) {
       expect(unknownKeywords(s)).toEqual([]);
       expect(s.title).toBe(id);
-      // estate.json, dora.json and run.json are written under chant's neutral id; the schema reads that and the older id.
-      expect(s.properties.schema.const !== undefined ? [s.properties.schema.const] : s.properties.schema.enum).toContain(id);
+      expect(s.properties.schema.const).toBe(id);
     }
     expect(unknownKeywords(schema("report.schema.json"))).toEqual([]);
   });
@@ -436,17 +432,7 @@ describe("terragucci.audit/v1", () => {
     const states = JSON.stringify({ schema: STATES_SCHEMA, roots: [{ root: "envs/dev/orders", backend: "s3", location: "s3://state/orders.tfstate", versioning: "on", checked: at(9), versions: [{ version_id: "v1", commit: "c", started: at(8, 50), finished: at(8, 56), wave: 1, path: "x" }] }] });
     const fromStates = await unrecorded(RUN.project, states, "envs/dev/orders");
     const text = appendEntries(readRecord(undefined), [...approvals, ...overrides, ...fromReports, ...fromStates]);
-    // Each line is chant's chant.audit/v1 with product terragucci, and passes chant's reader and its published schema.
-    const written = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Json);
-    for (const [i, l] of written.entries()) {
-      expect(l.schema, `line ${i + 1}`).toBe("chant.audit/v1");
-      expect(l.product, `line ${i + 1}`).toBe("terragucci");
-      expect(readAuditLine(l), `line ${i + 1}`).toEqual(l);
-      expect(validate(CHANT_AUDIT, l), `line ${i + 1}`).toEqual([]);
-    }
-    // Mapped back with chant's toProductAuditLine, each is the terragucci.audit/v1 line older releases wrote.
-    const lines = written.map((l) => toProductAuditLine(l as AuditLine, "terragucci") as Json);
-    expect(lines).toEqual([...approvals, ...overrides, ...fromReports, ...fromStates].map((e) => productLine(e) as unknown as Json));
+    const lines = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Json);
     expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(["approval-requested", "approval", "approval-revoked", "override-requested", "override", "override-revoked", "apply", "refused", "unrecorded-write"]));
     for (const [i, l] of lines.entries()) expect(validate(AUDIT, l), `line ${i + 1}`).toEqual([]);
     expect([...keys(lines)].sort()).toEqual(named(AUDIT).sort());

@@ -18,9 +18,9 @@ import type { ObjectStore } from "@intentius/chant/object-store";
 import type { ReportComposedMember, ReportWave, WaveState } from "./schema";
 import { updateJson, type Wait } from "./store";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
-import { isOwn, storeHead, type StoreHead } from "./store-format";
+import { isOwn } from "./store-format";
 
-/** The id older releases wrote run.json under, still read. The view is written as chant's `chant.run/v1` with `product: "terragucci"` (./store-format.ts). */
+/** The id run.json is written under. A view under chant's `chant.run/v1` naming terragucci reads as well (./store-format.ts). */
 export const RUN_SCHEMA = "terragucci.run/v1";
 
 /** Whether a parsed run.json is terragucci's run view: chant's `chant.run/v1` naming terragucci, or the older id. */
@@ -97,7 +97,8 @@ export interface RunRoot {
 /** How many spans a wave keeps, newest last. */
 export const SPANS_KEPT = 24;
 
-export interface RunView extends StoreHead<"run"> {
+export interface RunView {
+  schema: typeof RUN_SCHEMA;
   project: string;
   commit: string;
   updated: string;
@@ -121,7 +122,7 @@ export function runSkeleton(
 ): RunView {
   const waveOf = new Map(waves.flatMap((w, i) => w.map((r) => [r, i + 1] as const)));
   return {
-    ...storeHead("run"),
+    schema: RUN_SCHEMA,
     project,
     commit,
     updated: "",

@@ -52,7 +52,6 @@ import { VERSIONS_SCHEMA, type Versions } from "./report/versions";
 import { readStateVersions, type StateVersions } from "./report/state-versions";
 import { readStateEdges, type StateEdges } from "./report/state-edges";
 import { isRunView, runViewKey, type RunView } from "./report/run-view";
-import { storedDoc } from "./report/store-format";
 import { changesKey, edgesKey, inventoryKey, statesKey, versionsKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 import { buildDora, DORA_FILE, doraGauges, duration, spanLabel, type Dora } from "./report/dora";
 import { buildPolicyMetrics, POLICY_METRICS_FILE, type PolicyMetrics } from "./report/policy-metrics";
@@ -405,8 +404,7 @@ export async function estate(cwd: string, config: TerragucciConfig, options: Est
     history = buildHistory(changed.map((p) => ({ project: p.project, changes: p.changes!, ...(p.base !== undefined ? { base: p.base } : {}) })), audit, now);
     linkHistory(page, history);
   }
-  // estate.json and dora.json in chant's format: chant.estate/v1 and chant.dora/v1, each with product terragucci.
-  const files: Record<string, string> = { "estate.json": JSON.stringify(storedDoc(page, "estate"), null, 2) + "\n", "estate.html": renderEstateHtml(page, dora, policy), [DORA_FILE]: JSON.stringify(storedDoc(dora, "dora"), null, 2) + "\n", [POLICY_METRICS_FILE]: JSON.stringify(policy, null, 2) + "\n" };
+  const files: Record<string, string> = { "estate.json": JSON.stringify(page, null, 2) + "\n", "estate.html": renderEstateHtml(page, dora, policy), [DORA_FILE]: JSON.stringify(dora, null, 2) + "\n", [POLICY_METRICS_FILE]: JSON.stringify(policy, null, 2) + "\n" };
   if (history) Object.assign(files, { [HISTORY_FILES.json]: JSON.stringify(history, null, 2) + "\n", [HISTORY_FILES.page]: renderHistoryHtml(history) });
   const dir = resolve(cwd, options.out ?? "terragucci-estate");
   mkdirSync(dir, { recursive: true });

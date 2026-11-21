@@ -1,6 +1,5 @@
 {
-  "schema": "chant.run/v1",
-  "product": "terragucci",
+  "schema": "terragucci.report/v1",
   "minor": 51,
   "run": {
     "project": "forgejo.example/acme/infra",
