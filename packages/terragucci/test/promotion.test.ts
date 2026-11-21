@@ -17,9 +17,12 @@ import {
   releaseWords,
 } from "../src/promotion";
 import { TERRAGUCCI_WORDS } from "../src/ci-words";
+import { planEnv } from "../src/product-plan";
 import { renderPipeline } from "../src/render";
+import { renderProwJobs } from "../src/render-prow";
 import { parseYAML } from "@intentius/chant/yaml";
-import { git, tmp, write } from "./helpers";
+import { git, tmp, twoRootRepo, write } from "./helpers";
+import { init } from "../src/init";
 
 /** The problems validateConfig finds in `raw`. */
 function checkConfig(raw: unknown): { problems: string[] } {
@@ -105,6 +108,68 @@ describe("promotion in terragucci.yml", () => {
     expect(jobs(true)["apply-wave-1"].permissions).toMatchObject({ contents: "write", checks: "read", statuses: "read", actions: "read" });
     expect(jobs(false)["apply-wave-1"].permissions.checks).toBeUndefined();
     expect(jobs(false)["apply-wave-1"].permissions.actions).toBeUndefined();
+  });
+});
+
+describe("the plan environment under promotion", () => {
+  /** Every line of the rendered files that names an environment to `pr-post` or `plan-handoff`. */
+  const envLines = (files: string[]): string[] => files.flatMap((f) => f.split("\n")).filter((l) => /(pr-post|plan-handoff)\b.*--env /.test(l));
+  const envsOf = (files: string[]): string[] => [...new Set(envLines(files).map((l) => /--env (\S+)/.exec(l)![1]!))];
+  const pipeline = (forge: "github" | "gitlab" | "forgejo", promotion?: string[]): string[] => {
+    const r = renderPipeline({ forge, binary: "tofu", version: "1.13.1", image: "img:1", layers: [["envs/dev/net"]], env: {}, ...(promotion ? { planEnv: planEnv(promotion) } : {}) });
+    return [r.content, ...(r.extra ?? []).map((e) => e.content)];
+  };
+
+  it("is the first stage of promotion, else default", () => {
+    expect(planEnv(["dev", "staging", "prod"])).toBe("dev");
+    expect(planEnv(undefined)).toBe("default");
+    expect(planEnv([])).toBe("default");
+  });
+
+  it.each(["github", "gitlab", "forgejo"] as const)("names the first stage in every pr-post and plan-handoff on %s, the plan note and stale-notes among them", (forge) => {
+    const files = pipeline(forge, ["dev", "staging", "prod"]);
+    const lines = envLines(files);
+    expect(lines.some((l) => l.includes("pr-post") && l.includes("--stale"))).toBe(true);
+    expect(lines.some((l) => l.includes("plan-handoff"))).toBe(true);
+    expect(envsOf(files)).toEqual(["dev"]);
+  });
+
+  it.each(["github", "gitlab", "forgejo"] as const)("names default with no promotion on %s", (forge) => {
+    const files = pipeline(forge);
+    expect(envLines(files).some((l) => l.includes("pr-post") && l.includes("--stale"))).toBe(true);
+    expect(envsOf(files)).toEqual(["default"]);
+  });
+
+  it("is what init writes into the workflow: the first stage with promotion, default without", async () => {
+    const workflow = async (config?: string): Promise<string[]> => {
+      const dir = twoRootRepo();
+      write(dir, { "terragucci.yml": `forge: forgejo\n${config ?? ""}` });
+      git(dir, "init", "-q", "-b", "main");
+      await init(dir, { binary: "tofu" });
+      return [readFileSync(join(dir, ".forgejo/workflows/terragucci.yml"), "utf-8")];
+    };
+    const promoted = await workflow('environments:\n  dev:\n    roots: ["network"]\n  prod:\n    roots: ["app"]\npromotion: [dev, prod]\n');
+    expect(envLines(promoted).some((l) => l.includes("pr-post") && l.includes("--stale"))).toBe(true);
+    expect(envsOf(promoted)).toEqual(["dev"]);
+    expect(envsOf(await workflow())).toEqual(["default"]);
+  });
+
+  it("names the first stage in prow's plan note and stale mark", () => {
+    const prow = (env?: string): string[] => [renderProwJobs({
+      repo: "acme/infra",
+      defaultBranch: "main",
+      prow: { cluster: "untrusted", trusted_cluster: "trusted", service_accounts: { plan: "tf-plan", apply: "tf-apply" }, token_secret: { name: "t" }, plan_before_merge: true },
+      binary: "tofu",
+      image: "img:1",
+      layers: [["envs/dev/net"]],
+      env: {},
+      check: {},
+      report: {},
+      ...(env ? { planEnv: env } : {}),
+    }).content];
+    expect(envLines(prow("dev")).filter((l) => l.includes("pr-post")).length).toBe(2);
+    expect(envsOf(prow("dev"))).toEqual(["dev"]);
+    expect(envsOf(prow())).toEqual(["default"]);
   });
 });
 

@@ -335,6 +335,11 @@ export interface PipelineInput {
    */
   releaseCut?: boolean;
   /**
+   * The environment the plan jobs, `plan-handoff` and `pr-post` name (./product-plan.ts `planEnv`): with
+   * `promotion`, its first stage, since chant.config.ts declares only promotion's environments. Unset, `default`.
+   */
+  planEnv?: string;
+  /**
    * `evidence` (terragucci issue 1413): chant's runner identity. The plan note job (GitLab: `plan-evidence`)
    * signs `plan` and `policy`, and each wave `plan:<wave>` and `policy:<wave>`, a wave that trades cloud
    * credentials and signs keyless in its `<wave job>-evidence` job.
@@ -1145,7 +1150,7 @@ function reportUrl(forge: ForgeName): string {
  * The plan identities come from chant's trade or login before this runs,
  * and the job's forge tokens are dropped before it, by chant.
  */
-export function planVerbScript(binary: Binary, layers: string[][], forge: ForgeName, report: PlanReportInput = {}, options: { traded?: boolean } = {}): string {
+export function planVerbScript(binary: Binary, layers: string[][], forge: ForgeName, report: PlanReportInput = {}, options: { traded?: boolean; env?: string } = {}): string {
   const args = [
     "--out", REPORT_DIR,
     "--binary", binary,
@@ -1175,7 +1180,7 @@ export function planVerbScript(binary: Binary, layers: string[][], forge: ForgeN
     `terragucci stage tf-plan ${args.join(" ")}`,
     "rc=$?",
     ...(report.description ? [`[ ! -f ${REPORT_DIR}/report.json ] || terragucci respond description --mode apply --report ${REPORT_DIR} || true`] : []),
-    `terragucci plan-handoff --report ${REPORT_DIR} --env ${PLAN_ENV} --exit "$rc"`,
+    `terragucci plan-handoff --report ${REPORT_DIR} --env ${options.env ?? PLAN_ENV} --exit "$rc"`,
     "PLAN",
   ].join("\n");
 }
@@ -1673,10 +1678,12 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   // oidc.azure, whose provider and backend take only the token, the jobs log in instead.
   const planTradeSpec = needsToken ? planTrade(input.oidc, credentials, input.reports?.role, env, stageAudience(oidc, "plan")) : undefined;
   const planLogin = needsToken && !planTradeSpec ? loginSpec(oidc, "plan", "terragucci-plan") : undefined;
+  const planEnvName = input.planEnv ?? PLAN_ENV;
   const planInput: PlanJobsInput = {
     forge,
     image,
-    command: planVerbScript(binary, layers, forge, report, { traded: planTradeSpec !== undefined }),
+    planEnv: planEnvName,
+    command: planVerbScript(binary, layers, forge, report, { traded: planTradeSpec !== undefined, env: planEnvName }),
     // GitLab hands every job the project's variables, so its plan job needs only the pipeline's own.
     env: forge === "gitlab"
       ? definedEnv({ ...jobEnv, ...headersEnv, TG_SHA: "$CI_COMMIT_SHA", TG_BRANCH: "$CI_DEFAULT_BRANCH", TG_PR: "$CI_MERGE_REQUEST_IID", GIT_DEPTH: "0", ...glCostEnv })
@@ -1709,7 +1716,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
   const wavesBm = prApply ? wavesBeforeMerge(forge, wavesInput.beforeMerge!, input.applyRequires) : undefined;
   // Before merge chant takes the locks of what the change reaches as it decides the head, in terragucci's lock file (gate tf-apply).
   const reachLine = prApply ? `terragucci reach --layers ${sh(layers.map((l) => l.join(",")).join(";"))}${tg ? " --terragrunt" : ""}` : undefined;
-  const wavesProduct = productPipelineJobs(forge, PLAN_ENV, {
+  const wavesProduct = productPipelineJobs(forge, planEnvName, {
     // The waves' jobs answer apply; the plan's answer plan.
     words: { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply" }, aliases: [] },
     // GitLab's comments poll is terragucci's, and carries the reach line itself (CHANT_LOCK_REACH).

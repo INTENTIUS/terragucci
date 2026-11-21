@@ -11,6 +11,7 @@ import { ConfigError, type ForgeName, type ResolvedSettings } from "./config";
 import { pathOfRemote } from "./identities";
 import { PROW_CI } from "./prow-config";
 import { renderProwJobs, type ProwJobsInput, type RenderedProwJobs } from "./render-prow";
+import { planEnv } from "./product-plan";
 
 const git = (repo: string, ...args: string[]): string => {
   try {
@@ -36,7 +37,7 @@ export function prowDefaultBranch(repo: string): string {
 export function prowPipeline(
   repo: string,
   settings: ResolvedSettings,
-  o: Omit<ProwJobsInput, "repo" | "defaultBranch" | "prow" | "env" | "drift"> & { forge: ForgeName; plain: boolean },
+  o: Omit<ProwJobsInput, "repo" | "defaultBranch" | "prow" | "env" | "drift" | "planEnv"> & { forge: ForgeName; plain: boolean },
 ): RenderedProwJobs {
   try {
     resolveForgeCi({ forge: o.forge, ci: PROW_CI });
@@ -56,5 +57,6 @@ export function prowPipeline(
     prow: settings.prow,
     env: settings.env,
     ...(settings.drift ? { drift: settings.drift } : {}),
+    ...(settings.promotion?.length ? { planEnv: planEnv(settings.promotion) } : {}),
   });
 }

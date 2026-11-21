@@ -62,7 +62,7 @@ import { GL_ROOT_FILE, gitlabCi } from "./gitlab-ci";
 import { resolveControl } from "./control-repo";
 import { EPHEMERAL_PATHS, MARKER, PIPELINE_PATHS, RenderError, renderPipeline, REQUEST_PATHS, RESUME_PATHS, resumeCron, ROLLOUT_PATHS, type PipelineInput } from "./render";
 import { prowPipeline } from "./init-prow";
-import { PLAN_NOTES_CRON, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR } from "./product-plan";
+import { PLAN_NOTES_CRON, PLAN_NOTES_SCHEDULE, PLAN_NOTES_VAR, planEnv } from "./product-plan";
 import { COMPONENTS_PATH, componentsDecl, componentsJson, componentsWrittenByTerragucci } from "./components-decl";
 import { terragruntInstalls } from "./render-terragrunt";
 import { pinnedTool, rootPin, VERSION_FILES, versionFileRelease, versionGlobs } from "./pins";
@@ -467,6 +467,8 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(control ? { control } : {}),
     // promotion: the merge's last wave cuts a release under the forge-checks gate chant.config.ts sets, which reads the commit's checks.
     ...(settings.promotion?.length && settings.release?.cut !== false ? { releaseCut: true } : {}),
+    // promotion: chant.config.ts declares only its environments, and a pull request plans the change the merge applies to the first.
+    ...(settings.promotion?.length ? { planEnv: planEnv(settings.promotion) } : {}),
     // Every job runs the shape's prepare before it reads the roots; an Atmos repo's jobs install Atmos for it.
     ...(shape.prepare ? { synth: shape.prepare } : {}),
     ...(atmos ? { atmos: { version: atmos.version } } : {}),

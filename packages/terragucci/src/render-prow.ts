@@ -87,6 +87,8 @@ export interface ProwJobsInput {
   check: { rootPins?: boolean; generate?: boolean; sources?: boolean; mirror?: boolean; parallelism?: number; synth?: string };
   report: PlanReportInput;
   drift?: string;
+  /** The environment `plan-handoff` and `pr-post` name (./product-plan.ts `planEnv`); unset, `default`. */
+  planEnv?: string;
 }
 
 export interface RenderedProwJobs {
@@ -194,6 +196,7 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
   const untrusted = { cluster: prow.cluster ?? "default", ...(prow.namespace ? { namespace: prow.namespace } : {}) };
   const install = input.install ? [installScript(input.install.binary, input.install.version, "github", true)] : [];
   const layerArg = layers.map((l) => l.join(",")).join(";");
+  const planEnvName = input.planEnv ?? PLAN_ENV;
 
   // ── checks, before merge, no credential ───────────────────────────────────
   const c = input.check;
@@ -225,7 +228,7 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
       // The plan runs the change's code: it runs in a shell without the token.
       "(",
       `unset ${TOKEN_VAR} TG_TOKEN`,
-      onProw(planVerbScript(binary, layers, "github", input.report)),
+      onProw(planVerbScript(binary, layers, "github", input.report, { env: planEnvName })),
       ") && tg_rc=0 || tg_rc=$?",
     ];
     if (when === "presubmit") {
@@ -233,10 +236,10 @@ export function renderProwJobs(input: ProwJobsInput): RenderedProwJobs {
         ...exportEnv(noteEnv(image)),
         'export CHANT_PLAN_NOTE_NOTICES="$(mktemp)"',
         `TG_TOKEN="$${TOKEN_VAR}" terragucci plan-note --forge github --report ${REPORT_DIR} --notices "$CHANT_PLAN_NOTE_NOTICES" || true`,
-        `terragucci components pr-post --pr "$PULL_NUMBER" --head "$PULL_PULL_SHA" --env ${PLAN_ENV} --output ${REPORT_DIR} --forge github --result "$([ "$tg_rc" -eq 0 ] && echo success || echo failure)" --context ${PLAN_NAMES.statusContext}`,
+        `terragucci components pr-post --pr "$PULL_NUMBER" --head "$PULL_PULL_SHA" --env ${planEnvName} --output ${REPORT_DIR} --forge github --result "$([ "$tg_rc" -eq 0 ] && echo success || echo failure)" --context ${PLAN_NAMES.statusContext}`,
       );
     } else if (prow.plan_before_merge) {
-      lines.push(`terragucci components pr-post --stale --tip "$GITHUB_SHA" --env ${PLAN_ENV} --forge github --context ${PLAN_NAMES.statusContext} --preview-comment || true`);
+      lines.push(`terragucci components pr-post --stale --tip "$GITHUB_SHA" --env ${planEnvName} --forge github --context ${PLAN_NAMES.statusContext} --preview-comment || true`);
     }
     lines.push('exit "$tg_rc"');
     return lines.join("\n");
