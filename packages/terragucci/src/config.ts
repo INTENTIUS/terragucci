@@ -409,7 +409,8 @@ export interface AtmosSettings {
  */
 export const RESPONSES = {
   plan: ["summary"],
-  "wave-refused": ["diff", "off"],
+  /** summary: chant's note on a refused wave carries a model's summary above the diff, with `agent.wave-refused`'s settings. */
+  "wave-refused": ["diff", "summary", "off"],
   "apply-failed": ["triage", "off"],
   drift: ["pull-request", "attribute", "off"],
   tips: ["pull-request", "off"],
@@ -469,6 +470,27 @@ export interface DashboardSettings {
 
 export const DASHBOARD_KEYS = ["dir", "prometheus", "tempo", "folder", "path", "drift_age", "wave_wait", "schedule"] as const;
 export const DASHBOARD_DURATION_KEYS = ["drift_age", "wave_wait", "schedule"] as const;
+
+/**
+ * `agent.wave-refused`: the model chant's refused-wave note runs with
+ * `respond.wave-refused: summary` (chant's `waveSummary`). Read with
+ * `summary` only. The model gets the diff on stdin and its key alone.
+ */
+export interface WaveRefusedAgentSettings {
+  /** The model's command line, prompt on stdin and summary on stdout. Default: chant's review command with `--output-format json`. */
+  command?: string;
+  /** The secret holding the model's key. Default `ANTHROPIC_API_KEY`. */
+  key_secret?: string;
+  /** Minutes the command may run. Default 10. */
+  timeout?: number;
+  /** The most summaries a day. */
+  max_runs?: number;
+  /** The most US dollars the summaries may cost a day. */
+  max_cost_usd?: number;
+}
+
+/** The settings of `agent.wave-refused`. */
+export const AGENT_WAVE_REFUSED_KEYS = ["command", "key_secret", "timeout", "max_runs", "max_cost_usd"] as const;
 
 /**
  * `agent.comment`: the `/terragucci agent <ask>` pull request comment, off
@@ -1014,7 +1036,7 @@ export interface ProjectSettings {
    * can comment, push a branch and open a pull request; the agent itself never
    * holds it.
    */
-  agent?: { via: (typeof AGENT_VIA)[number]; token_env: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings; alert?: boolean | AgentFactsSettings; "apply-failed"?: boolean | AgentFactsSettings; schedule?: AgentScheduleSettings };
+  agent?: { via?: (typeof AGENT_VIA)[number]; token_env?: string; login?: string; comment?: boolean | AgentCommentSettings; drift?: boolean | AgentCommentSettings; alert?: boolean | AgentFactsSettings; "apply-failed"?: boolean | AgentFactsSettings; schedule?: AgentScheduleSettings; "wave-refused"?: WaveRefusedAgentSettings };
   /** The AI review of a pull request's intent against its plan; see ReviewSettings. Off when absent. */
   review?: ReviewSettings;
   /** The typed-decision service; see DecideSettings. Off when absent. A project's `decide` replaces the defaults' whole. */
@@ -1701,11 +1723,16 @@ function checkSettings(s: unknown, where: string, problems: string[]): void {
     if (!isObject(a)) problems.push(`${where}.agent must be a map with via and token_env`);
     else {
       for (const k of Object.keys(a)) if (!AGENT_KEYS.includes(k)) problems.push(`${where}.agent.${k} is not a setting (settings: ${AGENT_KEYS.join(", ")})`);
-      if (a.login !== undefined && (typeof a.login !== "string" || !AGENT_LOGIN.test(a.login))) problems.push(`${where}.agent.login must be the forge login the agent's token acts as`);
-      if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
-      else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
-      else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
-      if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
+      if (a["wave-refused"] !== undefined) checkWaveRefusedAgent(a["wave-refused"], `${where}.agent.wave-refused`, problems);
+      // agent.wave-refused alone needs no forge token: chant posts the note with the wave job's own.
+      const forgeAgent = Object.keys(a).some((k) => k !== "wave-refused");
+      if (forgeAgent) {
+        if (a.login !== undefined && (typeof a.login !== "string" || !AGENT_LOGIN.test(a.login))) problems.push(`${where}.agent.login must be the forge login the agent's token acts as`);
+        if (a.via === undefined) problems.push(`${where}.agent.via is missing; use forge`);
+        else if (a.via === "fountain") problems.push(`${where}.agent.via: fountain is not supported; the agent runs in a forge job, so use forge`);
+        else oneOf(a.via, AGENT_VIA, `${where}.agent.via`, problems);
+        if (typeof a.token_env !== "string" || a.token_env === "") problems.push(`${where}.agent.token_env must name the variable holding the agent's forge token`);
+      }
       if (a.comment !== undefined) checkAgentComment(a.comment, a.token_env, `${where}.agent.comment`, problems);
       if (a.alert !== undefined) checkAgentComment(a.alert, a.token_env, `${where}.agent.alert`, problems, "alert");
       if (a["apply-failed"] !== undefined) checkAgentComment(a["apply-failed"], a.token_env, `${where}.agent.apply-failed`, problems, "apply-failed");
@@ -1748,7 +1775,7 @@ export const TELEMETRY_KEYS = ["headers_secret", "trace_url"];
 export const TOKEN_PROTECTION_KEYS = ["token"];
 export const COST_KEYS = ["key_secret", "command", "approve_above"];
 export const PASS_KEYS = ["secrets", "vars"];
-export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift", "alert", "apply-failed", "schedule"];
+export const AGENT_KEYS = ["via", "token_env", "login", "comment", "drift", "alert", "apply-failed", "schedule", "wave-refused"];
 
 /** A forge login, as `agent.login` takes it. */
 export const AGENT_LOGIN = /^[A-Za-z0-9][A-Za-z0-9._-]*(\[bot\])?$/;
@@ -2467,6 +2494,19 @@ export function policySourceOf(policy: { source?: string; path?: string }): Gate
 }
 
 export const SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** `agent.wave-refused`: a map of AGENT_WAVE_REFUSED_KEYS, each optional. */
+function checkWaveRefusedAgent(c: unknown, where: string, problems: string[]): void {
+  if (!isObject(c)) {
+    problems.push(`${where} must be a map (settings: ${AGENT_WAVE_REFUSED_KEYS.join(", ")})`);
+    return;
+  }
+  for (const k of Object.keys(c)) if (!(AGENT_WAVE_REFUSED_KEYS as readonly string[]).includes(k)) problems.push(`${where}.${k} is not a setting (settings: ${AGENT_WAVE_REFUSED_KEYS.join(", ")})`);
+  if (c.command !== undefined && (typeof c.command !== "string" || c.command.trim() === "" || /[\r\n]/.test(c.command))) problems.push(`${where}.command must be one command line that reads the prompt on stdin`);
+  if (c.key_secret !== undefined && !(typeof c.key_secret === "string" && SECRET_NAME.test(c.key_secret))) problems.push(`${where}.key_secret must name the secret holding the model's API key, such as ANTHROPIC_API_KEY`);
+  for (const k of ["timeout", "max_runs"] as const) if (c[k] !== undefined && !(Number.isInteger(c[k]) && (c[k] as number) >= 1)) problems.push(`${where}.${k} must be a whole number of 1 or more`);
+  if (c.max_cost_usd !== undefined && !(typeof c.max_cost_usd === "number" && Number.isFinite(c.max_cost_usd) && c.max_cost_usd > 0)) problems.push(`${where}.max_cost_usd must be a number of US dollars above 0`);
+}
 
 /** `agent.comment`: true, false, or a map of AGENT_COMMENT_KEYS. Its token is `agent.token_env`, read as a secret of that name. `agent.alert`, `agent.apply-failed` and `agent.schedule` add keys (AGENT_FACTS_KEYS, AGENT_SCHEDULE_KEYS). */
 function checkAgentComment(c: unknown, tokenEnv: unknown, where: string, problems: string[], kind: "comment" | "alert" | "apply-failed" | "schedule" = "comment"): void {

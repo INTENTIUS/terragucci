@@ -37,6 +37,7 @@
  */
 import { fetchGatePolicySource } from "@intentius/chant/policy-source";
 import type { WorkspaceTree } from "@intentius/chant/workspace/tree";
+import type { PolicyCost as ChantPolicyCost } from "@intentius/chant/ci-product";
 import type { PolicyReview } from "../review-agent";
 import type { Actor } from "../actor";
 import { spawn, spawnSync } from "node:child_process";
@@ -240,10 +241,13 @@ export interface PolicyCostFigures {
   past_monthly_total: number | null;
 }
 
-/** What a policy reads as `input.cost`: the root's monthly cost, its wave's, and `cost.approve_above` at base. */
-export interface PolicyCost {
-  estimator: string;
-  currency: string;
+/**
+ * What a policy reads as `input.cost`: chant's record (`monthlyDelta`,
+ * `approveAbove`, `members`, `member`, ...), and beside it, for one release,
+ * terragucci's own snake_case fields: the root's monthly cost, its wave's,
+ * and `cost.approve_above` at base (../cost.ts).
+ */
+export interface PolicyCost extends ChantPolicyCost {
   root: PolicyCostFigures;
   /** The wave the root applies in, with the sums over its roots estimated. Absent when the run cuts no waves. */
   wave?: PolicyCostFigures & { number: number };

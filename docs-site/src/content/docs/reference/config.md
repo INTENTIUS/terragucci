@@ -157,7 +157,7 @@ dashboards: true
 | `locks` | `apply` | `locks.when`, when a pull request locks the roots it reaches: `apply`, when `/terragucci apply` decides its head before merge; `plan`, from its first plan (GitHub and Forgejo); see [Plan locks](#plan-locks). `locks: plan` and `locks: apply`, with the value alone, are the earlier spelling, still read |
 | `waves` | none | `canary`, a list of roots that go out first, as wave 1; `after`, roots that apply after others they do not read (plain roots; see [Root order](#root-order)); `jobs`, the most jobs one wave's roots or units spread across, 1 when unset (not with `apply.when: pull-request`; see [A wide wave across jobs](/terragucci/concepts/waves-and-approvals/#a-wide-wave-across-jobs)); `compose`, `true` to plan and apply the roots a change reaches as one composed run beside the waves, `false` when unset (plain roots on `tofu` or `terraform`; see [A composed run](#a-composed-run)); `compose_max`, the most roots one composed run covers, a whole number of 2 or more, 10 when unset |
 | `notify` | none (off) | the secrets of a Slack (`slack`) or Teams (`teams`) incoming webhook, and `webhook` with `webhook_key` for a signed [`chant.notify/v1`](/terragucci/reference/notify-event/) event; an apply job posts a wave that waits, is refused or fails, and the drift job posts drift to Slack and Teams with a Re-plan button. A message approves nothing; see [Notify a chat channel](/terragucci/guides/notify-a-chat-channel/). `relay_name` (earlier spelling `relay`, still read): the name of [your relay](/terragucci/guides/approve-from-chat/), not a secret, with `relay_key`, the secret holding the key the buttons are signed with; a waiting wave's Slack message then carries Approve and Decline buttons, and its Teams card the reply that approves |
-| `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, and `command` runs another estimator that prints Infracost's JSON. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
+| `cost` | none (off) | a monthly cost estimate per root in the plan note: `true` runs Infracost in the plan job on the key in the secret `INFRACOST_API_KEY`; `key_secret` names another secret, which the plan and wave jobs get as `INFRACOST_API_KEY`, and `command` runs another estimator that prints Infracost's JSON. chant prices each root whose plan changes something. Each `tf-apply` wave prices its plans too, for the policy's `input.cost`, chant's record; `approve_above: <amount>`, read at base, makes a wave whose monthly change is over the amount wait for an approval whatever `gate` says ([Estimate the cost of a change](/terragucci/guides/estimate-cost/#hold-a-wave-over-an-amount)) |
 | `drift` | `false` (off) | `drift.schedule`, a cron schedule for `tf-drift`; `drift: "<cron>"`, with the schedule alone, is the earlier spelling, still read; see [Drift](/terragucci/reference/stages/#drift). A choudoufu root under live resource markers plans in full ([Live roots](/terragucci/guides/turn-on-drift-checks/#live-roots)) |
 | `rollouts` | `false` (off) | a cron schedule for the rollout job, which opens the next wave of each rollout in flight once the last applied; `respond.rollout: off` leaves it out. Written as a map, `schedule` is that cron and `watch` is a list of rules that start a rollout when a module or provider has a newer release: each names a `module` or a `provider` glob, `follow` (a list of `patch`, `minor` and `major`; default `patch` and `minor`) and `min_age` (a duration such as `3d`, the age a release reaches before it is picked up). `soak` is a duration such as `24h`, or a map of `after`, `conditions` (a list of `drift`, `apply` and `policy`) and `overrides` (rules naming a `module` or `provider` glob with their own `after` or `conditions`): the next wave opens only once that long has passed since the wave before it merged, and the conditions hold. A person skips it with the comment `/terragucci skip-soak`; see [Wait between waves](/terragucci/guides/roll-out-a-module-version/#wait-between-waves). Not in a control repo; see [Roll out a new module version](/terragucci/guides/roll-out-a-module-version/) for its token and the GitLab schedule, and [Start a rollout when a release comes out](/terragucci/guides/roll-out-a-module-version/#start-a-rollout-when-a-release-comes-out) for the rules |
 | `templates` | none | apps from templates: `registry`, the registry URL whose release catalog lists the templates (default `modules.registry`'s); `apps`, the path of a requested app's root, with `{name}` in it (default `apps/{name}`); `require`, `signed` (the default: a signed or verified version) or `any`. With it, `init` writes the request workflow on GitHub and Forgejo; see [`terragucci request`](/terragucci/reference/cli/#request) |
@@ -194,7 +194,7 @@ dashboards: true
 | `modules.gitlab_token` | `GITLAB_TOKEN` | the secret a GitHub or Forgejo publish job passes as `GITLAB_TOKEN` when `modules.publish` names a `gitlab://` project; the token needs the `api` scope. On GitLab the job's own CI variables are used |
 | `tips` | `true` | advice on pins, lock files and rollout setup, in the report and the dry run |
 | `respond` | a response per event | how terragucci answers each pipeline event; see [Responses to pipeline events](/terragucci/reference/responses/) |
-| `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment), [`drift`](#the-drift-agent), and [`alert`, `apply-failed` and `schedule`](#agents-from-alerts-failed-applies-and-schedules) |
+| `agent` | none | `via` (`forge`), `token_env`, [`comment`](#the-agent-comment), [`drift`](#the-drift-agent), [`alert`, `apply-failed` and `schedule`](#agents-from-alerts-failed-applies-and-schedules), and [`wave-refused`](#the-refused-wave-summary) |
 | `evidence.identity` | none (nothing signed) | `oidc`: the jobs sign check evidence keyless, from each job's OIDC token. The plan note job signs `plan` and `policy`. Each wave signs `plan:wave-<k>`. A wave that trades cloud credentials signs in its own `apply-wave-<k>-evidence` job. On GitLab the `plan-evidence` job signs in the plan notes pipeline. `init` writes `.chant/trust.json` with the workflow's identity, the ref gate's rule for the default branch and a `pre-push` hook. See [Signed checks](/terragucci/reference/pipeline/#signed-checks) |
 | `evidence.audience` | `sigstore` | with `identity`: the OIDC token's audience |
 | `evidence.runner_key_secret` | none | the secret (GitHub, Forgejo) or CI/CD variable (GitLab) that holds the runner key, in place of `identity`. `.chant/trust.json` lists its public half under `runners` |
@@ -565,7 +565,7 @@ notify-done:
 | Forgejo | under `jobs:` in `.forgejo/workflows/terragucci.yml` |
 | GitLab | at the top level of `.gitlab/terragucci.yml`, which `.gitlab-ci.yml` includes |
 
-Each job keeps every key and value the file gives it in the forge's own syntax; comments in the file are dropped, and `init` checks only the job's name. A name terragucci gives one of its own jobs is refused, and so is a GitLab keyword such as `variables`. Since they share terragucci's run, `needs` may name a wave's job and an artifact download reads that run's reports. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) adds its job this way, and [Run your pre-commit hooks in CI](/terragucci/guides/run-pre-commit-hooks/#a-job-of-your-own) shows a pre-commit job.
+Each job keeps every key and value the file gives it in the forge's own syntax; comments in the file are dropped, and `init` checks only the job's name. A name terragucci gives one of its own jobs is refused, and so is a GitLab keyword such as `variables`. Since they share terragucci's run, `needs` may name a wave's job and an artifact download reads that run's reports. [Run your pre-commit hooks in CI](/terragucci/guides/run-pre-commit-hooks/#a-job-of-your-own) shows a pre-commit job.
 
 ## Plan locks
 
@@ -694,6 +694,30 @@ Each takes the keys of [the agent comment](#the-agent-comment) (`command`, `key_
 | `task` | required | `schedule`: what the agent does on each run, at most 4000 characters |
 
 `alert: true` and `apply-failed: true` take every default. `max_cost_usd` is the most the agent's runs may cost per day. `agent.apply-failed` turns on the apply waves' failed-apply facts and leaves the triage comment as it is. With `apply.when: pull-request` the gate and record jobs of the split waves record the facts. [The jobs](/terragucci/reference/pipeline/#agents-from-alerts-failed-applies-and-schedules).
+
+## The refused-wave summary
+
+`respond.wave-refused: summary` puts a model's summary above the diff in the note chant posts when a wave applies nothing because its plans moved after their approval. `agent.wave-refused` sets the model; it needs no `via` or `token_env`, since the note goes out with the wave job's own token. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) sets it up.
+
+```yaml
+respond:
+  wave-refused: summary
+agent:
+  wave-refused:
+    key_secret: ANTHROPIC_API_KEY
+    max_runs: 10
+    max_cost_usd: 5
+```
+
+| Key | Default | What it does |
+|---|---|---|
+| `command` | chant's review command with `--output-format json` | the model's command line; it reads the prompt on stdin and prints the summary |
+| `key_secret` | `ANTHROPIC_API_KEY` | the secret (GitHub, Forgejo) or CI/CD variable (GitLab) holding the model's key, the one secret the command gets |
+| `timeout` | 10 | minutes the command may run |
+| `max_runs` | none | the most summaries a day |
+| `max_cost_usd` | none | the most US dollars the summaries may cost a day |
+
+These are chant's `agent.wave-refused` keys, written into the waves' spec as `waveSummary`, and the wave jobs carry them as `CHANT_WAVE_SUMMARY_*` variables. They are read under `summary` only. A summary that cannot run, fails or is past a limit leaves the diff alone and the note says the summary was skipped. The summary approves nothing and changes no exit code.
 
 ## The review
 

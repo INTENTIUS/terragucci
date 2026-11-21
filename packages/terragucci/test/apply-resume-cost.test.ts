@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APPLIED_PATH, applyWave, parseApplied, parseLedger } from "../src/apply";
 import type { PolicyExec } from "../src/report/policy";
-import type { CostRunner } from "../src/report/cost";
+import type { CostRunner } from "../src/cost";
 import { git, write } from "./helpers";
 import { T, FAKE, setup, approve } from "./apply-helpers";
 
@@ -113,7 +113,7 @@ describe("a wave behind its gate", () => {
 
   describe("cost.approve_above", () => {
     const yml = (amount: number) => `gate: never\ncost:\n  command: node cost.mjs\n  approve_above: ${amount}\n`;
-    const priced = (delta: number): CostRunner => async () => ({ code: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
+    const priced = (delta: number): CostRunner => () => ({ status: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
     const opts = (bin: string, delta: number) => ({ wave: 1, layers: [["a"]], binary: bin, gate: "never" as const, env: {}, costRunner: priced(delta) });
     const report = (work: string) => JSON.parse(readFileSync(join(work, "terragucci-report", "report.json"), "utf-8"));
 
@@ -124,7 +124,7 @@ describe("a wave behind its gate", () => {
       expect(existsSync(log)).toBe(false);
       const text = out.mock.calls.flat().join("\n");
       expect(text).toContain("the monthly cost changes by +20.00 USD, over cost.approve_above 15.00 USD in the config at ");
-      expect(text).toMatch(/over cost\.approve_above 15\.00 USD in the config at [0-9a-f]+, so it waits for an approval/);
+      expect(text).toMatch(/over cost\.approve_above 15\.00 USD in the config at [0-9a-f]+, so chant's cost hold makes it wait for an approval/);
       const pending = parseLedger(git(origin, "show", "chant/lifecycle:_gates/tf-apply.jsonl")).pending[0]!;
       expect(pending.members!.map((m) => m.member)).toEqual(["a", "(monthly cost)"]);
       expect(report(work).waves[0]).toMatchObject({ approval: "waiting", cost: { monthly_delta: 20, approve_above: 15, over: true } });
@@ -181,7 +181,7 @@ describe("a wave behind its gate", () => {
       const { work, bin } = setup({ "terragucci.yml": "gate: never\n" });
       vi.spyOn(console, "log").mockImplementation(() => {});
       let ran = 0;
-      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1), costRunner: async () => (ran++, { code: 1, stdout: "", stderr: "" }) })).toBe(0);
+      expect(await applyWave(work, { wave: 1, layers: [["a"]], binary: bin, gate: "never", env: {}, now: T(1), costRunner: () => (ran++, { status: 1, stdout: "", stderr: "" }) })).toBe(0);
       expect(ran).toBe(0);
       expect(report(work).cost).toBeUndefined();
     });

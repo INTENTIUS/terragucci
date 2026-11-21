@@ -51,7 +51,7 @@ import { INVENTORY_SCHEMA, type Inventory } from "./report/inventory";
 import { VERSIONS_SCHEMA, type Versions } from "./report/versions";
 import { readStateVersions, type StateVersions } from "./report/state-versions";
 import { readStateEdges, type StateEdges } from "./report/state-edges";
-import { RUN_SCHEMA, runViewKey, type RunView } from "./report/run-view";
+import { isRunView, runViewKey, type RunView } from "./report/run-view";
 import { changesKey, edgesKey, inventoryKey, statesKey, versionsKey, reportsBase, type IndexEntry, type ReportIndex } from "./report/store";
 import { buildDora, DORA_FILE, doraGauges, duration, spanLabel, type Dora } from "./report/dora";
 import { buildPolicyMetrics, POLICY_METRICS_FILE, type PolicyMetrics } from "./report/policy-metrics";
@@ -174,8 +174,8 @@ async function readRunOf(store: ObjectStore, project: string, rows: IndexEntry[]
   try {
     const text = await store.get(`${runViewKey(project, last.commit, prefix)}/run.json`);
     if (text === undefined) return undefined;
-    const parsed = JSON.parse(text) as Partial<RunView>;
-    return parsed.schema === RUN_SCHEMA && Array.isArray(parsed.roots) && Array.isArray(parsed.waves) ? (parsed as RunView) : undefined;
+    const parsed: unknown = JSON.parse(text);
+    return isRunView(parsed) && Array.isArray(parsed.roots) ? parsed : undefined;
   } catch (e) {
     if (e instanceof StoreError || e instanceof TypeError || e instanceof SyntaxError) return undefined;
     throw e;

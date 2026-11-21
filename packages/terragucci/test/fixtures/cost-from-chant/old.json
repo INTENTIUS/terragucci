@@ -1,0 +1,74 @@
+{
+  "cost": {
+    "estimator": "infracost",
+    "currency": "USD",
+    "monthly_delta": 15,
+    "monthly_total": 20,
+    "past_monthly_total": 5,
+    "roots": [
+      {
+        "root": "app",
+        "monthly_delta": 20,
+        "monthly_total": 20,
+        "past_monthly_total": 0,
+        "output": "roots/app/cost.json"
+      },
+      {
+        "root": "old",
+        "monthly_delta": -5,
+        "monthly_total": 0,
+        "past_monthly_total": 5,
+        "output": "roots/old/cost.json"
+      },
+      {
+        "root": "broken",
+        "monthly_delta": null,
+        "monthly_total": null,
+        "past_monthly_total": null,
+        "error": "the estimator exited 1: Error: no API key"
+      }
+    ]
+  },
+  "outputs": {
+    "app": "{\"version\":\"0.2\",\"currency\":\"USD\",\"totalMonthlyCost\":\"20\",\"pastTotalMonthlyCost\":\"0\",\"diffTotalMonthlyCost\":\"20\",\"projects\":[]}\n",
+    "old": "{\"version\":\"0.2\",\"currency\":\"USD\",\"totalMonthlyCost\":\"0\",\"pastTotalMonthlyCost\":\"5\",\"diffTotalMonthlyCost\":\"-5\",\"projects\":[]}\n"
+  },
+  "waveCosts": [
+    {
+      "currency": "USD",
+      "monthly_delta": 15,
+      "monthly_total": 20,
+      "past_monthly_total": 5,
+      "approve_above": 15,
+      "over": false
+    },
+    {
+      "currency": "USD",
+      "monthly_delta": null,
+      "monthly_total": null,
+      "past_monthly_total": null,
+      "unestimated": [
+        "broken"
+      ],
+      "approve_above": 15,
+      "over": true
+    }
+  ],
+  "policy": {
+    "estimator": "infracost",
+    "currency": "USD",
+    "root": {
+      "monthly_delta": 20,
+      "monthly_total": 20,
+      "past_monthly_total": 0
+    },
+    "wave": {
+      "number": 1,
+      "monthly_delta": 15,
+      "monthly_total": 20,
+      "past_monthly_total": 5
+    },
+    "approve_above": 15
+  },
+  "gate": "Against `cost.approve_above` at base, 15.00 USD a month: wave 1 +15.00 USD, within it; wave 2 not estimated for broken, over it: it waits for an approval whatever the gate."
+}

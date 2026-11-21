@@ -130,7 +130,9 @@ import { checkPlans, configAtBase, governingPolicy, type PolicyOptions } from ".
 import { binaryText, type Report, type ReportCost, type ReportPolicy, type ReportRead, type ReportRootBinary, type ReportRootPolicy, type ReportRecordVersions, type ReportStateVersion, type ReportWave, type ReportWaveCost, type WaveState } from "./report/schema";
 import { liveEstate } from "./tips/secrets";
 import { RootBinaries, type Installer, type RootBinary } from "./pins";
-import { approveAbove, costCommand, costMember, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRunner } from "./report/cost";
+import { defaultGatePolicyExec, type GatePolicyExec } from "@intentius/chant/gate-policy";
+import { approveAbove, costExec, costHold, costHoldEnv, costReason, isCostArgv, costRule, estimateRoots, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, writeCostFiles, type CostRunner } from "./cost";
+import type { CostEstimate } from "@intentius/chant/ci-product";
 import { affectedRoots, artifactReportUrl, eachLimited, oneAtATime, outsideRoots, reportCompose, reportLinks, rootCacheEnv, rootsParallelism, runFacts, type Turn } from "./report/stage";
 import { uploadReport, writeReportDir } from "./report/store";
 import { uploadRosters, waveRosters, type Roster, type RosterWrite } from "./report/roster";
@@ -679,6 +681,10 @@ interface PlannedRoot {
   env: NodeJS.ProcessEnv;
   member?: WaveMember;
   plan?: unknown;
+  /** The engine's plan document chant's step wrote (`artifact.planJson`), which the cost estimate reads. */
+  planJson?: string;
+  /** chant's plan file says the plan changes nothing, so chant's cost hold prices it not. */
+  planEmpty?: boolean;
   changes: number;
   destroys: number;
   summary: string;
@@ -1200,7 +1206,7 @@ function stepPlannedRoot(repo: string, options: ApplyWaveOptions, w: WaveRun, ru
   // Timed by the hook around the engine's commands (waveCapabilities); a root it saw no command of is timed as nothing.
   const timing = w.observer.timed(run.target);
   if (timing.end === undefined) w.observer.endRoot(timing);
-  let file: { artifact?: { planFile?: string }; changeSet?: { entries?: { action: string }[] } } = {};
+  let file: { artifact?: { planFile?: string }; changeSet?: { entries?: { action: string }[] }; empty?: boolean } = {};
   try {
     file = JSON.parse(readFileSync(join(repo, run.plan), "utf-8")) as typeof file;
   } catch {
@@ -1221,6 +1227,8 @@ function stepPlannedRoot(repo: string, options: ApplyWaveOptions, w: WaveRun, ru
     ...base,
     member: { member: run.target, planDigest: run.planDigest },
     plan,
+    ...(run.planJson ? { planJson: run.planJson } : {}),
+    ...(file.empty === true ? { planEmpty: true } : {}),
     changes: changed.length,
     destroys: changed.filter((e) => e.action === "delete" || e.action === "replace").length,
     summary: stepSummary(entries),
@@ -1581,7 +1589,7 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
         w.changedRoots = planned.filter((p) => changesSomething(p.plan)).map((p) => p.root).sort();
         if (planned.every((p) => p.changes === 0)) facts.nothing = true;
         if (deciding) {
-          const unpriced = await priceWave(repo, options, { label: j.label, settings, configPath: ctx.configPath, work: ctx.work }, planned, w);
+          const unpriced = await chantWaveCost(repo, options, { label: j.label, settings, configPath: ctx.configPath, work: ctx.work }, planned, w);
           if (unpriced !== undefined) {
             j.code = unpriced;
             throw new Error("cost.approve_above could not be read at base");
@@ -1653,11 +1661,11 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       // The policy's hold and allow_unattended rules, over the plans that change something (policy.outcomes at base).
       const ruled = changes > 0 ? waveRules(repo, ctx, j, changing, gate, destroys > 0) : undefined;
       if (ruled?.held) holds.push(ruled.outcome === "held" ? `the policy holds it for an approval (${w.policyGate?.rules.join(", ") ?? "hold"})` : `gate ${gate} holds it, and the policy does not let every root through`);
-      if (changes > 0 && w.waveCost?.over === true) {
-        console.log(`${label}: ${costReason(w.waveCost, w.costSource)}, so it waits for an approval`);
-        holds.push(costReason(w.waveCost, w.costSource));
-      }
-      const priced = costMember(w.waveCost);
+      // cost.approve_above at base: chant's holds.cost holds the wave and adds the cost to its digest. The member here is the one
+      // chant's verdict gives on the same estimate, for the report's digest, the pending fact and a review's digest.
+      const costHeld = changes > 0 && w.costHold !== undefined && w.waveCost !== undefined;
+      if (costHeld) console.log(`${label}: ${costReason(w.waveCost!, w.costSource)}, so chant's cost hold makes it wait for an approval`);
+      const priced = w.costMember;
       // The digest chant decides, as it takes it over the plans that change something and the cost: the stored report names it.
       const members = plans.filter((p) => p.member).map((p) => p.member!);
       const moving = new Set(changing.map((p) => p.root));
@@ -1666,11 +1674,12 @@ function stepAfterPlan(s: StepContext): import("@intentius/chant/op").OpWaveAfte
       const commit = jobCommit(env, repo);
       const roots = w.roots ?? [];
       // Only a gate that decides takes the approvals settled before it: under gate never with nothing holding, none is read.
-      const approvals = changes > 0 && w.digest && (gate !== "never" || holds.length > 0 || heldBySteps.length > 0) ? await stepGateApprovals(s, j, w.digest, plans) : [];
+      const approvals = changes > 0 && w.digest && (gate !== "never" || holds.length > 0 || costHeld || heldBySteps.length > 0) ? await stepGateApprovals(s, j, w.digest, plans) : [];
       return {
         // The pending fact names the members it asks approval for, as the respond job reads them.
         pending: { description: `${label}: ${(s.units ? changing.map((p) => p.root) : roots).join(", ")}`, ...(commit ? { commit } : {}), members: [...members.filter((m) => moving.has(m.member)), ...(priced && changing.length > 0 ? [priced] : [])] },
-        ...(s.migrationMembers.length || (priced && changing.length > 0) ? { members: [...s.migrationMembers, ...(priced && changing.length > 0 ? [priced] : [])] } : {}),
+        // chant's holds.cost adds the cost member itself, so the hook names only the migrations' members.
+        ...(s.migrationMembers.length ? { members: [...s.migrationMembers] } : {}),
         ...(changes > 0 ? { holds } : {}),
         ...(approvals.length ? { approvals } : {}),
         ...(j.overriders?.length ? { overriders: j.overriders, overridersSource: "policy.override in the config" } : {}),
@@ -1733,7 +1742,7 @@ async function stepGateApprovals(s: StepContext, j: WaveJob, digest: string, pla
   if (rule.mode !== "pr-review" && rule.mode !== "prow-labels") return [];
   // Under pr-review the merged pull request's approval of its head counts, when it reviewed these plans.
   const sha = jobCommit(env, repo);
-  const priced = costMember(w.waveCost);
+  const priced = w.costMember;
   const changesDigest = reviewDigest(plans.filter((p) => p.member).map((p) => ({ member: p.member!.member, planDigest: p.member!.planDigest, plan: p.plan })), priced ? [priced] : []);
   // Under prow-labels the merged pull request's lgtm and approved labels count, when the note on its head showed these plans (./prow-labels.ts).
   if (rule.mode === "prow-labels") {
@@ -1896,7 +1905,10 @@ async function runStepWave(
     involved: { ...(agent ? { agents: [agent] } : {}), exclude: true as const },
     ...(rule?.approvalRules?.length && !rule.point ? { quorum: rule.approvalRules } : {}),
   };
+  // cost.approve_above at base: chant's holds.cost prices the wave and holds it over the amount (an unreadable base fails the wave in its after-plan hook).
+  const costAt = await costRule(repo, settings.cost, at.base, ctx.configPath ? { config: ctx.configPath } : {});
   const spec = wavesStepSpec({
+    ...(costAt.setting && costAt.approveAbove !== undefined && !costAt.error ? { cost: costHold(costAt.setting, costAt.approveAbove, costHoldEnv(settings)) } : {}),
     ...(Object.keys(workspaces).length ? { workspaces } : {}),
     ...(Object.keys(dirs).length ? { dirs } : {}),
     ...(Object.keys(reads).length ? { reads } : {}),
@@ -1986,6 +1998,8 @@ async function runStepWave(
     inProcessHooks: servedHooks(repo, options, ctx, jobOf),
     afterPlan: stepAfterPlan(s),
     runHooks: stepRunHooks(s),
+    // A test's estimator, for chant's cost hold as for terragucci's own estimate; every other hold command runs as chant runs it.
+    ...(options.costRunner ? { holdExec: testHoldExec(options.costRunner, env) } : {}),
     log: (line) => console.log(line),
   });
   } catch (e) {
@@ -2536,6 +2550,13 @@ export interface WaveRun {
   costSource?: string;
   /** The estimator's output per root, kept beside the plans in the report. */
   costOutputs?: Map<string, string>;
+  /** chant's estimate of the wave's plans, which the policy reads as `input.cost`. */
+  estimate?: CostEstimate;
+  /** `cost.approve_above` at base. */
+  approveAbove?: number;
+  /** With `cost.approve_above`: chant's digest member for the wave's cost, and its hold line when the wave waits for it (opWaveCostVerdict). */
+  costMember?: WaveMember;
+  costHold?: string;
   /** Where the wave stands once it ended, for its report and the run view. */
   state?: WaveState;
   /** A wave split across jobs that decided: how many share jobs apply it. */
@@ -3000,26 +3021,33 @@ function migrationProgress(w: WaveRun, bucket: Awaited<ReturnType<typeof migrati
 }
 
 /** What the policy and the gate read of a wave's plans: a plain root's, or a Terragrunt unit's. */
-type WavePlan = Pick<PlannedRoot, "root" | "plan" | "member" | "error" | "applyError" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
+type WavePlan = Pick<PlannedRoot, "root" | "plan" | "planJson" | "planEmpty" | "member" | "error" | "applyError" | "policy" | "cone"> & { bin?: ReportRootBinary; steps?: ReportStep[] };
+
+/** `holdExec` for a test that gives its own estimator: chant's cost hold runs it on terragucci's cost argv, and anything else as chant would. */
+function testHoldExec(run: CostRunner, env: NodeJS.ProcessEnv): GatePolicyExec {
+  return (argv, cwd) => (isCostArgv(argv) ? run(argv, env, cwd) : defaultGatePolicyExec(argv, cwd));
+}
 
 /**
- * Price a wave's plans, with `cost` set (at the checkout or at base): the
- * estimator over each plan, redacted as the report keeps it, as tf-plan runs
- * it. `cost.approve_above` is read at base: `--base`, else the commit before
- * the one applied, so a change cannot raise the amount its own apply is
- * judged by. Leaves the figures on the wave for the policy, the gate and the
- * report. Returns the exit code when the amount cannot be read, so whether
- * the wave waits cannot be decided; undefined to go on. An estimate that
- * fails fails nothing; under an amount the wave then waits.
+ * chant's cost estimate of a wave's plans, with `cost` set (at the checkout
+ * or at base), through ../cost.ts, for the report and terragucci's policy:
+ * chant's hook hands the product no estimate of its own. With
+ * `cost.approve_above` at base (`--base`, else the commit before the one
+ * applied) the spec's `holds.cost` holds the wave; the verdict here, on the
+ * same figures, gives the digest member the report and the pending fact
+ * name. Leaves the record on the wave for the policy and the report. Returns the exit code when the amount
+ * cannot be read, so whether the wave waits cannot be decided; undefined to
+ * go on. An estimate that fails fails nothing; under an amount the wave
+ * then waits.
  */
-async function priceWave(
+async function chantWaveCost(
   repo: string,
   options: ApplyWaveOptions,
   ctx: { label: string; settings: ResolvedSettings; configPath: string | undefined; work: string },
   planned: WavePlan[],
   w: WaveRun,
 ): Promise<number | undefined> {
-  const { label, settings, configPath, work } = ctx;
+  const { label, settings, configPath } = ctx;
   const env = options.env ?? process.env;
   const own = settings.cost;
   let base: string | undefined = options.base;
@@ -3042,13 +3070,25 @@ async function priceWave(
   }
   if (rule.note) console.log(`${label}: ${rule.note}`);
   if (!rule.setting) return undefined;
-  const stored = planned.filter((p) => p.plan !== undefined).map((p) => ({ root: p.root, json: JSON.stringify(redactPlan(p.plan).plan) }));
-  if (stored.length === 0) return undefined;
-  const dir = mkdtempSync(join(work, "cost-"));
-  const estimate = await estimateCosts(stored, costCommand(rule.setting), env, dir, repo, (l) => console.log(`${label}: ${l}`), options.costRunner);
-  w.cost = estimate.cost;
-  w.costOutputs = estimate.outputs;
-  w.waveCost = waveCost(estimate.cost, planned.map((p) => p.root), rule.approveAbove);
+  // The roots chant's hold prices: those its plan file does not call empty.
+  const roots = planned.flatMap((p) => (p.plan !== undefined && p.planJson ? [{ root: p.root, planJson: p.planJson, empty: p.planEmpty === true }] : []));
+  if (!roots.some((r) => !r.empty)) return undefined;
+  // chant's hook hands the product no estimate, so the report and terragucci's policy price through chant's priceRuns here,
+  // which redacts the plan and drops the forge tokens; terragucci's exec scrubs its secrets: values and drops its own tokens.
+  const run = costExec(env, options.costRunner ? { run: options.costRunner } : {});
+  const estimate = estimateRoots(rule.setting, roots, repo, run.exec);
+  for (const m of estimate.members) console.log(`${label}: cost: ${m.member}: ${"error" in m ? `no estimate (${m.error})` : `${signed(m.monthlyDelta)} ${estimate.currency} a month`}`);
+  const names = planned.map((p) => p.root);
+  w.estimate = estimate;
+  w.cost = reportCostOf(estimate, run.outputs);
+  w.costOutputs = run.outputs;
+  w.waveCost = reportWaveCostOf(estimate, names, rule.approveAbove);
+  if (rule.approveAbove !== undefined) {
+    w.approveAbove = rule.approveAbove;
+    const verdict = waveCostVerdict(estimate, names, rule.approveAbove);
+    w.costMember = verdict.member;
+    if (verdict.hold) w.costHold = verdict.hold;
+  }
   if (rule.source) w.costSource = rule.source;
   return undefined;
 }
@@ -3344,7 +3384,7 @@ async function policyCheck(
   governing.policy = { ...governing.policy, outcomes: outcomes ?? ["deny"] };
   const runAt = runFacts(repo, policyEnv, settings.forge);
   // With cost on, each root's figures and its wave's: the policy reads the cost of what this wave applies.
-  const cost = (root: string) => (w.cost ? { cost: policyCost(w.cost, root, w.waveCost ? { number: wave, cost: w.waveCost } : undefined, w.waveCost?.approve_above) } : {});
+  const cost = (root: string) => (w.estimate ? { cost: policyCostOf(w.estimate, root, { number: wave, roots: planned.map((p) => p.root) }, w.approveAbove) } : {});
   // With review.agent on, the policy reads the review of the merged pull request's head as input.review.
   const review = settings.review?.agent ? await waveReview(repo, policyEnv, options, label, settings.forge) : undefined;
   const found = await checkPlans(repo, governing.policy, planned.map((p) => ({ path: p.root, plan: p.plan, ...cost(p.root) })), policyBaseRef, governing.trust, options.policy ?? {}, (l) => console.log(l), { stage: "tf-apply", project: runAt.project, commit: runAt.commit, actor: detectActor(repo, policyEnv, governing.policy.agents), ...(review ? { review } : {}) });

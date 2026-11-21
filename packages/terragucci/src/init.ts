@@ -47,6 +47,7 @@ import {
   type ResolvedSettings,
 } from "./config";
 import { detectBinary, detectForge, detectVersion, type RootReason } from "./detect";
+import type { WaveSummarySpec } from "@intentius/chant/ci-product";
 import { bucketLines, estateOf, liveRoots, setupLine, writtenRecordStore } from "@intentius/chant-lexicon-terraform/live-roots";
 import { checkStoreBucket, readLiveSetup } from "./live-setup";
 import type { PolicyExec } from "./report/policy";
@@ -192,6 +193,23 @@ export interface RootVersion {
 }
 
 /** `own_jobs`: the map itself, or the map the repo's YAML file at that path holds. */
+/**
+ * chant's `waveSummary` from `agent.wave-refused`, under `respond.wave-refused:
+ * summary` only: chant's refused-wave note then runs the model with these
+ * settings (each defaults in chant when unset).
+ */
+export function waveSummaryOf(settings: Pick<ResolvedSettings, "respond" | "agent">): WaveSummarySpec | undefined {
+  if (settings.respond?.["wave-refused"] !== "summary") return undefined;
+  const a = settings.agent?.["wave-refused"] ?? {};
+  return {
+    ...(a.command !== undefined ? { command: a.command } : {}),
+    ...(a.key_secret !== undefined ? { keyEnv: a.key_secret } : {}),
+    ...(a.timeout !== undefined ? { timeout: a.timeout } : {}),
+    ...(a.max_runs !== undefined ? { maxRuns: a.max_runs } : {}),
+    ...(a.max_cost_usd !== undefined ? { maxCostUsd: a.max_cost_usd } : {}),
+  };
+}
+
 export function ownJobs(repo: string, v: NonNullable<ProjectSettings["own_jobs"]>): Record<string, Record<string, unknown>> {
   if (typeof v !== "string") return v;
   const path = join(repo, v);
@@ -463,6 +481,7 @@ export async function init(repo: string, options: InitOptions = {}): Promise<Ini
     ...(approval.value === "pr-review" ? { prReview: true } : {}),
     ...(settings.agent?.login ? { agentLogin: settings.agent.login } : {}),
     ...(settings.respond ? { respond: settings.respond } : {}),
+    ...(waveSummaryOf(settings) ? { waveSummary: waveSummaryOf(settings) } : {}),
     ...(settings.policy ? { policy: true } : {}),
     ...(agentCommentInput(settings) ? { agentComment: agentCommentInput(settings) } : {}),
     ...(agentDriftInput(settings) ? { agentDrift: agentDriftInput(settings) } : {}),

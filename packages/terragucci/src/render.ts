@@ -205,7 +205,7 @@ import { applyFailedRelayKey, chantFactsFiles } from "./render-chant-agent-trigg
 import { chantDriftExitLines, chantDriftFiles, CHANT_DRIFT_GITLAB_STAGE, CHANT_DRIFT_PATHS } from "./render-chant-drift";
 import { DRIFT_ISSUE_FILE, DRIFT_ISSUE_JS } from "./drift-agent";
 import { ATLANTIS_COMMENTS_ENV } from "./comment";
-import { commentLine, productPipelineJobs, type CiProductCommand } from "@intentius/chant/ci-product";
+import { commentLine, productPipelineJobs, type CiProductCommand, type WaveSummarySpec } from "@intentius/chant/ci-product";
 import { TERRAGUCCI_WORDS } from "./ci-words";
 import { WAVES_OP, WAVES_SPEC, waveCallArgv, wavesSpec } from "./chant-waves";
 import { gitlabReviewScript, reviewWorkflow } from "./render-review";
@@ -407,6 +407,8 @@ export interface PipelineInput {
   agentLogin?: string;
   /** The response to each event, from `respond:`; the jobs call `terragucci respond` for each one that is not off. */
   respond?: Partial<Record<RespondEvent, string>>;
+  /** `agent.wave-refused` under `respond.wave-refused: summary`: chant's `waveSummary`, which the wave jobs carry as `CHANT_WAVE_SUMMARY_*`. */
+  waveSummary?: WaveSummarySpec;
   /** `policy:` is set; the check job then runs the policy's tests, which read the policy from the default branch, so it clones with full history. */
   policy?: boolean;
   /** `agent.comment` is set: `/terragucci agent <ask>` gets the agent and agent-push jobs (render-agent.ts). GitHub and Forgejo only. */
@@ -1633,6 +1635,7 @@ export function renderPipeline(input: PipelineInput): RenderedPipeline {
     ...(input.resume ? { resume: resumeCron(input.resume) } : {}),
     ...(input.notify ? { notify: input.notify } : {}),
     ...(input.respond ? { respond: input.respond as Record<string, string> } : {}),
+    ...(input.waveSummary ? { waveSummary: input.waveSummary } : {}),
     ...(input.control ? { control: input.control } : {}),
     ...(tg && forge === "gitlab" ? { cache: (forgeCache("gitlab") as { cache: unknown }).cache } : {}),
   };

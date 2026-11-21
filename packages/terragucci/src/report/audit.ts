@@ -23,11 +23,15 @@
 import { createHash } from "node:crypto";
 import { deriveGateAudit, type GateAuditEntry, type GateLedgerLine } from "@intentius/chant/lifecycle/gate-audit";
 import { samePlanDigest } from "@intentius/chant/lifecycle/plan-digest";
+import { readAuditLine, REPORT_SCHEMAS, toProductAuditLine } from "@intentius/chant/report-store";
 import { esc } from "./html";
 import { failedRoots, type Report, type ReportRefusal } from "./schema";
 import { TACO_CSS, TACO_ICON, TACO_IMG } from "./taco";
 
+/** The record's lines. A `chant.audit/v1` line naming terragucci reads as well (auditEntryOf). */
 export const AUDIT_SCHEMA = "terragucci.audit/v1";
+/** The product a `chant.audit/v1` line of terragucci's names. */
+export const AUDIT_PRODUCT = "terragucci";
 export const AUDIT_SUMMARY_SCHEMA = "terragucci.audit-summary/v1";
 
 /** The record, its page and its summary, at the top of the reports prefix. */
@@ -735,13 +739,28 @@ export function reportEntry(report: Report, path: string, evidence: AuditEvidenc
   };
 }
 
+/**
+ * One line of the record as an entry: a `terragucci.audit/v1` line as it is,
+ * or a `chant.audit/v1` line naming terragucci (`product: "terragucci"`),
+ * mapped back with chant's `toProductAuditLine`. Undefined for anything
+ * else, a neutral line of another product among them.
+ */
+export function auditEntryOf(raw: unknown): AuditEntry | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as { schema?: unknown; id?: unknown; product?: unknown };
+  if (r.schema === AUDIT_SCHEMA) return typeof r.id === "string" ? (raw as AuditEntry) : undefined;
+  if (r.schema !== REPORT_SCHEMAS.audit || r.product !== AUDIT_PRODUCT) return undefined;
+  const line = readAuditLine(raw);
+  return line ? (toProductAuditLine(line, "terragucci") as unknown as AuditEntry) : undefined;
+}
+
 /** The record's lines: each entry it holds, and the ids. A line that is not an entry is kept as it is and counts for nothing. */
 export function readRecord(text: string | undefined): { lines: string[]; entries: AuditEntry[]; ids: Set<string> } {
   const lines = (text ?? "").split("\n").filter((l) => l.trim() !== "");
   const entries: AuditEntry[] = [];
   for (const l of lines) {
-    const e = parse(l) as AuditEntry | undefined;
-    if (e && e.schema === AUDIT_SCHEMA && typeof e.id === "string") entries.push(e);
+    const e = auditEntryOf(parse(l));
+    if (e) entries.push(e);
   }
   return { lines, entries, ids: new Set(entries.map((e) => e.id)) };
 }
@@ -760,10 +779,15 @@ export function missingEntries(record: ReturnType<typeof readRecord>, derived: A
   return out.sort(order);
 }
 
+/** An entry as `terragucci.audit/v1`, its fields in that schema's order: the line the record holds, and what `chant.audit/v1` maps from. */
+export function productLine(e: AuditEntry): AuditEntry {
+  const { schema, id, kind, project, at: when, who, what, digest, result, evidence, detail } = e;
+  return { schema, id, kind, project, at: when, who, what, digest, result, evidence, ...(detail && Object.keys(detail).length ? { detail } : {}) };
+}
+
 /** An entry's line: its fields in the schema's order, so every line reads the same way. */
 export function entryLine(e: AuditEntry): string {
-  const { schema, id, kind, project, at: when, who, what, digest, result, evidence, detail } = e;
-  return JSON.stringify({ schema, id, kind, project, at: when, who, what, digest, result, evidence, ...(detail && Object.keys(detail).length ? { detail } : {}) });
+  return JSON.stringify(productLine(e));
 }
 
 /** The record with the missing entries appended: every line it held stays, in its place. */

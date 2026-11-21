@@ -2,14 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyWave } from "../src/apply";
-import type { CostRunner } from "../src/report/cost";
+import type { CostRunner } from "../src/cost";
 import { T, fakeTerragrunt, setupWith, approve, ledger, opts, runs } from "./apply-terragrunt-helpers";
 
 describe("a Terragrunt wave behind its gate", () => {
   afterEach(() => vi.restoreAllMocks());
 
   describe("cost", () => {
-    const priced = (delta: number): CostRunner => async () => ({ code: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
+    const priced = (delta: number): CostRunner => () => ({ status: 0, stdout: JSON.stringify({ currency: "USD", totalMonthlyCost: String(delta), pastTotalMonthlyCost: "0", diffTotalMonthlyCost: String(delta) }), stderr: "" });
     const yml = "gate: never\ncost:\n  command: node cost.mjs\n  approve_above: 15\n";
 
     it("prices each unit's saved plan, and a wave over cost.approve_above waits under gate: never with its cost in the digest", async () => {

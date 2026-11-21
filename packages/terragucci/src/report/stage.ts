@@ -86,7 +86,8 @@ import { changesSomething } from "./changing";
 import { bucketReportUrl, changesKey, presignedLinks, uploadReport, writeReportDir, type Uploaded } from "./store";
 import { readChanges } from "./history";
 import { markPerpetual, PERPETUAL_WAVES } from "./perpetual";
-import { costCommand, costReason, costRule, estimateCosts, policyCost, waveCost, writeCostFiles, type CostRule, type CostRunner } from "./cost";
+import { costExec, costReason, costRule, estimateRoots, policyCostOf, reportCostOf, reportWaveCostOf, signed, waveCostVerdict, writeCostFiles, type CostRule, type CostRunner } from "../cost";
+import type { CostEstimate } from "@intentius/chant/ci-product";
 import { isArtifactPage, noteLimit, type NoteOptions } from "./views";
 import { runBinary, runBinarySync, terragruntExec } from "../binary-env";
 import { asUpstreamCommands, withTerraformCommandHook } from "@intentius/chant-lexicon-terraform/engine-runner";
@@ -2083,38 +2084,48 @@ async function finish(
   const drift = stage === "tf-drift";
   // cost: the estimator over each root's stored plan, before the policy, which reads the figures; a failed estimate is named and fails nothing.
   // cost.approve_above is read at base, so the note says which waves the amount will hold as the base's config has it.
+  // chant prices the plans (chant#5334): each root whose plan changes something, on its redacted copy without the forge tokens (chant#5416).
+  // The stored plans are terragucci's redacted ones already, its secrets: values among them, and terragucci's exec drops its own tokens.
   let costOutputs: Map<string, string> | undefined;
   let cost: ReportCost | undefined;
+  let estimate: CostEstimate | undefined;
   let rule: CostRule = {};
   if (!drift && !options.noCost) {
     rule = await costRule(repo, settings.cost, options.base ?? baseRef(env), policyTrust(repo, options));
     if (rule.note) log(rule.note);
     if (rule.error) log(`cost: ${rule.error}`);
-    const stored = rule.setting
-      ? inputs.flatMap((i) => {
+    const work = rule.setting ? mkdtempSync(join(tmpdir(), "terragucci-cost-")) : undefined;
+    const stored = work
+      ? inputs.flatMap((i, n) => {
         const json = plans.get(i.path)?.json;
-        return json !== undefined ? [{ root: i.path, json }] : [];
+        if (json === undefined) return [];
+        const planJson = join(work, `plan-${n}.json`);
+        writeFileSync(planJson, json);
+        return [{ root: i.path, planJson, empty: i.error !== undefined || !changesSomething(i.plan) }];
       })
       : [];
-    if (rule.setting && stored.length > 0) {
-      const costWork = mkdtempSync(join(tmpdir(), "terragucci-cost-"));
+    if (work && rule.setting) {
       try {
-        const estimate = await estimateCosts(stored, costCommand(rule.setting), env, costWork, repo, log, options.costRunner);
-        cost = estimate.cost;
-        costOutputs = estimate.outputs;
+        if (stored.some((s) => !s.empty)) {
+          const run = costExec(env, options.costRunner ? { run: options.costRunner } : {});
+          estimate = estimateRoots(rule.setting, stored, repo, run.exec);
+          cost = reportCostOf(estimate, run.outputs);
+          costOutputs = run.outputs;
+          for (const m of estimate.members) log(`cost: ${m.member}: ${"error" in m ? `no estimate (${m.error})` : `${signed(m.monthlyDelta)} ${estimate.currency} a month`}`);
+        }
       } finally {
-        rmSync(costWork, { recursive: true, force: true });
+        rmSync(work, { recursive: true, force: true });
       }
     }
   }
-  const costWaves = cost ? waves.map((w) => ({ ...w, cost: waveCost(cost!, w.roots, rule.approveAbove) })) : waves;
+  const costWaves = estimate ? waves.map((w) => ({ ...w, cost: reportWaveCostOf(estimate!, w.roots, rule.approveAbove), ...(rule.approveAbove !== undefined ? { costMember: waveCostVerdict(estimate!, w.roots, rule.approveAbove).member } : {}) })) : waves;
   for (const w of costWaves) {
     if ("cost" in w && w.cost?.over) log(`cost: wave ${w.number}: ${costReason(w.cost, rule.source)}, so it waits for an approval when it applies`);
   }
   const costOf = (root: string): PolicyCost | undefined => {
-    if (!cost) return undefined;
-    const w = costWaves.find((x) => x.roots.includes(root));
-    return policyCost(cost, root, w && "cost" in w && w.cost ? { number: w.number, cost: w.cost } : undefined, rule.approveAbove);
+    if (!estimate) return undefined;
+    const w = waves.find((x) => x.roots.includes(root));
+    return policyCostOf(estimate, root, w ? { number: w.number, roots: w.roots } : undefined, rule.approveAbove);
   };
   // The base's policy key decides whether policy runs, so a pull request that deletes it is still checked.
   const governing = drift ? undefined : await governingPolicy(repo, settings.policy, options.base ?? baseRef(env), policyTrust(repo, options));

@@ -69,7 +69,7 @@ Setup and every pull request feature are plain CI jobs that need no agent; four 
 | The `/terragucci agent <ask>` comment (GitHub and Forgejo) | `agent.comment` is set, with a model API key secret | [Have an agent change a pull request](/terragucci/guides/agent-change-a-pull-request/) |
 | A code change that matches what drift found, in a pull request (GitHub and Forgejo) | `agent.drift` is set, with a model API key secret | [Have an agent fix drift](/terragucci/guides/agent-fix-drift/) |
 | A note comparing a pull request's description with its plan (on GitLab through the `comments:` schedule) | `review.agent` is set, with a model API key secret | [Have a model review a pull request](/terragucci/guides/agent-review-a-pull-request/) |
-| A summary of a refused wave | you add its job by hand, with a model API key secret | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
+| A summary of a refused wave | `respond.wave-refused` is `summary`, with a model API key secret | [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/) |
 
 ## Prerequisites
 

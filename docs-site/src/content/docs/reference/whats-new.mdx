@@ -10,6 +10,16 @@ Release `0.4.63` is on npm as `@intentius/terragucci@0.4.63`, and its [GitHub re
 | Each repo | `npx @intentius/terragucci@0.4.63 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
 
+## In 0.4.64
+
+The cost estimate is chant's. chant runs `cost.command` (Infracost by default) over each root whose plan changes something and writes the cost section of the plan note, with a row per root. A root whose plan changes nothing is no longer priced. The command still reads the redacted plan from `TG_PLAN_JSON` and the root from `TG_ROOT`, and it still runs without the forge tokens. The `cost` keys in `terragucci.yml` are unchanged.
+
+With `cost.approve_above`, the waves' spec carries chant's cost hold, which prices the wave, holds it over the amount and gives the `(monthly cost)` member of its digest. That member's digest is chant's now. The hold runs the command with chant's redaction, which covers what the plan marks sensitive, so declare each variable that takes a `secrets:` value `sensitive = true` ([Another estimator](/terragucci/guides/estimate-cost/#another-estimator)). A wave that waited on its cost before the upgrade waits for an approval of its new digest, so approve it again with `terragucci approve`.
+
+The policy's `input.cost` is chant's record, with fields such as `monthlyDelta`, `members` and `approveAbove`. The earlier fields `input.cost.root`, `input.cost.wave` and `input.cost.approve_above` sit beside them, so existing policies keep working. [Policy](/terragucci/reference/policy/#cost) pairs each with chant's field. `run.cost_estimate` under `input: hcp` is filled as before.
+
+`respond.wave-refused: summary` puts a model's summary above the diff in the note on a refused wave. chant's wave job runs it with the `agent.wave-refused` keys. [Have an agent summarize a refused wave](/terragucci/guides/agent-refused-wave/#move-from-an-explain-refusal-job) shows how a repo with the `explain-refusal` job under `own_jobs` moves to it.
+
 ## In 0.4.63
 
 terragucci is on chant `0.124.106`, in npm and in its images. Lexicons version apart from chant, so each bundled lexicon is pinned at its own latest release; prow and terraform are at `0.124.102`.

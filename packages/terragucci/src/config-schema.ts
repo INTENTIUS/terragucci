@@ -18,6 +18,7 @@ import {
   AGENT_FACTS_KEYS,
   AGENT_SCHEDULE_KEYS,
   AGENT_TASK_MAX,
+  AGENT_WAVE_REFUSED_KEYS,
   CONTROL_KEYS,
   EVIDENCE_KEYS,
   TEMPLATES_KEYS,
@@ -693,8 +694,9 @@ function settings(top: boolean): Record<keyof ProjectSettings | (typeof VOCABULA
         alert: agentFactsRun,
         "apply-failed": agentFactsRun,
         schedule: agentScheduleRun,
-      }, { required: ["via", "token_env"] }),
-      description: "The coding agent behind /terragucci agent, the drift agent, and the agents that start from a production alert, a failed apply or a schedule.",
+        "wave-refused": map(AGENT_WAVE_REFUSED_KEYS, { command: oneLine, key_secret: secret, timeout: whole(1), max_runs: whole(1), max_cost_usd: { type: "number", exclusiveMinimum: 0 } }),
+      }, { anyOf: [{ required: ["via", "token_env"] }, { required: ["wave-refused"], maxProperties: 1 }] }),
+      description: "The coding agent behind /terragucci agent, the drift agent, the agents that start from a production alert, a failed apply or a schedule, and the model behind respond.wave-refused: summary.",
     },
     review: {
       ...map(REVIEW_KEYS, {
