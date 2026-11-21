@@ -7,6 +7,24 @@
       "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json",
       "break": "caught",
       "chant": "0.124.112",
+      "claim": "respond/triage",
+      "contract": 1,
+      "date": "2026-11-21",
+      "engine": {
+        "binary": "tofu",
+        "version": "1.13.1"
+      },
+      "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
+      "plain": "pass",
+      "product": "terragucci",
+      "productCommit": "315e4edfa92509a12cccb066260b653f23a796bf",
+      "safeRun": "CLEAN",
+      "scenario": "smoke"
+    },
+    {
+      "$schema": "https://intentius.io/chant/schemas/e2e-harness/e2e-claim-row/v1/e2e-claim-row.schema.json",
+      "break": "caught",
+      "chant": "0.124.112",
       "claim": "agent/alert",
       "contract": 1,
       "date": "2026-11-21",

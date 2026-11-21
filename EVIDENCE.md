@@ -350,7 +350,7 @@ One row per claim. The result is the weakest of its runs. Where it runs lists ev
 | Claim | What it checks | Where it runs | Result |
 |---|---|---|---|
 | `agent/comment` | a /terragucci agent comment pushes the commit of the stand-in agent to the branch of the pull request, which re-plans it and is linked in the reply, and a forbidden path, a non-writer and a fork push nothing | Forgejo, GitLab, github.com | passes |
-| `agent/drift` | with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue | Forgejo | proven |
+| `agent/drift` | with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue | Forgejo | fails |
 | `agent/review` | with review.agent on, the review workflow of the default branch runs on pull_request_target after the plan, and its review job runs a stand-in reviewer on the pull request, its plan and the instructions of the default branch, with the key of the model and no forge token, and the note it posts flags a destroy the description does not mention and approves nothing | Forgejo, GitLab | proven |
 | `ephemeral/cdktn` | with synth set, opening a pull request runs the synth command in its checkout and applies its own copy of a CDK Terrain stack at the key suffixed -pr-<n>, beside the state of the stack itself, and closing it destroys the copy on the record | Forgejo | proven |
 | `ephemeral/pr` | with ephemeral naming canary/*, opening a pull request applies its own copy of canary/one under the state key suffixed -pr-<n>, beside the state of the root itself, and closing it destroys the copy through a planned destroy recorded on chant/lifecycle with the reason closed | Forgejo, GitLab | proven |
@@ -422,10 +422,11 @@ One row per claim. The result is the weakest of its runs. Where it runs lists ev
 
 ## Not yet proven
 
-39 cells of the feature-area grids (feature area by tool, and by forge) have no proven claim. "same code" means the area runs the same code on that binary as on OpenTofu and has no claim of its own there.
+41 cells of the feature-area grids (feature area by tool, and by forge) have no proven claim. "same code" means the area runs the same code on that binary as on OpenTofu and has no claim of its own there.
 
 | Tool or forge | Feature area | Now |
 |---|---|---|
+| OpenTofu | Agents and pull request environments | fails |
 | Terraform | Plan and review | same code |
 | Terraform | Modules | same code |
 | Terraform | State and migration | same code |
@@ -454,6 +455,7 @@ One row per claim. The result is the weakest of its runs. Where it runs lists ev
 | CDK Terrain | Chat and notify | none |
 | CDK Terrain | Reports and visibility | none |
 | CDK Terrain | Modules | none |
+| Forgejo | Agents and pull request environments | fails |
 | GitHub | Plan and review | passes |
 | GitHub | Approve and apply | passes |
 | GitHub | Policy | passes |
