@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { waveReads, waveState } from "../src/apply";
 import { StoreConflict, type ObjectStore, type StoreCondition } from "@intentius/chant/object-store";
-import { renderRunHtml, RUN_SCHEMA, runSkeleton, runViewKey, updateRunView, withWave, type RunView } from "../src/report/run-view";
+import { isRunView, renderRunHtml, RUN_SCHEMA, runSkeleton, runViewKey, updateRunView, withWave, type RunView } from "../src/report/run-view";
 import { unitEdges } from "../src/terragrunt";
 import { tmp, write } from "./helpers";
 
@@ -110,7 +110,10 @@ describe("the run view", () => {
     expect(html).toContain("after wave 1");
     expect(html).toContain('data-wave="1" data-state="not-started"');
     const json = html.slice(html.indexOf('id="terragucci-run">') + 'id="terragucci-run">'.length, html.indexOf("</script>"));
-    expect(JSON.parse(json).schema).toBe(RUN_SCHEMA);
+    // chant's run head; the older id is still read (isRunView).
+    expect(JSON.parse(json)).toMatchObject({ schema: "chant.run/v1", product: "terragucci" });
+    expect(isRunView({ ...JSON.parse(json), schema: RUN_SCHEMA, product: undefined })).toBe(true);
+    expect(isRunView({ ...JSON.parse(json), product: "plywood" })).toBe(false);
   });
 
   it("writes run.json and run.html in the bucket, wave by wave", async () => {

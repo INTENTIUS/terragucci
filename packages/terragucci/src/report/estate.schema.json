@@ -6,7 +6,8 @@
   "type": "object",
   "required": ["schema", "generated", "totals", "projects", "recent"],
   "properties": {
-    "schema": { "const": "terragucci.estate/v1" },
+    "schema": { "enum": ["chant.estate/v1", "terragucci.estate/v1"], "description": "chant.estate/v1, which terragucci writes; terragucci.estate/v1 is the same body as older releases wrote it." },
+    "product": { "const": "terragucci", "description": "Under chant.estate/v1: the product that wrote it." },
     "generated": { "type": "string", "description": "When the page was built, ISO 8601. Every age on it is as of this time." },
     "totals": {
       "type": "object",

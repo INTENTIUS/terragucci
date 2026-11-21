@@ -73,13 +73,15 @@ The estate page links `audit.html` once `audit.json` is beside it, and its [reso
 
 ## Entry fields
 
-Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.schema.json`), and holds these fields in this order:
+Every line is chant's `chant.audit/v1`, the audit line every CI product on chant writes (JSON Schema in chant as `@intentius/chant/report-store/audit.schema.json`), and holds these fields in this order:
 
 | Field | What it holds |
 |---|---|
-| `schema` | `terragucci.audit/v1`; a new field never changes an existing one |
+| `schema` | `chant.audit/v1`; a new field never changes an existing one |
+| `product` | `terragucci` |
 | `id` | `sha256:` over where the entry came from: the ledger line, the report's path and finish time, or the state's location and version id |
-| `kind` | what happened; see the next table |
+| `kind` | chant's word for what happened: `approval-requested`, `approved`, `revoked`, `override-requested`, `override-recorded`, `applied`, or `recorded` for a kind of terragucci's own |
+| `product_kind` | terragucci's word for it, when it is not `kind`; see the next table |
 | `project` | `<host>/<path>` of the repo |
 | `at` | when: the ledger line's `timestamp`, the commit that removed a line, the run's finish, or when the store says a version was written |
 | `who` | the approver, the overrider, whoever removed the line, for an apply the approver it applied under, or for an unrecorded write the writer the bucket's log names; `null` when nobody did or no log names one |
@@ -91,7 +93,9 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
 
 ## Kinds and results
 
-| `kind` | From | `result` | `detail` |
+The first column is terragucci's word: a line's `product_kind`, or its `kind` where chant uses the same word (`approval-requested`, `override-requested`, `refused`). chant's `kind` for `approval` is `approved`, for `approval-revoked` and `override-revoked` `revoked`, for `override` `override-recorded`, for `apply` `applied`, and `recorded` for the rest. A line older releases wrote, `terragucci.audit/v1`, has terragucci's word in `kind` and stays in the record as it was; chant's `readAuditLine` reads both.
+
+| terragucci's word | From | `result` | `detail` |
 |---|---|---|---|
 | `approval-requested` | a pending line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl` for a migration, `_gates/tf-unlock.jsonl` for a state lock's release, `_gates/tf-state-export.jsonl` for a [state export](/terragucci/guides/export-a-state-version/), or `_gates/tf-ephemeral.jsonl` for a pull request's [ephemeral copy](/terragucci/guides/ephemeral-environments/) planned by terragucci 0.4.42 or earlier | `waiting` | `expires`, `run_id`, `description`, `roots`, `excluded` |
 | `approval` | an approval line in `_gates/tf-apply.jsonl`, `_gates/tf-migrate.jsonl`, `_gates/tf-unlock.jsonl`, `_gates/tf-state-export.jsonl`, `_gates/pr-<n>.jsonl` (an ephemeral copy's gate `pr-env`) or `_gates/tf-ephemeral.jsonl` | `unsigned`, `sealed` or `review` | `signer` (sealed), `via`, `pr`, `head`, `reviewers` (review), `relayed_by`, `committed_by`, `excluded` |
@@ -136,12 +140,12 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
 <Tabs syncKey="audit-query">
   <TabItem label="Approvals">
     ```bash
-    jq -r 'select(.kind == "approval") | [.at, .project, .what, .digest, .who, .result] | @tsv' audit.jsonl
+    jq -r 'select(.kind == "approved") | [.at, .project, .what, .digest, .who, .result] | @tsv' audit.jsonl
     ```
   </TabItem>
   <TabItem label="Overrides">
     ```bash
-    jq -r 'select(.kind == "override") | [.at, .project, .what, .who, (.detail.rules | join(",")), .detail.reason] | @tsv' audit.jsonl
+    jq -r 'select(.kind == "override-recorded") | [.at, .project, .what, .who, (.detail.rules | join(",")), .detail.reason] | @tsv' audit.jsonl
     ```
   </TabItem>
   <TabItem label="Refused and failed">
@@ -151,17 +155,17 @@ Every line is `terragucci.audit/v1` (JSON Schema in the package as `dist/audit.s
   </TabItem>
   <TabItem label="One wave">
     ```bash
-    jq -c 'select(.project == "github.com/acme/network" and .what == "wave-2") | {at, kind, who, digest, result}' audit.jsonl
+    jq -c 'select(.project == "github.com/acme/network" and .what == "wave-2") | {at, kind, product_kind, who, digest, result}' audit.jsonl
     ```
   </TabItem>
   <TabItem label="Unrecorded writes">
     ```bash
-    jq -r 'select(.kind == "unrecorded-write") | [.at, .project, .what, .detail.current_version, (.who // "unknown"), .detail.who_source] | @tsv' audit.jsonl
+    jq -r 'select(.product_kind == "unrecorded-write") | [.at, .project, .what, .detail.current_version, (.who // "unknown"), .detail.who_source] | @tsv' audit.jsonl
     ```
   </TabItem>
   <TabItem label="Applies with no approval">
     ```bash
-    jq -r 'select(.kind == "apply" and .result == "applied" and .detail.gate == "approved" and .detail.approval == null) | [.at, .project, .what, .digest] | @tsv' audit.jsonl
+    jq -r 'select(.kind == "applied" and .product_kind == "apply" and .result == "applied" and .detail.gate == "approved" and .detail.approval == null) | [.at, .project, .what, .digest] | @tsv' audit.jsonl
     ```
   </TabItem>
 </Tabs>

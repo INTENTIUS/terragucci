@@ -216,7 +216,7 @@ export const LAST_APPLY_REPORTS = 50;
 export const TOOLS: Tool[] = [
   {
     name: "estate",
-    description: "The estate page's data (estate.json, terragucci.estate/v1), as `terragucci estate` last wrote it: every project, its waiting waves, drift, failed roots, inventory and state versions, and the module, provider and binary versions every root runs.",
+    description: "The estate page's data (estate.json, chant.estate/v1 with product terragucci), as `terragucci estate` last wrote it: every project, its waiting waves, drift, failed roots, inventory and state versions, and the module, provider and binary versions every root runs.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run(_a, ctx) {
       const { store, prefix } = ctx.top();
@@ -249,7 +249,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "report",
-    description: "A run's report.json (terragucci.report/v1), by the report path an index row gives (<project>/<yyyy>/<mm>/<commit>/<stage>). With root, that root alone.",
+    description: "A run's report.json (chant.run/v1 with product terragucci), by the report path an index row gives (<project>/<yyyy>/<mm>/<commit>/<stage>). With root, that root alone.",
     inputSchema: {
       type: "object",
       properties: {
@@ -316,7 +316,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "run_view",
-    description: "The run view of one applied commit (terragucci.run/v1): every wave of its apply, its roots, the roots whose state each reads, and where each wave stands at its gate, with the approve command for a waiting one.",
+    description: "The run view of one applied commit (chant.run/v1 with product terragucci): every wave of its apply, its roots, the roots whose state each reads, and where each wave stands at its gate, with the approve command for a waiting one.",
     inputSchema: {
       type: "object",
       properties: { commit: { type: "string", description: "The commit, in full." }, project },
@@ -374,7 +374,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "dora",
-    description: "The DORA figures (dora.json, terragucci.dora/v1) `terragucci estate` last wrote: deployment frequency, lead time, change failure rate and time to restore, for the estate, each project and each week.",
+    description: "The DORA figures (dora.json, chant.dora/v1 with product terragucci) `terragucci estate` last wrote: deployment frequency, lead time, change failure rate and time to restore, for the estate, each project and each week.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run(_a, ctx) {
       const { store, prefix } = ctx.top();

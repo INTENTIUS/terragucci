@@ -11,7 +11,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { AuditEntry } from "../packages/terragucci/src/report/audit";
+import { auditEntryOf, type AuditEntry } from "../packages/terragucci/src/report/audit";
 import type { History } from "../packages/terragucci/src/report/history";
 import type { IndexEntry, ReportIndex } from "../packages/terragucci/src/report/store";
 import {
@@ -224,7 +224,10 @@ describe("the runs of the last day, whose reports go", () => {
     const marked = got?.entries[1] as AuditEntry;
     expect(marked.evidence).toMatchObject({ source: "report", key: `${DIR}${runPath(3, "tf-apply-wave-1")}/report.json`, deleted: true });
     expect(marked.evidence.url).toBeUndefined();
-    expect(JSON.parse(got!.text.split("\n")[1])).toEqual(marked);
+    // The rewritten line is chant.audit/v1, which reads back as the marked entry.
+    const line = JSON.parse(got!.text.split("\n")[1]);
+    expect(line).toMatchObject({ schema: "chant.audit/v1", product: "terragucci", kind: "applied", product_kind: "apply" });
+    expect(auditEntryOf(line)).toEqual(marked);
     // Without `since`, the run goes as before; the next prune finds the marked entry and rewrites nothing.
     expect(pruneAudit(text, new Map([[P, kept]]))?.entries.map((e) => e.id)).toEqual(["sha256:2"]);
     expect(pruneAudit(got!.text, new Map([[P, kept]]), undefined, since)).toBeNull();

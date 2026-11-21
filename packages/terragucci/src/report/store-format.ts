@@ -1,15 +1,14 @@
 /**
  * The report store's documents in chant's format (`@intentius/chant/report-store`):
- * a stage's report.json and a commit's run.json as `chant.run/v1`,
- * estate.json as `chant.estate/v1` and dora.json as `chant.dora/v1`, each
- * with `product: "terragucci"` after `schema` and the body as terragucci
- * writes it under its own id. audit.jsonl's lines in that format are
- * `chant.audit/v1` (./audit.ts).
+ * a stage's report.json and a commit's run.json are `chant.run/v1`,
+ * estate.json `chant.estate/v1` and dora.json `chant.dora/v1`, each with
+ * `product: "terragucci"` after `schema` and the body as terragucci wrote it
+ * under its own id. audit.jsonl's lines are `chant.audit/v1` (./audit.ts).
  *
- * terragucci writes its own ids (`terragucci.report/v1`, `terragucci.run/v1`,
- * `terragucci.estate/v1`, `terragucci.dora/v1`, `terragucci.audit/v1`) and
- * reads both forms: {@link isOwn} takes either. A neutral document of another
- * product is not terragucci's. index.json is `terragucci.report-index/v1`.
+ * The ids older releases wrote (`terragucci.report/v1`, `terragucci.run/v1`,
+ * `terragucci.estate/v1`, `terragucci.dora/v1`) stay readable: {@link isOwn}
+ * takes either. A neutral document of another product is not terragucci's.
+ * index.json stays `terragucci.report-index/v1`.
  */
 import { neutralReport, REPORT_SCHEMAS, type ReportKind } from "@intentius/chant/report-store";
 
