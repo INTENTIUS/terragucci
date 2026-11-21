@@ -392,7 +392,7 @@
       "needs": null,
       "verdict": "pass",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "315e4edf"
     },
     {
       "claim": "respond/drift",
@@ -2396,9 +2396,9 @@
       "claim": "agent/drift",
       "says": "with agent.drift on, a drift run that opens the drift issue runs the stand-in agent with no forge token in its step, and the push job opens a pull request with its change, which plans like any other and is linked on the issue",
       "needs": null,
-      "verdict": "pass",
+      "verdict": "fail",
       "break": "caught",
-      "commit": "c64d95fa"
+      "commit": "315e4edf"
     },
     {
       "claim": "drift/github",
