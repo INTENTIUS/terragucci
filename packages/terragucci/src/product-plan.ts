@@ -45,8 +45,18 @@ export const PLAN_NAMES = {
 /** The plan note's own line under chant's marker: `<!-- terragucci:plan roots=a,b -->`, which a stale mark and the MCP note read. */
 export const PLAN_PRODUCT_MARKER = "terragucci:plan";
 
-/** The environment the plan jobs and `pr-post` name: chant's note marker is `<!-- chant-pr:default -->`. */
+/** The environment the plan jobs and `pr-post` name with no `promotion`: chant's note marker is `<!-- chant-pr:default -->`. */
 export const PLAN_ENV = "default";
+
+/**
+ * The environment the plan jobs, `plan-handoff` and `pr-post` name. With
+ * `promotion`, chant.config.ts declares only its environments, and a pull
+ * request's plan is the change the merge applies to the first of them, so
+ * the plan names that first stage; with none, `default`.
+ */
+export function planEnv(promotion?: readonly string[]): string {
+  return promotion?.[0] ?? PLAN_ENV;
+}
 
 /** The variable a GitLab plan notes schedule sets, as chant's plan-note job's rule reads it. */
 export const PLAN_NOTES_VAR = "CHANT_PLAN_NOTES";
@@ -61,6 +71,8 @@ export const PLAN_NOTES_CRON = "*/5 * * * *";
 export interface PlanJobsInput {
   forge: ForgeName;
   image: string;
+  /** The environment the jobs and `pr-post` name (planEnv); unset, `default`. */
+  planEnv?: string;
   /** The plan verb's shell (render.ts planVerbScript), the step's last line. */
   command: string;
   /** Variables of the whole plan job, every step's (GitHub, Forgejo: secrets as expressions). */
@@ -136,7 +148,7 @@ function planWords(atlantis: boolean): typeof TERRAGUCCI_WORDS {
 /** GitHub and Forgejo: chant's plan, plan-note, replan and replan-note jobs, as the workflow's jobs. */
 export function githubPlanJobs(input: PlanJobsInput): Array<[string, Record<string, unknown>]> {
   const forge = input.forge as "github" | "forgejo";
-  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.evidence ? { evidence: input.evidence } : {}), ...commentAllowOption(input) } as never);
+  const { doc } = buildProductPlanGithubDoc(forge, input.planEnv ?? PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.evidence ? { evidence: input.evidence } : {}), ...commentAllowOption(input) } as never);
   const jobs = doc.jobsDoc as Record<string, Record<string, unknown>>;
   const names = PLAN_NAMES.jobNames;
   const out: Array<[string, Record<string, unknown>]> = [];
@@ -161,7 +173,7 @@ export function githubCommentJob(input: PlanJobsInput, waves: Record<string, unk
   const forge = input.forge as "github" | "forgejo";
   // Before merge (`reach`) it answers lock and unlock too (chant issue 5061).
   const words = { ...TERRAGUCCI_WORDS, commands: { plan: "plan", apply: "apply", ...(reach ? { lock: "lock", unlock: "unlock" } : {}) }, aliases: input.atlantis ? TERRAGUCCI_WORDS.aliases.filter((a) => a.command === "plan" || a.command === "apply") : [] };
-  const { doc } = buildProductPlanGithubDoc(forge, PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true, ...(reach ? { reach } : {}) }), ...commentAllowOption(input), ...waves } as never);
+  const { doc } = buildProductPlanGithubDoc(forge, input.planEnv ?? PLAN_ENV, { words, image: input.image, productPlan: planOptions(input, { noReply: true, ...(reach ? { reach } : {}) }), ...commentAllowOption(input), ...waves } as never);
   const job = (doc.jobsDoc as Record<string, Record<string, unknown>>)["apply-comment"];
   if (!job) throw new Error("chant's product pipeline wrote no apply-comment job");
   const container = typeof job.container === "string" ? { image: job.container } : job.container;
@@ -177,7 +189,7 @@ export const PLAN_EVIDENCE_JOB = `${PLAN_NAMES.jobNames.plan}-evidence`;
  * pipeline, and with `evidence` the `plan-evidence` job before the note.
  */
 export function gitlabPlanJobs(input: PlanJobsInput): { plan: Record<string, unknown>; note: Record<string, unknown>; evidence?: Record<string, unknown> } {
-  const { entries } = generateGitlabProductPlanPipeline(PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.cache !== undefined ? { cache: input.cache } : {}), ...(input.evidence ? { evidence: input.evidence } : {}) });
+  const { entries } = generateGitlabProductPlanPipeline(input.planEnv ?? PLAN_ENV, { words: planWords(input.atlantis === true), image: input.image, productPlan: planOptions(input), ...(input.cache !== undefined ? { cache: input.cache } : {}), ...(input.evidence ? { evidence: input.evidence } : {}) });
   const found = new Map(entries);
   const plan = found.get(PLAN_NAMES.jobNames.plan) as Record<string, unknown> | undefined;
   const note = found.get(PLAN_NAMES.jobNames.note) as Record<string, unknown> | undefined;
