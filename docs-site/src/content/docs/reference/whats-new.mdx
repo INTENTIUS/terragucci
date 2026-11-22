@@ -1,14 +1,24 @@
 ---
-title: Changes in 0.4.64
-description: "terragucci 0.4.64, released 2026-11-21."
+title: Changes in 0.4.65
+description: "terragucci 0.4.65, released 2026-11-22."
 ---
 
-Release `0.4.64` is on npm as `@intentius/terragucci@0.4.64`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.64) lists every change.
+Release `0.4.65` is on npm as `@intentius/terragucci@0.4.65`, and its [GitHub release](https://github.com/INTENTIUS/terragucci/releases/tag/v0.4.65) lists every change.
 
 | To upgrade | Run |
 |---|---|
-| Each repo | `npx @intentius/terragucci@0.4.64 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
+| Each repo | `npx @intentius/terragucci@0.4.65 init`, then merge the pipeline it writes, with `chant.config.ts` in a repo of plain roots |
 | Each approver | `terragucci approve` where you ran [`chant approve`](/terragucci/concepts/glossary/#chant); installing terragucci is enough ([approve](/terragucci/reference/cli/#approve)) |
+
+## In 0.4.65
+
+chant moves to `0.124.114`, in the package and in the images it builds.
+
+Each release now publishes the four CI images in two sets, eight in all. The package records the digest of every one. The Debian set is as before: `node:22-bookworm-slim`, Node 22, apt, running as root. The new Chainguard set is built on Chainguard's public `node` and `wolfi-base` images. It installs with apk and runs as user 65532. Its Node is the one Wolfi packages, which was Node 26 when the set was built, so a later release can move it to a newer major. Both sets carry the same engines at the same versions. The Chainguard tags end in `-chainguard` and share a repository with the Debian ones, and each image's labels record its base. The apk packages in the Chainguard images are installed at the versions chant pins, so they move with chant's pins.
+
+`image.base` in `terragucci.yml` picks the set: `debian` (the default) or `chainguard`. `image: { base: chainguard }` is enough with no `name`, and `init` writes the pipeline with that set's image by digest. `image recipe` builds `FROM` the set `image.base` names. Its steps run as root and the image ends as the user the base runs as, so a layer of your own on the Chainguard base wraps its changes in `USER root` and `USER 65532` and installs with apk. [Run the jobs in a prepared image](/terragucci/guides/run-in-a-prepared-image/#the-two-image-sets) and [Versions and pins](/terragucci/reference/versions-and-pins/#the-two-image-sets) compare the two sets. A release before this one published only the Debian images and refuses `image.base: chainguard`.
+
+terragucci's own release now runs with chant's `supply-chain` group on. It refuses a base image named without a digest and scans each image before anything is pushed. Each image gets an SBOM made from its layers and a keyless Sigstore signature. It also gets SLSA provenance, which the publish requires. The npm package carries an SBOM as well.
 
 ## In 0.4.64
 
