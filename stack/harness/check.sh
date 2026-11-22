@@ -227,6 +227,7 @@ tg_net() {
   overlay="$(break_overlay)"
   local -a mounts=(-v "$BUNDLE:/opt/tg/terragucci.mjs:ro")
   [ -z "$overlay" ] || mounts+=(-v "$overlay:/break:ro")
+  [ ! -f "$ROOT/.chant-local/intentius-chant.tgz" ] || mounts+=(-v "$ROOT/.chant-local:/chant-local:ro")
   run_copied --rm ${tty[@]+"${tty[@]}"} --network "$TG_NETWORK" "${mounts[@]}" \
     -e "TERRAGUCCI_FORGEJO_TOKEN=$AUTHOR_TOKEN" -e "TG_CLONE=http://$AUTHOR:$AUTHOR_TOKEN@forgejo:3000/$REPO.git" -e "TG_AUTHOR=$AUTHOR" \
     -e AWS_ENDPOINT_URL=http://floci:4566 -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_REGION=us-east-1 \
@@ -544,7 +545,13 @@ case "${1:-}" in
     chant_pin="$(jq -r '.devDependencies["@intentius/chant"]' "$ROOT/package.json")"
     lexicon_pin="$(jq -r '.devDependencies["@intentius/chant-lexicon-terraform"]' "$ROOT/packages/terragucci/package.json")"
     tsx_pin="$(jq -r '.devDependencies.tsx' "$ROOT/package.json")"
-    deps="npm i -q --no-save --no-audit --no-fund @intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin tsx@$tsx_pin >&2"
+    chant_pkgs="@intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin"
+    # After `just chant-local`, the chant packed in .chant-local/ (tg_net mounts it at /chant-local).
+    if jq -e '.chantLocal' "$ROOT/node_modules/@intentius/chant/package.json" >/dev/null 2>&1; then
+      chant_pkgs="/chant-local/intentius-chant.tgz /chant-local/intentius-chant-lexicon-terraform.tgz"
+      log "release: the local chant $(jq -r '.chantLocal.commit' "$ROOT/node_modules/@intentius/chant/package.json")"
+    fi
+    deps="npm i -q --no-save --no-audit --no-fund $chant_pkgs tsx@$tsx_pin >&2"
     case "$what" in
       cut) line="$deps && FORGEJO_TOKEN=\"\$TERRAGUCCI_FORGEJO_TOKEN\" npx chant release cut ${1:?cut <label>} --yes --wait-checks && git push -q origin release/$1" ;;
       first) line="$deps && npx chant run --components all --env ${1:?first <env> <label>} --release ${2:?first <env> <label>}" ;;
