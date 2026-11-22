@@ -31,6 +31,8 @@ image:
 
 The recipe's steps run as root on either base, and its Dockerfile then sets the user back to the base image's (`USER ${CHANT_IMAGE_USER:-root}`). A layer you add yourself runs as that user, so on the Chainguard base wrap it in `USER root` and `USER 65532` lines. Keep `base` when you add the pushed image's `name`.
 
+A job in the Chainguard set runs as 65532 with `/tmp` as its `$HOME`. A root that pins an engine release the image lacks has it installed under `TOFU_INSTALL_DIR` (`$RUNNER_TEMP/terragucci-bin` when unset). When 65532 cannot write that directory the install goes under `$HOME/.cache/terragucci-bin` instead and the job's log says so. That happens with a cache the runner mounts as root. To keep installs between jobs, give 65532 the cache directory on the runner (`chown 65532` it on the host or in the volume). `TF_PLUGIN_CACHE_DIR` needs the same because OpenTofu and Terraform write the provider cache as the job's user.
+
 ## Before you start
 
 | You need | Why |

@@ -347,9 +347,12 @@ claim_init/chainguard_job() {
   #   the checkout succeeded and HEAD is the pushed commit
   #   the job's user is 65532, CHANT_IMAGE_USER says so, and $HOME is writable
   #   git works in the workspace (the image's system safe.directory), and the workspace is writable
-  #   the engine the image carries is linked in /usr/local/bin, and /opt/terragucci belongs to 65532
-  #   an engine release the image lacks (tofu 1.12.0) installs with `terragucci install`, which downloads with node and
-  #   writes under $RUNNER_TEMP, and is first on PATH
+  #   the engine the image carries (TOOL_VERSIONS.tofu in packages/terragucci/src/images.ts, as the image's build reads it)
+  #   is linked in /usr/local/bin, and /opt/terragucci belongs to 65532
+  #   an engine release the image lacks (tofu $lacking, which must differ from the pin) installs with `terragucci install`,
+  #   which downloads with node, and is first on PATH. The runner sets TOFU_INSTALL_DIR to /cache/bin on a volume root
+  #   owns, which 65532 cannot write, so the install goes under $HOME and says so in one line (unless a root job already
+  #   put that release in /cache/bin, which is then used where it is); the claim logs where it went and that line
   #   a plan step runs: tofu init and plan in a root with a terraform_data resource, as 65532
   # The Debian images' jobs on this runner are the other claims', which run the generated pipeline as root. The image must
   # be built from this tree (just images), since the user, the git setting and the bundle are in it.
@@ -358,8 +361,12 @@ claim_init/chainguard_job() {
   log() { echo "[smoke chainguard-job] $*" >&2; }
   # shellcheck source=lib.sh
   . "$HERE/lib.sh"
-  local work repo="$USER/cgjob" tree sha image cimage wf logs job rc=0 want key
+  local work repo="$USER/cgjob" tree sha image cimage wf logs job rc=0 want key pinned lacking=1.12.0
   image="$(image_tag tofu-chainguard)"
+  # The OpenTofu the image carries, from the pin its build reads, and a release it lacks that must stay another one.
+  pinned="$(cd "$HERE/.." && node_modules/.bin/tsx -e 'import { TOOL_VERSIONS } from "./packages/terragucci/src/images"; console.log(TOOL_VERSIONS.tofu)')"
+  [ -n "$pinned" ] || { log "could not read TOOL_VERSIONS.tofu from packages/terragucci/src/images.ts"; return 1; }
+  [ "$pinned" != "$lacking" ] || { log "the image now carries tofu $lacking, so the install would test nothing; pick another release the image lacks"; return 1; }
   docker image inspect "$image" >/dev/null 2>&1 || { log "no CI image $image; run 'just images' first"; return 1; }
   build_cli || return 1
   work="$(mktemp -d "${TMPDIR:-/tmp}/terragucci-smoke.XXXXXX")"; track_work "$work"
@@ -422,13 +429,15 @@ jobs:
           echo "$out" | grep -q '1 to add' && echo "CG: plan=ok"
       - name: An engine the image lacks
         run: |
-          dir="$(terragucci install tofu 1.12.0)"
+          dir="$(terragucci install tofu LACKING 2>install.err)" || { cat install.err >&2; exit 1; }
+          cat install.err >&2
           export PATH="$dir:$PATH"
           echo "CG: install_dir=$dir"
+          echo "CG: install_note=$(head -1 install.err)"
           echo "CG: tofu_on_path=$(command -v tofu)"
           echo "CG: tofu_version=$(tofu version | head -1)"
 YAML
-  sed -i.bak "s#container: IMAGE#container: $cimage#" "$wf" && rm -f "$wf.bak"
+  sed -i.bak "s#container: IMAGE#container: $cimage#; s#terragucci install tofu LACKING#terragucci install tofu $lacking#" "$wf" && rm -f "$wf.bak"
   [ -n "${BREAK:-}" ] && sed -i.bak "s#^    env:#    env:\n      GIT_CONFIG_NOSYSTEM: '1'#" "$wf" && rm -f "$wf.bak"
   fresh_repo cgjob || return 1
   api -o /dev/null -H 'content-type: application/json' -X PATCH -d '{"has_actions":true}' "$URL/api/v1/repos/$repo"
@@ -451,11 +460,12 @@ YAML
   want write_workspace ok
   want write_home ok
   want plan ok
-  want tofu_link /opt/terragucci/tofu-1.13.1/tofu
+  want tofu_link "/opt/terragucci/tofu-$pinned/tofu"
   want tool_root_owner 65532
-  want tofu_version "OpenTofu v1.12.0"
+  want tofu_version "OpenTofu v$lacking"
   key="$(fact install_dir)"
-  [ -n "$key" ] && [ "$(fact tofu_on_path)" = "$key/tofu" ] || { log "tofu 1.12.0 is not first on PATH from ${key:-no install dir}: $(fact tofu_on_path)"; rc=1; }
+  [ -n "$key" ] && [ "$(fact tofu_on_path)" = "$key/tofu" ] || { log "tofu $lacking is not first on PATH from ${key:-no install dir}: $(fact tofu_on_path)"; rc=1; }
+  log "the install went to ${key:-nowhere}${key:+; its note: $(fact install_note)}"
   log "the workspace's owner is uid $(fact workspace_owner) and the job's user is $(fact uid)"
   [ "$(fact workspace_owner)" != 65532 ] || log "the runner's workspace belongs to 65532, so this run did not test a checkout another uid owns"
   [ "$(fact home | head -c1)" = / ] || { log "no \$HOME in the job"; rc=1; }
