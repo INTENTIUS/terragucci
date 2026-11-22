@@ -37,7 +37,7 @@
     "build": "node ../../scripts/build-cli.mjs"
   },
   "dependencies": {
-    "@intentius/chant": "0.124.114"
+    "@intentius/chant": "0.124.115"
   },
   "peerDependencies": {
     "@intentius/tsad-reference": "2.x",
