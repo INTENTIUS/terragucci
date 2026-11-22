@@ -177,9 +177,9 @@
         "version": "1.13.1"
       },
       "floci": "sha256:5ec92ae8046445d62c0009590dd09f04560886e5a5ef31248cb3fcc09b2961ec",
-      "plain": "fail",
+      "plain": "pass",
       "product": "terragucci",
-      "productCommit": "58042a112091e8fcad2ef0e4179285626247c422",
+      "productCommit": "85b8ae058093da29be5831cc4cbb32b6ed912f6d",
       "safeRun": "CLEAN",
       "scenario": "smoke"
     }
