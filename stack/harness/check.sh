@@ -543,7 +543,8 @@ case "${1:-}" in
     what="${1:?release cut|first|promote|rollback|approve|output ...}"; shift
     chant_pin="$(jq -r '.devDependencies["@intentius/chant"]' "$ROOT/package.json")"
     lexicon_pin="$(jq -r '.devDependencies["@intentius/chant-lexicon-terraform"]' "$ROOT/packages/terragucci/package.json")"
-    deps="npm i -q --no-save --no-audit --no-fund @intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin >&2"
+    tsx_pin="$(jq -r '.devDependencies.tsx' "$ROOT/package.json")"
+    deps="npm i -q --no-save --no-audit --no-fund @intentius/chant@$chant_pin @intentius/chant-lexicon-terraform@$lexicon_pin tsx@$tsx_pin >&2"
     case "$what" in
       cut) line="$deps && FORGEJO_TOKEN=\"\$TERRAGUCCI_FORGEJO_TOKEN\" npx chant release cut ${1:?cut <label>} --yes --wait-checks && git push -q origin release/$1" ;;
       first) line="$deps && npx chant run --components all --env ${1:?first <env> <label>} --release ${2:?first <env> <label>}" ;;
