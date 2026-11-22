@@ -43,6 +43,7 @@ packages/terragucci/src/apply.ts          choudoufu/killed boot/* waves/tofu mod
 packages/terragucci/src/apply-progress.ts estate/tofu choudoufu/killed
 packages/terragucci/src/cdf-records.ts    choudoufu/killed
 packages/terragucci/src/cdf-history.ts    choudoufu/record-versions
+images/Dockerfile.choudoufuChainguard     init/chainguard-job
 images/Dockerfile.choudoufu               choudoufu/record-versions
 packages/terragucci/src/plan.ts           note/grouped report/tofu report/highlight report/sensitive affected/tofu linked/fresh note/diff note/footer note/report-link note/split note/stale tips/tofu lock/plan lock/plan-fmt lock/plan-release report/wave binary/terraform binary/terragrunt-terraform init/foreign-checkout policy/tofu policy/delete-key policy/hcl policy/hcp policy/opa policy/override policy/source policy/wave check/tofu
 packages/terragucci/src/check.ts          check/tofu modules/recorded modules/require modules/terragrunt-require check/diagnostics check/terragrunt tips/terragrunt-mock review/description generate/tofu generate/terragrunt policy/sources-module

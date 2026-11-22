@@ -260,6 +260,7 @@ pr-apply/stale|a comment on an approved pull request whose head is behind the de
 telemetry/provider-calls|with binary: choudoufu the report lists the slowest provider calls of a root, each with its method, provider and resource type, from the provider call spans choudoufu sends|
 telemetry/summed-timings|with binary: choudoufu past its span budget the report lists the timings choudoufu summed by resource type, and the note of the root says it summed them|
 init/foreign-checkout|a job that runs as root in the CI image on a checkout another user owns, with no git setting of its own, plans only the roots a change touches|
+init/chainguard-job|with image.base: chainguard, init names the -chainguard image, and a Forgejo container job in it runs as user 65532: its checkout, git, writes in the workspace and $HOME, an install of an engine the image lacks and a plan all work|
 waves/terragrunt-layers|a Terragrunt repo of three units in a chain goes out in three waves, one job each, every wave waiting for an approval of its own set digest before it applies|
 waves/atmos|init names one root per Atmos instance, <stack>/<component>, from atmos describe stacks, and cuts a wave per layer of dependencies.components: each dependent instance applies in the wave after its dependency, behind its own gate|
 apply/atmos-workspace|each Atmos instance plans and applies in the Terraform workspace Atmos names for it, never default: the instances of one component in two stacks keep their own states, and plan no change after the apply|
@@ -630,6 +631,7 @@ pr-apply/stale       runner self! weight=200
 telemetry/provider-calls       weight=90
 telemetry/summed-timings       weight=90
 init/foreign-checkout     ex after=boot/tofu weight=150
+init/chainguard-job       runner self! weight=250
 waves/terragrunt-layers            runner self! weight=300
 waves/atmos          runner self! weight=350
 apply/atmos-workspace      self! weight=150
